@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+storage/
+data/
+*.db
+*.sqlite
+.env
+logs/
+temp/
+outputs/

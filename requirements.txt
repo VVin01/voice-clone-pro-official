@@ -1,0 +1,21 @@
+# Voice Clone Pro Official - Production & Testing Dependencies
+# Python Target: 3.10.x
+
+# Telegram Bot Framework
+aiogram==3.31.0
+
+# Database & Async Engine
+sqlalchemy==2.0.52
+aiosqlite==0.22.1
+greenlet==3.5.5
+
+# Configuration & Data Validation
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# TTS Generation
+edge-tts==7.2.8
+
+# Test Suite
+pytest==9.1.1
+pytest-asyncio==1.4.0
