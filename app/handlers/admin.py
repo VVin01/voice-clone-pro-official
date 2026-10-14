@@ -21,10 +21,12 @@ from app.models.enums import (
     LedgerDirection,
     LedgerSource,
     PaymentStatus,
+    UserStatus,
     VoiceModelStatus,
     VoiceModelType,
 )
 from app.models.schema import (
+    AuditLog,
     Job,
     MinuteBalance,
     MinuteLedgerEvent,
@@ -61,8 +63,10 @@ from app.ui.keyboards import (
     admin_broadcast_preview_kb,
     admin_broadcast_prompt_kb,
     admin_dashboard_kb,
+    admin_queue_failures_kb,
     admin_queue_kb,
     admin_user_card_kb,
+    admin_user_search_cancel_kb,
     admin_users_list_kb,
 )
 
@@ -79,6 +83,10 @@ class AdminAdjustFSM(StatesGroup):
     waiting_for_amount = State()
     waiting_for_reason = State()
     confirming = State()
+
+
+class AdminUserSearchFSM(StatesGroup):
+    waiting_for_query = State()
 
 
 async def is_authorized_admin(event: CallbackQuery | Message) -> bool:
@@ -283,16 +291,23 @@ async def handle_admin_model_scan(callback: CallbackQuery):
     await handle_admin_voices(callback)
 
 
-@admin_router.callback_query(F.data.startswith("admin:model:"))
-async def handle_admin_model_detail(callback: CallbackQuery):
+async def render_admin_model_detail(
+    callback: CallbackQuery,
+    model_id: int,
+    session: AsyncSession | None = None,
+):
     if not await is_authorized_admin(callback):
         return
 
-    model_id = int(callback.data.split(":")[2])
-    async with AsyncSessionLocal() as session:
+    if session is not None:
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
         model = await session.get(VoiceModel, model_id)
+    else:
+        async with AsyncSessionLocal() as s:
+            user, _ = await get_or_create_user(s, callback.from_user.id)
+            lang = user.language_code
+            model = await s.get(VoiceModel, model_id)
 
     if not model:
         await callback.answer(t("admin_alert_model_not_found", lang), show_alert=True)
@@ -325,19 +340,40 @@ async def handle_admin_model_detail(callback: CallbackQuery):
 
     buttons.append([InlineKeyboardButton(text=t("admin_btn_back_to_models", lang), callback_data="admin:voices")])
 
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    try:
+        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
     await callback.answer()
 
 
+@admin_router.callback_query(F.data.startswith("admin:model:"))
+async def handle_admin_model_detail(callback: CallbackQuery, session: AsyncSession | None = None):
+    if not await is_authorized_admin(callback):
+        return
+
+    try:
+        model_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Malformed model callback", show_alert=True)
+        return
+
+    await render_admin_model_detail(callback, model_id=model_id, session=session)
+
+
 @admin_router.callback_query(F.data.startswith("admin:mod_toggle:"))
-async def handle_admin_model_toggle(callback: CallbackQuery):
+async def handle_admin_model_toggle(callback: CallbackQuery, session: AsyncSession | None = None):
     if not await is_authorized_admin(callback):
         return
 
     parts = callback.data.split(":")
-    model_id, action = int(parts[2]), parts[3]
+    try:
+        model_id, action = int(parts[2]), parts[3]
+    except (IndexError, ValueError):
+        await callback.answer("Malformed toggle callback", show_alert=True)
+        return
 
-    async with AsyncSessionLocal() as session:
+    if session is not None:
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
         if action == "activate":
@@ -345,25 +381,45 @@ async def handle_admin_model_toggle(callback: CallbackQuery):
         else:
             ok, msg = await disable_model(session, model_id, admin_id=callback.from_user.id)
         await session.commit()
+    else:
+        async with AsyncSessionLocal() as s:
+            user, _ = await get_or_create_user(s, callback.from_user.id)
+            lang = user.language_code
+            if action == "activate":
+                ok, msg = await activate_model(s, model_id, admin_id=callback.from_user.id)
+            else:
+                ok, msg = await disable_model(s, model_id, admin_id=callback.from_user.id)
+            await s.commit()
 
     await callback.answer(t("admin_alert_model_toggled", lang, action=action, msg=msg), show_alert=True)
-    await handle_admin_model_detail(callback)
+    await render_admin_model_detail(callback, model_id=model_id, session=session)
 
 
 @admin_router.callback_query(F.data.startswith("admin:mod_free:"))
-async def handle_admin_model_free(callback: CallbackQuery):
+async def handle_admin_model_free(callback: CallbackQuery, session: AsyncSession | None = None):
     if not await is_authorized_admin(callback):
         return
 
-    model_id = int(callback.data.split(":")[2])
-    async with AsyncSessionLocal() as session:
+    try:
+        model_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Malformed model free callback", show_alert=True)
+        return
+
+    if session is not None:
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
         ok, msg = await set_free_default_model(session, model_id, admin_id=callback.from_user.id)
         await session.commit()
+    else:
+        async with AsyncSessionLocal() as s:
+            user, _ = await get_or_create_user(s, callback.from_user.id)
+            lang = user.language_code
+            ok, msg = await set_free_default_model(s, model_id, admin_id=callback.from_user.id)
+            await s.commit()
 
     await callback.answer(t("admin_alert_free_updated", lang, msg=msg), show_alert=True)
-    await handle_admin_model_detail(callback)
+    await render_admin_model_detail(callback, model_id=model_id, session=session)
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +492,8 @@ async def handle_admin_pay_detail(callback: CallbackQuery):
     )
 
     buttons = []
+    if payment.receipt_file_id:
+        buttons.append([InlineKeyboardButton(text=t("admin_btn_view_receipt", lang), callback_data=f"admin:pay_receipt:{payment.id}")])
     if payment.status == PaymentStatus.PENDING.value:
         buttons.append([
             InlineKeyboardButton(text=t("admin_btn_pay_approve_credit", lang), callback_data=f"admin:pay_approve:{payment.id}"),
@@ -445,6 +503,37 @@ async def handle_admin_pay_detail(callback: CallbackQuery):
 
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
     await callback.answer()
+
+
+@admin_router.callback_query(F.data.startswith("admin:pay_receipt:"))
+async def handle_admin_pay_receipt(callback: CallbackQuery, session: AsyncSession | None = None):
+    if not await is_authorized_admin(callback):
+        return
+
+    pay_id = callback.data.split(":")[2]
+    if session is not None:
+        user, _ = await get_or_create_user(session, callback.from_user.id)
+        lang = user.language_code
+        payment = await session.get(PaymentRequest, pay_id)
+    else:
+        async with AsyncSessionLocal() as s:
+            user, _ = await get_or_create_user(s, callback.from_user.id)
+            lang = user.language_code
+            payment = await s.get(PaymentRequest, pay_id)
+
+    if not payment or not payment.receipt_file_id:
+        await callback.answer(t("admin_alert_receipt_not_found", lang), show_alert=True)
+        return
+
+    try:
+        await callback.message.answer_photo(
+            photo=payment.receipt_file_id,
+            caption=f"🧾 Payment #{payment.id} receipt (User {payment.user_id})",
+        )
+        await callback.answer()
+    except Exception as e:
+        logger.warning("Could not send receipt photo: %s", e)
+        await callback.answer(f"Receipt ID: {payment.receipt_file_id}", show_alert=True)
 
 
 @admin_router.callback_query(F.data.startswith("admin:pay_approve:"))
@@ -529,8 +618,45 @@ async def handle_admin_queue(callback: CallbackQuery, session: AsyncSession | No
             failed = (await s.execute(select(func.count()).where(Job.status == JobStatus.FAILED.value))).scalar() or 0
 
     text = t("admin_queue_monitor", lang, queued=queued, running=running, success=success, failed=failed)
-    kb = admin_queue_kb(lang=lang)
+    kb = admin_queue_kb(lang=lang, failed_count=failed)
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data == "admin:queue_failures")
+async def handle_admin_queue_failures(callback: CallbackQuery, session: AsyncSession | None = None):
+    if not await is_authorized_admin(callback):
+        return
+
+    if session is not None:
+        user, _ = await get_or_create_user(session, callback.from_user.id)
+        lang = user.language_code
+        failed_jobs = (await session.execute(
+            select(Job).where(Job.status == JobStatus.FAILED.value).order_by(Job.created_at.desc()).limit(5)
+        )).scalars().all()
+    else:
+        async with AsyncSessionLocal() as s:
+            user, _ = await get_or_create_user(s, callback.from_user.id)
+            lang = user.language_code
+            failed_jobs = (await s.execute(
+                select(Job).where(Job.status == JobStatus.FAILED.value).order_by(Job.created_at.desc()).limit(5)
+            )).scalars().all()
+
+    if not failed_jobs:
+        text = t("admin_queue_failures_empty", lang)
+    else:
+        lines = [t("admin_queue_failures_title", lang, count=len(failed_jobs))]
+        for j in failed_jobs:
+            ts_str = j.created_at.strftime("%Y-%m-%d %H:%M UTC") if j.created_at else "Unknown"
+            safe_err = html.escape(str(j.error_message or "Unknown error")[:120])
+            lines.append(f"• Job <code>#{j.id}</code> (User <code>{j.user_id}</code>) at <code>{ts_str}</code>\n  <i>{safe_err}</i>\n")
+        text = "\n".join(lines)
+
+    kb = admin_queue_failures_kb(lang=lang)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
 
@@ -599,39 +725,39 @@ async def handle_admin_users_page(callback: CallbackQuery, session: AsyncSession
     await render_admin_users_page(callback, page=page, session=session)
 
 
-@admin_router.callback_query(F.data.startswith("admin:user_detail:"))
-async def handle_admin_user_detail(
-    callback: CallbackQuery,
+async def render_admin_user_detail(
+    event: CallbackQuery | Message,
+    target_user_id: int,
+    return_page: int = 1,
     session: AsyncSession | None = None,
     answer_callback: bool = True,
 ):
-    if not await is_authorized_admin(callback):
+    if not await is_authorized_admin(event):
         return
 
-    parts = callback.data.split(":")
-    try:
-        target_user_id = int(parts[2])
-        return_page = int(parts[3]) if len(parts) > 3 else 1
-    except (IndexError, ValueError):
-        await callback.answer("Malformed user callback", show_alert=True)
-        return
-
+    admin_id = event.from_user.id
     if session is not None:
-        admin_user, _ = await get_or_create_user(session, callback.from_user.id)
+        admin_user, _ = await get_or_create_user(session, admin_id)
         lang = admin_user.language_code
         target_user = await session.get(User, target_user_id)
         if not target_user:
-            await callback.answer("User not found", show_alert=True)
+            if isinstance(event, CallbackQuery):
+                await event.answer("User not found", show_alert=True)
+            else:
+                await event.answer("User not found")
             return
         balance = await get_minute_balance(session, target_user.id)
         events = await get_user_recent_ledger_events(session, target_user.id, limit=3)
     else:
         async with AsyncSessionLocal() as s:
-            admin_user, _ = await get_or_create_user(s, callback.from_user.id)
+            admin_user, _ = await get_or_create_user(s, admin_id)
             lang = admin_user.language_code
             target_user = await s.get(User, target_user_id)
             if not target_user:
-                await callback.answer("User not found", show_alert=True)
+                if isinstance(event, CallbackQuery):
+                    await event.answer("User not found", show_alert=True)
+                else:
+                    await event.answer("User not found")
                 return
             balance = await get_minute_balance(s, target_user.id)
             events = await get_user_recent_ledger_events(s, target_user.id, limit=3)
@@ -665,13 +791,212 @@ async def handle_admin_user_detail(
     else:
         text += "• <i>No ledger events recorded yet.</i>\n"
 
-    kb = admin_user_card_kb(target_user_id=target_user.id, return_page=return_page, lang=lang)
+    kb = admin_user_card_kb(
+        target_user_id=target_user.id,
+        return_page=return_page,
+        lang=lang,
+        user_status=target_user.status,
+    )
+
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await event.message.answer(text, reply_markup=kb, parse_mode="HTML")
+        if answer_callback:
+            await event.answer()
+    else:
+        await event.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@admin_router.callback_query(F.data.startswith("admin:user_detail:"))
+async def handle_admin_user_detail(
+    callback: CallbackQuery,
+    session: AsyncSession | None = None,
+    answer_callback: bool = True,
+):
+    if not await is_authorized_admin(callback):
+        return
+
+    parts = callback.data.split(":")
+    try:
+        target_user_id = int(parts[2])
+        return_page = int(parts[3]) if len(parts) > 3 else 1
+    except (IndexError, ValueError):
+        await callback.answer("Malformed user callback", show_alert=True)
+        return
+
+    await render_admin_user_detail(
+        callback,
+        target_user_id=target_user_id,
+        return_page=return_page,
+        session=session,
+        answer_callback=answer_callback,
+    )
+
+
+@admin_router.callback_query(F.data.startswith("admin:user_status:"))
+async def handle_admin_user_toggle_status(
+    callback: CallbackQuery,
+    session: AsyncSession | None = None,
+):
+    if not await is_authorized_admin(callback):
+        return
+
+    parts = callback.data.split(":")
+    try:
+        target_user_id = int(parts[2])
+        action = parts[3].upper()
+        return_page = int(parts[4]) if len(parts) > 4 else 1
+    except (IndexError, ValueError):
+        await callback.answer("Malformed status callback", show_alert=True)
+        return
+
+    if target_user_id == callback.from_user.id:
+        await callback.answer(t("admin_alert_cannot_block_self", "en"), show_alert=True)
+        return
+
+    new_status = UserStatus.BLOCKED.value if action == "BLOCK" else UserStatus.ACTIVE.value
+
+    if session is not None:
+        admin_user, _ = await get_or_create_user(session, callback.from_user.id)
+        lang = admin_user.language_code
+        target_user = await session.get(User, target_user_id)
+        if not target_user:
+            await callback.answer("User not found", show_alert=True)
+            return
+        target_user.status = new_status
+        session.add(AuditLog(
+            admin_id=callback.from_user.id,
+            action="user.block" if action == "BLOCK" else "user.unblock",
+            target_type="user",
+            target_id=str(target_user.id),
+            details_json=f'{{"new_status": "{new_status}"}}',
+        ))
+        await session.flush()
+    else:
+        async with AsyncSessionLocal() as s:
+            admin_user, _ = await get_or_create_user(s, callback.from_user.id)
+            lang = admin_user.language_code
+            target_user = await s.get(User, target_user_id)
+            if not target_user:
+                await callback.answer("User not found", show_alert=True)
+                return
+            target_user.status = new_status
+            s.add(AuditLog(
+                admin_id=callback.from_user.id,
+                action="user.block" if action == "BLOCK" else "user.unblock",
+                target_type="user",
+                target_id=str(target_user.id),
+                details_json=f'{{"new_status": "{new_status}"}}',
+            ))
+            await s.commit()
+
+    await callback.answer(t("admin_alert_user_status_updated", lang, status=new_status), show_alert=True)
+    await render_admin_user_detail(
+        callback,
+        target_user_id=target_user_id,
+        return_page=return_page,
+        session=session,
+        answer_callback=False,
+    )
+
+
+@admin_router.callback_query(F.data == "admin:user_search")
+async def handle_admin_user_search_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession | None = None):
+    if not await is_authorized_admin(callback):
+        return
+
+    if session is not None:
+        admin_user, _ = await get_or_create_user(session, callback.from_user.id)
+        lang = admin_user.language_code
+    else:
+        async with AsyncSessionLocal() as s:
+            admin_user, _ = await get_or_create_user(s, callback.from_user.id)
+            lang = admin_user.language_code
+
+    await state.set_state(AdminUserSearchFSM.waiting_for_query)
+    text = t("admin_user_search_prompt", lang)
+    kb = admin_user_search_cancel_kb(lang=lang)
     try:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception:
         await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
-    if answer_callback:
-        await callback.answer()
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data == "admin:user_search_cancel")
+async def handle_admin_user_search_cancel(callback: CallbackQuery, state: FSMContext, session: AsyncSession | None = None):
+    if not await is_authorized_admin(callback):
+        return
+
+    await state.clear()
+    await callback.answer(t("admin_alert_search_cancelled", "en"))
+    await render_admin_users_page(callback, page=1, session=session, answer_callback=False)
+
+
+@admin_router.message(AdminUserSearchFSM.waiting_for_query)
+async def handle_admin_user_search_query(message: Message, state: FSMContext, session: AsyncSession | None = None):
+    if not await is_authorized_admin(message):
+        return
+
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("Please enter a valid Telegram ID or @username.")
+        return
+
+    await state.clear()
+    await _execute_user_lookup(message, query=query, session=session)
+
+
+@admin_router.message(Command("user"))
+async def handle_admin_user_command(message: Message, session: AsyncSession | None = None):
+    if not await is_authorized_admin(message):
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Usage: <code>/user &lt;telegram_id or @username&gt;</code>", parse_mode="HTML")
+        return
+
+    query = parts[1].strip()
+    await _execute_user_lookup(message, query=query, session=session)
+
+
+async def _execute_user_lookup(message: Message, query: str, session: AsyncSession | None = None):
+    clean_query = query.lstrip("@").strip()
+    target_user = None
+
+    if session is not None:
+        admin_user, _ = await get_or_create_user(session, message.from_user.id)
+        lang = admin_user.language_code
+        if clean_query.isdigit():
+            target_user = await session.get(User, int(clean_query))
+        if not target_user:
+            target_user = (await session.execute(
+                select(User).where(func.lower(User.username) == clean_query.lower())
+            )).scalar_one_or_none()
+    else:
+        async with AsyncSessionLocal() as s:
+            admin_user, _ = await get_or_create_user(s, message.from_user.id)
+            lang = admin_user.language_code
+            if clean_query.isdigit():
+                target_user = await s.get(User, int(clean_query))
+            if not target_user:
+                target_user = (await s.execute(
+                    select(User).where(func.lower(User.username) == clean_query.lower())
+                )).scalar_one_or_none()
+
+    if not target_user:
+        not_found_text = t("admin_user_search_not_found", lang, query=html.escape(query))
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t("admin_btn_search_user", lang), callback_data="admin:user_search")],
+            [InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:users")],
+        ])
+        await message.answer(not_found_text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    await render_admin_user_detail(message, target_user_id=target_user.id, return_page=1, session=session)
 
 
 # ---------------------------------------------------------------------------
@@ -974,8 +1299,13 @@ async def handle_admin_adjust_cancel(
 
     await callback.answer("❌ Adjustment cancelled.", show_alert=True)
     if target_user_id:
-        callback.data = f"admin:user_detail:{target_user_id}:{return_page}"
-        await handle_admin_user_detail(callback, session=session, answer_callback=False)
+        await render_admin_user_detail(
+            callback,
+            target_user_id=target_user_id,
+            return_page=return_page,
+            session=session,
+            answer_callback=False,
+        )
     else:
         await render_admin_users_page(callback, page=return_page, session=session, answer_callback=False)
 
@@ -1007,7 +1337,7 @@ async def handle_admin_pricing(callback: CallbackQuery, session: AsyncSession | 
 
 
 @admin_router.callback_query(F.data == "admin:settings")
-async def handle_admin_settings(callback: CallbackQuery):
+async def handle_admin_settings(callback: CallbackQuery, session: AsyncSession | None = None):
     if not await is_authorized_admin(callback):
         return
 
@@ -1032,7 +1362,7 @@ async def handle_admin_settings(callback: CallbackQuery):
 
 
 @admin_router.callback_query(F.data == "admin:tutorial")
-async def handle_admin_tutorial(callback: CallbackQuery):
+async def handle_admin_tutorial(callback: CallbackQuery, session: AsyncSession | None = None):
     if not await is_authorized_admin(callback):
         return
 

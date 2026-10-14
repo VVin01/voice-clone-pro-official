@@ -148,5 +148,21 @@
   "admin_alert_broadcast_cancelled": "❌ Broadcast cancelled.",
   "admin_alert_broadcast_invalid_or_expired": "⚠️ This broadcast confirmation is invalid or has expired.",
   "admin_broadcast_in_progress": "🚀 <b>Sending Broadcast...</b>\n\nProgress: <b>{sent}/{total}</b> sent (Failed: {failed})",
-  "admin_broadcast_completed": "✅ <b>Broadcast Completed!</b>\n\n• <b>Total Targets:</b> <code>{total}</code>\n• <b>Successfully Sent:</b> <code>{sent}</code>\n• <b>Failed:</b> <code>{failed}</code>\n• <b>Skipped / Blocked:</b> <code>{skipped}</code>\n• <b>Duration:</b> <code>{duration}s</code>"
+  "admin_broadcast_completed": "✅ <b>Broadcast Completed!</b>\n\n• <b>Total Targets:</b> <code>{total}</code>\n• <b>Successfully Sent:</b> <code>{sent}</code>\n• <b>Failed:</b> <code>{failed}</code>\n• <b>Skipped / Blocked:</b> <code>{skipped}</code>\n• <b>Duration:</b> <code>{duration}s</code>",
+  "admin_btn_block_user": "🚫 Block User",
+  "admin_btn_unblock_user": "✅ Unblock User",
+  "admin_btn_search_user": "🔍 Search User",
+  "admin_btn_search_cancel": "❌ Cancel Search",
+  "admin_btn_view_receipt": "📷 View Receipt Slip",
+  "admin_btn_queue_failures": "⚠️ Recent Failed Jobs",
+  "admin_btn_back_to_queue": "🔙 Back to Queue",
+  "admin_alert_user_status_updated": "User status updated to {status}",
+  "admin_alert_cannot_block_self": "⛔ You cannot block your own admin account.",
+  "admin_alert_receipt_not_found": "Receipt file is not available.",
+  "admin_alert_search_cancelled": "Search cancelled.",
+  "admin_user_search_prompt": "🔍 <b>Search User</b>\n\nPlease enter the Telegram ID or @username to search:",
+  "admin_user_search_not_found": "❌ No user found for: <code>{query}</code>",
+  "admin_queue_failures_title": "⚠️ <b>Recent Failed Jobs (Latest {count})</b>\n\n",
+  "admin_queue_failures_empty": "✅ No failed jobs recorded.",
+  "user_account_suspended": "⛔ Your account has been suspended. Please contact support."
 }

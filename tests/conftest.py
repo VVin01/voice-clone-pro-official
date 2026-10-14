@@ -40,3 +40,14 @@ async def db_session():
 @pytest.fixture(autouse=True)
 def setup_locales():
     load_locales()
+
+
+@pytest.fixture(autouse=True)
+def restore_settings():
+    from app.config import settings
+    orig_admin_ids = settings.admin_ids_raw
+    orig_bot_token = settings.bot_token
+    yield
+    settings.admin_ids_raw = orig_admin_ids
+    settings.bot_token = orig_bot_token
+

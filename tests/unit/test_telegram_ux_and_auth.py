@@ -15,25 +15,38 @@ from app.ui.keyboards import main_menu_kb
 
 
 @pytest.mark.asyncio
-async def test_two_button_menu_and_admin_button():
-    # Ordinary user keyboard: exactly 1 button (Start), no admin dashboard
+async def test_four_item_user_menu_and_admin_button():
+    # Ordinary user keyboard: exactly 4 items, no admin dashboard
     kb_user_my = main_menu_kb(is_admin=False, lang="my")
     user_buttons = [btn.callback_data for row in kb_user_my.inline_keyboard for btn in row]
-    assert user_buttons == ["menu:start"]
+    assert user_buttons == [
+        "menu:voice_clone",
+        "menu:buy_minutes",
+        "menu:refer_earn",
+        "menu:tutorial",
+    ]
     assert "admin:dashboard" not in user_buttons
-    assert len(user_buttons) == 1
-    assert "စတင်ရန်" in kb_user_my.inline_keyboard[0][0].text
+    assert len(user_buttons) == 4
+    assert "အသံ" in kb_user_my.inline_keyboard[0][0].text or "Voice" in kb_user_my.inline_keyboard[0][0].text
 
     kb_user_en = main_menu_kb(is_admin=False, lang="en")
-    assert "Start" in kb_user_en.inline_keyboard[0][0].text
+    assert "Voice" in kb_user_en.inline_keyboard[0][0].text
+    assert "Buy Minutes" in kb_user_en.inline_keyboard[1][0].text
+    assert "Refer & Earn" in kb_user_en.inline_keyboard[2][0].text
+    assert "Tutorial" in kb_user_en.inline_keyboard[3][0].text
 
-    # Admin keyboard: exactly 2 buttons (Start + Admin Dashboard)
+    # Admin keyboard: 4 user items + 1 admin dashboard
     kb_admin = main_menu_kb(is_admin=True, lang="en")
     admin_buttons = [btn.callback_data for row in kb_admin.inline_keyboard for btn in row]
-    assert admin_buttons == ["menu:start", "admin:dashboard"]
-    assert len(admin_buttons) == 2
-    assert "Start" in kb_admin.inline_keyboard[0][0].text
-    assert "Admin Dashboard" in kb_admin.inline_keyboard[1][0].text
+    assert admin_buttons == [
+        "menu:voice_clone",
+        "menu:buy_minutes",
+        "menu:refer_earn",
+        "menu:tutorial",
+        "admin:dashboard",
+    ]
+    assert len(admin_buttons) == 5
+    assert "Admin Dashboard" in kb_admin.inline_keyboard[4][0].text
 
 
 @pytest.mark.asyncio
@@ -91,11 +104,16 @@ async def test_render_main_menu_display(db_session):
     assert "Account:" in text
     assert "FREE" in text
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert callbacks == ["menu:start"]
+    assert callbacks == [
+        "menu:voice_clone",
+        "menu:buy_minutes",
+        "menu:refer_earn",
+        "menu:tutorial",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_start_button_routes_to_voice_studio(db_session):
+async def test_voice_clone_button_routes_to_voice_studio(db_session):
     user, _ = await get_or_create_user(db_session, telegram_id=88002)
     user.language_code = "en"
     bal = await get_minute_balance(db_session, user.id)
@@ -104,7 +122,7 @@ async def test_start_button_routes_to_voice_studio(db_session):
 
     cb = MagicMock(spec=CallbackQuery)
     cb.from_user = TgUser(id=88002, is_bot=False, first_name="VoiceUser")
-    cb.data = "menu:start"
+    cb.data = "menu:voice_clone"
     cb.message = MagicMock(spec=Message)
     cb.message.edit_text = AsyncMock()
     cb.answer = AsyncMock()
@@ -183,7 +201,7 @@ async def test_start_command_flow_new_vs_existing(db_session):
     msg_new.answer.assert_called_once()
     assert "language" in msg_new.answer.call_args[0][0].lower() or "ဘာသာစကား" in msg_new.answer.call_args[0][0]
 
-    # 2. Existing verified user: receives main menu directly with 2-button design
+    # 2. Existing verified user: receives main menu directly with 4-button design
     user, _ = await get_or_create_user(db_session, telegram_id=77003)
     user.language_code = "en"
     user.channel_verified = True
@@ -201,4 +219,9 @@ async def test_start_command_flow_new_vs_existing(db_session):
     msg_exist.answer.assert_called_once()
     reply_markup = msg_exist.answer.call_args[1]["reply_markup"]
     callbacks = [btn.callback_data for row in reply_markup.inline_keyboard for btn in row]
-    assert callbacks == ["menu:start"]
+    assert callbacks == [
+        "menu:voice_clone",
+        "menu:buy_minutes",
+        "menu:refer_earn",
+        "menu:tutorial",
+    ]

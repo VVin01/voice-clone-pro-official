@@ -27,7 +27,10 @@ def membership_gate_kb(channel_link: str, group_link: str, lang: str = "my") -> 
 
 def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text=t("btn_menu_start", lang), callback_data="menu:start")],
+        [InlineKeyboardButton(text=t("btn_menu_voice_clone", lang), callback_data="menu:voice_clone")],
+        [InlineKeyboardButton(text=t("btn_menu_buy_minutes", lang), callback_data="menu:buy_minutes")],
+        [InlineKeyboardButton(text=t("btn_menu_refer_earn", lang), callback_data="menu:refer_earn")],
+        [InlineKeyboardButton(text=t("btn_menu_tutorial", lang), callback_data="menu:tutorial")],
     ]
     if is_admin:
         buttons.append([InlineKeyboardButton(text=t("btn_admin_dashboard", lang), callback_data="admin:dashboard")])
@@ -103,11 +106,21 @@ def admin_users_list_kb(users: list, page: int, total_pages: int, lang: str = "m
         nav_row.append(InlineKeyboardButton(text="Next ▶", callback_data=f"admin:users_page:{page + 1}"))
     buttons.append(nav_row)
 
-    buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard")])
+    buttons.append([
+        InlineKeyboardButton(text=t("admin_btn_search_user", lang), callback_data="admin:user_search"),
+        InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def admin_user_card_kb(target_user_id: int, return_page: int = 1, lang: str = "my") -> InlineKeyboardMarkup:
+def admin_user_card_kb(
+    target_user_id: int,
+    return_page: int = 1,
+    lang: str = "my",
+    user_status: str = "ACTIVE",
+) -> InlineKeyboardMarkup:
+    status_btn_text = t("admin_btn_unblock_user", lang) if user_status == "BLOCKED" else t("admin_btn_block_user", lang)
+    status_action = "UNBLOCK" if user_status == "BLOCKED" else "BLOCK"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -115,9 +128,20 @@ def admin_user_card_kb(target_user_id: int, return_page: int = 1, lang: str = "m
                 InlineKeyboardButton(text="➖ Debit Minutes", callback_data=f"admin:adjust_start:{target_user_id}:DEBIT:{return_page}"),
             ],
             [
+                InlineKeyboardButton(text=status_btn_text, callback_data=f"admin:user_status:{target_user_id}:{status_action}:{return_page}"),
+            ],
+            [
                 InlineKeyboardButton(text="🔄 Refresh", callback_data=f"admin:user_detail:{target_user_id}:{return_page}"),
                 InlineKeyboardButton(text="🔙 Back to Users", callback_data=f"admin:users_page:{return_page}"),
             ],
+        ]
+    )
+
+
+def admin_user_search_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t("admin_btn_search_cancel", lang), callback_data="admin:user_search_cancel")]
         ]
     )
 
@@ -139,11 +163,21 @@ def admin_adjust_preview_kb(token: str, lang: str = "my") -> InlineKeyboardMarku
     )
 
 
-def admin_queue_kb(lang: str = "my") -> InlineKeyboardMarkup:
+def admin_queue_kb(lang: str = "my", failed_count: int = 0) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="🔄 Refresh Queue", callback_data="admin:queue")],
+    ]
+    if failed_count > 0:
+        buttons.append([InlineKeyboardButton(text=t("admin_btn_queue_failures", lang), callback_data="admin:queue_failures")])
+    buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_queue_failures_kb(lang: str = "my") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Refresh Queue", callback_data="admin:queue")],
-            [InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard")],
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data="admin:queue_failures")],
+            [InlineKeyboardButton(text=t("admin_btn_back_to_queue", lang), callback_data="admin:queue")],
         ]
     )
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import secrets
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -29,6 +32,29 @@ MAX_REFERRALS_REWARDED = 20      # Max 20 eligible referrals
 MAX_REFERRAL_SECONDS = 600       # Max 10 minutes total (20 * 30s)
 
 
+async def _find_available_referral_code(
+    session: AsyncSession,
+    telegram_id: int,
+    max_attempts: int = 5,
+) -> str:
+    """Generate a unique referral code that does not collide with existing users."""
+    candidate = f"ref_{telegram_id}"
+    stmt = select(User.id).where(User.referral_code == candidate, User.id != telegram_id)
+    existing_owner = (await session.execute(stmt)).scalar_one_or_none()
+    if existing_owner is None:
+        return candidate
+
+    for attempt in range(1, max_attempts + 1):
+        suffix = secrets.token_hex(3)
+        candidate = f"ref_{telegram_id}_{suffix}"[:32]
+        stmt = select(User.id).where(User.referral_code == candidate, User.id != telegram_id)
+        if (await session.execute(stmt)).scalar_one_or_none() is None:
+            return candidate
+
+    suffix = uuid.uuid4().hex[:8]
+    return f"r{telegram_id}_{suffix}"[:32]
+
+
 async def get_or_create_user(
     session: AsyncSession,
     telegram_id: int,
@@ -41,6 +67,7 @@ async def get_or_create_user(
 
     Returns (user, is_new).
     If the user is new and was referred with a valid code, creates a PENDING referral.
+    Safely handles concurrent registrations, unique constraint collisions, and rollbacks.
     """
     stmt = select(User).where(User.id == telegram_id)
     result = await session.execute(stmt)
@@ -60,28 +87,76 @@ async def get_or_create_user(
             await session.flush()
         return user, False
 
-    # Create new user
-    gen_code = f"ref_{telegram_id}"
-    user = User(
-        id=telegram_id,
-        username=username,
-        first_name=first_name,
-        language_code=language_code or "my",
-        account_category=AccountCategory.FREE.value,
-        referral_code=gen_code,
-    )
-    session.add(user)
+    # User not found in current snapshot; attempt insertion with retry and collision handling
+    max_insert_attempts = 5
+    last_error: Exception | None = None
 
-    # Initialize empty balance
-    balance = MinuteBalance(user_id=telegram_id)
-    session.add(balance)
-    await session.flush()
+    for attempt in range(max_insert_attempts):
+        if attempt == 0:
+            gen_code = await _find_available_referral_code(session, telegram_id)
+        else:
+            suffix = secrets.token_hex(3 + attempt)
+            gen_code = f"ref_{telegram_id}_{suffix}"[:32]
 
-    # Process incoming referral if present
-    if referral_code_arg:
-        await _record_incoming_referral(session, new_user_id=telegram_id, raw_code=referral_code_arg)
+        try:
+            async with session.begin_nested():
+                user = User(
+                    id=telegram_id,
+                    username=username,
+                    first_name=first_name,
+                    language_code=language_code or "my",
+                    account_category=AccountCategory.FREE.value,
+                    referral_code=gen_code,
+                )
+                session.add(user)
 
-    return user, True
+                # Initialize empty balance
+                balance = MinuteBalance(user_id=telegram_id)
+                session.add(balance)
+                await session.flush()
+
+            # Insert succeeded!
+            if referral_code_arg:
+                await _record_incoming_referral(session, new_user_id=telegram_id, raw_code=referral_code_arg)
+
+            return user, True
+
+        except IntegrityError as exc:
+            last_error = exc
+            logger.warning(
+                "IntegrityError in get_or_create_user for user %s (attempt %s/%s): %s",
+                telegram_id,
+                attempt + 1,
+                max_insert_attempts,
+                exc,
+            )
+
+            # Check if user was inserted concurrently
+            check_user = (await session.execute(select(User).where(User.id == telegram_id))).scalar_one_or_none()
+            if check_user is not None:
+                logger.info("Resolved concurrent registration for user %s", telegram_id)
+                updated = False
+                if username and check_user.username != username:
+                    check_user.username = username
+                    updated = True
+                if first_name and check_user.first_name != first_name:
+                    check_user.first_name = first_name
+                    updated = True
+                if updated:
+                    check_user.updated_at = utc_now()
+                    await session.flush()
+                return check_user, False
+
+            # The collision was on referral_code with another user or concurrent commit pending
+            await asyncio.sleep(0.02 * (attempt + 1))
+            check_user = (await session.execute(select(User).where(User.id == telegram_id))).scalar_one_or_none()
+            if check_user is not None:
+                return check_user, False
+
+    if last_error:
+        raise last_error
+
+    raise RuntimeError(f"Failed to get_or_create_user for {telegram_id} after {max_insert_attempts} attempts")
 
 
 async def _record_incoming_referral(
@@ -96,8 +171,12 @@ async def _record_incoming_referral(
     else:
         referrer_id_str = code
 
+    # Extract base numeric ID if code has a collision suffix (e.g. ref_12345_a1b2c3)
+    base_numeric_str = referrer_id_str.split("_")[0] if "_" in referrer_id_str else referrer_id_str
+    possible_id = int(base_numeric_str) if base_numeric_str.isdigit() else -1
+
     # Verify referrer exists and is not self
-    stmt = select(User).where((User.referral_code == code) | (User.id == (int(referrer_id_str) if referrer_id_str.isdigit() else -1)))
+    stmt = select(User).where((User.referral_code == code) | (User.id == possible_id))
     res = await session.execute(stmt)
     referrer = res.scalar_one_or_none()
 
@@ -109,15 +188,20 @@ async def _record_incoming_referral(
     if existing_ref.scalar_one_or_none() is not None:
         return False
 
-    referral = Referral(
-        referrer_id=referrer.id,
-        referred_id=new_user_id,
-        referral_code=code,
-        status="PENDING",
-    )
-    session.add(referral)
-    await session.flush()
-    return True
+    try:
+        async with session.begin_nested():
+            referral = Referral(
+                referrer_id=referrer.id,
+                referred_id=new_user_id,
+                referral_code=code,
+                status="PENDING",
+            )
+            session.add(referral)
+            await session.flush()
+            return True
+    except IntegrityError:
+        logger.info("Concurrent referral attribution for user %s already exists", new_user_id)
+        return False
 
 
 async def get_minute_balance(session: AsyncSession, user_id: int) -> MinuteBalance:

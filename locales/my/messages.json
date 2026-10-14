@@ -106,8 +106,8 @@
   "recovery_fail_notice_refunded": "❌ <b>လုပ်ငန်းစဉ် ရပ်တန့်သွားခဲ့သည်။</b>\nဆာဗာ ပြန်လည်စတင်ခြင်း (Restart) ကြောင့် လုပ်ငန်းစဉ် ရပ်တန့်ခဲ့ရပါသည်။ ဖြတ်တောက်ထားသော မိနစ်များကို သင့်အကောင့်ထဲသို့ ပြန်လည်ထည့်သွင်းပေးပြီးပါပြီ။",
   "recovery_fail_notice_no_charge": "❌ <b>လုပ်ငန်းစဉ် ရပ်တန့်သွားခဲ့သည်။</b>\nဆာဗာ ပြန်လည်စတင်ခြင်း (Restart) ကြောင့် လုပ်ငန်းစဉ် ရပ်တန့်ခဲ့ရပါသည်။ မိနစ်ဖြတ်တောက်ထားခြင်း မရှိပါ။",
 
-  "admin_dashboard_status": "{admin_title}\n\nဆာဗာအခြေအနေ: 🟢 Online\nAdmin ID: <code>{admin_id}</code>\n\n👥 <b>အသုံးပြုသူများ အကျဉ်းချုပ်:</b>\n• စုစုပေါင်း: <b>{total_users}</b> (Free: {free_users} · Purchased: {purchased_users})\n\n🎙️ <b>အသံထုတ်လုပ်မှုများ:</b>\n• အလုပ်စုစုပေါင်း: <b>{total_jobs}</b>\n• ⏳ စောင့်ဆိုင်းဆဲ: <b>{queued_jobs}</b> · ⚙️ လုပ်ဆောင်ဆဲ: <b>{running_jobs}</b>\n• ✅ အောင်မြင်: <b>{success_jobs}</b> · ❌ မအောင်မြင်: <b>{failed_jobs}</b>\n\n⏱️ <b>မိနစ်လက်ကျန် အခြေအနေ:</b>\n• ဝယ်ယူထားမှု: <b>{purchased_minutes}m</b> · သုံးစွဲပြီး: <b>{consumed_minutes}m</b>\n• စစ်ဆေးရန်ကျန်ငွေလွှဲများ: <b>{pending_payments}</b>\n\n🤖 <b>အသံမော်ဒယ်များ:</b> <b>{active_models}</b> ခု အသုံးပြုနိုင်\n\n⚠️ <b>နောက်ဆုံးပြဿနာများ:</b> {recent_issues}",
-  "admin_voice_mgmt_title": "<b>🎙️ အသံမော်ဒယ်လ် စီမံခန့်ခွဲမှု</b>\n\n🟢 အသုံးပြုနိုင်\n🟡 အဆင်သင့်\nပိတ်ထား\n🔴 ပျက်စီး\n⭐ = အခမဲ့ မူလမော်ဒယ်လ်",
+  "admin_dashboard_status": "{admin_title}\n\nဆာဗာအခြေအနေ: 🟢 Online\nAdmin ID: <code>{admin_id}</code>\n\n👥 <b>အသုံးပြုသူများ အကျဉ်းချုပ်</b>\n• စုစုပေါင်း: <b>{total_users}</b>\n• Free: {free_users}\n• Purchased: {purchased_users}\n\n🎙️ <b>အသံထုတ်လုပ်မှုများ</b>\n• 💼 အလုပ်စုစုပေါင်း: <b>{total_jobs}</b>\n• ⏳ စောင့်ဆိုင်းဆဲ: <b>{queued_jobs}</b>\n• ⚙️ လုပ်ဆောင်ဆဲ: <b>{running_jobs}</b>\n• ✅ အောင်မြင်: <b>{success_jobs}</b>\n• ❌ မအောင်မြင်: <b>{failed_jobs}</b>\n\n⏱️ <b>မိနစ်လက်ကျန် အခြေအနေ</b>\n• ဝယ်ယူထားမှု: <b>{purchased_minutes}m</b>\n• သုံးစွဲပြီး: <b>{consumed_minutes}m</b>\n• စစ်ဆေးရန်ကျန်ငွေလွှဲများ: <b>{pending_payments}</b>\n\n🤖 <b>အသံမော်ဒယ်များ:</b> <b>{active_models}</b> ခု အသုံးပြုနိုင်\n\n⚠️ <b>နောက်ဆုံးပြဿနာများ:</b> {recent_issues}",
+  "admin_voice_mgmt_title": "<b>🎙️ အသံမော်ဒယ်လ် စီမံခန့်ခွဲမှု</b>\n\n🟢 အသုံးပြုနိုင်\n🟡 အဆင်သင့်\n⚪ ပိတ်ထား\n🔴 ပျက်စီး\n⭐ = အခမဲ့ မူလမော်ဒယ်လ်",
   "admin_btn_scan_models": "🔄 မော်ဒယ်လ်များကို စကင်ဖတ်ရန် (Local Scan)",
   "admin_alert_scanned": "✅ မော်ဒယ်လ် {count} ခု စကင်ဖတ်ပြီးပါပြီ!",
   "admin_alert_model_not_found": "မော်ဒယ်လ် ရှာမတွေ့ပါ",
@@ -148,5 +148,21 @@
   "admin_alert_broadcast_cancelled": "❌ ကြေညာချက်ပေးပို့ခြင်းကို ပယ်ဖျက်လိုက်ပါသည်။",
   "admin_alert_broadcast_invalid_or_expired": "⚠️ ဤကြေညာချက် အတည်ပြုချက်သည် မမှန်ကန်တော့ပါ သို့မဟုတ် သက်တမ်းကုန်ဆုံးသွားပါပြီ။",
   "admin_broadcast_in_progress": "🚀 <b>ကြေညာချက် ပေးပို့နေသည်...</b>\n\nလုပ်ဆောင်မှု: <b>{sent}/{total}</b> ပေးပို့ပြီး (မအောင်မြင်: {failed})",
-  "admin_broadcast_completed": "✅ <b>ကြေညာချက် ပေးပို့မှု ပြီးစီးပါပြီ!</b>\n\n• <b>စုစုပေါင်း ပစ်မှတ်:</b> <code>{total}</code> ဦး\n• <b>အောင်မြင်စွာ ပေးပို့ပြီး:</b> <code>{sent}</code> ဦး\n• <b>မအောင်မြင်:</b> <code>{failed}</code> ဦး\n• <b>ကျော်သွား / ပိတ်ပင်ထား:</b> <code>{skipped}</code> ဦး\n• <b>ကြာမြင့်ချိန်:</b> <code>{duration}s</code>"
+  "admin_broadcast_completed": "✅ <b>ကြေညာချက် ပေးပို့မှု ပြီးစီးပါပြီ!</b>\n\n• <b>စုစုပေါင်း ပစ်မှတ်:</b> <code>{total}</code> ဦး\n• <b>အောင်မြင်စွာ ပေးပို့ပြီး:</b> <code>{sent}</code> ဦး\n• <b>မအောင်မြင်:</b> <code>{failed}</code> ဦး\n• <b>ကျော်သွား / ပိတ်ပင်ထား:</b> <code>{skipped}</code> ဦး\n• <b>ကြာမြင့်ချိန်:</b> <code>{duration}s</code>",
+  "admin_btn_block_user": "🚫 အသုံးပြုသူကို ပိတ်ပင်ရန်",
+  "admin_btn_unblock_user": "✅ အသုံးပြုသူကို ပြန်ဖွင့်ရန်",
+  "admin_btn_search_user": "🔍 အသုံးပြုသူ ရှာဖွေရန်",
+  "admin_btn_search_cancel": "❌ ရှာဖွေမှု ပယ်ဖျက်ရန်",
+  "admin_btn_view_receipt": "📷 ငွေလွှဲပြေစာ ကြည့်ရန်",
+  "admin_btn_queue_failures": "⚠️ မအောင်မြင်သော အလုပ်များ",
+  "admin_btn_back_to_queue": "🔙 တန်းစီဇယားသို့ ပြန်သွားရန်",
+  "admin_alert_user_status_updated": "အသုံးပြုသူ အခြေအနေကို {status} သို့ ပြောင်းလဲပြီးပါပြီ",
+  "admin_alert_cannot_block_self": "⛔ မိမိ၏ Admin အကောင့်ကို ပိတ်ပင်၍ မရပါ။",
+  "admin_alert_receipt_not_found": "ငွေလွှဲပြေစာဖိုင် မရှိပါ။",
+  "admin_alert_search_cancelled": "ရှာဖွေမှု ပယ်ဖျက်လိုက်ပါသည်။",
+  "admin_user_search_prompt": "🔍 <b>အသုံးပြုသူ ရှာဖွေရန်</b>\n\nရှာဖွေလိုသော Telegram ID သို့မဟုတ် @username ကို ရိုက်ထည့်ပါ -",
+  "admin_user_search_not_found": "❌ ရှာဖွေမှုနှင့် ကိုက်ညီသော အသုံးပြုသူ မတွေ့ပါ - <code>{query}</code>",
+  "admin_queue_failures_title": "⚠️ <b>လတ်တလော မအောင်မြင်သော အလုပ်များ (နောက်ဆုံး {count} ခု)</b>\n\n",
+  "admin_queue_failures_empty": "✅ မအောင်မြင်သော အလုပ်များ မရှိပါ။",
+  "user_account_suspended": "⛔ သင့်အကောင့်ကို ပိတ်ပင်ထားပါသည်။ အကူအညီရယူရန် Admin ထံ ဆက်သွယ်ပါ။"
 }
