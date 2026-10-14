@@ -50,4 +50,3 @@ def restore_settings():
     yield
     settings.admin_ids_raw = orig_admin_ids
     settings.bot_token = orig_bot_token
-

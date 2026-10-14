@@ -1088,4 +1088,3 @@ async def test_non_admin_cannot_reach_admin_operations(db_session, monkeypatch):
     assert len(answer_cb_calls) == 1
     assert "access denied" in answer_cb_calls[0].text.lower() or "admin only" in answer_cb_calls[0].text.lower() or "ခွင့်ပြုချက်မရှိ" in answer_cb_calls[0].text
     assert answer_cb_calls[0].show_alert is True
-
