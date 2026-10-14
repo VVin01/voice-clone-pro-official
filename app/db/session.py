@@ -13,6 +13,16 @@ from app.db.base import Base
 connect_args = {}
 if settings.database_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
+    connect_args["timeout"] = 15.0
+
+
+def set_sqlite_pragma(dbapi_connection, connection_record=None) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=15000")
+    cursor.close()
+
 
 engine = create_async_engine(
     settings.database_url,
@@ -22,12 +32,7 @@ engine = create_async_engine(
 )
 
 if settings.database_url.startswith("sqlite"):
-    @event.listens_for(engine.sync_engine, "connect")
-    def set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.close()
+    event.listen(engine.sync_engine, "connect", set_sqlite_pragma)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

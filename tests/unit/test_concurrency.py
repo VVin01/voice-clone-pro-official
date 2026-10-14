@@ -1,11 +1,12 @@
 import asyncio
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy import event, select
+from sqlalchemy import event, select, text
 
 from sqlalchemy.pool import StaticPool
 from app.db.base import Base
-from app.models.schema import MinuteLedgerEvent, ReferralReward
+from app.db.session import connect_args as app_connect_args, set_sqlite_pragma
+from app.models.schema import MinuteLedgerEvent, ReferralReward, User
 from app.services.ledger import (
     award_welcome_bonus,
     confirm_referral_and_reward,
@@ -112,3 +113,71 @@ async def test_concurrent_referral_rewarding(tmp_path):
 
     await engine.dispose()
 
+
+@pytest.mark.asyncio
+async def test_set_sqlite_pragma_busy_timeout(tmp_path):
+    """Verify set_sqlite_pragma configures busy_timeout=15000, foreign_keys=ON, and WAL mode."""
+    db_file = tmp_path / "test_pragma.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
+    event.listen(engine.sync_engine, "connect", set_sqlite_pragma)
+
+    async with engine.connect() as conn:
+        busy_timeout = (await conn.execute(text("PRAGMA busy_timeout"))).scalar()
+        foreign_keys = (await conn.execute(text("PRAGMA foreign_keys"))).scalar()
+        journal_mode = (await conn.execute(text("PRAGMA journal_mode"))).scalar()
+
+    assert busy_timeout == 15000
+    assert foreign_keys == 1
+    assert str(journal_mode).lower() == "wal"
+
+    await engine.dispose()
+
+
+def test_app_connect_args_timeout():
+    """Verify connect_args in app.db.session includes check_same_thread and 15s timeout for SQLite."""
+    from app.config import settings
+
+    if settings.database_url.startswith("sqlite"):
+        assert app_connect_args.get("check_same_thread") is False
+        assert app_connect_args.get("timeout") == 15.0
+
+
+@pytest.mark.asyncio
+async def test_sqlite_busy_timeout_contention_resolution(tmp_path):
+    """Verify that concurrent writes resolve cleanly without immediate lock errors under busy_timeout."""
+    db_file = tmp_path / "test_contention.db"
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{db_file}",
+        connect_args={"timeout": 15.0},
+        echo=False,
+    )
+    event.listen(engine.sync_engine, "connect", set_sqlite_pragma)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    started_tx1 = asyncio.Event()
+
+    async def tx1():
+        async with session_maker() as s1:
+            await get_or_create_user(s1, telegram_id=7001)
+            started_tx1.set()
+            await asyncio.sleep(0.3)
+            await s1.commit()
+
+    async def tx2():
+        await started_tx1.wait()
+        async with session_maker() as s2:
+            await get_or_create_user(s2, telegram_id=7002)
+            await s2.commit()
+
+    await asyncio.gather(tx1(), tx2())
+
+    async with session_maker() as s:
+        u1 = (await s.execute(select(User).where(User.id == 7001))).scalar_one_or_none()
+        u2 = (await s.execute(select(User).where(User.id == 7002))).scalar_one_or_none()
+        assert u1 is not None
+        assert u2 is not None
+
+    await engine.dispose()
