@@ -16,37 +16,40 @@ from app.ui.keyboards import main_menu_kb
 
 @pytest.mark.asyncio
 async def test_four_item_user_menu_and_admin_button():
-    # Ordinary user keyboard: exactly 4 items, no admin dashboard
+    # Ordinary user keyboard: exactly 5 items, no admin dashboard
     kb_user_my = main_menu_kb(is_admin=False, lang="my")
     user_buttons = [btn.callback_data for row in kb_user_my.inline_keyboard for btn in row]
     assert user_buttons == [
         "menu:voice_clone",
         "menu:buy_minutes",
         "menu:refer_earn",
-        "menu:tutorial",
+        "menu:custom_voice",
+        "menu:help_settings",
     ]
     assert "admin:dashboard" not in user_buttons
-    assert len(user_buttons) == 4
+    assert len(user_buttons) == 5
     assert "အသံ" in kb_user_my.inline_keyboard[0][0].text or "Voice" in kb_user_my.inline_keyboard[0][0].text
 
     kb_user_en = main_menu_kb(is_admin=False, lang="en")
     assert "Voice" in kb_user_en.inline_keyboard[0][0].text
     assert "Buy Minutes" in kb_user_en.inline_keyboard[1][0].text
-    assert "Refer & Earn" in kb_user_en.inline_keyboard[2][0].text
-    assert "Tutorial" in kb_user_en.inline_keyboard[3][0].text
+    assert "Refer & Earn" in kb_user_en.inline_keyboard[1][1].text
+    assert "Custom Voice" in kb_user_en.inline_keyboard[2][0].text
+    assert "Help & Settings" in kb_user_en.inline_keyboard[2][1].text
 
-    # Admin keyboard: 4 user items + 1 admin dashboard
+    # Admin keyboard: 5 user items + 1 admin dashboard
     kb_admin = main_menu_kb(is_admin=True, lang="en")
     admin_buttons = [btn.callback_data for row in kb_admin.inline_keyboard for btn in row]
     assert admin_buttons == [
         "menu:voice_clone",
         "menu:buy_minutes",
         "menu:refer_earn",
-        "menu:tutorial",
+        "menu:custom_voice",
+        "menu:help_settings",
         "admin:dashboard",
     ]
-    assert len(admin_buttons) == 5
-    assert "Admin Dashboard" in kb_admin.inline_keyboard[4][0].text
+    assert len(admin_buttons) == 6
+    assert "Admin Dashboard" in kb_admin.inline_keyboard[3][0].text
 
 
 @pytest.mark.asyncio
@@ -74,6 +77,7 @@ async def test_backend_admin_authorization():
 
 @pytest.mark.asyncio
 async def test_membership_gate_and_welcome_bonus_awarding(db_session):
+    settings.welcome_bonus_seconds = 300
     user, is_new = await get_or_create_user(db_session, telegram_id=77001)
     assert user.welcome_bonus_awarded is False
     assert user.channel_verified is False
@@ -108,7 +112,8 @@ async def test_render_main_menu_display(db_session):
         "menu:voice_clone",
         "menu:buy_minutes",
         "menu:refer_earn",
-        "menu:tutorial",
+        "menu:custom_voice",
+        "menu:help_settings",
     ]
 
 
@@ -176,10 +181,12 @@ async def test_help_command_handler(db_session):
 
     msg.answer.assert_called_once()
     call_args = msg.answer.call_args
-    assert "Voice Studio Help & Guide" in call_args[0][0]
+    assert "Guide & Settings" in call_args[0][0] or "Help & Settings" in call_args[0][0]
     reply_markup = call_args[1]["reply_markup"]
     callbacks = [btn.callback_data for row in reply_markup.inline_keyboard for btn in row]
     assert "menu:home" in callbacks
+    assert "user_lang:my" in callbacks
+    assert "user_lang:en" in callbacks
 
 
 @pytest.mark.asyncio
@@ -223,5 +230,6 @@ async def test_start_command_flow_new_vs_existing(db_session):
         "menu:voice_clone",
         "menu:buy_minutes",
         "menu:refer_earn",
-        "menu:tutorial",
+        "menu:custom_voice",
+        "menu:help_settings",
     ]

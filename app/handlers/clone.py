@@ -14,8 +14,12 @@ from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.models import get_available_models_for_user
 from app.services.queue import create_voice_clone_job, get_queue_position
+from app.ui.helpers import safe_edit_message
 from app.ui.keyboards import back_to_menu_kb
 from app.worker import process_single_job
+
+from pathlib import Path
+import uuid
 
 logger = logging.getLogger(__name__)
 clone_router = Router(name="clone")
@@ -31,12 +35,27 @@ class CloneFSM(StatesGroup):
 
 @clone_router.callback_query(F.data.in_({"menu:voice_clone", "menu:start"}))
 async def handle_voice_clone_start(callback: CallbackQuery, state: FSMContext):
+    # Clean up any lingering temp input audio from aborted session
+    old_data = await state.get_data()
+    old_audio = old_data.get("source_audio_path")
+    if old_audio:
+        try:
+            p = Path(old_audio)
+            if p.is_file() and "temp" in str(p):
+                p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     async with AsyncSessionLocal() as session:
         user, _ = await get_or_create_user(session, callback.from_user.id)
         balance = await get_minute_balance(session, user.id)
         lang = user.language_code
 
     is_admin = settings.is_admin(callback.from_user.id)
+    if settings.maintenance_mode and not is_admin:
+        await callback.answer(t("maintenance_desc", lang), show_alert=True)
+        return
+
     if not is_admin and balance.total_usable_seconds <= 0:
         await callback.answer(t("tts_insufficient_balance", lang), show_alert=True)
         return
@@ -54,10 +73,98 @@ async def handle_voice_clone_start(callback: CallbackQuery, state: FSMContext):
         text = t("tts_enter_text", lang, max_chars=max_chars)
 
     await state.set_state(CloneFSM.waiting_for_text)
-    await state.update_data(max_chars=max_chars, lang=lang, is_admin=is_admin)
+    await state.update_data(max_chars=max_chars, lang=lang, is_admin=is_admin, source_audio_path=None)
 
-    await callback.message.edit_text(text, reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
-    await callback.answer()
+    await safe_edit_message(callback, text, reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+
+@clone_router.message(CloneFSM.waiting_for_text, F.voice | F.audio | F.document)
+async def handle_clone_audio_input(message: Message, state: FSMContext, session: AsyncSession | None = None):
+    data = await state.get_data()
+    lang = data.get("lang", "my")
+    is_admin = data.get("is_admin", settings.is_admin(message.from_user.id))
+
+    file_id = None
+    duration = 0
+    filename = "input_audio.wav"
+
+    if message.voice:
+        file_id = message.voice.file_id
+        duration = message.voice.duration or 0
+        filename = f"voice_{message.from_user.id}.ogg"
+    elif message.audio:
+        file_id = message.audio.file_id
+        duration = message.audio.duration or 0
+        filename = message.audio.file_name or f"audio_{message.from_user.id}.mp3"
+    elif message.document:
+        doc_mime = message.document.mime_type or ""
+        doc_name = message.document.file_name or ""
+        valid_exts = (".wav", ".mp3", ".ogg", ".oga", ".m4a", ".aac", ".flac")
+        if doc_mime.startswith("audio") or any(doc_name.lower().endswith(ext) for ext in valid_exts):
+            file_id = message.document.file_id
+            filename = doc_name or f"doc_{message.from_user.id}.wav"
+        else:
+            await message.answer(t("audio_input_invalid_format", lang), reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
+            return
+
+    if not file_id:
+        return
+
+    # Check balance for non-admins if duration is known
+    if not is_admin and duration > 0:
+        if session is not None:
+            balance = await get_minute_balance(session, message.from_user.id)
+        else:
+            async with AsyncSessionLocal() as s:
+                balance = await get_minute_balance(s, message.from_user.id)
+
+        if balance.total_usable_seconds < duration:
+            await message.answer(
+                t("audio_input_insufficient_balance", lang, duration=duration, balance=balance.total_usable_seconds),
+                reply_markup=back_to_menu_kb(lang),
+                parse_mode="HTML",
+            )
+            return
+
+    # Download file to storage/temp/inputs/
+    inputs_dir = settings.storage_root / "temp" / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    clean_name = "".join(c for c in filename if c.isalnum() or c in "._-") or "audio.wav"
+    dest_path = inputs_dir / f"input_{uuid.uuid4().hex[:12]}_{clean_name}"
+
+    try:
+        tg_file = await message.bot.get_file(file_id)
+        await message.bot.download_file(tg_file.file_path, destination=dest_path)
+    except Exception as exc:
+        logger.error("Failed to download input audio from user %s: %s", message.from_user.id, exc)
+        await message.answer(t("audio_input_download_failed", lang), reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
+        return
+
+    caption_or_name = message.caption or f"Audio: {clean_name}"
+    await state.update_data(
+        input_type="audio",
+        source_audio_path=str(dest_path),
+        input_text=caption_or_name,
+    )
+    # Advance state to waiting_for_gender (skip Edge TTS voice & speed selection!)
+    await state.set_state(CloneFSM.waiting_for_gender)
+
+    buttons = [
+        [InlineKeyboardButton(text=t("preset_m2m", lang), callback_data="clone_gender:m2m")],
+        [InlineKeyboardButton(text=t("preset_m2f", lang), callback_data="clone_gender:m2f")],
+        [InlineKeyboardButton(text=t("preset_f2f", lang), callback_data="clone_gender:f2f")],
+        [InlineKeyboardButton(text=t("preset_f2m", lang), callback_data="clone_gender:f2m")],
+        [InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone")],
+    ]
+    await message.answer(
+        t("tts_choose_gender_preset_audio", lang),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
 
 
 @clone_router.message(CloneFSM.waiting_for_text)
@@ -86,15 +193,21 @@ async def handle_clone_text_input(message: Message, state: FSMContext):
     await state.update_data(input_text=raw_text)
     await state.set_state(CloneFSM.waiting_for_voice)
 
-    # Prompt Edge TTS voice selection
-    buttons = [
-        [InlineKeyboardButton(text=info["name"], callback_data=f"clone_voice:{code}")]
-        for code, info in CURATED_TTS_VOICES.items()
-    ]
-    buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone")])
+    # Prompt Edge TTS voice selection in balanced 2-column layout
+    voice_buttons: list[list[InlineKeyboardButton]] = []
+    v_row: list[InlineKeyboardButton] = []
+    for code, info in CURATED_TTS_VOICES.items():
+        icon = "👨" if info.get("gender") == "male" else "👩"
+        v_row.append(InlineKeyboardButton(text=f"{icon} {info['name']}", callback_data=f"clone_voice:{code}"))
+        if len(v_row) == 2:
+            voice_buttons.append(v_row)
+            v_row = []
+    if v_row:
+        voice_buttons.append(v_row)
+    voice_buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone")])
 
     text = t("tts_choose_base_voice", lang)
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=voice_buttons), parse_mode="HTML")
 
 
 @clone_router.callback_query(F.data.startswith("clone_voice:"))
@@ -106,18 +219,25 @@ async def handle_clone_voice_selected(callback: CallbackQuery, state: FSMContext
     await state.update_data(edge_voice=voice_code)
     await state.set_state(CloneFSM.waiting_for_speed)
 
-    # Prompt speed selection
+    # Prompt speed selection in sleek single-row trio + back button
     buttons = [
-        [InlineKeyboardButton(text=t("speed_slow", lang), callback_data="clone_speed:slow")],
-        [InlineKeyboardButton(text=t("speed_normal", lang), callback_data="clone_speed:normal")],
-        [InlineKeyboardButton(text=t("speed_fast", lang), callback_data="clone_speed:fast")],
+        [
+            InlineKeyboardButton(text=t("speed_slow", lang), callback_data="clone_speed:slow"),
+            InlineKeyboardButton(text=t("speed_normal", lang), callback_data="clone_speed:normal"),
+            InlineKeyboardButton(text=t("speed_fast", lang), callback_data="clone_speed:fast"),
+        ],
+        [InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone")],
     ]
-    await callback.message.edit_text(
+    await safe_edit_message(
+        callback,
         t("tts_choose_speed", lang),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @clone_router.callback_query(F.data.startswith("clone_speed:"))
@@ -129,19 +249,24 @@ async def handle_clone_speed_selected(callback: CallbackQuery, state: FSMContext
     await state.update_data(speed_preset=speed_code)
     await state.set_state(CloneFSM.waiting_for_gender)
 
-    # Prompt gender combination selection
+    # Prompt gender combination selection with back button
     buttons = [
         [InlineKeyboardButton(text=t("preset_m2m", lang), callback_data="clone_gender:m2m")],
         [InlineKeyboardButton(text=t("preset_m2f", lang), callback_data="clone_gender:m2f")],
         [InlineKeyboardButton(text=t("preset_f2f", lang), callback_data="clone_gender:f2f")],
         [InlineKeyboardButton(text=t("preset_f2m", lang), callback_data="clone_gender:f2m")],
+        [InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone")],
     ]
-    await callback.message.edit_text(
+    await safe_edit_message(
+        callback,
         t("tts_choose_gender_preset", lang),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @clone_router.callback_query(F.data.startswith("clone_gender:"))
@@ -158,23 +283,50 @@ async def handle_clone_gender_selected(callback: CallbackQuery, state: FSMContex
         models = await get_available_models_for_user(session, callback.from_user.id)
 
     if not models:
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             t("tts_no_active_models", lang),
             reply_markup=back_to_menu_kb(lang),
         )
-        await callback.answer()
+        try:
+            await callback.answer()
+        except Exception:
+            pass
         return
 
-    buttons = [
-        [InlineKeyboardButton(text=f"🎙️ {m.name}", callback_data=f"clone_model:{m.id}")]
-        for m in models
-    ]
-    await callback.message.edit_text(
+    # Symmetrical 2-column model grid with VIP indicators + back button
+    buttons: list[list[InlineKeyboardButton]] = []
+    m_row: list[InlineKeyboardButton] = []
+    for m in models:
+        if getattr(m, "type", None) == "PERSONAL" or getattr(m, "owner_user_id", None) == callback.from_user.id:
+            prefix = "👑"
+        elif getattr(m, "is_free_default", False):
+            prefix = "⭐"
+        else:
+            prefix = "🎙️"
+        m_row.append(InlineKeyboardButton(text=f"{prefix} {m.name}", callback_data=f"clone_model:{m.id}"))
+        if len(m_row) == 2:
+            buttons.append(m_row)
+            m_row = []
+    if m_row:
+        buttons.append(m_row)
+    buttons.append([
+        InlineKeyboardButton(text=t("btn_menu_voice_samples", lang), callback_data="menu:voice_samples"),
+        InlineKeyboardButton(text=t("btn_menu_custom_voice", lang), callback_data="menu:custom_voice"),
+    ])
+    buttons.append([
+        InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone"),
+    ])
+    await safe_edit_message(
+        callback,
         t("tts_choose_model", lang),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @clone_router.callback_query(F.data.startswith("clone_model:"))
@@ -184,6 +336,7 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
     model_id = int(callback.data.split(":")[1])
 
     input_text = data.get("input_text", "")
+    source_audio_path = data.get("source_audio_path")
     edge_voice = data.get("edge_voice", "my-MM-ThihaNeural")
     speed_preset = data.get("speed_preset", "normal")
     gender_preset = data.get("gender_preset", "m2m")
@@ -200,9 +353,16 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
             gender_preset=gender_preset,
             speed_preset=speed_preset,
             chat_id=callback.from_user.id,
+            source_audio_path=source_audio_path,
         )
         if not job:
-            await callback.answer(t("tts_queue_failed", lang, reason=reason), show_alert=True)
+            if reason == "DAILY_JOB_LIMIT_EXCEEDED":
+                err_msg = t("queue_daily_limit_exceeded", lang)
+            elif reason == "CONCURRENT_JOB_LIMIT_EXCEEDED":
+                err_msg = t("queue_concurrent_limit_exceeded", lang)
+            else:
+                err_msg = t("tts_queue_failed", lang, reason=reason)
+            await callback.answer(err_msg, show_alert=True)
             return
 
         queue_pos = await get_queue_position(session, job.id)
@@ -212,8 +372,12 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
             status_validating=t("status_validating", lang),
             queue_pos=queue_pos,
         )
-        msg = await callback.message.edit_text(status_text, parse_mode="HTML")
-        job.status_message_id = msg.message_id
+        msg = await safe_edit_message(callback, status_text, parse_mode="HTML")
+        if msg is not None:
+            job.status_message_id = msg.message_id
         await session.commit()
 
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass

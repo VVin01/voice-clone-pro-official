@@ -14,7 +14,7 @@ pydantic==2.13.5
 pydantic-settings==2.15.0
 
 # TTS Generation
-edge-tts==7.2.8
+edge-tts==7.3.1
 
 # Test Suite
 pytest==9.1.1

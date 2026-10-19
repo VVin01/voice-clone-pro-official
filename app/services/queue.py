@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import Job, User, utc_now
-from app.services.ledger import get_minute_balance, get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user, grant_monthly_free_allowance
 from app.services.models import get_authorized_model
 
 logger = logging.getLogger(__name__)
@@ -31,15 +31,18 @@ async def get_queue_position(session: AsyncSession, job_id: str) -> int:
 async def create_voice_clone_job(
     session: AsyncSession,
     user_id: int,
-    text: str,
-    edge_voice: str,
-    model_id: int,
+    text: str | None = None,
+    edge_voice: str | None = None,
+    model_id: int | None = None,
     gender_preset: str = "m2m",
     speed_preset: str = "normal",
     chat_id: int | None = None,
     status_message_id: int | None = None,
+    source_audio_path: str | None = None,
 ) -> tuple[Job | None, str]:
     """Validate character limits, balance, model authorization and enqueue job."""
+    from pathlib import Path
+
     user, _ = await get_or_create_user(session, user_id)
 
     # 1. Validate model authorization
@@ -47,22 +50,59 @@ async def create_voice_clone_job(
     if not model:
         return None, "MODEL_NOT_AUTHORIZED"
 
-    # 2. Check character limits defense-in-depth
+    # 2. Check concurrency and daily job limits (admins exempt)
     is_admin = settings.is_admin(user_id)
-    if is_admin:
-        if len(text) > settings.infrastructure_safety_character_limit:
-            return None, "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT"
-    else:
-        allowed_chars = (
-            settings.character_limit_purchased
-            if user.account_category == AccountCategory.PURCHASED.value
-            else settings.character_limit_free
-        )
-        if len(text) > allowed_chars:
-            return None, "TEXT_EXCEEDS_CHARACTER_LIMIT"
-
-    # 3. Check balance (admins have unlimited access and do not require balance)
     if not is_admin:
+        # Concurrent job limit (1 job)
+        concurrent_stmt = (
+            select(func.count())
+            .select_from(Job)
+            .where(
+                Job.user_id == user_id,
+                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+            )
+        )
+        active_jobs = (await session.execute(concurrent_stmt)).scalar() or 0
+        if active_jobs >= settings.max_concurrent_jobs_per_user:
+            return None, "CONCURRENT_JOB_LIMIT_EXCEEDED"
+
+        # Daily job limit for FREE users
+        if user.account_category == AccountCategory.FREE.value and settings.free_daily_job_limit > 0:
+            today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+            daily_stmt = (
+                select(func.count())
+                .select_from(Job)
+                .where(
+                    Job.user_id == user_id,
+                    Job.created_at >= today_start,
+                    Job.status != JobStatus.CANCELLED.value,
+                )
+            )
+            daily_count = (await session.execute(daily_stmt)).scalar() or 0
+            if daily_count >= settings.free_daily_job_limit:
+                return None, "DAILY_JOB_LIMIT_EXCEEDED"
+
+    # 3. Check character limits defense-in-depth (only for text jobs)
+    if not source_audio_path:
+        valid_text = text or ""
+        if is_admin:
+            if len(valid_text) > settings.infrastructure_safety_character_limit:
+                return None, "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT"
+        else:
+            allowed_chars = (
+                settings.character_limit_purchased
+                if user.account_category == AccountCategory.PURCHASED.value
+                else settings.character_limit_free
+            )
+            if len(valid_text) > allowed_chars:
+                return None, "TEXT_EXCEEDS_CHARACTER_LIMIT"
+    else:
+        if not Path(source_audio_path).is_file():
+            return None, "AUDIO_FILE_NOT_FOUND"
+
+    # 4. Check balance (admins have unlimited access and do not require balance)
+    if not is_admin:
+        await grant_monthly_free_allowance(session, user_id)
         balance = await get_minute_balance(session, user_id)
         if balance.total_usable_seconds <= 0:
             return None, "INSUFFICIENT_BALANCE"
@@ -74,6 +114,7 @@ async def create_voice_clone_job(
         status=JobStatus.QUEUED.value,
         job_type=JobType.VOICE_CLONE.value,
         input_text=text,
+        source_audio_path=source_audio_path,
         edge_voice=edge_voice,
         model_id=model_id,
         gender_preset=gender_preset,
@@ -82,7 +123,7 @@ async def create_voice_clone_job(
     session.add(job)
     await session.flush()
 
-    logger.info("Created voice clone job %s for user %s (model=%s)", job.id, user_id, model.name)
+    logger.info("Created voice clone job %s for user %s (model=%s, source_audio=%s)", job.id, user_id, model.name, bool(source_audio_path))
     return job, "QUEUED"
 
 

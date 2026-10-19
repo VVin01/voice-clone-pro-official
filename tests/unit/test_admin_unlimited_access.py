@@ -15,6 +15,7 @@ from app.services.ledger import (
     consume_seconds,
     get_minute_balance,
     get_or_create_user,
+    grant_monthly_free_allowance,
     refund_job_seconds,
 )
 from app.services.queue import create_voice_clone_job
@@ -106,7 +107,10 @@ async def test_admin_zero_balance_job_creation(db_session, tmp_path):
 async def test_non_admin_zero_balance_blocked(db_session, tmp_path):
     """Normal users cannot create voice clone jobs with 0 minute balance."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID)
+    await grant_monthly_free_allowance(db_session, user.id)
     bal = await get_minute_balance(db_session, user.id)
+    bal.monthly_free_seconds = 0
+    await db_session.flush()
     assert bal.total_usable_seconds == 0
 
     # Create dummy active model
@@ -173,6 +177,8 @@ async def test_non_admin_voice_clone_start_handler_blocked(db_session):
     """Non-admin entering Voice Studio with 0 balance is blocked and prompted with alert."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID)
     bal = await get_minute_balance(db_session, user.id)
+    bal.monthly_free_seconds = 0
+    await db_session.flush()
     assert bal.total_usable_seconds == 0
 
     cb = MagicMock(spec=CallbackQuery)
@@ -198,9 +204,9 @@ async def test_non_admin_voice_clone_start_handler_blocked(db_session):
 
 @pytest.mark.asyncio
 async def test_admin_submits_text_longer_than_purchased_limit_allowed(db_session, tmp_path):
-    """Admin submitting text longer than PURCHASED limit (e.g. 750 > 500 chars) is ALLOWED."""
+    """Admin submitting text longer than PURCHASED limit (e.g. 2500 > 2000 chars) is ALLOWED."""
     admin_user, _ = await get_or_create_user(db_session, telegram_id=ADMIN_TELEGRAM_ID)
-    long_text = "မြန်မာစာ" * 95  # 95 * 8 = 760 characters, well above the 500-char purchased limit
+    long_text = "မြန်မာစာ" * 320  # 320 * 8 = 2560 characters, well above the 2000-char purchased limit
     assert len(long_text) > settings.character_limit_purchased
     assert len(long_text) < settings.infrastructure_safety_character_limit
 
@@ -249,12 +255,12 @@ async def test_admin_submits_text_longer_than_purchased_limit_allowed(db_session
 
 @pytest.mark.asyncio
 async def test_ordinary_purchased_user_blocked_above_purchased_limit(db_session, tmp_path):
-    """Ordinary PURCHASED user submitting text longer than 500 chars is BLOCKED."""
+    """Ordinary PURCHASED user submitting text longer than 2000 chars is BLOCKED."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID)
     user.account_category = AccountCategory.PURCHASED.value
     await db_session.flush()
 
-    long_text = "A" * 700  # 700 characters > 500 chars
+    long_text = "A" * 2500  # 2500 characters > 2000 chars
     assert len(long_text) > settings.character_limit_purchased
 
     # 1. Handler validation
@@ -305,7 +311,7 @@ async def test_ordinary_free_user_blocked_above_free_limit(db_session, tmp_path)
     user.account_category = AccountCategory.FREE.value
     await db_session.flush()
 
-    medium_text = "B" * 150  # 150 characters > 120 free limit
+    medium_text = "B" * 600  # 600 characters > 500 free limit
     assert len(medium_text) > settings.character_limit_free
 
     # 1. Handler validation
@@ -538,6 +544,8 @@ async def test_identity_spoofing_prevention(db_session):
     # Attempt to consume seconds for attacker
     # If balance is 0, normal user cannot consume
     bal = await get_minute_balance(db_session, attacker.id)
+    bal.monthly_free_seconds = 0
+    await db_session.flush()
     assert bal.total_usable_seconds == 0
 
     with pytest.raises(ValueError):
@@ -556,7 +564,10 @@ async def test_normal_user_regression(db_session, tmp_path):
     awarded, bal = await award_welcome_bonus(db_session, user.id)
     assert awarded is True
     assert bal.welcome_seconds == 300
-    assert bal.total_usable_seconds == 300
+    await grant_monthly_free_allowance(db_session, user.id)
+    bal = await get_minute_balance(db_session, user.id)
+    assert bal.monthly_free_seconds == 180
+    assert bal.total_usable_seconds == 480
 
     pth_file = tmp_path / "ModelReg.pth"
     pth_file.write_bytes(b"pth_content")
@@ -604,22 +615,22 @@ async def test_normal_user_regression(db_session, tmp_path):
         success = await process_single_job(session=db_session, job=job)
         assert success is True
 
-    # User balance debited
+    # User balance debited (monthly free deducted first)
     bal_after = await get_minute_balance(db_session, user.id)
-    assert bal_after.welcome_seconds == 288  # 300 - 12 = 288
-    assert bal_after.total_usable_seconds == 288
+    assert bal_after.welcome_seconds == 300
+    assert bal_after.monthly_free_seconds == 168  # 180 - 12 = 168
+    assert bal_after.total_usable_seconds == 468
 
-    # Ledger event created
+    # Ledger events created: MONTHLY_FREE credit, WELCOME credit, MONTHLY_FREE debit
     events = (
         await db_session.execute(
             select(MinuteLedgerEvent).where(MinuteLedgerEvent.user_id == user.id)
         )
     ).scalars().all()
-    # 1 WELCOME credit + 1 WELCOME debit
-    assert len(events) == 2
+    assert len(events) == 3
     debit_events = [e for e in events if e.direction == LedgerDirection.DEBIT.value]
     assert len(debit_events) == 1
-    assert debit_events[0].source == LedgerSource.WELCOME.value
+    assert debit_events[0].source == LedgerSource.MONTHLY_FREE.value
     assert debit_events[0].seconds == 12
 
     # Normal user must NOT have any admin audit logs

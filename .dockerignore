@@ -1,0 +1,10 @@
+data/*.db*
+storage/temp/*
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.env
+.venv/
+env/

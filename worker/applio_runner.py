@@ -68,6 +68,7 @@ def main() -> int:
     parser.add_argument("--index-rate", type=float, default=0.75)
     parser.add_argument("--protect", type=float, default=0.5)
     parser.add_argument("--volume-envelope", type=float, default=1.0)
+    parser.add_argument("--split-audio", action="store_true", default=False)
     args = parser.parse_args()
 
     model, input_audio, output_audio, index = _validate_paths(args)
@@ -91,6 +92,7 @@ def main() -> int:
         volume_envelope=args.volume_envelope,
         protect=args.protect,
         sid=args.speaker_id,
+        split_audio=bool(args.split_audio),
         export_format="WAV",
     )
 

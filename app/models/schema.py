@@ -22,6 +22,7 @@ from app.models.enums import (
     AccountCategory,
     BroadcastCampaignStatus,
     BroadcastDeliveryStatus,
+    CustomVoiceRequestStatus,
     JobStatus,
     JobType,
     PaymentStatus,
@@ -90,6 +91,8 @@ class MinuteBalance(Base):
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
+    monthly_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_monthly_grant_period: Mapped[str | None] = mapped_column(String(7), nullable=True)  # YYYY-MM
     welcome_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referral_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     purchased_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -106,11 +109,21 @@ class MinuteBalance(Base):
 
     @property
     def total_usable_seconds(self) -> int:
-        return max(0, self.welcome_seconds + self.referral_seconds + self.purchased_seconds)
+        return max(
+            0,
+            self.monthly_free_seconds
+            + self.purchased_seconds
+            + self.welcome_seconds
+            + self.referral_seconds,
+        )
 
     @property
     def total_usable_minutes(self) -> float:
         return self.total_usable_seconds / 60.0
+
+    @property
+    def monthly_free_minutes(self) -> float:
+        return max(0, self.monthly_free_seconds) / 60.0
 
     @property
     def purchased_minutes(self) -> float:
@@ -125,6 +138,7 @@ class MinuteBalance(Base):
         return max(0, self.referral_seconds) / 60.0
 
     __table_args__ = (
+        CheckConstraint("monthly_free_seconds >= 0", name="chk_balance_monthly_free_non_neg"),
         CheckConstraint("welcome_seconds >= 0", name="chk_balance_welcome_non_neg"),
         CheckConstraint("referral_seconds >= 0", name="chk_balance_referral_non_neg"),
         CheckConstraint("purchased_seconds >= 0", name="chk_balance_purchased_non_neg"),
@@ -163,7 +177,7 @@ class MinuteLedgerEvent(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "source IN ('WELCOME', 'REFERRAL', 'PURCHASE', 'ADJUST', 'CONSUME')",
+            "source IN ('MONTHLY_FREE', 'WELCOME', 'REFERRAL', 'PURCHASE', 'ADJUST', 'CONSUME')",
             name="chk_ledger_source",
         ),
         CheckConstraint(
@@ -294,11 +308,14 @@ class VoiceModel(Base):
     model_dir: Mapped[str] = mapped_column(Text, nullable=False)
     pth_path: Mapped[str] = mapped_column(Text, nullable=False)
     index_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sample_audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     gender: Mapped[str] = mapped_column(String(20), nullable=False, default="unspecified")
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=VoiceModelStatus.READY.value
     )
     is_default_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allowed_for_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    allowed_for_purchased: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
@@ -316,6 +333,68 @@ class VoiceModel(Base):
             name="chk_voice_model_status",
         ),
         CheckConstraint("type IN ('SYSTEM', 'PERSONAL')", name="chk_voice_model_type"),
+    )
+
+
+class CustomVoiceRequest(Base):
+    __tablename__ = "custom_voice_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f"CVR-{uuid.uuid4().hex[:8].upper()}")
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sample_file_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    sample_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sample_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=CustomVoiceRequestStatus.PENDING.value
+    )
+    assigned_model_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("voice_models.id", ondelete="SET NULL"), nullable=True
+    )
+    admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED')",
+            name="chk_custom_voice_request_status",
+        ),
+    )
+
+
+class UserVoiceModelGrant(Base):
+    __tablename__ = "user_voice_model_grants"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    model_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("voice_models.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    granted_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "model_id", name="uq_user_voice_model_grant"),
     )
 
 
@@ -342,6 +421,7 @@ class Job(Base):
     chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     result_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -432,4 +512,54 @@ class BroadcastDelivery(Base):
 
     __table_args__ = (
         UniqueConstraint("campaign_id", "user_id", name="uq_broadcast_delivery_campaign_user"),
+    )
+
+
+class DatabaseMetadata(Base):
+    __tablename__ = "database_metadata"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
+    )
+
+
+class ImportedAudience(Base):
+    __tablename__ = "imported_audience"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_batch: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="legacy_migration_v1"
+    )
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    is_registered_in_new_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, index=True
+    )
+    broadcast_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MonthlyFreeAllowanceGrant(Base):
+    __tablename__ = "monthly_free_allowance_grants"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # Format: "YYYY-MM"
+    seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=180)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "period", name="uq_user_monthly_grant_period"),
     )

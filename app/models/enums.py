@@ -13,10 +13,12 @@ class AccountCategory(str, Enum):
 
 
 class LedgerSource(str, Enum):
+    MONTHLY_FREE = "MONTHLY_FREE"
     WELCOME = "WELCOME"
     REFERRAL = "REFERRAL"
     PURCHASE = "PURCHASE"
     ADJUST = "ADJUST"
+    CONSUME = "CONSUME"
 
 
 class LedgerDirection(str, Enum):
@@ -38,6 +40,13 @@ class VoiceModelStatus(str, Enum):
 
 
 class PaymentStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class CustomVoiceRequestStatus(str, Enum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
@@ -70,3 +79,10 @@ class BroadcastDeliveryStatus(str, Enum):
     SENT = "SENT"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
+
+
+class BroadcastRecipientGroup(str, Enum):
+    IMPORTED_ALL = "IMPORTED_ALL"
+    IMPORTED_UNREGISTERED = "IMPORTED_UNREGISTERED"
+    REGISTERED_ALL = "REGISTERED_ALL"
+

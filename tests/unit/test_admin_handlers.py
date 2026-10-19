@@ -66,7 +66,7 @@ async def test_admin_pricing_handler_authorized(db_session):
 
     cb.message.edit_text.assert_called_once()
     call_args = cb.message.edit_text.call_args[0][0]
-    assert "Active Minute Packages" in call_args
+    assert ("Active Minute Packages" in call_args or "လက်ရှိ မိနစ်ပက်ကေ့ဂျ်များ" in call_args)
     assert "MMK" in call_args
     cb.answer.assert_called_once()
 

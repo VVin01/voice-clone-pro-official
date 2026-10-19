@@ -133,8 +133,8 @@ async def test_balance_consumption_and_status_transitions(db_session):
     bal = await consume_seconds(db_session, user.id, seconds_to_consume=500, job_id="JOB-3")
     assert bal.purchased_seconds == 0
     assert bal.total_usable_seconds == 0
-    # Status reverts back to FREE
-    assert user.account_category == AccountCategory.FREE.value
+    # User retains PURCHASED entitlement state even when purchased balance reaches 0
+    assert user.account_category == AccountCategory.PURCHASED.value
 
     # Attempt to consume more than available raises ValueError
     with pytest.raises(ValueError, match="Insufficient balance"):

@@ -13,6 +13,7 @@ from app.handlers.admin import (
     handle_admin_broadcast_cancel,
     handle_admin_broadcast_command,
     handle_admin_broadcast_confirm,
+    handle_admin_broadcast_group_select,
     handle_admin_broadcast_message_input,
     handle_admin_broadcast_start,
 )
@@ -299,10 +300,21 @@ async def test_admin_broadcast_flow_compose_preview_and_cancel(db_session):
 
     await handle_admin_broadcast_start(cb_start, state, session=db_session)
 
-    assert state.current_state == AdminBroadcastFSM.waiting_for_message
+    assert state.current_state == AdminBroadcastFSM.choosing_audience
     cb_start.message.edit_text.assert_called_once()
-    assert "Admin Broadcast Message" in cb_start.message.edit_text.call_args[0][0]
+    assert "Audience Selection" in cb_start.message.edit_text.call_args[0][0]
     cb_start.answer.assert_called_once()
+
+    # Step 1b: Admin selects audience
+    cb_group = MagicMock(spec=CallbackQuery)
+    cb_group.from_user = TgUser(id=999888, is_bot=False, first_name="ChiefAdmin")
+    cb_group.data = "admin:bc_group:REGISTERED_ALL"
+    cb_group.message = MagicMock(spec=Message)
+    cb_group.message.edit_text = AsyncMock()
+    cb_group.answer = AsyncMock()
+
+    await handle_admin_broadcast_group_select(cb_group, state, session=db_session)
+    assert state.current_state == AdminBroadcastFSM.waiting_for_message
 
     # Step 2: Admin sends empty text -> rejected with warning, remains in waiting_for_message
     msg_empty = MagicMock(spec=Message)

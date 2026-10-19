@@ -7,15 +7,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import PaymentStatus
-from app.models.schema import AuditLog, PaymentRequest, PricingPlan, User, utc_now
+from app.models.schema import AuditLog, BotSetting, PaymentRequest, PricingPlan, User, utc_now
 from app.services.ledger import credit_purchased_minutes, get_or_create_user
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PRICING_PLANS = [
-    {"code": "MIN_10", "minutes": 10, "price_mmk": 2000, "sort_order": 1},
-    {"code": "MIN_30", "minutes": 30, "price_mmk": 5000, "sort_order": 2},
-    {"code": "MIN_60", "minutes": 60, "price_mmk": 9000, "sort_order": 3},
+    {"code": "MIN_10", "minutes": 10, "price_mmk": 5000, "sort_order": 1},
+    {"code": "MIN_30", "minutes": 30, "price_mmk": 15000, "sort_order": 2},
+    {"code": "MIN_60", "minutes": 60, "price_mmk": 27000, "sort_order": 3},
 ]
 
 
@@ -152,3 +152,47 @@ async def reject_payment_request(
     await session.flush()
     logger.info("Payment %s rejected by admin %s", payment.id, admin_id)
     return True, payment, "REJECTED"
+
+
+async def get_payment_account_info(session: AsyncSession) -> dict[str, str]:
+    """Retrieve active payment account numbers and names."""
+    rows = (await session.execute(select(BotSetting).where(BotSetting.key.like("payment_%")))).scalars().all()
+    d = {r.key: r.value for r in rows}
+    return {
+        "kpay_number": d.get("payment_kpay_number", "09790760003"),
+        "kpay_name": d.get("payment_kpay_name", "Win Kyaw Oo"),
+        "wave_number": d.get("payment_wave_number", "09790760003"),
+        "wave_name": d.get("payment_wave_name", "Win Kyaw Oo"),
+    }
+
+
+async def update_pricing_plan_price(
+    session: AsyncSession,
+    code: str,
+    new_price_mmk: int,
+    admin_id: int | None = None,
+) -> tuple[bool, PricingPlan | None, str]:
+    """Update price of an existing pricing plan."""
+    stmt = select(PricingPlan).where(PricingPlan.code == code)
+    res = await session.execute(stmt)
+    plan = res.scalar_one_or_none()
+    if not plan:
+        return False, None, "PLAN_NOT_FOUND"
+
+    old_price = plan.price_mmk
+    plan.price_mmk = new_price_mmk
+    plan.updated_at = utc_now()
+
+    if admin_id is not None:
+        session.add(
+            AuditLog(
+                admin_id=admin_id,
+                action="pricing.update",
+                target_type="pricing_plan",
+                target_id=code,
+                details_json=f'{{"old_price": {old_price}, "new_price": {new_price_mmk}}}',
+            )
+        )
+    await session.flush()
+    return True, plan, "PRICE_UPDATED"
+

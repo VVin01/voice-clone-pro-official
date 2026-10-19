@@ -42,8 +42,31 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+from app.models.schema import DatabaseMetadata, utc_now
+from sqlalchemy import select
+
+
+class DatabaseIdentityError(RuntimeError):
+    """Raised when connecting to a database whose identity does not match expectations."""
+    pass
+
+
+async def verify_database_safety(session: AsyncSession) -> bool:
+    """Verify that the connected database matches the expected identity and schema."""
+    stmt = select(DatabaseMetadata).where(DatabaseMetadata.key == "db_identity")
+    res = await session.execute(stmt)
+    meta = res.scalar_one_or_none()
+    if meta is None or meta.value != settings.expected_db_identity:
+        actual_val = meta.value if meta else "NONE (uninitialized or legacy database)"
+        raise DatabaseIdentityError(
+            f"DATABASE IDENTITY SAFEGUARD ERROR: Expected database identity '{settings.expected_db_identity}', "
+            f"but found '{actual_val}'. Aborting to prevent accidental operations on the wrong database!"
+        )
+    return True
+
+
 async def init_db() -> None:
-    """Create all tables in development/test environments."""
+    """Create all tables and register database identity metadata."""
     if settings.storage_root:
         settings.storage_root.mkdir(parents=True, exist_ok=True)
     if settings.data_root:
@@ -51,6 +74,34 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Ensure sample_audio_path exists in voice_models (SQLite backward compatibility)
+        def _add_sample_audio_col(connection):
+            from sqlalchemy import text
+            res = connection.execute(text("PRAGMA table_info(voice_models)"))
+            cols = [row[1] for row in res.fetchall()]
+            if "sample_audio_path" not in cols:
+                connection.execute(text("ALTER TABLE voice_models ADD COLUMN sample_audio_path TEXT"))
+
+            res_jobs = connection.execute(text("PRAGMA table_info(jobs)"))
+            cols_jobs = [row[1] for row in res_jobs.fetchall()]
+            if "source_audio_path" not in cols_jobs:
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN source_audio_path TEXT"))
+
+        await conn.run_sync(_add_sample_audio_col)
+
+    # Initialize database identity metadata idempotently
+    async with AsyncSessionLocal() as session:
+        stmt = select(DatabaseMetadata).where(DatabaseMetadata.key == "db_identity")
+        res = await session.execute(stmt)
+        if res.scalar_one_or_none() is None:
+            session.add(DatabaseMetadata(key="db_identity", value=settings.expected_db_identity))
+            session.add(DatabaseMetadata(key="schema_version", value="2.0.0"))
+            session.add(DatabaseMetadata(key="created_at", value=utc_now().isoformat()))
+            await session.commit()
+
+        from app.services.dynamic_settings import load_dynamic_settings
+        await load_dynamic_settings(session)
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:

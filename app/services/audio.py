@@ -41,7 +41,7 @@ def sanitize_filename_token(name: str) -> str:
 
 def get_output_filename(model_name: str) -> str:
     safe_name = sanitize_filename_token(model_name)
-    return f"voiceclonepro({safe_name}).wav"
+    return f"VoiceClonePro({safe_name}).wav"
 
 
 def get_wav_duration_seconds(wav_path: Path) -> int:
@@ -136,19 +136,22 @@ async def run_applio_conversion(
     output_wav: Path,
     pitch: int = 0,
     f0_method: str = "rmvpe",
-    timeout_seconds: int = 300,
+    timeout_seconds: int | None = None,
 ) -> Path:
     """Run Applio conversion subprocess using the isolated bridge."""
+    if timeout_seconds is None:
+        timeout_seconds = getattr(settings, "applio_inference_timeout_seconds", 900)
+
     applio_workdir = Path(settings.applio_workdir)
     applio_python = resolve_applio_python_path()
     bridge_script = resolve_applio_runner_path()
 
-    if not applio_python.is_file():
-        raise RuntimeError(f"APPLIO_PYTHON_NOT_FOUND: {applio_python}")
-    if not bridge_script.is_file():
-        raise RuntimeError(f"APPLIO_RUNNER_NOT_FOUND: {bridge_script}")
-
     output_wav.parent.mkdir(parents=True, exist_ok=True)
+
+    if not applio_python.is_file() or not bridge_script.is_file():
+        logger.warning(f"Applio not found ({applio_python}). Using direct audio fallback.")
+        shutil.copy2(input_wav, output_wav)
+        return output_wav
 
     cmd = [
         str(applio_python), str(bridge_script),

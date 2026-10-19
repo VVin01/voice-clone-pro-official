@@ -31,7 +31,14 @@ async def db_session():
         expire_on_commit=False,
     )
 
+    from app.config import settings
+    from app.models.schema import DatabaseMetadata, utc_now
+
     async with session_maker() as session:
+        session.add(DatabaseMetadata(key="db_identity", value=settings.expected_db_identity))
+        session.add(DatabaseMetadata(key="schema_version", value="2.0.0"))
+        session.add(DatabaseMetadata(key="created_at", value=utc_now().isoformat()))
+        await session.commit()
         yield session
 
     await engine.dispose()
@@ -47,6 +54,8 @@ def restore_settings():
     from app.config import settings
     orig_admin_ids = settings.admin_ids_raw
     orig_bot_token = settings.bot_token
+    orig_welcome_bonus_seconds = settings.welcome_bonus_seconds
     yield
     settings.admin_ids_raw = orig_admin_ids
     settings.bot_token = orig_bot_token
+    settings.welcome_bonus_seconds = orig_welcome_bonus_seconds

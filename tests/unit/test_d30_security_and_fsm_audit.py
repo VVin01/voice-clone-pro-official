@@ -23,6 +23,7 @@ from app.handlers.admin import (
     handle_admin_adjust_start,
     handle_admin_broadcast_cancel,
     handle_admin_broadcast_confirm,
+    handle_admin_broadcast_group_select,
     handle_admin_broadcast_message_input,
     handle_admin_broadcast_start,
     handle_admin_command,
@@ -498,7 +499,18 @@ async def test_admin_broadcast_realistic_token_lifecycle(db_session, monkeypatch
     cb_init.message.edit_text = AsyncMock()
     cb_init.answer = AsyncMock()
 
-    await handle_admin_broadcast_start(cb_init, state)
+    with patch("app.handlers.admin.AsyncSessionLocal", sm):
+        await handle_admin_broadcast_start(cb_init, state)
+    assert state.current_state == AdminBroadcastFSM.choosing_audience
+
+    cb_grp = MagicMock(spec=CallbackQuery)
+    cb_grp.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
+    cb_grp.data = "admin:bc_group:REGISTERED_ALL"
+    cb_grp.message = MagicMock(spec=Message)
+    cb_grp.message.edit_text = AsyncMock()
+    cb_grp.answer = AsyncMock()
+    with patch("app.handlers.admin.AsyncSessionLocal", sm):
+        await handle_admin_broadcast_group_select(cb_grp, state)
     assert state.current_state == AdminBroadcastFSM.waiting_for_message
 
     msg_a = MagicMock(spec=Message)
@@ -548,7 +560,19 @@ async def test_admin_broadcast_realistic_token_lifecycle(db_session, monkeypatch
     assert len(c0) == 0
 
     # Step 4: Admin initiates fresh broadcast -> Fresh Preview with Token B
-    await handle_admin_broadcast_start(cb_init, state)
+    with patch("app.handlers.admin.AsyncSessionLocal", sm):
+        await handle_admin_broadcast_start(cb_init, state)
+    assert state.current_state == AdminBroadcastFSM.choosing_audience
+
+    cb_grp2 = MagicMock(spec=CallbackQuery)
+    cb_grp2.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
+    cb_grp2.data = "admin:bc_group:REGISTERED_ALL"
+    cb_grp2.message = MagicMock(spec=Message)
+    cb_grp2.message.edit_text = AsyncMock()
+    cb_grp2.answer = AsyncMock()
+    with patch("app.handlers.admin.AsyncSessionLocal", sm):
+        await handle_admin_broadcast_group_select(cb_grp2, state)
+    assert state.current_state == AdminBroadcastFSM.waiting_for_message
     msg_b = MagicMock(spec=Message)
     msg_b.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
     msg_b.text = "Broadcast Announcement B"
@@ -718,7 +742,8 @@ async def test_admin_user_search_fsm_complete_lifecycle(db_session):
     cb_start.message.edit_text = AsyncMock()
     cb_start.answer = AsyncMock()
 
-    await handle_admin_user_search_start(cb_start, state)
+    with patch("app.handlers.admin.AsyncSessionLocal", sm):
+        await handle_admin_user_search_start(cb_start, state)
     assert state.current_state == AdminUserSearchFSM.waiting_for_query
 
     # 2. Admin enters query

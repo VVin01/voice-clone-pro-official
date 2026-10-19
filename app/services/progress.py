@@ -55,7 +55,16 @@ def render_stepper_progress(
     ]
     footnote = t("progress_footnote", lang)
 
-    lines = [title, "━━━━━━━━━━━━━━━━━━━━", model_lbl, time_lbl, ""]
+    progress_bars = {
+        1: "▰▰▱▱▱▱▱▱ 25%",
+        2: "▰▰▰▰▱▱▱▱ 50%",
+        3: "▰▰▰▰▰▰▱▱ 75%",
+        4: "▰▰▰▰▰▰▰▰ 100%",
+    }
+    bar_str = progress_bars.get(step, "▰▰▰▰▰▰▱▱ 75%")
+    bar_lbl = f"📊 တိုးတက်မှု: <code>{bar_str}</code>" if lang == "my" else f"📊 Progress: <code>{bar_str}</code>"
+
+    lines = [title, "━━━━━━━━━━━━━━━━━━━━", model_lbl, time_lbl, bar_lbl, ""]
     for i, (name, done_txt, active_txt, wait_txt) in enumerate(steps_def, 1):
         if i < step:
             lines.append(f"✅ <b>[{i}/4] {name}:</b> <i>{done_txt}</i>")
@@ -106,7 +115,19 @@ async def safe_edit_status(
 class JobProgressTracker:
     """Manages 4-step progress updates and background animation ticker for long-running jobs."""
 
-    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    # Premium audio waveform equalizer visualizer frames for AI voice synthesis
+    SPINNER_FRAMES = [
+        "⚡ [ ▂▃▅ ]",
+        "⚡ [ ▃▅▆ ]",
+        "⚡ [ ▅▆▇ ]",
+        "⚡ [ ▆▇█ ]",
+        "⚡ [ ▇█▇ ]",
+        "⚡ [ █▇▆ ]",
+        "⚡ [ ▇▆▅ ]",
+        "⚡ [ ▆▅▃ ]",
+        "⚡ [ ▅▃▂ ]",
+        "⚡ [ ▃▂  ]",
+    ]
 
     def __init__(
         self,

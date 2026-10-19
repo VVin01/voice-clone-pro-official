@@ -57,9 +57,10 @@ async def verify_user_membership(
     # Confirm pending referral reward for referrer
     await confirm_referral_and_reward(session, user.id)
 
-    # Award welcome bonus once (for eligible non-admin users)
-    if not settings.is_admin(user.id):
-        await award_welcome_bonus(session, user.id)
+    # In V2, free user allowance is governed by the monthly 180s allowance (grant_monthly_free_allowance).
+    # Legacy welcome bonus is only awarded if explicit welcome_bonus_seconds is configured (> 0).
+    if settings.welcome_bonus_seconds > 0 and not settings.is_admin(user.id):
+        await award_welcome_bonus(session, user.id, seconds=settings.welcome_bonus_seconds)
 
     await session.flush()
     return True, "verified"

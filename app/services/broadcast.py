@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import (
     BroadcastCampaignStatus,
     BroadcastDeliveryStatus,
+    BroadcastRecipientGroup,
     UserStatus,
 )
-from app.models.schema import BroadcastCampaign, BroadcastDelivery, User
+from app.models.schema import BroadcastCampaign, BroadcastDelivery, ImportedAudience, User
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +39,41 @@ class BroadcastResult:
     campaign_id: str | None = None
 
 
-async def get_broadcast_recipient_ids(session: AsyncSession) -> list[int]:
-    """Query all active registered user IDs for broadcast target list."""
-    stmt = (
-        select(User.id)
-        .where(User.status == UserStatus.ACTIVE.value)
-        .order_by(User.id.asc())
-    )
+async def get_broadcast_recipient_ids(
+    session: AsyncSession,
+    target_group: str | BroadcastRecipientGroup = BroadcastRecipientGroup.REGISTERED_ALL,
+) -> list[int]:
+    """Query recipient Telegram IDs for the specified target group.
+
+    Groups:
+    - IMPORTED_ALL: All imported audience users who are broadcast eligible.
+    - IMPORTED_UNREGISTERED: Imported audience users not yet registered in the new system and broadcast eligible.
+    - REGISTERED_ALL: All active registered users in the new system.
+    """
+    group_str = target_group.value if isinstance(target_group, BroadcastRecipientGroup) else str(target_group)
+
+    if group_str == BroadcastRecipientGroup.IMPORTED_ALL.value:
+        stmt = (
+            select(ImportedAudience.telegram_id)
+            .where(ImportedAudience.broadcast_eligible.is_(True))
+            .order_by(ImportedAudience.telegram_id.asc())
+        )
+    elif group_str == BroadcastRecipientGroup.IMPORTED_UNREGISTERED.value:
+        stmt = (
+            select(ImportedAudience.telegram_id)
+            .where(
+                ImportedAudience.is_registered_in_new_system.is_(False),
+                ImportedAudience.broadcast_eligible.is_(True),
+            )
+            .order_by(ImportedAudience.telegram_id.asc())
+        )
+    else:  # Default to REGISTERED_ALL
+        stmt = (
+            select(User.id)
+            .where(User.status == UserStatus.ACTIVE.value)
+            .order_by(User.id.asc())
+        )
+
     result = await session.execute(stmt)
     return [int(uid) for uid in result.scalars().all()]
 
@@ -54,8 +83,16 @@ async def mark_user_blocked(session: AsyncSession, user_id: int) -> None:
     try:
         stmt = update(User).where(User.id == user_id).values(status=UserStatus.BLOCKED.value)
         await session.execute(stmt)
+
+        stmt_imported = (
+            update(ImportedAudience)
+            .where(ImportedAudience.telegram_id == user_id)
+            .values(broadcast_eligible=False)
+        )
+        await session.execute(stmt_imported)
+
         await session.commit()
-        logger.info("Marked user %s as BLOCKED in database", user_id)
+        logger.info("Marked user %s as BLOCKED/ineligible in database", user_id)
     except Exception as e:
         logger.error("Failed to mark user %s as BLOCKED: %s", user_id, e)
 

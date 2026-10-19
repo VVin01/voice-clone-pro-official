@@ -15,8 +15,10 @@ from app.models.enums import AccountCategory, LedgerDirection, LedgerSource
 from app.models.schema import (
     AdjustmentIdempotencyRecord,
     AuditLog,
+    ImportedAudience,
     MinuteBalance,
     MinuteLedgerEvent,
+    MonthlyFreeAllowanceGrant,
     Referral,
     ReferralReward,
     User,
@@ -85,6 +87,7 @@ async def get_or_create_user(
         if updated:
             user.updated_at = utc_now()
             await session.flush()
+        await _sync_imported_and_allowance(session, telegram_id)
         return user, False
 
     # User not found in current snapshot; attempt insertion with retry and collision handling
@@ -119,18 +122,11 @@ async def get_or_create_user(
             if referral_code_arg:
                 await _record_incoming_referral(session, new_user_id=telegram_id, raw_code=referral_code_arg)
 
+            await _sync_imported_and_allowance(session, telegram_id)
             return user, True
 
         except IntegrityError as exc:
             last_error = exc
-            logger.warning(
-                "IntegrityError in get_or_create_user for user %s (attempt %s/%s): %s",
-                telegram_id,
-                attempt + 1,
-                max_insert_attempts,
-                exc,
-            )
-
             # Check if user was inserted concurrently
             check_user = (await session.execute(select(User).where(User.id == telegram_id))).scalar_one_or_none()
             if check_user is not None:
@@ -145,12 +141,20 @@ async def get_or_create_user(
                 if updated:
                     check_user.updated_at = utc_now()
                     await session.flush()
+                await _sync_imported_and_allowance(session, telegram_id)
                 return check_user, False
 
             # The collision was on referral_code with another user or concurrent commit pending
+            logger.debug(
+                "Referral code collision in get_or_create_user for user %s (attempt %s/%s), retrying...",
+                telegram_id,
+                attempt + 1,
+                max_insert_attempts,
+            )
             await asyncio.sleep(0.02 * (attempt + 1))
             check_user = (await session.execute(select(User).where(User.id == telegram_id))).scalar_one_or_none()
             if check_user is not None:
+                await _sync_imported_and_allowance(session, telegram_id)
                 return check_user, False
 
     if last_error:
@@ -216,11 +220,100 @@ async def get_minute_balance(session: AsyncSession, user_id: int) -> MinuteBalan
     return bal
 
 
-async def award_welcome_bonus(session: AsyncSession, user_id: int) -> tuple[bool, MinuteBalance]:
-    """Award exactly 5 minutes (300 seconds) once per eligible account.
+def get_current_monthly_period() -> str:
+    """Return the current calendar month in UTC as 'YYYY-MM'."""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+async def grant_monthly_free_allowance(
+    session: AsyncSession,
+    user_id: int,
+    period: str | None = None,
+) -> tuple[bool, MinuteBalance]:
+    """Grant 3 minutes (180 seconds) free allowance once per calendar month.
+
+    - Free users receive 180 seconds free allowance once per calendar month (YYYY-MM UTC).
+    - Admins skip balance allowances since they have unlimited access.
+    - Idempotent: protected by MonthlyFreeAllowanceGrant unique constraint (user_id, period).
+    - Deductions use monthly_free_seconds first before purchased_seconds.
+    """
+    balance = await get_minute_balance(session, user_id)
+
+    if settings.is_admin(user_id):
+        return False, balance
+
+    current_period = period or get_current_monthly_period()
+
+    # Check if already granted for this period
+    stmt = select(MonthlyFreeAllowanceGrant).where(
+        MonthlyFreeAllowanceGrant.user_id == user_id,
+        MonthlyFreeAllowanceGrant.period == current_period,
+    )
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        return False, balance
+
+    allowance_seconds = settings.free_monthly_allowance_seconds
+
+    try:
+        async with session.begin_nested():
+            grant = MonthlyFreeAllowanceGrant(
+                user_id=user_id,
+                period=current_period,
+                seconds=allowance_seconds,
+            )
+            session.add(grant)
+            await session.flush()
+    except IntegrityError:
+        # Concurrent grant attempt
+        return False, balance
+
+    # Set / replenish monthly free seconds for the new period
+    balance.monthly_free_seconds = allowance_seconds
+    balance.last_monthly_grant_period = current_period
+    balance.updated_at = utc_now()
+
+    event = MinuteLedgerEvent(
+        user_id=user_id,
+        source=LedgerSource.MONTHLY_FREE.value,
+        direction=LedgerDirection.CREDIT.value,
+        seconds=allowance_seconds,
+        reference_id=current_period,
+        note=f"Monthly Free Allowance {current_period} (3 minutes)",
+    )
+    session.add(event)
+    await session.flush()
+
+    logger.info("Granted monthly free allowance (%ss) to user %s for period %s", allowance_seconds, user_id, current_period)
+    return True, balance
+
+
+async def _sync_imported_and_allowance(session: AsyncSession, user_id: int) -> None:
+    """Mark user as registered in ImportedAudience if applicable."""
+    imported_row = (
+        await session.execute(
+            select(ImportedAudience).where(ImportedAudience.telegram_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if imported_row is not None and not imported_row.is_registered_in_new_system:
+        imported_row.is_registered_in_new_system = True
+        await session.flush()
+
+
+async def award_welcome_bonus(
+    session: AsyncSession,
+    user_id: int,
+    seconds: int | None = None,
+) -> tuple[bool, MinuteBalance]:
+    """Award welcome bonus once per eligible account if enabled.
 
     Transactional and idempotent: repeated calls return (False, balance).
     """
+    bonus_sec = seconds if seconds is not None else WELCOME_BONUS_SECONDS
+    if bonus_sec <= 0:
+        balance = await get_minute_balance(session, user_id)
+        return False, balance
+
     stmt = select(User).where(User.id == user_id).with_for_update()
     res = await session.execute(stmt)
     user = res.scalar_one_or_none()
@@ -238,7 +331,7 @@ async def award_welcome_bonus(session: AsyncSession, user_id: int) -> tuple[bool
         return False, balance
 
     # Insert WelcomeBonusAward row to enforce database-level primary-key uniqueness
-    award_record = WelcomeBonusAward(user_id=user_id, seconds=WELCOME_BONUS_SECONDS)
+    award_record = WelcomeBonusAward(user_id=user_id, seconds=bonus_sec)
     session.add(award_record)
     try:
         await session.flush()
@@ -249,20 +342,20 @@ async def award_welcome_bonus(session: AsyncSession, user_id: int) -> tuple[bool
     # Transactionally mark awarded and credit balance
     user.welcome_bonus_awarded = True
     user.updated_at = utc_now()
-    balance.welcome_seconds += WELCOME_BONUS_SECONDS
+    balance.welcome_seconds += bonus_sec
     balance.updated_at = utc_now()
 
     event = MinuteLedgerEvent(
         user_id=user_id,
         source=LedgerSource.WELCOME.value,
         direction=LedgerDirection.CREDIT.value,
-        seconds=WELCOME_BONUS_SECONDS,
-        note="Welcome Bonus 5 Minutes (Once-per-account)",
+        seconds=bonus_sec,
+        note=f"Welcome Bonus {bonus_sec // 60} Minutes (Once-per-account)",
     )
     session.add(event)
     await session.flush()
 
-    logger.info("Awarded welcome bonus 300s to user %s", user_id)
+    logger.info("Awarded welcome bonus %ss to user %s", bonus_sec, user_id)
     return True, balance
 
 
@@ -424,7 +517,23 @@ async def consume_seconds(
 
     remaining_to_deduct = seconds_to_consume
 
-    # 1. Deduct from welcome balance
+    # 1. Deduct from monthly free balance
+    if remaining_to_deduct > 0 and balance.monthly_free_seconds > 0:
+        monthly_deduct = min(balance.monthly_free_seconds, remaining_to_deduct)
+        balance.monthly_free_seconds -= monthly_deduct
+        remaining_to_deduct -= monthly_deduct
+        session.add(
+            MinuteLedgerEvent(
+                user_id=user_id,
+                source=LedgerSource.MONTHLY_FREE.value,
+                direction=LedgerDirection.DEBIT.value,
+                seconds=monthly_deduct,
+                reference_id=job_id,
+                note=note or "Voice generation deduction (Monthly Free)",
+            )
+        )
+
+    # 2. Deduct from welcome balance (legacy)
     if remaining_to_deduct > 0 and balance.welcome_seconds > 0:
         welcome_deduct = min(balance.welcome_seconds, remaining_to_deduct)
         balance.welcome_seconds -= welcome_deduct
@@ -475,13 +584,11 @@ async def consume_seconds(
     balance.consumed_seconds += seconds_to_consume
     balance.updated_at = utc_now()
 
-    # Free vs Purchased status policy:
-    # A user with a positive purchased-minute balance receives PURCHASED status.
-    # When purchased minutes reach zero, the user returns to FREE status.
+    # Purchased entitlement policy:
+    # A user who has purchased minutes holds the persistent PURCHASED entitlement state.
+    # Consuming minutes does not demote or erase their PURCHASED entitlement.
     if balance.purchased_seconds > 0:
         user.account_category = AccountCategory.PURCHASED.value
-    else:
-        user.account_category = AccountCategory.FREE.value
     user.updated_at = utc_now()
 
     await session.flush()
@@ -527,7 +634,9 @@ async def refund_job_seconds(
     user = await session.get(User, user_id)
 
     for debit in debits:
-        if debit.source == LedgerSource.WELCOME.value:
+        if debit.source == LedgerSource.MONTHLY_FREE.value:
+            balance.monthly_free_seconds += debit.seconds
+        elif debit.source == LedgerSource.WELCOME.value:
             balance.welcome_seconds += debit.seconds
         elif debit.source == LedgerSource.REFERRAL.value:
             balance.referral_seconds += debit.seconds
@@ -629,6 +738,8 @@ async def admin_adjust_balance(
                 if source == LedgerSource.PURCHASE:
                     balance.purchased_seconds += seconds
                     user.account_category = AccountCategory.PURCHASED.value
+                elif source == LedgerSource.MONTHLY_FREE:
+                    balance.monthly_free_seconds += seconds
                 elif source == LedgerSource.REFERRAL:
                     balance.referral_seconds += seconds
                 elif source == LedgerSource.WELCOME:
@@ -642,6 +753,12 @@ async def admin_adjust_balance(
                     balance.purchased_seconds -= seconds
                     if balance.purchased_seconds == 0:
                         user.account_category = AccountCategory.FREE.value
+                elif source == LedgerSource.MONTHLY_FREE:
+                    if balance.monthly_free_seconds < seconds:
+                        raise ValueError(
+                            f"Insufficient monthly free balance ({balance.monthly_free_seconds}s) to debit {seconds}s"
+                        )
+                    balance.monthly_free_seconds -= seconds
                 elif source == LedgerSource.REFERRAL:
                     if balance.referral_seconds < seconds:
                         raise ValueError(

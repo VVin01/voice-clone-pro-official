@@ -69,34 +69,52 @@ async def process_single_job(
 
         job.status = JobStatus.RUNNING.value
         job.started_at = utc_now()
-        await session.flush()
+        await session.commit()
 
-        # Stage 2: Generate base audio (Edge TTS) & Normalize
+        # Stage 2: Prepare base audio & Normalize
         await tracker.update_step(2)
-        base_tts_path = temp_dir / "base.mp3"
-        await generate_edge_tts(
-            text=job.input_text or "",
-            out_path=base_tts_path,
-            voice=job.edge_voice or "my-MM-ThihaNeural",
-            speed=job.speed_preset or "normal",
-        )
         norm_wav_path = temp_dir / "norm.wav"
-        await normalize_audio_to_wav(base_tts_path, norm_wav_path)
+        if getattr(job, "source_audio_path", None) and Path(job.source_audio_path).is_file():
+            logger.info("Direct audio input mode for job %s: normalizing %s", job.id, job.source_audio_path)
+            await normalize_audio_to_wav(Path(job.source_audio_path), norm_wav_path)
+        else:
+            base_tts_path = temp_dir / "base.mp3"
+            await generate_edge_tts(
+                text=job.input_text or "",
+                out_path=base_tts_path,
+                voice=job.edge_voice or "my-MM-ThihaNeural",
+                speed=job.speed_preset or "normal",
+            )
+            await normalize_audio_to_wav(base_tts_path, norm_wav_path)
 
         # Stage 3: Run Applio Voice Conversion with Live Ticker
         out_filename = get_output_filename(model.name)
         converted_wav_path = temp_dir / out_filename
         pitch = GENDER_PITCH_MAP.get(job.gender_preset or "m2m", 0)
 
+        # Dynamic timeout: CPU inference scales with audio length (~4-6x real-time on CPU)
+        norm_duration = get_wav_duration_seconds(norm_wav_path)
+        computed_timeout = max(
+            getattr(settings, "applio_inference_timeout_seconds", 900),
+            int(norm_duration * 6) + 180,
+        )
+
         await tracker.update_step(3)
         await tracker.start_ticker(step=3)
         try:
+            logger.info(
+                "Starting Applio conversion for job %s (audio_len=%ss, timeout=%ss)",
+                job.id,
+                norm_duration,
+                computed_timeout,
+            )
             await run_applio_conversion(
                 model_pth=Path(model.pth_path),
                 index_path=Path(model.index_path) if model.index_path else None,
                 input_wav=norm_wav_path,
                 output_wav=converted_wav_path,
                 pitch=pitch,
+                timeout_seconds=computed_timeout,
             )
         finally:
             await tracker.stop_ticker()
@@ -150,7 +168,7 @@ async def process_single_job(
 
         job.status = JobStatus.SUCCESS.value
         job.finished_at = utc_now()
-        await session.flush()
+        await session.commit()
 
         logger.info("Successfully completed voice job %s (duration=%ss)", job.id, duration_seconds)
         return True
@@ -166,6 +184,8 @@ async def process_single_job(
             from app.services.ledger import refund_job_seconds
             await refund_job_seconds(session, job.user_id, str(job.id))
 
+        await session.commit()
+
         safe_exc = html.escape(str(exc))
         await safe_edit_status(bot, target_chat_id, target_msg_id, f"{t('status_failed', lang)}\n<i>({safe_exc})</i>")
         return False
@@ -175,6 +195,13 @@ async def process_single_job(
             await tracker.stop_ticker()
         # Safe cleanup of intermediate files
         shutil.rmtree(temp_dir, ignore_errors=True)
+        if getattr(job, "source_audio_path", None):
+            try:
+                p = Path(job.source_audio_path)
+                if p.is_file() and "temp" in str(p):
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 async def claim_and_process_next_job(

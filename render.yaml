@@ -1,0 +1,13 @@
+services:
+  - type: worker
+    name: voice-clone-pro-official-bot
+    env: docker
+    plan: standard
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./data/voice_clone_official.db

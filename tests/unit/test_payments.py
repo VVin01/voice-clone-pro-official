@@ -31,7 +31,7 @@ async def test_pricing_plans_and_payment_lifecycle(db_session):
     )
     assert payment.status == PaymentStatus.PENDING.value
     assert payment.minutes == 10
-    assert payment.amount_mmk == 2000
+    assert payment.amount_mmk == 5000
     assert payment.id.startswith("PAY-")
 
     # 3. Admin approves payment request

@@ -46,8 +46,16 @@ class Settings(BaseSettings):
 
     # Database: ISOLATED local SQLite by default, strictly separate from legacy/production
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./data/voice_clone_official.db",
+        default="sqlite+aiosqlite:///./data/voice_clone_v2.db",
         alias="DATABASE_URL",
+    )
+    legacy_database_url: str = Field(
+        default="sqlite+aiosqlite:///./data/voice_clone_official.db",
+        alias="LEGACY_DATABASE_URL",
+    )
+    expected_db_identity: str = Field(
+        default="voice_clone_v2",
+        alias="EXPECTED_DB_IDENTITY",
     )
 
     # Project and storage paths
@@ -56,9 +64,15 @@ class Settings(BaseSettings):
     locales_root: Path = ROOT / "locales"
     data_root: Path = ROOT / "data"
 
-    # Character Limits per Generation (user-facing account tiers)
-    character_limit_free: int = Field(default=120, alias="CHARACTER_LIMIT_FREE")
-    character_limit_purchased: int = Field(default=500, alias="CHARACTER_LIMIT_PURCHASED")
+    # User Account Policies
+    free_monthly_allowance_seconds: int = Field(default=180, alias="FREE_MONTHLY_ALLOWANCE_SECONDS")  # 3 minutes
+    welcome_bonus_seconds: int = Field(default=0, alias="WELCOME_BONUS_SECONDS")  # Retired in V2 (default 0)
+    character_limit_free: int = Field(default=500, alias="CHARACTER_LIMIT_FREE")
+    character_limit_purchased: int = Field(default=2000, alias="CHARACTER_LIMIT_PURCHASED")
+    free_daily_job_limit: int = Field(default=5, alias="FREE_DAILY_JOB_LIMIT")
+    purchased_daily_job_limit: int = Field(default=0, alias="PURCHASED_DAILY_JOB_LIMIT")  # 0 = unlimited
+    max_concurrent_jobs_per_user: int = Field(default=1, alias="MAX_CONCURRENT_JOBS_PER_USER")
+    maintenance_mode: bool = Field(default=False, alias="MAINTENANCE_MODE")
 
     # Infrastructure Safety Limit (independent of user account tiers, protects Edge TTS & Applio memory)
     infrastructure_safety_character_limit: int = Field(
@@ -71,18 +85,30 @@ class Settings(BaseSettings):
     applio_python: str = Field(default="", alias="APPLIO_PYTHON")
     applio_runner: str = Field(default="", alias="APPLIO_RUNNER")
     applio_command: str = Field(default="", alias="APPLIO_COMMAND")
+    applio_inference_timeout_seconds: int = Field(
+        default=900,
+        alias="APPLIO_INFERENCE_TIMEOUT_SECONDS",
+    )
 
     # Stale Job Crash Recovery (seconds)
-    stale_job_timeout_seconds: int = Field(default=600, alias="STALE_JOB_TIMEOUT_SECONDS")
+    stale_job_timeout_seconds: int = Field(default=1800, alias="STALE_JOB_TIMEOUT_SECONDS")
 
     # Tutorial Link
     tutorial_video_link: str = Field(
         default="https://t.me/voiceclonepro/tutorial",
         alias="TUTORIAL_VIDEO_LINK",
     )
+    tutorial_video_enabled: bool = Field(default=True, alias="TUTORIAL_VIDEO_ENABLED")
 
     # Edge TTS defaults
     default_tts_voice: str = "my-MM-ThihaNeural"
+
+    # Payment accounts
+    payment_kpay_number: str = "09790760003"
+    payment_kpay_name: str = "Win Kyaw Oo"
+    payment_wave_number: str = "09790760003"
+    payment_wave_name: str = "Win Kyaw Oo"
+
 
     @property
     def admin_ids(self) -> set[int]:

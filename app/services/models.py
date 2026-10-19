@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.enums import AccountCategory, VoiceModelStatus, VoiceModelType
-from app.models.schema import AuditLog, User, VoiceModel, utc_now
+from app.models.schema import AuditLog, User, UserVoiceModelGrant, VoiceModel, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,34 @@ def safe_model_slug(name: str) -> str:
     """Sanitize model name or artifact path into a filesystem/slug-safe token."""
     value = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip()).strip("-").lower()
     return value or "model"
+
+
+def find_model_sample_audio(model_dir: Path) -> Path | None:
+    """Find a voice sample audio file in the model directory if present.
+
+    Searches for:
+    1. sample.mp3, sample.wav, sample.ogg, sample.m4a
+    2. preview.mp3, preview.wav, preview.ogg, preview.m4a
+    3. Any file containing 'sample' or 'preview' in stem
+    """
+    if not model_dir.exists() or not model_dir.is_dir():
+        return None
+
+    # Exact matches first
+    for base in ("sample", "preview", "demo"):
+        for ext in (".mp3", ".wav", ".ogg", ".m4a"):
+            cand = model_dir / f"{base}{ext}"
+            if cand.is_file():
+                return cand
+
+    # Pattern matches
+    for ext in (".mp3", ".wav", ".ogg", ".m4a"):
+        for f in model_dir.glob(f"*{ext}"):
+            lower_stem = f.stem.lower()
+            if "sample" in lower_stem or "preview" in lower_stem or "demo" in lower_stem:
+                return f
+
+    return None
 
 
 def _artifact_pairs(root: Path) -> list[tuple[Path, Path | None]]:
@@ -69,6 +97,8 @@ async def scan_root(
         slug = safe_model_slug(f"{model_type.value}-{relative_artifact}")
         seen_slugs.add(slug)
 
+        sample_file = find_model_sample_audio(pth.parent)
+
         # Match by physical path first
         stmt = select(VoiceModel).where(VoiceModel.pth_path == str(pth))
         res = await session.execute(stmt)
@@ -89,6 +119,7 @@ async def scan_root(
                 model_dir=str(pth.parent),
                 pth_path=str(pth),
                 index_path=str(idx) if idx else None,
+                sample_audio_path=str(sample_file) if sample_file else None,
                 status=VoiceModelStatus.ACTIVE.value if model_type == VoiceModelType.PERSONAL else VoiceModelStatus.READY.value,
                 is_default_free=False,
             )
@@ -102,6 +133,9 @@ async def scan_root(
             model.index_path = str(idx) if idx else None
             model.type = model_type.value
             model.owner_user_id = owner_user_id
+
+            if sample_file:
+                model.sample_audio_path = str(sample_file)
 
             if model.status in (VoiceModelStatus.BROKEN.value, VoiceModelStatus.DISCOVERED.value):
                 model.status = VoiceModelStatus.READY.value
@@ -192,6 +226,46 @@ async def disable_model(session: AsyncSession, model_id: int, admin_id: int) -> 
     return True, "DISABLED"
 
 
+async def set_model_free_permission(session: AsyncSession, model_id: int, allowed: bool, admin_id: int) -> tuple[bool, str]:
+    """Admin configures whether a model is accessible to FREE users."""
+    model = await session.get(VoiceModel, model_id)
+    if not model:
+        return False, "MODEL_NOT_FOUND"
+
+    model.allowed_for_free = allowed
+    model.updated_at = utc_now()
+
+    session.add(AuditLog(
+        admin_id=admin_id,
+        action="voice_model.set_free_permission",
+        target_type="voice_model",
+        target_id=str(model_id),
+        details_json=f'{{"name": "{model.name}", "allowed_for_free": {allowed}}}',
+    ))
+    await session.flush()
+    return True, "UPDATED"
+
+
+async def set_model_purchased_permission(session: AsyncSession, model_id: int, allowed: bool, admin_id: int) -> tuple[bool, str]:
+    """Admin configures whether a model is accessible to PURCHASED users."""
+    model = await session.get(VoiceModel, model_id)
+    if not model:
+        return False, "MODEL_NOT_FOUND"
+
+    model.allowed_for_purchased = allowed
+    model.updated_at = utc_now()
+
+    session.add(AuditLog(
+        admin_id=admin_id,
+        action="voice_model.set_purchased_permission",
+        target_type="voice_model",
+        target_id=str(model_id),
+        details_json=f'{{"name": "{model.name}", "allowed_for_purchased": {allowed}}}',
+    ))
+    await session.flush()
+    return True, "UPDATED"
+
+
 async def set_free_default_model(session: AsyncSession, model_id: int, admin_id: int) -> tuple[bool, str]:
     """Set an active system model as the free default. Unsets previous defaults."""
     model = await session.get(VoiceModel, model_id)
@@ -206,6 +280,7 @@ async def set_free_default_model(session: AsyncSession, model_id: int, admin_id:
     )
 
     model.is_default_free = True
+    model.allowed_for_free = True  # Ensure default free model is also allowed for free
     model.updated_at = utc_now()
 
     session.add(AuditLog(
@@ -222,19 +297,60 @@ async def set_free_default_model(session: AsyncSession, model_id: int, admin_id:
 async def get_available_models_for_user(session: AsyncSession, user_id: int) -> list[VoiceModel]:
     """Single authoritative source of truth for models a user is allowed to use.
 
-    Per product directive, FREE and PURCHASED users have identical model access
-    privileges. Both see all active admin-approved SYSTEM models plus any active
-    PERSONAL models owned by the user.
+    - Admins: see all active models.
+    - PURCHASED users: see all active system models explicitly allowed for Purchased,
+      plus active personal models owned by the user.
+    - FREE users: see all active system models explicitly allowed for Free.
     """
-    stmt = (
-        select(VoiceModel)
-        .where(
-            VoiceModel.status == VoiceModelStatus.ACTIVE.value,
-            (VoiceModel.type == VoiceModelType.SYSTEM.value)
-            | ((VoiceModel.type == VoiceModelType.PERSONAL.value) & (VoiceModel.owner_user_id == user_id)),
+    is_admin = settings.is_admin(user_id)
+    if is_admin:
+        stmt = (
+            select(VoiceModel)
+            .where(VoiceModel.status == VoiceModelStatus.ACTIVE.value)
+            .order_by(VoiceModel.name)
         )
-        .order_by(VoiceModel.name)
-    )
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+    user_stmt = select(User).where(User.id == user_id)
+    user_res = await session.execute(user_stmt)
+    user = user_res.scalar_one_or_none()
+    is_purchased = (user is not None and user.account_category == AccountCategory.PURCHASED.value)
+
+    if is_purchased:
+        granted_subq = (
+            select(UserVoiceModelGrant.model_id)
+            .where(UserVoiceModelGrant.user_id == user_id)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(VoiceModel)
+            .where(
+                VoiceModel.status == VoiceModelStatus.ACTIVE.value,
+                (
+                    (VoiceModel.type == VoiceModelType.SYSTEM.value)
+                    & (VoiceModel.allowed_for_purchased.is_(True))
+                )
+                | (
+                    (VoiceModel.type == VoiceModelType.PERSONAL.value)
+                    & (VoiceModel.owner_user_id == user_id)
+                )
+                | (
+                    VoiceModel.id.in_(granted_subq)
+                ),
+            )
+            .order_by(VoiceModel.name)
+        )
+    else:
+        stmt = (
+            select(VoiceModel)
+            .where(
+                VoiceModel.status == VoiceModelStatus.ACTIVE.value,
+                VoiceModel.type == VoiceModelType.SYSTEM.value,
+                VoiceModel.allowed_for_free.is_(True),
+            )
+            .order_by(VoiceModel.name)
+        )
 
     res = await session.execute(stmt)
     return list(res.scalars().all())
@@ -249,3 +365,35 @@ async def get_authorized_model(session: AsyncSession, user_id: int, model_id: in
         if m.id == model_id:
             return m
     return None
+
+
+async def rename_voice_model(
+    session: AsyncSession,
+    model_id: int,
+    new_name: str,
+    admin_id: int | None = None,
+) -> tuple[bool, VoiceModel | None, str]:
+    """Rename a voice model's display name."""
+    stmt = select(VoiceModel).where(VoiceModel.id == model_id)
+    res = await session.execute(stmt)
+    model = res.scalar_one_or_none()
+    if not model:
+        return False, None, "MODEL_NOT_FOUND"
+
+    old_name = model.name
+    model.name = new_name.strip()
+    model.updated_at = utc_now()
+
+    if admin_id is not None:
+        session.add(
+            AuditLog(
+                admin_id=admin_id,
+                action="voice_model.rename",
+                target_type="voice_model",
+                target_id=str(model_id),
+                details_json=f'{{"old_name": "{old_name}", "new_name": "{model.name}"}}',
+            )
+        )
+    await session.flush()
+    return True, model, "MODEL_RENAMED"
+
