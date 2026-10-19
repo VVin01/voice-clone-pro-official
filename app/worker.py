@@ -55,8 +55,12 @@ async def process_single_job(
     try:
         # Stage 1: Validation
         model = await get_authorized_model(session, job.user_id, job.model_id)
-        if not model or not Path(model.pth_path).is_file():
+        if not model:
             raise RuntimeError("Model is missing or not authorized")
+
+        is_voxcpm = (getattr(model, "pth_path", "") == "voxcpm" or "voxcpm" in getattr(model, "slug", "").lower())
+        if not is_voxcpm and (not model.pth_path or not Path(model.pth_path).is_file()):
+            raise RuntimeError("Model file (.pth) is missing or not authorized on this server")
 
         tracker = JobProgressTracker(
             bot=bot,
@@ -74,48 +78,72 @@ async def process_single_job(
         # Stage 2: Prepare base audio & Normalize
         await tracker.update_step(2)
         norm_wav_path = temp_dir / "norm.wav"
-        if getattr(job, "source_audio_path", None) and Path(job.source_audio_path).is_file():
-            logger.info("Direct audio input mode for job %s: normalizing %s", job.id, job.source_audio_path)
-            await normalize_audio_to_wav(Path(job.source_audio_path), norm_wav_path)
-        else:
-            base_tts_path = temp_dir / "base.mp3"
-            await generate_edge_tts(
-                text=job.input_text or "",
-                out_path=base_tts_path,
-                voice=job.edge_voice or "my-MM-ThihaNeural",
-                speed=job.speed_preset or "normal",
-            )
-            await normalize_audio_to_wav(base_tts_path, norm_wav_path)
+        if not is_voxcpm:
+            if getattr(job, "source_audio_path", None) and Path(job.source_audio_path).is_file():
+                logger.info("Direct audio input mode for job %s: normalizing %s", job.id, job.source_audio_path)
+                await normalize_audio_to_wav(Path(job.source_audio_path), norm_wav_path)
+            else:
+                base_tts_path = temp_dir / "base.mp3"
+                await generate_edge_tts(
+                    text=job.input_text or "",
+                    out_path=base_tts_path,
+                    voice=job.edge_voice or "my-MM-ThihaNeural",
+                    speed=job.speed_preset or "normal",
+                )
+                await normalize_audio_to_wav(base_tts_path, norm_wav_path)
 
-        # Stage 3: Run Applio Voice Conversion with Live Ticker
+        # Stage 3: Run Applio or VoxCPM Voice Conversion with Live Ticker & Real-time ETA
         out_filename = get_output_filename(model.name)
         converted_wav_path = temp_dir / out_filename
-        pitch = GENDER_PITCH_MAP.get(job.gender_preset or "m2m", 0)
-
-        # Dynamic timeout: CPU inference scales with audio length (~4-6x real-time on CPU)
-        norm_duration = get_wav_duration_seconds(norm_wav_path)
-        computed_timeout = max(
-            getattr(settings, "applio_inference_timeout_seconds", 900),
-            int(norm_duration * 6) + 180,
-        )
 
         await tracker.update_step(3)
         await tracker.start_ticker(step=3)
         try:
-            logger.info(
-                "Starting Applio conversion for job %s (audio_len=%ss, timeout=%ss)",
-                job.id,
-                norm_duration,
-                computed_timeout,
-            )
-            await run_applio_conversion(
-                model_pth=Path(model.pth_path),
-                index_path=Path(model.index_path) if model.index_path else None,
-                input_wav=norm_wav_path,
-                output_wav=converted_wav_path,
-                pitch=pitch,
-                timeout_seconds=computed_timeout,
-            )
+            if is_voxcpm:
+                logger.info("Starting VoxCPM Cloud AI synthesis for job %s", job.id)
+                import functools
+                from app.services.voxcpm_engine import VoxCPMEngine
+                engine_inst = VoxCPMEngine(work_dir=temp_dir)
+
+                ref_wav = None
+                if getattr(job, "source_audio_path", None) and Path(job.source_audio_path).is_file():
+                    ref_wav = Path(job.source_audio_path)
+                elif getattr(model, "sample_audio_path", None) and Path(model.sample_audio_path).is_file():
+                    ref_wav = Path(model.sample_audio_path)
+
+                clean_text = job.input_text or "မင်္ဂလာပါခင်ဗျာ"
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        engine_inst.synthesize,
+                        text=clean_text,
+                        output_wav=converted_wav_path,
+                        reference_wav=ref_wav,
+                        progress_cb=tracker.set_custom_note,
+                    )
+                )
+            else:
+                pitch = GENDER_PITCH_MAP.get(job.gender_preset or "m2m", 0)
+                norm_duration = get_wav_duration_seconds(norm_wav_path)
+                computed_timeout = max(
+                    getattr(settings, "applio_inference_timeout_seconds", 900),
+                    int(norm_duration * 6) + 180,
+                )
+                logger.info(
+                    "Starting Applio conversion for job %s (audio_len=%ss, timeout=%ss)",
+                    job.id,
+                    norm_duration,
+                    computed_timeout,
+                )
+                await run_applio_conversion(
+                    model_pth=Path(model.pth_path),
+                    index_path=Path(model.index_path) if model.index_path else None,
+                    input_wav=norm_wav_path,
+                    output_wav=converted_wav_path,
+                    pitch=pitch,
+                    timeout_seconds=computed_timeout,
+                )
         finally:
             await tracker.stop_ticker()
 

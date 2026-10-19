@@ -18,6 +18,7 @@ def render_stepper_progress(
     elapsed_seconds: int,
     spinner: str = "⏳",
     lang: str = "my",
+    custom_note: str | None = None,
 ) -> str:
     """Format an honest, Burmese-first 4-stage stepper message with live elapsed time."""
     safe_model = html.escape(str(model_name or "Standard"))
@@ -72,6 +73,10 @@ def render_stepper_progress(
             lines.append(f"🔄 <b>[{i}/4] {name}:</b> <b>{active_txt}</b>")
         else:
             lines.append(f"⏳ <b>[{i}/4] {name}:</b> <i>{wait_txt}</i>")
+
+    if custom_note:
+        lines.append("")
+        lines.append(f"ℹ️ <b>Live Status:</b> <code>{html.escape(custom_note)}</code>")
 
     lines.extend(["━━━━━━━━━━━━━━━━━━━━", footnote])
     return "\n".join(lines)
@@ -145,11 +150,16 @@ class JobProgressTracker:
         self.lang = lang
         self.update_interval = update_interval
         self.current_step = 1
+        self.custom_note: str | None = None
         self.start_time = time.monotonic()
         self._frame_idx = 0
         self._last_rendered_text = ""
         self._ticker_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+
+    def set_custom_note(self, note: str | None) -> None:
+        """Update live custom note (e.g. queue ETA, position) to render in stepper."""
+        self.custom_note = note
 
     async def update_step(self, step: int) -> None:
         """Advance step and immediately render without waiting for ticker."""
@@ -198,6 +208,7 @@ class JobProgressTracker:
             elapsed_seconds=elapsed,
             spinner=spinner,
             lang=self.lang,
+            custom_note=self.custom_note,
         )
         if text == self._last_rendered_text:
             return

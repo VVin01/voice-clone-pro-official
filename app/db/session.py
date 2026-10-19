@@ -77,6 +77,8 @@ async def init_db() -> None:
 
         # Ensure sample_audio_path exists in voice_models (SQLite backward compatibility)
         def _add_sample_audio_col(connection):
+            if connection.dialect.name != "sqlite":
+                return
             from sqlalchemy import text
             res = connection.execute(text("PRAGMA table_info(voice_models)"))
             cols = [row[1] for row in res.fetchall()]
@@ -102,6 +104,35 @@ async def init_db() -> None:
 
         from app.services.dynamic_settings import load_dynamic_settings
         await load_dynamic_settings(session)
+
+        # Ensure VoxCPM Cloud AI model is active and available
+        try:
+            from app.models.schema import VoiceModel
+            from app.models.enums import VoiceModelStatus, VoiceModelType
+            stmt_v = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
+            res_v = await session.execute(stmt_v)
+            vox_m = res_v.scalar_one_or_none()
+            if vox_m is None:
+                session.add(VoiceModel(
+                    name="🎙️ VoxCPM (Cloud AI)",
+                    slug="voxcpm-cloud-ai",
+                    type=VoiceModelType.SYSTEM.value,
+                    status=VoiceModelStatus.ACTIVE.value,
+                    allowed_for_free=True,
+                    allowed_for_purchased=True,
+                    is_default_free=True,
+                    pth_path="voxcpm",
+                    model_dir="cloud",
+                ))
+                await session.commit()
+            elif vox_m.status != VoiceModelStatus.ACTIVE.value:
+                vox_m.status = VoiceModelStatus.ACTIVE.value
+                vox_m.allowed_for_free = True
+                vox_m.allowed_for_purchased = True
+                await session.commit()
+        except Exception as e_vox_init:
+            import logging
+            logging.getLogger(__name__).warning("Could not auto-register VoxCPM model: %s", e_vox_init)
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
