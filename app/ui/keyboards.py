@@ -26,7 +26,17 @@ def membership_gate_kb(channel_link: str, group_link: str, lang: str = "my") -> 
 
 
 def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMarkup:
-    buttons = [
+    import os
+    from aiogram.types import WebAppInfo
+    web_app_url = os.getenv("MINI_APP_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+
+    buttons = []
+    if web_app_url:
+        buttons.append([
+            InlineKeyboardButton(text="📱 Open Studio (Mini App) ✨", web_app=WebAppInfo(url=web_app_url))
+        ])
+
+    buttons.extend([
         [InlineKeyboardButton(text=t("btn_menu_voice_clone", lang), callback_data="menu:voice_clone")],
         [
             InlineKeyboardButton(text=t("btn_menu_buy_minutes", lang), callback_data="menu:buy_minutes"),
@@ -36,7 +46,7 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
             InlineKeyboardButton(text=t("btn_menu_custom_voice", lang), callback_data="menu:custom_voice"),
             InlineKeyboardButton(text=t("btn_menu_help_settings", lang), callback_data="menu:help_settings"),
         ],
-    ]
+    ])
     if is_admin:
         buttons.append([InlineKeyboardButton(text=t("btn_admin_dashboard", lang), callback_data="admin:dashboard")])
 

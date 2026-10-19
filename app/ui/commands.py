@@ -39,6 +39,22 @@ async def setup_bot_commands(bot: Bot) -> None:
             len(default_cmds),
             [c.command for c in default_cmds],
         )
+
+        # Configure Telegram Menu Button for Mini App if URL available
+        import os
+        web_app_url = os.getenv("MINI_APP_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+        if web_app_url:
+            try:
+                from aiogram.types import MenuButtonWebApp, WebAppInfo
+                await bot.set_chat_menu_button(
+                    menu_button=MenuButtonWebApp(
+                        text="📱 Open Studio",
+                        web_app=WebAppInfo(url=web_app_url),
+                    )
+                )
+                logger.info("Configured Telegram Menu Button to Mini App: %s", web_app_url)
+            except Exception as e_mb:
+                logger.warning("Could not set Telegram Menu Button: %s", e_mb)
     except Exception as e:
         logger.error("Failed to register default bot commands: %s", e)
         raise RuntimeError(f"Failed to register default bot commands: {e}") from e

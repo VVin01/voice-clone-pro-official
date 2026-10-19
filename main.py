@@ -67,6 +67,28 @@ async def run_bot_and_worker(mode: str) -> None:
             bot_task = asyncio.create_task(dp.start_polling(bot))
             tasks.append(bot_task)
 
+    # Start FastAPI Telegram Mini App & API Web Server
+    if mode in ("all", "web", "all_with_web"):
+        try:
+            import os
+            import uvicorn
+            from app.webapp.server import webapp_app
+
+            port = int(os.environ.get("PORT", "8000"))
+            config = uvicorn.Config(
+                app=webapp_app,
+                host="0.0.0.0",
+                port=port,
+                log_level="info",
+                access_log=False,
+            )
+            server = uvicorn.Server(config)
+            logger.info("Starting FastAPI Telegram Mini App web server on 0.0.0.0:%d...", port)
+            web_task = asyncio.create_task(server.serve())
+            tasks.append(web_task)
+        except Exception as e_web:
+            logger.warning("Could not launch web server task: %s", e_web)
+
     if not tasks:
         logger.info("No tasks to run. Exiting.")
         return
