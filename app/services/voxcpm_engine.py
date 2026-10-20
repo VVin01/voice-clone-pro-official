@@ -161,7 +161,7 @@ class VoxCPMEngine:
         prompt_text: str = "",
         cfg_value: float = 2.0,
         progress_cb: Optional[Callable[[str], None]] = None,
-        retries: int = 2,
+        retries: int = 1,
     ) -> Path:
         """
         Synthesize Burmese speech for given text using VoxCPM.
@@ -234,8 +234,11 @@ class VoxCPMEngine:
                     api_name="/generate",
                 )
 
-                # Monitor live queue ETA and position
+                # Monitor live queue ETA and position with strict timeout
+                poll_start_time = time.time()
                 while not job.done():
+                    if time.time() - poll_start_time > 25:
+                        raise TimeoutError("VoxCPM space queue timed out after 25s")
                     try:
                         st = job.status()
                         eta_val = getattr(st, "eta", None)
