@@ -75,22 +75,39 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-        # Ensure sample_audio_path exists in voice_models (SQLite backward compatibility)
-        def _add_sample_audio_col(connection):
-            if connection.dialect.name != "sqlite":
-                return
+        # Ensure columns exist across SQLite and PostgreSQL databases
+        def _add_missing_cols(connection):
             from sqlalchemy import text
-            res = connection.execute(text("PRAGMA table_info(voice_models)"))
-            cols = [row[1] for row in res.fetchall()]
-            if "sample_audio_path" not in cols:
-                connection.execute(text("ALTER TABLE voice_models ADD COLUMN sample_audio_path TEXT"))
+            dialect_name = connection.dialect.name
+            if dialect_name == "postgresql":
+                # PostgreSQL safe IF NOT EXISTS column additions
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS engine VARCHAR(20) DEFAULT 'voxcpm'"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preset_voice VARCHAR(50)"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
+                connection.execute(text("ALTER TABLE voice_models ADD COLUMN IF NOT EXISTS sample_audio_path TEXT"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
+            elif dialect_name == "sqlite":
+                # SQLite PRAGMA check
+                res = connection.execute(text("PRAGMA table_info(voice_models)"))
+                cols = [row[1] for row in res.fetchall()]
+                if "sample_audio_path" not in cols:
+                    connection.execute(text("ALTER TABLE voice_models ADD COLUMN sample_audio_path TEXT"))
 
-            res_jobs = connection.execute(text("PRAGMA table_info(jobs)"))
-            cols_jobs = [row[1] for row in res_jobs.fetchall()]
-            if "source_audio_path" not in cols_jobs:
-                connection.execute(text("ALTER TABLE jobs ADD COLUMN source_audio_path TEXT"))
+                res_jobs = connection.execute(text("PRAGMA table_info(jobs)"))
+                cols_jobs = [row[1] for row in res_jobs.fetchall()]
+                if "source_audio_path" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN source_audio_path TEXT"))
+                if "engine" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN engine VARCHAR(20) DEFAULT 'voxcpm'"))
+                if "preset_voice" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN preset_voice VARCHAR(50)"))
 
-        await conn.run_sync(_add_sample_audio_col)
+                res_pay = connection.execute(text("PRAGMA table_info(payment_requests)"))
+                cols_pay = [row[1] for row in res_pay.fetchall()]
+                if "slip_url" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN slip_url TEXT"))
+
+        await conn.run_sync(_add_missing_cols)
 
     # Initialize database identity metadata idempotently
     async with AsyncSessionLocal() as session:

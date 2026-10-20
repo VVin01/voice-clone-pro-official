@@ -96,6 +96,21 @@ async def handle_menu_home(callback: CallbackQuery, state: FSMContext | None = N
         pass
 
 
+@menu_router.callback_query(F.data == "menu:change_lang")
+async def handle_change_language(callback: CallbackQuery):
+    from app.ui.keyboards import language_selection_kb
+    await safe_edit_message(
+        callback,
+        "🌐 ကျေးဇူးပြု၍ အသုံးပြုလိုသော ဘာသာစကားကို ရွေးချယ်ပါ / Please select your preferred language:",
+        reply_markup=language_selection_kb(),
+        parse_mode="HTML",
+    )
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+
 @menu_router.callback_query(F.data == "menu:refer_earn")
 async def handle_menu_refer_earn(callback: CallbackQuery):
     async with AsyncSessionLocal() as session:

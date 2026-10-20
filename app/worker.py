@@ -112,6 +112,14 @@ async def process_single_job(
                     ref_wav = Path(model.sample_audio_path)
 
                 clean_text = job.input_text or "မင်္ဂလာပါခင်ဗျာ"
+                control_instruction = None
+                if getattr(job, "preset_voice", None):
+                    from app.services.curated_voices import get_curated_voice
+                    p_info = get_curated_voice(job.preset_voice)
+                    if p_info:
+                        control_instruction = p_info.get("control_instruction")
+                        logger.info("Using curated persona '%s' for VoxCPM job %s", job.preset_voice, job.id)
+
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
                     None,
@@ -120,6 +128,7 @@ async def process_single_job(
                         text=clean_text,
                         output_wav=converted_wav_path,
                         reference_wav=ref_wav,
+                        control_instruction=control_instruction or "A clear, natural, emotionally expressive Burmese speaker with warm tone and fluent pronunciation",
                         progress_cb=tracker.set_custom_note,
                     )
                 )
@@ -248,20 +257,21 @@ async def process_single_job(
 async def claim_and_process_next_job(
     session: AsyncSession,
     bot: Bot | None = None,
+    engine_filter: str | None = "voxcpm",
 ) -> bool:
-    """Atomically claim the oldest QUEUED job and process it."""
+    """Atomically claim the oldest QUEUED job matching engine_filter and process it."""
     from app.services.queue import claim_next_queued_job
 
-    job = await claim_next_queued_job(session)
+    job = await claim_next_queued_job(session, engine_filter=engine_filter)
     if not job:
         return False
 
     return await process_single_job(session=session, job=job, bot=bot)
 
 
-async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0) -> None:
-    """Continuously poll for QUEUED jobs and process them via atomic claim."""
-    logger.info("Starting background audio processing worker loop...")
+async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, engine_filter: str = "voxcpm") -> None:
+    """Continuously poll for QUEUED jobs (defaulting to VoxCPM cloud engine) and process them."""
+    logger.info("Starting background audio processing worker loop (engine_filter=%s)...", engine_filter)
 
     # Startup recovery: sweep orphaned RUNNING jobs before starting polling
     from app.services.recovery import recover_stale_running_jobs
@@ -276,7 +286,7 @@ async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0) ->
     while True:
         try:
             async with AsyncSessionLocal() as session:
-                processed = await claim_and_process_next_job(session, bot=bot)
+                processed = await claim_and_process_next_job(session, bot=bot, engine_filter=engine_filter)
                 if processed:
                     await session.commit()
                 else:

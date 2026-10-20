@@ -23,6 +23,13 @@ gradio_client>=2.7.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 python-multipart>=0.0.9
+aiofiles>=24.0.0
+
+# Downloader & Media Processing
+yt-dlp>=2024.8.0
+requests>=2.31.0
+Pillow>=10.0.0
+google-genai>=0.1.0
 
 # Test Suite
 pytest==9.1.1

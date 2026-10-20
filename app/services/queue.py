@@ -39,6 +39,8 @@ async def create_voice_clone_job(
     chat_id: int | None = None,
     status_message_id: int | None = None,
     source_audio_path: str | None = None,
+    engine: str = "voxcpm",
+    preset_voice: str | None = None,
 ) -> tuple[Job | None, str]:
     """Validate character limits, balance, model authorization and enqueue job."""
     from pathlib import Path
@@ -49,6 +51,10 @@ async def create_voice_clone_job(
     model = await get_authorized_model(session, user_id, model_id)
     if not model:
         return None, "MODEL_NOT_AUTHORIZED"
+
+    # Auto-detect engine if model is VoxCPM
+    is_vox = (model.pth_path == "voxcpm" or "voxcpm" in model.slug.lower() or engine == "voxcpm")
+    actual_engine = "voxcpm" if is_vox else "applio"
 
     # 2. Check concurrency and daily job limits (admins exempt)
     is_admin = settings.is_admin(user_id)
@@ -106,12 +112,16 @@ async def create_voice_clone_job(
         if balance.total_usable_seconds <= 0:
             return None, "INSUFFICIENT_BALANCE"
 
+    import uuid
     job = Job(
+        id=str(uuid.uuid4()),
         user_id=user_id,
         chat_id=chat_id or user_id,
         status_message_id=status_message_id,
         status=JobStatus.QUEUED.value,
         job_type=JobType.VOICE_CLONE.value,
+        engine=actual_engine,
+        preset_voice=preset_voice,
         input_text=text,
         source_audio_path=source_audio_path,
         edge_voice=edge_voice,
@@ -122,7 +132,7 @@ async def create_voice_clone_job(
     session.add(job)
     await session.flush()
 
-    logger.info("Created voice clone job %s for user %s (model=%s, source_audio=%s)", job.id, user_id, model.name, bool(source_audio_path))
+    logger.info("Created voice clone job %s for user %s (engine=%s, model=%s, source_audio=%s)", job.id, user_id, actual_engine, model.name, bool(source_audio_path))
     return job, "QUEUED"
 
 
@@ -143,17 +153,16 @@ async def claim_job_for_running(session: AsyncSession, job_id: str) -> bool:
     return res.rowcount == 1
 
 
-async def claim_next_queued_job(session: AsyncSession) -> Job | None:
-    """Find the oldest QUEUED job and atomically transition it to RUNNING.
+async def claim_next_queued_job(session: AsyncSession, engine_filter: str | None = None) -> Job | None:
+    """Find the oldest QUEUED job matching engine_filter and atomically transition it to RUNNING.
 
     Guarantees exactly ONE competing worker claims and executes the job.
     """
-    candidate_stmt = (
-        select(Job.id)
-        .where(Job.status == JobStatus.QUEUED.value)
-        .order_by(Job.created_at)
-        .limit(1)
-    )
+    query = select(Job.id).where(Job.status == JobStatus.QUEUED.value)
+    if engine_filter:
+        query = query.where(Job.engine == engine_filter)
+
+    candidate_stmt = query.order_by(Job.created_at).limit(1)
     candidate_id = (await session.execute(candidate_stmt)).scalar_one_or_none()
     if not candidate_id:
         return None

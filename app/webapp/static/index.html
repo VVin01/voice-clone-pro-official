@@ -19,13 +19,16 @@
             <div class="brand">
                 <span class="brand-icon">⚡</span>
                 <div class="brand-text">
-                    <h1>Studio Pro</h1>
-                    <span class="sub-brand">AI Voice & Recap</span>
+                    <h1 data-i18n="brand_title">Studio Pro</h1>
+                    <span class="sub-brand" data-i18n="brand_subtitle">AI Voice & Recap</span>
                 </div>
             </div>
-            <div class="user-pill" id="user-pill">
-                <span class="vip-badge free" id="vip-status-badge">FREE</span>
-                <span class="balance-text" id="user-balance-text">⏱️ 0s</span>
+            <div class="top-actions">
+                <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()">🇲🇲 မြန်မာ</button>
+                <div class="user-pill" id="user-pill">
+                    <span class="vip-badge free" id="vip-status-badge">FREE</span>
+                    <span class="balance-text" id="user-balance-text">⏱️ 0s</span>
+                </div>
             </div>
         </header>
 
@@ -35,83 +38,98 @@
             <!-- ════ TAB 1: VOICE CLONE STUDIO ════ -->
             <section id="tab-voice" class="tab-pane active">
                 <div class="pane-header">
-                    <h2>🎙️ AI Voice Clone Studio</h2>
-                    <p>သဘာဝကျသော မြန်မာ AI အသံသွင်းခြင်း နှင့် Voice Cloning</p>
+                    <h2 data-i18n="voice_title">🎙️ AI Voice Clone Studio</h2>
+                    <p data-i18n="voice_subtitle">သဘာဝကျသော မြန်မာ AI အသံသွင်းခြင်း နှင့် အသံတုပခြင်း</p>
                 </div>
 
                 <!-- Engine Selector Card -->
                 <div class="card glass engine-card">
-                    <div class="card-label">အသုံးပြုမည့် AI Engine</div>
+                    <div class="card-label" data-i18n="engine_label">အသုံးပြုမည့် AI Engine</div>
                     <div class="segmented-control">
                         <button class="seg-btn active" data-engine="voxcpm" id="btn-engine-voxcpm">
-                            <span class="seg-title">🎙️ VoxCPM (Cloud AI)</span>
-                            <span class="seg-desc">လူအစစ်ကဲ့သို့ သဘာဝအသံ • Zero-shot</span>
+                            <span class="seg-title" data-i18n="engine_voxcpm_title">☁️ VoxCPM (Cloud AI)</span>
+                            <span class="seg-desc" data-i18n="engine_voxcpm_desc">Zero-shot သဘာဝအသံ • Cloud</span>
                         </button>
                         <button class="seg-btn" data-engine="applio" id="btn-engine-applio">
-                            <span class="seg-title">🎭 Applio RVC</span>
-                            <span class="seg-desc">Train ထားသော Clone မော်ဒယ်များ</span>
+                            <span class="seg-title" data-i18n="engine_applio_title">💻 Applio RVC (Local GPU)</span>
+                            <span class="seg-desc" data-i18n="engine_applio_desc">Laptop Worker တွင် Train ထားသော မော်ဒယ်များ</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- Model Selection Grid -->
-                <div class="card glass model-picker-card">
+                <!-- VoxCPM Mode: Curated Personas vs Custom Clone -->
+                <div id="voxcpm-mode-section">
+                    <div class="card glass">
+                        <div class="card-label" data-i18n="persona_mode_title">အသံရွေးချယ်မှု စတိုင်လ်</div>
+                        <div class="segmented-control sm">
+                            <button class="seg-btn active" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
+                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Curated Voices (၆ မျိုး)</span>
+                            </button>
+                            <button class="seg-btn" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
+                                <span class="seg-title" data-i18n="btn_mode_custom">🎙️ Custom Voice Clone</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 6 Gemini Curated Personas Grid -->
+                    <div class="card glass" id="curated-personas-card">
+                        <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ</div>
+                        <div class="personas-grid" id="personas-grid">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <!-- Custom Reference Audio Card -->
+                    <div class="card glass ref-audio-card hidden" id="ref-audio-section">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="custom_ref_title">🎙️ Reference Voice (အသံတူ Clone ရန် အသံနမူနာ)</div>
+                            <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့် (Optional)</span>
+                        </div>
+                        <p class="ref-desc" data-i18n="custom_ref_desc">မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။</p>
+                        <div class="ref-upload-row">
+                            <label class="btn-file-upload" for="ref-audio-input">
+                                <span class="upload-icon">📁</span>
+                                <span id="ref-audio-label" data-i18n="ref_file_btn">Reference Audio ဖိုင် ရွေးချယ်မည်</span>
+                            </label>
+                            <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
+                            <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ဖျက်မည်</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Applio Models Card (Hidden when VoxCPM is active) -->
+                <div class="card glass model-picker-card hidden" id="applio-models-section">
                     <div class="card-header-row">
-                        <div class="card-label">ရွေးချယ်ထားသော အသံမော်ဒယ်</div>
-                        <span class="model-count-tag" id="models-count">2 Models</span>
+                        <div class="card-label" data-i18n="model_picker_label">ရွေးချယ်ထားသော အသံမော်ဒယ်</div>
+                        <span class="status-pill-badge" id="applio-worker-pill" data-i18n="applio_status_waiting">🟡 Laptop Worker စောင့်ဆိုင်းနေပါသည်</span>
                     </div>
                     <div class="models-scroll" id="models-list">
                         <!-- Dynamically filled by JS -->
-                        <div class="model-chip active" data-slug="voxcpm-cloud-ai">
-                            <span class="chip-avatar">🎙️</span>
-                            <div class="chip-info">
-                                <span class="chip-name">VoxCPM Cloud AI</span>
-                                <span class="chip-type">သဘာဝအသံ (Standard)</span>
-                            </div>
-                            <span class="chip-check">✓</span>
-                        </div>
                     </div>
                 </div>
 
                 <!-- Text Input Card -->
                 <div class="card glass input-card">
                     <div class="card-header-row">
-                        <div class="card-label">အသံသွင်းလိုသော စာသား (Text)</div>
+                        <div class="card-label" data-i18n="text_input_label">အသံသွင်းလိုသော စာသား (Text)</div>
                         <span class="char-counter" id="char-count">0 / 500 chars</span>
                     </div>
-                    <textarea id="voice-text-input" placeholder="မြန်မာစာသားများကို ဤနေရာတွင် ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..." rows="5"></textarea>
+                    <textarea id="voice-text-input" data-i18n-ph="text_placeholder" placeholder="မြန်မာစာသားများကို ဤနေရာတွင် ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..." rows="5"></textarea>
                     <div class="sample-chips">
-                        <button class="mini-chip" onclick="insertSampleText('မင်္ဂလာပါခင်ဗျာ၊ Voice Clone Pro Studio မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။')">💡 မင်္ဂလာပါ</button>
-                        <button class="mini-chip" onclick="insertSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')">💡 AI နည်းပညာ</button>
-                        <button class="mini-chip text-danger" onclick="clearVoiceText()">🗑️ ရှင်းမည်</button>
+                        <button class="mini-chip" onclick="insertSampleText('မင်္ဂလာပါခင်ဗျာ၊ Voice Clone Pro Studio မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။')" data-i18n="sample_greeting">💡 မင်္ဂလာပါ</button>
+                        <button class="mini-chip" onclick="insertSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')" data-i18n="sample_tech">💡 AI နည်းပညာ</button>
+                        <button class="mini-chip text-danger" onclick="clearVoiceText()" data-i18n="btn_clear_text">🗑️ ရှင်းမည်</button>
                     </div>
                 </div>
 
-                <!-- Reference Audio Card for VoxCPM Voice Cloning -->
-                <div class="card glass ref-audio-card" id="ref-audio-section">
-                    <div class="card-header-row">
-                        <div class="card-label">🎙️ Reference Voice (အသံတူ Clone ရန် အသံနမူနာ)</div>
-                        <span class="hint-tag" id="ref-status-tag">ရွေးချယ်ခွင့် (Optional)</span>
-                    </div>
-                    <p class="ref-desc">မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။</p>
-                    <div class="ref-upload-row">
-                        <label class="btn-file-upload" for="ref-audio-input">
-                            <span class="upload-icon">📁</span>
-                            <span id="ref-audio-label">Reference Audio ဖိုင် ရွေးချယ်မည်</span>
-                        </label>
-                        <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
-                        <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()">✕ ဖျက်မည်</button>
-                    </div>
-                </div>
-
-                <!-- Audio Controls (Speed & Pitch) -->
+                <!-- Audio Controls (Speed) -->
                 <div class="card glass controls-card">
                     <div class="control-row">
-                        <span class="ctrl-title">အမြန်နှုန်း (Speed):</span>
+                        <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း (Speed):</span>
                         <div class="pill-group" id="speed-selector">
-                            <button class="pill-btn" data-speed="slow">0.8x နှေး</button>
-                            <button class="pill-btn active" data-speed="normal">1.0x ပုံမှန်</button>
-                            <button class="pill-btn" data-speed="fast">1.2x မြန်</button>
+                            <button class="pill-btn" data-speed="slow" data-i18n="speed_slow">0.8x နှေး</button>
+                            <button class="pill-btn active" data-speed="normal" data-i18n="speed_normal">1.0x ပုံမှန်</button>
+                            <button class="pill-btn" data-speed="fast" data-i18n="speed_fast">1.2x မြန်</button>
                         </div>
                     </div>
                 </div>
@@ -119,26 +137,26 @@
                 <!-- Action Button -->
                 <button class="btn primary-gradient-btn" id="btn-generate-voice">
                     <span class="btn-icon">🚀</span>
-                    <span class="btn-text">အသံ စတင်ထုတ်ယူမည်</span>
+                    <span class="btn-text" data-i18n="btn_generate">အသံ စတင်ထုတ်ယူမည်</span>
                 </button>
 
                 <!-- Generation Progress & Player Section -->
                 <div class="card glass progress-card hidden" id="voice-progress-box">
                     <div class="progress-status-header">
                         <span class="spinner-wave" id="voice-spinner">⚡</span>
-                        <span class="status-msg" id="voice-status-msg">ပြင်ဆင်နေပါသည်...</span>
+                        <span class="status-msg" id="voice-status-msg" data-i18n="preparing_msg">ပြင်ဆင်နေပါသည်...</span>
                     </div>
                     <div class="progress-bar-track">
                         <div class="progress-bar-fill" id="voice-progress-fill" style="width: 25%;"></div>
                     </div>
-                    <div class="eta-tag" id="voice-eta-text">ခန့်မှန်းစောင့်ဆိုင်းချိန် တွက်ချက်နေပါသည်...</div>
+                    <div class="eta-tag" id="voice-eta-text" data-i18n="calculating_eta">ခန့်မှန်းစောင့်ဆိုင်းချိန် တွက်ချက်နေပါသည်...</div>
                 </div>
 
                 <div class="card glass result-card hidden" id="voice-result-box">
-                    <div class="result-title">🎉 အသံထုတ်ယူမှု ပြီးစီးပါပြီ</div>
+                    <div class="result-title" data-i18n="result_title">🎉 အသံထုတ်ယူမှု ပြီးစီးပါပြီ</div>
                     <audio id="result-audio-player" controls class="custom-audio-player"></audio>
                     <div class="result-actions">
-                        <a id="btn-download-audio" href="#" download="voice_clone.wav" class="btn secondary-btn">📥 Download WAV</a>
+                        <a id="btn-download-audio" href="#" download="voice_clone.wav" class="btn secondary-btn" data-i18n="btn_download_wav">📥 Download WAV</a>
                     </div>
                 </div>
             </section>
@@ -146,44 +164,38 @@
             <!-- ════ TAB 2: AI RECAP STUDIO ════ -->
             <section id="tab-recap" class="tab-pane">
                 <div class="pane-header">
-                    <h2>🎬 AI Movie Recap Maker</h2>
-                    <p>English ဗီဒီယိုများကို မြန်မာအသံ၊ စာတန်းထိုး နှင့် Blur ပါဝင်သော Recap ဖန်တီးပါ</p>
+                    <h2 data-i18n="recap_title">🎬 AI Movie Recap Maker</h2>
+                    <p data-i18n="recap_subtitle">English ဗီဒီယိုများကို မြန်မာအသံ၊ စာတန်းထိုး နှင့် Blur ပါဝင်သော Recap ဖန်တီးပါ</p>
                 </div>
 
                 <!-- Video Link Card -->
                 <div class="card glass">
-                    <div class="card-label">YouTube သို့မဟုတ် TikTok Video Link</div>
+                    <div class="card-label" data-i18n="recap_url_label">YouTube သို့မဟုတ် TikTok Video Link</div>
                     <div class="input-with-btn">
-                        <input type="url" id="recap-url-input" placeholder="https://youtu.be/... သို့မဟုတ် TikTok link...">
-                        <button class="btn mini-btn" id="btn-fetch-recap-info">စစ်ဆေး</button>
+                        <input type="url" id="recap-url-input" data-i18n-ph="recap_url_placeholder" placeholder="https://youtu.be/... သို့မဟုတ် TikTok link...">
+                        <button class="btn mini-btn" id="btn-fetch-recap-info" data-i18n="btn_analyze">စစ်ဆေးမည်</button>
                     </div>
                 </div>
 
                 <!-- Visual Interactive Canvas Mockup -->
                 <div class="card glass visual-editor-card">
                     <div class="card-header-row">
-                        <div class="card-label">🖼️ Real-time Preview မျက်နှာပြင်</div>
-                        <span class="hint-tag">Drag or Move Sliders</span>
+                        <div class="card-label" data-i18n="preview_label">🖼️ Real-time Preview မျက်နှာပြင်</div>
+                        <span class="hint-tag" data-i18n="preview_hint">Slider များကို ရွှေ့၍ နေရာညှိပါ</span>
                     </div>
 
                     <!-- Phone Frame Video Mockup -->
                     <div class="mockup-screen">
                         <div class="video-bg-placeholder">
                             <span class="video-placeholder-icon">🎬 Video Screen</span>
-                            
-                            <!-- Dynamic Blur Box (Positioned by slider) -->
                             <div class="preview-blur-box" id="preview-blur-box" style="bottom: 12%; height: 14%;">
-                                <span class="blur-label">Original Subtitle Blur Box</span>
+                                <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
                             </div>
-
-                            <!-- Dynamic Myanmar Subtitle (Positioned by slider) -->
                             <div class="preview-sub-box neon" id="preview-sub-box" style="bottom: 15%;">
-                                <span class="preview-sub-text">"အခုတော့ ကျွန်တော်တို့ရဲ့ အစီအစဉ် စတင်ပါပြီ..."</span>
+                                <span class="preview-sub-text" data-i18n="sub_sample_text">"အခုတော့ ကျွန်တော်တို့ရဲ့ အစီအစဉ် စတင်ပါပြီ..."</span>
                             </div>
-
-                            <!-- Channel Logo Watermark Mockup -->
                             <div class="preview-logo-watermark" id="preview-logo">
-                                <span>⭐ LOGO</span>
+                                <span data-i18n="logo_label">⭐ LOGO</span>
                             </div>
                         </div>
                     </div>
@@ -192,7 +204,7 @@
                     <div class="editor-controls">
                         <div class="slider-group">
                             <div class="slider-header">
-                                <span>🔲 မူရင်းစာတန်းဖျက် Blur အနိမ့်အမြင့် (Y):</span>
+                                <span data-i18n="slider_blur_y">🔲 မူရင်းစာတန်းဖျက် Blur အနိမ့်အမြင့် (Y):</span>
                                 <span class="slider-val" id="val-blur-y">81%</span>
                             </div>
                             <input type="range" min="50" max="95" value="81" class="studio-slider" id="slider-blur-y">
@@ -200,7 +212,7 @@
 
                         <div class="slider-group">
                             <div class="slider-header">
-                                <span>↕️ Blur Box အထူ/အမြင့် (H):</span>
+                                <span data-i18n="slider_blur_h">↕️ Blur Box အထူ/အမြင့် (H):</span>
                                 <span class="slider-val" id="val-blur-h">13%</span>
                             </div>
                             <input type="range" min="5" max="30" value="13" class="studio-slider" id="slider-blur-h">
@@ -208,7 +220,7 @@
 
                         <div class="slider-group">
                             <div class="slider-header">
-                                <span>📝 မြန်မာစာတန်းထိုး နေရာ (Sub Y):</span>
+                                <span data-i18n="slider_sub_y">📝 မြန်မာစာတန်းထိုး နေရာ (Sub Y):</span>
                                 <span class="slider-val" id="val-sub-y">85%</span>
                             </div>
                             <input type="range" min="50" max="95" value="85" class="studio-slider" id="slider-sub-y">
@@ -217,7 +229,7 @@
 
                     <!-- Subtitle Color Style Chips -->
                     <div class="style-selector-row">
-                        <span class="style-lbl">စာတန်းထိုး စတိုင်လ်:</span>
+                        <span class="style-lbl" data-i18n="sub_style_label">စာတန်းထိုး စတိုင်လ်:</span>
                         <div class="chip-options" id="sub-style-picker">
                             <button class="style-chip active" data-style="neon">⚡ Neon Yellow</button>
                             <button class="style-chip" data-style="gold">👑 Gold Pro</button>
@@ -229,52 +241,55 @@
 
                 <!-- Voice Selection for Recap -->
                 <div class="card glass">
-                    <div class="card-label">Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)</div>
+                    <div class="card-label" data-i18n="recap_voice_label">Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)</div>
                     <select class="studio-select" id="recap-voice-select">
-                        <option value="thiha">👨 Thiha (သဘာဝကျသော အမျိုးသားအသံ)</option>
-                        <option value="nilar">👩 Nilar (သဘာဝကျသော အမျိုးသမီးအသံ)</option>
-                        <option value="voxcpm-cloud-ai">🎙️ VoxCPM (Cloud AI Clone)</option>
+                        <option value="komin">👨‍💼 Ko Min (မင်းမင်း - ဇာတ်လမ်းပြောသူ)</option>
+                        <option value="kothura">🎙️ Ko Thura (ကိုသူရ - သတင်း/Docu)</option>
+                        <option value="koaung">⚡ Ko Aung (အောင်အောင် - Viral Shorts)</option>
+                        <option value="mahnin">👩‍🦰 Ma Hnin (နှင်းနှင်း - Audiobook)</option>
+                        <option value="manadi">🎭 Ma Nadi (နဒီ - Thriller Drama)</option>
+                        <option value="mamay">🌟 Ma May (မေမေ - Friendly Guide)</option>
                     </select>
                 </div>
 
                 <!-- 1-Click Action -->
                 <button class="btn primary-gradient-btn" id="btn-start-recap">
                     <span class="btn-icon">⚡</span>
-                    <span class="btn-text">1-Click Pro Recap ဖန်တီးမည်</span>
+                    <span class="btn-text" data-i18n="btn_start_recap">1-Click Pro Recap ဖန်တီးမည်</span>
                 </button>
             </section>
 
             <!-- ════ TAB 3: DOWNLOADER ════ -->
             <section id="tab-downloader" class="tab-pane">
                 <div class="pane-header">
-                    <h2>📥 Media Downloader</h2>
-                    <p>YouTube နှင့် TikTok မှ Video (MP4)၊ Audio (MP3) နှင့် Subtitle (SRT) ဒေါင်းလုဒ် ရယူပါ</p>
+                    <h2 data-i18n="dl_title">📥 Media Downloader</h2>
+                    <p data-i18n="dl_subtitle">YouTube နှင့် TikTok မှ Video (MP4)၊ Audio (MP3) ဒေါင်းလုဒ် ရယူပါ</p>
                 </div>
 
                 <div class="card glass">
-                    <div class="card-label">Video သို့မဟုတ် Music Link ကူးထည့်ပါ</div>
-                    <input type="url" id="dl-url-input" placeholder="YouTube, TikTok, Shorts URL..." class="studio-input">
+                    <div class="card-label" data-i18n="dl_url_label">Video သို့မဟုတ် Music Link ကူးထည့်ပါ</div>
+                    <input type="url" id="dl-url-input" data-i18n-ph="dl_url_placeholder" placeholder="YouTube, TikTok, Shorts URL..." class="studio-input">
                     <button class="btn primary-btn mt-3" id="btn-extract-dl">
-                        <span>🔍 ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာဖွေမည်</span>
+                        <span data-i18n="btn_search_dl">🔍 ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာဖွေမည်</span>
                     </button>
                 </div>
 
                 <div class="card glass hidden" id="dl-result-card">
                     <div class="dl-formats-grid">
-                        <button class="format-card" onclick="alert('Bot သို့ တိုက်ရိုက် MP4 ပို့ပေးနေပါသည်...')">
+                        <button class="format-card" onclick="alert(t('toast_copied'))">
                             <span class="fmt-icon">🎬</span>
-                            <span class="fmt-name">Full HD Video</span>
-                            <span class="fmt-desc">MP4 (H.264/AAC)</span>
+                            <span class="fmt-name" data-i18n="fmt_video_title">Full HD Video</span>
+                            <span class="fmt-desc" data-i18n="fmt_video_desc">MP4 (H.264 / AAC)</span>
                         </button>
-                        <button class="format-card" onclick="alert('Bot သို့ တိုက်ရိုက် MP3 ပို့ပေးနေပါသည်...')">
+                        <button class="format-card" onclick="alert(t('toast_copied'))">
                             <span class="fmt-icon">🎵</span>
-                            <span class="fmt-name">High-Quality Audio</span>
-                            <span class="fmt-desc">MP3 (192kbps)</span>
+                            <span class="fmt-name" data-i18n="fmt_audio_title">High-Quality Audio</span>
+                            <span class="fmt-desc" data-i18n="fmt_audio_desc">MP3 (192kbps)</span>
                         </button>
-                        <button class="format-card" onclick="alert('Bot သို့ တိုက်ရိုက် SRT စာတန်းထိုး ပို့ပေးနေပါသည်...')">
+                        <button class="format-card" onclick="alert(t('toast_copied'))">
                             <span class="fmt-icon">📝</span>
-                            <span class="fmt-name">Subtitle File</span>
-                            <span class="fmt-desc">SRT (Auto-captions)</span>
+                            <span class="fmt-name" data-i18n="fmt_sub_title">Subtitle File</span>
+                            <span class="fmt-desc" data-i18n="fmt_sub_desc">SRT (Auto-captions)</span>
                         </button>
                     </div>
                 </div>
@@ -283,19 +298,19 @@
             <!-- ════ TAB 4: VIP & WALLET ════ -->
             <section id="tab-vip" class="tab-pane">
                 <div class="pane-header">
-                    <h2>👑 VIP အသင်းဝင် & Balance</h2>
-                    <p>အကန့်အသတ်မဲ့ အသံသွင်းခွင့်နှင့် Pro Recap သီးသန့် အခွင့်အရေးများ</p>
+                    <h2 data-i18n="vip_title">👑 VIP အသင်းဝင် & Balance</h2>
+                    <p data-i18n="vip_subtitle">အကန့်အသတ်မဲ့ အသံသွင်းခွင့်နှင့် Pro Recap သီးသန့် အခွင့်အရေးများ</p>
                 </div>
 
                 <!-- User Stats Card -->
                 <div class="card glass stats-card">
                     <div class="stats-row">
                         <div class="stat-col">
-                            <span class="stat-label">လက်ရှိ အဆင့်အတန်း</span>
+                            <span class="stat-label" data-i18n="stat_current_tier">လက်ရှိ အဆင့်အတန်း</span>
                             <span class="stat-val text-gold" id="profile-category-tag">FREE MEMBER</span>
                         </div>
                         <div class="stat-col">
-                            <span class="stat-label">လက်ကျန် မိနစ် (Minutes)</span>
+                            <span class="stat-label" data-i18n="stat_balance_min">လက်ကျန် မိနစ် (Minutes)</span>
                             <span class="stat-val" id="profile-balance-min">0.0 mins</span>
                         </div>
                     </div>
@@ -304,39 +319,39 @@
                 <!-- Pricing Packages -->
                 <div class="pricing-grid">
                     <div class="card glass pricing-card featured">
-                        <div class="featured-ribbon">လူကြိုက်အများဆုံး 🔥</div>
-                        <div class="plan-name">1 Month Unlimited VIP</div>
-                        <div class="plan-price">15,000 <span class="currency">MMK</span></div>
+                        <div class="featured-ribbon" data-i18n="plan_1m_badge">လူကြိုက်အများဆုံး 🔥</div>
+                        <div class="plan-name" data-i18n="plan_1m_name">1 Month Unlimited VIP</div>
+                        <div class="plan-price"><span data-i18n="plan_1m_price">15,000</span> <span class="currency">MMK</span></div>
                         <ul class="plan-features">
-                            <li>✓ Full HD Movie Recap ဖန်တီးခွင့် မကန့်သတ်</li>
-                            <li>✓ VoxCPM Cloud AI & Applio အသံသွင်းခွင့်</li>
-                            <li>✓ မူရင်းစာတန်းဖျက် Smart Blur & Logo Watermark</li>
-                            <li>✓ အမြင့်ဆုံး Speed 192k MP3 & Subtitles</li>
+                            <li data-i18n="plan_1m_f1">✓ Full HD Movie Recap ဖန်တီးခွင့် မကန့်သတ်</li>
+                            <li data-i18n="plan_1m_f2">✓ VoxCPM Cloud AI & Applio အသံသွင်းခွင့်</li>
+                            <li data-i18n="plan_1m_f3">✓ မူရင်းစာတန်းဖျက် Smart Blur & Logo Watermark</li>
+                            <li data-i18n="plan_1m_f4">✓ အမြင့်ဆုံး Speed 192k MP3 & Subtitles</li>
                         </ul>
-                        <button class="btn primary-btn mt-3" onclick="openPaymentDrawer('1 Month VIP', '15,000 MMK')">
+                        <button class="btn primary-btn mt-3" onclick="openPaymentDrawer('vip_1m', '15,000 MMK')" data-i18n="btn_buy_1m">
                             💎 ယခု ဝယ်ယူမည်
                         </button>
                     </div>
 
                     <div class="card glass pricing-card">
-                        <div class="plan-name">3 Months Studio Pro</div>
-                        <div class="plan-price">35,000 <span class="currency">MMK</span></div>
+                        <div class="plan-name" data-i18n="plan_3m_name">3 Months Studio Pro</div>
+                        <div class="plan-price"><span data-i18n="plan_3m_price">35,000</span> <span class="currency">MMK</span></div>
                         <ul class="plan-features">
-                            <li>✓ ၃ လ သက်တမ်း အကန့်အသတ်မဲ့ အသုံးပြုခွင့်</li>
-                            <li>✓ မိမိကိုယ်ပိုင် Clone Voice Slot (၁) ခု အခမဲ့ Train ပေးခြင်း</li>
-                            <li>✓ Priority High-Speed Queue စနစ်</li>
-                            <li>✓ 24/7 VIP Direct Support</li>
+                            <li data-i18n="plan_3m_f1">✓ ၃ လ သက်တမ်း အကန့်အသတ်မဲ့ အသုံးပြုခွင့်</li>
+                            <li data-i18n="plan_3m_f2">✓ မိမိကိုယ်ပိုင် Clone Voice Slot (၁) ခု အခမဲ့ Train ပေးခြင်း</li>
+                            <li data-i18n="plan_3m_f3">✓ Priority High-Speed Queue စနစ်</li>
+                            <li data-i18n="plan_3m_f4">✓ 24/7 VIP Direct Support</li>
                         </ul>
-                        <button class="btn secondary-btn mt-3" onclick="openPaymentDrawer('3 Months VIP', '35,000 MMK')">
+                        <button class="btn secondary-btn mt-3" onclick="openPaymentDrawer('vip_3m', '35,000 MMK')" data-i18n="btn_buy_3m">
                             👑 ယခု ဝယ်ယူမည်
                         </button>
                     </div>
                 </div>
 
-                <!-- Payment Info Drawer (Hidden by default) -->
+                <!-- Payment Info Drawer -->
                 <div class="card glass payment-drawer hidden" id="payment-box">
                     <div class="card-header-row">
-                        <span class="card-label">💳 ငွေပေးချေမှု အချက်အလက်များ</span>
+                        <span class="card-label" data-i18n="payment_info_title">💳 ငွေပေးချေမှု အချက်အလက်များ</span>
                         <button class="close-btn" onclick="closePaymentDrawer()">✕</button>
                     </div>
                     <div class="payment-methods">
@@ -344,7 +359,7 @@
                             <div class="pay-title">KBZPay (KPay)</div>
                             <div class="pay-account">
                                 <span class="acc-num" id="kpay-num">09951234567</span>
-                                <button class="mini-copy-btn" onclick="copyAccount('09951234567')">📋 ကူးမည်</button>
+                                <button class="mini-copy-btn" onclick="copyAccount('09951234567')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
                             <span class="acc-name">Account: Ko Win</span>
                         </div>
@@ -352,16 +367,80 @@
                             <div class="pay-title">WavePay</div>
                             <div class="pay-account">
                                 <span class="acc-num" id="wave-num">09951234567</span>
-                                <button class="mini-copy-btn" onclick="copyAccount('09951234567')">📋 ကူးမည်</button>
+                                <button class="mini-copy-btn" onclick="copyAccount('09951234567')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
                             <span class="acc-name">Account: Ko Win</span>
                         </div>
                     </div>
-                    <p class="pay-note">
-                        ⚠️ ငွေလွှဲပြီးပါက ငွေလွှဲပြေစာ Screenshot ကို 
-                        <a href="https://t.me/VoiceClonePro" class="gold-link" target="_blank">@VoiceClonePro Admin</a> 
-                        သို့ ပို့ပေးပါက ၅ မိနစ်အတွင်း VIP စတင် အသုံးပြုနိုင်ပါပြီခင်ဗျာ။
+                    
+                    <!-- Direct Slip Upload Form -->
+                    <div class="slip-uploader-box mt-3">
+                        <div class="card-label" data-i18n="slip_upload_title">📸 ငွေလွှဲပြေစာ (Screenshot) တင်သွင်းရန်</div>
+                        <input type="file" id="slip-file-input" accept="image/*" class="studio-input mt-2">
+                        <button class="btn primary-btn mt-2" id="btn-submit-slip-action" onclick="submitPaymentSlip()">
+                            <span data-i18n="btn_submit_slip">📤 ပြေစာ တင်သွင်းမည်</span>
+                        </button>
+                    </div>
+
+                    <p class="pay-note mt-3" data-i18n="payment_notice">
+                        ⚠️ ငွေလွှဲပြီးပါက ငွေလွှဲပြေစာ Screenshot ကို အထက်တွင် တင်သွင်းပေးပါ သို့မဟုတ် @VoiceCloneProAdmin သို့ ပို့ပေးပါရန်။
                     </p>
+                </div>
+            </section>
+
+            <!-- ════ TAB 5: ADMIN CONSOLE (Role-Gated) ════ -->
+            <section id="tab-admin" class="tab-pane hidden">
+                <div class="pane-header">
+                    <h2 data-i18n="admin_title">⚡ Admin Control Console</h2>
+                    <p data-i18n="admin_subtitle">စနစ်ကြီးကြပ်မှု၊ ငွေလွှဲပြေစာ စစ်ဆေးခြင်းနှင့် အသုံးပြုသူများ စီမံခန့်ခွဲမှု</p>
+                </div>
+
+                <!-- Admin Statistics Grid -->
+                <div class="admin-stats-grid">
+                    <div class="card glass stat-mini-card">
+                        <span class="stat-lbl" data-i18n="admin_stat_users">အသုံးပြုသူ စုစုပေါင်း</span>
+                        <span class="stat-num" id="adm-total-users">0</span>
+                    </div>
+                    <div class="card glass stat-mini-card">
+                        <span class="stat-lbl" data-i18n="admin_stat_vip">VIP အသင်းဝင်များ</span>
+                        <span class="stat-num text-gold" id="adm-vip-users">0</span>
+                    </div>
+                    <div class="card glass stat-mini-card">
+                        <span class="stat-lbl" data-i18n="admin_stat_slips">စစ်ဆေးရန် ပြေစာများ</span>
+                        <span class="stat-num text-danger" id="adm-pending-slips">0</span>
+                    </div>
+                    <div class="card glass stat-mini-card">
+                        <span class="stat-lbl" data-i18n="admin_stat_queue">Queue ရှိ အလုပ်များ</span>
+                        <span class="stat-num" id="adm-queued-jobs">0</span>
+                    </div>
+                </div>
+
+                <!-- Pending Payment Slips Management -->
+                <div class="card glass mt-3">
+                    <div class="card-label" data-i18n="admin_slips_header">📋 စစ်ဆေးရန် စောင့်ဆိုင်းနေသော ငွေလွှဲပြေစာများ</div>
+                    <div id="admin-slips-list" class="mt-2">
+                        <p class="text-muted" data-i18n="admin_no_slips">စစ်ဆေးရန် ပြေစာ မရှိသေးပါ</p>
+                    </div>
+                </div>
+
+                <!-- Quick User Manager -->
+                <div class="card glass mt-3">
+                    <div class="card-label" data-i18n="admin_user_manage_header">👤 အသုံးပြုသူ ရှာဖွေ ပြင်ဆင်ခြင်း</div>
+                    <div class="input-with-btn mt-2">
+                        <input type="number" id="adm-target-user-id" data-i18n-ph="admin_user_id_ph" placeholder="Telegram ID (ဥပမာ: 1957002115)">
+                        <button class="btn mini-btn" onclick="adminGrantVip()" data-i18n="btn_grant_vip">👑 VIP သို့ တင်မည်</button>
+                        <button class="btn mini-btn secondary-btn" onclick="adminAddMinutes()" data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</button>
+                    </div>
+                </div>
+
+                <!-- Broadcast Sender -->
+                <div class="card glass mt-3">
+                    <div class="card-label" data-i18n="admin_broadcast_header">📢 Telegram Bot အားလုံးသို့ Broadcast စာပို့ရန်</div>
+                    <textarea id="adm-broadcast-text" data-i18n-ph="admin_broadcast_ph" placeholder="အသုံးပြုသူ အားလုံးထံ ပေးပို့မည့် စာသား ရိုက်ထည့်ပါ..." rows="3" class="mt-2"></textarea>
+                    <button class="btn primary-gradient-btn mt-2" onclick="adminSendBroadcast()">
+                        <span class="btn-icon">🚀</span>
+                        <span data-i18n="btn_send_broadcast">Broadcast ပို့မည်</span>
+                    </button>
                 </div>
             </section>
 
@@ -371,24 +450,29 @@
         <nav class="bottom-nav">
             <button class="nav-item active" data-tab="tab-voice">
                 <span class="nav-icon">🎙️</span>
-                <span class="nav-label">Voice Studio</span>
+                <span class="nav-label" data-i18n="tab_voice">Voice Studio</span>
             </button>
             <button class="nav-item" data-tab="tab-recap">
                 <span class="nav-icon">🎬</span>
-                <span class="nav-label">Recap Maker</span>
+                <span class="nav-label" data-i18n="tab_recap">Recap Maker</span>
             </button>
             <button class="nav-item" data-tab="tab-downloader">
                 <span class="nav-icon">📥</span>
-                <span class="nav-label">Downloader</span>
+                <span class="nav-label" data-i18n="tab_downloader">Downloader</span>
             </button>
             <button class="nav-item" data-tab="tab-vip">
                 <span class="nav-icon">👑</span>
-                <span class="nav-label">VIP Wallet</span>
+                <span class="nav-label" data-i18n="tab_vip">VIP Wallet</span>
+            </button>
+            <button class="nav-item hidden" id="nav-btn-admin" data-tab="tab-admin">
+                <span class="nav-icon">⚡</span>
+                <span class="nav-label" data-i18n="tab_admin">Admin</span>
             </button>
         </nav>
     </div>
 
-    <!-- Application Script -->
+    <!-- Scripts: i18n localization engine first, then app controller -->
+    <script src="/static/js/i18n.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

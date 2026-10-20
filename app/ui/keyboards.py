@@ -28,27 +28,27 @@ def membership_gate_kb(channel_link: str, group_link: str, lang: str = "my") -> 
 def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMarkup:
     import os
     from aiogram.types import WebAppInfo
-    web_app_url = os.getenv("MINI_APP_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    web_app_url = (
+        os.getenv("MINI_APP_URL", "").strip()
+        or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+        or "https://voice-clone-studio-c1er.onrender.com"
+    )
 
-    buttons = []
-    if web_app_url:
-        buttons.append([
-            InlineKeyboardButton(text="📱 Open Studio (Mini App) ✨", web_app=WebAppInfo(url=web_app_url))
-        ])
+    is_my = (lang == "my")
+    launch_text = "🚀 Studio Pro (Mini App) ဖွင့်မည် ✨" if is_my else "🚀 Launch Studio Pro (Mini App) ✨"
+    switch_lang_text = "🌐 Change Language (အင်္ဂလိပ် / မြန်မာ)" if is_my else "🌐 Switch Language (မြန်မာ / English)"
+    verify_gate_text = "🛡️ အဖွဲ့ဝင်စစ်ဆေးမည်" if is_my else "🛡️ Verify Membership"
 
-    buttons.extend([
-        [InlineKeyboardButton(text=t("btn_menu_voice_clone", lang), callback_data="menu:voice_clone")],
+    buttons = [
+        [InlineKeyboardButton(text=launch_text, web_app=WebAppInfo(url=web_app_url))],
         [
-            InlineKeyboardButton(text=t("btn_menu_buy_minutes", lang), callback_data="menu:buy_minutes"),
-            InlineKeyboardButton(text=t("btn_menu_refer_earn", lang), callback_data="menu:refer_earn"),
+            InlineKeyboardButton(text=switch_lang_text, callback_data="menu:change_lang"),
+            InlineKeyboardButton(text=verify_gate_text, callback_data="gate:verify"),
         ],
-        [
-            InlineKeyboardButton(text=t("btn_menu_custom_voice", lang), callback_data="menu:custom_voice"),
-            InlineKeyboardButton(text=t("btn_menu_help_settings", lang), callback_data="menu:help_settings"),
-        ],
-    ])
+    ]
     if is_admin:
-        buttons.append([InlineKeyboardButton(text=t("btn_admin_dashboard", lang), callback_data="admin:dashboard")])
+        admin_text = "📢 Broadcast ပို့မည်" if is_my else "📢 Send Broadcast"
+        buttons.append([InlineKeyboardButton(text=admin_text, callback_data="admin:broadcast_prompt")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

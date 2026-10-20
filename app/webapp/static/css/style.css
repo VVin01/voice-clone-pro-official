@@ -1017,3 +1017,224 @@ textarea#voice-text-input:focus {
 .hidden-file-input {
     display: none;
 }
+
+/* ── Top Nav Actions & Language Toggle ────────────────────────────────────── */
+.top-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.lang-pill-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #93c5fd;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.lang-pill-btn:hover {
+    background: rgba(59, 130, 246, 0.25);
+    border-color: var(--accent-blue);
+    color: #fff;
+}
+
+/* ── Curated Personas Grid (Gemini Voices) ────────────────────────────────── */
+.personas-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-top: 10px;
+}
+
+@media (max-width: 360px) {
+    .personas-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.persona-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.persona-card:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.persona-card.active {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 14px rgba(59, 130, 246, 0.25);
+}
+
+.persona-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.persona-avatar {
+    font-size: 22px;
+}
+
+.persona-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.persona-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    padding: 2px 6px;
+    border-radius: 4px;
+    align-self: flex-start;
+    margin-top: 2px;
+}
+
+.persona-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.35;
+    margin-top: 4px;
+}
+
+.segmented-control.sm .seg-btn {
+    padding: 6px 4px;
+}
+
+.status-pill-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 12px;
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* ── Admin Console ────────────────────────────────────────────────────────── */
+.admin-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.stat-mini-card {
+    text-align: center;
+    padding: 12px 8px;
+}
+
+.stat-lbl {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: block;
+}
+
+.stat-num {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-top: 4px;
+    display: block;
+}
+
+.slip-item-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.slip-item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.slip-thumb {
+    width: 65px;
+    height: 65px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    cursor: pointer;
+}
+
+.slip-info {
+    flex: 1;
+}
+
+.slip-user {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.slip-amount {
+    font-size: 14px;
+    font-weight: 800;
+    color: #34d399;
+    margin-top: 2px;
+}
+
+.slip-date {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.slip-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.btn-approve {
+    flex: 1;
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.5);
+    color: #6ee7b7;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.btn-approve:hover {
+    background: rgba(16, 185, 129, 0.35);
+}
+
+.btn-reject {
+    flex: 1;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.btn-reject:hover {
+    background: rgba(239, 68, 68, 0.3);
+}
