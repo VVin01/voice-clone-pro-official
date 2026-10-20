@@ -22,6 +22,7 @@ import logging
 import asyncio
 import functools
 import html
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
@@ -33,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import get_db_session
-from app.models.enums import AccountCategory, JobStatus, VoiceModelStatus, VoiceModelType, PaymentStatus
+from app.models.enums import AccountCategory, JobStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
 from app.models.schema import User, Job, VoiceModel, MinuteBalance, PaymentRequest, AuditLog, utc_now
 from app.services.models import get_authorized_model
 from app.services.curated_voices import list_curated_voices, get_curated_voice
@@ -561,6 +562,16 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
         from app.db.session import AsyncSessionLocal
         downloader = MediaDownloader()
 
+        # Update Job in database
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    update(Job).where(Job.id == job_id).values(status=JobStatus.RUNNING.value, started_at=func.now())
+                )
+                await session.commit()
+        except Exception as db_e:
+            logger.warning(f"Failed to update Job {job_id} to RUNNING in DB: {db_e}")
+
         job_dir = settings.storage_root / "recap_output" / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -646,6 +657,20 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
             "script": f"/api/recap/download/{job_id}/script" if script_path else None,
         }
 
+        # Update Job in database
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    update(Job).where(Job.id == job_id).values(
+                        status=JobStatus.SUCCESS.value,
+                        result_path=video_path,
+                        finished_at=func.now(),
+                    )
+                )
+                await session.commit()
+        except Exception as db_succ_err:
+            logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
+
         # Send to Telegram
         if video_path and Path(video_path).is_file():
             await _send_recap_telegram_delivery(
@@ -667,12 +692,79 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
         try:
             from app.db.session import AsyncSessionLocal
             async with AsyncSessionLocal() as session:
+                await session.execute(
+                    update(Job).where(Job.id == job_id).values(
+                        status=JobStatus.FAILED.value,
+                        error_message=str(e),
+                        finished_at=func.now(),
+                    )
+                )
                 u = await session.get(User, user_id)
                 if u and not settings.is_admin(u.id):
                     u.recap_credits = (getattr(u, "recap_credits", 0) or 0) + 1
-                    await session.commit()
+                await session.commit()
         except Exception as ref_err:
             logger.warning(f"Credit refund failed: {ref_err}")
+
+
+async def cleanup_expired_jobs_24h() -> int:
+    """
+    Purge jobs and generated media files older than 24 hours to enforce privacy and free disk space.
+    Removes DB records and physical files (recap output dirs, temporary voice clones).
+    """
+    deleted_count = 0
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    try:
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            stmt = select(Job).where(Job.created_at < cutoff)
+            res = await session.execute(stmt)
+            expired_jobs = res.scalars().all()
+
+            for j in expired_jobs:
+                try:
+                    # 1. Clean recap output directory
+                    if j.job_type == JobType.RECAP.value or j.id.startswith("rc_"):
+                        job_dir = settings.storage_root / "recap_output" / j.id
+                        if job_dir.is_dir():
+                            shutil.rmtree(job_dir, ignore_errors=True)
+
+                    # 2. Clean voice clone generated files
+                    if j.result_path and Path(j.result_path).is_file():
+                        try:
+                            Path(j.result_path).unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                    if j.source_audio_path and Path(j.source_audio_path).is_file():
+                        try:
+                            Path(j.source_audio_path).unlink(missing_ok=True)
+                        except Exception:
+                            pass
+
+                    # 3. Clean from memory registry
+                    RECAP_JOBS_REGISTRY.pop(j.id, None)
+
+                    # 4. Delete DB record
+                    await session.delete(j)
+                    deleted_count += 1
+                except Exception as del_err:
+                    logger.warning(f"Error cleaning job {j.id}: {del_err}")
+
+            await session.commit()
+
+            # Clean memory registry keys older than 24h
+            now_ts = time.time()
+            expired_keys = [k for k, v in RECAP_JOBS_REGISTRY.items() if now_ts - v.get("created_at", 0) > 86400]
+            for k in expired_keys:
+                RECAP_JOBS_REGISTRY.pop(k, None)
+
+            if deleted_count > 0:
+                logger.info(f"Auto-cleaned {deleted_count} expired (>24h) jobs and media files.")
+    except Exception as e:
+        logger.error(f"Error during 24h cleanup: {e}")
+
+    return deleted_count
 
 
 @api_router.post("/recap/generate")
@@ -713,8 +805,36 @@ async def create_recap_job(
         "error_message": None,
     }
 
+    # Record Recap Job in database table for 24h history and tracking
+    try:
+        db_job = Job(
+            id=job_id,
+            user_id=user.id,
+            chat_id=user.id,
+            status=JobStatus.QUEUED.value,
+            job_type=JobType.RECAP.value,
+            engine="recap",
+            preset_voice=req.voice_slug,
+            input_text=req.url,
+            seconds_estimated=120,
+        )
+        db.add(db_job)
+        await db.commit()
+    except Exception as err_db:
+        logger.warning(f"Could not persist recap Job record in DB: {err_db}")
+
     # Start background task
     asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id))
+
+    return {
+        "success": True,
+        "recap_id": job_id,
+        "status": "QUEUED",
+        "story_style": req.story_style,
+        "ratio": req.ratio,
+        "remaining_credits": getattr(user, "recap_credits", 0),
+        "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
+    }
 
     return {
         "success": True,
@@ -755,11 +875,27 @@ async def download_recap_file(
 ):
     """Download generated recap MP4 video, MP3 audio, SRT subtitles, or TXT script."""
     entry = RECAP_JOBS_REGISTRY.get(job_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Recap job not found")
+    file_path = None
+    if entry:
+        path_key = f"{file_type}_path"
+        file_path = entry.get(path_key)
 
-    path_key = f"{file_type}_path"
-    file_path = entry.get(path_key)
+    # Fallback to checking storage directory directly if in-memory entry evicted
+    if not file_path or not Path(file_path).is_file():
+        job_dir = settings.storage_root / "recap_output" / job_id
+        if file_type == "video":
+            cands = list(job_dir.glob("*.mp4"))
+            if cands: file_path = str(cands[0])
+        elif file_type == "audio":
+            cands = list(job_dir.glob("*.mp3")) + list(job_dir.glob("*.wav"))
+            if cands: file_path = str(cands[0])
+        elif file_type == "srt":
+            cands = list(job_dir.glob("*.srt"))
+            if cands: file_path = str(cands[0])
+        elif file_type == "script":
+            cands = list(job_dir.glob("*script*.txt")) + list(job_dir.glob("*.txt"))
+            if cands: file_path = str(cands[0])
+
     if not file_path or not Path(file_path).is_file():
         raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} file not ready or not found")
 
@@ -771,6 +907,165 @@ async def download_recap_file(
     }
     media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
     return FileResponse(path=str(file_path), media_type=media_type, filename=filename)
+
+
+# ── 5.1. 24-Hour Job History & Lifecycle Management ─────────────────────────
+@api_router.get("/history")
+async def get_user_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Get user's 24-hour job generation history (both Voice Clone and Recap).
+    Jobs older than 24 hours are automatically purged.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    stmt = (
+        select(Job)
+        .where(Job.user_id == user.id, Job.created_at >= cutoff)
+        .order_by(Job.created_at.desc())
+        .limit(60)
+    )
+    res = await db.execute(stmt)
+    jobs = res.scalars().all()
+
+    out = []
+    for j in jobs:
+        created_ts = j.created_at.timestamp() if j.created_at else time.time()
+        mins_ago = int((time.time() - created_ts) // 60)
+        time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
+
+        deliverables = {}
+        download_url = None
+        is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_"))
+
+        if is_recap:
+            recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
+            if recap_entry and recap_entry.get("download_urls"):
+                deliverables = recap_entry["download_urls"]
+                download_url = deliverables.get("video")
+            else:
+                download_url = f"/api/recap/download/{j.id}/video"
+                deliverables = {
+                    "video": f"/api/recap/download/{j.id}/video",
+                    "audio": f"/api/recap/download/{j.id}/audio",
+                    "srt": f"/api/recap/download/{j.id}/srt",
+                    "script": f"/api/recap/download/{j.id}/script",
+                }
+        else:
+            download_url = f"/api/audio/stream/{j.id}" if j.status == JobStatus.SUCCESS.value else None
+
+        out.append({
+            "id": j.id,
+            "job_type": "RECAP" if is_recap else "VOICE_CLONE",
+            "engine": j.engine,
+            "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
+            "status": j.status,
+            "input_snippet": (j.input_text[:70] + "...") if j.input_text and len(j.input_text) > 70 else (j.input_text or ""),
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "time_ago": time_ago,
+            "download_url": download_url,
+            "deliverables": deliverables,
+            "error_message": j.error_message,
+        })
+
+    return {
+        "success": True,
+        "count": len(out),
+        "history": out,
+        "ttl_hours": 24,
+    }
+
+
+@api_router.get("/admin/history")
+async def get_admin_global_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Admin Only: View all users' generated jobs (and admin's own) within the last 24 hours.
+    """
+    if not settings.is_admin(user.id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    stmt = (
+        select(Job, User.username, User.first_name)
+        .outerjoin(User, Job.user_id == User.id)
+        .where(Job.created_at >= cutoff)
+        .order_by(Job.created_at.desc())
+        .limit(100)
+    )
+    res = await db.execute(stmt)
+    rows = res.all()
+
+    total_recap = 0
+    total_voice = 0
+    out = []
+
+    for job, username, first_name in rows:
+        is_recap = (job.job_type == JobType.RECAP.value or job.id.startswith("rc_"))
+        if is_recap:
+            total_recap += 1
+        else:
+            total_voice += 1
+
+        created_ts = job.created_at.timestamp() if job.created_at else time.time()
+        mins_ago = int((time.time() - created_ts) // 60)
+        time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
+
+        deliverables = {}
+        download_url = None
+        if is_recap:
+            download_url = f"/api/recap/download/{job.id}/video"
+            deliverables = {
+                "video": f"/api/recap/download/{job.id}/video",
+                "audio": f"/api/recap/download/{job.id}/audio",
+                "srt": f"/api/recap/download/{job.id}/srt",
+                "script": f"/api/recap/download/{job.id}/script",
+            }
+        else:
+            download_url = f"/api/audio/stream/{job.id}" if job.status == JobStatus.SUCCESS.value else None
+
+        out.append({
+            "id": job.id,
+            "user_id": job.user_id,
+            "username": username or "Unknown",
+            "first_name": first_name or "",
+            "job_type": "RECAP" if is_recap else "VOICE_CLONE",
+            "engine": job.engine,
+            "preset_voice": job.preset_voice or ("Thiha" if is_recap else "Standard"),
+            "status": job.status,
+            "input_snippet": (job.input_text[:70] + "...") if job.input_text and len(job.input_text) > 70 else (job.input_text or ""),
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "time_ago": time_ago,
+            "download_url": download_url,
+            "deliverables": deliverables,
+            "error_message": job.error_message,
+        })
+
+    return {
+        "success": True,
+        "total_24h": len(out),
+        "total_voice": total_voice,
+        "total_recap": total_recap,
+        "history": out,
+    }
+
+
+@api_router.post("/admin/cleanup-24h")
+async def trigger_admin_cleanup(
+    user: User = Depends(get_current_user),
+):
+    """Admin Only: Manually purge all expired jobs and disk files older than 24 hours."""
+    if not settings.is_admin(user.id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    count = await cleanup_expired_jobs_24h()
+    return {
+        "success": True,
+        "purged_count": count,
+        "message": f"၂၄ နာရီကျော်လွန်သော ဖိုင်နှင့် မှတ်တမ်း {count} ခုကို အောင်မြင်စွာ ရှင်းလင်းပြီးပါပြီ။",
+    }
 
 
 # ── 6. VIP Pricing Plans & Payments ────────────────────────────────────────

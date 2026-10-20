@@ -64,6 +64,7 @@ class JobStatus(str, Enum):
 
 class JobType(str, Enum):
     VOICE_CLONE = "VOICE_CLONE"
+    RECAP = "RECAP"
 
 
 class BroadcastCampaignStatus(str, Enum):

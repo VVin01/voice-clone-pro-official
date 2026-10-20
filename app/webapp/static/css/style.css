@@ -1886,3 +1886,153 @@ textarea#voice-text-input:focus {
     background: #000;
     margin-bottom: 12px;
 }
+
+/* ── Interactive Draggable Controls on Canvas ─────────────────────────── */
+.draggable-box {
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+.draggable-box:active,
+.draggable-box.is-dragging {
+    cursor: grabbing;
+    transition: none !important;
+    border-color: #38bdf8 !important;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.6) !important;
+}
+
+.drag-grip-icon {
+    display: inline-block;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 14px;
+    margin-right: 5px;
+    letter-spacing: -2px;
+    vertical-align: middle;
+}
+
+.sub-grip {
+    color: #fbbf24;
+}
+
+/* ── 24-Hour History UI ─────────────────────────────────────────────────── */
+.history-expiry-note {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    margin-bottom: 8px;
+}
+
+.history-list-container,
+.admin-history-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.history-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: all 0.2s;
+}
+
+.history-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.history-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.history-item-badge {
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+
+.history-item-badge.badge-recap {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.history-item-badge.badge-voice {
+    background: rgba(6, 182, 212, 0.15);
+    color: #22d3ee;
+    border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.history-item-badge.status-success {
+    color: #34d399;
+}
+
+.history-item-badge.status-running {
+    color: #38bdf8;
+}
+
+.history-item-badge.status-failed {
+    color: #f87171;
+}
+
+.history-item-body {
+    font-size: 12.5px;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.history-item-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.history-btn-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.history-dl-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+    text-decoration: none;
+    border: 1px solid var(--card-border);
+}
+
+.history-dl-link:hover {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+}
+
+.admin-history-stats-row {
+    display: flex;
+    gap: 8px;
+}
+
+.admin-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}

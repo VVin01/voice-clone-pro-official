@@ -201,6 +201,18 @@
                         <a id="btn-download-audio" href="#" download="voice_clone.wav" class="btn secondary-btn" data-i18n="btn_download_wav">📥 Download WAV</a>
                     </div>
                 </div>
+
+                <!-- 24-Hour User Voice History -->
+                <div class="card glass mt-4" id="voice-history-card">
+                    <div class="card-header-row">
+                        <div class="card-label" data-i18n="history_voice_title">🕒 ၂၄ နာရီအတွင်း Voice ဖန်တီးမှုများ</div>
+                        <button class="mini-chip" onclick="loadUserHistory()">🔄 Refresh</button>
+                    </div>
+                    <p class="history-expiry-note" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအတွင်းသာ သိမ်းဆည်းထားပြီးနောက် အလိုအလျောက် ပယ်ဖျက်ပါမည်</p>
+                    <div id="voice-user-history-list" class="history-list-container mt-2">
+                        <p class="text-muted" data-i18n="history_empty">လတ်တလော ၂၄ နာရီအတွင်း ဖန်တီးထားသော ဖိုင် မရှိသေးပါ</p>
+                    </div>
+                </div>
             </section>
 
             <!-- ════ TAB 2: AI RECAP STUDIO ════ -->
@@ -335,7 +347,7 @@
                 <div class="card glass visual-editor-card">
                     <div class="card-header-row">
                         <div class="card-label" data-i18n="preview_label">🖼️ Real-time Preview မျက်နှာပြင်</div>
-                        <span class="hint-tag" data-i18n="preview_hint">Slider များကို ရွှေ့၍ နေရာညှိပါ</span>
+                        <span class="hint-tag" data-i18n="preview_hint">↕️ ဖိဆွဲ၍ (Drag) နေရာညှိနိုင်ပါသည်</span>
                     </div>
 
                     <!-- Dynamic Aspect Ratio Video Canvas -->
@@ -348,10 +360,12 @@
                                         <span data-i18n="logo_label">⭐ LOGO</span>
                                     </div>
                                 </div>
-                                <div class="preview-blur-box" id="preview-blur-box" style="bottom: 12%; height: 14%;">
+                                <div class="preview-blur-box draggable-box" id="preview-blur-box" style="bottom: 12%; height: 14%;" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ">
+                                    <span class="drag-grip-icon">⠿</span>
                                     <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
                                 </div>
-                                <div class="preview-sub-box yellow" id="preview-sub-box" style="bottom: 15%;">
+                                <div class="preview-sub-box yellow draggable-box" id="preview-sub-box" style="bottom: 15%;" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ">
+                                    <span class="drag-grip-icon sub-grip">⠿</span>
                                     <span class="preview-sub-text" id="preview-sub-text-el" data-i18n="sub_sample_text">"အခုတော့ ကျွန်တော်တို့ရဲ့ အစီအစဉ် စတင်ပါပြီ..."</span>
                                 </div>
                             </div>
@@ -504,6 +518,18 @@
                                 📜 Script (TXT)
                             </a>
                         </div>
+                    </div>
+                </div>
+
+                <!-- 24-Hour User Recap History -->
+                <div class="card glass mt-4" id="recap-history-card">
+                    <div class="card-header-row">
+                        <div class="card-label" data-i18n="history_recap_title">🕒 ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ</div>
+                        <button class="mini-chip" onclick="loadUserHistory()">🔄 Refresh</button>
+                    </div>
+                    <p class="history-expiry-note" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအတွင်းသာ သိမ်းဆည်းထားပြီးနောက် အလိုအလျောက် ပယ်ဖျက်ပါမည်</p>
+                    <div id="recap-user-history-list" class="history-list-container mt-2">
+                        <p class="text-muted" data-i18n="history_empty">လတ်တလော ၂၄ နာရီအတွင်း ဖန်တီးထားသော ဖိုင် မရှိသေးပါ</p>
                     </div>
                 </div>
             </section>
@@ -749,6 +775,26 @@
                         <span class="btn-icon">🚀</span>
                         <span data-i18n="btn_send_broadcast">Broadcast ပို့မည်</span>
                     </button>
+                </div>
+
+                <!-- 24-Hour All Users Job Production History & Purge Control -->
+                <div class="card glass mt-3" id="admin-history-card">
+                    <div class="card-header-row">
+                        <div class="card-label" data-i18n="admin_history_header">📊 အသုံးပြုသူအားလုံး၏ ၂၄ နာရီ ထုတ်ယူမှု မှတ်တမ်း</div>
+                        <div class="admin-header-actions">
+                            <button class="btn mini-btn danger-btn" onclick="adminTriggerPurge24h()" data-i18n="admin_history_purge_btn">🧹 ၂၄ နာရီကျော်ဖိုင်များ ရှင်းမည်</button>
+                            <button class="mini-chip" onclick="loadAdminHistory()">🔄 Refresh</button>
+                        </div>
+                    </div>
+                    <p class="history-expiry-note" data-i18n="admin_history_note">⏱️ User များနှင့် Admin တို့၏ ၂၄ နာရီအတွင်း ထုတ်ယူထားသော အသံနှင့် ဗီဒီယို ဖိုင်များအားလုံး (၂၄ နာရီကျော်ပါက အလိုအလျောက် ပယ်ဖျက်သည်)</p>
+                    <div class="admin-history-stats-row mt-2">
+                        <span class="mini-tag">Total 24h: <strong id="adm-hist-total">0</strong></span>
+                        <span class="mini-tag">Recap: <strong id="adm-hist-recap" class="text-gold">0</strong></span>
+                        <span class="mini-tag">Voice: <strong id="adm-hist-voice" class="text-cyan">0</strong></span>
+                    </div>
+                    <div id="admin-global-history-list" class="admin-history-container mt-2">
+                        <p class="text-muted">Loading 24h history...</p>
+                    </div>
                 </div>
             </section>
 

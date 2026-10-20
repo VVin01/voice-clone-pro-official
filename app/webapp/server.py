@@ -25,7 +25,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("Error during webapp DB init: %s", e)
+
+    # Initial 24h cleanup on startup
+    import asyncio
+    try:
+        from app.webapp.api import cleanup_expired_jobs_24h
+        await cleanup_expired_jobs_24h()
+    except Exception as cl_err:
+        import logging
+        logging.getLogger(__name__).warning("Initial 24h cleanup error: %s", cl_err)
+
+    # Periodic background task every 30 minutes
+    async def _periodic_cleanup():
+        while True:
+            await asyncio.sleep(1800)  # 30 mins
+            try:
+                from app.webapp.api import cleanup_expired_jobs_24h
+                await cleanup_expired_jobs_24h()
+            except Exception:
+                pass
+
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
     yield
+    cleanup_task.cancel()
 
 
 webapp_app = FastAPI(

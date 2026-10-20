@@ -234,6 +234,15 @@ const translations = {
         admin_broadcast_ph: "အသုံးပြုသူ အားလုံးထံ ပေးပို့မည့် စာသား ရိုက်ထည့်ပါ...",
         btn_send_broadcast: "🚀 Broadcast ပို့မည်",
 
+        // 24-Hour History UI
+        history_recap_title: "🕒 ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ",
+        history_voice_title: "🕒 ၂၄ နာရီအတွင်း Voice ဖန်တီးမှုများ",
+        history_expiry_note: "⏱️ ဖိုင်များကို ၂၄ နာရီအတွင်းသာ သိမ်းဆည်းထားပြီးနောက် အလိုအလျောက် ပယ်ဖျက်ပါမည်",
+        history_empty: "လတ်တလော ၂၄ နာရီအတွင်း ဖန်တီးထားသော ဖိုင် မရှိသေးပါ",
+        admin_history_header: "📊 အသုံးပြုသူအားလုံး၏ ၂၄ နာရီ ထုတ်ယူမှု မှတ်တမ်း",
+        admin_history_note: "⏱️ User များနှင့် Admin တို့၏ ၂၄ နာရီအတွင်း ထုတ်ယူထားသော အသံနှင့် ဗီဒီယို ဖိုင်များအားလုံး (၂၄ နာရီကျော်ပါက အလိုအလျောက် ပယ်ဖျက်သည်)",
+        admin_history_purge_btn: "🧹 ၂၄ နာရီကျော်ဖိုင်များ ရှင်းမည်",
+
         // Notifications & Toasts
         toast_copied: "ကူးယူပြီးပါပြီခင်ဗျာ!",
         toast_empty_text: "ကျေးဇူးပြု၍ စာသား ရိုက်ထည့်ပေးပါခင်ဗျာ။",
@@ -470,6 +479,15 @@ const translations = {
         admin_broadcast_header: "📢 Broadcast Message to All Users",
         admin_broadcast_ph: "Type broadcast message to deliver to all users...",
         btn_send_broadcast: "🚀 Send Broadcast",
+
+        // 24-Hour History UI
+        history_recap_title: "🕒 24-Hour Recap Productions",
+        history_voice_title: "🕒 24-Hour Voice Productions",
+        history_expiry_note: "⏱️ Media files are retained for 24 hours, then auto-purged",
+        history_empty: "No creations in the last 24 hours",
+        admin_history_header: "📊 All Users 24-Hour Job Production Monitor",
+        admin_history_note: "⏱️ All voice & recap jobs produced within the past 24 hours (auto-purged after 24h)",
+        admin_history_purge_btn: "🧹 Purge Expired Files (>24h)",
 
         // Notifications & Toasts
         toast_copied: "Copied to clipboard!",

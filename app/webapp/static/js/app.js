@@ -529,6 +529,7 @@ function startJobPolling(jobId) {
                     btnDl.href = data.output_audio_url;
                 }
                 loadUserProfile();
+                loadUserHistory();
 
             } else if (data.status === "FAILED") {
                 clearInterval(state.pollTimer);
@@ -590,6 +591,91 @@ function setupRecapVisualEditor() {
             previewSub.style.bottom = `${bottomPct}%`;
         });
     }
+
+    // ── Interactive Drag & Drop / Manual Move on Canvas ──────────────────
+    function enableVerticalDrag(boxElement, onUpdateY) {
+        if (!boxElement || !canvas) return;
+
+        let isDragging = false;
+
+        function startDrag(clientY) {
+            isDragging = true;
+            boxElement.classList.add("is-dragging");
+            haptic("light");
+        }
+
+        function moveDrag(clientY) {
+            if (!isDragging) return;
+            const canvasRect = canvas.getBoundingClientRect();
+            if (canvasRect.height <= 0) return;
+
+            // Calculate percentage from canvas top (0% top to 100% bottom)
+            const relativeY = clientY - canvasRect.top;
+            const rawPercent = (relativeY / canvasRect.height) * 100;
+            const clampedY = Math.max(50, Math.min(95, Math.round(rawPercent)));
+            onUpdateY(clampedY);
+        }
+
+        function endDrag() {
+            if (!isDragging) return;
+            isDragging = false;
+            boxElement.classList.remove("is-dragging");
+        }
+
+        // Desktop Mouse Drag
+        boxElement.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startDrag(e.clientY);
+
+            const onMouseMove = (ev) => {
+                ev.preventDefault();
+                moveDrag(ev.clientY);
+            };
+            const onMouseUp = () => {
+                endDrag();
+                window.removeEventListener("mousemove", onMouseMove);
+                window.removeEventListener("mouseup", onMouseUp);
+            };
+            window.addEventListener("mousemove", onMouseMove);
+            window.addEventListener("mouseup", onMouseUp);
+        });
+
+        // Mobile Touch Drag
+        boxElement.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length > 0) {
+                e.stopPropagation();
+                startDrag(e.touches[0].clientY);
+            }
+        }, { passive: true });
+
+        boxElement.addEventListener("touchmove", (e) => {
+            if (isDragging && e.touches && e.touches.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                moveDrag(e.touches[0].clientY);
+            }
+        }, { passive: false });
+
+        boxElement.addEventListener("touchend", endDrag);
+        boxElement.addEventListener("touchcancel", endDrag);
+    }
+
+    // Attach dragging to Blur Box
+    enableVerticalDrag(previewBlur, (y) => {
+        if (sliderBlurY) sliderBlurY.value = y;
+        if (valBlurY) valBlurY.innerText = `${y}%`;
+        const bottomPct = Math.max(2, 100 - y - (sliderBlurH ? parseInt(sliderBlurH.value)/2 : 7));
+        if (previewBlur) previewBlur.style.bottom = `${bottomPct}%`;
+    });
+
+    // Attach dragging to Subtitle Box
+    enableVerticalDrag(previewSub, (y) => {
+        if (sliderSubY) sliderSubY.value = y;
+        if (valSubY) valSubY.innerText = `${y}%`;
+        const bottomPct = Math.max(4, 100 - y);
+        if (previewSub) previewSub.style.bottom = `${bottomPct}%`;
+    });
 
     // 2. Aspect Ratio Selector (9:16, 16:9, 1:1, Original)
     const ratioBtns = document.querySelectorAll("#recap-ratio-picker .ratio-btn");
@@ -962,6 +1048,7 @@ function startRecapJobPolling(jobId) {
 
                 haptic("success");
                 loadUserProfile();
+                loadUserHistory();
             } else if (data.status === "FAILED") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
@@ -1156,6 +1243,8 @@ async function loadAdminData() {
                 });
             }
         }
+        // Load 24h global history
+        loadAdminHistory();
     } catch (e) {
         console.warn("Error loading admin data:", e);
     }
@@ -1299,6 +1388,153 @@ async function adminSendBroadcast() {
     }
 }
 
+// ── 24-Hour Job History & Lifecycle Controller ─────────────────────────────
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+async function loadUserHistory() {
+    try {
+        const res = await fetch("/api/history", {
+            headers: getAuthHeaders(),
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const history = data.history || [];
+
+        const voiceContainer = document.getElementById("voice-user-history-list");
+        const recapContainer = document.getElementById("recap-user-history-list");
+
+        const voiceJobs = history.filter(h => h.job_type === "VOICE_CLONE");
+        const recapJobs = history.filter(h => h.job_type === "RECAP");
+
+        // Render Voice History (24h)
+        if (voiceContainer) {
+            if (voiceJobs.length === 0) {
+                voiceContainer.innerHTML = `<p class="text-muted" data-i18n="history_empty">${t("history_empty")}</p>`;
+            } else {
+                voiceContainer.innerHTML = voiceJobs.map(j => `
+                    <div class="history-item">
+                        <div class="history-item-header">
+                            <span class="history-item-badge badge-voice">🎙️ ${escapeHtml(j.engine.toUpperCase())} • ${escapeHtml(j.preset_voice)}</span>
+                            <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
+                        </div>
+                        <div class="history-item-body">"${escapeHtml(j.input_snippet || "Voice Synthesis")}"</div>
+                        <div class="history-item-footer">
+                            <span>⏱️ ${j.time_ago}</span>
+                            <div class="history-btn-row">
+                                ${j.download_url ? `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Play / Download</a>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `).join("");
+            }
+        }
+
+        // Render Recap History (24h)
+        if (recapContainer) {
+            if (recapJobs.length === 0) {
+                recapContainer.innerHTML = `<p class="text-muted" data-i18n="history_empty">${t("history_empty")}</p>`;
+            } else {
+                recapContainer.innerHTML = recapJobs.map(j => `
+                    <div class="history-item">
+                        <div class="history-item-header">
+                            <span class="history-item-badge badge-recap">🎬 RECAP • ${escapeHtml(j.preset_voice)}</span>
+                            <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
+                        </div>
+                        <div class="history-item-body">🔗 ${escapeHtml(j.input_snippet || "Movie Recap")}</div>
+                        <div class="history-item-footer">
+                            <span>⏱️ ${j.time_ago}</span>
+                            <div class="history-btn-row">
+                                ${j.deliverables?.video ? `<a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a>` : ''}
+                                ${j.deliverables?.audio ? `<a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.mp3" class="history-dl-link">🎙️ Audio</a>` : ''}
+                                ${j.deliverables?.srt ? `<a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>` : ''}
+                                ${j.deliverables?.script ? `<a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `).join("");
+            }
+        }
+    } catch (e) {
+        console.warn("Could not load user history:", e);
+    }
+}
+
+async function loadAdminHistory() {
+    try {
+        const res = await fetch("/api/admin/history", {
+            headers: getAuthHeaders(),
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const elTotal = document.getElementById("adm-hist-total");
+        const elRecap = document.getElementById("adm-hist-recap");
+        const elVoice = document.getElementById("adm-hist-voice");
+        const container = document.getElementById("admin-global-history-list");
+
+        if (elTotal) elTotal.innerText = data.total_24h || 0;
+        if (elRecap) elRecap.innerText = data.total_recap || 0;
+        if (elVoice) elVoice.innerText = data.total_voice || 0;
+
+        const history = data.history || [];
+        if (container) {
+            if (history.length === 0) {
+                container.innerHTML = `<p class="text-muted" data-i18n="history_empty">${t("history_empty")}</p>`;
+            } else {
+                container.innerHTML = history.map(j => `
+                    <div class="history-item">
+                        <div class="history-item-header">
+                            <div>
+                                <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">
+                                    ${j.job_type === 'RECAP' ? '🎬 RECAP' : '🎙️ VOICE'}
+                                </span>
+                                <span class="mini-tag" style="margin-left: 4px;">👤 ${escapeHtml(j.username ? '@' + j.username : 'ID: ' + j.user_id)}</span>
+                            </div>
+                            <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
+                        </div>
+                        <div class="history-item-body">
+                            <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
+                        </div>
+                        <div class="history-item-footer">
+                            <span>⏱️ ${j.time_ago} (${j.id.slice(0,10)})</span>
+                            <div class="history-btn-row">
+                                ${j.download_url ? `<a href="${j.download_url}" target="_blank" class="history-dl-link">🎬 Preview / File</a>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `).join("");
+            }
+        }
+    } catch (e) {
+        console.warn("Could not load admin history:", e);
+    }
+}
+
+async function adminTriggerPurge24h() {
+    if (!confirm("၂၄ နာရီကျော်လွန်နေသော အသံနှင့် ဗီဒီယို ဖိုင်များအားလုံးကို ရှင်းလင်းဖျက်သိမ်းမည်မှာ သေချာပါသလား?")) return;
+    haptic("heavy");
+    try {
+        const res = await fetch("/api/admin/cleanup-24h", {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        alert(data.message || `Cleaned ${data.purged_count} files`);
+        loadAdminHistory();
+    } catch (e) {
+        alert("Cleanup error: " + e.message);
+    }
+}
+
 // ── App Startup ────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
@@ -1312,4 +1548,5 @@ document.addEventListener("DOMContentLoaded", () => {
     loadUserProfile();
     loadCuratedVoices();
     loadApplioModels();
+    loadUserHistory();
 });
