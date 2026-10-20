@@ -81,6 +81,7 @@ async def init_db() -> None:
             dialect_name = connection.dialect.name
             if dialect_name == "postgresql":
                 # PostgreSQL safe IF NOT EXISTS column additions
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS recap_credits INTEGER DEFAULT 3"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS engine VARCHAR(20) DEFAULT 'voxcpm'"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preset_voice VARCHAR(50)"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
@@ -88,6 +89,11 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
             elif dialect_name == "sqlite":
                 # SQLite PRAGMA check
+                res_users = connection.execute(text("PRAGMA table_info(users)"))
+                cols_users = [row[1] for row in res_users.fetchall()]
+                if "recap_credits" not in cols_users:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN recap_credits INTEGER DEFAULT 3"))
+
                 res = connection.execute(text("PRAGMA table_info(voice_models)"))
                 cols = [row[1] for row in res.fetchall()]
                 if "sample_audio_path" not in cols:
@@ -147,6 +153,69 @@ async def init_db() -> None:
                 vox_m.allowed_for_free = True
                 vox_m.allowed_for_purchased = True
                 await session.commit()
+
+            # Ensure Default Applio Local GPU Models are registered in DB
+            default_applio_models = [
+                {
+                    "name": "🎭 ကာတွန်းအသံ (Kartoon AI)",
+                    "slug": "kartoon",
+                    "pth_path": "storage/models/system/ကာတွန်းအသံ/kartoon_150e_1950s.pth",
+                    "index_path": "storage/models/system/ကာတွန်းအသံ/kartoon.index",
+                    "gender": "male",
+                    "allowed_free": True,
+                    "allowed_purchased": True,
+                },
+                {
+                    "name": "🎙️ မြန်မာအသံ ၁ (Myanmar Voice 1)",
+                    "slug": "myanmar-voice-1",
+                    "pth_path": "storage/models/system/မြန်မာအသံ/myanmar_voice_1_100e_6600s.pth",
+                    "index_path": "storage/models/system/မြန်မာအသံ/myanmar_voice_1.index",
+                    "gender": "male",
+                    "allowed_free": True,
+                    "allowed_purchased": True,
+                },
+                {
+                    "name": "✨ The Light (သဘာဝစကားပြောသံ)",
+                    "slug": "the-light",
+                    "pth_path": "storage/models/system/The_Light/the_light_150e_450s.pth",
+                    "index_path": "storage/models/system/The_Light/the_light.index",
+                    "gender": "female",
+                    "allowed_free": False,
+                    "allowed_purchased": True,
+                },
+                {
+                    "name": "🎬 အာန့် (Ant Movie Recap)",
+                    "slug": "ant-movie",
+                    "pth_path": "storage/models/system/အာန့်/ant_150e_11700s.pth",
+                    "index_path": "storage/models/system/အာန့်/ant.index",
+                    "gender": "male",
+                    "allowed_free": False,
+                    "allowed_purchased": True,
+                },
+            ]
+
+            for ap_m in default_applio_models:
+                stmt_ap = select(VoiceModel).where(VoiceModel.slug == ap_m["slug"])
+                res_ap = await session.execute(stmt_ap)
+                existing_ap = res_ap.scalar_one_or_none()
+                if existing_ap is None:
+                    session.add(VoiceModel(
+                        name=ap_m["name"],
+                        slug=ap_m["slug"],
+                        type=VoiceModelType.SYSTEM.value,
+                        status=VoiceModelStatus.ACTIVE.value,
+                        allowed_for_free=ap_m["allowed_free"],
+                        allowed_for_purchased=ap_m["allowed_purchased"],
+                        gender=ap_m["gender"],
+                        pth_path=ap_m["pth_path"],
+                        index_path=ap_m["index_path"],
+                        model_dir="system",
+                    ))
+                    await session.commit()
+                elif existing_ap.status != VoiceModelStatus.ACTIVE.value:
+                    existing_ap.status = VoiceModelStatus.ACTIVE.value
+                    await session.commit()
+
         except Exception as e_vox_init:
             import logging
             logging.getLogger(__name__).warning("Could not auto-register VoxCPM model: %s", e_vox_init)

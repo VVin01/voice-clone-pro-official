@@ -3,52 +3,82 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Voice Clone Pro & AI Recap Studio</title>
+    <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/static/css/style.css">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Padauk:wght@400;700&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Padauk:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body class="dark-theme">
     <div id="app" class="app-container">
-        <!-- Top App Bar -->
+        
+        <!-- ════ TOP LUXURY STUDIO APP BAR ════ -->
         <header class="top-nav">
             <div class="brand">
-                <span class="brand-icon">⚡</span>
+                <div class="brand-crest">
+                    <svg class="crest-svg" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <polygon points="20,2 38,11 38,29 20,38 2,29 2,11" fill="url(#crest-grad)" stroke="#f59e0b" stroke-width="1.5"/>
+                        <path d="M12 20v0M16 16v8M20 11v18M24 16v8M28 20v0" stroke="#ffd700" stroke-width="2.2" stroke-linecap="round"/>
+                        <circle cx="20" cy="7" r="1.5" fill="#ffd700"/>
+                        <defs>
+                            <linearGradient id="crest-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#1e180d"/>
+                                <stop offset="50%" stop-color="#2a2012"/>
+                                <stop offset="100%" stop-color="#120c04"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
                 <div class="brand-text">
-                    <h1 data-i18n="brand_title">Studio Pro</h1>
-                    <span class="sub-brand" data-i18n="brand_subtitle">AI Voice & Recap</span>
+                    <div class="brand-title-wrap">
+                        <h1 data-i18n="brand_title">VOICE CLONE PRO</h1>
+                        <span class="pro-tag">PRO</span>
+                    </div>
+                    <span class="sub-brand" data-i18n="brand_subtitle">STUDIO • ULTRA SUITE</span>
                 </div>
             </div>
+
             <div class="top-actions">
                 <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()">🇲🇲 မြန်မာ</button>
                 <div class="user-pill" id="user-pill">
-                    <span class="vip-badge free" id="vip-status-badge">FREE</span>
-                    <span class="balance-text" id="user-balance-text">⏱️ 0s</span>
+                    <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free">FREE</span>
+                    <div class="balance-chips">
+                        <span class="bal-chip" id="user-voice-bal" title="Voice Minutes">🎙️ 0.0m</span>
+                        <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits">🎬 0c</span>
+                    </div>
                 </div>
             </div>
         </header>
 
-        <!-- Main Content Area (Tab Views) -->
+        <!-- ════ MAIN CONTENT VIEWPORT ════ -->
         <main class="content-viewport">
             
             <!-- ════ TAB 1: VOICE CLONE STUDIO ════ -->
             <section id="tab-voice" class="tab-pane active">
                 <div class="pane-header">
-                    <h2 data-i18n="voice_title">🎙️ AI Voice Clone Studio</h2>
-                    <p data-i18n="voice_subtitle">သဘာဝကျသော မြန်မာ AI အသံသွင်းခြင်း နှင့် အသံတုပခြင်း</p>
+                    <div class="pane-title-row">
+                        <h2 data-i18n="voice_title">🎙️ AI Voice Clone Studio</h2>
+                        <span class="badge-studio">LIVE</span>
+                    </div>
+                    <p data-i18n="voice_subtitle">သဘာဝကျသော မြန်မာ AI အသံသွင်းခြင်း နှင့် အဆင့်မြင့် Voice Cloning</p>
+                </div>
+
+                <!-- Estimated Duration Notice -->
+                <div class="queue-notice-banner" id="voice-queue-notice">
+                    <span class="notice-icon">⚡</span>
+                    <span class="notice-text" data-i18n="queue_notice_voxcpm">⚡ ပုံမှန်ခန့်မှန်းကြာချိန်: ၅-၁၅ စက္ကန့် • Live Cloud AI စနစ်</span>
                 </div>
 
                 <!-- Engine Selector Card -->
                 <div class="card glass engine-card">
-                    <div class="card-label" data-i18n="engine_label">အသုံးပြုမည့် AI Engine</div>
+                    <div class="card-label" data-i18n="engine_label">အသုံးပြုမည့် AI Engine ရွေးချယ်ပါ</div>
                     <div class="segmented-control">
                         <button class="seg-btn active" data-engine="voxcpm" id="btn-engine-voxcpm">
                             <span class="seg-title" data-i18n="engine_voxcpm_title">☁️ VoxCPM (Cloud AI)</span>
-                            <span class="seg-desc" data-i18n="engine_voxcpm_desc">Zero-shot သဘာဝအသံ • Cloud</span>
+                            <span class="seg-desc" data-i18n="engine_voxcpm_desc">Zero-shot သဘာဝအသံ • Cloud တွင် တိုက်ရိုက်လုပ်ဆောင်သည်</span>
                         </button>
                         <button class="seg-btn" data-engine="applio" id="btn-engine-applio">
                             <span class="seg-title" data-i18n="engine_applio_title">💻 Applio RVC (Local GPU)</span>
@@ -63,7 +93,7 @@
                         <div class="card-label" data-i18n="persona_mode_title">အသံရွေးချယ်မှု စတိုင်လ်</div>
                         <div class="segmented-control sm">
                             <button class="seg-btn active" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
-                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Curated Voices (၆ မျိုး)</span>
+                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Curated Voices (၁၂ မျိုး)</span>
                             </button>
                             <button class="seg-btn" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
                                 <span class="seg-title" data-i18n="btn_mode_custom">🎙️ Custom Voice Clone</span>
@@ -71,11 +101,14 @@
                         </div>
                     </div>
 
-                    <!-- 6 Gemini Curated Personas Grid -->
+                    <!-- 12 Gemini Curated Personas Grid -->
                     <div class="card glass" id="curated-personas-card">
-                        <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ</div>
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ (၁၂ မျိုး)</div>
+                            <span class="count-badge" id="personas-count">12 Personas</span>
+                        </div>
                         <div class="personas-grid" id="personas-grid">
-                            <!-- Populated dynamically via JS -->
+                            <!-- Populated dynamically via JS with all 12 personas -->
                         </div>
                     </div>
 
@@ -97,14 +130,23 @@
                     </div>
                 </div>
 
-                <!-- Applio Models Card (Hidden when VoxCPM is active) -->
+                <!-- Applio Models Card (Visible when Applio Engine is chosen) -->
                 <div class="card glass model-picker-card hidden" id="applio-models-section">
                     <div class="card-header-row">
-                        <div class="card-label" data-i18n="model_picker_label">ရွေးချယ်ထားသော အသံမော်ဒယ်</div>
-                        <span class="status-pill-badge" id="applio-worker-pill" data-i18n="applio_status_waiting">🟡 Laptop Worker စောင့်ဆိုင်းနေပါသည်</span>
+                        <div class="card-label" data-i18n="model_picker_label">ရွေးချယ်ထားသော Applio အသံမော်ဒယ်</div>
+                        <div class="worker-status-badge" id="applio-worker-pill">
+                            <span class="status-dot online"></span>
+                            <span class="status-txt" data-i18n="applio_status_active">🟢 Laptop Worker အဆင်သင့်ဖြစ်ပါသည်</span>
+                        </div>
                     </div>
-                    <div class="models-scroll" id="models-list">
-                        <!-- Dynamically filled by JS -->
+                    
+                    <div class="models-grid" id="models-list">
+                        <!-- Populated dynamically via loadApplioModels() -->
+                    </div>
+
+                    <div class="queue-notice-banner applio-notice mt-2">
+                        <span class="notice-icon">ℹ️</span>
+                        <span class="notice-text" data-i18n="queue_notice_applio">⚡ Local GPU မော်ဒယ်များ: Laptop Worker ဖွင့်ထားချိန်တွင် ချက်ချင်း ဆောင်ရွက်ပေးပါသည်</span>
                     </div>
                 </div>
 
@@ -135,7 +177,7 @@
                 </div>
 
                 <!-- Action Button -->
-                <button class="btn primary-gradient-btn" id="btn-generate-voice">
+                <button class="btn gold-gradient-btn" id="btn-generate-voice">
                     <span class="btn-icon">🚀</span>
                     <span class="btn-text" data-i18n="btn_generate">အသံ စတင်ထုတ်ယူမည်</span>
                 </button>
@@ -164,8 +206,17 @@
             <!-- ════ TAB 2: AI RECAP STUDIO ════ -->
             <section id="tab-recap" class="tab-pane">
                 <div class="pane-header">
-                    <h2 data-i18n="recap_title">🎬 AI Movie Recap Maker</h2>
+                    <div class="pane-title-row">
+                        <h2 data-i18n="recap_title">🎬 AI Movie Recap Maker</h2>
+                        <span class="badge-studio gold">ULTRA</span>
+                    </div>
                     <p data-i18n="recap_subtitle">English ဗီဒီယိုများကို မြန်မာအသံ၊ စာတန်းထိုး နှင့် Blur ပါဝင်သော Recap ဖန်တီးပါ</p>
+                </div>
+
+                <!-- Recap Duration Notice -->
+                <div class="queue-notice-banner">
+                    <span class="notice-icon">⚡</span>
+                    <span class="notice-text" data-i18n="queue_notice_recap">⚡ Movie Recap ခန့်မှန်းကြာချိန်: ၁-၂ မိနစ် (Full HD 1080p Render)</span>
                 </div>
 
                 <!-- Video Link Card -->
@@ -174,6 +225,28 @@
                     <div class="input-with-btn">
                         <input type="url" id="recap-url-input" data-i18n-ph="recap_url_placeholder" placeholder="https://youtu.be/... သို့မဟုတ် TikTok link...">
                         <button class="btn mini-btn" id="btn-fetch-recap-info" data-i18n="btn_analyze">စစ်ဆေးမည်</button>
+                    </div>
+                </div>
+
+                <!-- Narration Story Style Selector (Restored from Downloader Bot) -->
+                <div class="card glass">
+                    <div class="card-label" data-i18n="recap_style_label">ဇာတ်လမ်းပြော စတိုင်လ် (Story Style):</div>
+                    <div class="style-pills-grid" id="story-style-picker">
+                        <button class="style-select-pill active" data-story="viral">
+                            <span class="pill-main" data-i18n="style_viral">🔥 Viral Hook (စိတ်လှုပ်ရှားဖွယ်)</span>
+                        </button>
+                        <button class="style-select-pill" data-story="dramatic">
+                            <span class="pill-main" data-i18n="style_dramatic">🎭 သည်းထိတ်ရင်ဖို (Drama)</span>
+                        </button>
+                        <button class="style-select-pill" data-story="funny">
+                            <span class="pill-main" data-i18n="style_funny">😂 ဟာသရယ်မောဖွယ်</span>
+                        </button>
+                        <button class="style-select-pill" data-story="pov">
+                            <span class="pill-main" data-i18n="style_pov">👁️ ဇာတ်ကောင် POV</span>
+                        </button>
+                        <button class="style-select-pill" data-story="standard">
+                            <span class="pill-main" data-i18n="style_standard">📖 ပုံမှန်ဇာတ်ကြောင်း</span>
+                        </button>
                     </div>
                 </div>
 
@@ -187,15 +260,17 @@
                     <!-- Phone Frame Video Mockup -->
                     <div class="mockup-screen">
                         <div class="video-bg-placeholder">
-                            <span class="video-placeholder-icon">🎬 Video Screen</span>
+                            <div class="video-top-overlay">
+                                <span class="video-placeholder-icon">🎬 1080p Canvas Preview</span>
+                                <div class="preview-logo-watermark" id="preview-logo">
+                                    <span data-i18n="logo_label">⭐ LOGO</span>
+                                </div>
+                            </div>
                             <div class="preview-blur-box" id="preview-blur-box" style="bottom: 12%; height: 14%;">
                                 <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
                             </div>
-                            <div class="preview-sub-box neon" id="preview-sub-box" style="bottom: 15%;">
-                                <span class="preview-sub-text" data-i18n="sub_sample_text">"အခုတော့ ကျွန်တော်တို့ရဲ့ အစီအစဉ် စတင်ပါပြီ..."</span>
-                            </div>
-                            <div class="preview-logo-watermark" id="preview-logo">
-                                <span data-i18n="logo_label">⭐ LOGO</span>
+                            <div class="preview-sub-box yellow" id="preview-sub-box" style="bottom: 15%;">
+                                <span class="preview-sub-text" id="preview-sub-text-el" data-i18n="sub_sample_text">"အခုတော့ ကျွန်တော်တို့ရဲ့ အစီအစဉ် စတင်ပါပြီ..."</span>
                             </div>
                         </div>
                     </div>
@@ -227,14 +302,34 @@
                         </div>
                     </div>
 
-                    <!-- Subtitle Color Style Chips -->
+                    <!-- Subtitle Presets (Yellow, White, Boxed, Neon) -->
                     <div class="style-selector-row">
-                        <span class="style-lbl" data-i18n="sub_style_label">စာတန်းထိုး စတိုင်လ်:</span>
+                        <span class="style-lbl" data-i18n="sub_style_label">စာတန်းထိုး စတိုင်လ် (Subtitle Style):</span>
                         <div class="chip-options" id="sub-style-picker">
-                            <button class="style-chip active" data-style="neon">⚡ Neon Yellow</button>
-                            <button class="style-chip" data-style="gold">👑 Gold Pro</button>
-                            <button class="style-chip" data-style="boxed">⬛ Boxed Black</button>
-                            <button class="style-chip" data-style="cyan">💎 Cyan Modern</button>
+                            <button class="style-chip active" data-style="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</button>
+                            <button class="style-chip" data-style="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</button>
+                            <button class="style-chip" data-style="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</button>
+                            <button class="style-chip" data-style="neon" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</button>
+                        </div>
+                    </div>
+
+                    <!-- Font Size & Lines Selectors -->
+                    <div class="sub-specs-row mt-2">
+                        <div class="spec-col">
+                            <span class="spec-lbl" data-i18n="sub_font_size_label">စာလုံးအရွယ်အစား:</span>
+                            <div class="pill-group sm" id="font-size-picker">
+                                <button class="pill-btn" data-size="13">13pt</button>
+                                <button class="pill-btn active" data-size="16">16pt</button>
+                                <button class="pill-btn" data-size="19">19pt</button>
+                                <button class="pill-btn" data-size="22">22pt</button>
+                            </div>
+                        </div>
+                        <div class="spec-col">
+                            <span class="spec-lbl" data-i18n="sub_lines_label">စာကြောင်းရေ:</span>
+                            <div class="pill-group sm" id="sub-lines-picker">
+                                <button class="pill-btn active" data-lines="1">1 Line</button>
+                                <button class="pill-btn" data-lines="2">2 Lines</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -243,19 +338,25 @@
                 <div class="card glass">
                     <div class="card-label" data-i18n="recap_voice_label">Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)</div>
                     <select class="studio-select" id="recap-voice-select">
-                        <option value="komin">👨‍💼 Ko Min (မင်းမင်း - ဇာတ်လမ်းပြောသူ)</option>
-                        <option value="kothura">🎙️ Ko Thura (ကိုသူရ - သတင်း/Docu)</option>
-                        <option value="koaung">⚡ Ko Aung (အောင်အောင် - Viral Shorts)</option>
-                        <option value="mahnin">👩‍🦰 Ma Hnin (နှင်းနှင်း - Audiobook)</option>
-                        <option value="manadi">🎭 Ma Nadi (နဒီ - Thriller Drama)</option>
-                        <option value="mamay">🌟 Ma May (မေမေ - Friendly Guide)</option>
+                        <option value="komin">👨‍💼 Ko Min (ကိုမင်း — Master Storyteller)</option>
+                        <option value="kothura">🎙️ Ko Thura (ကိုသူရ — News & Docu)</option>
+                        <option value="kozayar">🎬 Ko Zayar (ကိုဇေယျာ — Cinema Movie Trailer)</option>
+                        <option value="koaung">⚡ Ko Aung (အောင်အောင် — Viral Shorts)</option>
+                        <option value="komyat">👁️ Ko Myat (ကိုမြတ် — Spooky Mystery / Horror)</option>
+                        <option value="kophone">💡 Ko Phone (ကိုဖုန်း — Tech & Explainer)</option>
+                        <option value="mahnin">👩‍🦰 Ma Hnin (မနှင်း — Classic Audiobook)</option>
+                        <option value="manadi">🎭 Ma Nadi (မနဒီ — Thriller Drama)</option>
+                        <option value="mamay">🌟 Ma May (မမေ — Friendly Guide)</option>
+                        <option value="mayoon">🧘 Ma Yoon (မယွန်း — Calm ASMR & Meditation)</option>
+                        <option value="machaw">🎮 Ma Chaw (မချော — Anime & Gaming)</option>
+                        <option value="mathiri">💎 Ma Thiri (မသီရိ — Luxury Lifestyle)</option>
                     </select>
                 </div>
 
                 <!-- 1-Click Action -->
-                <button class="btn primary-gradient-btn" id="btn-start-recap">
+                <button class="btn gold-gradient-btn" id="btn-start-recap">
                     <span class="btn-icon">⚡</span>
-                    <span class="btn-text" data-i18n="btn_start_recap">1-Click Pro Recap ဖန်တီးမည်</span>
+                    <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Pro Recap ဖန်တီးမည်</span>
                 </button>
             </section>
 
@@ -295,14 +396,17 @@
                 </div>
             </section>
 
-            <!-- ════ TAB 4: VIP & WALLET ════ -->
+            <!-- ════ TAB 4: VIP PLANS & WALLET ════ -->
             <section id="tab-vip" class="tab-pane">
                 <div class="pane-header">
-                    <h2 data-i18n="vip_title">👑 VIP အသင်းဝင် & Balance</h2>
-                    <p data-i18n="vip_subtitle">အကန့်အသတ်မဲ့ အသံသွင်းခွင့်နှင့် Pro Recap သီးသန့် အခွင့်အရေးများ</p>
+                    <div class="pane-title-row">
+                        <h2 data-i18n="vip_title">💎 Creator VIP Plans & Wallet</h2>
+                        <span class="badge-studio gold">PREMIUM</span>
+                    </div>
+                    <p data-i18n="vip_subtitle">အရည်အသွေးမြင့်မားသော စတူဒီယို အစီအစဉ်များကို စိတ်ကြိုက်ရွေးချယ်ပါ</p>
                 </div>
 
-                <!-- User Stats Card -->
+                <!-- User Stats Card: Separate Minutes and Recap Credits -->
                 <div class="card glass stats-card">
                     <div class="stats-row">
                         <div class="stat-col">
@@ -310,50 +414,94 @@
                             <span class="stat-val text-gold" id="profile-category-tag">FREE MEMBER</span>
                         </div>
                         <div class="stat-col">
-                            <span class="stat-label" data-i18n="stat_balance_min">လက်ကျန် မိနစ် (Minutes)</span>
+                            <span class="stat-label" data-i18n="stat_balance_min">အသံသွင်းခွင့် လက်ကျန် (Minutes)</span>
                             <span class="stat-val" id="profile-balance-min">0.0 mins</span>
+                        </div>
+                        <div class="stat-col">
+                            <span class="stat-label" data-i18n="stat_recap_credits">Recap Video လက်ကျန် (Credits)</span>
+                            <span class="stat-val text-cyan" id="profile-balance-credits">0 credits</span>
                         </div>
                     </div>
                 </div>
 
-                <!-- Pricing Packages -->
+                <!-- 3 Specialized Creator Pricing Packages -->
                 <div class="pricing-grid">
-                    <div class="card glass pricing-card featured">
-                        <div class="featured-ribbon" data-i18n="plan_1m_badge">လူကြိုက်အများဆုံး 🔥</div>
-                        <div class="plan-name" data-i18n="plan_1m_name">1 Month Unlimited VIP</div>
-                        <div class="plan-price"><span data-i18n="plan_1m_price">15,000</span> <span class="currency">MMK</span></div>
+                    
+                    <!-- PLAN 1: Voice Clone Studio Pro -->
+                    <div class="card glass pricing-card" id="card-plan-voice">
+                        <div class="plan-badge-top" data-i18n="plan_voice_badge">Voice Creators 🔥</div>
+                        <div class="plan-name" data-i18n="plan_voice_name">🎙️ Voice Clone Studio Pro</div>
+                        <div class="plan-allocation" data-i18n="plan_voice_alloc">မိနစ် ၃၀၀ (၅ နာရီ) စတူဒီယို အသံသွင်းခွင့်</div>
+                        <div class="plan-price">
+                            <span class="price-val" data-i18n="plan_voice_price">25,000</span>
+                            <span class="currency">MMK</span>
+                        </div>
                         <ul class="plan-features">
-                            <li data-i18n="plan_1m_f1">✓ Full HD Movie Recap ဖန်တီးခွင့် မကန့်သတ်</li>
-                            <li data-i18n="plan_1m_f2">✓ VoxCPM Cloud AI & Applio အသံသွင်းခွင့်</li>
-                            <li data-i18n="plan_1m_f3">✓ မူရင်းစာတန်းဖျက် Smart Blur & Logo Watermark</li>
-                            <li data-i18n="plan_1m_f4">✓ အမြင့်ဆုံး Speed 192k MP3 & Subtitles</li>
+                            <li data-i18n="plan_voice_f1">✓ VoxCPM Cloud AI အသံ ၁၂ မျိုး အသုံးပြုခွင့်</li>
+                            <li data-i18n="plan_voice_f2">✓ Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)</li>
+                            <li data-i18n="plan_voice_f3">✓ Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်</li>
+                            <li data-i18n="plan_voice_f4">✓ High-Speed Priority Cloud Processing Queue</li>
+                            <li data-i18n="plan_voice_f5">✓ အရည်အသွေးမြင့် 24kHz PCM WAV တိုက်ရိုက်ဒေါင်းလုဒ်</li>
                         </ul>
-                        <button class="btn primary-btn mt-3" onclick="openPaymentDrawer('vip_1m', '15,000 MMK')" data-i18n="btn_buy_1m">
-                            💎 ယခု ဝယ်ယူမည်
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('voice_studio_pro', 25000, '🎙️ Voice Clone Studio Pro')" data-i18n="btn_buy_voice">
+                            💎 Voice Plan ဝယ်ယူမည်
                         </button>
                     </div>
 
-                    <div class="card glass pricing-card">
-                        <div class="plan-name" data-i18n="plan_3m_name">3 Months Studio Pro</div>
-                        <div class="plan-price"><span data-i18n="plan_3m_price">35,000</span> <span class="currency">MMK</span></div>
+                    <!-- PLAN 2: Movie Recap Studio Pro -->
+                    <div class="card glass pricing-card" id="card-plan-recap">
+                        <div class="plan-badge-top" data-i18n="plan_recap_badge">Video Editors 🎬</div>
+                        <div class="plan-name" data-i18n="plan_recap_name">🎬 Movie Recap Studio Pro</div>
+                        <div class="plan-allocation" data-i18n="plan_recap_alloc">ဗီဒီယို ၆၀ ကား Recap ဖန်တီးခွင့် (Credits)</div>
+                        <div class="plan-price">
+                            <span class="price-val" data-i18n="plan_recap_price">35,000</span>
+                            <span class="currency">MMK</span>
+                        </div>
                         <ul class="plan-features">
-                            <li data-i18n="plan_3m_f1">✓ ၃ လ သက်တမ်း အကန့်အသတ်မဲ့ အသုံးပြုခွင့်</li>
-                            <li data-i18n="plan_3m_f2">✓ မိမိကိုယ်ပိုင် Clone Voice Slot (၁) ခု အခမဲ့ Train ပေးခြင်း</li>
-                            <li data-i18n="plan_3m_f3">✓ Priority High-Speed Queue စနစ်</li>
-                            <li data-i18n="plan_3m_f4">✓ 24/7 VIP Direct Support</li>
+                            <li data-i18n="plan_recap_f1">✓ Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား</li>
+                            <li data-i18n="plan_recap_f2">✓ ဇာတ်လမ်းစတိုင် ၅ မျိုး & စာတန်းထိုးစတိုင် ၄ မျိုး</li>
+                            <li data-i18n="plan_recap_f3">✓ မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)</li>
+                            <li data-i18n="plan_recap_f4">✓ Channel Watermark Logo ထည့်သွင်းခွင့်</li>
+                            <li data-i18n="plan_recap_f5">✓ High-Speed Multi-Threaded Video Rendering</li>
                         </ul>
-                        <button class="btn secondary-btn mt-3" onclick="openPaymentDrawer('vip_3m', '35,000 MMK')" data-i18n="btn_buy_3m">
-                            👑 ယခု ဝယ်ယူမည်
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 35000, '🎬 Movie Recap Studio Pro')" data-i18n="btn_buy_recap">
+                            🎬 Recap Plan ဝယ်ယူမည်
                         </button>
                     </div>
+
+                    <!-- PLAN 3: All-in-One Master Suite (Featured Gold Halo) -->
+                    <div class="card glass pricing-card featured-master" id="card-plan-master">
+                        <div class="featured-ribbon" data-i18n="plan_master_badge">အကောင်းဆုံး တန်ဖိုး 💎</div>
+                        <div class="plan-name master-title" data-i18n="plan_master_name">👑 All-in-One Master Suite</div>
+                        <div class="plan-allocation text-gold" data-i18n="plan_master_alloc">မိနစ် ၆၀၀ + Recap ဗီဒီယို ၁၅၀ ကား</div>
+                        <div class="plan-price master-price">
+                            <span class="price-val" data-i18n="plan_master_price">55,000</span>
+                            <span class="currency">MMK</span>
+                        </div>
+                        <ul class="plan-features">
+                            <li data-i18n="plan_master_f1">✓ Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၆၀၀ - ၁၀ နာရီ)</li>
+                            <li data-i18n="plan_master_f2">✓ Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား)</li>
+                            <li data-i18n="plan_master_f3">✓ မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း</li>
+                            <li data-i18n="plan_master_f4">✓ Dedicated High-Speed Cloud Node Priority</li>
+                            <li data-i18n="plan_master_f5">✓ Commercial Copyright Safe & 24/7 VIP Direct Support</li>
+                        </ul>
+                        <button class="btn gold-gradient-btn mt-3" onclick="openPaymentDrawer('all_in_one_master', 55000, '👑 All-in-One Master Suite')" data-i18n="btn_buy_master">
+                            👑 Master Suite ဝယ်ယူမည်
+                        </button>
+                    </div>
+
                 </div>
 
                 <!-- Payment Info Drawer -->
                 <div class="card glass payment-drawer hidden" id="payment-box">
                     <div class="card-header-row">
-                        <span class="card-label" data-i18n="payment_info_title">💳 ငွေပေးချေမှု အချက်အလက်များ</span>
+                        <div class="drawer-header-info">
+                            <span class="card-label" data-i18n="payment_info_title">💳 ငွေပေးချေမှု အချက်အလက်များ</span>
+                            <span class="target-plan-title" id="drawer-package-title">👑 VIP Plan</span>
+                        </div>
                         <button class="close-btn" onclick="closePaymentDrawer()">✕</button>
                     </div>
+
                     <div class="payment-methods">
                         <div class="pay-method kpay">
                             <div class="pay-title">KBZPay (KPay)</div>
@@ -361,7 +509,7 @@
                                 <span class="acc-num" id="kpay-num">09951234567</span>
                                 <button class="mini-copy-btn" onclick="copyAccount('09951234567')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
-                            <span class="acc-name">Account: Ko Win</span>
+                            <span class="acc-name">Account Name: Ko Win</span>
                         </div>
                         <div class="pay-method wavepay">
                             <div class="pay-title">WavePay</div>
@@ -369,15 +517,18 @@
                                 <span class="acc-num" id="wave-num">09951234567</span>
                                 <button class="mini-copy-btn" onclick="copyAccount('09951234567')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
-                            <span class="acc-name">Account: Ko Win</span>
+                            <span class="acc-name">Account Name: Ko Win</span>
                         </div>
                     </div>
                     
                     <!-- Direct Slip Upload Form -->
                     <div class="slip-uploader-box mt-3">
                         <div class="card-label" data-i18n="slip_upload_title">📸 ငွေလွှဲပြေစာ (Screenshot) တင်သွင်းရန်</div>
+                        <div class="slip-preview-container hidden" id="slip-preview-box">
+                            <img id="slip-preview-img" src="" alt="Slip Preview">
+                        </div>
                         <input type="file" id="slip-file-input" accept="image/*" class="studio-input mt-2">
-                        <button class="btn primary-btn mt-2" id="btn-submit-slip-action" onclick="submitPaymentSlip()">
+                        <button class="btn gold-gradient-btn mt-2" id="btn-submit-slip-action" onclick="submitPaymentSlip()">
                             <span data-i18n="btn_submit_slip">📤 ပြေစာ တင်သွင်းမည်</span>
                         </button>
                     </div>
@@ -391,7 +542,10 @@
             <!-- ════ TAB 5: ADMIN CONSOLE (Role-Gated) ════ -->
             <section id="tab-admin" class="tab-pane hidden">
                 <div class="pane-header">
-                    <h2 data-i18n="admin_title">⚡ Admin Control Console</h2>
+                    <div class="pane-title-row">
+                        <h2 data-i18n="admin_title">⚡ Executive Control Center</h2>
+                        <span class="badge-studio gold">ADMIN</span>
+                    </div>
                     <p data-i18n="admin_subtitle">စနစ်ကြီးကြပ်မှု၊ ငွေလွှဲပြေစာ စစ်ဆေးခြင်းနှင့် အသုံးပြုသူများ စီမံခန့်ခွဲမှု</p>
                 </div>
 
@@ -417,7 +571,10 @@
 
                 <!-- Pending Payment Slips Management -->
                 <div class="card glass mt-3">
-                    <div class="card-label" data-i18n="admin_slips_header">📋 စစ်ဆေးရန် စောင့်ဆိုင်းနေသော ငွေလွှဲပြေစာများ</div>
+                    <div class="card-header-row">
+                        <div class="card-label" data-i18n="admin_slips_header">📋 စစ်ဆေးရန် စောင့်ဆိုင်းနေသော ငွေလွှဲပြေစာများ</div>
+                        <button class="mini-chip" onclick="loadAdminData()">🔄 Refresh</button>
+                    </div>
                     <div id="admin-slips-list" class="mt-2">
                         <p class="text-muted" data-i18n="admin_no_slips">စစ်ဆေးရန် ပြေစာ မရှိသေးပါ</p>
                     </div>
@@ -426,18 +583,21 @@
                 <!-- Quick User Manager -->
                 <div class="card glass mt-3">
                     <div class="card-label" data-i18n="admin_user_manage_header">👤 အသုံးပြုသူ ရှာဖွေ ပြင်ဆင်ခြင်း</div>
-                    <div class="input-with-btn mt-2">
-                        <input type="number" id="adm-target-user-id" data-i18n-ph="admin_user_id_ph" placeholder="Telegram ID (ဥပမာ: 1957002115)">
-                        <button class="btn mini-btn" onclick="adminGrantVip()" data-i18n="btn_grant_vip">👑 VIP သို့ တင်မည်</button>
-                        <button class="btn mini-btn secondary-btn" onclick="adminAddMinutes()" data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</button>
+                    <div class="admin-user-inputs mt-2">
+                        <input type="number" id="adm-target-user-id" data-i18n-ph="admin_user_id_ph" placeholder="Telegram ID (ဥပမာ: 1957002115)" class="studio-input">
+                        <div class="admin-action-row mt-2">
+                            <button class="btn mini-btn gold-btn" onclick="adminGrantVip()" data-i18n="btn_grant_vip">👑 VIP သို့ တင်မည်</button>
+                            <button class="btn mini-btn secondary-btn" onclick="adminAddMinutes()" data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</button>
+                            <button class="btn mini-btn cyan-btn" onclick="adminAddRecapCredits()" data-i18n="btn_add_recap_credit">🎬 +10 Recap Credit</button>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Broadcast Sender -->
                 <div class="card glass mt-3">
                     <div class="card-label" data-i18n="admin_broadcast_header">📢 Telegram Bot အားလုံးသို့ Broadcast စာပို့ရန်</div>
-                    <textarea id="adm-broadcast-text" data-i18n-ph="admin_broadcast_ph" placeholder="အသုံးပြုသူ အားလုံးထံ ပေးပို့မည့် စာသား ရိုက်ထည့်ပါ..." rows="3" class="mt-2"></textarea>
-                    <button class="btn primary-gradient-btn mt-2" onclick="adminSendBroadcast()">
+                    <textarea id="adm-broadcast-text" data-i18n-ph="admin_broadcast_ph" placeholder="အသုံးပြုသူ အားလုံးထံ ပေးပို့မည့် စာသား ရိုက်ထည့်ပါ..." rows="3" class="studio-input mt-2"></textarea>
+                    <button class="btn gold-gradient-btn mt-2" onclick="adminSendBroadcast()">
                         <span class="btn-icon">🚀</span>
                         <span data-i18n="btn_send_broadcast">Broadcast ပို့မည်</span>
                     </button>
@@ -446,7 +606,7 @@
 
         </main>
 
-        <!-- Bottom Navigation Bar -->
+        <!-- ════ BOTTOM LUXURY FLOATING DOCK ════ -->
         <nav class="bottom-nav">
             <button class="nav-item active" data-tab="tab-voice">
                 <span class="nav-icon">🎙️</span>
@@ -461,14 +621,22 @@
                 <span class="nav-label" data-i18n="tab_downloader">Downloader</span>
             </button>
             <button class="nav-item" data-tab="tab-vip">
-                <span class="nav-icon">👑</span>
-                <span class="nav-label" data-i18n="tab_vip">VIP Wallet</span>
+                <span class="nav-icon">💎</span>
+                <span class="nav-label" data-i18n="tab_vip">VIP Plans</span>
             </button>
             <button class="nav-item hidden" id="nav-btn-admin" data-tab="tab-admin">
                 <span class="nav-icon">⚡</span>
                 <span class="nav-label" data-i18n="tab_admin">Admin</span>
             </button>
         </nav>
+    </div>
+
+    <!-- ════ FULLSCREEN SLIP PREVIEW MODAL ════ -->
+    <div id="slip-modal" class="image-modal hidden" onclick="closeSlipModal()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <button class="modal-close" onclick="closeSlipModal()">✕</button>
+            <img id="modal-slip-img" src="" alt="Payment Slip Full View">
+        </div>
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->

@@ -126,6 +126,7 @@ async def get_user_profile(
         "is_vip": is_vip,
         "balance_seconds": seconds_left,
         "balance_minutes": round(seconds_left / 60, 1),
+        "recap_credits": getattr(user, "recap_credits", 3),
         "character_limit": char_limit,
     }
 
@@ -470,11 +471,14 @@ async def extract_media_info(
 # ── 5. Recap Studio Configuration ─────────────────────────────────────────
 class RecapConfigRequest(BaseModel):
     url: str
-    voice_slug: str = "thiha"
+    voice_slug: str = "komin"
+    story_style: str = "viral"  # viral, dramatic, funny, pov, standard
     blur_y: int = Field(81, ge=0, le=100)
     blur_h: int = Field(13, ge=1, le=50)
     sub_y: int = Field(85, ge=0, le=100)
-    sub_style: str = "neon"  # yellow, boxed, neon, gold, cyan
+    sub_style: str = "yellow"  # yellow, white, boxed, neon
+    sub_font_size: int = Field(16, ge=12, le=30)
+    sub_lines: int = Field(1, ge=1, le=2)
     include_logo: bool = True
 
 
@@ -482,21 +486,31 @@ class RecapConfigRequest(BaseModel):
 async def create_recap_job(
     req: RecapConfigRequest,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
-    """Submit 1-Click Pro Recap Job with visual blur and subtitle coordinates."""
+    """Submit 1-Click Pro Recap Job with visual blur, subtitle styles, and story style."""
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
-    if not is_vip:
+    credits = getattr(user, "recap_credits", 0)
+
+    if not is_vip and credits <= 0:
         raise HTTPException(
             status_code=403,
-            detail="AI Recap Studio သည် VIP အသုံးပြုသူများ သီးသန့်ဖြစ်ပါသည်။ ကျေးဇူးပြု၍ VIP ဝယ်ယူပေးပါရန်။",
+            detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
         )
+
+    # Deduct credit if non-admin
+    if not settings.is_admin(user.id) and hasattr(user, "recap_credits") and user.recap_credits > 0:
+        user.recap_credits -= 1
+        await db.commit()
 
     return {
         "success": True,
         "recap_id": f"rc_{int(time.time())}",
         "status": "PROCESSING",
+        "story_style": req.story_style,
         "blur_config": {"y": req.blur_y, "h": req.blur_h},
-        "sub_config": {"y": req.sub_y, "style": req.sub_style},
+        "sub_config": {"y": req.sub_y, "style": req.sub_style, "font_size": req.sub_font_size, "lines": req.sub_lines},
+        "remaining_credits": getattr(user, "recap_credits", 0),
         "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
     }
 
@@ -504,32 +518,59 @@ async def create_recap_job(
 # ── 6. VIP Pricing Plans & Payments ────────────────────────────────────────
 @api_router.get("/vip/plans")
 async def get_vip_plans(user: User = Depends(get_current_user)):
-    """Return VIP subscription packages and payment accounts."""
+    """Return specialized high-value VIP subscription packages and payment accounts."""
+    lang = user.language_code or "my"
+    is_my = (lang == "my")
+
     return {
         "plans": [
             {
-                "id": "vip_1m",
-                "name": "🌟 1 Month Unlimited VIP",
-                "price": "15,000 MMK",
+                "id": "voice_studio_pro",
+                "name": "🎙️ Voice Clone Studio Pro" if is_my else "🎙️ Voice Clone Studio Pro",
+                "category": "voice",
+                "allocation": "300 Usable Minutes (5 Hours)" if is_my else "300 Usable Minutes (5 Hours)",
+                "price": "25,000",
+                "currency": "MMK",
                 "features": [
-                    "Full HD Recap Video ဖန်တီးခွင့် မကန့်သတ်",
-                    "VoxCPM Cloud AI & Applio အသံသွင်းခွင့်",
-                    "Anti-Copyright Smart Blur & Logo Watermark",
-                    "High-speed 192kbps Audio & SRT Subtitle",
+                    "VoxCPM Cloud AI အသံ ၁၂ မျိုး အသုံးပြုခွင့်" if is_my else "12 VoxCPM Cloud AI Personas (6M / 6F)",
+                    "Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)" if is_my else "Custom Voice Clone (Audio Sample Upload)",
+                    "Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်" if is_my else "Applio RVC Local GPU Trained Models",
+                    "High-Speed Priority Cloud Processing Queue" if is_my else "High-Speed Priority Cloud Processing Queue",
+                    "အရည်အသွေးမြင့် 24kHz PCM WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct 24kHz PCM WAV Audio Downloads",
                 ],
-                "badge": "လူကြိုက်အများဆုံး 🔥",
+                "badge": "Voice Creators 🔥",
             },
             {
-                "id": "vip_3m",
-                "name": "👑 3 Months Studio Pro",
-                "price": "35,000 MMK",
+                "id": "recap_studio_pro",
+                "name": "🎬 Movie Recap Studio Pro" if is_my else "🎬 Movie Recap Studio Pro",
+                "category": "recap",
+                "allocation": "60 Movie Recap Credits" if is_my else "60 Movie Recap Credits",
+                "price": "35,000",
+                "currency": "MMK",
                 "features": [
-                    "၃ လ သက်တမ်း အကန့်အသတ်မဲ့ အသုံးပြုခွင့်",
-                    "မိမိကိုယ်ပိုင် Clone Voice Slot (၁) ခု အခမဲ့ Train ပေးခြင်း",
-                    "Priority High-Speed Server Access",
-                    "24/7 VIP Direct Support",
+                    "Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား ဖန်တီးခွင့်" if is_my else "60 Full HD 1080p Movie Recap Generations",
+                    "ဇာတ်လမ်းစတိုင် ၅ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်)" if is_my else "5 Narration Styles (Viral Hook, Dramatic, POV)",
+                    "စာတန်းထိုးစတိုင် ၄ မျိုး (Classic Gold, White, Dark Box, Neon)" if is_my else "4 Subtitle Presets (Gold, White, Dark Box, Neon)",
+                    "မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)" if is_my else "Anti-Copyright Custom Blur Box (Y, H Sliders)",
+                    "Channel Watermark Logo ထည့်သွင်းခွင့်" if is_my else "Custom Channel Logo Watermark Integration",
                 ],
-                "badge": "တန်ဖိုးအရှိဆုံး 💎",
+                "badge": "Video Editors 🎬",
+            },
+            {
+                "id": "all_in_one_master",
+                "name": "👑 All-in-One Master Suite" if is_my else "👑 All-in-One Master Suite",
+                "category": "bundle",
+                "allocation": "600 Mins + 150 Recap Credits" if is_my else "600 Mins + 150 Recap Credits",
+                "price": "55,000",
+                "currency": "MMK",
+                "features": [
+                    "Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၆၀၀ - ၁၀ နာရီ)" if is_my else "Full Voice Clone Studio Pro (600 Mins)",
+                    "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား)" if is_my else "Full Movie Recap Studio Pro (150 Videos)",
+                    "မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း" if is_my else "1 Free Custom Trained Voice Model Slot",
+                    "Dedicated High-Speed Processing Server" if is_my else "Dedicated High-Speed Cloud Node Priority",
+                    "Commercial Copyright Safe & 24/7 VIP Direct Support" if is_my else "Commercial Copyright Safe & 24/7 VIP Support",
+                ],
+                "badge": "အကောင်းဆုံး တန်ဖိုး 💎" if is_my else "Best Value Master 💎",
             },
         ],
         "payment_accounts": [
@@ -560,7 +601,12 @@ async def submit_payment_slip(
     with open(dest_path, "wb") as f:
         f.write(content)
 
-    minutes = 60 if "1m" in package_code else 180
+    if "recap" in package_code:
+        minutes = 0
+    elif "all_in_one" in package_code or "master" in package_code:
+        minutes = 600
+    else:
+        minutes = 300
 
     pay_req = PaymentRequest(
         id=str(uuid.uuid4()),
@@ -584,9 +630,8 @@ async def submit_payment_slip(
 @api_router.get("/receipts/{filename}")
 async def get_receipt_image(
     filename: str,
-    user: User = Depends(require_admin),
 ):
-    """Serve uploaded payment receipt image to Admin."""
+    """Serve uploaded payment receipt image."""
     clean_fn = Path(filename).name
     p = settings.storage_root / "receipts" / clean_fn
     if not p.is_file():
@@ -677,16 +722,21 @@ async def approve_payment_slip(
     target_user = await db.get(User, p_req.user_id)
     if target_user:
         target_user.account_category = AccountCategory.PURCHASED.value
+        if "recap" in p_req.package_code:
+            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 60
+        elif "all_in_one" in p_req.package_code or "master" in p_req.package_code:
+            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 150
 
     # Credit minutes
-    from app.services.ledger import credit_purchased_minutes
-    await credit_purchased_minutes(
-        session=db,
-        user_id=p_req.user_id,
-        minutes=p_req.minutes,
-        payment_request_id=p_req.id,
-        admin_id=admin.id,
-    )
+    if p_req.minutes > 0:
+        from app.services.ledger import credit_purchased_minutes
+        await credit_purchased_minutes(
+            session=db,
+            user_id=p_req.user_id,
+            minutes=p_req.minutes,
+            payment_request_id=p_req.id,
+            admin_id=admin.id,
+        )
     await db.commit()
 
     return {"success": True, "message": f"Approved payment for User {p_req.user_id} (+{p_req.minutes} mins)"}
@@ -721,6 +771,7 @@ class AdjustUserRequest(BaseModel):
     user_id: int
     account_category: Optional[str] = None
     add_minutes: int = 0
+    add_recap_credits: int = 0
 
 
 @api_router.post("/admin/adjust-user")
@@ -729,13 +780,16 @@ async def adjust_user_status(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Admin manually modifies user tier or adds minutes."""
+    """Admin manually modifies user tier, adds minutes, or adds recap credits."""
     target_user = await db.get(User, req.user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
 
     if req.account_category in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value):
         target_user.account_category = req.account_category
+
+    if req.add_recap_credits != 0:
+        target_user.recap_credits = max(0, (getattr(target_user, "recap_credits", 0) or 0) + req.add_recap_credits)
 
     if req.add_minutes > 0:
         from app.services.ledger import credit_purchased_minutes

@@ -1,6 +1,6 @@
 /**
- * app.js - Unified Telegram Mini App Client Logic
- * Voice Clone Pro & AI Movie Recap Studio
+ * app.js - Unified Telegram Mini App Client Controller
+ * Voice Clone Pro & AI Movie Recap Studio — Studio Ultra Suite
  */
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -17,6 +17,13 @@ const state = {
     speed: "normal",
     activeJobId: null,
     pollTimer: null,
+
+    // Recap Configuration
+    recapStoryStyle: "viral",
+    recapSubStyle: "yellow",
+    recapFontSize: 16,
+    recapLines: 1,
+    recapVoice: "komin",
 };
 
 // ── Telegram WebApp Initialization ─────────────────────────────────────────
@@ -25,8 +32,8 @@ function initTelegram() {
         state.tg.ready();
         state.tg.expand();
         try {
-            state.tg.setHeaderColor("#0a0d14");
-            state.tg.setBackgroundColor("#0a0d14");
+            state.tg.setHeaderColor("#07090e");
+            state.tg.setBackgroundColor("#07090e");
         } catch (e) {}
     }
 }
@@ -54,6 +61,7 @@ function toggleLanguage() {
     const nextLang = currentLang === "my" ? "en" : "my";
     setLanguage(nextLang);
     loadCuratedVoices();
+    loadUserProfile();
 }
 
 // ── Navigation (Tabs) ───────────────────────────────────────────────────────
@@ -94,9 +102,12 @@ async function loadUserProfile() {
         }
 
         const vipBadge = document.getElementById("vip-status-badge");
-        const balText = document.getElementById("user-balance-text");
+        const voiceBalChip = document.getElementById("user-voice-bal");
+        const recapBalChip = document.getElementById("user-recap-bal");
+        
         const catTag = document.getElementById("profile-category-tag");
         const balMin = document.getElementById("profile-balance-min");
+        const balCredits = document.getElementById("profile-balance-credits");
         const charCount = document.getElementById("char-count");
         const adminNavBtn = document.getElementById("nav-btn-admin");
         const adminTab = document.getElementById("tab-admin");
@@ -105,9 +116,13 @@ async function loadUserProfile() {
             vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
             vipBadge.innerText = data.is_vip ? t("vip_purchased") : t("vip_free");
         }
-        if (balText) {
-            balText.innerText = data.is_vip ? `⏱️ ${t("unlimited")}` : `⏱️ ${data.balance_minutes}m`;
+        if (voiceBalChip) {
+            voiceBalChip.innerText = data.is_vip ? `🎙️ ${t("unlimited")}` : `🎙️ ${data.balance_minutes}m`;
         }
+        if (recapBalChip) {
+            recapBalChip.innerText = data.is_vip ? `🎬 ${t("unlimited")}` : `🎬 ${data.recap_credits || 0}c`;
+        }
+
         if (catTag) {
             catTag.innerText = data.is_vip ? t("vip_purchased") : t("vip_free");
             catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
@@ -115,6 +130,10 @@ async function loadUserProfile() {
         if (balMin) {
             balMin.innerText = data.is_vip ? t("unlimited") : `${data.balance_minutes} mins`;
         }
+        if (balCredits) {
+            balCredits.innerText = data.is_vip ? t("unlimited") : `${data.recap_credits || 0} credits`;
+        }
+
         if (charCount) {
             charCount.innerText = `0 / ${data.character_limit} chars`;
         }
@@ -130,7 +149,7 @@ async function loadUserProfile() {
     }
 }
 
-// ── API: Curated Voices (Gemini Personas) ──────────────────────────────────
+// ── API: Curated Voices (12 Gemini Personas) ───────────────────────────────
 async function loadCuratedVoices() {
     const grid = document.getElementById("personas-grid");
     if (!grid) return;
@@ -164,8 +183,74 @@ async function loadCuratedVoices() {
 
             grid.appendChild(card);
         });
+
+        const countBadge = document.getElementById("personas-count");
+        if (countBadge) {
+            countBadge.innerText = `${voices.length} Personas`;
+        }
     } catch (e) {
         console.warn("Could not load curated voices:", e);
+    }
+}
+
+// ── API: Applio Models Loader ──────────────────────────────────────────────
+async function loadApplioModels() {
+    const container = document.getElementById("models-list");
+    if (!container) return;
+
+    try {
+        const res = await fetch("/api/voices/models", { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const models = await res.json();
+        state.models = models;
+
+        const applioModels = models.filter(m => !m.is_voxcpm);
+        container.innerHTML = "";
+
+        if (applioModels.length === 0) {
+            container.innerHTML = `<p class="text-muted" style="grid-column: 1 / -1; padding: 12px; text-align: center;">No Applio models found in database.</p>`;
+            return;
+        }
+
+        // Set default selected model if none selected
+        if (!state.selectedModelSlug || state.selectedModelSlug === "voxcpm-cloud-ai") {
+            state.selectedModelSlug = applioModels[0].slug;
+        }
+
+        const avatarMap = {
+            "kartoon": "🎭",
+            "myanmar-voice-1": "🎙️",
+            "the-light": "💡",
+            "ant-movie": "🎬",
+        };
+
+        applioModels.forEach(m => {
+            const card = document.createElement("div");
+            const isSelected = (m.slug === state.selectedModelSlug);
+            card.className = `applio-model-card ${isSelected ? "active" : ""}`;
+            card.setAttribute("data-slug", m.slug);
+
+            const avatar = avatarMap[m.slug] || "🎙️";
+            card.innerHTML = `
+                <span class="applio-model-avatar">${avatar}</span>
+                <div class="applio-model-details">
+                    <span class="applio-model-name">${m.name}</span>
+                    <span class="applio-model-tag">RVC v2 • Local GPU</span>
+                </div>
+            `;
+
+            card.addEventListener("click", () => {
+                haptic("selection");
+                document.querySelectorAll(".applio-model-card").forEach(c => c.classList.remove("active"));
+                card.classList.add("active");
+                state.selectedModelSlug = m.slug;
+            });
+
+            container.appendChild(card);
+        });
+
+    } catch (err) {
+        console.warn("Could not load Applio models:", err);
     }
 }
 
@@ -209,6 +294,7 @@ function setupVoiceStudio() {
     const btnApplio = document.getElementById("btn-engine-applio");
     const voxModeSection = document.getElementById("voxcpm-mode-section");
     const applioSection = document.getElementById("applio-models-section");
+    const voiceQueueNotice = document.getElementById("voice-queue-notice");
 
     if (btnVox && btnApplio) {
         btnVox.addEventListener("click", () => {
@@ -219,7 +305,12 @@ function setupVoiceStudio() {
             state.selectedModelSlug = "voxcpm-cloud-ai";
             if (voxModeSection) voxModeSection.classList.remove("hidden");
             if (applioSection) applioSection.classList.add("hidden");
+            if (voiceQueueNotice) {
+                voiceQueueNotice.className = "queue-notice-banner";
+                voiceQueueNotice.querySelector(".notice-text").innerText = t("queue_notice_voxcpm");
+            }
         });
+
         btnApplio.addEventListener("click", () => {
             haptic("selection");
             btnApplio.classList.add("active");
@@ -227,6 +318,11 @@ function setupVoiceStudio() {
             state.selectedEngine = "applio";
             if (voxModeSection) voxModeSection.classList.add("hidden");
             if (applioSection) applioSection.classList.remove("hidden");
+            if (voiceQueueNotice) {
+                voiceQueueNotice.className = "queue-notice-banner applio-notice";
+                voiceQueueNotice.querySelector(".notice-text").innerText = t("queue_notice_applio");
+            }
+            loadApplioModels();
         });
     }
 
@@ -399,7 +495,7 @@ function startJobPolling(jobId) {
 
             if (data.is_waiting_laptop_worker) {
                 if (statusMsg) statusMsg.innerText = t("applio_status_waiting");
-                if (etaText) etaText.innerText = "Laptop Worker တွင် စတင်လိုက်ပါက အလိုအလျောက် ပြီးစီးပါမည်";
+                if (etaText) etaText.innerText = "Laptop Worker ဖွင့်ထားပါက အလိုအလျောက် ပြီးစီးပါမည်";
                 if (progressFill) progressFill.style.width = "35%";
             } else if (data.status === "QUEUED") {
                 if (progressFill) progressFill.style.width = "45%";
@@ -441,7 +537,7 @@ function startJobPolling(jobId) {
     }, 2000);
 }
 
-// ── TAB 2: Visual Mockup Slider Synchronizer ───────────────────────────────
+// ── TAB 2: Recap Studio Configuration & Visual Mockup ──────────────────────
 function setupRecapVisualEditor() {
     const sliderBlurY = document.getElementById("slider-blur-y");
     const sliderBlurH = document.getElementById("slider-blur-h");
@@ -480,7 +576,18 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // Subtitle Style Picker
+    // Story Style Picker
+    const storyPills = document.querySelectorAll("#story-style-picker .style-select-pill");
+    storyPills.forEach(pill => {
+        pill.addEventListener("click", () => {
+            haptic("selection");
+            storyPills.forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            state.recapStoryStyle = pill.getAttribute("data-story");
+        });
+    });
+
+    // Subtitle Style Presets (Yellow, White, Boxed, Neon)
     const styleChips = document.querySelectorAll("#sub-style-picker .style-chip");
     styleChips.forEach(chip => {
         chip.addEventListener("click", () => {
@@ -488,25 +595,100 @@ function setupRecapVisualEditor() {
             styleChips.forEach(c => c.classList.remove("active"));
             chip.classList.add("active");
             const style = chip.getAttribute("data-style");
+            state.recapSubStyle = style;
             if (previewSub) {
                 previewSub.className = `preview-sub-box ${style}`;
             }
         });
     });
 
+    // Font Size Picker
+    const sizePills = document.querySelectorAll("#font-size-picker .pill-btn");
+    sizePills.forEach(pill => {
+        pill.addEventListener("click", () => {
+            haptic("selection");
+            sizePills.forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            state.recapFontSize = parseInt(pill.getAttribute("data-size"));
+            const previewText = document.getElementById("preview-sub-text-el");
+            if (previewText) {
+                previewText.style.fontSize = `${state.recapFontSize * 0.85}px`;
+            }
+        });
+    });
+
+    // Subtitle Lines Picker
+    const linePills = document.querySelectorAll("#sub-lines-picker .pill-btn");
+    linePills.forEach(pill => {
+        pill.addEventListener("click", () => {
+            haptic("selection");
+            linePills.forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            state.recapLines = parseInt(pill.getAttribute("data-lines"));
+        });
+    });
+
+    // Dub Voice Selector
+    const voiceSelect = document.getElementById("recap-voice-select");
+    if (voiceSelect) {
+        voiceSelect.addEventListener("change", (e) => {
+            state.recapVoice = e.target.value;
+        });
+    }
+
     // 1-Click Recap Action
     const btnRecap = document.getElementById("btn-start-recap");
     if (btnRecap) {
-        btnRecap.addEventListener("click", () => {
-            const urlInput = document.getElementById("recap-url-input");
-            const url = urlInput ? urlInput.value.trim() : "";
-            if (!url) {
-                alert(t("toast_empty_url"));
-                return;
-            }
-            haptic("heavy");
-            alert("🚀 1-Click Pro Recap အမိန့်ကို လက်ခံရရှိပါပြီ!\nBot မှ ဗီဒီယိုကို ရယူပြီး စာတန်းထိုးနှင့် အသံသွင်းခြင်း စတင်နေပါပြီခင်ဗျာ။");
+        btnRecap.addEventListener("click", handleStartRecap);
+    }
+}
+
+async function handleStartRecap() {
+    const urlInput = document.getElementById("recap-url-input");
+    const url = urlInput ? urlInput.value.trim() : "";
+    if (!url) {
+        alert(t("toast_empty_url"));
+        return;
+    }
+
+    haptic("heavy");
+    const btn = document.getElementById("btn-start-recap");
+    if (btn) btn.disabled = true;
+
+    try {
+        const sliderBlurY = document.getElementById("slider-blur-y");
+        const sliderBlurH = document.getElementById("slider-blur-h");
+        const sliderSubY = document.getElementById("slider-sub-y");
+
+        const payload = {
+            url: url,
+            voice_slug: state.recapVoice || "komin",
+            story_style: state.recapStoryStyle || "viral",
+            blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 81,
+            blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 13,
+            sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
+            sub_style: state.recapSubStyle || "yellow",
+            sub_font_size: state.recapFontSize || 16,
+            sub_lines: state.recapLines || 1,
+            include_logo: true,
+        };
+
+        const res = await fetch("/api/recap/generate", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload),
         });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Recap creation failed");
+
+        alert(`🚀 ${data.message}\n\n🎬 Job ID: ${data.recap_id}\n⚡ စတိုင်လ်: ${data.story_style}\n💳 လက်ကျန် Credit: ${data.remaining_credits}`);
+        loadUserProfile();
+
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
@@ -542,13 +724,19 @@ function setupDownloader() {
 }
 
 // ── Payment Drawer & Slip Submission ───────────────────────────────────────
-let activePackageCode = "vip_1m";
-let activeAmount = 15000;
+let activePackageCode = "voice_studio_pro";
+let activeAmount = 25000;
 
-function openPaymentDrawer(packageCode, priceStr) {
+function openPaymentDrawer(packageCode, amount, title) {
     haptic("light");
     activePackageCode = packageCode;
-    activeAmount = packageCode === "vip_1m" ? 15000 : 35000;
+    activeAmount = amount;
+
+    const titleEl = document.getElementById("drawer-package-title");
+    if (titleEl && title) {
+        titleEl.innerText = `${title} — ${amount.toLocaleString()} MMK`;
+    }
+
     const drawer = document.getElementById("payment-box");
     if (drawer) {
         drawer.classList.remove("hidden");
@@ -570,11 +758,33 @@ function copyAccount(accNum) {
     });
 }
 
+function setupSlipPreview() {
+    const fileInput = document.getElementById("slip-file-input");
+    const previewBox = document.getElementById("slip-preview-box");
+    const previewImg = document.getElementById("slip-preview-img");
+
+    if (fileInput && previewBox && previewImg) {
+        fileInput.addEventListener("change", (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    previewImg.src = ev.target.result;
+                    previewBox.classList.remove("hidden");
+                };
+                reader.readAsDataURL(file);
+            } else {
+                previewBox.classList.add("hidden");
+            }
+        });
+    }
+}
+
 async function submitPaymentSlip() {
     const fileInput = document.getElementById("slip-file-input");
     const file = fileInput && fileInput.files ? fileInput.files[0] : null;
     if (!file) {
-        alert("ငွေလွှဲပြေစာ ပုံကို ရွေးချယ်ပေးပါခင်ဗျာ။");
+        alert("ကျေးဇူးပြု၍ ငွေလွှဲပြေစာ ပုံကို ရွေးချယ်ပေးပါခင်ဗျာ။");
         return;
     }
 
@@ -605,6 +815,8 @@ async function submitPaymentSlip() {
         alert(t("toast_success_slip"));
         closePaymentDrawer();
         if (fileInput) fileInput.value = "";
+        const previewBox = document.getElementById("slip-preview-box");
+        if (previewBox) previewBox.classList.add("hidden");
     } catch (e) {
         alert(e.message);
     } finally {
@@ -644,10 +856,10 @@ async function loadAdminData() {
                     item.className = "slip-item-card";
                     item.innerHTML = `
                         <div class="slip-item-row">
-                            <img src="${s.slip_url}" class="slip-thumb" onclick="window.open('${s.slip_url}')" title="Click to view full image">
+                            <img src="${s.slip_url}" class="slip-thumb" onclick="openSlipModal('${s.slip_url}')" title="Click to view full image">
                             <div class="slip-info">
                                 <div class="slip-user">${s.user_name} (@${s.username || s.user_id})</div>
-                                <div class="slip-amount">${s.amount_mmk.toLocaleString()} MMK (${s.minutes} mins)</div>
+                                <div class="slip-amount">${s.amount_mmk.toLocaleString()} MMK • Package: ${s.package_code}</div>
                                 <div class="slip-date">${s.created_at}</div>
                             </div>
                         </div>
@@ -663,6 +875,20 @@ async function loadAdminData() {
     } catch (e) {
         console.warn("Error loading admin data:", e);
     }
+}
+
+function openSlipModal(url) {
+    const modal = document.getElementById("slip-modal");
+    const img = document.getElementById("modal-slip-img");
+    if (modal && img) {
+        img.src = url;
+        modal.classList.remove("hidden");
+    }
+}
+
+function closeSlipModal() {
+    const modal = document.getElementById("slip-modal");
+    if (modal) modal.classList.add("hidden");
 }
 
 async function adminApproveSlip(reqId) {
@@ -744,6 +970,28 @@ async function adminAddMinutes() {
     }
 }
 
+async function adminAddRecapCredits() {
+    const input = document.getElementById("adm-target-user-id");
+    const uid = input ? parseInt(input.value) : 0;
+    if (!uid) {
+        alert("Telegram ID ထည့်ပါ");
+        return;
+    }
+    haptic("medium");
+    try {
+        const res = await fetch("/api/admin/adjust-user", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ user_id: uid, add_recap_credits: 10 }),
+        });
+        const data = await res.json();
+        alert(data.message);
+        loadAdminData();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
 async function adminSendBroadcast() {
     const textEl = document.getElementById("adm-broadcast-text");
     const msg = textEl ? textEl.value.trim() : "";
@@ -775,7 +1023,9 @@ document.addEventListener("DOMContentLoaded", () => {
     setupVoiceStudio();
     setupRecapVisualEditor();
     setupDownloader();
+    setupSlipPreview();
 
     loadUserProfile();
     loadCuratedVoices();
+    loadApplioModels();
 });

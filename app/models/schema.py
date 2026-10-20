@@ -53,6 +53,7 @@ class User(Base):
         String(20), nullable=False, default=UserStatus.ACTIVE.value
     )
 
+    recap_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     channel_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     group_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     welcome_bonus_awarded: Mapped[bool] = mapped_column(

@@ -105,6 +105,102 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         ),
         "cfg_value": 2.0,
     },
+    "kozayar": {
+        "id": "kozayar",
+        "gender": "male",
+        "name_my": "ကိုဇေယျာ (အက်ရှင်ဇာတ်ကားကြီး & Trailer)",
+        "name_en": "Ko Zayar (Epic Action & Movie Trailer)",
+        "desc_my": "ဩဇာတိက္ကမကြီးမားပြီး ရုပ်ရှင်ကားကြီးများ၏ အဖွင့်ကြေညာသံ",
+        "desc_en": "Deep, bass-rich, resonant blockbuster movie trailer voice with powerful impact",
+        "avatar": "🎬",
+        "badge_my": "Epic Cinema 👑",
+        "badge_en": "Epic Cinema 👑",
+        "control_instruction": (
+            "A deep, bass-rich, resonant, dramatic blockbuster movie trailer narrator. "
+            "Authoritative, powerful gravitas, cinematic impact with pristine Burmese pronunciation."
+        ),
+        "cfg_value": 2.3,
+    },
+    "komyat": {
+        "id": "komyat",
+        "gender": "male",
+        "name_my": "ကိုမြတ် (သရဲတစ္ဆေ & လျှို့ဝှက်ဆန်းကြယ်)",
+        "name_en": "Ko Myat (Spooky Mystery & Ghost Stories)",
+        "desc_my": "ကြက်သီးထဖွယ် ညသန်းခေါင်ယံ သရဲဇာတ်လမ်းပြောသံ",
+        "desc_en": "Chilling, mysterious, atmospheric storyteller for ghost stories and dark thrillers",
+        "avatar": "👻",
+        "badge_my": "သရဲတစ္ဆေ 🕯️",
+        "badge_en": "Spooky Dark 🕯️",
+        "control_instruction": (
+            "A mysterious, chilling, suspenseful, dark Burmese male ghost story narrator. "
+            "Atmospheric, brooding, captivating eerie cadence."
+        ),
+        "cfg_value": 2.1,
+    },
+    "kophone": {
+        "id": "kophone",
+        "gender": "male",
+        "name_my": "ကိုဘုန်း (နည်းပညာ & ဗဟုသုတ)",
+        "name_en": "Ko Phone (Tech & Educational Explainer)",
+        "desc_my": "တိကျရှင်းလင်းပြီး သိပ္ပံနှင့် နည်းပညာ ဗဟုသုတ ဝေမျှရာတွင် အကောင်းဆုံး",
+        "desc_en": "Clear, engaging, articulate explainer voice for tech tutorials, gadgets and science",
+        "avatar": "💻",
+        "badge_my": "Tech & Science 💡",
+        "badge_en": "Tech & Science 💡",
+        "control_instruction": (
+            "An articulate, engaging, intelligent Burmese male explainer. "
+            "Clean, friendly, informative pacing ideal for technology, educational videos and tutorials."
+        ),
+        "cfg_value": 2.0,
+    },
+    "mayoon": {
+        "id": "mayoon",
+        "gender": "female",
+        "name_my": "မယွန်း (အိပ်ဆေးပုံပြင် & ASMR)",
+        "name_en": "Ma Yoon (Calm Meditation & ASMR)",
+        "desc_my": "စိတ်ကို အေးချမ်းစေသော တရားထိုင်နှင့် အိပ်ဆေးပုံပြင်သံ",
+        "desc_en": "Ultra-soft, tranquil voice designed for guided meditation and sleep relaxation",
+        "avatar": "🌙",
+        "badge_my": "အေးချမ်း ASMR ✨",
+        "badge_en": "Peaceful ASMR ✨",
+        "control_instruction": (
+            "An ultra-soft, serene, tranquil, whispery Burmese female voice. "
+            "Extremely relaxing, gentle, calm tempo ideal for meditation, ASMR and bedtime stories."
+        ),
+        "cfg_value": 1.8,
+    },
+    "machaw": {
+        "id": "machaw",
+        "gender": "female",
+        "name_my": "မချော (Anime Dub & Gaming Streamer)",
+        "name_en": "Ma Chaw (Anime Dub & Gaming Streamer)",
+        "desc_my": "ချစ်စရာကောင်းပြီး တက်ကြွလန်းဆန်းသော အန်နီမေးနှင့် ဂိမ်းအသံ",
+        "desc_en": "Youthful, high-energy, expressive anime character and gaming streamer voice",
+        "avatar": "🎮",
+        "badge_my": "Anime & Gaming 🎀",
+        "badge_en": "Anime & Gaming 🎀",
+        "control_instruction": (
+            "A high-energy, youthful, playful, vibrant Burmese female anime dubbing artist and gaming creator. "
+            "Expressive, colorful intonation with bright personality."
+        ),
+        "cfg_value": 2.0,
+    },
+    "mathiri": {
+        "id": "mathiri",
+        "gender": "female",
+        "name_my": "မသီရိ (Luxury Brand & Lifestyle)",
+        "name_en": "Ma Thiri (Luxury Brand & Lifestyle)",
+        "desc_my": "ခေတ်မီဆန်းပြားပြီး အဆင့်အတန်းမြင့်သော Lifestyle ကြော်ငြာသံ",
+        "desc_en": "Chic, sophisticated, stylish influencer tone for fashion, beauty and luxury brands",
+        "avatar": "💎",
+        "badge_my": "Luxury Lifestyle 👑",
+        "badge_en": "Luxury Lifestyle 👑",
+        "control_instruction": (
+            "An elegant, chic, highly sophisticated Burmese female influencer and brand ambassador. "
+            "Confident, modern, silky smooth vocal texture for luxury and lifestyle."
+        ),
+        "cfg_value": 2.1,
+    },
 }
 
 

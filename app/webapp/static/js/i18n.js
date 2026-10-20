@@ -1,47 +1,52 @@
 /**
  * i18n.js - Comprehensive Localization Engine for Studio Pro Mini App
- * Supports pure Burmese (my) and pure English (en) without hardcoded strings.
+ * Pure Burmese (my) and Pure English (en) without mixed or hardcoded strings.
  */
 
 const translations = {
     my: {
-        // App Top Bar
-        brand_title: "Studio Pro",
-        brand_subtitle: "AI အသံနှင့် Recap ဖန်တီးမှု စနစ်",
+        // App Top Bar & Brand
+        brand_title: "VOICE CLONE PRO",
+        brand_subtitle: "STUDIO • ULTRA SUITE",
         vip_free: "FREE အဖွဲ့ဝင်",
-        vip_purchased: "👑 VIP အသင်းဝင်",
+        vip_purchased: "👑 VIP PRO",
         unlimited: "အကန့်အသတ်မဲ့",
+        balance_voice_label: "🎙️ အသံသွင်းခွင့်:",
+        balance_recap_label: "🎬 Recap Credits:",
 
         // Bottom Navigation Tabs
         tab_voice: "Voice Studio",
         tab_recap: "Recap Maker",
         tab_downloader: "Downloader",
-        tab_vip: "VIP Wallet",
+        tab_vip: "VIP Plans",
         tab_admin: "Admin Console",
 
         // Tab 1: Voice Clone Studio
         voice_title: "🎙️ AI Voice Clone Studio",
-        voice_subtitle: "သဘာဝကျသော မြန်မာ AI အသံသွင်းခြင်း နှင့် အသံတုပခြင်း",
-        engine_label: "အသုံးပြုမည့် AI Engine",
+        voice_subtitle: "သဘာဝကျသော မြန်မာ AI အသံသွင်းခြင်း နှင့် အဆင့်မြင့် Voice Cloning",
+        engine_label: "အသုံးပြုမည့် AI Engine ရွေးချယ်ပါ",
         engine_voxcpm_title: "☁️ VoxCPM (Cloud AI)",
         engine_voxcpm_desc: "Zero-shot သဘာဝအသံ • Cloud တွင် တိုက်ရိုက်လုပ်ဆောင်သည်",
         engine_applio_title: "💻 Applio RVC (Local GPU)",
         engine_applio_desc: "Laptop Worker တွင် Train ထားသော မော်ဒယ်များ",
 
         persona_mode_title: "အသံရွေးချယ်မှု စတိုင်လ်",
-        btn_mode_curated: "🌟 Curated Voices (၆ မျိုး)",
+        btn_mode_curated: "🌟 Curated Voices (၁၂ မျိုး)",
         btn_mode_custom: "🎙️ Custom Voice Clone",
 
-        curated_section_title: "ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ",
+        curated_section_title: "ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ (၁၂ မျိုး)",
         custom_ref_title: "🎙️ Reference Voice (အသံတူ Clone ရန် အသံနမူနာ)",
         custom_ref_optional: "ရွေးချယ်ခွင့် (Optional)",
         custom_ref_desc: "မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။",
         ref_file_btn: "📁 Reference Audio ဖိုင် ရွေးချယ်မည်",
         btn_clear_file: "✕ ဖျက်မည်",
 
-        model_picker_label: "ရွေးချယ်ထားသော အသံမော်ဒယ်",
-        applio_status_active: "🟢 Local Worker အဆင်သင့်ဖြစ်ပါသည်",
+        model_picker_label: "ရွေးချယ်ထားသော Applio အသံမော်ဒယ်",
+        applio_status_active: "🟢 Laptop Worker အဆင်သင့်ဖြစ်ပါသည်",
         applio_status_waiting: "🟡 Laptop Worker စောင့်ဆိုင်းနေပါသည် (Queue)",
+
+        queue_notice_voxcpm: "⚡ ပုံမှန်ခန့်မှန်းကြာချိန်: ၅-၁၅ စက္ကန့် • Live Cloud AI စနစ်",
+        queue_notice_applio: "⚡ Local GPU မော်ဒယ်များ: Laptop Worker ဖွင့်ထားချိန်တွင် ချက်ချင်း ဆောင်ရွက်ပေးပါသည်",
 
         text_input_label: "အသံသွင်းလိုသော စာသား (Text)",
         text_placeholder: "မြန်မာစာသားများကို ဤနေရာတွင် ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ...",
@@ -66,6 +71,14 @@ const translations = {
         recap_url_label: "YouTube သို့မဟုတ် TikTok Video Link",
         recap_url_placeholder: "https://youtu.be/... သို့မဟုတ် TikTok link...",
         btn_analyze: "စစ်ဆေးမည်",
+
+        recap_style_label: "ဇာတ်လမ်းပြော စတိုင်လ် (Story Style):",
+        style_viral: "🔥 Viral Hook (စိတ်လှုပ်ရှားဖွယ်)",
+        style_dramatic: "🎭 သည်းထိတ်ရင်ဖို (Drama)",
+        style_funny: "😂 ဟာသရယ်မောဖွယ်",
+        style_pov: "👁️ ဇာတ်ကောင် POV",
+        style_standard: "📖 ပုံမှန်ဇာတ်ကြောင်း",
+
         preview_label: "🖼️ Real-time Preview မျက်နှာပြင်",
         preview_hint: "Slider များကို ရွှေ့၍ နေရာညှိပါ",
         blur_box_label: "မူရင်းစာတန်းဖျက် Blur Box",
@@ -74,8 +87,18 @@ const translations = {
         slider_blur_y: "🔲 မူရင်းစာတန်းဖျက် Blur အနိမ့်အမြင့် (Y):",
         slider_blur_h: "↕️ Blur Box အထူ/အမြင့် (H):",
         slider_sub_y: "📝 မြန်မာစာတန်းထိုး နေရာ (Sub Y):",
-        sub_style_label: "စာတန်းထိုး စတိုင်လ်:",
+
+        sub_style_label: "စာတန်းထိုး စတိုင်လ် (Subtitle Style):",
+        sub_style_yellow: "🟡 Classic Gold (အဝါ)",
+        sub_style_white: "⚪ Clean White (အဖြူ)",
+        sub_style_boxed: "⬛ Dark Box (နောက်ခံ)",
+        sub_style_neon: "🔵 Neon Cyan (နီယွန်)",
+
+        sub_font_size_label: "စာလုံးအရွယ်အစား:",
+        sub_lines_label: "စာကြောင်းရေ:",
+
         recap_voice_label: "Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)",
+        queue_notice_recap: "⚡ Movie Recap ခန့်မှန်းကြာချိန်: ၁-၂ မိနစ် (Full HD 1080p Render)",
         btn_start_recap: "⚡ 1-Click Pro Recap ဖန်တီးမည်",
 
         // Tab 3: Downloader
@@ -91,29 +114,47 @@ const translations = {
         fmt_sub_title: "Subtitle File",
         fmt_sub_desc: "SRT (Auto-captions)",
 
-        // Tab 4: VIP Wallet
-        vip_title: "👑 VIP အသင်းဝင် & Balance",
-        vip_subtitle: "အကန့်အသတ်မဲ့ အသံသွင်းခွင့်နှင့် Pro Recap သီးသန့် အခွင့်အရေးများ",
+        // Tab 4: VIP Plans
+        vip_title: "💎 Creator VIP Plans & Wallet",
+        vip_subtitle: "အရည်အသွေးမြင့်မားသော စတူဒီယို အစီအစဉ်များကို စိတ်ကြိုက်ရွေးချယ်ပါ",
         stat_current_tier: "လက်ရှိ အဆင့်အတန်း",
-        stat_balance_min: "လက်ကျန် မိနစ် (Minutes)",
-        plan_1m_name: "1 Month Unlimited VIP",
-        plan_1m_price: "15,000",
-        plan_1m_badge: "လူကြိုက်အများဆုံး 🔥",
-        plan_1m_f1: "✓ Full HD Movie Recap ဖန်တီးခွင့် မကန့်သတ်",
-        plan_1m_f2: "✓ VoxCPM Cloud AI & Applio အသံသွင်းခွင့်",
-        plan_1m_f3: "✓ မူရင်းစာတန်းဖျက် Smart Blur & Logo Watermark",
-        plan_1m_f4: "✓ အမြင့်ဆုံး Speed 192k MP3 & Subtitles",
+        stat_balance_min: "အသံသွင်းခွင့် လက်ကျန် (Minutes)",
+        stat_recap_credits: "Recap Video လက်ကျန် (Credits)",
 
-        plan_3m_name: "3 Months Studio Pro",
-        plan_3m_price: "35,000",
-        plan_3m_badge: "တန်ဖိုးအရှိဆုံး 💎",
-        plan_3m_f1: "✓ ၃ လ သက်တမ်း အကန့်အသတ်မဲ့ အသုံးပြုခွင့်",
-        plan_3m_f2: "✓ မိမိကိုယ်ပိုင် Clone Voice Slot (၁) ခု အခမဲ့ Train ပေးခြင်း",
-        plan_3m_f3: "✓ Priority High-Speed Queue စနစ်",
-        plan_3m_f4: "✓ 24/7 VIP Direct Support",
+        plan_voice_name: "🎙️ Voice Clone Studio Pro",
+        plan_voice_alloc: "မိနစ် ၃၀၀ (၅ နာရီ) စတူဒီယို အသံသွင်းခွင့်",
+        plan_voice_price: "25,000",
+        plan_voice_badge: "Voice Creators 🔥",
+        plan_voice_f1: "✓ VoxCPM Cloud AI အသံ ၁၂ မျိုး အသုံးပြုခွင့်",
+        plan_voice_f2: "✓ Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)",
+        plan_voice_f3: "✓ Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်",
+        plan_voice_f4: "✓ High-Speed Priority Cloud Processing Queue",
+        plan_voice_f5: "✓ အရည်အသွေးမြင့် 24kHz PCM WAV တိုက်ရိုက်ဒေါင်းလုဒ်",
 
-        btn_buy_1m: "💎 ယခု ဝယ်ယူမည်",
-        btn_buy_3m: "👑 ယခု ဝယ်ယူမည်",
+        plan_recap_name: "🎬 Movie Recap Studio Pro",
+        plan_recap_alloc: "ဗီဒီယို ၆၀ ကား Recap ဖန်တီးခွင့် (Credits)",
+        plan_recap_price: "35,000",
+        plan_recap_badge: "Video Editors 🎬",
+        plan_recap_f1: "✓ Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား",
+        plan_recap_f2: "✓ ဇာတ်လမ်းစတိုင် ၅ မျိုး & စာတန်းထိုးစတိုင် ၄ မျိုး",
+        plan_recap_f3: "✓ မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)",
+        plan_recap_f4: "✓ Channel Watermark Logo ထည့်သွင်းခွင့်",
+        plan_recap_f5: "✓ High-Speed Multi-Threaded Video Rendering",
+
+        plan_master_name: "👑 All-in-One Master Suite",
+        plan_master_alloc: "မိနစ် ၆၀၀ + Recap ဗီဒီယို ၁၅၀ ကား",
+        plan_master_price: "55,000",
+        plan_master_badge: "အကောင်းဆုံး တန်ဖိုး 💎",
+        plan_master_f1: "✓ Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၆၀၀ - ၁၀ နာရီ)",
+        plan_master_f2: "✓ Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား)",
+        plan_master_f3: "✓ မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း",
+        plan_master_f4: "✓ Dedicated High-Speed Cloud Node Priority",
+        plan_master_f5: "✓ Commercial Copyright Safe & 24/7 VIP Direct Support",
+
+        btn_buy_voice: "💎 Voice Plan ဝယ်ယူမည်",
+        btn_buy_recap: "🎬 Recap Plan ဝယ်ယူမည်",
+        btn_buy_master: "👑 Master Suite ဝယ်ယူမည်",
+
         payment_info_title: "💳 ငွေပေးချေမှု အချက်အလက်များ",
         copy_btn: "📋 ကူးမည်",
         payment_notice: "⚠️ ငွေလွှဲပြီးပါက ငွေလွှဲပြေစာ Screenshot ကို အောက်တွင် တင်သွင်းပေးပါ သို့မဟုတ် @VoiceCloneProAdmin သို့ ပို့ပေးပါရန်။",
@@ -121,7 +162,7 @@ const translations = {
         btn_submit_slip: "📤 ပြေစာ တင်သွင်းမည်",
 
         // Tab 5: Admin Console
-        admin_title: "⚡ Admin Control Console",
+        admin_title: "⚡ Executive Control Center",
         admin_subtitle: "စနစ်ကြီးကြပ်မှု၊ ငွေလွှဲပြေစာ စစ်ဆေးခြင်းနှင့် အသုံးပြုသူများ စီမံခန့်ခွဲမှု",
         admin_stat_users: "အသုံးပြုသူ စုစုပေါင်း",
         admin_stat_vip: "VIP အသင်းဝင်များ",
@@ -135,6 +176,7 @@ const translations = {
         admin_user_id_ph: "Telegram ID (ဥပမာ: 1957002115)",
         btn_grant_vip: "👑 VIP သို့ တင်မည်",
         btn_add_minutes: "⏱️ +60 မိနစ် ထည့်မည်",
+        btn_add_recap_credit: "🎬 +10 Recap Credit ထည့်မည်",
         admin_broadcast_header: "📢 Telegram Bot အားလုံးသို့ Broadcast စာပို့ရန်",
         admin_broadcast_ph: "အသုံးပြုသူ အားလုံးထံ ပေးပို့မည့် စာသား ရိုက်ထည့်ပါ...",
         btn_send_broadcast: "🚀 Broadcast ပို့မည်",
@@ -147,43 +189,48 @@ const translations = {
     },
 
     en: {
-        // App Top Bar
-        brand_title: "Studio Pro",
-        brand_subtitle: "AI Voice & Recap Studio",
-        vip_free: "FREE MEMBER",
+        // App Top Bar & Brand
+        brand_title: "VOICE CLONE PRO",
+        brand_subtitle: "STUDIO • ULTRA SUITE",
+        vip_free: "FREE CREATOR",
         vip_purchased: "👑 VIP PRO",
         unlimited: "Unlimited",
+        balance_voice_label: "🎙️ Voice Allowance:",
+        balance_recap_label: "🎬 Recap Credits:",
 
         // Bottom Navigation Tabs
         tab_voice: "Voice Studio",
         tab_recap: "Recap Maker",
         tab_downloader: "Downloader",
-        tab_vip: "VIP Wallet",
+        tab_vip: "VIP Plans",
         tab_admin: "Admin Console",
 
         // Tab 1: Voice Clone Studio
         voice_title: "🎙️ AI Voice Clone Studio",
-        voice_subtitle: "Natural Myanmar Speech Synthesis & Voice Cloning",
-        engine_label: "AI Synthesis Engine",
+        voice_subtitle: "High-Fidelity Myanmar Speech Synthesis & Voice Cloning",
+        engine_label: "Select AI Synthesis Engine",
         engine_voxcpm_title: "☁️ VoxCPM (Cloud AI)",
-        engine_voxcpm_desc: "Zero-shot human natural speech • Real-time cloud",
+        engine_voxcpm_desc: "Zero-shot natural speech • Real-time cloud",
         engine_applio_title: "💻 Applio RVC (Local GPU)",
         engine_applio_desc: "Local trained models on laptop worker",
 
         persona_mode_title: "Voice Selection Mode",
-        btn_mode_curated: "🌟 Curated Personas (6)",
+        btn_mode_curated: "🌟 Curated Personas (12)",
         btn_mode_custom: "🎙️ Custom Voice Clone",
 
-        curated_section_title: "Pre-tuned Gemini Voice Personas",
+        curated_section_title: "Pre-tuned Gemini Voice Personas (12)",
         custom_ref_title: "🎙️ Reference Voice (Clone Sample)",
         custom_ref_optional: "Optional",
         custom_ref_desc: "Upload target voice sample (3-30s WAV/MP3). If left empty, default Burmese AI voice will be used.",
         ref_file_btn: "📁 Choose Reference Audio File",
         btn_clear_file: "✕ Clear",
 
-        model_picker_label: "Selected Voice Model",
-        applio_status_active: "🟢 Local Worker Online",
+        model_picker_label: "Selected Applio Voice Model",
+        applio_status_active: "🟢 Laptop Worker Online",
         applio_status_waiting: "🟡 Waiting for Laptop Worker (Queued)",
+
+        queue_notice_voxcpm: "⚡ Estimated Duration: 5-15s • Real-time Cloud AI Node",
+        queue_notice_applio: "⚡ Local GPU Models: Processed instantly when Laptop Worker is active",
 
         text_input_label: "Input Script Text",
         text_placeholder: "Type or paste Myanmar text here...",
@@ -208,6 +255,14 @@ const translations = {
         recap_url_label: "YouTube or TikTok Video Link",
         recap_url_placeholder: "https://youtu.be/... or TikTok link...",
         btn_analyze: "Analyze Link",
+
+        recap_style_label: "Narration Story Style:",
+        style_viral: "🔥 Viral Hook (High Engagement)",
+        style_dramatic: "🎭 Dramatic (Suspense Thriller)",
+        style_funny: "😂 Comedy (Humorous)",
+        style_pov: "👁️ First-Person POV",
+        style_standard: "📖 Classic Storytelling",
+
         preview_label: "🖼️ Real-time Canvas Preview",
         preview_hint: "Adjust sliders to position overlays",
         blur_box_label: "Subtitle Deletion Blur Box",
@@ -216,8 +271,18 @@ const translations = {
         slider_blur_y: "🔲 Subtitle Blur Position (Y):",
         slider_blur_h: "↕️ Blur Box Height (H):",
         slider_sub_y: "📝 Subtitle Vertical Position (Sub Y):",
+
         sub_style_label: "Subtitle Typography Style:",
+        sub_style_yellow: "🟡 Classic Gold",
+        sub_style_white: "⚪ Clean White",
+        sub_style_boxed: "⬛ Dark Box",
+        sub_style_neon: "🔵 Neon Cyan",
+
+        sub_font_size_label: "Font Size:",
+        sub_lines_label: "Lines:",
+
         recap_voice_label: "Narrator Dubbing Voice",
+        queue_notice_recap: "⚡ Movie Recap Estimate: 1-2 mins (Full HD 1080p Render)",
         btn_start_recap: "⚡ Generate 1-Click Pro Recap",
 
         // Tab 3: Downloader
@@ -233,29 +298,47 @@ const translations = {
         fmt_sub_title: "Subtitle File",
         fmt_sub_desc: "SRT (Auto-captions)",
 
-        // Tab 4: VIP Wallet
-        vip_title: "👑 VIP Membership & Wallet",
-        vip_subtitle: "Unlimited voice cloning allowance & full movie recap access",
+        // Tab 4: VIP Plans
+        vip_title: "💎 Creator VIP Plans & Wallet",
+        vip_subtitle: "Premium creator-tier subscriptions built for serious editors & creators",
         stat_current_tier: "Current Membership Tier",
         stat_balance_min: "Remaining Minutes",
-        plan_1m_name: "1 Month Unlimited VIP",
-        plan_1m_price: "15,000",
-        plan_1m_badge: "Most Popular 🔥",
-        plan_1m_f1: "✓ Full HD Movie Recap creation unlimited",
-        plan_1m_f2: "✓ VoxCPM Cloud AI & Applio Voice Cloning",
-        plan_1m_f3: "✓ Anti-Copyright Smart Blur & Logo Watermark",
-        plan_1m_f4: "✓ High-speed 192k MP3 & Subtitles",
+        stat_recap_credits: "Remaining Recap Credits",
 
-        plan_3m_name: "3 Months Studio Pro",
-        plan_3m_price: "35,000",
-        plan_3m_badge: "Best Value 💎",
-        plan_3m_f1: "✓ 3 Months unrestricted studio usage",
-        plan_3m_f2: "✓ Free custom trained clone voice slot (1)",
-        plan_3m_f3: "✓ Priority High-Speed Queue access",
-        plan_3m_f4: "✓ 24/7 VIP Direct Support",
+        plan_voice_name: "🎙️ Voice Clone Studio Pro",
+        plan_voice_alloc: "300 Usable Minutes (5 Hours Audio)",
+        plan_voice_price: "25,000",
+        plan_voice_badge: "Voice Creators 🔥",
+        plan_voice_f1: "✓ 12 VoxCPM Cloud AI Personas (6M / 6F)",
+        plan_voice_f2: "✓ Custom Voice Clone (Audio Sample Upload)",
+        plan_voice_f3: "✓ Applio RVC Local GPU Trained Models",
+        plan_voice_f4: "✓ High-Speed Priority Cloud Processing Queue",
+        plan_voice_f5: "✓ High-Fidelity 24kHz PCM WAV Direct Download",
 
-        btn_buy_1m: "💎 Upgrade Now",
-        btn_buy_3m: "👑 Upgrade Now",
+        plan_recap_name: "🎬 Movie Recap Studio Pro",
+        plan_recap_alloc: "60 Movie Recap Video Credits",
+        plan_recap_price: "35,000",
+        plan_recap_badge: "Video Editors 🎬",
+        plan_recap_f1: "✓ 60 Full HD 1080p Movie Recap Generations",
+        plan_recap_f2: "✓ 5 Story Styles & 4 Subtitle Typography Presets",
+        plan_recap_f3: "✓ Anti-Copyright Smart Blur Box (Y, H sliders)",
+        plan_recap_f4: "✓ Custom Channel Logo Watermark Overlay",
+        plan_recap_f5: "✓ High-Speed Multi-Threaded Video Rendering",
+
+        plan_master_name: "👑 All-in-One Master Suite",
+        plan_master_alloc: "600 Mins + 150 Recap Credits",
+        plan_master_price: "55,000",
+        plan_master_badge: "Best Value Master 💎",
+        plan_master_f1: "✓ Full Voice Clone Studio Pro (600 Mins)",
+        plan_master_f2: "✓ Full Movie Recap Studio Pro (150 Videos)",
+        plan_master_f3: "✓ 1 Free Custom Trained Voice Model Slot",
+        plan_master_f4: "✓ Dedicated High-Speed Cloud Node Priority",
+        plan_master_f5: "✓ Commercial Copyright Safe & 24/7 VIP Support",
+
+        btn_buy_voice: "💎 Get Voice Plan",
+        btn_buy_recap: "🎬 Get Recap Plan",
+        btn_buy_master: "👑 Get Master Suite",
+
         payment_info_title: "💳 Payment Account Details",
         copy_btn: "📋 Copy",
         payment_notice: "⚠️ After payment, upload your transfer screenshot below or send to @VoiceCloneProAdmin for instant activation.",
@@ -263,7 +346,7 @@ const translations = {
         btn_submit_slip: "📤 Submit Receipt Slip",
 
         // Tab 5: Admin Console
-        admin_title: "⚡ Admin Control Console",
+        admin_title: "⚡ Executive Control Center",
         admin_subtitle: "Operations overview, payment verification, and user management",
         admin_stat_users: "Total Registered Users",
         admin_stat_vip: "VIP Members",
@@ -273,10 +356,11 @@ const translations = {
         admin_no_slips: "No pending payment slips",
         btn_approve: "✓ Approve (+VIP)",
         btn_reject: "✕ Reject",
-        admin_user_manage_header: "👤 User Tier & Minutes Management",
+        admin_user_manage_header: "👤 User Tier & Allowance Management",
         admin_user_id_ph: "Telegram ID (e.g. 1957002115)",
         btn_grant_vip: "👑 Upgrade to VIP",
         btn_add_minutes: "⏱️ Add +60 Minutes",
+        btn_add_recap_credit: "🎬 Add +10 Recap Credits",
         admin_broadcast_header: "📢 Broadcast Message to All Users",
         admin_broadcast_ph: "Type broadcast message to deliver to all users...",
         btn_send_broadcast: "🚀 Send Broadcast",
