@@ -19,11 +19,22 @@ const state = {
     pollTimer: null,
 
     // Recap Configuration
+    recapRatio: "9:16",
+    recapRatioFill: "blur",
+    recapMirror: true,
+    recapZoom: 1.06,
+    recapSpeed: "+12%",
     recapStoryStyle: "viral",
+    recapBurnSubs: true,
+    recapBlurSubs: true,
+    recapLogo: true,
+    recapLogoPos: "top-right",
     recapSubStyle: "yellow",
     recapFontSize: 16,
     recapLines: 1,
     recapVoice: "komin",
+    recapJobId: null,
+    recapPollTimer: null,
 };
 
 // ── Telegram WebApp Initialization ─────────────────────────────────────────
@@ -549,7 +560,11 @@ function setupRecapVisualEditor() {
 
     const previewBlur = document.getElementById("preview-blur-box");
     const previewSub = document.getElementById("preview-sub-box");
+    const previewLogo = document.getElementById("preview-logo");
+    const canvas = document.getElementById("video-bg-canvas");
+    const mockupFrame = document.getElementById("recap-mockup-frame");
 
+    // 1. Slider Controls for Original Blur and Subtitle Y
     if (sliderBlurY && previewBlur && valBlurY) {
         sliderBlurY.addEventListener("input", (e) => {
             const val = parseInt(e.target.value);
@@ -576,25 +591,131 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // Story Style Picker
+    // 2. Aspect Ratio Selector (9:16, 16:9, 1:1, Original)
+    const ratioBtns = document.querySelectorAll("#recap-ratio-picker .ratio-btn");
+    ratioBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            ratioBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapRatio = btn.getAttribute("data-ratio") || "9:16";
+
+            if (mockupFrame) {
+                let ratioClass = "ratio-9-16";
+                if (state.recapRatio === "16:9") ratioClass = "ratio-16-9";
+                else if (state.recapRatio === "1:1") ratioClass = "ratio-1-1";
+                else if (state.recapRatio === "Original") ratioClass = "ratio-16-9";
+                mockupFrame.className = `mockup-screen ${ratioClass}`;
+            }
+        });
+    });
+
+    // 3. Aspect Ratio Fill Mode (blur, crop, black)
+    const fillBtns = document.querySelectorAll("#recap-fill-picker .pill-btn");
+    fillBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            fillBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapRatioFill = btn.getAttribute("data-fill") || "blur";
+        });
+    });
+
+    // 4. Anti-Copyright Protection: Mirror Toggle
+    const btnMirror = document.getElementById("btn-toggle-mirror");
+    if (btnMirror) {
+        btnMirror.addEventListener("click", () => {
+            haptic("selection");
+            state.recapMirror = !state.recapMirror;
+            btnMirror.classList.toggle("active", state.recapMirror);
+            const statusSpan = btnMirror.querySelector(".toggle-status");
+            if (statusSpan) {
+                statusSpan.innerText = state.recapMirror ? t("mirror_on") : t("mirror_off");
+            }
+            if (canvas) {
+                canvas.classList.toggle("mirrored", state.recapMirror);
+            }
+        });
+    }
+
+    // 5. Anti-Copyright Protection: Micro-Zoom (1.00, 1.06, 1.10)
+    const zoomBtns = document.querySelectorAll("#recap-zoom-picker .pill-btn");
+    zoomBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            zoomBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapZoom = parseFloat(btn.getAttribute("data-zoom") || "1.06");
+        });
+    });
+
+    // 6. Narration Speed & Pacing (+0%, +8%, +12%, +18%, +22%)
+    const speedBtns = document.querySelectorAll("#recap-speed-picker .pill-btn");
+    speedBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            speedBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapSpeed = btn.getAttribute("data-speed") || "+12%";
+        });
+    });
+
+    // 7. Narration Story Style Picker (viral, dramatic, funny, pov, standard)
     const storyPills = document.querySelectorAll("#story-style-picker .style-select-pill");
     storyPills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
             storyPills.forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
-            state.recapStoryStyle = pill.getAttribute("data-story");
+            state.recapStoryStyle = pill.getAttribute("data-story") || "viral";
         });
     });
 
-    // Subtitle Style Presets (Yellow, White, Boxed, Neon)
+    // 8. Overlay Toggles: Subtitles, Blur, Logo
+    const btnToggleSubs = document.getElementById("btn-toggle-subs");
+    if (btnToggleSubs) {
+        btnToggleSubs.addEventListener("click", () => {
+            haptic("selection");
+            state.recapBurnSubs = !state.recapBurnSubs;
+            btnToggleSubs.classList.toggle("active", state.recapBurnSubs);
+            const tVal = btnToggleSubs.querySelector(".t-val");
+            if (tVal) tVal.innerText = state.recapBurnSubs ? t("toggle_on") : t("toggle_off");
+            if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
+        });
+    }
+
+    const btnToggleBlur = document.getElementById("btn-toggle-blur");
+    if (btnToggleBlur) {
+        btnToggleBlur.addEventListener("click", () => {
+            haptic("selection");
+            state.recapBlurSubs = !state.recapBlurSubs;
+            btnToggleBlur.classList.toggle("active", state.recapBlurSubs);
+            const tVal = btnToggleBlur.querySelector(".t-val");
+            if (tVal) tVal.innerText = state.recapBlurSubs ? t("toggle_on") : t("toggle_off");
+            if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
+        });
+    }
+
+    const btnToggleLogo = document.getElementById("btn-toggle-logo");
+    if (btnToggleLogo) {
+        btnToggleLogo.addEventListener("click", () => {
+            haptic("selection");
+            state.recapLogo = !state.recapLogo;
+            btnToggleLogo.classList.toggle("active", state.recapLogo);
+            const tVal = btnToggleLogo.querySelector(".t-val");
+            if (tVal) tVal.innerText = state.recapLogo ? t("toggle_on") : t("toggle_off");
+            if (previewLogo) previewLogo.style.display = state.recapLogo ? "block" : "none";
+        });
+    }
+
+    // 9. Subtitle Style Presets (Yellow, White, Boxed, Neon)
     const styleChips = document.querySelectorAll("#sub-style-picker .style-chip");
     styleChips.forEach(chip => {
         chip.addEventListener("click", () => {
             haptic("selection");
             styleChips.forEach(c => c.classList.remove("active"));
             chip.classList.add("active");
-            const style = chip.getAttribute("data-style");
+            const style = chip.getAttribute("data-style") || "yellow";
             state.recapSubStyle = style;
             if (previewSub) {
                 previewSub.className = `preview-sub-box ${style}`;
@@ -602,14 +723,14 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // Font Size Picker
+    // 10. Font Size Picker
     const sizePills = document.querySelectorAll("#font-size-picker .pill-btn");
     sizePills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
             sizePills.forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
-            state.recapFontSize = parseInt(pill.getAttribute("data-size"));
+            state.recapFontSize = parseInt(pill.getAttribute("data-size") || "16");
             const previewText = document.getElementById("preview-sub-text-el");
             if (previewText) {
                 previewText.style.fontSize = `${state.recapFontSize * 0.85}px`;
@@ -617,18 +738,32 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // Subtitle Lines Picker
+    // 11. Subtitle Lines Picker
     const linePills = document.querySelectorAll("#sub-lines-picker .pill-btn");
     linePills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
             linePills.forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
-            state.recapLines = parseInt(pill.getAttribute("data-lines"));
+            state.recapLines = parseInt(pill.getAttribute("data-lines") || "1");
         });
     });
 
-    // Dub Voice Selector
+    // 12. Logo Position Picker
+    const logoPosBtns = document.querySelectorAll("#recap-logo-pos-picker .pill-btn");
+    logoPosBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            logoPosBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapLogoPos = btn.getAttribute("data-pos") || "top-right";
+            if (previewLogo) {
+                previewLogo.className = `preview-logo-watermark ${state.recapLogoPos}`;
+            }
+        });
+    });
+
+    // 13. Dub Voice Selector
     const voiceSelect = document.getElementById("recap-voice-select");
     if (voiceSelect) {
         voiceSelect.addEventListener("change", (e) => {
@@ -636,7 +771,60 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // 1-Click Recap Action
+    // 14. Analyze / Video Info Check Button
+    const btnAnalyze = document.getElementById("btn-fetch-recap-info");
+    const recapInfoBox = document.getElementById("recap-video-info-box");
+    if (btnAnalyze) {
+        btnAnalyze.addEventListener("click", async () => {
+            const urlInput = document.getElementById("recap-url-input");
+            const url = urlInput ? urlInput.value.trim() : "";
+            if (!url) {
+                alert(t("toast_empty_url"));
+                return;
+            }
+            haptic("medium");
+            btnAnalyze.disabled = true;
+            const originalText = btnAnalyze.innerText;
+            btnAnalyze.innerText = "⏳...";
+
+            try {
+                const res = await fetch("/api/downloader/extract", {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ url: url }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Analysis failed");
+
+                if (recapInfoBox) recapInfoBox.classList.remove("hidden");
+                const thumbImg = document.getElementById("recap-info-thumb");
+                const titleSpan = document.getElementById("recap-info-title");
+                const durSpan = document.getElementById("recap-info-dur");
+                const platformSpan = document.getElementById("recap-info-platform");
+                const subSpan = document.getElementById("recap-info-sub");
+
+                if (thumbImg && data.thumbnail) thumbImg.src = data.thumbnail;
+                if (titleSpan) titleSpan.innerText = data.title || "Video";
+                if (durSpan) durSpan.innerText = `⏱️ ${data.estimated_duration || "03:00"}`;
+                if (platformSpan) platformSpan.innerText = data.platform || "Video";
+                if (subSpan) subSpan.innerText = data.has_subtitles ? "✅ Subtitle Ready" : "⚠️ AI Auto Sub";
+
+                // Reflect thumbnail on live preview canvas
+                if (canvas && data.thumbnail) {
+                    canvas.style.backgroundImage = `url('${data.thumbnail}')`;
+                    canvas.style.backgroundSize = "cover";
+                    canvas.style.backgroundPosition = "center";
+                }
+            } catch (err) {
+                alert(err.message || "Failed to inspect video link");
+            } finally {
+                btnAnalyze.disabled = false;
+                btnAnalyze.innerText = originalText;
+            }
+        });
+    }
+
+    // 15. 1-Click Recap Action
     const btnRecap = document.getElementById("btn-start-recap");
     if (btnRecap) {
         btnRecap.addEventListener("click", handleStartRecap);
@@ -655,6 +843,21 @@ async function handleStartRecap() {
     const btn = document.getElementById("btn-start-recap");
     if (btn) btn.disabled = true;
 
+    const progressBox = document.getElementById("recap-progress-box");
+    const resultBox = document.getElementById("recap-result-box");
+    const progressFill = document.getElementById("recap-progress-fill");
+    const statusMsg = document.getElementById("recap-status-msg");
+    const stepText = document.getElementById("recap-step-text");
+
+    if (resultBox) resultBox.classList.add("hidden");
+    if (progressBox) {
+        progressBox.classList.remove("hidden");
+        progressBox.scrollIntoView({ behavior: "smooth" });
+    }
+    if (progressFill) progressFill.style.width = "10%";
+    if (statusMsg) statusMsg.innerText = t("recap_processing_msg");
+    if (stepText) stepText.innerText = t("queue_notice_recap");
+
     try {
         const sliderBlurY = document.getElementById("slider-blur-y");
         const sliderBlurH = document.getElementById("slider-blur-h");
@@ -664,13 +867,21 @@ async function handleStartRecap() {
             url: url,
             voice_slug: state.recapVoice || "komin",
             story_style: state.recapStoryStyle || "viral",
+            ratio: state.recapRatio || "9:16",
+            ratio_fill: state.recapRatioFill || "blur",
+            mirror_video: state.recapMirror !== false,
+            zoom_factor: state.recapZoom || 1.06,
+            voice_speed: state.recapSpeed || "+12%",
+            blur_subtitles: state.recapBlurSubs !== false,
             blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 81,
             blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 13,
+            burn_subtitles: state.recapBurnSubs !== false,
             sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
             sub_style: state.recapSubStyle || "yellow",
             sub_font_size: state.recapFontSize || 16,
             sub_lines: state.recapLines || 1,
-            include_logo: true,
+            include_logo: state.recapLogo !== false,
+            logo_pos: state.recapLogoPos || "top-right",
         };
 
         const res = await fetch("/api/recap/generate", {
@@ -682,14 +893,87 @@ async function handleStartRecap() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Recap creation failed");
 
-        alert(`🚀 ${data.message}\n\n🎬 Job ID: ${data.recap_id}\n⚡ စတိုင်လ်: ${data.story_style}\n💳 လက်ကျန် Credit: ${data.remaining_credits}`);
+        state.recapJobId = data.recap_id;
         loadUserProfile();
+        startRecapJobPolling(data.recap_id);
 
     } catch (err) {
         alert(err.message);
-    } finally {
+        if (progressBox) progressBox.classList.add("hidden");
         if (btn) btn.disabled = false;
     }
+}
+
+function startRecapJobPolling(jobId) {
+    if (state.recapPollTimer) clearInterval(state.recapPollTimer);
+
+    const progressBox = document.getElementById("recap-progress-box");
+    const resultBox = document.getElementById("recap-result-box");
+    const progressFill = document.getElementById("recap-progress-fill");
+    const statusMsg = document.getElementById("recap-status-msg");
+    const stepText = document.getElementById("recap-step-text");
+    const btn = document.getElementById("btn-start-recap");
+
+    state.recapPollTimer = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/recap/${jobId}/status`, {
+                headers: getAuthHeaders(),
+            });
+            if (!res.ok) return;
+
+            const data = await res.json();
+            if (progressFill && data.progress_percent) {
+                progressFill.style.width = `${Math.min(100, Math.max(10, data.progress_percent))}%`;
+            }
+            if (statusMsg && data.progress_label) {
+                statusMsg.innerText = data.progress_label;
+            }
+            if (stepText && data.progress_step) {
+                stepText.innerText = `Step ${data.progress_step} • ${t("queue_notice_recap")}`;
+            }
+
+            if (data.status === "SUCCESS") {
+                clearInterval(state.recapPollTimer);
+                state.recapPollTimer = null;
+                if (btn) btn.disabled = false;
+                if (progressBox) progressBox.classList.add("hidden");
+                if (resultBox) {
+                    resultBox.classList.remove("hidden");
+                    resultBox.scrollIntoView({ behavior: "smooth" });
+                }
+
+                // Setup video player
+                const player = document.getElementById("recap-result-player");
+                if (player && data.download_urls?.video) {
+                    player.src = data.download_urls.video;
+                    player.classList.remove("hidden");
+                }
+
+                // Setup deliverable buttons
+                const btnVideo = document.getElementById("btn-recap-dl-video");
+                const btnAudio = document.getElementById("btn-recap-dl-audio");
+                const btnSrt = document.getElementById("btn-recap-dl-srt");
+                const btnScript = document.getElementById("btn-recap-dl-script");
+
+                if (btnVideo && data.download_urls?.video) btnVideo.href = data.download_urls.video;
+                if (btnAudio && data.download_urls?.audio) btnAudio.href = data.download_urls.audio;
+                if (btnSrt && data.download_urls?.srt) btnSrt.href = data.download_urls.srt;
+                if (btnScript && data.download_urls?.script) btnScript.href = data.download_urls.script;
+
+                haptic("success");
+                loadUserProfile();
+            } else if (data.status === "FAILED") {
+                clearInterval(state.recapPollTimer);
+                state.recapPollTimer = null;
+                if (btn) btn.disabled = false;
+                if (progressBox) progressBox.classList.add("hidden");
+                alert(`❌ Recap Generation Failed: ${data.error_message || "Processing error"}\n\nCredit has been refunded to your account.`);
+                loadUserProfile();
+            }
+        } catch (err) {
+            console.warn("Recap polling error:", err);
+        }
+    }, 2000);
 }
 
 // ── Downloader Tab ─────────────────────────────────────────────────────────

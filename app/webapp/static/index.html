@@ -219,16 +219,97 @@
                     <span class="notice-text" data-i18n="queue_notice_recap">⚡ Movie Recap ခန့်မှန်းကြာချိန်: ၁-၂ မိနစ် (Full HD 1080p Render)</span>
                 </div>
 
-                <!-- Video Link Card -->
+                <!-- Video Link Card & Analysis -->
                 <div class="card glass">
                     <div class="card-label" data-i18n="recap_url_label">YouTube သို့မဟုတ် TikTok Video Link</div>
                     <div class="input-with-btn">
                         <input type="url" id="recap-url-input" data-i18n-ph="recap_url_placeholder" placeholder="https://youtu.be/... သို့မဟုတ် TikTok link...">
                         <button class="btn mini-btn" id="btn-fetch-recap-info" data-i18n="btn_analyze">စစ်ဆေးမည်</button>
                     </div>
+
+                    <!-- Video Info Box (Populated after link check) -->
+                    <div class="video-info-card hidden" id="recap-video-info-box">
+                        <img id="recap-info-thumb" src="" alt="Thumbnail" class="recap-info-thumb">
+                        <div class="recap-info-meta">
+                            <span class="recap-info-title" id="recap-info-title">Video Title</span>
+                            <div class="recap-info-tags">
+                                <span class="mini-tag" id="recap-info-dur">⏱️ 00:00</span>
+                                <span class="mini-tag" id="recap-info-platform">YouTube</span>
+                                <span class="mini-tag text-green" id="recap-info-sub">✅ Subtitle Ready</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Narration Story Style Selector (Restored from Downloader Bot) -->
+                <!-- 1. Video Aspect Ratio Selector (Ratio) -->
+                <div class="card glass">
+                    <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား (Aspect Ratio):</div>
+                    <div class="ratio-pills-grid" id="recap-ratio-picker">
+                        <button class="ratio-btn active" data-ratio="9:16">
+                            <span class="ratio-icon">📱</span>
+                            <span class="ratio-title" data-i18n="ratio_9_16">📐 9:16 (TikTok / Reels / Shorts)</span>
+                        </button>
+                        <button class="ratio-btn" data-ratio="16:9">
+                            <span class="ratio-icon">🖥️</span>
+                            <span class="ratio-title" data-i18n="ratio_16_9">📐 16:9 (YouTube / အလျားလိုက်)</span>
+                        </button>
+                        <button class="ratio-btn" data-ratio="1:1">
+                            <span class="ratio-icon">⏹️</span>
+                            <span class="ratio-title" data-i18n="ratio_1_1">📐 1:1 (Square စကွဲယား)</span>
+                        </button>
+                        <button class="ratio-btn" data-ratio="Original">
+                            <span class="ratio-icon">🎞️</span>
+                            <span class="ratio-title" data-i18n="ratio_original">📐 Original (မူရင်းအချိုးအစား)</span>
+                        </button>
+                    </div>
+
+                    <!-- Aspect Ratio Fill Mode -->
+                    <div class="sub-specs-row mt-3">
+                        <div class="spec-col" style="grid-column: 1 / -1;">
+                            <span class="spec-lbl" data-i18n="recap_fill_label">ဘောင်ဖြည့်စွက်မှု (Aspect Fill):</span>
+                            <div class="pill-group sm" id="recap-fill-picker">
+                                <button class="pill-btn active" data-fill="blur" data-i18n="fill_blur">🌫️ Blur Background (ဝါးဖြည့်)</button>
+                                <button class="pill-btn" data-fill="crop" data-i18n="fill_crop">✂️ Center Crop (အလယ်ဖြတ်)</button>
+                                <button class="pill-btn" data-fill="black" data-i18n="fill_black">⬛ Black Bars (ဘေးဘောင်မည်း)</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Anti-Copyright Protection (Mirror & Zoom) -->
+                <div class="card glass">
+                    <div class="card-label" data-i18n="recap_anticopyright_label">မူပိုင်ခွင့် ကာကွယ်ရေး (Anti-Copyright):</div>
+                    <div class="anticopyright-grid">
+                        <div class="spec-col">
+                            <span class="spec-lbl" data-i18n="recap_mirror_label">🪞 Video Mirror (ဘယ်/ညာ လှန်မည်):</span>
+                            <button class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true">
+                                <span class="toggle-status" data-i18n="mirror_on">🪞 Mirror: ON ✅</span>
+                            </button>
+                        </div>
+                        <div class="spec-col">
+                            <span class="spec-lbl" data-i18n="recap_zoom_label">🔍 Micro-Zoom (ဇူးမ်ချဲ့ခြင်း):</span>
+                            <div class="pill-group sm" id="recap-zoom-picker">
+                                <button class="pill-btn" data-zoom="1.00" data-i18n="zoom_off">1.0x ပုံမှန်</button>
+                                <button class="pill-btn active" data-zoom="1.06" data-i18n="zoom_std">1.06x စံနှုန်း 🔥</button>
+                                <button class="pill-btn" data-zoom="1.10" data-i18n="zoom_strong">1.10x အမြင့်</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Narration Speed & Pacing -->
+                <div class="card glass">
+                    <div class="card-label" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း (Narration Speed / Pacing):</div>
+                    <div class="pill-group sm flex-wrap" id="recap-speed-picker">
+                        <button class="pill-btn" data-speed="+0%" data-i18n="speed_0">+0% ပုံမှန်</button>
+                        <button class="pill-btn" data-speed="+8%" data-i18n="speed_8">+8% သွက်</button>
+                        <button class="pill-btn active" data-speed="+12%" data-i18n="speed_12">+12% အကြံပြု 🔥</button>
+                        <button class="pill-btn" data-speed="+18%" data-i18n="speed_18">+18% မြန်</button>
+                        <button class="pill-btn" data-speed="+22%" data-i18n="speed_22">+22% အထူးမြန်</button>
+                    </div>
+                </div>
+
+                <!-- 4. Narration Story Style Selector -->
                 <div class="card glass">
                     <div class="card-label" data-i18n="recap_style_label">ဇာတ်လမ်းပြော စတိုင်လ် (Story Style):</div>
                     <div class="style-pills-grid" id="story-style-picker">
@@ -250,33 +331,54 @@
                     </div>
                 </div>
 
-                <!-- Visual Interactive Canvas Mockup -->
+                <!-- 5. Visual Interactive Canvas Mockup & Overlays -->
                 <div class="card glass visual-editor-card">
                     <div class="card-header-row">
                         <div class="card-label" data-i18n="preview_label">🖼️ Real-time Preview မျက်နှာပြင်</div>
                         <span class="hint-tag" data-i18n="preview_hint">Slider များကို ရွှေ့၍ နေရာညှိပါ</span>
                     </div>
 
-                    <!-- Phone Frame Video Mockup -->
-                    <div class="mockup-screen">
-                        <div class="video-bg-placeholder">
-                            <div class="video-top-overlay">
-                                <span class="video-placeholder-icon">🎬 1080p Canvas Preview</span>
-                                <div class="preview-logo-watermark" id="preview-logo">
-                                    <span data-i18n="logo_label">⭐ LOGO</span>
+                    <!-- Dynamic Aspect Ratio Video Canvas -->
+                    <div class="mockup-screen-container">
+                        <div class="mockup-screen ratio-9-16" id="recap-mockup-frame">
+                            <div class="video-bg-placeholder mirrored" id="video-bg-canvas">
+                                <div class="video-top-overlay">
+                                    <span class="video-placeholder-icon">🎬 Live Canvas</span>
+                                    <div class="preview-logo-watermark top-right" id="preview-logo">
+                                        <span data-i18n="logo_label">⭐ LOGO</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="preview-blur-box" id="preview-blur-box" style="bottom: 12%; height: 14%;">
-                                <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
-                            </div>
-                            <div class="preview-sub-box yellow" id="preview-sub-box" style="bottom: 15%;">
-                                <span class="preview-sub-text" id="preview-sub-text-el" data-i18n="sub_sample_text">"အခုတော့ ကျွန်တော်တို့ရဲ့ အစီအစဉ် စတင်ပါပြီ..."</span>
+                                <div class="preview-blur-box" id="preview-blur-box" style="bottom: 12%; height: 14%;">
+                                    <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
+                                </div>
+                                <div class="preview-sub-box yellow" id="preview-sub-box" style="bottom: 15%;">
+                                    <span class="preview-sub-text" id="preview-sub-text-el" data-i18n="sub_sample_text">"အခုတော့ ကျွန်တော်တို့ရဲ့ အစီအစဉ် စတင်ပါပြီ..."</span>
+                                </div>
                             </div>
                         </div>
                     </div>
 
+                    <!-- Overlay Toggles (Subtitles, Blur, Logo) -->
+                    <div class="overlays-toggle-row mt-3">
+                        <button class="mini-toggle active" id="btn-toggle-subs">
+                            <span class="t-icon">📝</span>
+                            <span class="t-lbl" data-i18n="recap_burn_subs_label">စာတန်းထိုး:</span>
+                            <span class="t-val" data-i18n="toggle_on">ON ✅</span>
+                        </button>
+                        <button class="mini-toggle active" id="btn-toggle-blur">
+                            <span class="t-icon">🌫️</span>
+                            <span class="t-lbl" data-i18n="recap_blur_subs_label">Blur Box:</span>
+                            <span class="t-val" data-i18n="toggle_on">ON ✅</span>
+                        </button>
+                        <button class="mini-toggle active" id="btn-toggle-logo">
+                            <span class="t-icon">⭐</span>
+                            <span class="t-lbl" data-i18n="recap_logo_toggle_label">Logo:</span>
+                            <span class="t-val" data-i18n="toggle_on">ON ✅</span>
+                        </button>
+                    </div>
+
                     <!-- Sliders Controls -->
-                    <div class="editor-controls">
+                    <div class="editor-controls mt-3">
                         <div class="slider-group">
                             <div class="slider-header">
                                 <span data-i18n="slider_blur_y">🔲 မူရင်းစာတန်းဖျက် Blur အနိမ့်အမြင့် (Y):</span>
@@ -313,8 +415,8 @@
                         </div>
                     </div>
 
-                    <!-- Font Size & Lines Selectors -->
-                    <div class="sub-specs-row mt-2">
+                    <!-- Font Size, Lines & Logo Position Selectors -->
+                    <div class="sub-specs-row mt-3">
                         <div class="spec-col">
                             <span class="spec-lbl" data-i18n="sub_font_size_label">စာလုံးအရွယ်အစား:</span>
                             <div class="pill-group sm" id="font-size-picker">
@@ -332,9 +434,20 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Logo Position Selector -->
+                    <div class="spec-col mt-2">
+                        <span class="spec-lbl" data-i18n="recap_logo_pos_label">Logo နေရာ:</span>
+                        <div class="pill-group sm" id="recap-logo-pos-picker">
+                            <button class="pill-btn active" data-pos="top-right" data-i18n="pos_top_right">အပေါ် ညာ</button>
+                            <button class="pill-btn" data-pos="top-left" data-i18n="pos_top_left">အပေါ် ဘယ်</button>
+                            <button class="pill-btn" data-pos="bottom-right" data-i18n="pos_bottom_right">အောက် ညာ</button>
+                            <button class="pill-btn" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</button>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Voice Selection for Recap -->
+                <!-- 6. Voice Selection for Recap -->
                 <div class="card glass">
                     <div class="card-label" data-i18n="recap_voice_label">Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)</div>
                     <select class="studio-select" id="recap-voice-select">
@@ -356,8 +469,43 @@
                 <!-- 1-Click Action -->
                 <button class="btn gold-gradient-btn" id="btn-start-recap">
                     <span class="btn-icon">⚡</span>
-                    <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Pro Recap ဖန်တီးမည်</span>
+                    <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Pro Recap ဖန်တီးမည် (1 Credit)</span>
                 </button>
+
+                <!-- Live Progress Card -->
+                <div class="card glass progress-card hidden" id="recap-progress-box">
+                    <div class="progress-status-header">
+                        <span class="spinner-wave" id="recap-spinner">⚡</span>
+                        <span class="status-msg" id="recap-status-msg" data-i18n="recap_processing_msg">Recap စတင်လုပ်ဆောင်နေပါသည်...</span>
+                    </div>
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="recap-progress-fill" style="width: 15%;"></div>
+                    </div>
+                    <div class="eta-tag" id="recap-step-text">ခန့်မှန်းစောင့်ဆိုင်းချိန်: ၁-၂ မိနစ်...</div>
+                </div>
+
+                <!-- Completed Deliverables Card -->
+                <div class="card glass result-card hidden" id="recap-result-box">
+                    <div class="result-title" data-i18n="recap_result_title">🎉 Pro Movie Recap ဖန်တီးမှု ပြီးစီးပါပြီ!</div>
+                    <video id="recap-result-player" controls class="custom-video-player hidden"></video>
+
+                    <div class="deliverables-grid mt-3">
+                        <a id="btn-recap-dl-video" href="#" download="recap_video.mp4" class="btn gold-gradient-btn" data-i18n="btn_dl_recap_video">
+                            🎬 Download Full HD Video (MP4)
+                        </a>
+                        <div class="dl-sub-buttons mt-2">
+                            <a id="btn-recap-dl-audio" href="#" download="voiceover.mp3" class="btn mini-btn secondary-btn" data-i18n="btn_dl_recap_audio">
+                                🎙️ Voiceover (MP3)
+                            </a>
+                            <a id="btn-recap-dl-srt" href="#" download="subtitles.srt" class="btn mini-btn secondary-btn" data-i18n="btn_dl_recap_srt">
+                                📝 Subtitles (SRT)
+                            </a>
+                            <a id="btn-recap-dl-script" href="#" download="script.txt" class="btn mini-btn secondary-btn" data-i18n="btn_dl_recap_script">
+                                📜 Script (TXT)
+                            </a>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- ════ TAB 3: DOWNLOADER ════ -->

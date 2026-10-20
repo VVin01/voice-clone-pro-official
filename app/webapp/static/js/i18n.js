@@ -71,6 +71,51 @@ const translations = {
         recap_url_label: "YouTube သို့မဟုတ် TikTok Video Link",
         recap_url_placeholder: "https://youtu.be/... သို့မဟုတ် TikTok link...",
         btn_analyze: "စစ်ဆေးမည်",
+        recap_analyzing: "ဗီဒီယို အချက်အလက် စစ်ဆေးနေပါသည်...",
+
+        // Aspect Ratio & Layout
+        recap_ratio_label: "ဗီဒီယို အချိုးအစား (Aspect Ratio):",
+        ratio_9_16: "📐 9:16 (TikTok / Reels / Shorts)",
+        ratio_16_9: "📐 16:9 (YouTube / အလျားလိုက်)",
+        ratio_1_1: "📐 1:1 (Square စကွဲယား)",
+        ratio_original: "📐 Original (မူရင်းအချိုးအစား)",
+
+        recap_fill_label: "ဘောင်ဖြည့်စွက်မှု (Aspect Fill):",
+        fill_blur: "🌫️ Blur Background (ဝါးဖြည့်)",
+        fill_crop: "✂️ Center Crop (အလယ်ဖြတ်)",
+        fill_black: "⬛ Black Bars (ဘေးဘောင်မည်း)",
+
+        // Anti-Copyright Protections
+        recap_anticopyright_label: "မူပိုင်ခွင့် ကာကွယ်ရေး (Anti-Copyright):",
+        recap_mirror_label: "🪞 Video Mirror (ဘယ်/ညာ လှန်မည်):",
+        mirror_on: "🪞 Mirror: ON ✅",
+        mirror_off: "🪞 Mirror: OFF ❌",
+        recap_zoom_label: "🔍 Micro-Zoom (ဇူးမ်ချဲ့ခြင်း):",
+        zoom_off: "1.0x ပုံမှန်",
+        zoom_std: "1.06x စံနှုန်း 🔥",
+        zoom_strong: "1.10x အမြင့်",
+
+        // Voice Speed & Pacing
+        recap_speed_label: "ဇာတ်လမ်းပြောနှုန်း (Narration Speed / Pacing):",
+        speed_0: "+0% ပုံမှန်",
+        speed_8: "+8% သွက်",
+        speed_12: "+12% အကြံပြု 🔥",
+        speed_18: "+18% မြန်",
+        speed_22: "+22% အထူးမြန်",
+
+        // Toggles
+        recap_burn_subs_label: "📝 စာတန်းထိုး ထည့်သွင်းခြင်း:",
+        recap_blur_subs_label: "🌫️ မူရင်းစာတန်းဖျက် Blur:",
+        toggle_on: "ON ✅",
+        toggle_off: "OFF ❌",
+
+        // Branding Logo
+        recap_logo_toggle_label: "⭐ Channel Logo Watermark:",
+        recap_logo_pos_label: "Logo နေရာ:",
+        pos_top_right: "အပေါ် ညာ",
+        pos_top_left: "အပေါ် ဘယ်",
+        pos_bottom_right: "အောက် ညာ",
+        pos_bottom_left: "အောက် ဘယ်",
 
         recap_style_label: "ဇာတ်လမ်းပြော စတိုင်လ် (Story Style):",
         style_viral: "🔥 Viral Hook (စိတ်လှုပ်ရှားဖွယ်)",
@@ -99,7 +144,15 @@ const translations = {
 
         recap_voice_label: "Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)",
         queue_notice_recap: "⚡ Movie Recap ခန့်မှန်းကြာချိန်: ၁-၂ မိနစ် (Full HD 1080p Render)",
-        btn_start_recap: "⚡ 1-Click Pro Recap ဖန်တီးမည်",
+        btn_start_recap: "⚡ 1-Click Pro Recap ဖန်တီးမည် (1 Credit)",
+
+        // Deliverables
+        recap_result_title: "🎉 Pro Movie Recap ဖန်တီးမှု ပြီးစီးပါပြီ!",
+        btn_dl_recap_video: "🎬 Download Full HD Video (MP4)",
+        btn_dl_recap_audio: "🎙️ Download Voiceover (MP3)",
+        btn_dl_recap_srt: "📝 Download Subtitles (SRT)",
+        btn_dl_recap_script: "📜 Download Script (TXT)",
+        recap_processing_msg: "Recap စတင်လုပ်ဆောင်နေပါသည်...",
 
         // Tab 3: Downloader
         dl_title: "📥 Media Downloader",
@@ -255,6 +308,51 @@ const translations = {
         recap_url_label: "YouTube or TikTok Video Link",
         recap_url_placeholder: "https://youtu.be/... or TikTok link...",
         btn_analyze: "Analyze Link",
+        recap_analyzing: "Analyzing video stream...",
+
+        // Aspect Ratio & Layout
+        recap_ratio_label: "Video Aspect Ratio:",
+        ratio_9_16: "📐 9:16 (TikTok / Reels / Shorts)",
+        ratio_16_9: "📐 16:9 (YouTube / Widescreen)",
+        ratio_1_1: "📐 1:1 (Instagram / Square)",
+        ratio_original: "📐 Original (Source Ratio)",
+
+        recap_fill_label: "Aspect Ratio Fill Mode:",
+        fill_blur: "🌫️ Blur Background (Recommended)",
+        fill_crop: "✂️ Center Crop",
+        fill_black: "⬛ Black Letterbox",
+
+        // Anti-Copyright Protections
+        recap_anticopyright_label: "Anti-Copyright Protection:",
+        recap_mirror_label: "🪞 Video Mirror (H-Flip):",
+        mirror_on: "🪞 Mirror: ON ✅",
+        mirror_off: "🪞 Mirror: OFF ❌",
+        recap_zoom_label: "🔍 Micro-Zoom:",
+        zoom_off: "1.0x None",
+        zoom_std: "1.06x Standard 🔥",
+        zoom_strong: "1.10x Strong",
+
+        // Voice Speed & Pacing
+        recap_speed_label: "Narration Speed / Pacing:",
+        speed_0: "+0% Normal",
+        speed_8: "+8% Brisk",
+        speed_12: "+12% Recommended 🔥",
+        speed_18: "+18% Fast",
+        speed_22: "+22% Ultra-fast",
+
+        // Toggles
+        recap_burn_subs_label: "📝 Burn Myanmar Subtitles:",
+        recap_blur_subs_label: "🌫️ Subtitle Blur Box:",
+        toggle_on: "ON ✅",
+        toggle_off: "OFF ❌",
+
+        // Branding Logo
+        recap_logo_toggle_label: "⭐ Channel Logo Watermark:",
+        recap_logo_pos_label: "Logo Position:",
+        pos_top_right: "Top-Right",
+        pos_top_left: "Top-Left",
+        pos_bottom_right: "Bottom-Right",
+        pos_bottom_left: "Bottom-Left",
 
         recap_style_label: "Narration Story Style:",
         style_viral: "🔥 Viral Hook (High Engagement)",
@@ -283,7 +381,15 @@ const translations = {
 
         recap_voice_label: "Narrator Dubbing Voice",
         queue_notice_recap: "⚡ Movie Recap Estimate: 1-2 mins (Full HD 1080p Render)",
-        btn_start_recap: "⚡ Generate 1-Click Pro Recap",
+        btn_start_recap: "⚡ Generate 1-Click Pro Recap (1 Credit)",
+
+        // Deliverables
+        recap_result_title: "🎉 Pro Movie Recap Generated Successfully!",
+        btn_dl_recap_video: "🎬 Download Full HD Video (MP4)",
+        btn_dl_recap_audio: "🎙️ Download Voiceover (MP3)",
+        btn_dl_recap_srt: "📝 Download Subtitles (SRT)",
+        btn_dl_recap_script: "📜 Download Script (TXT)",
+        recap_processing_msg: "Processing recap video...",
 
         // Tab 3: Downloader
         dl_title: "📥 Media Downloader",

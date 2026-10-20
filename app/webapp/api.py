@@ -19,6 +19,9 @@ import json
 import uuid
 import shutil
 import logging
+import asyncio
+import functools
+import html
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
@@ -468,18 +471,208 @@ async def extract_media_info(
         }
 
 
-# ── 5. Recap Studio Configuration ─────────────────────────────────────────
+# ── 5. Recap Studio Configuration & Background Pipeline ─────────────────────
+RECAP_JOBS_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
 class RecapConfigRequest(BaseModel):
     url: str
     voice_slug: str = "komin"
-    story_style: str = "viral"  # viral, dramatic, funny, pov, standard
+    story_style: str = "viral"        # viral, dramatic, funny, pov, standard
+    ratio: str = "9:16"               # Original, 9:16, 16:9, 1:1
+    ratio_fill: str = "blur"          # blur, crop, black
+    mirror_video: bool = True
+    zoom_factor: float = 1.06
+    voice_speed: str = "+12%"         # +0%, +8%, +12%, +18%, +22%
+    blur_subtitles: bool = True
     blur_y: int = Field(81, ge=0, le=100)
     blur_h: int = Field(13, ge=1, le=50)
+    burn_subtitles: bool = True
     sub_y: int = Field(85, ge=0, le=100)
-    sub_style: str = "yellow"  # yellow, white, boxed, neon
+    sub_style: str = "yellow"         # yellow, white, boxed, neon
     sub_font_size: int = Field(16, ge=12, le=30)
     sub_lines: int = Field(1, ge=1, le=2)
     include_logo: bool = True
+    logo_pos: str = "top-right"       # top-right, top-left, bottom-right, bottom-left, top-center
+
+
+async def _send_recap_telegram_delivery(
+    chat_id: int,
+    video_path: str,
+    audio_path: Optional[str],
+    srt_path: Optional[str],
+    script_path: Optional[str],
+    title: str,
+    style: str,
+    voice_name: str,
+    duration_sec: int,
+):
+    """Deliver completed recap video and media files directly to user's Telegram."""
+    if not settings.bot_token or not chat_id:
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.types import FSInputFile
+        from app.services.downloader import format_duration, format_filesize
+
+        bot = Bot(token=settings.bot_token)
+        try:
+            file_size = os.path.getsize(video_path) if os.path.isfile(video_path) else 0
+            dur_formatted = format_duration(duration_sec)
+            size_formatted = format_filesize(file_size)
+
+            caption = (
+                f"🇲🇲 <b>Recap English → Myanmar Video (Smart Sync)</b>\n"
+                f"🎬 <b>{html.escape(title[:60])}</b>\n"
+                f"🎭 <b>စတိုင်:</b> {style}\n"
+                f"🎙️ <b>အသံ:</b> {voice_name}\n"
+                f"⏱️ <b>ကြာချိန်:</b> <code>{dur_formatted}</code> · 📁 <b>ဖိုင်ဆိုဒ်:</b> <code>{size_formatted}</code>\n\n"
+                f"💡 <i>Mini App မှ ဒေါင်းလုဒ်ရယူနိုင်သလို Telegram သို့လည်း တိုက်ရိုက် ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
+            )
+
+            if file_size <= 50 * 1024 * 1024:
+                vf = FSInputFile(video_path, filename=Path(video_path).name)
+                await bot.send_video(chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML")
+            else:
+                vf = FSInputFile(video_path, filename=Path(video_path).name)
+                await bot.send_document(chat_id=chat_id, document=vf, caption=caption, parse_mode="HTML")
+
+            if srt_path and os.path.isfile(srt_path):
+                sf = FSInputFile(srt_path, filename=f"subtitles_{Path(srt_path).name}")
+                await bot.send_document(chat_id=chat_id, document=sf, caption="📝 <b>Myanmar Subtitles (SRT)</b>", parse_mode="HTML")
+
+        finally:
+            await bot.session.close()
+    except Exception as e:
+        logger.warning(f"Failed to send recap video to Telegram chat {chat_id}: {e}")
+
+
+async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_id: int, chat_id: int):
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if not entry:
+        return
+
+    entry["status"] = "RUNNING"
+    entry["progress_percent"] = 15
+    entry["progress_step"] = "1/4"
+    entry["progress_label"] = "📥 Downloading source video from URL..."
+
+    try:
+        from app.services.downloader import MediaDownloader
+        from app.db.session import AsyncSessionLocal
+        downloader = MediaDownloader()
+
+        job_dir = settings.storage_root / "recap_output" / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        def progress_cb(cur: int, tot: int, label: str):
+            if entry:
+                entry["progress_step"] = f"{cur}/{tot}"
+                entry["progress_label"] = label
+                pct = int(min(95, max(15, (cur / max(1, tot)) * 100)))
+                entry["progress_percent"] = pct
+
+        selected_voice = "my-MM-ThihaNeural"
+        if req.voice_slug in ("mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"):
+            selected_voice = "my-MM-NilarNeural"
+        else:
+            selected_voice = "my-MM-ThihaNeural"
+
+        logo_pos_map = {
+            "top-right": [0.82, 0.04],
+            "top-left": [0.04, 0.04],
+            "bottom-right": [0.82, 0.88],
+            "bottom-left": [0.04, 0.88],
+            "top-center": [0.42, 0.04],
+        }
+        logo_pos_coords = logo_pos_map.get(req.logo_pos, [0.82, 0.04])
+
+        loop = asyncio.get_running_loop()
+        recap_fn = functools.partial(
+            downloader.generate_recap_video,
+            url_or_path=req.url,
+            target_dir=str(job_dir),
+            voice=selected_voice,
+            narrative_style=req.story_style,
+            voice_speed=req.voice_speed,
+            output_ratio=req.ratio,
+            frame_fill=req.ratio_fill,
+            mirror_video=req.mirror_video,
+            zoom_factor=req.zoom_factor,
+            blur_subtitles=req.blur_subtitles,
+            blur_y=float(req.blur_y) / 100.0,
+            blur_h=float(req.blur_h) / 100.0,
+            burn_subtitles=req.burn_subtitles,
+            sub_y=float(req.sub_y) / 100.0,
+            sub_lines=req.sub_lines,
+            sub_font_size=req.sub_font_size,
+            sub_style=req.sub_style,
+            logo_position=logo_pos_coords if req.include_logo else None,
+            progress_callback=progress_cb,
+        )
+
+        recap_res = await loop.run_in_executor(None, recap_fn)
+
+        video_path = recap_res.get("final_video") or recap_res.get("final_video_path")
+        audio_path = recap_res.get("audio") or recap_res.get("final_audio_path")
+        srt_path = recap_res.get("subtitles_srt")
+        script_path = None
+
+        if srt_path and Path(srt_path).is_file():
+            try:
+                script_file = job_dir / f"{job_id}_script.txt"
+                lines = []
+                with open(srt_path, "r", encoding="utf-8", errors="replace") as f:
+                    for l in f:
+                        s = l.strip()
+                        if s and not s.isdigit() and "-->" not in s and s not in lines:
+                            lines.append(s)
+                with open(script_file, "w", encoding="utf-8") as f:
+                    f.write(f"🎬 Recap Script: {req.story_style}\n\n" + "\n\n".join(lines))
+                script_path = str(script_file)
+            except Exception:
+                pass
+
+        entry["status"] = "SUCCESS"
+        entry["progress_percent"] = 100
+        entry["progress_label"] = "🎉 Recap Video Generation Completed!"
+        entry["video_path"] = video_path
+        entry["audio_path"] = audio_path
+        entry["srt_path"] = srt_path
+        entry["script_path"] = script_path
+        entry["download_urls"] = {
+            "video": f"/api/recap/download/{job_id}/video" if video_path else None,
+            "audio": f"/api/recap/download/{job_id}/audio" if audio_path else None,
+            "srt": f"/api/recap/download/{job_id}/srt" if srt_path else None,
+            "script": f"/api/recap/download/{job_id}/script" if script_path else None,
+        }
+
+        # Send to Telegram
+        if video_path and Path(video_path).is_file():
+            await _send_recap_telegram_delivery(
+                chat_id=chat_id,
+                video_path=video_path,
+                audio_path=audio_path,
+                srt_path=srt_path,
+                script_path=script_path,
+                title="AI Movie Recap",
+                style=req.story_style,
+                voice_name=req.voice_slug,
+                duration_sec=int(recap_res.get("duration", 0)),
+            )
+
+    except Exception as e:
+        logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
+        entry["status"] = "FAILED"
+        entry["error_message"] = str(e)
+        try:
+            from app.db.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
+                u = await session.get(User, user_id)
+                if u and not settings.is_admin(u.id):
+                    u.recap_credits = (getattr(u, "recap_credits", 0) or 0) + 1
+                    await session.commit()
+        except Exception as ref_err:
+            logger.warning(f"Credit refund failed: {ref_err}")
 
 
 @api_router.post("/recap/generate")
@@ -488,7 +681,7 @@ async def create_recap_job(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Submit 1-Click Pro Recap Job with visual blur, subtitle styles, and story style."""
+    """Submit 1-Click Pro Recap Job with complete ratio, audio, subtitle, and anti-copyright settings."""
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
     credits = getattr(user, "recap_credits", 0)
 
@@ -503,16 +696,81 @@ async def create_recap_job(
         user.recap_credits -= 1
         await db.commit()
 
+    job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    RECAP_JOBS_REGISTRY[job_id] = {
+        "id": job_id,
+        "user_id": user.id,
+        "status": "QUEUED",
+        "progress_percent": 5,
+        "progress_step": "0/4",
+        "progress_label": "⏳ Cloud Queue ပြင်ဆင်နေပါသည်...",
+        "created_at": time.time(),
+        "video_path": None,
+        "audio_path": None,
+        "srt_path": None,
+        "script_path": None,
+        "download_urls": {},
+        "error_message": None,
+    }
+
+    # Start background task
+    asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id))
+
     return {
         "success": True,
-        "recap_id": f"rc_{int(time.time())}",
-        "status": "PROCESSING",
+        "recap_id": job_id,
+        "status": "QUEUED",
         "story_style": req.story_style,
-        "blur_config": {"y": req.blur_y, "h": req.blur_h},
-        "sub_config": {"y": req.sub_y, "style": req.sub_style, "font_size": req.sub_font_size, "lines": req.sub_lines},
+        "ratio": req.ratio,
         "remaining_credits": getattr(user, "recap_credits", 0),
         "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
     }
+
+
+@api_router.get("/recap/{job_id}/status")
+async def get_recap_status(
+    job_id: str,
+    user: User = Depends(get_current_user),
+):
+    """Poll recap job status, progress percentage, and deliverables."""
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Recap job not found")
+
+    return {
+        "id": job_id,
+        "status": entry.get("status", "PENDING"),
+        "progress_percent": entry.get("progress_percent", 0),
+        "progress_step": entry.get("progress_step", ""),
+        "progress_label": entry.get("progress_label", ""),
+        "error_message": entry.get("error_message"),
+        "download_urls": entry.get("download_urls", {}),
+    }
+
+
+@api_router.get("/recap/download/{job_id}/{file_type}")
+async def download_recap_file(
+    job_id: str,
+    file_type: str,
+):
+    """Download generated recap MP4 video, MP3 audio, SRT subtitles, or TXT script."""
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Recap job not found")
+
+    path_key = f"{file_type}_path"
+    file_path = entry.get(path_key)
+    if not file_path or not Path(file_path).is_file():
+        raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} file not ready or not found")
+
+    mime_map = {
+        "video": ("video/mp4", f"recap_{job_id[:8]}.mp4"),
+        "audio": ("audio/mpeg", f"voiceover_{job_id[:8]}.mp3"),
+        "srt": ("text/plain; charset=utf-8", f"subtitles_{job_id[:8]}.srt"),
+        "script": ("text/plain; charset=utf-8", f"script_{job_id[:8]}.txt"),
+    }
+    media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
+    return FileResponse(path=str(file_path), media_type=media_type, filename=filename)
 
 
 # ── 6. VIP Pricing Plans & Payments ────────────────────────────────────────
