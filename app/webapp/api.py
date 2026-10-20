@@ -422,10 +422,14 @@ async def extract_media_info(
     req: ExtractMediaRequest,
     user: User = Depends(get_current_user),
 ):
-    """Extract YouTube/TikTok/Facebook video metadata via yt-dlp."""
-    url = req.url.strip()
+    """Extract YouTube/TikTok/Douyin/Facebook video metadata via yt-dlp."""
+    from app.services.downloader import extract_first_url, unshorten_url, detect_platform
+    raw_url = req.url.strip()
+    url = extract_first_url(raw_url) or raw_url
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+
+    canonical_url = unshorten_url(url)
 
     try:
         import yt_dlp
@@ -433,9 +437,14 @@ async def extract_media_info(
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
+            "nocheckcertificate": True,
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+            }
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(canonical_url, download=False)
             title = info.get("title", "Video Content")
             duration_sec = info.get("duration", 0) or 0
             mins, secs = divmod(int(duration_sec), 60)
@@ -445,8 +454,8 @@ async def extract_media_info(
 
             return {
                 "success": True,
-                "url": url,
-                "platform": info.get("extractor_key", "Video"),
+                "url": canonical_url,
+                "platform": detect_platform(canonical_url),
                 "title": title,
                 "uploader": uploader,
                 "thumbnail": thumbnail,
@@ -456,12 +465,12 @@ async def extract_media_info(
                 "formats_available": ["MP4 (Full HD Video)", "MP3 (192kbps Audio)", "SRT (Subtitles)"],
             }
     except Exception as e:
-        logger.warning(f"yt-dlp extract error for {url}: {e}")
+        logger.warning(f"yt-dlp extract error for {canonical_url}: {e}")
         # Graceful fallback response
-        platform = "TikTok" if "tiktok.com" in url else "YouTube" if ("youtu.be" in url or "youtube.com" in url) else "Video"
+        platform = detect_platform(canonical_url)
         return {
             "success": True,
-            "url": url,
+            "url": canonical_url,
             "platform": platform,
             "title": f"{platform} Content",
             "uploader": "Online Creator",
@@ -598,9 +607,13 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
         logo_pos_coords = logo_pos_map.get(req.logo_pos, [0.82, 0.04])
 
         loop = asyncio.get_running_loop()
+        from app.services.downloader import extract_first_url, unshorten_url
+        clean_source_url = extract_first_url(req.url) or req.url.strip()
+        canonical_source_url = unshorten_url(clean_source_url)
+
         recap_fn = functools.partial(
             downloader.generate_recap_video,
-            url_or_path=req.url,
+            url_or_path=canonical_source_url,
             target_dir=str(job_dir),
             voice=selected_voice,
             narrative_style=req.story_style,

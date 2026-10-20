@@ -68,8 +68,8 @@ const translations = {
         // Tab 2: Recap Maker
         recap_title: "🎬 AI Movie Recap Maker",
         recap_subtitle: "English ဗီဒီယိုများကို မြန်မာအသံ၊ စာတန်းထိုး နှင့် Blur ပါဝင်သော Recap ဖန်တီးပါ",
-        recap_url_label: "YouTube သို့မဟုတ် TikTok Video Link",
-        recap_url_placeholder: "https://youtu.be/... သို့မဟုတ် TikTok link...",
+        recap_url_label: "YouTube, TikTok သို့မဟုတ် Douyin (抖音) Video Link",
+        recap_url_placeholder: "YouTube, TikTok, Douyin link (https://v.douyin.com/...)...",
         btn_analyze: "စစ်ဆေးမည်",
         recap_analyzing: "ဗီဒီယို အချက်အလက် စစ်ဆေးနေပါသည်...",
 
@@ -156,9 +156,9 @@ const translations = {
 
         // Tab 3: Downloader
         dl_title: "📥 Media Downloader",
-        dl_subtitle: "YouTube နှင့် TikTok မှ Video (MP4)၊ Audio (MP3) နှင့် Subtitle (SRT) ဒေါင်းလုဒ် ရယူပါ",
+        dl_subtitle: "YouTube, TikTok နှင့် Douyin (抖音) မှ Video (MP4)၊ Audio (MP3) ဒေါင်းလုဒ် ရယူပါ",
         dl_url_label: "Video သို့မဟုတ် Music Link ကူးထည့်ပါ",
-        dl_url_placeholder: "YouTube, TikTok, Shorts URL...",
+        dl_url_placeholder: "YouTube, TikTok, Douyin (抖音) URL...",
         btn_search_dl: "🔍 ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာဖွေမည်",
         fmt_video_title: "Full HD Video",
         fmt_video_desc: "MP4 (H.264 / AAC)",
@@ -314,8 +314,8 @@ const translations = {
         // Tab 2: Recap Maker
         recap_title: "🎬 AI Movie Recap Maker",
         recap_subtitle: "Transform English videos into Myanmar dubbed recaps with smart sync & subtitles",
-        recap_url_label: "YouTube or TikTok Video Link",
-        recap_url_placeholder: "https://youtu.be/... or TikTok link...",
+        recap_url_label: "YouTube, TikTok or Douyin (抖音) Video Link",
+        recap_url_placeholder: "YouTube, TikTok, Douyin link (https://v.douyin.com/...)...",
         btn_analyze: "Analyze Link",
         recap_analyzing: "Analyzing video stream...",
 
@@ -402,9 +402,9 @@ const translations = {
 
         // Tab 3: Downloader
         dl_title: "📥 Media Downloader",
-        dl_subtitle: "Download high-speed MP4 Video, MP3 Audio, and SRT Subtitles from YouTube & TikTok",
+        dl_subtitle: "Download high-speed MP4 Video, MP3 Audio from YouTube, TikTok and Douyin (抖音)",
         dl_url_label: "Paste Video or Audio Link",
-        dl_url_placeholder: "YouTube, TikTok, Shorts URL...",
+        dl_url_placeholder: "YouTube, TikTok, Douyin (抖音) URL...",
         btn_search_dl: "🔍 Fetch Download Formats",
         fmt_video_title: "Full HD Video",
         fmt_video_desc: "MP4 (H.264 / AAC)",

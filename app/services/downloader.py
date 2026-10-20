@@ -150,9 +150,37 @@ def extract_first_url(text: str) -> Optional[str]:
 
 def unshorten_url(url: str) -> str:
     """
-    Expands shortened URLs (bit.ly, tinyurl, vt.tiktok.com, youtu.be, etc.)
-    to their canonical target URL.
+    Expands shortened URLs (bit.ly, tinyurl, vt.tiktok.com, v.douyin.com, youtu.be, etc.)
+    to their canonical target URL. Handles Douyin (抖音) mobile share links and redirects.
     """
+    clean_url = extract_first_url(url) or str(url).strip()
+
+    # Douyin (抖音) specific resolution
+    clean_lower = clean_url.lower()
+    if "douyin.com" in clean_lower or "iesdouyin.com" in clean_lower:
+        # Check if already a full video/note URL
+        vid_match = re.search(r'/(?:video|note)/(\d+)', clean_url)
+        if vid_match:
+            return f"https://www.douyin.com/video/{vid_match.group(1)}"
+
+        # Follow Douyin short link (v.douyin.com) with mobile User-Agent
+        try:
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+                )
+            }
+            resp = requests.get(clean_url, headers=headers, allow_redirects=True, timeout=10)
+            final_url = resp.url
+            vid_match2 = re.search(r'/(?:video|note|share/video)/(\d+)', final_url)
+            if vid_match2:
+                return f"https://www.douyin.com/video/{vid_match2.group(1)}"
+            return final_url
+        except Exception as e:
+            logger.warning(f"Douyin link expansion error for {clean_url}: {e}")
+            return clean_url
+
     try:
         headers = {
             "User-Agent": (
@@ -163,17 +191,17 @@ def unshorten_url(url: str) -> str:
         }
         # Follow redirects with HEAD request first
         session = requests.Session()
-        resp = session.head(url, allow_redirects=True, headers=headers, timeout=10)
+        resp = session.head(clean_url, allow_redirects=True, headers=headers, timeout=10)
         final_url = resp.url
-        if final_url and final_url != url:
+        if final_url and final_url != clean_url:
             return final_url
             
         # Fallback to GET with stream=True (does not download body)
-        resp = session.get(url, allow_redirects=True, headers=headers, stream=True, timeout=10)
+        resp = session.get(clean_url, allow_redirects=True, headers=headers, stream=True, timeout=10)
         return resp.url
     except Exception:
         # If redirect resolution fails, return original URL (yt-dlp will try to resolve it anyway)
-        return url
+        return clean_url
 
 def detect_platform(url: str) -> str:
     """Identify the platform name from URL or local media for display."""
@@ -186,6 +214,8 @@ def detect_platform(url: str) -> str:
     url_lower = url.lower()
     if "tiktok.com" in url_lower:
         return "TikTok"
+    elif "douyin.com" in url_lower or "iesdouyin.com" in url_lower:
+        return "Douyin (抖音)"
     elif "youtube.com" in url_lower or "youtu.be" in url_lower:
         return "YouTube"
     elif "facebook.com" in url_lower or "fb.watch" in url_lower:
@@ -355,6 +385,10 @@ class MediaDownloader:
             'fragment_retries': 10,
             'file_access_retries': 5,
             'remote_components': ['ejs:github'],
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+            }
         }
         # Enable Node.js for solving YouTube JS / n challenges if installed
         if shutil.which("node"):
