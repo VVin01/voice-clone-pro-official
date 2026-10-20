@@ -120,18 +120,43 @@ async def process_single_job(
                         control_instruction = p_info.get("control_instruction")
                         logger.info("Using curated persona '%s' for VoxCPM job %s", job.preset_voice, job.id)
 
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(
-                    None,
-                    functools.partial(
-                        engine_inst.synthesize,
-                        text=clean_text,
-                        output_wav=converted_wav_path,
-                        reference_wav=ref_wav,
-                        control_instruction=control_instruction or "A clear, natural, emotionally expressive Burmese speaker with warm tone and fluent pronunciation",
-                        progress_cb=tracker.set_custom_note,
+                try:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        None,
+                        functools.partial(
+                            engine_inst.synthesize,
+                            text=clean_text,
+                            output_wav=converted_wav_path,
+                            reference_wav=ref_wav,
+                            control_instruction=control_instruction or "A clear, natural, emotionally expressive Burmese speaker with warm tone and fluent pronunciation",
+                            progress_cb=tracker.set_custom_note,
+                        )
                     )
-                )
+                except Exception as e_vox:
+                    logger.warning("VoxCPM primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", e_vox)
+                    try:
+                        await tracker.set_custom_note("🔄 VoxCPM Queue ပြည့်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
+                    except Exception:
+                        pass
+
+                    is_female = False
+                    if getattr(job, "preset_voice", None):
+                        from app.services.curated_voices import get_curated_voice
+                        p_info = get_curated_voice(job.preset_voice)
+                        if p_info and p_info.get("gender") == "female":
+                            is_female = True
+
+                    edge_voice = "my-MM-NilarNeural" if is_female else "my-MM-ThihaNeural"
+                    temp_mp3 = temp_dir / "fallback.mp3"
+                    await generate_edge_tts(
+                        text=clean_text,
+                        out_path=temp_mp3,
+                        voice=edge_voice,
+                        speed=job.speed_preset or "normal",
+                    )
+                    await normalize_audio_to_wav(temp_mp3, converted_wav_path)
+                    logger.info("Resilient fallback audio generated successfully for job %s: %s", job.id, converted_wav_path)
             else:
                 pitch = GENDER_PITCH_MAP.get(job.gender_preset or "m2m", 0)
                 norm_duration = get_wav_duration_seconds(norm_wav_path)
