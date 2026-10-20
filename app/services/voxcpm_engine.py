@@ -56,6 +56,59 @@ def _resolve_result_path(result) -> Optional[str]:
     return None
 
 
+def _synthesize_neural_tts_fallback(
+    text: str,
+    output_wav: Path,
+    control_instruction: str = "",
+) -> bool:
+    """Seamless fallback using Microsoft Edge Neural TTS (Burmese) if VoxCPM Space is saturated."""
+    try:
+        import asyncio
+        import edge_tts
+        import subprocess
+        import shutil
+
+        is_female = any(w in str(control_instruction).lower() for w in ["female", "woman", "girl", "hnin", "nadi", "may", "နှင်း", "နဒီ", "မေမေ"])
+        voice_id = "my-MM-NilarNeural" if is_female else "my-MM-ThihaNeural"
+
+        temp_mp3 = output_wav.with_suffix(".fallback.mp3")
+
+        async def _run():
+            comm = edge_tts.Communicate(text, voice_id)
+            await comm.save(str(temp_mp3))
+
+        try:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                fut = executor.submit(lambda: asyncio.run(_run()))
+                fut.result(timeout=25)
+        except Exception as e_run:
+            logger.warning("Direct fallback thread failed: %s; attempting direct asyncio.run", e_run)
+            asyncio.run(_run())
+
+        if temp_mp3.is_file() and temp_mp3.stat().st_size > 1000:
+            ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+            if ffmpeg_bin:
+                cmd = [
+                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", str(temp_mp3),
+                    "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
+                    str(output_wav)
+                ]
+                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                try:
+                    temp_mp3.unlink()
+                except Exception:
+                    pass
+                return output_wav.is_file() and output_wav.stat().st_size > 1000
+            else:
+                shutil.move(str(temp_mp3), str(output_wav))
+                return True
+    except Exception as e_fb:
+        logger.warning("Neural TTS fallback error: %s", e_fb)
+    return False
+
+
 class VoxCPMEngine:
     """
     High-level client for VoxCPM speech synthesis and voice cloning.
@@ -251,7 +304,19 @@ class VoxCPMEngine:
                 self._log(f"⚠️ VoxCPM attempt {attempt} failed: {e}")
                 VoxCPMEngine._client_instance = None
                 if attempt <= retries:
-                    time.sleep(2 * attempt)
+                    time.sleep(3 * attempt)
+
+        # If VoxCPM Cloud Space is saturated or queue full, invoke resilient Neural fallback
+        self._log(f"⚠️ VoxCPM Space busy ({last_err}). Invoking High-Fidelity Neural Engine fallback...")
+        if progress_cb:
+            try:
+                progress_cb("🔄 VoxCPM Queue အချိန်ကုန်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
+            except Exception:
+                pass
+
+        if _synthesize_neural_tts_fallback(clean_text, out_path, control_instruction):
+            self._log(f"✅ Fallback Audio successfully delivered: {out_path.name} ({out_path.stat().st_size} bytes)")
+            return out_path
 
         raise RuntimeError(
             f"VoxCPM speech synthesis failed after {retries + 1} attempts: {last_err}"

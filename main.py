@@ -53,10 +53,10 @@ async def run_bot_and_worker(mode: str) -> None:
         worker_task = asyncio.create_task(run_worker_loop(bot=bot))
         tasks.append(worker_task)
 
-    if mode in ("all", "bot"):
+    if mode in ("all", "bot", "web_and_bot", "bot_and_web"):
         if not bot:
             logger.error("Cannot run bot mode without TELEGRAM_BOT_TOKEN.")
-            if mode == "bot":
+            if mode in ("bot", "web_and_bot", "bot_and_web"):
                 return
         else:
             logger.info("Registering Telegram bot commands menu...")
@@ -68,7 +68,7 @@ async def run_bot_and_worker(mode: str) -> None:
             tasks.append(bot_task)
 
     # Start FastAPI Telegram Mini App & API Web Server
-    if mode in ("all", "web", "all_with_web"):
+    if mode in ("all", "web", "all_with_web", "web_and_bot", "bot_and_web"):
         try:
             import os
             import uvicorn
@@ -106,17 +106,23 @@ async def run_bot_and_worker(mode: str) -> None:
 
 
 def main() -> None:
+    import os
+    env_mode = (os.getenv("RUN_MODE") or os.getenv("APP_MODE") or "").strip().lower()
+    default_mode = env_mode if env_mode else "all"
+
     parser = argparse.ArgumentParser(description="Voice Clone Pro Standalone Telegram Bot & Worker")
     parser.add_argument(
         "--mode",
-        choices=["all", "bot", "worker"],
-        default="all",
-        help="Service execution mode: 'all' (bot + worker), 'bot', or 'worker'",
+        choices=["all", "bot", "worker", "web", "web_and_bot", "bot_and_web"],
+        default=default_mode,
+        help="Service execution mode: 'all', 'bot', 'worker', 'web', or 'web_and_bot'",
     )
     args = parser.parse_args()
+    selected_mode = (os.getenv("RUN_MODE") or os.getenv("APP_MODE") or args.mode).strip().lower()
+    logger.info("Starting Voice Clone Pro in execution mode: '%s'", selected_mode)
 
     try:
-        asyncio.run(run_bot_and_worker(mode=args.mode))
+        asyncio.run(run_bot_and_worker(mode=selected_mode))
     except KeyboardInterrupt:
         logger.info("Process interrupted by user.")
 
