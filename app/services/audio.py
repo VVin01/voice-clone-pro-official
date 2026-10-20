@@ -51,8 +51,26 @@ def get_wav_duration_seconds(wav_path: Path) -> int:
             rate = wf.getframerate()
             if rate > 0:
                 return max(1, int(round(frames / float(rate))))
+    except Exception:
+        pass
+
+    # Fallback to ffprobe for MP3 or non-standard WAV
+    try:
+        import subprocess
+        import shutil
+        ffprobe_bin = shutil.which("ffprobe") or r"C:\ffmpeg\bin\ffprobe.exe"
+        cmd = [
+            ffprobe_bin, "-v", "error", "-show_entries",
+            "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+            str(wav_path)
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            val = float(res.stdout.strip())
+            return max(1, int(round(val)))
     except Exception as e:
-        logger.warning("Failed to inspect wav duration for %s: %s", wav_path, e)
+        logger.debug("ffprobe duration inspect fallback: %s", e)
+
     return 5  # Conservative default fallback
 
 

@@ -87,6 +87,23 @@
                     </div>
                 </div>
 
+                <!-- Reference Audio Card for VoxCPM Voice Cloning -->
+                <div class="card glass ref-audio-card" id="ref-audio-section">
+                    <div class="card-header-row">
+                        <div class="card-label">🎙️ Reference Voice (အသံတူ Clone ရန် အသံနမူနာ)</div>
+                        <span class="hint-tag" id="ref-status-tag">ရွေးချယ်ခွင့် (Optional)</span>
+                    </div>
+                    <p class="ref-desc">မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။</p>
+                    <div class="ref-upload-row">
+                        <label class="btn-file-upload" for="ref-audio-input">
+                            <span class="upload-icon">📁</span>
+                            <span id="ref-audio-label">Reference Audio ဖိုင် ရွေးချယ်မည်</span>
+                        </label>
+                        <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
+                        <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()">✕ ဖျက်မည်</button>
+                    </div>
+                </div>
+
                 <!-- Audio Controls (Speed & Pitch) -->
                 <div class="card glass controls-card">
                     <div class="control-row">

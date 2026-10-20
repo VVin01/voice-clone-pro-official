@@ -151,6 +151,17 @@ async def process_single_job(
         await tracker.update_step(4)
         duration_seconds = get_wav_duration_seconds(converted_wav_path)
 
+        # Preserve the generated audio in permanent outputs storage for Mini App & API downloads
+        outputs_dir = settings.storage_root / "outputs"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        permanent_wav_path = outputs_dir / f"{job.id}_{out_filename}"
+        try:
+            shutil.copy2(converted_wav_path, permanent_wav_path)
+            job.result_path = str(permanent_wav_path)
+        except Exception as copy_err:
+            logger.warning("Could not persist generated audio to %s: %s", permanent_wav_path, copy_err)
+            job.result_path = str(converted_wav_path)
+
         # Deduct actual generated duration (idempotent per job.id)
         if not settings.is_admin(job.user_id):
             await consume_seconds(
@@ -174,25 +185,27 @@ async def process_single_job(
 
         job.seconds_consumed = duration_seconds
 
-        # Send completed audio to user
+        # Send completed audio to user via Telegram Bot (if available)
         if bot and target_chat_id:
-            audio_file = FSInputFile(str(converted_wav_path), filename=out_filename)
-            caption = t(
-                "status_completed_caption",
-                lang,
-                completed_status=t("status_completed", lang),
-                model_name=html.escape(str(model.name or "Standard")),
-                duration_seconds=duration_seconds,
-            )
-            sent_msg = await bot.send_audio(
-                chat_id=target_chat_id,
-                audio=audio_file,
-                caption=caption,
-                parse_mode="HTML",
-            )
-            if sent_msg and getattr(sent_msg, "audio", None):
-                job.result_path = sent_msg.audio.file_id
-            await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
+            try:
+                audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
+                audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
+                caption = t(
+                    "status_completed_caption",
+                    lang,
+                    completed_status=t("status_completed", lang),
+                    model_name=html.escape(str(model.name or "Standard")),
+                    duration_seconds=duration_seconds,
+                )
+                await bot.send_audio(
+                    chat_id=target_chat_id,
+                    audio=audio_file,
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+                await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
+            except Exception as send_err:
+                logger.warning("Failed to deliver audio via Telegram for job %s: %s", job.id, send_err)
 
         job.status = JobStatus.SUCCESS.value
         job.finished_at = utc_now()

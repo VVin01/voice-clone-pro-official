@@ -965,3 +965,55 @@ textarea#voice-text-input:focus {
 .mt-3 {
     margin-top: 12px;
 }
+
+/* ── Reference Audio Upload (VoxCPM) ──────────────────────────────────────── */
+.ref-audio-card {
+    border: 1px dashed rgba(59, 130, 246, 0.35);
+    background: rgba(15, 23, 42, 0.4);
+}
+
+.ref-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 6px 0 12px 0;
+    line-height: 1.4;
+}
+
+.ref-upload-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn-file-upload {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex: 1;
+}
+
+.btn-file-upload:hover {
+    background: rgba(59, 130, 246, 0.25);
+    border-color: var(--accent-blue);
+    color: #fff;
+}
+
+.btn-file-upload.has-file {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.5);
+    color: #6ee7b7;
+}
+
+.hidden-file-input {
+    display: none;
+}

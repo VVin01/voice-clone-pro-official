@@ -82,9 +82,9 @@ async def create_voice_clone_job(
             if daily_count >= settings.free_daily_job_limit:
                 return None, "DAILY_JOB_LIMIT_EXCEEDED"
 
-    # 3. Check character limits defense-in-depth (only for text jobs)
-    if not source_audio_path:
-        valid_text = text or ""
+    # 3. Check character limits and audio file existence defense-in-depth
+    valid_text = (text or "").strip()
+    if valid_text:
         if is_admin:
             if len(valid_text) > settings.infrastructure_safety_character_limit:
                 return None, "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT"
@@ -96,9 +96,8 @@ async def create_voice_clone_job(
             )
             if len(valid_text) > allowed_chars:
                 return None, "TEXT_EXCEEDS_CHARACTER_LIMIT"
-    else:
-        if not Path(source_audio_path).is_file():
-            return None, "AUDIO_FILE_NOT_FOUND"
+    if source_audio_path and not Path(source_audio_path).is_file():
+        return None, "AUDIO_FILE_NOT_FOUND"
 
     # 4. Check balance (admins have unlimited access and do not require balance)
     if not is_admin:

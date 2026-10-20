@@ -13,6 +13,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -186,28 +187,111 @@ async def create_voice_job(
         if not model:
             raise HTTPException(status_code=404, detail="အသံမော်ဒယ် မတွေ့ရှိပါ")
 
-    # Create job in database
+    # Create job in database with QUEUED status so background worker picks it up
+    import uuid
     job = Job(
+        id=str(uuid.uuid4()),
         user_id=user.id,
+        chat_id=user.id,
         model_id=model.id,
         input_text=clean_text,
         speed_preset=req.speed,
         gender_preset=req.gender_preset,
         edge_voice="my-MM-ThihaNeural",
-        status=JobStatus.PENDING.value,
+        status=JobStatus.QUEUED.value,
     )
     db.add(job)
     await db.commit()
     await db.refresh(job)
 
-    # If VoxCPM Cloud AI is chosen, run immediate synthesis in background or return job_id
     is_vox = (model.pth_path == "voxcpm" or "voxcpm" in model.slug.lower() or req.engine == "voxcpm")
 
     return {
         "success": True,
         "job_id": job.id,
-        "status": "PENDING",
+        "status": "QUEUED",
         "model_name": model.name,
+        "is_voxcpm": is_vox,
+        "message": "အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ",
+    }
+
+
+@api_router.post("/voices/generate-with-audio")
+async def create_voice_job_with_audio(
+    text: str = Form(...),
+    model_slug: str = Form("voxcpm-cloud-ai"),
+    speed: str = Form("normal"),
+    gender_preset: str = Form("m2m"),
+    engine: str = Form("voxcpm"),
+    reference_audio: Optional[UploadFile] = File(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Submit a voice clone generation job with uploaded Reference Audio from Mini App."""
+    clean_text = text.strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ရန် လိုအပ်ပါသည်")
+
+    is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
+    char_limit = settings.character_limit_purchased if is_vip else settings.character_limit_free
+
+    if len(clean_text) > char_limit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"အက္ခရာ အရေအတွက် {len(clean_text)} သည် ကန့်သတ်ချက် {char_limit} ထက် ကျော်လွန်နေပါသည်။",
+        )
+
+    # Find model
+    stmt = select(VoiceModel).where(VoiceModel.slug == model_slug)
+    res = await db.execute(stmt)
+    model = res.scalar_one_or_none()
+    if not model:
+        stmt2 = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
+        res2 = await db.execute(stmt2)
+        model = res2.scalar_one_or_none()
+        if not model:
+            raise HTTPException(status_code=404, detail="အသံမော်ဒယ် မတွေ့ရှိပါ")
+
+    # Handle reference audio upload if provided
+    ref_audio_path = None
+    if reference_audio and reference_audio.filename:
+        ref_dir = settings.storage_root / "temp" / "voxcpm_refs"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        import uuid
+        ext = Path(reference_audio.filename).suffix or ".wav"
+        clean_ext = ext if ext.lower() in (".wav", ".mp3", ".ogg", ".m4a") else ".wav"
+        save_file = ref_dir / f"webapp_ref_{uuid.uuid4().hex[:12]}{clean_ext}"
+        content = await reference_audio.read()
+        if len(content) > 100:  # Valid audio
+            with open(save_file, "wb") as f:
+                f.write(content)
+            ref_audio_path = str(save_file)
+
+    import uuid
+    job = Job(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        chat_id=user.id,
+        model_id=model.id,
+        input_text=clean_text,
+        source_audio_path=ref_audio_path,
+        speed_preset=speed,
+        gender_preset=gender_preset,
+        edge_voice="my-MM-ThihaNeural",
+        status=JobStatus.QUEUED.value,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    is_vox = (model.pth_path == "voxcpm" or "voxcpm" in model.slug.lower() or engine == "voxcpm")
+
+    return {
+        "success": True,
+        "job_id": job.id,
+        "status": "QUEUED",
+        "model_name": model.name,
+        "has_reference_audio": bool(ref_audio_path),
         "is_voxcpm": is_vox,
         "message": "အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ",
     }
@@ -215,12 +299,12 @@ async def create_voice_job(
 
 @api_router.get("/jobs/{job_id}/status")
 async def get_job_status(
-    job_id: int,
+    job_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Poll job status for real-time progress & audio delivery."""
-    job = await db.get(Job, job_id)
+    job = await db.get(Job, str(job_id))
     if not job or (job.user_id != user.id and not settings.is_admin(user.id)):
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -229,10 +313,52 @@ async def get_job_status(
         "status": job.status,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
-        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "error_message": job.error_message,
         "output_audio_url": f"/api/audio/download/{job.id}" if job.status == JobStatus.SUCCESS.value else None,
     }
+
+
+@api_router.get("/audio/download/{job_id}")
+async def download_job_audio(
+    job_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Stream or download the completed generated voice clone audio file."""
+    job = await db.get(Job, str(job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Audio job not found")
+
+    # Locate generated audio
+    target_path = None
+    if job.result_path and Path(job.result_path).is_file():
+        target_path = Path(job.result_path)
+    else:
+        # Check storage outputs
+        outputs_dir = settings.storage_root / "outputs"
+        matches = list(outputs_dir.glob(f"{job.id}*"))
+        if matches and matches[0].is_file():
+            target_path = matches[0]
+
+    if not target_path or not target_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not ready or expired")
+
+    return FileResponse(
+        path=str(target_path),
+        media_type="audio/wav",
+        filename=f"voice_clone_{job.id[:8]}.wav",
+    )
+
+
+@api_router.get("/voices/sample/{slug}")
+async def get_voice_sample_audio(slug: str, db: AsyncSession = Depends(get_db_session)):
+    """Serve sample audio file for a given voice model."""
+    stmt = select(VoiceModel).where(VoiceModel.slug == slug)
+    res = await db.execute(stmt)
+    m = res.scalar_one_or_none()
+    if not m or not m.sample_audio_path or not Path(m.sample_audio_path).is_file():
+        raise HTTPException(status_code=404, detail="Sample audio not found")
+    return FileResponse(path=m.sample_audio_path, media_type="audio/wav")
 
 
 # ── 4. Quick Downloader & Video Info ───────────────────────────────────────

@@ -10,6 +10,7 @@ const state = {
     models: [],
     selectedModelSlug: "voxcpm-cloud-ai",
     selectedEngine: "voxcpm",
+    selectedReferenceFile: null,
     speed: "normal",
     activeJobId: null,
     pollTimer: null,
@@ -165,9 +166,28 @@ function setupVoiceStudio() {
         });
     }
 
+    // Reference Audio File Input Setup
+    const refFileInput = document.getElementById("ref-audio-input");
+    const refLabel = document.getElementById("ref-audio-label");
+    const btnClearRef = document.getElementById("btn-clear-ref-audio");
+    const fileUploadBtn = document.querySelector(".btn-file-upload");
+    if (refFileInput) {
+        refFileInput.addEventListener("change", (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) {
+                state.selectedReferenceFile = file;
+                if (refLabel) refLabel.innerText = `🎵 ${file.name} (${Math.round(file.size / 1024)} KB)`;
+                if (btnClearRef) btnClearRef.classList.remove("hidden");
+                if (fileUploadBtn) fileUploadBtn.classList.add("has-file");
+                haptic("selection");
+            }
+        });
+    }
+
     // Engine Selector Buttons
     const btnVox = document.getElementById("btn-engine-voxcpm");
     const btnApplio = document.getElementById("btn-engine-applio");
+    const refSection = document.getElementById("ref-audio-section");
     if (btnVox && btnApplio) {
         btnVox.addEventListener("click", () => {
             haptic("selection");
@@ -176,12 +196,14 @@ function setupVoiceStudio() {
             state.selectedEngine = "voxcpm";
             state.selectedModelSlug = "voxcpm-cloud-ai";
             updateActiveModelChip("voxcpm-cloud-ai");
+            if (refSection) refSection.classList.remove("hidden");
         });
         btnApplio.addEventListener("click", () => {
             haptic("selection");
             btnApplio.classList.add("active");
             btnVox.classList.remove("active");
             state.selectedEngine = "applio";
+            if (refSection) refSection.classList.add("hidden");
         });
     }
 
@@ -201,6 +223,19 @@ function setupVoiceStudio() {
     if (btnGen) {
         btnGen.addEventListener("click", handleVoiceGenerate);
     }
+}
+
+function clearRefAudio() {
+    state.selectedReferenceFile = null;
+    const refFileInput = document.getElementById("ref-audio-input");
+    const refLabel = document.getElementById("ref-audio-label");
+    const btnClearRef = document.getElementById("btn-clear-ref-audio");
+    const fileUploadBtn = document.querySelector(".btn-file-upload");
+    if (refFileInput) refFileInput.value = "";
+    if (refLabel) refLabel.innerText = "Reference Audio ဖိုင် ရွေးချယ်မည်";
+    if (btnClearRef) btnClearRef.classList.add("hidden");
+    if (fileUploadBtn) fileUploadBtn.classList.remove("has-file");
+    haptic("light");
 }
 
 function updateActiveModelChip(slug) {
@@ -253,16 +288,38 @@ async function handleVoiceGenerate() {
     if (btnGen) btnGen.disabled = true;
 
     try {
-        const res = await fetch("/api/voices/generate", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({
-                text: text,
-                model_slug: state.selectedModelSlug,
-                speed: state.speed,
-                engine: state.selectedEngine,
-            }),
-        });
+        let res;
+        if (state.selectedReferenceFile) {
+            // Upload with reference audio file via FormData
+            const formData = new FormData();
+            formData.append("text", text);
+            formData.append("model_slug", state.selectedModelSlug || "voxcpm-cloud-ai");
+            formData.append("speed", state.speed);
+            formData.append("engine", state.selectedEngine);
+            formData.append("reference_audio", state.selectedReferenceFile);
+
+            const headers = {};
+            if (state.tg && state.tg.initData) {
+                headers["X-Telegram-Init-Data"] = state.tg.initData;
+            }
+            res = await fetch("/api/voices/generate-with-audio", {
+                method: "POST",
+                headers: headers,
+                body: formData,
+            });
+        } else {
+            // JSON submission
+            res = await fetch("/api/voices/generate", {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({
+                    text: text,
+                    model_slug: state.selectedModelSlug || "voxcpm-cloud-ai",
+                    speed: state.speed,
+                    engine: state.selectedEngine,
+                }),
+            });
+        }
 
         const data = await res.json();
         if (!res.ok) {
@@ -270,8 +327,8 @@ async function handleVoiceGenerate() {
         }
 
         state.activeJobId = data.job_id;
-        if (statusMsg) statusMsg.innerText = "⏳ စတင်လုပ်ဆောင်နေပါသည်...";
-        if (progressFill) progressFill.style.width = "40%";
+        if (statusMsg) statusMsg.innerText = "⏳ Queue စနစ်ထဲသို့ ထည့်သွင်းပြီးပါပြီ...";
+        if (progressFill) progressFill.style.width = "30%";
         if (etaText) etaText.innerText = data.is_voxcpm ? "VoxCPM Cloud Queue စစ်ဆေးနေပါသည်..." : "AI ပြင်ဆင်နေပါသည်...";
 
         // Start Polling for Status
@@ -304,9 +361,13 @@ function startJobPolling(jobId) {
             const btnDl = document.getElementById("btn-download-audio");
             const btnGen = document.getElementById("btn-generate-voice");
 
-            if (data.status === "RUNNING") {
+            if (data.status === "QUEUED") {
+                if (progressFill) progressFill.style.width = "40%";
+                if (statusMsg) statusMsg.innerText = "⏳ Queue စောင့်ဆိုင်းနေပါသည်...";
+                if (etaText) etaText.innerText = "မကြာမီ စတင်ပါမည်";
+            } else if (data.status === "RUNNING") {
                 if (progressFill) progressFill.style.width = "75%";
-                if (statusMsg) statusMsg.innerText = "⚡ အသံထွက်ပေါ်အောင် ပေါင်းစပ်နေပါသည်...";
+                if (statusMsg) statusMsg.innerText = "⚡ VoxCPM Cloud AI အသံသွင်းနေပါသည်...";
                 if (etaText) etaText.innerText = "ခန့်မှန်းကြာချိန် ~5s - 15s";
             } else if (data.status === "SUCCESS") {
                 clearInterval(state.pollTimer);
@@ -332,7 +393,7 @@ function startJobPolling(jobId) {
                 if (btnGen) btnGen.disabled = false;
             }
 
-            if (tick > 60) { // 2 minutes timeout
+            if (tick > 90) { // 3 minutes timeout
                 clearInterval(state.pollTimer);
                 if (btnGen) btnGen.disabled = false;
             }

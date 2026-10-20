@@ -5,6 +5,7 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
@@ -31,6 +32,7 @@ class CloneFSM(StatesGroup):
     waiting_for_speed = State()
     waiting_for_gender = State()
     waiting_for_model = State()
+    waiting_for_voxcpm_reference = State()  # VoxCPM: optional reference audio step
 
 
 @clone_router.callback_query(F.data.in_({"menu:voice_clone", "menu:start"}))
@@ -298,13 +300,15 @@ async def handle_clone_gender_selected(callback: CallbackQuery, state: FSMContex
     buttons: list[list[InlineKeyboardButton]] = []
     m_row: list[InlineKeyboardButton] = []
     for m in models:
-        if getattr(m, "type", None) == "PERSONAL" or getattr(m, "owner_user_id", None) == callback.from_user.id:
-            prefix = "👑"
+        if m.name.startswith(("🎙️", "👑", "⭐", "⚡", "🎭")):
+            label = m.name
+        elif getattr(m, "type", None) == "PERSONAL" or getattr(m, "owner_user_id", None) == callback.from_user.id:
+            label = f"👑 {m.name}"
         elif getattr(m, "is_free_default", False):
-            prefix = "⭐"
+            label = f"⭐ {m.name}"
         else:
-            prefix = "🎙️"
-        m_row.append(InlineKeyboardButton(text=f"{prefix} {m.name}", callback_data=f"clone_model:{m.id}"))
+            label = f"🎙️ {m.name}"
+        m_row.append(InlineKeyboardButton(text=label, callback_data=f"clone_model:{m.id}"))
         if len(m_row) == 2:
             buttons.append(m_row)
             m_row = []
@@ -335,6 +339,47 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
     lang = data.get("lang", "my")
     model_id = int(callback.data.split(":")[1])
 
+    # ── Detect if this is a VoxCPM model ─────────────────────────────────────
+    async with AsyncSessionLocal() as session:
+        from app.models.schema import VoiceModel
+        model_obj = await session.get(VoiceModel, model_id)
+
+    is_voxcpm_model = False
+    if model_obj:
+        is_voxcpm_model = (
+            getattr(model_obj, "pth_path", "") == "voxcpm"
+            or "voxcpm" in getattr(model_obj, "slug", "").lower()
+        )
+
+    # ── VoxCPM flow: ask for optional reference audio first ───────────────────
+    if is_voxcpm_model:
+        await state.update_data(model_id=model_id)
+        await state.set_state(CloneFSM.waiting_for_voxcpm_reference)
+
+        ref_prompt = (
+            "🎙️ <b>VoxCPM Cloud AI — Reference Voice</b>\n\n"
+            "အကောင်းဆုံးအသံ Clone ရရှိရန် <b>Reference Audio</b> (ကိုးကားသံ) တစ်ခု ပေးပို့ပေးပါ။\n\n"
+            "📌 <b>လိုအပ်ချက်:</b>\n"
+            "• WAV / MP3 / OGG ဖိုင် (၃-၃၀ စက္ကန့်)\n"
+            "• ကြည်လင်သန့်ရှင်းသော မိမိအသံ ဖြစ်ရမည်\n"
+            "• Background noise နည်းသလောက် ကောင်းသည်\n\n"
+            "⬇️ Reference Audio မလိုပဲ Default Burmese AI Voice သုံးမည်ဆိုလျှင်:\n"
+        )
+        skip_btn = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⏭️ Skip — Default AI Voice သုံးမည်",
+                callback_data="voxcpm_ref:skip"
+            )],
+            [InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone")],
+        ])
+        await callback.message.answer(ref_prompt, reply_markup=skip_btn, parse_mode="HTML")
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
+
+    # ── Standard Applio flow: submit job immediately ──────────────────────────
     input_text = data.get("input_text", "")
     source_audio_path = data.get("source_audio_path")
     edge_voice = data.get("edge_voice", "my-MM-ThihaNeural")
@@ -343,6 +388,145 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
 
     await state.clear()
 
+    await _submit_voice_job(
+        callback=callback,
+        lang=lang,
+        model_id=model_id,
+        input_text=input_text,
+        source_audio_path=source_audio_path,
+        edge_voice=edge_voice,
+        speed_preset=speed_preset,
+        gender_preset=gender_preset,
+    )
+
+
+# ── VoxCPM: Receive Reference Audio ──────────────────────────────────────────
+
+@clone_router.message(
+    CloneFSM.waiting_for_voxcpm_reference,
+    F.voice | F.audio | F.document
+)
+async def handle_voxcpm_reference_audio(message: Message, state: FSMContext):
+    """Handle user-uploaded reference audio for VoxCPM voice cloning."""
+    data = await state.get_data()
+    lang = data.get("lang", "my")
+    model_id = data.get("model_id")
+
+    file_id = None
+    filename = "reference.wav"
+
+    if message.voice:
+        file_id = message.voice.file_id
+        filename = f"voxcpm_ref_{message.from_user.id}.ogg"
+    elif message.audio:
+        file_id = message.audio.file_id
+        filename = message.audio.file_name or f"voxcpm_ref_{message.from_user.id}.mp3"
+    elif message.document:
+        doc_mime = message.document.mime_type or ""
+        doc_name = message.document.file_name or ""
+        valid_exts = (".wav", ".mp3", ".ogg", ".oga", ".m4a", ".aac", ".flac")
+        if doc_mime.startswith("audio") or any(doc_name.lower().endswith(ext) for ext in valid_exts):
+            file_id = message.document.file_id
+            filename = doc_name or f"voxcpm_ref_{message.from_user.id}.wav"
+        else:
+            await message.answer(
+                "❌ ဤဖိုင်ကို လက်မခံနိုင်ပါ။ WAV, MP3 သို့မဟုတ် OGG ဖိုင်ကို ပေးပို့ပေးပါ။",
+                reply_markup=back_to_menu_kb(lang),
+                parse_mode="HTML",
+            )
+            return
+
+    if not file_id:
+        return
+
+    # Download reference audio to temp location
+    ref_dir = settings.storage_root / "temp" / "voxcpm_refs"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    clean_name = "".join(c for c in filename if c.isalnum() or c in "._-") or "reference.wav"
+    ref_path = ref_dir / f"ref_{uuid.uuid4().hex[:12]}_{clean_name}"
+
+    try:
+        tg_file = await message.bot.get_file(file_id)
+        await message.bot.download_file(tg_file.file_path, destination=ref_path)
+    except Exception as exc:
+        logger.error("Failed to download VoxCPM reference audio from user %s: %s", message.from_user.id, exc)
+        await message.answer(
+            "❌ Reference Audio ဒေါင်းလုဒ် မအောင်မြင်ပါ။ ထပ်မံ ကြိုးစားပါ။",
+            reply_markup=back_to_menu_kb(lang),
+            parse_mode="HTML",
+        )
+        return
+
+    # Retrieve FSM data and submit job
+    input_text = data.get("input_text", "")
+    edge_voice = data.get("edge_voice", "my-MM-ThihaNeural")
+    speed_preset = data.get("speed_preset", "normal")
+    gender_preset = data.get("gender_preset", "m2m")
+    await state.clear()
+
+    confirm_msg = await message.answer(
+        f"✅ Reference Audio ရရှိပါပြီ <code>{clean_name}</code>\n"
+        "🚀 VoxCPM Cloud AI ဖြင့် အသံ Clone ပြုလုပ်ရန် Queue ထဲသို့ ထည့်နေပါသည်...",
+        parse_mode="HTML",
+    )
+
+    await _submit_voxcpm_job(
+        message=message,
+        status_message=confirm_msg,
+        lang=lang,
+        model_id=model_id,
+        input_text=input_text,
+        source_audio_path=str(ref_path),  # Reference audio = source_audio_path for VoxCPM
+        edge_voice=edge_voice,
+        speed_preset=speed_preset,
+        gender_preset=gender_preset,
+    )
+
+
+@clone_router.callback_query(F.data == "voxcpm_ref:skip")
+async def handle_voxcpm_reference_skip(callback: CallbackQuery, state: FSMContext):
+    """Skip reference audio — use default Burmese AI voice style."""
+    data = await state.get_data()
+    lang = data.get("lang", "my")
+    model_id = data.get("model_id")
+    input_text = data.get("input_text", "")
+    edge_voice = data.get("edge_voice", "my-MM-ThihaNeural")
+    speed_preset = data.get("speed_preset", "normal")
+    gender_preset = data.get("gender_preset", "m2m")
+    source_audio_path = data.get("source_audio_path")
+
+    await state.clear()
+
+    try:
+        await callback.answer("⏭️ Default AI Voice ကို အသုံးပြုမည်...")
+    except Exception:
+        pass
+
+    await _submit_voice_job(
+        callback=callback,
+        lang=lang,
+        model_id=model_id,
+        input_text=input_text,
+        source_audio_path=source_audio_path,
+        edge_voice=edge_voice,
+        speed_preset=speed_preset,
+        gender_preset=gender_preset,
+    )
+
+
+# ── Shared Job Submission Helpers ─────────────────────────────────────────────
+
+async def _submit_voice_job(
+    callback: CallbackQuery,
+    lang: str,
+    model_id: int,
+    input_text: str,
+    source_audio_path: str | None,
+    edge_voice: str,
+    speed_preset: str,
+    gender_preset: str,
+) -> None:
+    """Submit voice clone job from a callback query context."""
     async with AsyncSessionLocal() as session:
         job, reason = await create_voice_clone_job(
             session=session,
@@ -381,3 +565,55 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
         await callback.answer()
     except Exception:
         pass
+
+
+async def _submit_voxcpm_job(
+    message: Message,
+    status_message,
+    lang: str,
+    model_id: int,
+    input_text: str,
+    source_audio_path: str | None,
+    edge_voice: str,
+    speed_preset: str,
+    gender_preset: str,
+) -> None:
+    """Submit VoxCPM voice clone job from a message context (after reference upload)."""
+    async with AsyncSessionLocal() as session:
+        job, reason = await create_voice_clone_job(
+            session=session,
+            user_id=message.from_user.id,
+            text=input_text,
+            edge_voice=edge_voice,
+            model_id=model_id,
+            gender_preset=gender_preset,
+            speed_preset=speed_preset,
+            chat_id=message.from_user.id,
+            source_audio_path=source_audio_path,
+        )
+        if not job:
+            if reason == "DAILY_JOB_LIMIT_EXCEEDED":
+                err_msg = t("queue_daily_limit_exceeded", lang)
+            elif reason == "CONCURRENT_JOB_LIMIT_EXCEEDED":
+                err_msg = t("queue_concurrent_limit_exceeded", lang)
+            else:
+                err_msg = t("tts_queue_failed", lang, reason=reason)
+            await message.answer(err_msg, reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
+            return
+
+        queue_pos = await get_queue_position(session, job.id)
+        status_text = t(
+            "queue_status_card",
+            lang,
+            status_validating=t("status_validating", lang),
+            queue_pos=queue_pos,
+        )
+        try:
+            from aiogram.types import Message as TgMessage
+            await status_message.edit_text(status_text, parse_mode="HTML")
+            job.status_message_id = status_message.message_id
+        except Exception:
+            sent = await message.answer(status_text, parse_mode="HTML")
+            if sent:
+                job.status_message_id = sent.message_id
+        await session.commit()
