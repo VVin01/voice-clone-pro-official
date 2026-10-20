@@ -367,6 +367,20 @@ async def get_job_status(
     }
 
 
+@api_router.get("/debug/storage")
+async def debug_storage():
+    outputs_dir = settings.storage_root / "outputs"
+    files = []
+    if outputs_dir.exists():
+        files = [str(f.name) for f in outputs_dir.iterdir()]
+    return {
+        "storage_root": str(settings.storage_root),
+        "exists": outputs_dir.exists(),
+        "files": files,
+        "mode": os.getenv("APP_MODE"),
+    }
+
+
 @api_router.get("/audio/download/{job_id}")
 async def download_job_audio(
     job_id: str,
