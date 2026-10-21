@@ -1724,6 +1724,26 @@ async def handle_admin_job_retry_confirm(callback: CallbackQuery, session: Async
             details_json=f'{{"user_id": {j.user_id}, "model_id": {j.model_id}, "category": "{cat}"}}',
         ))
         await s.commit()
+
+        # If it's a Movie Recap job, dispatch background processing task
+        if str(j.job_type).lower() == "recap" or str(j.id).startswith("rc_") or getattr(j, "engine", "") == "recap":
+            try:
+                from app.webapp.api import _run_recap_background_job, RecapConfigRequest, RECAP_JOBS_REGISTRY
+                cfg = RecapConfigRequest(
+                    url=j.input_text or "",
+                    voice_slug=j.preset_voice or "thiha",
+                )
+                RECAP_JOBS_REGISTRY[str(j.id)] = {
+                    "id": str(j.id),
+                    "status": "QUEUED",
+                    "progress_percent": 5,
+                    "progress_step": "0/4",
+                    "progress_label": "🔄 Re-queued by Administrator...",
+                }
+                asyncio.create_task(_run_recap_background_job(str(j.id), cfg, j.user_id, j.chat_id or j.user_id))
+            except Exception as recap_err:
+                logger.warning(f"Failed to dispatch background recap task in admin retry: {recap_err}")
+
         return True, "SUCCESS"
 
     if session is not None:
