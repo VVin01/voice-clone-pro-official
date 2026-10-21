@@ -276,19 +276,32 @@ def admin_tutorial_mgmt_kb(
     video_link: str | None = None,
     is_enabled: bool = True,
     lang: str = "my",
+    voice_enabled: bool = True,
+    voice_link: str | None = None,
+    recap_enabled: bool = True,
+    recap_link: str | None = None,
 ) -> InlineKeyboardMarkup:
-    toggle_text = t("admin_btn_tutorial_disable", lang) if is_enabled else t("admin_btn_tutorial_enable", lang)
+    v_status = "🟢 ON" if voice_enabled else "🔴 OFF"
+    r_status = "🟢 ON" if recap_enabled else "🔴 OFF"
+
     buttons = [
         [
-            InlineKeyboardButton(text=t("admin_btn_tutorial_edit", lang), callback_data="admin:tutorial_edit_url"),
-            InlineKeyboardButton(text=toggle_text, callback_data="admin:tutorial_toggle"),
+            InlineKeyboardButton(text=f"🎙️ Voice Tut: {v_status}", callback_data="admin:tutorial:voice_toggle"),
+            InlineKeyboardButton(text="✏️ Voice Link", callback_data="admin:tutorial:voice_edit"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🎬 Recap Tut: {r_status}", callback_data="admin:tutorial:recap_toggle"),
+            InlineKeyboardButton(text="✏️ Recap Link", callback_data="admin:tutorial:recap_edit"),
         ],
     ]
-    if video_link:
-        buttons.append([
-            InlineKeyboardButton(text=t("admin_btn_test_tutorial", lang), url=video_link),
-            InlineKeyboardButton(text=t("admin_btn_tutorial_remove", lang), callback_data="admin:tutorial_remove_prompt"),
-        ])
+    test_btns = []
+    if voice_link:
+        test_btns.append(InlineKeyboardButton(text="🎙️ Test Voice", url=voice_link))
+    if recap_link:
+        test_btns.append(InlineKeyboardButton(text="🎬 Test Recap", url=recap_link))
+    if test_btns:
+        buttons.append(test_btns)
+
     buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

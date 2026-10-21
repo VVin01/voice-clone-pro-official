@@ -3643,3 +3643,58 @@ textarea#voice-text-input:focus {
     }
 }
 
+/* ── Admin Tutorial Manager Boxes & Controls ────────────────────────── */
+.tutorial-admin-section {
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.card-subtitle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.sub-heading-gold {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #ffd700;
+}
+
+.badge-mini-gold {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #000;
+    background: #ffd700;
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+
+.admin-tut-box {
+    background: rgba(18, 24, 38, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 10px 12px;
+    transition: border-color 0.2s ease;
+}
+
+.admin-tut-box:focus-within {
+    border-color: rgba(245, 158, 11, 0.45);
+}
+
+.tut-box-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.tut-box-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f1f5f9;
+}
+

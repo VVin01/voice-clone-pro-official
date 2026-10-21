@@ -73,12 +73,113 @@ function getAuthHeaders() {
 }
 window.getAuthHeaders = getAuthHeaders;
 
-// ── Tutorial Video Link Controller ──────────────────────────────────────────
-let currentTutorialUrl = "https://t.me/VoiceClonePro/16";
+// ── Tutorial Video Link Controller (Voice Clone & Movie Recap) ───────────────
+let tutorialConfig = {
+    fallbackUrl: "https://t.me/VoiceClonePro/16",
+    voice: {
+        title: "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
+        url: "https://t.me/VoiceClonePro/16",
+        enabled: true
+    },
+    recap: {
+        title: "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်",
+        url: "https://t.me/VoiceClonePro/16",
+        enabled: true
+    }
+};
 
-function openTutorialVideo() {
+function updateTutorialUI(data) {
+    if (!data) return;
+    if (data.tutorial_video_link) tutorialConfig.fallbackUrl = data.tutorial_video_link;
+
+    if (data.tutorial_voice_title !== undefined) tutorialConfig.voice.title = data.tutorial_voice_title;
+    if (data.tutorial_voice_link !== undefined) tutorialConfig.voice.url = data.tutorial_voice_link;
+    if (data.tutorial_voice_enabled !== undefined) {
+        tutorialConfig.voice.enabled = String(data.tutorial_voice_enabled).toLowerCase() !== "false" && data.tutorial_voice_enabled !== false;
+    }
+
+    if (data.tutorial_recap_title !== undefined) tutorialConfig.recap.title = data.tutorial_recap_title;
+    if (data.tutorial_recap_link !== undefined) tutorialConfig.recap.url = data.tutorial_recap_link;
+    if (data.tutorial_recap_enabled !== undefined) {
+        tutorialConfig.recap.enabled = String(data.tutorial_recap_enabled).toLowerCase() !== "false" && data.tutorial_recap_enabled !== false;
+    }
+
+    // Apply visibility & title to Voice banner in Tab 1
+    const voiceBanner = document.getElementById("voice-tutorial-banner");
+    const voiceTitle = document.getElementById("voice-tut-title");
+    if (voiceBanner) {
+        if (tutorialConfig.voice.enabled) {
+            voiceBanner.classList.remove("hidden");
+            if (voiceTitle && tutorialConfig.voice.title) voiceTitle.textContent = tutorialConfig.voice.title;
+        } else {
+            voiceBanner.classList.add("hidden");
+        }
+    }
+
+    // Apply visibility & title to Recap banner in Tab 2
+    const recapBanner = document.getElementById("recap-tutorial-banner");
+    const recapTitle = document.getElementById("recap-tut-title");
+    if (recapBanner) {
+        if (tutorialConfig.recap.enabled) {
+            recapBanner.classList.remove("hidden");
+            if (recapTitle && tutorialConfig.recap.title) recapTitle.textContent = tutorialConfig.recap.title;
+        } else {
+            recapBanner.classList.add("hidden");
+        }
+    }
+
+    // Apply visibility to Top Nav Button
+    const topTutBtn = document.getElementById("btn-tutorial-top");
+    if (topTutBtn) {
+        if (!tutorialConfig.voice.enabled && !tutorialConfig.recap.enabled) {
+            topTutBtn.classList.add("hidden");
+        } else {
+            topTutBtn.classList.remove("hidden");
+        }
+    }
+}
+
+function openTutorialVideo(type = "auto") {
     haptic("light");
-    const url = currentTutorialUrl || "https://t.me/VoiceClonePro/16";
+    let target = null;
+    let fallbackType = type;
+
+    if (type === "voice") {
+        target = tutorialConfig.voice;
+        fallbackType = "voice";
+    } else if (type === "recap") {
+        target = tutorialConfig.recap;
+        fallbackType = "recap";
+    } else {
+        // "auto": check which tab is currently active
+        const activeTab = document.querySelector(".tab-pane.active")?.id;
+        if (activeTab === "tab-recap") {
+            target = tutorialConfig.recap;
+            fallbackType = "recap";
+        } else if (activeTab === "tab-voice") {
+            target = tutorialConfig.voice;
+            fallbackType = "voice";
+        } else {
+            // Priority: whichever is enabled
+            if (tutorialConfig.voice.enabled) {
+                target = tutorialConfig.voice;
+                fallbackType = "voice";
+            } else if (tutorialConfig.recap.enabled) {
+                target = tutorialConfig.recap;
+                fallbackType = "recap";
+            } else {
+                target = null;
+            }
+        }
+    }
+
+    if (!target || !target.enabled) {
+        const label = fallbackType === "recap" ? "Movie Recap" : "Voice Clone";
+        alert(`⚠️ ${label} လမ်းညွှန်ဗီဒီယိုကို မကြာမီ တင်ဆက်ပေးပါမည် (Coming Soon)။`);
+        return;
+    }
+
+    const url = target.url || tutorialConfig.fallbackUrl || "https://t.me/VoiceClonePro/16";
     if (window.Telegram?.WebApp?.openLink) {
         window.Telegram.WebApp.openLink(url);
     } else {
@@ -86,6 +187,7 @@ function openTutorialVideo() {
     }
 }
 window.openTutorialVideo = openTutorialVideo;
+window.updateTutorialUI = updateTutorialUI;
 
 // ── Floating Luxury Alert Notification Banner ──────────────────────────────
 function showFloatingAlert(title, message, actionCallback, actionText) {
@@ -224,8 +326,8 @@ async function loadUserProfile() {
         const data = await res.json();
         state.user = data;
 
-        if (data.tutorial_video_link) {
-            currentTutorialUrl = data.tutorial_video_link;
+        if (data) {
+            updateTutorialUI(data);
         }
 
         // Sync language with user profile if saved
@@ -2378,13 +2480,30 @@ async function loadAdminSettings() {
         const elTutLink = document.getElementById("adm-set-tutorial-link");
         const elMaint = document.getElementById("adm-set-maintenance");
 
+        const elTutVoiceEn = document.getElementById("adm-tut-voice-enabled");
+        const elTutVoiceTitle = document.getElementById("adm-tut-voice-title");
+        const elTutVoiceLink = document.getElementById("adm-tut-voice-link");
+
+        const elTutRecapEn = document.getElementById("adm-tut-recap-enabled");
+        const elTutRecapTitle = document.getElementById("adm-tut-recap-title");
+        const elTutRecapLink = document.getElementById("adm-tut-recap-link");
+
         if (elKpayNum) elKpayNum.value = s.payment_kpay_number || "";
         if (elKpayName) elKpayName.value = s.payment_kpay_name || "";
         if (elWaveNum) elWaveNum.value = s.payment_wave_number || "";
         if (elWaveName) elWaveName.value = s.payment_wave_name || "";
         if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
-        if (s.tutorial_video_link) currentTutorialUrl = s.tutorial_video_link;
         if (elMaint) elMaint.checked = !!s.maintenance_mode;
+
+        if (elTutVoiceEn) elTutVoiceEn.checked = String(s.tutorial_voice_enabled).toLowerCase() !== "false" && s.tutorial_voice_enabled !== false;
+        if (elTutVoiceTitle) elTutVoiceTitle.value = s.tutorial_voice_title || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
+        if (elTutVoiceLink) elTutVoiceLink.value = s.tutorial_voice_link || s.tutorial_video_link || "";
+
+        if (elTutRecapEn) elTutRecapEn.checked = String(s.tutorial_recap_enabled).toLowerCase() !== "false" && s.tutorial_recap_enabled !== false;
+        if (elTutRecapTitle) elTutRecapTitle.value = s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
+        if (elTutRecapLink) elTutRecapLink.value = s.tutorial_recap_link || s.tutorial_video_link || "";
+
+        updateTutorialUI(s);
     } catch (e) {
         console.warn("Could not load dynamic settings:", e);
     }
@@ -2399,15 +2518,29 @@ async function saveAdminSettings() {
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
 
+    const tutVoiceEn = !!document.getElementById("adm-tut-voice-enabled")?.checked;
+    const tutVoiceTitle = document.getElementById("adm-tut-voice-title")?.value?.trim() || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
+    const tutVoiceLink = document.getElementById("adm-tut-voice-link")?.value?.trim() || "";
+
+    const tutRecapEn = !!document.getElementById("adm-tut-recap-enabled")?.checked;
+    const tutRecapTitle = document.getElementById("adm-tut-recap-title")?.value?.trim() || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
+    const tutRecapLink = document.getElementById("adm-tut-recap-link")?.value?.trim() || "";
+
     const payload = {
         payment_kpay_number: kpayNum,
         payment_kpay_name: kpayName,
         payment_wave_number: waveNum,
         payment_wave_name: waveName,
         tutorial_video_link: tutLink,
+        tutorial_voice_enabled: tutVoiceEn,
+        tutorial_voice_title: tutVoiceTitle,
+        tutorial_voice_link: tutVoiceLink,
+        tutorial_recap_enabled: tutRecapEn,
+        tutorial_recap_title: tutRecapTitle,
+        tutorial_recap_link: tutRecapLink,
         maintenance_mode: maint,
     };
-    if (tutLink) currentTutorialUrl = tutLink;
+    updateTutorialUI(payload);
 
     try {
         const res = await fetch("/api/admin/settings", {

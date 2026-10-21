@@ -135,6 +135,36 @@ async def get_user_profile(
         "tutorial_video_enabled",
         default="true",
     )
+    tut_voice_title = await get_dynamic_setting(
+        db,
+        "tutorial_voice_title",
+        default=getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
+    )
+    tut_voice_link = await get_dynamic_setting(
+        db,
+        "tutorial_voice_link",
+        default=tutorial_link,
+    )
+    tut_voice_enabled = await get_dynamic_setting(
+        db,
+        "tutorial_voice_enabled",
+        default="true",
+    )
+    tut_recap_title = await get_dynamic_setting(
+        db,
+        "tutorial_recap_title",
+        default=getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
+    )
+    tut_recap_link = await get_dynamic_setting(
+        db,
+        "tutorial_recap_link",
+        default=tutorial_link,
+    )
+    tut_recap_enabled = await get_dynamic_setting(
+        db,
+        "tutorial_recap_enabled",
+        default="true",
+    )
 
     return {
         "id": user.id,
@@ -153,6 +183,12 @@ async def get_user_profile(
         "has_recap_watermark": not is_vip,
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
+        "tutorial_voice_title": tut_voice_title,
+        "tutorial_voice_link": tut_voice_link,
+        "tutorial_voice_enabled": str(tut_voice_enabled).lower() != "false",
+        "tutorial_recap_title": tut_recap_title,
+        "tutorial_recap_link": tut_recap_link,
+        "tutorial_recap_enabled": str(tut_recap_enabled).lower() != "false",
     }
 
 
@@ -170,9 +206,45 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         "tutorial_video_enabled",
         default="true",
     )
+    tut_voice_title = await get_dynamic_setting(
+        db,
+        "tutorial_voice_title",
+        default=getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
+    )
+    tut_voice_link = await get_dynamic_setting(
+        db,
+        "tutorial_voice_link",
+        default=tutorial_link,
+    )
+    tut_voice_enabled = await get_dynamic_setting(
+        db,
+        "tutorial_voice_enabled",
+        default="true",
+    )
+    tut_recap_title = await get_dynamic_setting(
+        db,
+        "tutorial_recap_title",
+        default=getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
+    )
+    tut_recap_link = await get_dynamic_setting(
+        db,
+        "tutorial_recap_link",
+        default=tutorial_link,
+    )
+    tut_recap_enabled = await get_dynamic_setting(
+        db,
+        "tutorial_recap_enabled",
+        default="true",
+    )
     return {
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
+        "tutorial_voice_title": tut_voice_title,
+        "tutorial_voice_link": tut_voice_link,
+        "tutorial_voice_enabled": str(tut_voice_enabled).lower() != "false",
+        "tutorial_recap_title": tut_recap_title,
+        "tutorial_recap_link": tut_recap_link,
+        "tutorial_recap_enabled": str(tut_recap_enabled).lower() != "false",
         "channel_invite_link": getattr(settings, "channel_invite_link", "https://t.me/VoiceCloneProChannel"),
         "group_invite_link": getattr(settings, "group_invite_link", "https://t.me/VoiceCloneProGroup"),
     }
@@ -1840,6 +1912,12 @@ class AdminSettingsPayload(BaseModel):
     payment_wave_name: Optional[str] = None
     tutorial_video_link: Optional[str] = None
     tutorial_video_enabled: Optional[bool] = None
+    tutorial_voice_title: Optional[str] = None
+    tutorial_voice_link: Optional[str] = None
+    tutorial_voice_enabled: Optional[bool] = None
+    tutorial_recap_title: Optional[str] = None
+    tutorial_recap_link: Optional[str] = None
+    tutorial_recap_enabled: Optional[bool] = None
     maintenance_mode: Optional[bool] = None
 
 
@@ -1858,6 +1936,12 @@ async def get_admin_settings(
         "payment_wave_name": getattr(settings, "payment_wave_name", "Win Kyaw Oo"),
         "tutorial_video_link": getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
         "tutorial_video_enabled": getattr(settings, "tutorial_video_enabled", True),
+        "tutorial_voice_title": getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
+        "tutorial_voice_link": getattr(settings, "tutorial_voice_link", "https://t.me/VoiceClonePro/16"),
+        "tutorial_voice_enabled": getattr(settings, "tutorial_voice_enabled", True),
+        "tutorial_recap_title": getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
+        "tutorial_recap_link": getattr(settings, "tutorial_recap_link", "https://t.me/VoiceClonePro/16"),
+        "tutorial_recap_enabled": getattr(settings, "tutorial_recap_enabled", True),
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
     }
 

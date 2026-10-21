@@ -95,12 +95,32 @@ class Settings(BaseSettings):
     # Stale Job Crash Recovery (seconds)
     stale_job_timeout_seconds: int = Field(default=1800, alias="STALE_JOB_TIMEOUT_SECONDS")
 
-    # Tutorial Link
+    # Tutorial Links & Controls (Voice Clone & Movie Recap)
     tutorial_video_link: str = Field(
-        default="https://t.me/voiceclonepro/tutorial",
+        default="https://t.me/VoiceClonePro/16",
         alias="TUTORIAL_VIDEO_LINK",
     )
     tutorial_video_enabled: bool = Field(default=True, alias="TUTORIAL_VIDEO_ENABLED")
+
+    tutorial_voice_title: str = Field(
+        default="🎙️ Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
+        alias="TUTORIAL_VOICE_TITLE",
+    )
+    tutorial_voice_link: str = Field(
+        default="https://t.me/VoiceClonePro/16",
+        alias="TUTORIAL_VOICE_LINK",
+    )
+    tutorial_voice_enabled: bool = Field(default=True, alias="TUTORIAL_VOICE_ENABLED")
+
+    tutorial_recap_title: str = Field(
+        default="🎬 Movie Recap ပြုလုပ်နည်း လမ်းညွှန်",
+        alias="TUTORIAL_RECAP_TITLE",
+    )
+    tutorial_recap_link: str = Field(
+        default="https://t.me/VoiceClonePro/16",
+        alias="TUTORIAL_RECAP_LINK",
+    )
+    tutorial_recap_enabled: bool = Field(default=True, alias="TUTORIAL_RECAP_ENABLED")
 
     # Edge TTS defaults
     default_tts_voice: str = "my-MM-ThihaNeural"

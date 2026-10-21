@@ -151,6 +151,8 @@ class AdminUserSearchFSM(StatesGroup):
 
 class AdminTutorialFSM(StatesGroup):
     waiting_for_url = State()
+    waiting_for_voice_url = State()
+    waiting_for_recap_url = State()
 
 
 async def is_authorized_admin(event: CallbackQuery | Message) -> bool:
@@ -3056,14 +3058,36 @@ async def handle_admin_settings_input_receive(message: Message, state: FSMContex
 # ---------------------------------------------------------------------------
 # Guide Video Management Handlers
 # ---------------------------------------------------------------------------
+# Dynamic Tutorial Video Management
+# ---------------------------------------------------------------------------
 
-async def _get_tutorial_state(session: AsyncSession) -> tuple[str, bool]:
+async def _get_tutorial_state(session: AsyncSession) -> dict[str, Any]:
     link_row = (await session.execute(select(BotSetting).where(BotSetting.key == "tutorial_video_link"))).scalar_one_or_none()
     current_link = link_row.value if link_row is not None else settings.tutorial_video_link
 
     en_row = (await session.execute(select(BotSetting).where(BotSetting.key == "tutorial_video_enabled"))).scalar_one_or_none()
     is_enabled = (en_row.value.lower() == "true") if en_row else True
-    return current_link, is_enabled
+
+    v_en = (await session.execute(select(BotSetting).where(BotSetting.key == "tutorial_voice_enabled"))).scalar_one_or_none()
+    voice_enabled = (v_en.value.lower() == "true") if v_en else True
+
+    v_link = (await session.execute(select(BotSetting).where(BotSetting.key == "tutorial_voice_link"))).scalar_one_or_none()
+    voice_link = v_link.value if v_link else current_link
+
+    r_en = (await session.execute(select(BotSetting).where(BotSetting.key == "tutorial_recap_enabled"))).scalar_one_or_none()
+    recap_enabled = (r_en.value.lower() == "true") if r_en else True
+
+    r_link = (await session.execute(select(BotSetting).where(BotSetting.key == "tutorial_recap_link"))).scalar_one_or_none()
+    recap_link = r_link.value if r_link else current_link
+
+    return {
+        "video_link": current_link,
+        "is_enabled": is_enabled,
+        "voice_enabled": voice_enabled,
+        "voice_link": voice_link,
+        "recap_enabled": recap_enabled,
+        "recap_link": recap_link,
+    }
 
 
 @admin_router.callback_query(F.data == "admin:tutorial")
@@ -3072,21 +3096,34 @@ async def handle_admin_tutorial(callback: CallbackQuery, session: AsyncSession |
         return
 
     if session is not None:
-        video_link, is_enabled = await _get_tutorial_state(session)
+        state_data = await _get_tutorial_state(session)
     else:
         async with AsyncSessionLocal() as s:
-            video_link, is_enabled = await _get_tutorial_state(s)
+            state_data = await _get_tutorial_state(s)
 
-    status_badge = "🟢 <b>Enabled</b>" if is_enabled else "🔴 <b>Disabled</b>"
-    link_display = f"<code>{html.escape(video_link)}</code>" if video_link else "<i>Not set (empty)</i>"
+    v_badge = "🟢 <b>Enabled (ဖွင့်ထားသည်)</b>" if state_data["voice_enabled"] else "🔴 <b>Disabled (ပိတ်ထားသည်)</b>"
+    r_badge = "🟢 <b>Enabled (ဖွင့်ထားသည်)</b>" if state_data["recap_enabled"] else "🔴 <b>Disabled (ပိတ်ထားသည်)</b>"
+
+    v_link_disp = f"<code>{html.escape(state_data['voice_link'])}</code>" if state_data['voice_link'] else "<i>Not set</i>"
+    r_link_disp = f"<code>{html.escape(state_data['recap_link'])}</code>" if state_data['recap_link'] else "<i>Not set</i>"
 
     text = (
-        f"📺 <b>Tutorial Manager</b> (Guide Video)\n\n"
-        f"• Status: {status_badge}\n"
-        f"• Current Video Link: {link_display}\n\n"
-        f"ℹ️ <i>Use the controls below to update the URL, toggle visibility, or remove the link.</i>"
+        f"📺 <b>Tutorial Video Manager (Guide Controls)</b>\n\n"
+        f"🎙️ <b>Voice Clone Tutorial:</b>\n"
+        f"• Status: {v_badge}\n"
+        f"• Link: {v_link_disp}\n\n"
+        f"🎬 <b>Movie Recap Tutorial:</b>\n"
+        f"• Status: {r_badge}\n"
+        f"• Link: {r_link_disp}\n\n"
+        f"ℹ️ <i>ဗီဒီယို အသင့်မဖြစ်သေးပါက ခလုတ်ကို နှိပ်၍ ပိတ်ထားနိုင်ပြီး၊ အဆင်သင့်ဖြစ်ပါက ဖွင့်၍ Link အသစ် ပြောင်းလဲနိုင်ပါသည်။</i>"
     )
-    kb = admin_tutorial_mgmt_kb(video_link=video_link, is_enabled=is_enabled, lang="en")
+    kb = admin_tutorial_mgmt_kb(
+        voice_enabled=state_data["voice_enabled"],
+        voice_link=state_data["voice_link"],
+        recap_enabled=state_data["recap_enabled"],
+        recap_link=state_data["recap_link"],
+        lang="en",
+    )
     try:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception:
@@ -3094,24 +3131,104 @@ async def handle_admin_tutorial(callback: CallbackQuery, session: AsyncSession |
     await callback.answer()
 
 
-@admin_router.callback_query(F.data == "admin:tutorial_edit_url")
-async def handle_admin_tutorial_edit_url(callback: CallbackQuery, state: FSMContext):
+@admin_router.callback_query(F.data == "admin:tutorial:voice_toggle")
+async def handle_admin_tutorial_voice_toggle(callback: CallbackQuery):
     if not await is_authorized_admin(callback):
         return
 
-    await state.set_state(AdminTutorialFSM.waiting_for_url)
+    async with AsyncSessionLocal() as session:
+        stmt = select(BotSetting).where(BotSetting.key == "tutorial_voice_enabled")
+        row = (await session.execute(stmt)).scalar_one_or_none()
+        current_val = (row.value.lower() == "true") if row else True
+        new_val = not current_val
+        val_str = "true" if new_val else "false"
+
+        if not row:
+            session.add(BotSetting(key="tutorial_voice_enabled", value=val_str))
+        else:
+            row.value = val_str
+            row.updated_at = utc_now()
+
+        session.add(AuditLog(
+            admin_id=callback.from_user.id,
+            action="admin.tutorial_voice_toggle",
+            target_type="bot_setting",
+            target_id="tutorial_voice_enabled",
+            details_json=f'{{"enabled": {str(new_val).lower()}}}',
+        ))
+        await session.commit()
+
+    status_str = "Enabled" if new_val else "Disabled"
+    await callback.answer(f"Voice Clone Tutorial {status_str}!", show_alert=False)
+    await handle_admin_tutorial(callback)
+
+
+@admin_router.callback_query(F.data == "admin:tutorial:recap_toggle")
+async def handle_admin_tutorial_recap_toggle(callback: CallbackQuery):
+    if not await is_authorized_admin(callback):
+        return
+
+    async with AsyncSessionLocal() as session:
+        stmt = select(BotSetting).where(BotSetting.key == "tutorial_recap_enabled")
+        row = (await session.execute(stmt)).scalar_one_or_none()
+        current_val = (row.value.lower() == "true") if row else True
+        new_val = not current_val
+        val_str = "true" if new_val else "false"
+
+        if not row:
+            session.add(BotSetting(key="tutorial_recap_enabled", value=val_str))
+        else:
+            row.value = val_str
+            row.updated_at = utc_now()
+
+        session.add(AuditLog(
+            admin_id=callback.from_user.id,
+            action="admin.tutorial_recap_toggle",
+            target_type="bot_setting",
+            target_id="tutorial_recap_enabled",
+            details_json=f'{{"enabled": {str(new_val).lower()}}}',
+        ))
+        await session.commit()
+
+    status_str = "Enabled" if new_val else "Disabled"
+    await callback.answer(f"Movie Recap Tutorial {status_str}!", show_alert=False)
+    await handle_admin_tutorial(callback)
+
+
+@admin_router.callback_query(F.data.in_({"admin:tutorial:voice_edit", "admin:tutorial_edit_url"}))
+async def handle_admin_tutorial_edit_voice_url(callback: CallbackQuery, state: FSMContext):
+    if not await is_authorized_admin(callback):
+        return
+
+    await state.set_state(AdminTutorialFSM.waiting_for_voice_url)
     text = (
-        "✏️ <b>Enter New Guide Video URL</b>\n\n"
-        "Please type or paste the new video link (must start with <code>http://</code> or <code>https://</code>):\n"
-        "Example: <code>https://t.me/voiceclonepro/tutorial</code>"
+        "✏️ <b>Enter Voice Clone Guide Video URL</b>\n\n"
+        "Please type or paste the video link for Voice Clone Tutorial:\n"
+        "Example: <code>https://t.me/VoiceClonePro/16</code>"
     )
     kb = admin_tutorial_cancel_kb("en")
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
 
-@admin_router.message(AdminTutorialFSM.waiting_for_url)
-async def handle_admin_tutorial_url_input(message: Message, state: FSMContext):
+@admin_router.callback_query(F.data == "admin:tutorial:recap_edit")
+async def handle_admin_tutorial_edit_recap_url(callback: CallbackQuery, state: FSMContext):
+    if not await is_authorized_admin(callback):
+        return
+
+    await state.set_state(AdminTutorialFSM.waiting_for_recap_url)
+    text = (
+        "✏️ <b>Enter Movie Recap Guide Video URL</b>\n\n"
+        "Please type or paste the video link for Movie Recap Tutorial:\n"
+        "Example: <code>https://t.me/VoiceClonePro/16</code>"
+    )
+    kb = admin_tutorial_cancel_kb("en")
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+@admin_router.message(AdminTutorialFSM.waiting_for_voice_url)
+async def handle_admin_tutorial_voice_url_input(message: Message, state: FSMContext):
     if not settings.is_admin(message.from_user.id if message.from_user else None):
         return
 
@@ -3130,19 +3247,19 @@ async def handle_admin_tutorial_url_input(message: Message, state: FSMContext):
     async with AsyncSessionLocal() as session:
         admin_user, _ = await get_or_create_user(session, message.from_user.id)
         lang = admin_user.language_code if admin_user else "my"
-        stmt = select(BotSetting).where(BotSetting.key == "tutorial_video_link")
+        stmt = select(BotSetting).where(BotSetting.key == "tutorial_voice_link")
         row = (await session.execute(stmt)).scalar_one_or_none()
         if not row:
-            session.add(BotSetting(key="tutorial_video_link", value=url))
+            session.add(BotSetting(key="tutorial_voice_link", value=url))
         else:
             row.value = url
             row.updated_at = utc_now()
 
         session.add(AuditLog(
             admin_id=message.from_user.id,
-            action="admin.tutorial_update",
+            action="admin.tutorial_voice_update",
             target_type="bot_setting",
-            target_id="tutorial_video_link",
+            target_id="tutorial_voice_link",
             details_json=f'{{"url": "{url}"}}',
         ))
         await session.commit()
@@ -3152,7 +3269,55 @@ async def handle_admin_tutorial_url_input(message: Message, state: FSMContext):
         [InlineKeyboardButton(text=t("btn_admin_dashboard", lang), callback_data="admin:dashboard")],
     ])
     await message.answer(
-        f"✅ <b>Guide Video URL Updated!</b>\n\n• New URL: <code>{html.escape(url)}</code>",
+        f"✅ <b>Voice Clone Guide Video URL Updated!</b>\n\n• New URL: <code>{html.escape(url)}</code>",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+@admin_router.message(AdminTutorialFSM.waiting_for_recap_url)
+async def handle_admin_tutorial_recap_url_input(message: Message, state: FSMContext):
+    if not settings.is_admin(message.from_user.id if message.from_user else None):
+        return
+
+    url = (message.text or "").strip()
+    if not (url.startswith("http://") or url.startswith("https://")) or len(url) < 10:
+        await message.answer(
+            "⚠️ <b>Invalid URL format!</b>\n"
+            "The link must start with <code>http://</code> or <code>https://</code>.\n"
+            "Please try again or tap cancel below:",
+            reply_markup=admin_tutorial_cancel_kb("en"),
+            parse_mode="HTML",
+        )
+        return
+
+    await state.clear()
+    async with AsyncSessionLocal() as session:
+        admin_user, _ = await get_or_create_user(session, message.from_user.id)
+        lang = admin_user.language_code if admin_user else "my"
+        stmt = select(BotSetting).where(BotSetting.key == "tutorial_recap_link")
+        row = (await session.execute(stmt)).scalar_one_or_none()
+        if not row:
+            session.add(BotSetting(key="tutorial_recap_link", value=url))
+        else:
+            row.value = url
+            row.updated_at = utc_now()
+
+        session.add(AuditLog(
+            admin_id=message.from_user.id,
+            action="admin.tutorial_recap_update",
+            target_type="bot_setting",
+            target_id="tutorial_recap_link",
+            details_json=f'{{"url": "{url}"}}',
+        ))
+        await session.commit()
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📺 Back to Guide Video Mgr", callback_data="admin:tutorial")],
+        [InlineKeyboardButton(text=t("btn_admin_dashboard", lang), callback_data="admin:dashboard")],
+    ])
+    await message.answer(
+        f"✅ <b>Movie Recap Guide Video URL Updated!</b>\n\n• New URL: <code>{html.escape(url)}</code>",
         reply_markup=kb,
         parse_mode="HTML",
     )
@@ -3160,34 +3325,7 @@ async def handle_admin_tutorial_url_input(message: Message, state: FSMContext):
 
 @admin_router.callback_query(F.data == "admin:tutorial_toggle")
 async def handle_admin_tutorial_toggle(callback: CallbackQuery):
-    if not await is_authorized_admin(callback):
-        return
-
-    async with AsyncSessionLocal() as session:
-        stmt = select(BotSetting).where(BotSetting.key == "tutorial_video_enabled")
-        row = (await session.execute(stmt)).scalar_one_or_none()
-        current_val = (row.value.lower() == "true") if row else True
-        new_val = not current_val
-        val_str = "true" if new_val else "false"
-
-        if not row:
-            session.add(BotSetting(key="tutorial_video_enabled", value=val_str))
-        else:
-            row.value = val_str
-            row.updated_at = utc_now()
-
-        session.add(AuditLog(
-            admin_id=callback.from_user.id,
-            action="admin.tutorial_toggle",
-            target_type="bot_setting",
-            target_id="tutorial_video_enabled",
-            details_json=f'{{"enabled": {str(new_val).lower()}}}',
-        ))
-        await session.commit()
-
-    status_str = "Enabled" if new_val else "Disabled"
-    await callback.answer(f"Guide video {status_str}!", show_alert=False)
-    await handle_admin_tutorial(callback)
+    await handle_admin_tutorial_voice_toggle(callback)
 
 
 @admin_router.callback_query(F.data == "admin:tutorial_remove_prompt")

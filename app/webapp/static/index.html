@@ -42,7 +42,7 @@
             </div>
 
             <div class="top-actions">
-                <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo()" title="အသုံးပြုနည်း လမ်းညွှန်">
+                <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်">
                     <span class="btn-icon">📚</span>
                     <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
                 </button>
@@ -71,11 +71,11 @@
                 </div>
 
                 <!-- Tutorial Guide Banner -->
-                <div class="tutorial-banner-card" onclick="openTutorialVideo()">
+                <div class="tutorial-banner-card" id="voice-tutorial-banner" onclick="openTutorialVideo('voice')">
                     <span class="tutorial-banner-icon">💡</span>
                     <div class="tutorial-banner-text">
-                        <strong data-i18n="tutorial_banner_title">အသုံးပြုနည်း လမ်းညွှန်ဗီဒီယို</strong>
-                        <span data-i18n="tutorial_banner_desc">Voice Cloning စတင်အသုံးပြုပုံ အဆင့်ဆင့် ဗီဒီယိုကို ကြည့်ရှုပါ</span>
+                        <strong id="voice-tut-title" data-i18n="tutorial_banner_title">အသုံးပြုနည်း လမ်းညွှန်ဗီဒီယို</strong>
+                        <span id="voice-tut-desc" data-i18n="tutorial_banner_desc">Voice Cloning စတင်အသုံးပြုပုံ အဆင့်ဆင့် ဗီဒီယိုကို ကြည့်ရှုပါ</span>
                     </div>
                     <span class="tutorial-banner-btn" data-i18n="btn_watch">ကြည့်ရှုရန် ▶️</span>
                 </div>
@@ -252,11 +252,11 @@
                 </div>
 
                 <!-- Tutorial Guide Banner -->
-                <div class="tutorial-banner-card" onclick="openTutorialVideo()">
+                <div class="tutorial-banner-card" id="recap-tutorial-banner" onclick="openTutorialVideo('recap')">
                     <span class="tutorial-banner-icon">🎬</span>
                     <div class="tutorial-banner-text">
-                        <strong data-i18n="recap_tutorial_title">Movie Recap ပြုလုပ်နည်း လမ်းညွှန်</strong>
-                        <span data-i18n="recap_tutorial_desc">ရုပ်ရှင်ဇာတ်လမ်း သုံးသပ်ချက် ဗီဒီယို အလွယ်တကူ ဖန်တီးနည်းကို ကြည့်ရှုပါ</span>
+                        <strong id="recap-tut-title" data-i18n="recap_tutorial_title">Movie Recap ပြုလုပ်နည်း လမ်းညွှန်</strong>
+                        <span id="recap-tut-desc" data-i18n="recap_tutorial_desc">ရုပ်ရှင်ဇာတ်လမ်း သုံးသပ်ချက် ဗီဒီယို အလွယ်တကူ ဖန်တီးနည်းကို ကြည့်ရှုပါ</span>
                     </div>
                     <span class="tutorial-banner-btn" data-i18n="btn_watch">ကြည့်ရှုရန် ▶️</span>
                 </div>
@@ -974,9 +974,59 @@
                                 <input type="text" id="adm-set-wave-name" class="studio-input" placeholder="Win Kyaw Oo">
                             </div>
                         </div>
+                        <div class="tutorial-admin-section mt-3">
+                            <div class="card-subtitle-row mb-1">
+                                <span class="sub-heading-gold">📚 Tutorial Guide Video Controls</span>
+                                <span class="badge-mini-gold">Voice & Recap</span>
+                            </div>
+                            <p class="text-xs text-muted mb-2">ဗီဒီယို အဆင်သင့်မဖြစ်သေးပါက ခလုတ်ကို ပိတ်ထားနိုင်ပြီး၊ အဆင်သင့်ဖြစ်ပါက ဖွင့်၍ Link ထည့်သွင်းနိုင်ပါသည်</p>
+
+                            <!-- 1. Voice Clone Tutorial Box -->
+                            <div class="admin-tut-box glass-inset mb-2">
+                                <div class="tut-box-header">
+                                    <span class="tut-box-title">🎙️ Voice Clone Tutorial</span>
+                                    <label class="switch-luxury">
+                                        <input type="checkbox" id="adm-tut-voice-enabled" checked>
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+                                <div class="form-row-2 mt-1">
+                                    <div>
+                                        <label class="input-label text-xs">Label (ခေါင်းစဉ်)</label>
+                                        <input type="text" id="adm-tut-voice-title" class="studio-input" placeholder="Voice Clone ပြုလုပ်နည်း လမ်းညွှန်">
+                                    </div>
+                                    <div>
+                                        <label class="input-label text-xs">Video Link (URL)</label>
+                                        <input type="text" id="adm-tut-voice-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/16">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 2. Movie Recap Tutorial Box -->
+                            <div class="admin-tut-box glass-inset mb-2">
+                                <div class="tut-box-header">
+                                    <span class="tut-box-title">🎬 Movie Recap Tutorial</span>
+                                    <label class="switch-luxury">
+                                        <input type="checkbox" id="adm-tut-recap-enabled" checked>
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+                                <div class="form-row-2 mt-1">
+                                    <div>
+                                        <label class="input-label text-xs">Label (ခေါင်းစဉ်)</label>
+                                        <input type="text" id="adm-tut-recap-title" class="studio-input" placeholder="Movie Recap ပြုလုပ်နည်း လမ်းညွှန်">
+                                    </div>
+                                    <div>
+                                        <label class="input-label text-xs">Video Link (URL)</label>
+                                        <input type="text" id="adm-tut-recap-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/16">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="form-row-2 mt-2">
                             <div>
-                                <label class="input-label" data-i18n="settings_tutorial_link">Tutorial Video Link</label>
+                                <label class="input-label" data-i18n="settings_tutorial_link">Default Tutorial Fallback Link</label>
                                 <input type="text" id="adm-set-tutorial-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/16">
                             </div>
                             <div class="toggle-control-col">
