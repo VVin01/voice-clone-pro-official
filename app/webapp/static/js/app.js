@@ -1852,6 +1852,7 @@ function setQueueEngineFilter(engine) {
 async function loadAdminQueue(isSilent = false) {
     if (!state.user?.is_admin) return;
     const container = document.getElementById("admin-queue-list");
+    const bannerEl = document.getElementById("admin-queue-status-banner");
     if (!container) return;
 
     if (!isSilent && container.innerHTML.trim() === "") {
@@ -1880,36 +1881,97 @@ async function loadAdminQueue(isSilent = false) {
         }
 
         // 2. Update Counts
-        if (data.counts) {
-            const c = data.counts;
-            const elTotal = document.getElementById("cnt-total");
-            const elQueued = document.getElementById("cnt-queued");
-            const elRunning = document.getElementById("cnt-running");
-            const elSuccess = document.getElementById("cnt-success");
-            const elFailed = document.getElementById("cnt-failed");
+        const c = data.counts || { total_listed: 0, queued: 0, running: 0, success: 0, failed: 0 };
+        const elTotal = document.getElementById("cnt-total");
+        const elQueued = document.getElementById("cnt-queued");
+        const elRunning = document.getElementById("cnt-running");
+        const elSuccess = document.getElementById("cnt-success");
+        const elFailed = document.getElementById("cnt-failed");
 
-            if (elTotal) elTotal.innerText = c.total_listed;
-            if (elQueued) elQueued.innerText = c.queued;
-            if (elRunning) elRunning.innerText = c.running;
-            if (elSuccess) elSuccess.innerText = c.success;
-            if (elFailed) elFailed.innerText = c.failed;
+        if (elTotal) elTotal.innerText = c.total_listed;
+        if (elQueued) elQueued.innerText = c.queued;
+        if (elRunning) elRunning.innerText = c.running;
+        if (elSuccess) elSuccess.innerText = c.success;
+        if (elFailed) elFailed.innerText = c.failed;
 
-            const elTopQueue = document.getElementById("adm-queued-jobs");
-            if (elTopQueue) elTopQueue.innerText = c.queued;
+        const elTopQueue = document.getElementById("adm-queued-jobs");
+        if (elTopQueue) elTopQueue.innerText = c.queued;
+
+        // 3. Render High-Visibility Active Queue Status Banner
+        if (bannerEl) {
+            const hostName = data.worker?.host || "Awin";
+            const engineMode = (data.worker?.engine || "ALL").toUpperCase();
+            const isOnline = data.worker?.status_code === "ONLINE";
+
+            if (c.queued === 0 && c.running === 0) {
+                bannerEl.innerHTML = `
+                    <div class="active-queue-status-banner idle">
+                        <div class="status-banner-icon">🟢</div>
+                        <div class="status-banner-info">
+                            <div class="status-banner-title">${t("admin_queue_idle_title")}</div>
+                            <div class="status-banner-desc">${t("admin_queue_idle_desc")}</div>
+                            <div class="status-banner-meta">
+                                <span class="meta-pill">💻 Worker Host: <strong>${escapeHtml(hostName)}</strong></span>
+                                <span class="meta-pill">⚙️ Engine: <strong>${escapeHtml(engineMode)}</strong></span>
+                                <span class="meta-pill">📡 Status: <strong class="${isOnline ? 'text-green' : 'text-danger'}">${isOnline ? 'ONLINE (STANDBY)' : 'OFFLINE'}</strong></span>
+                                <span class="meta-pill">⏳ Active Queue: <strong>0 Pending</strong></span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else if (c.running > 0) {
+                bannerEl.innerHTML = `
+                    <div class="active-queue-status-banner running">
+                        <div class="status-banner-icon pulsing">⚡</div>
+                        <div class="status-banner-info">
+                            <div class="status-banner-title">${t("admin_queue_running_title")}</div>
+                            <div class="status-banner-desc">Local Worker (${escapeHtml(hostName)}) is actively processing <strong>${c.running}</strong> job(s) right now.</div>
+                            <div class="status-banner-meta">
+                                <span class="meta-pill">⚡ Running: <strong>${c.running}</strong></span>
+                                <span class="meta-pill">⏳ Waiting: <strong>${c.queued}</strong></span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                bannerEl.innerHTML = `
+                    <div class="active-queue-status-banner queued">
+                        <div class="status-banner-icon">⏳</div>
+                        <div class="status-banner-info">
+                            <div class="status-banner-title">${t("admin_queue_queued_title")}</div>
+                            <div class="status-banner-desc">${c.queued} job(s) waiting in queue. Worker is polling and claiming atomically.</div>
+                        </div>
+                    </div>
+                `;
+            }
         }
 
-        // 3. Render Jobs
+        // 4. Render Jobs with Clear Visual Grouping
         const jobs = data.jobs || [];
         if (jobs.length === 0) {
             container.innerHTML = `<p class="text-muted" style="padding: 12px 0;">${t("admin_queue_empty")}</p>`;
             return;
         }
 
-        container.innerHTML = jobs.map(j => {
+        const renderJobCard = (j) => {
             const statusLower = (j.status || "queued").toLowerCase();
             const engineLower = (j.engine || "voxcpm").toLowerCase();
             const engineLabel = engineLower === "applio" ? "🎙️ APPLIO GPU" : (engineLower === "recap" ? "🎬 RECAP" : "☁️ VOXCPM AI");
-            const durationTxt = j.duration_seconds ? `⏱️ ${j.duration_seconds}s` : `⏳ ${j.created_ago}`;
+            
+            let statusBadgeText = j.status;
+            let durationTxt = `⏳ ${j.created_ago}`;
+            if (statusLower === "success") {
+                statusBadgeText = t("badge_completed") || "✅ COMPLETED";
+                durationTxt = `⏱️ ${j.duration_seconds || '15'}s • ${j.created_ago}`;
+            } else if (statusLower === "queued") {
+                statusBadgeText = t("badge_queued") || "⏳ WAITING";
+                durationTxt = `⏳ In Queue: ${j.created_ago}`;
+            } else if (statusLower === "running") {
+                statusBadgeText = t("badge_running") || "⚡ PROCESSING";
+                durationTxt = `⚡ Processing since: ${j.created_ago}`;
+            } else if (statusLower === "failed") {
+                statusBadgeText = t("badge_failed") || "❌ FAILED";
+            }
 
             let actionsHtml = "";
             if (statusLower === "failed" || statusLower === "cancelled") {
@@ -1928,7 +1990,7 @@ async function loadAdminQueue(isSilent = false) {
                 <div class="queue-item" id="queue-item-${j.id}">
                     <div class="queue-item-header">
                         <div class="queue-badges-left">
-                            <span class="badge-status ${statusLower}">${j.status}</span>
+                            <span class="badge-status ${statusLower}">${statusBadgeText}</span>
                             <span class="badge-engine ${engineLower}">${engineLabel}</span>
                             <span class="mini-tag">${escapeHtml(j.preset_voice)}</span>
                         </div>
@@ -1954,7 +2016,27 @@ async function loadAdminQueue(isSilent = false) {
                     </div>
                 </div>
             `;
-        }).join("");
+        };
+
+        if (adminQueueStatusFilter === "all") {
+            const activeJobs = jobs.filter(j => j.status === "QUEUED" || j.status === "RUNNING");
+            const finishedJobs = jobs.filter(j => j.status !== "QUEUED" && j.status !== "RUNNING");
+
+            let fullHtml = "";
+            if (activeJobs.length > 0) {
+                fullHtml += `<div class="queue-section-header active" style="grid-column: 1 / -1;">🔥 ${t("admin_active_section_title")} (${activeJobs.length})</div>`;
+                fullHtml += activeJobs.map(renderJobCard).join("");
+            }
+
+            if (finishedJobs.length > 0) {
+                fullHtml += `<div class="queue-section-header history" style="grid-column: 1 / -1;">📜 ${t("admin_history_section_title")} (${finishedJobs.length})</div>`;
+                fullHtml += finishedJobs.map(renderJobCard).join("");
+            }
+
+            container.innerHTML = fullHtml || `<p class="text-muted" style="padding: 12px 0;">${t("admin_queue_empty")}</p>`;
+        } else {
+            container.innerHTML = jobs.map(renderJobCard).join("");
+        }
 
     } catch (e) {
         console.warn("Could not load admin queue:", e);

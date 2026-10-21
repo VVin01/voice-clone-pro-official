@@ -237,10 +237,12 @@ body.dark-theme {
 
 /* ════ CONTENT VIEWPORT & PANES ════ */
 .content-viewport {
-    padding: 16px;
-    max-width: 620px;
+    padding: 16px 14px 110px 14px;
+    max-width: 680px;
     margin: 0 auto;
     width: 100%;
+    box-sizing: border-box;
+    transition: max-width 0.25s ease, padding 0.25s ease;
 }
 
 .tab-pane {
@@ -3071,5 +3073,312 @@ textarea#voice-text-input:focus {
     }
     .preview-recap-voice-btn {
         justify-content: center;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ⚡ ACTIVE QUEUE STATUS BANNER & SECTION HEADERS ⚡
+   ═══════════════════════════════════════════════════════════════ */
+.active-queue-status-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+    animation: fadeIn 0.3s ease;
+}
+
+.active-queue-status-banner.idle {
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.active-queue-status-banner.running {
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.45);
+}
+
+.active-queue-status-banner.queued {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.45);
+}
+
+.status-banner-icon {
+    font-size: 24px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.status-banner-icon.pulsing {
+    animation: pulseGlow 1.5s infinite;
+}
+
+.status-banner-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.status-banner-title {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-banner-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.status-banner-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.status-banner-meta .meta-pill {
+    font-size: 10.5px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+}
+
+.queue-section-header {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 10px 0 6px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.queue-section-header.active {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.queue-section-header.history {
+    background: rgba(148, 163, 184, 0.08);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   📱 MULTI-DEVICE RESPONSIVE OVERHAUL (Tablet, Laptop, Desktop)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* 1. Mobile & Phablets (< 1025px): Vertical Studio Flow */
+@media (max-width: 1024px) {
+    .recap-studio-desktop-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .recap-desktop-controls-col {
+        order: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .recap-desktop-preview-col {
+        order: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+}
+
+/* 2. Tablet Screens (768px to 1024px) */
+@media (min-width: 768px) {
+    .content-viewport {
+        max-width: 880px;
+        padding: 24px 20px 120px 20px;
+    }
+
+    .top-nav {
+        padding: 12px 24px;
+    }
+
+    .bottom-nav {
+        max-width: 580px;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 22px;
+        border-radius: 999px;
+        padding: 8px 18px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(245, 158, 11, 0.28);
+    }
+
+    .nav-item {
+        padding: 8px 16px;
+        border-radius: 16px;
+    }
+
+    .nav-item .nav-icon {
+        font-size: 20px;
+    }
+
+    .nav-item .nav-label {
+        font-size: 11px;
+    }
+
+    .personas-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }
+
+    .models-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }
+
+    .pricing-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        align-items: stretch;
+    }
+
+    .pricing-card {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .pricing-card .btn {
+        margin-top: auto;
+    }
+
+    .admin-stats-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+    }
+
+    .dl-formats-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }
+}
+
+/* 3. Laptop & Desktop Screens (>= 1025px) */
+@media (min-width: 1025px) {
+    .content-viewport {
+        max-width: 1160px;
+        padding: 28px 24px 130px 24px;
+    }
+
+    .top-nav {
+        padding: 14px calc((100% - 1160px) / 2 + 24px);
+    }
+
+    .bottom-nav {
+        max-width: 620px;
+        bottom: 24px;
+        padding: 10px 22px;
+    }
+
+    .nav-item .nav-icon {
+        font-size: 22px;
+    }
+
+    .nav-item .nav-label {
+        font-size: 11.5px;
+    }
+
+    /* 4-Column Grids for Voice Personas and Applio Models */
+    .personas-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+    }
+
+    .models-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+    }
+
+    /* 3-Column SaaS Style Pricing Table */
+    .pricing-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        align-items: stretch;
+    }
+
+    .pricing-card {
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.22s ease, box-shadow 0.22s ease;
+    }
+
+    .pricing-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(245, 158, 11, 0.2);
+    }
+
+    .pricing-card .btn {
+        margin-top: auto;
+    }
+
+    /* 4-Column KPI Stats */
+    .admin-stats-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+    }
+
+    /* 2-Column Dashboard Cards for Admin Queue */
+    .admin-queue-container {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+        max-height: 620px;
+    }
+
+    /* 2-Column Split Studio for Movie Recap */
+    .recap-studio-desktop-layout {
+        display: grid;
+        grid-template-columns: 460px 1fr;
+        gap: 24px;
+        align-items: start;
+    }
+
+    .recap-desktop-preview-col {
+        position: sticky;
+        top: 76px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        z-index: 10;
+    }
+
+    .recap-desktop-controls-col {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* 2-Column Grid for History Lists on Wide Screens */
+    .history-list-container {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .deliverables-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
     }
 }
