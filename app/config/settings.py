@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     payment_wave_number: str = "09790760003"
     payment_wave_name: str = "Win Kyaw Oo"
 
+    # Worker Heartbeat (Local Laptop GPU)
+    worker_laptop_heartbeat: str = ""
+    worker_laptop_engine: str = "all"
+    worker_laptop_status: str = "OFFLINE"
+    worker_laptop_host: str = ""
+
 
     @property
     def admin_ids(self) -> set[int]:

@@ -27,6 +27,10 @@ SETTING_TYPES: dict[str, type] = {
     "payment_wave_number": str,
     "payment_wave_name": str,
     "applio_inference_timeout_seconds": int,
+    "worker_laptop_heartbeat": str,
+    "worker_laptop_engine": str,
+    "worker_laptop_status": str,
+    "worker_laptop_host": str,
 }
 
 
@@ -49,8 +53,9 @@ async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
                     parsed_val = int(raw_val)
                 else:
                     parsed_val = str(raw_val)
-                setattr(settings, key, parsed_val)
-                logger.info("Loaded dynamic setting '%s' = %s", key, parsed_val)
+                if hasattr(settings, key):
+                    setattr(settings, key, parsed_val)
+                    logger.info("Loaded dynamic setting '%s' = %s", key, parsed_val)
             except Exception as e:
                 logger.warning("Failed to cast dynamic setting '%s' with value '%s': %s", key, raw_val, e)
     return loaded

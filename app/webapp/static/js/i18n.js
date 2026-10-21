@@ -251,6 +251,26 @@ const translations = {
         admin_broadcast_ph: "အသုံးပြုသူ အားလုံးထံ ပေးပို့မည့် စာသား ရိုက်ထည့်ပါ...",
         btn_send_broadcast: "🚀 Broadcast ပို့မည်",
 
+        // Admin Live Queue & Settings
+        admin_queue_header: "⚡ Live Processing Queue & အလုပ်များ စစ်ဆေးခြင်း",
+        admin_queue_loading: "Queue ရှိ အလုပ်များကို ရှာဖွေနေပါသည်...",
+        admin_queue_empty: "ရွေးချယ်ထားသော အခြေအနေနှင့် ကိုက်ညီသည့် အလုပ် မရှိသေးပါ",
+        filter_all: "အားလုံး",
+        filter_queued: "⏳ စောင့်ဆိုင်းဆဲ",
+        filter_running: "⚡ အလုပ်လုပ်နေဆဲ",
+        filter_success: "✅ အောင်မြင်ပြီး",
+        filter_failed: "❌ မအောင်မြင်ပါ",
+        admin_settings_header: "⚙️ စနစ်ဆိုင်ရာ ဒေတာ အချက်အလက်များ ပြင်ဆင်ခြင်း",
+        settings_kpay_num: "KBZPay ဖုန်းနံပါတ်",
+        settings_kpay_name: "KBZPay အမည်",
+        settings_wave_num: "WavePay ဖုန်းနံပါတ်",
+        settings_wave_name: "WavePay အမည်",
+        settings_tutorial_link: "လမ်းညွှန်ဗီဒီယို Link",
+        settings_maintenance: "စနစ်ပြုပြင်ထိန်းသိမ်းမှု မုဒ် (Maintenance)",
+        btn_save_settings: "💾 အချက်အလက်များ သိမ်းဆည်းမည်",
+        btn_retry_job: "🔄 ထပ်မံ ကြိုးစားမည်",
+        btn_cancel_job: "⏹️ ပယ်ဖျက်မည်",
+
         // 24-Hour History UI
         history_recap_title: "🕒 ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ",
         history_voice_title: "🕒 ၂၄ နာရီအတွင်း Voice ဖန်တီးမှုများ",
@@ -518,6 +538,26 @@ const translations = {
         admin_broadcast_header: "📢 Broadcast Message to All Users",
         admin_broadcast_ph: "Type broadcast message to deliver to all users...",
         btn_send_broadcast: "🚀 Send Broadcast",
+
+        // Admin Live Queue & Settings
+        admin_queue_header: "⚡ Live Processing Queue & Job Inspector",
+        admin_queue_loading: "Loading live processing queue...",
+        admin_queue_empty: "No jobs match the selected filter criteria",
+        filter_all: "All",
+        filter_queued: "⏳ Queued",
+        filter_running: "⚡ Running",
+        filter_success: "✅ Success",
+        filter_failed: "❌ Failed",
+        admin_settings_header: "⚙️ Dynamic Platform Settings",
+        settings_kpay_num: "KBZPay Phone Number",
+        settings_kpay_name: "KBZPay Account Name",
+        settings_wave_num: "WavePay Phone Number",
+        settings_wave_name: "WavePay Account Name",
+        settings_tutorial_link: "Tutorial Video Link",
+        settings_maintenance: "Maintenance Mode",
+        btn_save_settings: "💾 Save Platform Settings",
+        btn_retry_job: "🔄 Retry Job",
+        btn_cancel_job: "⏹️ Cancel",
 
         // 24-Hour History UI
         history_recap_title: "🕒 24-Hour Recap Productions",

@@ -1400,6 +1400,73 @@ async def get_receipt_image(
 
 
 # ── 7. Role-Gated Admin Console ───────────────────────────────────────────
+async def _get_laptop_worker_status(db: AsyncSession) -> dict:
+    from app.models.schema import BotSetting
+    hb_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_heartbeat"))).scalar_one_or_none()
+    eng_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_engine"))).scalar_one_or_none()
+    host_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_host"))).scalar_one_or_none()
+    stat_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_status"))).scalar_one_or_none()
+
+    if not hb_row or not hb_row.value:
+        return {
+            "is_online": False,
+            "status_code": "OFFLINE",
+            "status_text": "Offline (Never Connected)",
+            "engine": "ALL",
+            "host": None,
+            "last_seen_ago": "Never",
+        }
+
+    try:
+        hb_time = datetime.fromisoformat(hb_row.value)
+        if hb_time.tzinfo is None:
+            hb_time = hb_time.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        diff_sec = max(0, (now_utc - hb_time).total_seconds())
+
+        last_seen_str = f"{int(diff_sec)}s ago" if diff_sec < 60 else f"{int(diff_sec // 60)}m ago"
+        engine_mode = (eng_row.value if eng_row else "all").upper()
+        host_name = host_row.value if host_row else "Local Laptop"
+        explicit_status = stat_row.value if stat_row else "ONLINE"
+
+        if explicit_status == "OFFLINE" or diff_sec > 120:
+            return {
+                "is_online": False,
+                "status_code": "OFFLINE",
+                "status_text": f"Offline 🔴 (Last seen {last_seen_str})",
+                "engine": engine_mode,
+                "host": host_name,
+                "last_seen_ago": last_seen_str,
+            }
+        elif diff_sec > 45:
+            return {
+                "is_online": True,
+                "status_code": "STANDBY",
+                "status_text": f"Standby 🟡 ({last_seen_str})",
+                "engine": engine_mode,
+                "host": host_name,
+                "last_seen_ago": last_seen_str,
+            }
+        else:
+            return {
+                "is_online": True,
+                "status_code": "ONLINE",
+                "status_text": f"Online 🟢 (Pulsed {last_seen_str})",
+                "engine": engine_mode,
+                "host": host_name,
+                "last_seen_ago": last_seen_str,
+            }
+    except Exception as e:
+        return {
+            "is_online": False,
+            "status_code": "OFFLINE",
+            "status_text": f"Offline 🔴 ({e})",
+            "engine": "ALL",
+            "host": None,
+            "last_seen_ago": "Unknown",
+        }
+
+
 @api_router.get("/admin/overview")
 async def get_admin_overview(
     admin: User = Depends(require_admin),
@@ -1415,17 +1482,232 @@ async def get_admin_overview(
     pending_slips_res = await db.execute(select(func.count(PaymentRequest.id)).where(PaymentRequest.status == PaymentStatus.PENDING.value))
     pending_slips = pending_slips_res.scalar() or 0
 
+    queued_total_res = await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value))
+    queued_jobs = queued_total_res.scalar() or 0
+
+    running_total_res = await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.RUNNING.value))
+    running_jobs = running_total_res.scalar() or 0
+
     queued_applio_res = await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value, Job.engine == "applio"))
     queued_applio = queued_applio_res.scalar() or 0
+
+    worker_info = await _get_laptop_worker_status(db)
 
     return {
         "total_users": total_users,
         "vip_users": vip_users,
         "pending_slips": pending_slips,
+        "queued_jobs": queued_jobs,
+        "running_jobs": running_jobs,
         "queued_applio_jobs": queued_applio,
-        "cloud_worker_status": "ONLINE (Render)",
-        "laptop_worker_status": f"{queued_applio} jobs waiting" if queued_applio > 0 else "Idle / Ready",
+        "cloud_worker_status": "ONLINE (Render Cloud)",
+        "laptop_worker": worker_info,
+        "laptop_worker_status": f"{worker_info['status_text']} [Engine: {worker_info['engine']}]",
     }
+
+
+@api_router.get("/admin/queue")
+async def get_admin_queue(
+    status: Optional[str] = "all",
+    engine: Optional[str] = "all",
+    limit: int = 60,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Real-time Job Queue & Execution Monitor for Admin Console.
+    Supports filtering by status (all, queued, running, success, failed, cancelled)
+    and by engine (all, applio, voxcpm, recap).
+    """
+    cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    queued_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value))).scalar() or 0
+    running_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.RUNNING.value))).scalar() or 0
+    success_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.SUCCESS.value, Job.created_at >= cutoff_24h))).scalar() or 0
+    failed_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.FAILED.value, Job.created_at >= cutoff_24h))).scalar() or 0
+
+    query = select(Job, User).outerjoin(User, Job.user_id == User.id)
+
+    if status and status.lower() != "all":
+        query = query.where(Job.status == status.upper())
+
+    if engine and engine.lower() != "all":
+        query = query.where(Job.engine == engine.lower())
+
+    query = query.order_by(Job.created_at.desc()).limit(min(limit, 100))
+    res = await db.execute(query)
+    rows = res.all()
+
+    now_utc = datetime.now(timezone.utc)
+    jobs_out = []
+    for j, u in rows:
+        created_ts = j.created_at.timestamp() if j.created_at else time.time()
+        mins_ago = int((time.time() - created_ts) // 60)
+        time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
+
+        duration_sec = None
+        if j.started_at and j.finished_at:
+            duration_sec = round((j.finished_at - j.started_at).total_seconds(), 1)
+        elif j.started_at and j.status == JobStatus.RUNNING.value:
+            s_ts = j.started_at.replace(tzinfo=timezone.utc) if j.started_at.tzinfo is None else j.started_at
+            duration_sec = round((now_utc - s_ts).total_seconds(), 1)
+
+        is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_") or j.engine == "recap")
+
+        download_url = None
+        deliverables = {}
+        if is_recap:
+            download_url = f"/api/recap/download/{j.id}/video" if j.status == JobStatus.SUCCESS.value else None
+            if j.status == JobStatus.SUCCESS.value:
+                deliverables = {
+                    "video": f"/api/recap/download/{j.id}/video",
+                    "audio": f"/api/recap/download/{j.id}/audio",
+                    "srt": f"/api/recap/download/{j.id}/srt",
+                    "script": f"/api/recap/download/{j.id}/script",
+                }
+        else:
+            download_url = f"/api/audio/stream/{j.id}" if j.status == JobStatus.SUCCESS.value else None
+
+        jobs_out.append({
+            "id": j.id,
+            "user_id": j.user_id,
+            "user_name": (u.first_name if u else None) or f"User {j.user_id}",
+            "username": u.username if u else None,
+            "status": j.status,
+            "job_type": "RECAP" if is_recap else "VOICE_CLONE",
+            "engine": j.engine or ("recap" if is_recap else "voxcpm"),
+            "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
+            "input_snippet": (j.input_text[:80] + "...") if j.input_text and len(j.input_text) > 80 else (j.input_text or ""),
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "started_at": j.started_at.isoformat() if j.started_at else None,
+            "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+            "duration_seconds": duration_sec,
+            "created_ago": time_ago,
+            "download_url": download_url,
+            "deliverables": deliverables,
+            "error_message": j.error_message,
+        })
+
+    worker_info = await _get_laptop_worker_status(db)
+
+    return {
+        "success": True,
+        "counts": {
+            "queued": queued_cnt,
+            "running": running_cnt,
+            "success": success_cnt,
+            "failed": failed_cnt,
+            "total_listed": len(jobs_out),
+        },
+        "worker": worker_info,
+        "jobs": jobs_out,
+    }
+
+
+@api_router.post("/admin/queue/{job_id}/retry")
+async def retry_queued_job(
+    job_id: str,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Re-enqueue a failed or cancelled job so it will be claimed and re-executed."""
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job.status = JobStatus.QUEUED.value
+    job.started_at = None
+    job.finished_at = None
+    job.error_message = None
+    await db.commit()
+
+    if job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap":
+        try:
+            from app.webapp.api import _run_recap_background_job, RecapConfigRequest
+            cfg = RecapConfigRequest(
+                url=job.input_text or "",
+                voice_slug=job.preset_voice or "thiha",
+            )
+            RECAP_JOBS_REGISTRY[job_id] = {
+                "id": job_id,
+                "status": "QUEUED",
+                "progress_percent": 5,
+                "progress_step": "0/4",
+                "progress_label": "🔄 Re-queued by Administrator...",
+            }
+            asyncio.create_task(_run_recap_background_job(job_id, cfg, job.user_id, job.chat_id or job.user_id))
+        except Exception as e:
+            logger.warning(f"Could not re-dispatch recap job background task: {e}")
+
+    return {"success": True, "message": f"Job {job_id[:8]} re-queued successfully!"}
+
+
+@api_router.post("/admin/queue/{job_id}/cancel")
+async def cancel_queued_job(
+    job_id: str,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Cancel a currently queued or running job."""
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job.status = JobStatus.CANCELLED.value
+    job.finished_at = utc_now()
+    job.error_message = "Cancelled by Administrator via Admin Console"
+
+    if job_id in RECAP_JOBS_REGISTRY:
+        RECAP_JOBS_REGISTRY[job_id]["status"] = "FAILED"
+        RECAP_JOBS_REGISTRY[job_id]["error_message"] = "Cancelled by Administrator"
+
+    await db.commit()
+    return {"success": True, "message": f"Job {job_id[:8]} marked as CANCELLED."}
+
+
+class AdminSettingsPayload(BaseModel):
+    payment_kpay_number: Optional[str] = None
+    payment_kpay_name: Optional[str] = None
+    payment_wave_number: Optional[str] = None
+    payment_wave_name: Optional[str] = None
+    tutorial_video_link: Optional[str] = None
+    tutorial_video_enabled: Optional[bool] = None
+    maintenance_mode: Optional[bool] = None
+
+
+@api_router.get("/admin/settings")
+async def get_admin_settings(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Get all dynamic platform settings."""
+    from app.services.dynamic_settings import load_dynamic_settings
+    await load_dynamic_settings(db)
+    return {
+        "payment_kpay_number": getattr(settings, "payment_kpay_number", "09790760003"),
+        "payment_kpay_name": getattr(settings, "payment_kpay_name", "Win Kyaw Oo"),
+        "payment_wave_number": getattr(settings, "payment_wave_number", "09790760003"),
+        "payment_wave_name": getattr(settings, "payment_wave_name", "Win Kyaw Oo"),
+        "tutorial_video_link": getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
+        "tutorial_video_enabled": getattr(settings, "tutorial_video_enabled", True),
+        "maintenance_mode": getattr(settings, "maintenance_mode", False),
+    }
+
+
+@api_router.post("/admin/settings")
+async def update_admin_settings(
+    payload: AdminSettingsPayload,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Update dynamic platform settings directly from Admin Console."""
+    from app.services.dynamic_settings import set_dynamic_setting
+    updates = payload.model_dump(exclude_unset=True)
+    for k, v in updates.items():
+        if v is not None:
+            await set_dynamic_setting(db, k, v, admin_id=admin.id)
+    await db.commit()
+    return {"success": True, "message": "Settings updated successfully!", "updated": updates}
 
 
 @api_router.get("/admin/pending-slips")

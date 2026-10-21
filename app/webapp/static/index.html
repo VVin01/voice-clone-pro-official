@@ -824,6 +824,57 @@
                     </div>
                 </div>
 
+                <!-- ⚡ Live Processing Queue & Jobs Inspector ⚡ -->
+                <div class="card glass mt-3" id="admin-queue-card">
+                    <div class="card-header-row">
+                        <div class="card-label-col">
+                            <div class="card-label" data-i18n="admin_queue_header">⚡ Live Processing Queue & Jobs Inspector</div>
+                            <div class="worker-pulse-row mt-1">
+                                <span class="worker-indicator-badge" id="adm-worker-status-pill">
+                                    <span class="pulsing-dot standby" id="adm-worker-dot"></span>
+                                    <span id="adm-worker-status-text">Checking Worker...</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="queue-header-actions">
+                            <button class="mini-chip" id="adm-queue-refresh-btn" onclick="loadAdminQueue()">🔄 Refresh</button>
+                        </div>
+                    </div>
+
+                    <!-- Queue Filter Pills -->
+                    <div class="queue-filter-bar mt-2">
+                        <div class="filter-pill-group" id="queue-status-filters">
+                            <button type="button" class="filter-pill active" data-status="all" onclick="setQueueStatusFilter('all')">
+                                <span data-i18n="filter_all">All</span> <span class="pill-badge" id="cnt-total">0</span>
+                            </button>
+                            <button type="button" class="filter-pill" data-status="queued" onclick="setQueueStatusFilter('queued')">
+                                <span data-i18n="filter_queued">⏳ Queued</span> <span class="pill-badge text-gold" id="cnt-queued">0</span>
+                            </button>
+                            <button type="button" class="filter-pill" data-status="running" onclick="setQueueStatusFilter('running')">
+                                <span data-i18n="filter_running">⚡ Running</span> <span class="pill-badge text-cyan" id="cnt-running">0</span>
+                            </button>
+                            <button type="button" class="filter-pill" data-status="success" onclick="setQueueStatusFilter('success')">
+                                <span data-i18n="filter_success">✅ Success</span> <span class="pill-badge" id="cnt-success">0</span>
+                            </button>
+                            <button type="button" class="filter-pill" data-status="failed" onclick="setQueueStatusFilter('failed')">
+                                <span data-i18n="filter_failed">❌ Failed</span> <span class="pill-badge text-danger" id="cnt-failed">0</span>
+                            </button>
+                        </div>
+
+                        <div class="engine-filter-group mt-1" id="queue-engine-filters">
+                            <button type="button" class="engine-pill active" data-engine="all" onclick="setQueueEngineFilter('all')">All Engines</button>
+                            <button type="button" class="engine-pill" data-engine="applio" onclick="setQueueEngineFilter('applio')">🎙️ Applio GPU</button>
+                            <button type="button" class="engine-pill" data-engine="voxcpm" onclick="setQueueEngineFilter('voxcpm')">☁️ VoxCPM AI</button>
+                            <button type="button" class="engine-pill" data-engine="recap" onclick="setQueueEngineFilter('recap')">🎬 Movie Recap</button>
+                        </div>
+                    </div>
+
+                    <!-- Live Queue List Container -->
+                    <div id="admin-queue-list" class="admin-queue-container mt-2">
+                        <p class="text-muted" data-i18n="admin_queue_loading">Loading live queue...</p>
+                    </div>
+                </div>
+
                 <!-- Pending Payment Slips Management -->
                 <div class="card glass mt-3">
                     <div class="card-header-row">
@@ -845,6 +896,53 @@
                             <button class="btn mini-btn secondary-btn" onclick="adminAddMinutes()" data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</button>
                             <button class="btn mini-btn cyan-btn" onclick="adminAddRecapCredits()" data-i18n="btn_add_recap_credit">🎬 +10 Recap Credit</button>
                         </div>
+                    </div>
+                </div>
+
+                <!-- ⚙️ Platform Dynamic Settings Manager ⚙️ -->
+                <div class="card glass mt-3" id="admin-settings-card">
+                    <div class="card-header-row">
+                        <div class="card-label" data-i18n="admin_settings_header">⚙️ Dynamic Platform Settings</div>
+                        <button class="mini-chip" onclick="loadAdminSettings()">🔄 Refresh</button>
+                    </div>
+                    <div class="admin-settings-form mt-2">
+                        <div class="form-row-2">
+                            <div>
+                                <label class="input-label" data-i18n="settings_kpay_num">KBZPay Phone Number</label>
+                                <input type="text" id="adm-set-kpay-num" class="studio-input" placeholder="09790760003">
+                            </div>
+                            <div>
+                                <label class="input-label" data-i18n="settings_kpay_name">KBZPay Account Name</label>
+                                <input type="text" id="adm-set-kpay-name" class="studio-input" placeholder="Win Kyaw Oo">
+                            </div>
+                        </div>
+                        <div class="form-row-2 mt-2">
+                            <div>
+                                <label class="input-label" data-i18n="settings_wave_num">WavePay Phone Number</label>
+                                <input type="text" id="adm-set-wave-num" class="studio-input" placeholder="09790760003">
+                            </div>
+                            <div>
+                                <label class="input-label" data-i18n="settings_wave_name">WavePay Account Name</label>
+                                <input type="text" id="adm-set-wave-name" class="studio-input" placeholder="Win Kyaw Oo">
+                            </div>
+                        </div>
+                        <div class="form-row-2 mt-2">
+                            <div>
+                                <label class="input-label" data-i18n="settings_tutorial_link">Tutorial Video Link</label>
+                                <input type="text" id="adm-set-tutorial-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/16">
+                            </div>
+                            <div class="toggle-control-col">
+                                <label class="input-label" data-i18n="settings_maintenance">Maintenance Mode</label>
+                                <label class="switch-luxury">
+                                    <input type="checkbox" id="adm-set-maintenance">
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                        </div>
+                        <button class="btn gold-gradient-btn mt-3" onclick="saveAdminSettings()">
+                            <span class="btn-icon">💾</span>
+                            <span data-i18n="btn_save_settings">Save Platform Settings</span>
+                        </button>
                     </div>
                 </div>
 
@@ -915,7 +1013,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=2.7.0"></script>
-    <script src="/static/js/app.js?v=2.7.0"></script>
+    <script src="/static/js/i18n.js?v=2.8.0"></script>
+    <script src="/static/js/app.js?v=2.8.0"></script>
 </body>
 </html>

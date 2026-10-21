@@ -100,6 +100,22 @@ function setupTabs() {
 
             if (targetTab === "tab-admin") {
                 loadAdminData();
+                loadAdminQueue();
+                loadAdminSettings();
+                if (window.adminQueueInterval) clearInterval(window.adminQueueInterval);
+                window.adminQueueInterval = setInterval(() => {
+                    const adminPane = document.getElementById("tab-admin");
+                    if (adminPane && adminPane.classList.contains("active")) {
+                        loadAdminQueue(true);
+                    } else {
+                        clearInterval(window.adminQueueInterval);
+                    }
+                }, 4000);
+            } else {
+                if (window.adminQueueInterval) {
+                    clearInterval(window.adminQueueInterval);
+                    window.adminQueueInterval = null;
+                }
             }
         });
     });
@@ -1553,8 +1569,12 @@ async function loadAdminData() {
             if (elUsers) elUsers.innerText = stats.total_users;
             if (elVip) elVip.innerText = stats.vip_users;
             if (elSlips) elSlips.innerText = stats.pending_slips;
-            if (elQueue) elQueue.innerText = stats.queued_applio_jobs;
+            if (elQueue) elQueue.innerText = stats.queued_jobs !== undefined ? stats.queued_jobs : stats.queued_applio_jobs;
         }
+
+        // Load live processing queue & dynamic settings
+        loadAdminQueue();
+        loadAdminSettings();
 
         // Load pending payment slips
         const resSlips = await fetch("/api/admin/pending-slips", { headers: getAuthHeaders() });
@@ -1728,6 +1748,245 @@ async function adminSendBroadcast() {
         if (textEl) textEl.value = "";
     } catch (e) {
         alert(e.message);
+    }
+}
+
+// ── Admin Queue & Engine Monitor Controller ────────────────────────────────
+let adminQueueStatusFilter = "all";
+let adminQueueEngineFilter = "all";
+
+function setQueueStatusFilter(status) {
+    adminQueueStatusFilter = status;
+    document.querySelectorAll("#queue-status-filters .filter-pill").forEach(btn => {
+        btn.classList.toggle("active", btn.getAttribute("data-status") === status);
+    });
+    loadAdminQueue();
+}
+
+function setQueueEngineFilter(engine) {
+    adminQueueEngineFilter = engine;
+    document.querySelectorAll("#queue-engine-filters .engine-pill").forEach(btn => {
+        btn.classList.toggle("active", btn.getAttribute("data-engine") === engine);
+    });
+    loadAdminQueue();
+}
+
+async function loadAdminQueue(isSilent = false) {
+    if (!state.user?.is_admin) return;
+    const container = document.getElementById("admin-queue-list");
+    if (!container) return;
+
+    if (!isSilent && container.innerHTML.trim() === "") {
+        container.innerHTML = `<p class="text-muted">${t("admin_queue_loading")}</p>`;
+    }
+
+    try {
+        const url = `/api/admin/queue?status=${encodeURIComponent(adminQueueStatusFilter)}&engine=${encodeURIComponent(adminQueueEngineFilter)}&limit=50`;
+        const res = await fetch(url, { headers: getAuthHeaders() });
+        if (!res.ok) return;
+
+        const data = await res.json();
+
+        // 1. Update Worker Heartbeat Pill
+        const workerDot = document.getElementById("adm-worker-dot");
+        const workerText = document.getElementById("adm-worker-status-text");
+
+        if (data.worker) {
+            const w = data.worker;
+            if (workerDot) {
+                workerDot.className = "pulsing-dot " + (w.status_code ? w.status_code.toLowerCase() : "offline");
+            }
+            if (workerText) {
+                workerText.innerText = `Local Worker: ${w.status_text} (Engine: ${w.engine})`;
+            }
+        }
+
+        // 2. Update Counts
+        if (data.counts) {
+            const c = data.counts;
+            const elTotal = document.getElementById("cnt-total");
+            const elQueued = document.getElementById("cnt-queued");
+            const elRunning = document.getElementById("cnt-running");
+            const elSuccess = document.getElementById("cnt-success");
+            const elFailed = document.getElementById("cnt-failed");
+
+            if (elTotal) elTotal.innerText = c.total_listed;
+            if (elQueued) elQueued.innerText = c.queued;
+            if (elRunning) elRunning.innerText = c.running;
+            if (elSuccess) elSuccess.innerText = c.success;
+            if (elFailed) elFailed.innerText = c.failed;
+
+            const elTopQueue = document.getElementById("adm-queued-jobs");
+            if (elTopQueue) elTopQueue.innerText = c.queued;
+        }
+
+        // 3. Render Jobs
+        const jobs = data.jobs || [];
+        if (jobs.length === 0) {
+            container.innerHTML = `<p class="text-muted" style="padding: 12px 0;">${t("admin_queue_empty")}</p>`;
+            return;
+        }
+
+        container.innerHTML = jobs.map(j => {
+            const statusLower = (j.status || "queued").toLowerCase();
+            const engineLower = (j.engine || "voxcpm").toLowerCase();
+            const engineLabel = engineLower === "applio" ? "🎙️ APPLIO GPU" : (engineLower === "recap" ? "🎬 RECAP" : "☁️ VOXCPM AI");
+            const durationTxt = j.duration_seconds ? `⏱️ ${j.duration_seconds}s` : `⏳ ${j.created_ago}`;
+
+            let actionsHtml = "";
+            if (statusLower === "failed" || statusLower === "cancelled") {
+                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 Retry</button>`;
+            } else if (statusLower === "queued" || statusLower === "running") {
+                actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ Cancel</button>`;
+            }
+
+            if (j.download_url) {
+                actionsHtml += `<a href="${j.download_url}" target="_blank" class="queue-act-btn uid">📥 View</a>`;
+            }
+
+            actionsHtml += `<button class="queue-act-btn uid" onclick="admFillUser(${j.user_id})" title="Copy User ID to management input">👤 Target</button>`;
+
+            return `
+                <div class="queue-item" id="queue-item-${j.id}">
+                    <div class="queue-item-header">
+                        <div class="queue-badges-left">
+                            <span class="badge-status ${statusLower}">${j.status}</span>
+                            <span class="badge-engine ${engineLower}">${engineLabel}</span>
+                            <span class="mini-tag">${escapeHtml(j.preset_voice)}</span>
+                        </div>
+                        <span class="queue-timing">${durationTxt}</span>
+                    </div>
+
+                    <div class="queue-item-meta">
+                        <span class="queue-user-pill" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.user_name)} (@${escapeHtml(j.username || 'none')}) • ID: ${j.user_id}</span>
+                        <span>#${j.id.slice(0, 8)}</span>
+                    </div>
+
+                    <div class="queue-item-body">
+                        ${escapeHtml(j.input_snippet || "Task Content")}
+                    </div>
+
+                    ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(j.error_message)}</div>` : ""}
+
+                    <div class="queue-item-footer">
+                        <span class="queue-timing">Created: ${escapeHtml(j.created_ago)}</span>
+                        <div class="queue-actions-row">
+                            ${actionsHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join("");
+
+    } catch (e) {
+        console.warn("Could not load admin queue:", e);
+    }
+}
+
+async function adminRetryJob(jobId) {
+    haptic("medium");
+    try {
+        const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (data.success) {
+            loadAdminQueue();
+        } else {
+            alert(data.message || "Failed to retry job");
+        }
+    } catch (e) {
+        alert("Retry error: " + e.message);
+    }
+}
+
+async function adminCancelJob(jobId) {
+    if (!confirm("Are you sure you want to cancel this job?")) return;
+    haptic("medium");
+    try {
+        const res = await fetch(`/api/admin/queue/${jobId}/cancel`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (data.success) {
+            loadAdminQueue();
+        } else {
+            alert(data.message || "Failed to cancel job");
+        }
+    } catch (e) {
+        alert("Cancel error: " + e.message);
+    }
+}
+
+function admFillUser(userId) {
+    const input = document.getElementById("adm-target-user-id");
+    if (input) {
+        input.value = userId;
+        input.scrollIntoView({ behavior: "smooth", block: "center" });
+        input.focus();
+        haptic("light");
+    }
+}
+
+async function loadAdminSettings() {
+    if (!state.user?.is_admin) return;
+    try {
+        const res = await fetch("/api/admin/settings", { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const s = await res.json();
+
+        const elKpayNum = document.getElementById("adm-set-kpay-num");
+        const elKpayName = document.getElementById("adm-set-kpay-name");
+        const elWaveNum = document.getElementById("adm-set-wave-num");
+        const elWaveName = document.getElementById("adm-set-wave-name");
+        const elTutLink = document.getElementById("adm-set-tutorial-link");
+        const elMaint = document.getElementById("adm-set-maintenance");
+
+        if (elKpayNum) elKpayNum.value = s.payment_kpay_number || "";
+        if (elKpayName) elKpayName.value = s.payment_kpay_name || "";
+        if (elWaveNum) elWaveNum.value = s.payment_wave_number || "";
+        if (elWaveName) elWaveName.value = s.payment_wave_name || "";
+        if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
+        if (elMaint) elMaint.checked = !!s.maintenance_mode;
+    } catch (e) {
+        console.warn("Could not load dynamic settings:", e);
+    }
+}
+
+async function saveAdminSettings() {
+    haptic("medium");
+    const kpayNum = document.getElementById("adm-set-kpay-num")?.value?.trim();
+    const kpayName = document.getElementById("adm-set-kpay-name")?.value?.trim();
+    const waveNum = document.getElementById("adm-set-wave-num")?.value?.trim();
+    const waveName = document.getElementById("adm-set-wave-name")?.value?.trim();
+    const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
+    const maint = !!document.getElementById("adm-set-maintenance")?.checked;
+
+    const payload = {
+        payment_kpay_number: kpayNum,
+        payment_kpay_name: kpayName,
+        payment_wave_number: waveNum,
+        payment_wave_name: waveName,
+        tutorial_video_link: tutLink,
+        maintenance_mode: maint,
+    };
+
+    try {
+        const res = await fetch("/api/admin/settings", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        alert(data.message || "Settings updated successfully!");
+        loadAdminSettings();
+    } catch (e) {
+        alert("Failed to save settings: " + e.message);
     }
 }
 
