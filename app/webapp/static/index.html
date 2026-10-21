@@ -107,6 +107,11 @@
                             <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ (၁၂ မျိုး)</div>
                             <span class="count-badge" id="personas-count">12 Personas</span>
                         </div>
+                        <div class="persona-filter-row">
+                            <button type="button" class="filter-chip active" data-filter="all" onclick="filterPersonas('all')">🌟 အားလုံး (၁၂)</button>
+                            <button type="button" class="filter-chip" data-filter="male" onclick="filterPersonas('male')">👨 ယောက်ျားလေး (၆)</button>
+                            <button type="button" class="filter-chip" data-filter="female" onclick="filterPersonas('female')">👩 မိန်းကလေး (၆)</button>
+                        </div>
                         <div class="personas-grid" id="personas-grid">
                             <!-- Populated dynamically via JS with all 12 personas -->
                         </div>

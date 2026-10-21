@@ -14,12 +14,12 @@ const translations = {
         balance_voice_label: "🎙️ အသံသွင်းခွင့်:",
         balance_recap_label: "🎬 Recap Credits:",
 
-        // Bottom Navigation Tabs
-        tab_voice: "Voice Studio",
-        tab_recap: "Recap Maker",
-        tab_downloader: "Downloader",
+        // Bottom Navigation Tabs (Burmese)
+        tab_voice: "အသံဖန်တီး",
+        tab_recap: "ဗီဒီယို Recap",
+        tab_downloader: "ဒေါင်းလုဒ်",
         tab_vip: "VIP Plans",
-        tab_admin: "Admin Console",
+        tab_admin: "Admin",
 
         // Tab 1: Voice Clone Studio
         voice_title: "🎙️ AI Voice Clone Studio",
@@ -260,12 +260,12 @@ const translations = {
         balance_voice_label: "🎙️ Voice Allowance:",
         balance_recap_label: "🎬 Recap Credits:",
 
-        // Bottom Navigation Tabs
-        tab_voice: "Voice Studio",
-        tab_recap: "Recap Maker",
+        // Bottom Navigation Tabs (English)
+        tab_voice: "Voice",
+        tab_recap: "Recap",
         tab_downloader: "Downloader",
         tab_vip: "VIP Plans",
-        tab_admin: "Admin Console",
+        tab_admin: "Admin",
 
         // Tab 1: Voice Clone Studio
         voice_title: "🎙️ AI Voice Clone Studio",

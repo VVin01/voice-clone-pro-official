@@ -55,19 +55,14 @@ async def get_current_user(
         telegram_user_data = parse_and_verify_init_data(x_telegram_init_data)
 
     if not telegram_user_data:
-        # Development fallback to primary admin if specified in query or env
-        admin_id = 1957002115
-        if hasattr(settings, "admin_ids") and settings.admin_ids:
-            try:
-                admin_id = int(str(settings.admin_ids).split(",")[0].strip())
-            except Exception:
-                admin_id = 1957002115
-        user = await db.get(User, admin_id)
+        # Non-Telegram or unauthenticated web preview session (strictly Guest privileges)
+        guest_id = 999999999
+        user = await db.get(User, guest_id)
         if not user:
             user = User(
-                id=admin_id,
-                first_name="Admin",
-                account_category=AccountCategory.PURCHASED.value,
+                id=guest_id,
+                first_name="Guest",
+                account_category=AccountCategory.FREE.value,
                 language_code="my",
             )
             db.add(user)
@@ -96,7 +91,16 @@ async def get_current_user(
     return user
 
 
-def require_admin(user: User = Depends(get_current_user)) -> User:
+def require_admin(
+    x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
+    user: User = Depends(get_current_user),
+) -> User:
+    """Cryptographically enforce that the requester is a verified Telegram Admin."""
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=403, detail="Telegram cryptographic signature required for Admin operations")
+    verified_data = parse_and_verify_init_data(x_telegram_init_data)
+    if not verified_data or int(verified_data.get("id", 0)) != user.id:
+        raise HTTPException(status_code=403, detail="Invalid Telegram authentication signature")
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin authorization required")
     return user
@@ -1434,12 +1438,25 @@ async def send_admin_broadcast(
 ):
     """Trigger a broadcast message delivery to all registered bot users."""
     text = req.message.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Broadcast message cannot be empty")
+    if not text or len(text) < 4:
+        raise HTTPException(
+            status_code=400,
+            detail="Broadcast message is too short. Minimum 4 characters required to prevent accidental sends.",
+        )
 
     stmt = select(User.id).where(User.status == "ACTIVE")
     res = await db.execute(stmt)
     user_ids = res.scalars().all()
+
+    # Log broadcast to audit log
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="broadcast.send_webapp",
+        target_type="broadcast_campaign",
+        target_id=f"WEBAPP_BC_{int(time.time())}",
+        details_json=json.dumps({"snippet": text[:80], "recipients_count": len(user_ids)}),
+    ))
+    await db.commit()
 
     # Deliver via Telegram Bot in background
     if settings.bot_token:

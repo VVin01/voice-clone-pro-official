@@ -3438,8 +3438,12 @@ async def handle_admin_broadcast_message_input(
                 lang = user.language_code
 
     broadcast_text = (message.text or "").strip()
-    if not broadcast_text:
-        await message.answer(t("admin_broadcast_empty_text", lang))
+    if broadcast_text.startswith("/"):
+        await state.clear()
+        return
+
+    if not broadcast_text or len(broadcast_text) < 4:
+        await message.answer("⚠️ Broadcast စာသား တိုလွန်းပါသည်။ မတော်တဆ မှားယွင်းပေးပို့ခြင်း မဖြစ်စေရန် အနည်းဆုံး အက္ခရာ ၄ လုံး ရိုက်ထည့်ပါရန်။")
         return
 
     if session is not None:

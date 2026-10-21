@@ -126,13 +126,13 @@ async function loadUserProfile() {
 
         if (vipBadge) {
             vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
-            vipBadge.innerText = data.is_vip ? t("vip_purchased") : t("vip_free");
+            vipBadge.innerText = data.is_vip ? "👑 VIP PRO" : "FREE";
         }
         if (voiceBalChip) {
-            voiceBalChip.innerText = data.is_vip ? `🎙️ ${t("unlimited")}` : `🎙️ ${data.balance_minutes}m`;
+            voiceBalChip.innerText = data.is_vip ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
         }
         if (recapBalChip) {
-            recapBalChip.innerText = data.is_vip ? `🎬 ${t("unlimited")}` : `🎬 ${data.recap_credits || 0}c`;
+            recapBalChip.innerText = data.is_vip ? "🎬 ∞" : `🎬 ${data.recap_credits || 0}c`;
         }
 
         if (catTag) {
@@ -162,44 +162,65 @@ async function loadUserProfile() {
 }
 
 // ── API: Curated Voices (12 Gemini Personas) ───────────────────────────────
-async function loadCuratedVoices() {
+state.personaFilter = "all";
+
+function filterPersonas(filter) {
+    haptic("selection");
+    state.personaFilter = filter;
+    document.querySelectorAll(".filter-chip").forEach(btn => {
+        btn.classList.toggle("active", btn.getAttribute("data-filter") === filter);
+    });
+    renderCuratedVoices();
+}
+
+function renderCuratedVoices() {
     const grid = document.getElementById("personas-grid");
     if (!grid) return;
+    const filter = state.personaFilter || "all";
+    const filtered = (filter === "all")
+        ? state.curatedVoices
+        : state.curatedVoices.filter(v => v.gender === filter);
 
+    grid.innerHTML = "";
+    filtered.forEach(v => {
+        const card = document.createElement("div");
+        const isSelected = (v.id === state.selectedPersona);
+        card.className = `persona-card ${isSelected ? "active" : ""}`;
+        card.setAttribute("data-voice-id", v.id);
+        card.innerHTML = `
+            <div class="persona-header">
+                <span class="persona-avatar">${v.avatar}</span>
+                <div class="persona-meta">
+                    <span class="persona-name">${v.name}</span>
+                    <span class="persona-badge">${v.badge}</span>
+                </div>
+                ${isSelected ? '<span class="selected-indicator">✓</span>' : ''}
+            </div>
+            <p class="persona-desc">${v.description}</p>
+        `;
+
+        card.addEventListener("click", () => {
+            haptic("selection");
+            state.selectedPersona = v.id;
+            renderCuratedVoices();
+        });
+
+        grid.appendChild(card);
+    });
+
+    const countBadge = document.getElementById("personas-count");
+    if (countBadge) {
+        countBadge.innerText = `${filtered.length} Personas`;
+    }
+}
+
+async function loadCuratedVoices() {
     try {
         const res = await fetch("/api/voices/curated", { headers: getAuthHeaders() });
         if (!res.ok) return;
         const voices = await res.json();
         state.curatedVoices = voices;
-
-        grid.innerHTML = "";
-        voices.forEach(v => {
-            const card = document.createElement("div");
-            card.className = `persona-card ${v.id === state.selectedPersona ? "active" : ""}`;
-            card.setAttribute("data-voice-id", v.id);
-            card.innerHTML = `
-                <div class="persona-header">
-                    <span class="persona-avatar">${v.avatar}</span>
-                    <span class="persona-name">${v.name}</span>
-                </div>
-                <span class="persona-badge">${v.badge}</span>
-                <span class="persona-desc">${v.description}</span>
-            `;
-
-            card.addEventListener("click", () => {
-                haptic("selection");
-                document.querySelectorAll(".persona-card").forEach(c => c.classList.remove("active"));
-                card.classList.add("active");
-                state.selectedPersona = v.id;
-            });
-
-            grid.appendChild(card);
-        });
-
-        const countBadge = document.getElementById("personas-count");
-        if (countBadge) {
-            countBadge.innerText = `${voices.length} Personas`;
-        }
+        renderCuratedVoices();
     } catch (e) {
         console.warn("Could not load curated voices:", e);
     }
