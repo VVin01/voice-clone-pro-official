@@ -401,7 +401,7 @@ class MediaDownloader:
             },
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['mweb', 'web', 'android', 'ios'],
+                    'player_client': ['web_embedded', 'tv_samsung', 'web', 'default'],
                 }
             }
         }
