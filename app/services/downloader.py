@@ -401,7 +401,7 @@ class MediaDownloader:
             },
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'mweb', 'web'],
+                    'player_client': ['mweb', 'web', 'android', 'ios'],
                 }
             }
         }
@@ -567,9 +567,21 @@ class MediaDownloader:
         # Select compatible format: MP4 with H.264 video and AAC audio
         # Telegram native video player plays best with h264 + aac
         if max_height:
-            fmt = f"bestvideo[height<={max_height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]/best"
+            fmt = (
+                f"bestvideo[height<={max_height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={max_height}]+bestaudio/"
+                f"best[height<={max_height}]/"
+                "bestvideo+bestaudio/"
+                "best"
+            )
         else:
-            fmt = "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+            fmt = (
+                "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
+                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+                "bestvideo+bestaudio/"
+                "best"
+            )
 
         opts = self._get_base_opts()
         opts.update({
