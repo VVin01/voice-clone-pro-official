@@ -35,12 +35,18 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
     )
 
     is_my = (lang == "my")
-    launch_text = "🚀 Studio Pro (Mini App) ဖွင့်မည် ✨" if is_my else "🚀 Launch Studio Pro (Mini App) ✨"
-    switch_lang_text = "🌐 Change Language (အင်္ဂလိပ် / မြန်မာ)" if is_my else "🌐 Switch Language (မြန်မာ / English)"
+    launch_text = "🚀 Studio Ultra Suite (Mini App) ဖွင့်မည် ✨" if is_my else "🚀 Launch Studio Ultra Suite ✨"
+    recap_text = "🎬 Movie Recap Maker" if is_my else "🎬 Movie Recap Maker"
+    dl_text = "📥 Media Downloader" if is_my else "📥 Media Downloader"
+    switch_lang_text = "🌐 Change Language (မြန်မာ / English)" if is_my else "🌐 Switch Language (English / မြန်မာ)"
     verify_gate_text = "🛡️ အဖွဲ့ဝင်စစ်ဆေးမည်" if is_my else "🛡️ Verify Membership"
 
     buttons = [
         [InlineKeyboardButton(text=launch_text, web_app=WebAppInfo(url=web_app_url))],
+        [
+            InlineKeyboardButton(text=recap_text, web_app=WebAppInfo(url=f"{web_app_url}?tab=tab-recap")),
+            InlineKeyboardButton(text=dl_text, web_app=WebAppInfo(url=f"{web_app_url}?tab=tab-downloader")),
+        ],
         [
             InlineKeyboardButton(text=switch_lang_text, callback_data="menu:change_lang"),
             InlineKeyboardButton(text=verify_gate_text, callback_data="gate:verify"),

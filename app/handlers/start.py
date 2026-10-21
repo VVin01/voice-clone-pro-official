@@ -81,7 +81,7 @@ async def handle_start(message: Message, command: CommandObject):
         text, kb = await render_main_menu(telegram_id, lang, session=session)
         await session.commit()
 
-    welcome_text = f"{t('welcome_title', lang)}\n{t('welcome_desc', lang)}\n\n{text}"
+    welcome_text = f"{t('welcome_title', lang)}\n\n{t('welcome_desc', lang)}\n\n{text}"
     try:
         await message.answer(welcome_text, reply_markup=kb, parse_mode="HTML")
     except TelegramForbiddenError:

@@ -78,8 +78,9 @@ async def render_main_menu(
         category=category_badge,
         total_min=balance.total_usable_minutes,
         purchased_min=balance.purchased_minutes,
+        recap_credits=getattr(user, "recap_credits", 3) or 3,
     )
-    text = f"{t('menu_title', active_lang)}\n\n{info_text}"
+    text = info_text
     kb = main_menu_kb(is_admin=is_admin, lang=active_lang)
     return text, kb
 
