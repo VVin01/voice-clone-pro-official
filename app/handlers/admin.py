@@ -3370,6 +3370,10 @@ async def handle_admin_tutorial_remove_confirm(callback: CallbackQuery):
     await handle_admin_tutorial(callback)
 
 
+# Backward-compatible alias for unit tests & legacy callers
+handle_admin_tutorial_url_input = handle_admin_tutorial_voice_url_input
+
+
 # ---------------------------------------------------------------------------
 # Audit Log Handlers
 # ---------------------------------------------------------------------------
