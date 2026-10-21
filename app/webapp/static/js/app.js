@@ -2007,6 +2007,97 @@ function closeSlipModal() {
     if (modal) modal.classList.add("hidden");
 }
 
+function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, title) {
+    haptic("light");
+    const modal = document.getElementById("admin-media-modal");
+    const badge = document.getElementById("admin-media-badge");
+    const titleEl = document.getElementById("admin-media-title");
+    const bodyEl = document.getElementById("admin-media-body");
+    const delivEl = document.getElementById("admin-media-deliverables");
+    if (!modal) return;
+
+    let deliverables = {};
+    try {
+        deliverables = typeof deliverablesJson === "string" ? JSON.parse(deliverablesJson) : (deliverablesJson || {});
+    } catch (e) {
+        deliverables = {};
+    }
+
+    if (badge) {
+        badge.className = `history-item-badge ${jobType === 'RECAP' ? 'badge-recap' : 'badge-voice'}`;
+        badge.innerText = jobType === 'RECAP' ? '🎬 RECAP' : '🎙️ VOICE';
+    }
+    if (titleEl) {
+        titleEl.innerText = title || `Job #${jobId.slice(0, 10)}`;
+    }
+
+    if (bodyEl) {
+        if (jobType === "RECAP") {
+            const videoUrl = deliverables.video || downloadUrl;
+            bodyEl.innerHTML = `
+                <div class="modal-video-wrapper">
+                    <video id="admin-modal-video" src="${videoUrl}" controls autoplay playsinline class="admin-modal-player-video">
+                        Browser does not support HTML5 video.
+                    </video>
+                </div>
+            `;
+        } else {
+            const audioUrl = deliverables.audio || downloadUrl;
+            bodyEl.innerHTML = `
+                <div class="modal-audio-wrapper">
+                    <div class="modal-audio-icon">🎧</div>
+                    <audio id="admin-modal-audio" src="${audioUrl}" controls autoplay class="admin-modal-player-audio">
+                        Browser does not support HTML5 audio.
+                    </audio>
+                </div>
+            `;
+        }
+    }
+
+    if (delivEl) {
+        let buttons = '';
+        if (jobType === "RECAP") {
+            if (deliverables.video) {
+                buttons += `<a href="${deliverables.video}" download class="mini-chip gold" target="_blank">🎬 Download Video</a>`;
+            }
+            if (deliverables.audio) {
+                buttons += `<a href="${deliverables.audio}" download class="mini-chip" target="_blank">🎙️ Download Audio</a>`;
+            }
+            if (deliverables.srt) {
+                buttons += `<a href="${deliverables.srt}" download class="mini-chip" target="_blank">📝 Subtitles (SRT)</a>`;
+            }
+            if (deliverables.script) {
+                buttons += `<a href="${deliverables.script}" download class="mini-chip" target="_blank">📄 Script (TXT)</a>`;
+            }
+        } else {
+            const dlUrl = deliverables.download || downloadUrl;
+            if (dlUrl) {
+                buttons += `<a href="${dlUrl}" download class="mini-chip gold" target="_blank">📥 Download WAV / MP3</a>`;
+            }
+        }
+        if (downloadUrl) {
+            buttons += `<a href="${downloadUrl}" target="_blank" class="mini-chip" style="opacity: 0.85;">↗️ Browser Tab တွင်ဖွင့်မည်</a>`;
+        }
+        delivEl.innerHTML = buttons;
+    }
+
+    modal.classList.remove("hidden");
+}
+
+function closeAdminMediaModal() {
+    const modal = document.getElementById("admin-media-modal");
+    if (!modal) return;
+    const bodyEl = document.getElementById("admin-media-body");
+    if (bodyEl) {
+        const vid = bodyEl.querySelector("video");
+        if (vid) { vid.pause(); vid.src = ""; }
+        const aud = bodyEl.querySelector("audio");
+        if (aud) { aud.pause(); aud.src = ""; }
+        bodyEl.innerHTML = "";
+    }
+    modal.classList.add("hidden");
+}
+
 async function adminApproveSlip(reqId) {
     haptic("medium");
     if (!confirm("အတည်ပြုပြီး VIP သို့ မြှင့်တင်ပေးမည်လား?")) return;
@@ -2357,7 +2448,10 @@ async function loadAdminQueue(isSilent = false) {
             }
 
             if (j.download_url) {
-                actionsHtml += `<a href="${j.download_url}" target="_blank" class="queue-act-btn uid">📥 View</a>`;
+                const qDelivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
+                const qTitleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
+                actionsHtml += `<button class="queue-act-btn uid" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${qDelivStr}', '${qTitleStr}')">▶️ Play</button>`;
+                actionsHtml += `<a href="${j.download_url}" target="_blank" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
             }
 
             actionsHtml += `<button class="queue-act-btn uid" onclick="admFillUser(${j.user_id})" title="Copy User ID to management input">👤 Target</button>`;
@@ -2661,7 +2755,10 @@ async function loadAdminHistory() {
             if (history.length === 0) {
                 container.innerHTML = `<p class="text-muted" data-i18n="history_empty">${t("history_empty")}</p>`;
             } else {
-                container.innerHTML = history.map(j => `
+                container.innerHTML = history.map(j => {
+                    const delivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
+                    const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
+                    return `
                     <div class="history-item">
                         <div class="history-item-header">
                             <div>
@@ -2678,11 +2775,17 @@ async function loadAdminHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago} (${j.id.slice(0,10)})</span>
                             <div class="history-btn-row">
-                                ${j.download_url ? `<a href="${j.download_url}" target="_blank" class="history-dl-link">🎬 Preview / File</a>` : ''}
+                                ${j.download_url ? `
+                                    <button class="btn-play-preview" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${delivStr}', '${titleStr}')">
+                                        ▶️ ဖွင့်ကြည့်မည် (Preview)
+                                    </button>
+                                    <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
+                                ` : ''}
                             </div>
                         </div>
                     </div>
-                `).join("");
+                `;
+                }).join("");
             }
         }
     } catch (e) {

@@ -1112,6 +1112,21 @@
         </div>
     </div>
 
+    <!-- ════ ADMIN 24H MEDIA PREVIEW MODAL (VOICE & RECAP) ════ -->
+    <div id="admin-media-modal" class="image-modal hidden" onclick="closeAdminMediaModal()">
+        <div class="modal-content admin-media-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <span id="admin-media-badge" class="history-item-badge badge-voice">🎙️ VOICE</span>
+                    <h3 id="admin-media-title" class="modal-title">Job Preview</h3>
+                </div>
+                <button class="modal-close" onclick="closeAdminMediaModal()">✕</button>
+            </div>
+            <div id="admin-media-body" class="admin-media-body"></div>
+            <div id="admin-media-deliverables" class="admin-media-deliverables"></div>
+        </div>
+    </div>
+
     <!-- ════ FLOATING ALERT NOTIFICATION (PREMIUM LUXURY) ════ -->
     <div id="floating-alert-container" class="floating-alert-container hidden">
         <div class="floating-alert-card" id="floating-alert-card">

@@ -26,7 +26,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, update
@@ -540,9 +540,11 @@ async def get_job_status(
     }
 
 
+@api_router.get("/audio/stream/{job_id}")
 @api_router.get("/audio/download/{job_id}")
 async def download_job_audio(
     job_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
 ):
     """Stream or download the completed generated voice clone audio file."""
@@ -560,12 +562,34 @@ async def download_job_audio(
             target_path = matches[0]
 
     if not target_path or not target_path.is_file():
+        # Also check local output variations or storage subdirs
+        for cand_dir in [settings.storage_root / "outputs", settings.storage_root / "temp", settings.storage_root / "voices", settings.storage_root / "recap_output"]:
+            if cand_dir.is_dir():
+                m = list(cand_dir.glob(f"*{job.id}*"))
+                if m and m[0].is_file():
+                    target_path = m[0]
+                    break
+
+    if not target_path or not target_path.is_file():
         raise HTTPException(status_code=404, detail="Audio file not ready or expired")
+
+    ext = target_path.suffix.lower()
+    media_type = "audio/wav"
+    if ext == ".mp3":
+        media_type = "audio/mpeg"
+    elif ext in [".ogg", ".oga"]:
+        media_type = "audio/ogg"
+    elif ext in [".m4a", ".aac"]:
+        media_type = "audio/mp4"
+
+    is_stream = "/stream/" in request.url.path
+    disposition = "inline" if is_stream else "attachment"
 
     return FileResponse(
         path=str(target_path),
-        media_type="audio/wav",
-        filename=f"voice_clone_{job.id[:8]}.wav",
+        media_type=media_type,
+        filename=f"voice_clone_{job.id[:8]}{ext or '.wav'}",
+        content_disposition_type=disposition,
     )
 
 
@@ -1181,12 +1205,14 @@ async def get_recap_status(
     }
 
 
+@api_router.get("/recap/stream/{job_id}/{file_type}")
 @api_router.get("/recap/download/{job_id}/{file_type}")
 async def download_recap_file(
     job_id: str,
     file_type: str,
+    request: Request,
 ):
-    """Download generated recap MP4 video, MP3 audio, SRT subtitles, or TXT script."""
+    """Download or stream generated recap MP4 video, MP3 audio, SRT subtitles, or TXT script."""
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     file_path = None
     if entry:
@@ -1210,6 +1236,16 @@ async def download_recap_file(
             if cands: file_path = str(cands[0])
 
     if not file_path or not Path(file_path).is_file():
+        try:
+            from app.db.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
+                j = await session.get(Job, job_id)
+                if j and j.result_path and Path(j.result_path).is_file():
+                    file_path = j.result_path
+        except Exception:
+            pass
+
+    if not file_path or not Path(file_path).is_file():
         raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} file not ready or not found")
 
     mime_map = {
@@ -1219,7 +1255,16 @@ async def download_recap_file(
         "script": ("text/plain; charset=utf-8", f"script_{job_id[:8]}.txt"),
     }
     media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
-    return FileResponse(path=str(file_path), media_type=media_type, filename=filename)
+
+    is_stream = "/stream/" in request.url.path or file_type in ["video", "audio"]
+    disposition = "inline" if is_stream else "attachment"
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type=disposition,
+    )
 
 
 @api_router.post("/recap/{job_id}/send-telegram")
@@ -1343,15 +1388,19 @@ async def get_user_history(
                 deliverables = recap_entry["download_urls"]
                 download_url = deliverables.get("video")
             else:
-                download_url = f"/api/recap/download/{j.id}/video"
+                download_url = f"/api/recap/stream/{j.id}/video"
                 deliverables = {
-                    "video": f"/api/recap/download/{j.id}/video",
-                    "audio": f"/api/recap/download/{j.id}/audio",
+                    "video": f"/api/recap/stream/{j.id}/video",
+                    "audio": f"/api/recap/stream/{j.id}/audio",
                     "srt": f"/api/recap/download/{j.id}/srt",
                     "script": f"/api/recap/download/{j.id}/script",
                 }
         else:
             download_url = f"/api/audio/stream/{j.id}" if j.status == JobStatus.SUCCESS.value else None
+            deliverables = {
+                "audio": f"/api/audio/stream/{j.id}",
+                "download": f"/api/audio/download/{j.id}",
+            }
 
         out.append({
             "id": j.id,
@@ -1415,15 +1464,19 @@ async def get_admin_global_history(
         deliverables = {}
         download_url = None
         if is_recap:
-            download_url = f"/api/recap/download/{job.id}/video"
+            download_url = f"/api/recap/stream/{job.id}/video" if job.status == JobStatus.SUCCESS.value else None
             deliverables = {
-                "video": f"/api/recap/download/{job.id}/video",
-                "audio": f"/api/recap/download/{job.id}/audio",
+                "video": f"/api/recap/stream/{job.id}/video",
+                "audio": f"/api/recap/stream/{job.id}/audio",
                 "srt": f"/api/recap/download/{job.id}/srt",
                 "script": f"/api/recap/download/{job.id}/script",
             }
         else:
             download_url = f"/api/audio/stream/{job.id}" if job.status == JobStatus.SUCCESS.value else None
+            deliverables = {
+                "audio": f"/api/audio/stream/{job.id}",
+                "download": f"/api/audio/download/{job.id}",
+            }
 
         out.append({
             "id": job.id,
@@ -1797,16 +1850,21 @@ async def get_admin_queue(
         download_url = None
         deliverables = {}
         if is_recap:
-            download_url = f"/api/recap/download/{j.id}/video" if j.status == JobStatus.SUCCESS.value else None
+            download_url = f"/api/recap/stream/{j.id}/video" if j.status == JobStatus.SUCCESS.value else None
             if j.status == JobStatus.SUCCESS.value:
                 deliverables = {
-                    "video": f"/api/recap/download/{j.id}/video",
-                    "audio": f"/api/recap/download/{j.id}/audio",
+                    "video": f"/api/recap/stream/{j.id}/video",
+                    "audio": f"/api/recap/stream/{j.id}/audio",
                     "srt": f"/api/recap/download/{j.id}/srt",
                     "script": f"/api/recap/download/{j.id}/script",
                 }
         else:
             download_url = f"/api/audio/stream/{j.id}" if j.status == JobStatus.SUCCESS.value else None
+            if j.status == JobStatus.SUCCESS.value:
+                deliverables = {
+                    "audio": f"/api/audio/stream/{j.id}",
+                    "download": f"/api/audio/download/{j.id}",
+                }
 
         jobs_out.append({
             "id": j.id,
