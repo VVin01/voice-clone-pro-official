@@ -169,7 +169,12 @@ async def claim_next_queued_job(session: AsyncSession, engine_filter: str | None
 
     Guarantees exactly ONE competing worker claims and executes the job.
     """
-    query = select(Job.id).where(Job.status == JobStatus.QUEUED.value)
+    query = select(Job.id).where(
+        Job.status == JobStatus.QUEUED.value,
+        Job.job_type != JobType.RECAP.value,
+        Job.engine != "recap",
+        ~Job.id.startswith("rc_"),
+    )
     if engine_filter:
         query = query.where(Job.engine == engine_filter)
 
