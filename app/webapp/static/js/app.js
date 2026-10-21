@@ -73,6 +73,20 @@ function getAuthHeaders() {
 }
 window.getAuthHeaders = getAuthHeaders;
 
+// ── Tutorial Video Link Controller ──────────────────────────────────────────
+let currentTutorialUrl = "https://t.me/VoiceClonePro/16";
+
+function openTutorialVideo() {
+    haptic("light");
+    const url = currentTutorialUrl || "https://t.me/VoiceClonePro/16";
+    if (window.Telegram?.WebApp?.openLink) {
+        window.Telegram.WebApp.openLink(url);
+    } else {
+        window.open(url, "_blank");
+    }
+}
+window.openTutorialVideo = openTutorialVideo;
+
 // ── Floating Luxury Alert Notification Banner ──────────────────────────────
 function showFloatingAlert(title, message, actionCallback, actionText) {
     haptic("heavy");
@@ -209,6 +223,10 @@ async function loadUserProfile() {
         if (!res.ok) return;
         const data = await res.json();
         state.user = data;
+
+        if (data.tutorial_video_link) {
+            currentTutorialUrl = data.tutorial_video_link;
+        }
 
         // Sync language with user profile if saved
         if (data.language_code && data.language_code !== currentLang) {
@@ -1959,13 +1977,30 @@ async function adminAddRecapCredits() {
 
 async function adminSendBroadcast() {
     const textEl = document.getElementById("adm-broadcast-text");
+    const btn = document.getElementById("adm-broadcast-btn");
+    const btnText = document.getElementById("adm-broadcast-btn-text");
+    const reportBox = document.getElementById("adm-broadcast-report");
+
     const msg = textEl ? textEl.value.trim() : "";
     if (!msg) {
-        alert("စာသား ရိုက်ထည့်ပါ");
+        alert(currentLang === "my" ? "မက်ဆေ့ခ်ျ စာသား ရိုက်ထည့်ပေးပါ" : "Please enter broadcast message text");
         return;
     }
     haptic("heavy");
-    if (!confirm("အသုံးပြုသူ အားလုံးထံ ဤ Broadcast စာကို ပေးပို့မည်လား?")) return;
+    if (!confirm(currentLang === "my" 
+        ? "အသုံးပြုသူ အားလုံးထံသို့ ဤ Broadcast မက်ဆေ့ခ်ျ ပို့မှာ သေချာပါသလား?" 
+        : "Are you sure you want to broadcast this message to all users?")) return;
+
+    if (btn) btn.disabled = true;
+    if (btnText) btnText.textContent = currentLang === "my" ? "⏳ ပို့ဆောင်နေပါသည်..." : "⏳ Sending broadcast...";
+    if (reportBox) {
+        reportBox.classList.remove("hidden");
+        reportBox.innerHTML = `<div style="text-align: center; color: var(--gold-primary); padding: 10px;">
+            <span class="spinner" style="display:inline-block; margin-right:6px;"></span>
+            ${currentLang === "my" ? "Telegram Bot မှတစ်ဆင့် အသုံးပြုသူများထံ စစ်ဆေး ပို့ဆောင်နေပါသည်..." : "Delivering messages via Telegram Bot..."}
+        </div>`;
+    }
+
     try {
         const res = await fetch("/api/admin/broadcast", {
             method: "POST",
@@ -1973,10 +2008,67 @@ async function adminSendBroadcast() {
             body: JSON.stringify({ message: msg }),
         });
         const data = await res.json();
-        alert(`Broadcast ပို့ဆောင်ပြီးပါပြီ! (အောင်မြင်သူ: ${data.sent_count || 0})`);
+        if (!res.ok) {
+            throw new Error(data.detail || "Broadcast request failed");
+        }
+
+        const bd = data.breakdown || {};
+        const isMy = (currentLang === "my");
+        
+        let reportHtml = `
+            <div style="border-left: 3px solid #10b981; padding-left: 10px; margin-bottom: 12px;">
+                <strong style="color: #10b981; font-size: 14px;">
+                    ${isMy ? "📢 Broadcast ပို့ဆောင်မှု အစီရင်ခံစာ" : "📢 Broadcast Delivery Telemetry Report"}
+                </strong>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                    <div style="color: #94a3b8; font-size: 11px;">${isMy ? "👥 DB စုစုပေါင်း" : "Total DB Users"}</div>
+                    <div style="color: #fff; font-size: 16px; font-weight: 700;">${data.total_users_in_db || 0} ဦး</div>
+                </div>
+                <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                    <div style="color: #94a3b8; font-size: 11px;">${isMy ? "🎯 ပို့ရန် စစ်ဆေးခဲ့သူ" : "Targeted Users"}</div>
+                    <div style="color: #38bdf8; font-size: 16px; font-weight: 700;">${data.total_targeted || 0} ဦး</div>
+                </div>
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); padding: 8px; border-radius: 8px;">
+                    <div style="color: #10b981; font-size: 11px;">${isMy ? "✅ အောင်မြင်စွာ ပို့ဆောင်ပြီး" : "Delivered"}</div>
+                    <div style="color: #10b981; font-size: 16px; font-weight: 700;">${data.sent_count || 0} ဦး</div>
+                </div>
+                <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); padding: 8px; border-radius: 8px;">
+                    <div style="color: #ef4444; font-size: 11px;">${isMy ? "❌ မရောက်ရှိခဲ့သူ" : "Undelivered"}</div>
+                    <div style="color: #ef4444; font-size: 16px; font-weight: 700;">${data.failed_count || 0} ဦး</div>
+                </div>
+            </div>
+            
+            <div style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.6;">
+                <div style="color: #f59e0b; font-weight: 600; margin-bottom: 6px;">
+                    ${isMy ? "🔍 မရောက်ရှိရသည့် အသေးစိတ် အကြောင်းအရင်းများ:" : "🔍 Undelivered Breakdown & Reasons:"}
+                </div>
+                <div style="color: #cbd5e1;">• 🚫 <b>${bd.blocked_by_user || 0} ဦး</b>: ${isMy ? "Bot ကို Block ထားသူများ (DB တွင် BLOCKED အဖြစ် အလိုအလျောက် သတ်မှတ်ပေးခဲ့သည်)" : "Blocked bot (Auto-marked as BLOCKED in DB)"}</div>
+                <div style="color: #cbd5e1;">• ⚠️ <b>${bd.deactivated_or_not_found || 0} ဦး</b>: ${isMy ? "Telegram Account ဖျက်ထားသူ / ရှာမတွေ့သူများ" : "Telegram account deleted / not found"}</div>
+                <div style="color: #cbd5e1;">• 🧪 <b>${bd.invalid_test_id || 0} ဦး</b>: ${isMy ? "Test / စမ်းသပ် ID အဟောင်းများ (< ၈ လုံး)" : "Legacy Test IDs (< 8 digits)"}</div>
+                ${bd.pre_existing_blocked_in_db ? `<div style="color: #cbd5e1;">• 🛡️ <b>${bd.pre_existing_blocked_in_db} ဦး</b>: ${isMy ? "ယခင်ကတည်းက DB တွင် Blocked ဖြစ်နေသူများ" : "Pre-existing blocked users in DB"}</div>` : ""}
+                ${bd.other_errors ? `<div style="color: #cbd5e1;">• ❓ <b>${bd.other_errors} ဦး</b>: ${isMy ? "အခြား ကွန်ရက်/ချိတ်ဆက်မှု အမှား" : "Network/Other errors"}</div>` : ""}
+            </div>
+        `;
+
+        if (reportBox) {
+            reportBox.innerHTML = reportHtml;
+        }
+
+        alert(isMy 
+            ? `📢 Broadcast ပို့ဆောင်မှု ပြီးဆုံးပါပြီ!\n\n• စုစုပေါင်း: ${data.total_users_in_db} ဦး\n• အောင်မြင်: ${data.sent_count} ဦး\n• မရောက်ရှိ: ${data.failed_count} ဦး\n\nအသေးစိတ် အချက်အလက်များကို Admin Panel ရှိ Report တွင် ဖော်ပြထားပါသည်။` 
+            : `📢 Broadcast Completed!\n\n• Total Users: ${data.total_users_in_db}\n• Delivered: ${data.sent_count}\n• Failed: ${data.failed_count}\n\nDetailed breakdown displayed in report box.`);
+
         if (textEl) textEl.value = "";
     } catch (e) {
+        if (reportBox) {
+            reportBox.innerHTML = `<div style="color: #ef4444; padding: 10px;">❌ ${e.message}</div>`;
+        }
         alert(e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+        if (btnText) btnText.textContent = currentLang === "my" ? "Broadcast ပို့မည်" : "Send Broadcast";
     }
 }
 
@@ -2260,6 +2352,7 @@ async function loadAdminSettings() {
         if (elWaveNum) elWaveNum.value = s.payment_wave_number || "";
         if (elWaveName) elWaveName.value = s.payment_wave_name || "";
         if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
+        if (s.tutorial_video_link) currentTutorialUrl = s.tutorial_video_link;
         if (elMaint) elMaint.checked = !!s.maintenance_mode;
     } catch (e) {
         console.warn("Could not load dynamic settings:", e);
@@ -2283,6 +2376,7 @@ async function saveAdminSettings() {
         tutorial_video_link: tutLink,
         maintenance_mode: maint,
     };
+    if (tutLink) currentTutorialUrl = tutLink;
 
     try {
         const res = await fetch("/api/admin/settings", {

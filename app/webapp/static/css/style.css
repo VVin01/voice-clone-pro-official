@@ -3488,3 +3488,119 @@ textarea#voice-text-input:focus {
     color: #fff;
 }
 
+/* ── Luxury Tutorial Navigation Pill & Banner Guide ────────────────────────── */
+.tutorial-pill-btn {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #ffd700;
+    padding: 4px 9px;
+    border-radius: 16px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.tutorial-pill-btn:hover, .tutorial-pill-btn:active {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: #ffd700;
+    transform: scale(0.97);
+}
+
+.tutorial-banner-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(30, 41, 59, 0.5) 100%);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 12px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-top: 10px;
+    margin-bottom: 12px;
+}
+
+.tutorial-banner-card:hover {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(30, 41, 59, 0.7) 100%);
+    border-color: rgba(245, 158, 11, 0.5);
+    transform: translateY(-1px);
+}
+
+.tutorial-banner-icon {
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tutorial-banner-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tutorial-banner-text strong {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ffd700;
+}
+
+.tutorial-banner-text span {
+    font-size: 11px;
+    color: #94a3b8;
+}
+
+.tutorial-banner-btn {
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffd700;
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    padding: 5px 12px;
+    border-radius: 8px;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.tutorial-banner-card:hover .tutorial-banner-btn {
+    background: #ffd700;
+    color: #000;
+}
+
+/* ── Broadcast Report Telemetry Box ────────────────────────────────────────── */
+.broadcast-report-box {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 13px;
+    animation: fadeIn 0.3s ease;
+}
+
+@media (max-width: 480px) {
+    .tutorial-pill-btn {
+        padding: 3px 6px;
+        font-size: 10px;
+    }
+    .tutorial-banner-card {
+        padding: 8px 10px;
+        gap: 8px;
+    }
+    .tutorial-banner-text strong {
+        font-size: 12px;
+    }
+    .tutorial-banner-text span {
+        font-size: 10px;
+    }
+    .tutorial-banner-btn {
+        padding: 4px 8px;
+        font-size: 10px;
+    }
+}
+

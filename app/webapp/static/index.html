@@ -42,6 +42,10 @@
             </div>
 
             <div class="top-actions">
+                <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo()" title="အသုံးပြုနည်း လမ်းညွှန်">
+                    <span class="btn-icon">📚</span>
+                    <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
+                </button>
                 <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()">🇲🇲 မြန်မာ</button>
                 <div class="user-pill" id="user-pill">
                     <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free">FREE</span>
@@ -64,6 +68,16 @@
                         <span class="badge-studio">LIVE</span>
                     </div>
                     <p data-i18n="voice_subtitle">သဘာဝကျသော မြန်မာ AI အသံသွင်းခြင်း နှင့် အဆင့်မြင့် Voice Cloning</p>
+                </div>
+
+                <!-- Tutorial Guide Banner -->
+                <div class="tutorial-banner-card" onclick="openTutorialVideo()">
+                    <span class="tutorial-banner-icon">💡</span>
+                    <div class="tutorial-banner-text">
+                        <strong data-i18n="tutorial_banner_title">အသုံးပြုနည်း လမ်းညွှန်ဗီဒီယို</strong>
+                        <span data-i18n="tutorial_banner_desc">Voice Cloning စတင်အသုံးပြုပုံ အဆင့်ဆင့် ဗီဒီယိုကို ကြည့်ရှုပါ</span>
+                    </div>
+                    <span class="tutorial-banner-btn" data-i18n="btn_watch">ကြည့်ရှုရန် ▶️</span>
                 </div>
 
                 <!-- Estimated Duration Notice -->
@@ -235,6 +249,16 @@
                         <span class="badge-studio gold">ULTRA</span>
                     </div>
                     <p data-i18n="recap_subtitle">English ဗီဒီယိုများကို မြန်မာအသံ၊ စာတန်းထိုး နှင့် Blur ပါဝင်သော Recap ဖန်တီးပါ</p>
+                </div>
+
+                <!-- Tutorial Guide Banner -->
+                <div class="tutorial-banner-card" onclick="openTutorialVideo()">
+                    <span class="tutorial-banner-icon">🎬</span>
+                    <div class="tutorial-banner-text">
+                        <strong data-i18n="recap_tutorial_title">Movie Recap ပြုလုပ်နည်း လမ်းညွှန်</strong>
+                        <span data-i18n="recap_tutorial_desc">ရုပ်ရှင်ဇာတ်လမ်း သုံးသပ်ချက် ဗီဒီယို အလွယ်တကူ ဖန်တီးနည်းကို ကြည့်ရှုပါ</span>
+                    </div>
+                    <span class="tutorial-banner-btn" data-i18n="btn_watch">ကြည့်ရှုရန် ▶️</span>
                 </div>
 
                 <!-- Recap Duration Notice -->
@@ -974,10 +998,12 @@
                 <div class="card glass mt-3">
                     <div class="card-label" data-i18n="admin_broadcast_header">📢 Telegram Bot အားလုံးသို့ Broadcast စာပို့ရန်</div>
                     <textarea id="adm-broadcast-text" data-i18n-ph="admin_broadcast_ph" placeholder="အသုံးပြုသူ အားလုံးထံ ပေးပို့မည့် စာသား ရိုက်ထည့်ပါ..." rows="3" class="studio-input mt-2"></textarea>
-                    <button class="btn gold-gradient-btn mt-2" onclick="adminSendBroadcast()">
+                    <button class="btn gold-gradient-btn mt-2" id="adm-broadcast-btn" onclick="adminSendBroadcast()">
                         <span class="btn-icon">🚀</span>
-                        <span data-i18n="btn_send_broadcast">Broadcast ပို့မည်</span>
+                        <span id="adm-broadcast-btn-text" data-i18n="btn_send_broadcast">Broadcast ပို့မည်</span>
                     </button>
+                    <!-- Broadcast Telemetry Report Box -->
+                    <div id="adm-broadcast-report" class="broadcast-report-box mt-3 hidden"></div>
                 </div>
 
                 <!-- 24-Hour All Users Job Production History & Purge Control -->

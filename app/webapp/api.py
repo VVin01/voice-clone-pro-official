@@ -112,7 +112,8 @@ async def get_user_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Retrieve user's VIP status, minute balance, and allowance."""
+    """Retrieve user's VIP status, minute balance, allowance, and platform config."""
+    from app.services.dynamic_settings import get_dynamic_setting
     bal = await db.get(MinuteBalance, user.id)
     seconds_left = bal.total_usable_seconds if bal else 0
     is_admin = settings.is_admin(user.id)
@@ -122,6 +123,17 @@ async def get_user_profile(
         settings.character_limit_purchased
         if is_vip
         else settings.character_limit_free
+    )
+
+    tutorial_link = await get_dynamic_setting(
+        db,
+        "tutorial_video_link",
+        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
+    )
+    tutorial_enabled = await get_dynamic_setting(
+        db,
+        "tutorial_video_enabled",
+        default="true",
     )
 
     return {
@@ -136,6 +148,30 @@ async def get_user_profile(
         "balance_minutes": round(seconds_left / 60, 1),
         "recap_credits": getattr(user, "recap_credits", 3),
         "character_limit": char_limit,
+        "tutorial_video_link": tutorial_link,
+        "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
+    }
+
+
+@api_router.get("/config")
+async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
+    """Retrieve public platform config (tutorial link, channel/group invites, maintenance)."""
+    from app.services.dynamic_settings import get_dynamic_setting
+    tutorial_link = await get_dynamic_setting(
+        db,
+        "tutorial_video_link",
+        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
+    )
+    tutorial_enabled = await get_dynamic_setting(
+        db,
+        "tutorial_video_enabled",
+        default="true",
+    )
+    return {
+        "tutorial_video_link": tutorial_link,
+        "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
+        "channel_invite_link": getattr(settings, "channel_invite_link", "https://t.me/VoiceCloneProChannel"),
+        "group_invite_link": getattr(settings, "group_invite_link", "https://t.me/VoiceCloneProGroup"),
     }
 
 
@@ -2025,7 +2061,7 @@ async def send_admin_broadcast(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Trigger a broadcast message delivery to all registered bot users."""
+    """Trigger a broadcast message delivery to all registered bot users with comprehensive telemetry."""
     text = req.message.strip()
     if not text or len(text) < 4:
         raise HTTPException(
@@ -2033,35 +2069,113 @@ async def send_admin_broadcast(
             detail="Broadcast message is too short. Minimum 4 characters required to prevent accidental sends.",
         )
 
+    # 1. Total users in database
+    total_db_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
+
+    # 2. Targeted active users
     stmt = select(User.id).where(User.status == "ACTIVE")
     res = await db.execute(stmt)
     user_ids = res.scalars().all()
+    db_blocked_count = total_db_users - len(user_ids)
 
-    # Log broadcast to audit log
-    db.add(AuditLog(
-        admin_id=admin.id,
-        action="broadcast.send_webapp",
-        target_type="broadcast_campaign",
-        target_id=f"WEBAPP_BC_{int(time.time())}",
-        details_json=json.dumps({"snippet": text[:80], "recipients_count": len(user_ids)}),
-    ))
-    await db.commit()
-
-    # Deliver via Telegram Bot in background
+    # Deliver via Telegram Bot
     if settings.bot_token:
         from aiogram import Bot
         from aiogram.client.default import DefaultBotProperties
         from aiogram.enums import ParseMode
+        from aiogram.exceptions import (
+            TelegramForbiddenError,
+            TelegramBadRequest,
+            TelegramRetryAfter,
+            TelegramAPIError,
+        )
+
         bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        success_count = 0
+        sent_count = 0
+        blocked_by_user_count = 0
+        deactivated_or_not_found_count = 0
+        invalid_test_id_count = 0
+        other_error_count = 0
+        newly_blocked_ids = []
+
         for uid in user_ids:
+            # Detect legacy dummy/test IDs (< 8 digits)
+            if len(str(uid)) < 8:
+                invalid_test_id_count += 1
+                continue
+
             try:
                 await bot.send_message(chat_id=uid, text=text, parse_mode="HTML")
-                success_count += 1
+                sent_count += 1
                 await asyncio.sleep(0.05)
+            except TelegramForbiddenError:
+                # User has blocked the bot
+                blocked_by_user_count += 1
+                newly_blocked_ids.append(uid)
+            except TelegramBadRequest:
+                # Chat not found, user deactivated, or account deleted
+                deactivated_or_not_found_count += 1
+            except TelegramRetryAfter as e:
+                # Handle flood rate limits gracefully
+                await asyncio.sleep(e.retry_after)
+                try:
+                    await bot.send_message(chat_id=uid, text=text, parse_mode="HTML")
+                    sent_count += 1
+                except TelegramForbiddenError:
+                    blocked_by_user_count += 1
+                    newly_blocked_ids.append(uid)
+                except Exception:
+                    other_error_count += 1
             except Exception:
-                pass
+                other_error_count += 1
+
         await bot.session.close()
-        return {"success": True, "sent_count": success_count, "total_recipients": len(user_ids)}
+
+        # Update newly blocked users in database so subsequent broadcasts do not re-attempt
+        if newly_blocked_ids:
+            await db.execute(
+                update(User)
+                .where(User.id.in_(newly_blocked_ids))
+                .values(status="BLOCKED")
+            )
+            await db.commit()
+
+        failed_count = len(user_ids) - sent_count
+
+        # Log broadcast to audit log with granular delivery telemetry
+        db.add(AuditLog(
+            admin_id=admin.id,
+            action="broadcast.send_webapp",
+            target_type="broadcast_campaign",
+            target_id=f"WEBAPP_BC_{int(time.time())}",
+            details_json=json.dumps({
+                "snippet": text[:80],
+                "total_db_users": total_db_users,
+                "targeted": len(user_ids),
+                "sent_count": sent_count,
+                "failed_count": failed_count,
+                "blocked_by_user": blocked_by_user_count,
+                "deactivated_or_not_found": deactivated_or_not_found_count,
+                "invalid_test_id": invalid_test_id_count,
+                "pre_existing_db_blocked": db_blocked_count,
+            }),
+        ))
+        await db.commit()
+
+        return {
+            "success": True,
+            "total_users_in_db": total_db_users,
+            "total_targeted": len(user_ids),
+            "sent_count": sent_count,
+            "failed_count": failed_count,
+            "breakdown": {
+                "delivered": sent_count,
+                "blocked_by_user": blocked_by_user_count,
+                "deactivated_or_not_found": deactivated_or_not_found_count,
+                "invalid_test_id": invalid_test_id_count,
+                "other_errors": other_error_count,
+                "pre_existing_blocked_in_db": db_blocked_count,
+            },
+        }
 
     return {"success": True, "message": f"Broadcast queued for {len(user_ids)} users"}

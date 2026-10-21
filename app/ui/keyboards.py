@@ -28,6 +28,8 @@ def membership_gate_kb(channel_link: str, group_link: str, lang: str = "my") -> 
 def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMarkup:
     import os
     from aiogram.types import WebAppInfo
+    from app.config import settings
+
     web_app_url = (
         os.getenv("MINI_APP_URL", "").strip()
         or os.getenv("RENDER_EXTERNAL_URL", "").strip()
@@ -38,6 +40,12 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
     launch_text = "🚀 Studio Ultra Suite (Mini App) ဖွင့်မည် ✨" if is_my else "🚀 Launch Studio Ultra Suite ✨"
     recap_text = "🎬 Movie Recap Maker" if is_my else "🎬 Movie Recap Maker"
     dl_text = "📥 Media Downloader" if is_my else "📥 Media Downloader"
+    tutorial_text = "📚 အသုံးပြုနည်း လမ်းညွှန်ဗီဒီယို ကြည့်မည်" if is_my else "📚 Watch Tutorial Video"
+    tutorial_url = (
+        getattr(settings, "tutorial_video_link", "").strip()
+        or os.getenv("TUTORIAL_VIDEO_LINK", "").strip()
+        or "https://t.me/VoiceClonePro/16"
+    )
     switch_lang_text = "🌐 Change Language (မြန်မာ / English)" if is_my else "🌐 Switch Language (English / မြန်မာ)"
     verify_gate_text = "🛡️ အဖွဲ့ဝင်စစ်ဆေးမည်" if is_my else "🛡️ Verify Membership"
 
@@ -46,6 +54,9 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
         [
             InlineKeyboardButton(text=recap_text, web_app=WebAppInfo(url=f"{web_app_url}?tab=tab-recap")),
             InlineKeyboardButton(text=dl_text, web_app=WebAppInfo(url=f"{web_app_url}?tab=tab-downloader")),
+        ],
+        [
+            InlineKeyboardButton(text=tutorial_text, url=tutorial_url),
         ],
         [
             InlineKeyboardButton(text=switch_lang_text, callback_data="menu:change_lang"),
