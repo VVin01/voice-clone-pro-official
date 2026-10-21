@@ -126,24 +126,24 @@ async function loadUserProfile() {
 
         if (vipBadge) {
             vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
-            vipBadge.innerText = data.is_vip ? "👑 VIP PRO" : "FREE";
+            vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 PRO" : "FREE");
         }
         if (voiceBalChip) {
-            voiceBalChip.innerText = data.is_vip ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
+            voiceBalChip.innerText = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
         }
         if (recapBalChip) {
-            recapBalChip.innerText = data.is_vip ? "🎬 ∞" : `🎬 ${data.recap_credits || 0}c`;
+            recapBalChip.innerText = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits || 0}c`;
         }
 
         if (catTag) {
-            catTag.innerText = data.is_vip ? t("vip_purchased") : t("vip_free");
+            catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
             catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
         }
         if (balMin) {
-            balMin.innerText = data.is_vip ? t("unlimited") : `${data.balance_minutes} mins`;
+            balMin.innerText = data.is_admin ? t("unlimited") : `${data.balance_minutes} mins`;
         }
         if (balCredits) {
-            balCredits.innerText = data.is_vip ? t("unlimited") : `${data.recap_credits || 0} credits`;
+            balCredits.innerText = data.is_admin ? t("unlimited") : `${data.recap_credits || 0} credits`;
         }
 
         if (charCount) {
@@ -924,7 +924,19 @@ function setupRecapVisualEditor() {
 
                 if (thumbImg && data.thumbnail) thumbImg.src = data.thumbnail;
                 if (titleSpan) titleSpan.innerText = data.title || "Video";
-                if (durSpan) durSpan.innerText = `⏱️ ${data.estimated_duration || "03:00"}`;
+
+                state.recapSourceDuration = data.duration_seconds || 0;
+                const isOverLimit = (data.duration_seconds && data.duration_seconds > 600);
+                if (durSpan) {
+                    if (isOverLimit) {
+                        durSpan.className = "mini-tag text-danger";
+                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${t("recap_duration_warning")})</span>`;
+                    } else {
+                        durSpan.className = "mini-tag";
+                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid")})</span>`;
+                    }
+                }
+
                 if (platformSpan) platformSpan.innerText = data.platform || "Video";
                 if (subSpan) subSpan.innerText = data.has_subtitles ? "✅ Subtitle Ready" : "⚠️ AI Auto Sub";
 
@@ -960,6 +972,13 @@ async function handleStartRecap() {
 
     haptic("heavy");
     const btn = document.getElementById("btn-start-recap");
+
+    // Strictly enforce 10-minute maximum duration per recap credit
+    if (state.recapSourceDuration && state.recapSourceDuration > 600) {
+        alert(t("recap_duration_warning"));
+        return;
+    }
+
     if (btn) btn.disabled = true;
 
     const progressBox = document.getElementById("recap-progress-box");
@@ -1001,6 +1020,7 @@ async function handleStartRecap() {
             sub_lines: state.recapLines || 1,
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",
+            duration_seconds: state.recapSourceDuration || null,
         };
 
         const res = await fetch("/api/recap/generate", {

@@ -1298,10 +1298,28 @@ textarea#voice-text-input:focus {
     background: linear-gradient(135deg, rgba(26, 34, 52, 0.9), rgba(18, 24, 38, 0.85));
 }
 
+.plan-header-badge {
+    display: flex;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.featured-badge-pill {
+    display: inline-flex;
+    align-items: center;
+    background: var(--gold-gradient);
+    color: #07090e;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 3px 10px;
+    border-radius: 12px;
+    letter-spacing: 0.3px;
+    box-shadow: 0 2px 10px rgba(245, 158, 11, 0.35);
+}
+
 .featured-ribbon {
-    position: absolute;
-    top: 10px;
-    right: 12px;
+    display: inline-flex;
+    align-items: center;
     background: var(--gold-gradient);
     color: #000;
     font-size: 11px;
@@ -1309,6 +1327,25 @@ textarea#voice-text-input:focus {
     padding: 3px 10px;
     border-radius: 12px;
     letter-spacing: 0.3px;
+    margin-bottom: 6px;
+}
+
+.duration-limit-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 12px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gold-bright);
+}
+
+.duration-limit-pill .limit-icon {
+    font-size: 16px;
 }
 
 .plan-badge-top {
@@ -2144,11 +2181,18 @@ textarea#voice-text-input:focus {
 /* ════ LUXURY MOBILE RESPONSIVENESS & CLEAN POLISH ════ */
 @media (max-width: 480px) {
     .content-viewport {
-        padding: 12px 10px 100px 10px;
+        padding: 10px 8px 100px 8px;
     }
 
     .top-nav {
-        padding: 8px 12px;
+        padding: 8px 10px;
+        gap: 6px;
+    }
+
+    .brand {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
     }
 
     .brand-crest {
@@ -2158,25 +2202,44 @@ textarea#voice-text-input:focus {
     }
 
     .brand-title-wrap h1 {
-        font-size: 13.5px;
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .pro-tag {
+        font-size: 8px;
+        padding: 1px 3px;
     }
 
     .sub-brand {
         font-size: 8px;
     }
 
+    .top-actions {
+        flex-shrink: 0;
+        gap: 4px;
+    }
+
+    .lang-pill-btn {
+        padding: 3px 6px;
+        font-size: 11px;
+    }
+
     .user-pill {
         padding: 2px 6px;
-        gap: 3px;
+        gap: 4px;
     }
 
     .vip-badge {
         font-size: 8.5px;
-        padding: 1px 5px;
+        padding: 1px 4px;
     }
 
     .bal-chip {
-        font-size: 10.5px;
+        font-size: 10px;
+        padding: 1px 3px;
     }
 
     .card.glass {
@@ -2259,6 +2322,48 @@ textarea#voice-text-input:focus {
 
     .nav-item .nav-label {
         font-size: 9.5px;
+    }
+}
+
+@media (max-width: 390px) {
+    .top-nav {
+        padding: 6px 8px;
+        gap: 4px;
+    }
+
+    .brand-crest {
+        width: 26px;
+        height: 26px;
+        min-width: 26px;
+    }
+
+    .brand-title-wrap h1 {
+        font-size: 11.8px;
+        max-width: 105px;
+    }
+
+    .sub-brand {
+        display: none;
+    }
+
+    .lang-pill-btn {
+        padding: 2px 5px;
+        font-size: 10px;
+    }
+
+    .user-pill {
+        padding: 2px 4px;
+        gap: 2px;
+    }
+
+    .vip-badge {
+        font-size: 8px;
+        padding: 1px 3px;
+    }
+
+    .bal-chip {
+        font-size: 9px;
+        padding: 1px 2px;
     }
 }
 

@@ -18,8 +18,8 @@ const translations = {
         tab_voice: "အသံဖန်တီး",
         tab_recap: "ဗီဒီယို Recap",
         tab_downloader: "ဒေါင်းလုဒ်",
-        tab_vip: "VIP Plans",
-        tab_admin: "Admin",
+        tab_vip: "VIP အစီအစဉ်",
+        tab_admin: "အက်ဒမင်",
 
         // Tab 1: Voice Clone Studio
         voice_title: "🎙️ AI Voice Clone Studio",
@@ -185,24 +185,29 @@ const translations = {
         plan_voice_f5: "✓ အရည်အသွေးမြင့် 24kHz PCM WAV တိုက်ရိုက်ဒေါင်းလုဒ်",
 
         plan_recap_name: "🎬 Movie Recap Studio Pro",
-        plan_recap_alloc: "ဗီဒီယို ၆၀ ကား Recap ဖန်တီးခွင့် (Credits)",
+        plan_recap_alloc: "ဗီဒီယို ၆၀ ကား Recap ဖန်တီးခွင့် (၁ ပုဒ် အများဆုံး ၁၀ မိနစ်)",
         plan_recap_price: "35,000",
         plan_recap_badge: "Video Editors 🎬",
-        plan_recap_f1: "✓ Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား",
+        plan_recap_f1: "✓ Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား (အများဆုံး ၁၀ မိနစ်/ကား)",
         plan_recap_f2: "✓ ဇာတ်လမ်းစတိုင် ၅ မျိုး & စာတန်းထိုးစတိုင် ၄ မျိုး",
         plan_recap_f3: "✓ မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)",
         plan_recap_f4: "✓ Channel Watermark Logo ထည့်သွင်းခွင့်",
         plan_recap_f5: "✓ High-Speed Multi-Threaded Video Rendering",
 
         plan_master_name: "👑 All-in-One Master Suite",
-        plan_master_alloc: "မိနစ် ၆၀၀ + Recap ဗီဒီယို ၁၅၀ ကား",
+        plan_master_alloc: "မိနစ် ၆၀၀ + Recap ဗီဒီယို ၁၅၀ ကား (အများဆုံး ၁၀ မိနစ်/ကား)",
         plan_master_price: "55,000",
         plan_master_badge: "အကောင်းဆုံး တန်ဖိုး 💎",
         plan_master_f1: "✓ Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၆၀၀ - ၁၀ နာရီ)",
-        plan_master_f2: "✓ Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား)",
+        plan_master_f2: "✓ Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)",
         plan_master_f3: "✓ မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း",
         plan_master_f4: "✓ Dedicated High-Speed Cloud Node Priority",
         plan_master_f5: "✓ Commercial Copyright Safe & 24/7 VIP Direct Support",
+
+        // Recap Duration Limit UI
+        recap_limit_notice: "🎬 ၁ Credit = ဗီဒီယို ၁ ပုဒ် (အများဆုံး ၁၀ မိနစ်အထိ)",
+        recap_duration_warning: "⚠️ ဗီဒီယို ကြာချိန် ၁၀ မိနစ်ထက် ကျော်လွန်နေပါသည် (၁ Credit လျှင် အများဆုံး ၁၀ မိနစ်သာ ခွင့်ပြုထားပါသည်)",
+        recap_duration_valid: "✅ ၁၀ မိနစ်အတွင်း အကျုံးဝင်သည်",
 
         btn_buy_voice: "💎 Voice Plan ဝယ်ယူမည်",
         btn_buy_recap: "🎬 Recap Plan ဝယ်ယူမည်",
@@ -431,24 +436,29 @@ const translations = {
         plan_voice_f5: "✓ High-Fidelity 24kHz PCM WAV Direct Download",
 
         plan_recap_name: "🎬 Movie Recap Studio Pro",
-        plan_recap_alloc: "60 Movie Recap Video Credits",
+        plan_recap_alloc: "60 Movie Recap Credits (Max 10 mins/video)",
         plan_recap_price: "35,000",
         plan_recap_badge: "Video Editors 🎬",
-        plan_recap_f1: "✓ 60 Full HD 1080p Movie Recap Generations",
+        plan_recap_f1: "✓ 60 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
         plan_recap_f2: "✓ 5 Story Styles & 4 Subtitle Typography Presets",
         plan_recap_f3: "✓ Anti-Copyright Smart Blur Box (Y, H sliders)",
         plan_recap_f4: "✓ Custom Channel Logo Watermark Overlay",
         plan_recap_f5: "✓ High-Speed Multi-Threaded Video Rendering",
 
         plan_master_name: "👑 All-in-One Master Suite",
-        plan_master_alloc: "600 Mins + 150 Recap Credits",
+        plan_master_alloc: "600 Mins + 150 Recap Credits (Max 10 mins/video)",
         plan_master_price: "55,000",
         plan_master_badge: "Best Value Master 💎",
         plan_master_f1: "✓ Full Voice Clone Studio Pro (600 Mins)",
-        plan_master_f2: "✓ Full Movie Recap Studio Pro (150 Videos)",
+        plan_master_f2: "✓ Full Movie Recap Studio Pro (150 Videos - Max 10 mins/video)",
         plan_master_f3: "✓ 1 Free Custom Trained Voice Model Slot",
         plan_master_f4: "✓ Dedicated High-Speed Cloud Node Priority",
         plan_master_f5: "✓ Commercial Copyright Safe & 24/7 VIP Support",
+
+        // Recap Duration Limit UI
+        recap_limit_notice: "🎬 1 Credit = 1 Video (Max 10 mins duration)",
+        recap_duration_warning: "⚠️ Video duration exceeds 10 minutes limit (1 Credit allows up to 10 mins)",
+        recap_duration_valid: "✅ Within 10 mins limit",
 
         btn_buy_voice: "💎 Get Voice Plan",
         btn_buy_recap: "🎬 Get Recap Plan",

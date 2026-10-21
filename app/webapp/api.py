@@ -558,6 +558,7 @@ class RecapConfigRequest(BaseModel):
     sub_lines: int = Field(1, ge=1, le=2)
     include_logo: bool = True
     logo_pos: str = "top-right"       # top-right, top-left, bottom-right, bottom-left, top-center
+    duration_seconds: Optional[int] = None
 
 
 async def _send_recap_telegram_delivery(
@@ -849,6 +850,17 @@ async def create_recap_job(
         raise HTTPException(
             status_code=403,
             detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
+        )
+
+    # Duration limit validation (Max 10 minutes per recap credit)
+    max_duration_allowed = getattr(settings, "recap_max_duration_seconds", 600)
+    if req.duration_seconds and req.duration_seconds > max_duration_allowed:
+        dur_mins = req.duration_seconds // 60
+        dur_secs = req.duration_seconds % 60
+        max_m = max_duration_allowed // 60
+        raise HTTPException(
+            status_code=400,
+            detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်/Credit) ထက် ကျော်လွန်နေပါသည်။ ၁၀ မိနစ်အောက် ဗီဒီယိုကိုသာ အသုံးပြုပေးပါခင်ဗျာ။",
         )
 
     # Deduct credit if non-admin
@@ -1165,11 +1177,11 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "id": "recap_studio_pro",
                 "name": "🎬 Movie Recap Studio Pro" if is_my else "🎬 Movie Recap Studio Pro",
                 "category": "recap",
-                "allocation": "60 Movie Recap Credits" if is_my else "60 Movie Recap Credits",
+                "allocation": "60 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "60 Movie Recap Credits (Max 10 mins/video)",
                 "price": "35,000",
                 "currency": "MMK",
                 "features": [
-                    "Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား ဖန်တီးခွင့်" if is_my else "60 Full HD 1080p Movie Recap Generations",
+                    "Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "60 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
                     "ဇာတ်လမ်းစတိုင် ၅ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်)" if is_my else "5 Narration Styles (Viral Hook, Dramatic, POV)",
                     "စာတန်းထိုးစတိုင် ၄ မျိုး (Classic Gold, White, Dark Box, Neon)" if is_my else "4 Subtitle Presets (Gold, White, Dark Box, Neon)",
                     "မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)" if is_my else "Anti-Copyright Custom Blur Box (Y, H Sliders)",
@@ -1181,12 +1193,12 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "id": "all_in_one_master",
                 "name": "👑 All-in-One Master Suite" if is_my else "👑 All-in-One Master Suite",
                 "category": "bundle",
-                "allocation": "600 Mins + 150 Recap Credits" if is_my else "600 Mins + 150 Recap Credits",
+                "allocation": "600 Mins + 150 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "600 Mins + 150 Recap Credits (Max 10 mins/video)",
                 "price": "55,000",
                 "currency": "MMK",
                 "features": [
                     "Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၆၀၀ - ၁၀ နာရီ)" if is_my else "Full Voice Clone Studio Pro (600 Mins)",
-                    "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား)" if is_my else "Full Movie Recap Studio Pro (150 Videos)",
+                    "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Movie Recap Studio Pro (150 Videos - Max 10 mins/video)",
                     "မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း" if is_my else "1 Free Custom Trained Voice Model Slot",
                     "Dedicated High-Speed Processing Server" if is_my else "Dedicated High-Speed Cloud Node Priority",
                     "Commercial Copyright Safe & 24/7 VIP Direct Support" if is_my else "Commercial Copyright Safe & 24/7 VIP Support",
@@ -1195,8 +1207,18 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
             },
         ],
         "payment_accounts": [
-            {"provider": "KBZPay", "number": "09951234567", "name": "Ko Win", "color": "#0047BA"},
-            {"provider": "WavePay", "number": "09951234567", "name": "Ko Win", "color": "#FEE600"},
+            {
+                "provider": "KBZPay",
+                "number": getattr(settings, "payment_kpay_number", "09790760003") or "09790760003",
+                "name": getattr(settings, "payment_kpay_name", "Win Kyaw Oo") or "Win Kyaw Oo",
+                "color": "#0047BA",
+            },
+            {
+                "provider": "WavePay",
+                "number": getattr(settings, "payment_wave_number", "09790760003") or "09790760003",
+                "name": getattr(settings, "payment_wave_name", "Win Kyaw Oo") or "Win Kyaw Oo",
+                "color": "#FEE600",
+            },
         ],
         "support_telegram": "@VoiceCloneProAdmin",
     }

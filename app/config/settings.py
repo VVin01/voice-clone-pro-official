@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     # Edge TTS defaults
     default_tts_voice: str = "my-MM-ThihaNeural"
 
+    # Recap Studio Policies
+    recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # Max 10 minutes per recap credit
+
     # Payment accounts
     payment_kpay_number: str = "09790760003"
     payment_kpay_name: str = "Win Kyaw Oo"

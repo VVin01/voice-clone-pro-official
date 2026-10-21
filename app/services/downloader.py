@@ -992,6 +992,24 @@ class MediaDownloader:
                 progress_callback(0, 4, "📥 Downloading source video from URL...")
             source_video_path, _ = self.download_video(url_or_path, target_dir=dest_dir)
 
+        # Enforce maximum video duration limit per credit (default 10 minutes / 600 seconds)
+        try:
+            from app.config import settings
+            max_dur = getattr(settings, "recap_max_duration_seconds", 600)
+            meta = probe_local_media(source_video_path)
+            actual_dur = float(meta.get("duration", 0.0) or 0.0)
+            if actual_dur > max_dur:
+                m = int(actual_dur // 60)
+                s = int(actual_dur % 60)
+                max_m = max_dur // 60
+                raise ValueError(
+                    f"ဗီဒီယို ကြာချိန် ({m:02d}:{s:02d}) သည် ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်/Credit) ထက် ကျော်လွန်နေပါသည်။ ၁၀ မိနစ်အောက် ဗီဒီယိုကိုသာ အသုံးပြုပေးပါခင်ဗျာ။"
+                )
+        except ValueError:
+            raise
+        except Exception as probe_err:
+            logger.debug(f"Duration limit check skipped on probe error: {probe_err}")
+
         # 2. Run the full recap engine pipeline with Anti-Copyright & Branding
         recap_res = run_recap_pipeline(
             source_video_path=source_video_path,
