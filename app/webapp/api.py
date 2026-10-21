@@ -220,19 +220,44 @@ async def create_voice_job(
             detail=f"အက္ခရာ အရေအတွက် {len(clean_text)} သည် ကန့်သတ်ချက် {char_limit} ထက် ကျော်လွန်နေပါသည်။ VIP ရယူပါရန်။",
         )
 
-    # Find model
-    stmt = select(VoiceModel).where(VoiceModel.slug == req.model_slug)
-    res = await db.execute(stmt)
-    model = res.scalar_one_or_none()
-    if not model:
-        stmt2 = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
-        res2 = await db.execute(stmt2)
-        model = res2.scalar_one_or_none()
+    # Determine engine & resolve authorized model
+    is_vox = (
+        req.engine == "voxcpm"
+        or req.preset_voice is not None
+        or "voxcpm" in (req.model_slug or "").lower()
+    )
+    actual_engine = "voxcpm" if is_vox else "applio"
+
+    if actual_engine == "voxcpm":
+        stmt_vox = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
+        res_vox = await db.execute(stmt_vox)
+        model = res_vox.scalar_one_or_none()
+        if not model:
+            stmt_vox2 = select(VoiceModel).where(VoiceModel.pth_path == "voxcpm")
+            res_vox2 = await db.execute(stmt_vox2)
+            model = res_vox2.scalar_one_or_none()
+        if not model:
+            from app.models.enums import VoiceModelStatus, VoiceModelType
+            model = VoiceModel(
+                name="🎙️ VoxCPM (Cloud AI)",
+                slug="voxcpm-cloud-ai",
+                type=VoiceModelType.SYSTEM.value,
+                status=VoiceModelStatus.ACTIVE.value,
+                allowed_for_free=True,
+                allowed_for_purchased=True,
+                is_default_free=True,
+                pth_path="voxcpm",
+                model_dir="cloud",
+            )
+            db.add(model)
+            await db.commit()
+            await db.refresh(model)
+    else:
+        stmt = select(VoiceModel).where(VoiceModel.slug == req.model_slug)
+        res = await db.execute(stmt)
+        model = res.scalar_one_or_none()
         if not model:
             raise HTTPException(status_code=404, detail="အသံမော်ဒယ် မတွေ့ရှိပါ")
-
-    is_vox = (model.pth_path == "voxcpm" or "voxcpm" in model.slug.lower() or req.engine == "voxcpm")
-    actual_engine = "voxcpm" if is_vox else "applio"
 
     job = Job(
         id=str(uuid.uuid4()),
@@ -289,13 +314,42 @@ async def create_voice_job_with_audio(
             detail=f"အက္ခရာ အရေအတွက် {len(clean_text)} သည် ကန့်သတ်ချက် {char_limit} ထက် ကျော်လွန်နေပါသည်။",
         )
 
-    stmt = select(VoiceModel).where(VoiceModel.slug == model_slug)
-    res = await db.execute(stmt)
-    model = res.scalar_one_or_none()
-    if not model:
-        stmt2 = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
-        res2 = await db.execute(stmt2)
-        model = res2.scalar_one_or_none()
+    # Determine engine & resolve authorized model
+    is_vox = (
+        engine == "voxcpm"
+        or preset_voice is not None
+        or "voxcpm" in (model_slug or "").lower()
+    )
+    actual_engine = "voxcpm" if is_vox else "applio"
+
+    if actual_engine == "voxcpm":
+        stmt_vox = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
+        res_vox = await db.execute(stmt_vox)
+        model = res_vox.scalar_one_or_none()
+        if not model:
+            stmt_vox2 = select(VoiceModel).where(VoiceModel.pth_path == "voxcpm")
+            res_vox2 = await db.execute(stmt_vox2)
+            model = res_vox2.scalar_one_or_none()
+        if not model:
+            from app.models.enums import VoiceModelStatus, VoiceModelType
+            model = VoiceModel(
+                name="🎙️ VoxCPM (Cloud AI)",
+                slug="voxcpm-cloud-ai",
+                type=VoiceModelType.SYSTEM.value,
+                status=VoiceModelStatus.ACTIVE.value,
+                allowed_for_free=True,
+                allowed_for_purchased=True,
+                is_default_free=True,
+                pth_path="voxcpm",
+                model_dir="cloud",
+            )
+            db.add(model)
+            await db.commit()
+            await db.refresh(model)
+    else:
+        stmt = select(VoiceModel).where(VoiceModel.slug == model_slug)
+        res = await db.execute(stmt)
+        model = res.scalar_one_or_none()
         if not model:
             raise HTTPException(status_code=404, detail="အသံမော်ဒယ် မတွေ့ရှိပါ")
 
@@ -311,9 +365,6 @@ async def create_voice_job_with_audio(
             with open(save_file, "wb") as f:
                 f.write(content)
             ref_audio_path = str(save_file)
-
-    is_vox = (model.pth_path == "voxcpm" or "voxcpm" in model.slug.lower() or engine == "voxcpm")
-    actual_engine = "voxcpm" if is_vox else "applio"
 
     job = Job(
         id=str(uuid.uuid4()),

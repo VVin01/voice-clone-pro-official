@@ -63,8 +63,8 @@ async def run_bot_and_worker(mode: str) -> None:
             await setup_bot_commands(bot)
             dp = Dispatcher()
             setup_handlers(dp)
-            logger.info("Starting Telegram bot polling...")
-            bot_task = asyncio.create_task(dp.start_polling(bot))
+            logger.info("Starting Telegram bot polling (drop_pending_updates=True)...")
+            bot_task = asyncio.create_task(dp.start_polling(bot, drop_pending_updates=True))
             tasks.append(bot_task)
 
     # Start FastAPI Telegram Mini App & API Web Server

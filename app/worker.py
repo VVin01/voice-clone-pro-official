@@ -54,19 +54,63 @@ async def process_single_job(
     tracker: JobProgressTracker | None = None
     try:
         # Stage 1: Validation
-        model = await get_authorized_model(session, job.user_id, job.model_id)
-        if not model:
-            raise RuntimeError("Model is missing or not authorized")
+        is_voxcpm = (
+            getattr(job, "engine", "") == "voxcpm"
+            or getattr(job, "preset_voice", None) is not None
+        )
 
-        is_voxcpm = (getattr(model, "pth_path", "") == "voxcpm" or "voxcpm" in getattr(model, "slug", "").lower())
+        model = None
+        if job.model_id is not None:
+            model = await get_authorized_model(session, job.user_id, job.model_id)
+
+        if not model and is_voxcpm:
+            stmt_v = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
+            res_v = await session.execute(stmt_v)
+            model = res_v.scalar_one_or_none()
+
+        if not model:
+            if is_voxcpm:
+                from app.models.enums import VoiceModelStatus, VoiceModelType
+                model = VoiceModel(
+                    name="🎙️ VoxCPM (Cloud AI)",
+                    slug="voxcpm-cloud-ai",
+                    type=VoiceModelType.SYSTEM.value,
+                    status=VoiceModelStatus.ACTIVE.value,
+                    allowed_for_free=True,
+                    allowed_for_purchased=True,
+                    is_default_free=True,
+                    pth_path="voxcpm",
+                    model_dir="cloud",
+                )
+                session.add(model)
+                await session.flush()
+            else:
+                raise RuntimeError("Model is missing or not authorized")
+
+        if not is_voxcpm:
+            is_voxcpm = (
+                getattr(model, "pth_path", "") == "voxcpm"
+                or "voxcpm" in getattr(model, "slug", "").lower()
+            )
+
         if not is_voxcpm and (not model.pth_path or not Path(model.pth_path).is_file()):
             raise RuntimeError("Model file (.pth) is missing or not authorized on this server")
+
+        display_name = model.name or "Standard"
+        if getattr(job, "preset_voice", None):
+            try:
+                from app.services.curated_voices import get_curated_voice
+                p_info = get_curated_voice(job.preset_voice)
+                if p_info:
+                    display_name = f"VoxCPM ({p_info.get('name_my' if lang == 'my' else 'name_en')})"
+            except Exception:
+                pass
 
         tracker = JobProgressTracker(
             bot=bot,
             chat_id=target_chat_id,
             message_id=target_msg_id,
-            model_name=model.name,
+            model_name=display_name,
             lang=lang,
         )
         await tracker.update_step(1)
@@ -93,7 +137,8 @@ async def process_single_job(
                 await normalize_audio_to_wav(base_tts_path, norm_wav_path)
 
         # Stage 3: Run Applio or VoxCPM Voice Conversion with Live Ticker & Real-time ETA
-        out_filename = get_output_filename(model.name)
+        out_name = f"voxcpm_{job.preset_voice}" if getattr(job, "preset_voice", None) else model.name
+        out_filename = get_output_filename(out_name)
         converted_wav_path = temp_dir / out_filename
 
         await tracker.update_step(3)
@@ -136,7 +181,7 @@ async def process_single_job(
                 except Exception as e_vox:
                     logger.warning("VoxCPM primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", e_vox)
                     try:
-                        await tracker.set_custom_note("🔄 VoxCPM Queue ပြည့်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
+                        tracker.set_custom_note("🔄 VoxCPM Queue ပြည့်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
                     except Exception:
                         pass
 
@@ -224,11 +269,12 @@ async def process_single_job(
             try:
                 audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
                 audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
+                caption_model_name = display_name or model.name or "Standard"
                 caption = t(
                     "status_completed_caption",
                     lang,
                     completed_status=t("status_completed", lang),
-                    model_name=html.escape(str(model.name or "Standard")),
+                    model_name=html.escape(str(caption_model_name)),
                     duration_seconds=duration_seconds,
                 )
                 await bot.send_audio(

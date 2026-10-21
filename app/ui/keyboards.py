@@ -47,7 +47,7 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
         ],
     ]
     if is_admin:
-        admin_text = "📢 Broadcast ပို့မည်" if is_my else "📢 Send Broadcast"
+        admin_text = "📢 Broadcast ပို့မည် (Admin)" if is_my else "📢 Send Broadcast (Admin)"
         buttons.append([InlineKeyboardButton(text=admin_text, callback_data="admin:broadcast_prompt")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)

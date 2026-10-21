@@ -13,6 +13,7 @@ const state = {
     voxcpmSubMode: "curated",       // "curated" | "custom"
     selectedPersona: "komin",
     selectedModelSlug: "voxcpm-cloud-ai",
+    selectedApplioSlug: null,
     selectedReferenceFile: null,
     speed: "normal",
     activeJobId: null,
@@ -223,9 +224,12 @@ async function loadApplioModels() {
             return;
         }
 
-        // Set default selected model if none selected
-        if (!state.selectedModelSlug || state.selectedModelSlug === "voxcpm-cloud-ai") {
-            state.selectedModelSlug = applioModels[0].slug;
+        // Preserve and assign default Applio model selection without corrupting VoxCPM
+        if (!state.selectedApplioSlug && applioModels.length > 0) {
+            state.selectedApplioSlug = applioModels[0].slug;
+        }
+        if (state.selectedEngine === "applio") {
+            state.selectedModelSlug = state.selectedApplioSlug || applioModels[0].slug;
         }
 
         const avatarMap = {
@@ -237,7 +241,7 @@ async function loadApplioModels() {
 
         applioModels.forEach(m => {
             const card = document.createElement("div");
-            const isSelected = (m.slug === state.selectedModelSlug);
+            const isSelected = (m.slug === (state.selectedApplioSlug || applioModels[0].slug));
             card.className = `applio-model-card ${isSelected ? "active" : ""}`;
             card.setAttribute("data-slug", m.slug);
 
@@ -254,7 +258,10 @@ async function loadApplioModels() {
                 haptic("selection");
                 document.querySelectorAll(".applio-model-card").forEach(c => c.classList.remove("active"));
                 card.classList.add("active");
-                state.selectedModelSlug = m.slug;
+                state.selectedApplioSlug = m.slug;
+                if (state.selectedEngine === "applio") {
+                    state.selectedModelSlug = m.slug;
+                }
             });
 
             container.appendChild(card);
@@ -327,6 +334,7 @@ function setupVoiceStudio() {
             btnApplio.classList.add("active");
             btnVox.classList.remove("active");
             state.selectedEngine = "applio";
+            state.selectedModelSlug = state.selectedApplioSlug || "kartoon";
             if (voxModeSection) voxModeSection.classList.add("hidden");
             if (applioSection) applioSection.classList.remove("hidden");
             if (voiceQueueNotice) {
@@ -427,14 +435,18 @@ async function handleVoiceGenerate() {
 
     try {
         let res;
-        const presetVoice = (state.selectedEngine === "voxcpm" && state.voxcpmSubMode === "curated")
+        const isVox = (state.selectedEngine === "voxcpm");
+        const presetVoice = (isVox && state.voxcpmSubMode === "curated")
             ? state.selectedPersona
             : null;
+        const targetModelSlug = isVox
+            ? "voxcpm-cloud-ai"
+            : (state.selectedApplioSlug || state.selectedModelSlug || "kartoon");
 
         if (state.selectedReferenceFile) {
             const formData = new FormData();
             formData.append("text", text);
-            formData.append("model_slug", state.selectedModelSlug || "voxcpm-cloud-ai");
+            formData.append("model_slug", targetModelSlug);
             formData.append("speed", state.speed);
             formData.append("gender_preset", "m2m");
             formData.append("engine", state.selectedEngine);
@@ -456,7 +468,7 @@ async function handleVoiceGenerate() {
                 headers: getAuthHeaders(),
                 body: JSON.stringify({
                     text: text,
-                    model_slug: state.selectedModelSlug || "voxcpm-cloud-ai",
+                    model_slug: targetModelSlug,
                     speed: state.speed,
                     gender_preset: "m2m",
                     engine: state.selectedEngine,
