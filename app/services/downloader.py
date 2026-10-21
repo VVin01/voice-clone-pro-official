@@ -398,11 +398,49 @@ class MediaDownloader:
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
                 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+            },
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'mweb', 'web'],
+                }
             }
         }
         # Enable Node.js for solving YouTube JS / n challenges if installed
         if shutil.which("node"):
             opts['js_runtimes'] = {'node': {}}
+
+        # Automatic YouTube cookies loading (from env var YOUTUBE_COOKIES, COOKIES_CONTENT, or cookies.txt)
+        cookie_path = None
+        cookies_env = os.getenv("YOUTUBE_COOKIES") or os.getenv("COOKIES_FILE") or os.getenv("COOKIES_CONTENT")
+        if cookies_env:
+            if os.path.isfile(cookies_env):
+                cookie_path = os.path.abspath(cookies_env)
+            elif "# Netscape" in cookies_env or "youtube.com" in cookies_env or ".google.com" in cookies_env:
+                try:
+                    data_dir = os.path.join(os.getcwd(), "data")
+                    os.makedirs(data_dir, exist_ok=True)
+                    tmp_cookie = os.path.join(data_dir, "youtube_cookies.txt")
+                    with open(tmp_cookie, "w", encoding="utf-8") as cf:
+                        cf.write(cookies_env.strip())
+                    cookie_path = tmp_cookie
+                except Exception as ce:
+                    logger.warning(f"Failed to write YOUTUBE_COOKIES from env: {ce}")
+
+        if not cookie_path:
+            for cand in [
+                os.path.join(os.getcwd(), "cookies.txt"),
+                os.path.join(os.getcwd(), "data", "cookies.txt"),
+                os.path.join(os.getcwd(), "youtube_cookies.txt"),
+                os.path.join(os.getcwd(), "data", "youtube_cookies.txt"),
+            ]:
+                if os.path.isfile(cand):
+                    cookie_path = cand
+                    break
+
+        if cookie_path and os.path.isfile(cookie_path):
+            opts['cookiefile'] = cookie_path
+            logger.info(f"Loaded YouTube authentication cookies from: {cookie_path}")
+
         return opts
 
     def get_local_info(self, file_path: str) -> Dict[str, Any]:
@@ -465,10 +503,21 @@ class MediaDownloader:
         opts = self._get_base_opts()
         opts['extract_flat'] = False
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(expanded_url, download=False)
-            if not info:
-                raise ValueError("Could not extract media info from the provided URL.")
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(expanded_url, download=False)
+                if not info:
+                    raise ValueError("Could not extract media info from the provided URL.")
+        except Exception as e:
+            err_msg = str(e)
+            if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
+                logger.warning(f"YouTube anti-bot challenge encountered in get_info: {err_msg}")
+                raise RuntimeError(
+                    "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
+                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
+                    "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
+                ) from e
+            raise
 
             # Subtitles inspection
             subtitles = info.get('subtitles', {})
@@ -536,23 +585,34 @@ class MediaDownloader:
             ]
         })
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(expanded_url, download=True)
-            # Find the downloaded mp4 file
-            file_path = ydl.prepare_filename(info)
-            if not file_path.endswith('.mp4'):
-                base, _ = os.path.splitext(file_path)
-                file_path = f"{base}.mp4"
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(expanded_url, download=True)
+                # Find the downloaded mp4 file
+                file_path = ydl.prepare_filename(info)
+                if not file_path.endswith('.mp4'):
+                    base, _ = os.path.splitext(file_path)
+                    file_path = f"{base}.mp4"
 
-            if not os.path.exists(file_path):
-                # Search directory for file with id
-                media_id = info.get("id")
-                for fname in os.listdir(dest_dir):
-                    if media_id in fname and fname.endswith(('.mp4', '.mkv', '.webm')):
-                        file_path = os.path.join(dest_dir, fname)
-                        break
+                if not os.path.exists(file_path):
+                    # Search directory for file with id
+                    media_id = info.get("id")
+                    for fname in os.listdir(dest_dir):
+                        if media_id in fname and fname.endswith(('.mp4', '.mkv', '.webm')):
+                            file_path = os.path.join(dest_dir, fname)
+                            break
 
-            return file_path, info
+                return file_path, info
+        except Exception as e:
+            err_msg = str(e)
+            if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
+                logger.warning(f"YouTube anti-bot challenge encountered in download_video: {err_msg}")
+                raise RuntimeError(
+                    "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
+                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
+                    "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
+                ) from e
+            raise
 
     def download_audio(self, url: str, target_dir: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
         """
@@ -587,21 +647,32 @@ class MediaDownloader:
             ]
         })
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(expanded_url, download=True)
-            # Filename after audio extraction is .mp3
-            base_filename = ydl.prepare_filename(info)
-            base_name, _ = os.path.splitext(base_filename)
-            mp3_path = f"{base_name}.mp3"
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(expanded_url, download=True)
+                # Filename after audio extraction is .mp3
+                base_filename = ydl.prepare_filename(info)
+                base_name, _ = os.path.splitext(base_filename)
+                mp3_path = f"{base_name}.mp3"
 
-            if not os.path.exists(mp3_path):
-                media_id = info.get("id")
-                for fname in os.listdir(dest_dir):
-                    if media_id in fname and fname.endswith('.mp3'):
-                        mp3_path = os.path.join(dest_dir, fname)
-                        break
+                if not os.path.exists(mp3_path):
+                    media_id = info.get("id")
+                    for fname in os.listdir(dest_dir):
+                        if media_id in fname and fname.endswith('.mp3'):
+                            mp3_path = os.path.join(dest_dir, fname)
+                            break
 
-            return mp3_path, info
+                return mp3_path, info
+        except Exception as e:
+            err_msg = str(e)
+            if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
+                logger.warning(f"YouTube anti-bot challenge encountered in download_audio: {err_msg}")
+                raise RuntimeError(
+                    "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
+                    "အသံဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ အခြားလင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
+                    "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
+                ) from e
+            raise
 
     def download_audio_for_transcription(self, url: str, target_dir: Optional[str] = None) -> str:
         """

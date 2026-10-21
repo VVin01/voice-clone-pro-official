@@ -6,7 +6,7 @@
 const translations = {
     my: {
         // App Top Bar & Brand
-        brand_title: "VOICE CLONE PRO",
+        brand_title: "VOICE CLONE",
         brand_subtitle: "STUDIO • ULTRA SUITE",
         btn_tutorial: "လမ်းညွှန်",
         tutorial_banner_title: "အသုံးပြုနည်း လမ်းညွှန်ဗီဒီယို",
@@ -315,7 +315,7 @@ const translations = {
 
     en: {
         // App Top Bar & Brand
-        brand_title: "VOICE CLONE PRO",
+        brand_title: "VOICE CLONE",
         brand_subtitle: "STUDIO • ULTRA SUITE",
         btn_tutorial: "Tutorial",
         tutorial_banner_title: "Tutorial Video Guide",
