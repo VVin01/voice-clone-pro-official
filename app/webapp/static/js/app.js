@@ -495,7 +495,55 @@ function switchVoxCPMSubMode(mode) {
     }
 }
 
+function toggleResultAudioPlay() {
+    const player = document.getElementById("result-audio-player");
+    const icon = document.getElementById("play-toggle-icon");
+    const text = document.getElementById("play-toggle-text");
+    if (!player) return;
+
+    if (player.paused) {
+        player.play().then(() => {
+            if (icon) icon.innerText = "⏸️";
+            if (text) text.innerText = currentLang === "my" ? "ခေတ္တရပ်မည် (Pause Audio)" : "Pause Audio";
+        }).catch(err => {
+            console.warn("Audio play error:", err);
+            // If autoplay is blocked or user needs to click again
+            if (icon) icon.innerText = "▶️";
+            if (text) text.innerText = currentLang === "my" ? "အသံဖွင့်နားထောင်မည် (Play Audio)" : "Play Audio";
+        });
+    } else {
+        player.pause();
+        if (icon) icon.innerText = "▶️";
+        if (text) text.innerText = currentLang === "my" ? "အသံဖွင့်နားထောင်မည် (Play Audio)" : "Play Audio";
+    }
+}
+window.toggleResultAudioPlay = toggleResultAudioPlay;
+
+function setupAudioPlayerEvents() {
+    const player = document.getElementById("result-audio-player");
+    if (!player) return;
+    player.addEventListener("play", () => {
+        const icon = document.getElementById("play-toggle-icon");
+        const text = document.getElementById("play-toggle-text");
+        if (icon) icon.innerText = "⏸️";
+        if (text) text.innerText = currentLang === "my" ? "ခေတ္တရပ်မည် (Pause Audio)" : "Pause Audio";
+    });
+    player.addEventListener("pause", () => {
+        const icon = document.getElementById("play-toggle-icon");
+        const text = document.getElementById("play-toggle-text");
+        if (icon) icon.innerText = "▶️";
+        if (text) text.innerText = currentLang === "my" ? "အသံဖွင့်နားထောင်မည် (Play Audio)" : "Play Audio";
+    });
+    player.addEventListener("ended", () => {
+        const icon = document.getElementById("play-toggle-icon");
+        const text = document.getElementById("play-toggle-text");
+        if (icon) icon.innerText = "🔄";
+        if (text) text.innerText = currentLang === "my" ? "ပြန်လည်နားထောင်မည် (Replay)" : "Replay Audio";
+    });
+}
+
 function setupVoiceStudio() {
+    setupAudioPlayerEvents();
     const textInput = document.getElementById("voice-text-input");
     const charCount = document.getElementById("char-count");
 
@@ -746,6 +794,7 @@ function startJobPolling(jobId) {
 
                 if (audioPlayer && data.output_audio_url) {
                     audioPlayer.src = data.output_audio_url;
+                    audioPlayer.load();
                     audioPlayer.play().catch(() => {});
                 }
                 if (btnDl && data.output_audio_url) {
@@ -2430,6 +2479,8 @@ async function checkStartupDeepLinks() {
                     }
                     if (audioPlayer && data.output_audio_url) {
                         audioPlayer.src = data.output_audio_url;
+                        audioPlayer.load();
+                        audioPlayer.play().catch(() => {});
                     }
                     if (btnDl && data.output_audio_url) {
                         btnDl.href = data.output_audio_url;

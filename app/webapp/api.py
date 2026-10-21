@@ -456,6 +456,43 @@ async def download_job_audio(
     )
 
 
+@api_router.post("/internal/worker/upload-result/{job_id}")
+async def upload_worker_job_result(
+    job_id: str,
+    file: UploadFile = File(...),
+    auth_token: str = Header(None, alias="X-Worker-Token"),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Internal sync endpoint for Laptop Worker to upload converted audio results to Render Cloud."""
+    expected_token = settings.bot_token
+    if not auth_token or auth_token != expected_token:
+        raise HTTPException(status_code=403, detail="Unauthorized worker upload")
+
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    outputs_dir = settings.storage_root / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_filename = f"{job_id}_{file.filename}"
+    dest_path = outputs_dir / dest_filename
+
+    with open(dest_path, "wb") as f_out:
+        shutil.copyfileobj(file.file, f_out)
+
+    job.result_path = str(dest_path)
+    job.status = JobStatus.SUCCESS.value
+    await db.commit()
+
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "saved_path": str(dest_path),
+        "download_url": f"/api/audio/download/{job_id}",
+    }
+
+
 @api_router.get("/voices/sample/{slug}")
 @api_router.get("/voices/preview/{slug}")
 async def get_voice_sample_audio(slug: str, db: AsyncSession = Depends(get_db_session)):

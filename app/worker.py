@@ -30,6 +30,28 @@ from app.services.progress import JobProgressTracker, render_stepper_progress, s
 logger = logging.getLogger(__name__)
 
 
+async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
+    """Upload generated audio file from Local Worker to Render Cloud so Mini App & Bot can serve it."""
+    import os
+    cloud_url = os.getenv("RENDER_EXTERNAL_URL", "").strip() or os.getenv("MINI_APP_URL", "").strip() or "https://voice-clone-studio-c1er.onrender.com"
+    if not file_path or not file_path.is_file():
+        return
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            with open(file_path, "rb") as f:
+                files = {"file": (file_path.name, f, "audio/wav")}
+                headers = {"X-Worker-Token": settings.bot_token}
+                url = f"{cloud_url}/api/internal/worker/upload-result/{job_id}"
+                resp = await client.post(url, files=files, headers=headers)
+                if resp.is_success:
+                    logger.info("✅ Audio result for job %s successfully uploaded to Render Cloud server!", job_id)
+                else:
+                    logger.warning("Cloud upload for job %s returned status %s: %s", job_id, resp.status_code, resp.text)
+    except Exception as e:
+        logger.warning("Failed to sync output to cloud for job %s: %s", job_id, e)
+
+
 async def process_single_job(
     session: AsyncSession,
     job: Job,
@@ -261,6 +283,10 @@ async def process_single_job(
         except Exception as copy_err:
             logger.warning("Could not persist generated audio to %s: %s", permanent_wav_path, copy_err)
             job.result_path = str(converted_wav_path)
+
+        # Upload audio result to Render Cloud server so Mini App & Bot can stream / download it
+        final_audio_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
+        await sync_output_to_cloud(job.id, final_audio_path)
 
         # Deduct actual generated duration (idempotent per job.id)
         if not settings.is_admin(job.user_id):

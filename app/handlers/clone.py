@@ -4,7 +4,7 @@ import logging
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo, FSInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -624,65 +624,124 @@ async def _submit_voxcpm_job(
 @clone_router.callback_query(F.data.startswith("send_audio_"))
 async def handle_send_audio_callback(callback: CallbackQuery):
     job_id = callback.data.replace("send_audio_", "").strip()
-    await callback.answer("⏳ အသံဖိုင် ပေးပို့နေပါသည်...")
+    try:
+        await callback.answer("⏳ အသံဖိုင် ပေးပို့နေပါသည်...")
+    except Exception:
+        pass
 
-    async with AsyncSessionLocal() as session:
-        job = await session.get(Job, job_id)
-        if not job or job.status != JobStatus.SUCCESS.value:
-            await callback.message.answer("⚠️ အသံဖိုင် မတွေ့ရှိပါ သို့မဟုတ် လုပ်ဆောင်ဆဲဖြစ်ပါသည်ခင်ဗျာ။")
-            return
+    try:
+        target_chat_id = callback.from_user.id
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            if not job or job.status != JobStatus.SUCCESS.value:
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text="⚠️ အသံဖိုင် မတွေ့ရှိပါ သို့မဟုတ် လုပ်ဆောင်ဆဲဖြစ်ပါသည်ခင်ဗျာ။",
+                )
+                return
 
-        res_path = Path(job.result_path) if job.result_path else None
-        if res_path and not res_path.is_file():
-            # Search by filename in storage
-            for found in Path(settings.storage_root).rglob(res_path.name):
-                if found.is_file():
-                    res_path = found
-                    break
+            res_path = Path(job.result_path) if job.result_path else None
+            if not res_path or not res_path.is_file():
+                # Search by job_id in outputs
+                outputs_dir = settings.storage_root / "outputs"
+                matches = list(outputs_dir.glob(f"{job.id}*"))
+                if matches and matches[0].is_file():
+                    res_path = matches[0]
 
-        if res_path and res_path.is_file():
-            await callback.message.answer_audio(
-                audio=FSInputFile(str(res_path)),
-                caption=f"🎧 <b>AI Voice Clone:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
-                parse_mode="HTML",
+            if res_path and res_path.is_file():
+                await callback.bot.send_audio(
+                    chat_id=target_chat_id,
+                    audio=FSInputFile(str(res_path)),
+                    caption=f"🎧 <b>AI Voice Clone:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                    parse_mode="HTML",
+                )
+            else:
+                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                dl_url = f"{app_url}/api/audio/download/{job_id}"
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🎧 Mini App တွင် ဖွင့်နားထောင်မည်",
+                            web_app=WebAppInfo(url=f"{app_url}?job_id={job_id}")
+                        )
+                    ]
+                ])
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=(
+                        f"🎧 <b>အသံဖိုင် အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
+                        f"📥 <a href=\"{dl_url}\">တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
+                    ),
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
+    except Exception as e:
+        logger.error(f"Error handling send_audio callback for job {job_id}: {e}", exc_info=True)
+        try:
+            await callback.bot.send_message(
+                chat_id=callback.from_user.id,
+                text=f"⚠️ အသံဖိုင် ပေးပို့ရာတွင် အဆင်မပြေဖြစ်သွားပါသည်: {e}",
             )
-        else:
-            app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
-            dl_url = f"{app_url}/api/voice/download/{job_id}"
-            await callback.message.answer(
-                f"📥 <b>အသံဖိုင် ဒေါင်းလုဒ် ရယူရန် Link:</b>\n<a href='{dl_url}'>ဒီနေရာကို နှိပ်၍ Download ရယူပါ</a>",
-                parse_mode="HTML",
-            )
+        except Exception:
+            pass
 
 
 @clone_router.callback_query(F.data.startswith("send_recap_"))
 async def handle_send_recap_callback(callback: CallbackQuery):
     job_id = callback.data.replace("send_recap_", "").strip()
-    await callback.answer("⏳ Recap ဗီဒီယို ပေးပို့နေပါသည်...")
+    try:
+        await callback.answer("⏳ Recap ဗီဒီယို ပေးပို့နေပါသည်...")
+    except Exception:
+        pass
 
-    async with AsyncSessionLocal() as session:
-        job = await session.get(Job, job_id)
-        video_path = None
-        if job and job.result_path and Path(job.result_path).is_file():
-            video_path = Path(job.result_path)
-        else:
-            job_dir = settings.storage_root / "recap_output" / job_id
-            if job_dir.is_dir():
-                for f in job_dir.glob("*.mp4"):
-                    if f.is_file():
-                        video_path = f
-                        break
+    try:
+        target_chat_id = callback.from_user.id
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            video_path = None
+            if job and job.result_path and Path(job.result_path).is_file():
+                video_path = Path(job.result_path)
+            else:
+                job_dir = settings.storage_root / "recap_output" / job_id
+                if job_dir.is_dir():
+                    for f in job_dir.glob("*.mp4"):
+                        if f.is_file():
+                            video_path = f
+                            break
 
-        if video_path and video_path.is_file():
-            await callback.message.answer_video(
-                video=FSInputFile(str(video_path)),
-                caption=f"🎬 <b>Pro Movie Recap:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
-                parse_mode="HTML",
+            if video_path and video_path.is_file():
+                await callback.bot.send_video(
+                    chat_id=target_chat_id,
+                    video=FSInputFile(str(video_path)),
+                    caption=f"🎬 <b>Pro Movie Recap:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                    parse_mode="HTML",
+                )
+            else:
+                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                dl_url = f"{app_url}/api/recap/download/{job_id}/video"
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🎬 Mini App တွင် ကြည့်ရှုမည်",
+                            web_app=WebAppInfo(url=f"{app_url}?recap_job_id={job_id}")
+                        )
+                    ]
+                ])
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=(
+                        f"🎬 <b>Movie Recap Video အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
+                        f"📥 <a href=\"{dl_url}\">တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
+                    ),
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
+    except Exception as e:
+        logger.error(f"Error handling send_recap callback for job {job_id}: {e}", exc_info=True)
+        try:
+            await callback.bot.send_message(
+                chat_id=callback.from_user.id,
+                text=f"⚠️ Recap ဗီဒီယို ပေးပို့ရာတွင် အဆင်မပြေဖြစ်သွားပါသည်: {e}",
             )
-        else:
-            app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
-            dl_url = f"{app_url}/api/recap/download/{job_id}/video"
-            await callback.message.answer(
-                f"📥 <b>Recap Video ဒေါင်းလုဒ် ရယူရန် Link:</b>\n<a href='{dl_url}'>ဒီနေရာကို နှိပ်၍ Download ရယူပါ</a>",
-                parse_mode="HTML",
-            )
+        except Exception:
+            pass

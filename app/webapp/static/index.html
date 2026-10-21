@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=3.1.0">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.2.0">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -201,7 +201,11 @@
 
                 <div class="card glass result-card hidden" id="voice-result-box">
                     <div class="result-title" data-i18n="result_title">🎉 အသံထုတ်ယူမှု ပြီးစီးပါပြီ</div>
-                    <audio id="result-audio-player" controls class="custom-audio-player"></audio>
+                    <button id="btn-voice-play-toggle" class="btn gold-gradient-btn mb-2 w-100" onclick="toggleResultAudioPlay()">
+                        <span class="btn-icon" id="play-toggle-icon">▶️</span>
+                        <span id="play-toggle-text">အသံဖွင့်နားထောင်မည် (Play Audio)</span>
+                    </button>
+                    <audio id="result-audio-player" controls class="custom-audio-player" preload="auto"></audio>
                     <div class="result-actions">
                         <a id="btn-download-audio" href="#" download="voice_clone.wav" class="btn secondary-btn" data-i18n="btn_download_wav">📥 Download WAV</a>
                         <button id="btn-voice-send-telegram" class="btn send-telegram-gold-btn" onclick="sendVoiceToTelegram()">
@@ -1046,7 +1050,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=3.1.0"></script>
-    <script src="/static/js/app.js?v=3.1.0"></script>
+    <script src="/static/js/i18n.js?v=3.2.0"></script>
+    <script src="/static/js/app.js?v=3.2.0"></script>
 </body>
 </html>
