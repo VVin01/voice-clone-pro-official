@@ -399,14 +399,14 @@ class MediaDownloader:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
                 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
             },
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['tv_samsung', 'web', 'default'],
-                }
-            }
         }
         # Enable Node.js for solving YouTube JS / n challenges if installed or available via package
-        node_bin = shutil.which("node")
+        node_bin = shutil.which("node") or shutil.which("nodejs")
+        if not node_bin:
+            for sys_cand in ["/usr/bin/node", "/usr/local/bin/node", "/opt/render/project/src/.venv/bin/node"]:
+                if os.path.isfile(sys_cand) and os.access(sys_cand, os.X_OK):
+                    node_bin = sys_cand
+                    break
         if not node_bin:
             try:
                 import nodejs_wheel.executable
@@ -420,6 +420,7 @@ class MediaDownloader:
 
         if node_bin:
             opts['js_runtimes'] = {'node': {'path': node_bin}}
+            logger.info(f"Using Node.js runtime for YouTube JS challenges: {node_bin}")
 
         # Automatic YouTube cookies loading (from env var YOUTUBE_COOKIES, COOKIES_CONTENT, or cookies.txt)
         cookie_path = None
@@ -436,14 +437,24 @@ class MediaDownloader:
                         cf.write(cookies_env.strip())
                     cookie_path = tmp_cookie
                 except Exception as ce:
-                    logger.warning(f"Failed to write YOUTUBE_COOKIES from env: {ce}")
+                    try:
+                        import tempfile
+                        tmp_cookie = os.path.join(tempfile.gettempdir(), "youtube_cookies.txt")
+                        with open(tmp_cookie, "w", encoding="utf-8") as cf:
+                            cf.write(cookies_env.strip())
+                        cookie_path = tmp_cookie
+                    except Exception as ce2:
+                        logger.warning(f"Failed to write YOUTUBE_COOKIES from env: {ce2}")
 
         if not cookie_path:
+            repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             for cand in [
                 os.path.join(os.getcwd(), "cookies.txt"),
                 os.path.join(os.getcwd(), "data", "cookies.txt"),
                 os.path.join(os.getcwd(), "youtube_cookies.txt"),
                 os.path.join(os.getcwd(), "data", "youtube_cookies.txt"),
+                os.path.join(repo_root, "cookies.txt"),
+                os.path.join(repo_root, "data", "cookies.txt"),
             ]:
                 if os.path.isfile(cand):
                     cookie_path = cand
