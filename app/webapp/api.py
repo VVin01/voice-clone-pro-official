@@ -1152,9 +1152,14 @@ async def send_voice_to_telegram(
     if db_job and db_job.result_path and Path(db_job.result_path).is_file():
         audio_path = Path(db_job.result_path)
     else:
-        cand = settings.storage_root / "audio_out" / f"{job_id}.wav"
-        if cand.is_file():
-            audio_path = cand
+        outputs_dir = settings.storage_root / "outputs"
+        matches = list(outputs_dir.glob(f"{job_id}*"))
+        if matches and matches[0].is_file():
+            audio_path = matches[0]
+        else:
+            cand = settings.storage_root / "audio_out" / f"{job_id}.wav"
+            if cand.is_file():
+                audio_path = cand
 
     if not audio_path or not audio_path.is_file():
         raise HTTPException(status_code=404, detail="အသံဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
