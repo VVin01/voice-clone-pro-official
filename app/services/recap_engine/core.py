@@ -8,12 +8,17 @@ import shutil
 import socket
 import subprocess
 import re
+import sys
 import unicodedata
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
 
 
 LogFn = Callable[[str], None]
@@ -1932,7 +1937,10 @@ class EdgeSmartSync:
         vox_engine = None
         if use_voxcpm:
             try:
-                from recap_engine.voxcpm_engine import VoxCPMEngine
+                try:
+                    from recap_engine.voxcpm_engine import VoxCPMEngine
+                except ImportError:
+                    from voxcpm_engine import VoxCPMEngine
                 vox_engine = VoxCPMEngine(work_dir=paths.work / "voxcpm_temp", log_fn=self.log)
                 self.log("🎙️ Initialized VoxCPM Cloud Neural Voice Engine (Zero-shot human audio)")
             except Exception as vox_init_err:
@@ -1942,7 +1950,10 @@ class EdgeSmartSync:
         base_edge_voice = self.voice
         if str(self.voice).startswith(("clone_", "clone:")):
             try:
-                from recap_engine.voice_clone_bridge import resolve_clone_model
+                try:
+                    from recap_engine.voice_clone_bridge import resolve_clone_model
+                except ImportError:
+                    from voice_clone_bridge import resolve_clone_model
                 minfo = resolve_clone_model(self.voice)
                 base_edge_voice = minfo.get("edge_base", "my-MM-ThihaNeural") if minfo else "my-MM-ThihaNeural"
             except Exception:
@@ -2072,7 +2083,10 @@ class EdgeSmartSync:
             clone_tag = str(self.overlays.get("clone_model") or self.voice)
             cloned_audio_path = paths.root / "recap_voice_cloned.wav"
             try:
-                from recap_engine.voice_clone_bridge import convert_voice_rvc
+                try:
+                    from recap_engine.voice_clone_bridge import convert_voice_rvc
+                except ImportError:
+                    from voice_clone_bridge import convert_voice_rvc
                 self.log(f"🎭 Voice Clone Pro (Applio RVC) — Converting audio with model '{clone_tag}'...")
                 self.progress(len(segments), len(segments), f"🎭 RVC Voice Cloning: {clone_tag}")
                 cloned_res = convert_voice_rvc(

@@ -115,21 +115,31 @@ def extract_thumbnail_from_media(file_path: str, output_path: str, timestamp_sec
     return None
 
 try:
-    from transcriber import transcribe_to_srt
+    from app.services.transcriber import transcribe_to_srt
 except ImportError:
-    transcribe_to_srt = None
+    try:
+        from transcriber import transcribe_to_srt
+    except ImportError:
+        transcribe_to_srt = None
 
 try:
-    from gemini_recap import generate_tiktok_recap_and_srt, get_gemini_api_key
+    from app.services.gemini_recap import generate_tiktok_recap_and_srt, get_gemini_api_key
 except ImportError:
-    generate_tiktok_recap_and_srt = None
-    get_gemini_api_key = lambda: None
+    try:
+        from gemini_recap import generate_tiktok_recap_and_srt, get_gemini_api_key
+    except ImportError:
+        generate_tiktok_recap_and_srt = None
+        get_gemini_api_key = lambda: None
 
 try:
-    from recap_engine.recap_pipeline import run_recap_pipeline, generate_recap_preview
+    from app.services.recap_engine.recap_pipeline import run_recap_pipeline, generate_recap_preview
 except ImportError:
-    run_recap_pipeline = None
-    generate_recap_preview = None
+    try:
+        from recap_engine.recap_pipeline import run_recap_pipeline, generate_recap_preview
+    except ImportError as e:
+        logger.error(f"Failed to import recap_engine: {e}")
+        run_recap_pipeline = None
+        generate_recap_preview = None
 
 # Regex to detect URLs in a message
 URL_REGEX = re.compile(
