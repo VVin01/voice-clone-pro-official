@@ -519,34 +519,34 @@ class MediaDownloader:
                 ) from e
             raise
 
-            # Subtitles inspection
-            subtitles = info.get('subtitles', {})
-            auto_captions = info.get('automatic_captions', {})
-            available_subs = list(set(list(subtitles.keys()) + list(auto_captions.keys())))
+        # Subtitles inspection
+        subtitles = info.get('subtitles', {})
+        auto_captions = info.get('automatic_captions', {})
+        available_subs = list(set(list(subtitles.keys()) + list(auto_captions.keys())))
 
-            duration = info.get('duration')
-            title = info.get('title') or "media"
-            uploader = info.get('uploader') or info.get('channel') or info.get('creator') or "Unknown"
-            thumbnail = info.get('thumbnail')
-            filesize = info.get('filesize') or info.get('filesize_approx')
-            platform = detect_platform(expanded_url)
+        duration = info.get('duration')
+        title = info.get('title') or "media"
+        uploader = info.get('uploader') or info.get('channel') or info.get('creator') or "Unknown"
+        thumbnail = info.get('thumbnail')
+        filesize = info.get('filesize') or info.get('filesize_approx')
+        platform = detect_platform(expanded_url)
 
-            return {
-                "id": info.get("id"),
-                "title": title,
-                "duration": duration,
-                "duration_formatted": format_duration(duration),
-                "uploader": uploader,
-                "thumbnail": thumbnail,
-                "platform": platform,
-                "original_url": url,
-                "expanded_url": expanded_url,
-                "filesize": filesize,
-                "filesize_formatted": format_filesize(filesize),
-                "available_subs": available_subs,
-                "has_subtitles": len(available_subs) > 0,
-                "raw_info": info
-            }
+        return {
+            "id": info.get("id"),
+            "title": title,
+            "duration": duration,
+            "duration_formatted": format_duration(duration),
+            "uploader": uploader,
+            "thumbnail": thumbnail,
+            "platform": platform,
+            "original_url": url,
+            "expanded_url": expanded_url,
+            "filesize": filesize,
+            "filesize_formatted": format_filesize(filesize),
+            "available_subs": available_subs,
+            "has_subtitles": len(available_subs) > 0,
+            "raw_info": info
+        }
 
     def download_video(self, url: str, target_dir: Optional[str] = None, max_height: Optional[int] = None) -> Tuple[str, Dict[str, Any]]:
         """
