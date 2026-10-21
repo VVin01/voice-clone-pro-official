@@ -283,6 +283,8 @@ const translations = {
         btn_preview_voice: "🔊 နမူနာ နားထောင်မည်",
         preview_voice: "နမူနာ နားထောင်မည်",
         preview_playing: "ဖွင့်နေသည်...",
+        alert_voice_ready: "🎉 သင့် AI Voice ဖန်တီးမှု အောင်မြင်စွာ ပြီးစီးပါပြီ!",
+        alert_recap_ready: "🎉 Pro Movie Recap ဖန်တီးမှု အောင်မြင်စွာ ပြီးစီးပါပြီ!",
 
         // 24-Hour History UI
         history_recap_title: "🕒 ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ",
@@ -584,6 +586,8 @@ const translations = {
         btn_preview_voice: "🔊 Preview Voice",
         preview_voice: "Listen Preview",
         preview_playing: "Playing...",
+        alert_voice_ready: "🎉 Your AI Voice Generation is Ready!",
+        alert_recap_ready: "🎉 Pro Movie Recap Generation is Ready!",
 
         // 24-Hour History UI
         history_recap_title: "🕒 24-Hour Recap Productions",

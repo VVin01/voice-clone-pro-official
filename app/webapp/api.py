@@ -780,8 +780,50 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
             logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
 
         # Deliverables are stored and ready in Mini App
-        # Telegram delivery is available on-demand via /api/recap/{job_id}/send-telegram
-        logger.info(f"Recap job {job_id} successfully finished. Ready for in-app preview/download.")
+        # Send Telegram notification alert to user even if they closed the Mini App
+        if settings.bot_token and chat_id:
+            try:
+                from aiogram import Bot
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                clean_title = entry.get("title") or "Movie Recap Video"
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🎬 Mini App တွင် ကြည့်ရှုမည်",
+                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap")
+                        ),
+                        InlineKeyboardButton(
+                            text="📱 Video ဖိုင် ပို့ပေးပါ",
+                            callback_data=f"send_recap_{job_id}"
+                        )
+                    ]
+                ])
+                notify_text = (
+                    f"🎉 <b>Pro Movie Recap ဖန်တီးမှု ပြီးစီးပါပြီ!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎬 <b>ခေါင်းစဉ်:</b> <b>{html.escape(str(clean_title[:60]))}</b>\n"
+                    f"🎙️ <b>အသံ:</b> {html.escape(str(req.voice_slug.capitalize()))}\n"
+                    f"⏱️ <b>Format:</b> Full HD 1080p • မြန်မာပြန် + စာတန်းထိုး\n"
+                    f"🆔 <b>Task:</b> <code>#{job_id[:8]}</code>\n\n"
+                    f"✨ သင့် Recap ဗီဒီယို အဆင်သင့်ဖြစ်ပါပြီခင်ဗျာ။ Mini App ကို ပိတ်ထားခဲ့လျှင်ပင် "
+                    f"Mini App တွင် ဖွင့်ကြည့်နိုင်သလို Telegram သို့ တိုက်ရိုက်ရယူနိုင်ပါသည်!"
+                )
+                bot_inst = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                try:
+                    await bot_inst.send_message(
+                        chat_id=chat_id,
+                        text=notify_text,
+                        reply_markup=kb,
+                    )
+                finally:
+                    await bot_inst.session.close()
+            except Exception as notify_err:
+                logger.warning(f"Could not send recap completion notification to user {chat_id}: {notify_err}")
+
+        logger.info(f"Recap job {job_id} successfully finished. Notification sent to Telegram.")
 
     except Exception as e:
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)

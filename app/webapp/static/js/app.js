@@ -41,6 +41,7 @@ const state = {
     recapVoice: "komin",
     recapJobId: null,
     recapPollTimer: null,
+    alertDismissTimer: null,
 };
 
 // ── Telegram WebApp Initialization ─────────────────────────────────────────
@@ -71,6 +72,86 @@ function getAuthHeaders() {
     return headers;
 }
 window.getAuthHeaders = getAuthHeaders;
+
+// ── Floating Luxury Alert Notification Banner ──────────────────────────────
+function showFloatingAlert(title, message, actionCallback, actionText) {
+    haptic("heavy");
+    const container = document.getElementById("floating-alert-container");
+    const titleEl = document.getElementById("floating-alert-title");
+    const descEl = document.getElementById("floating-alert-desc");
+    const actionBtn = document.getElementById("floating-alert-btn");
+
+    if (!container) return;
+
+    if (titleEl) titleEl.innerText = title;
+    if (descEl) descEl.innerText = message;
+
+    if (actionCallback && actionBtn) {
+        actionBtn.innerText = actionText || (currentLang === "my" ? "ကြည့်ရှုမည်" : "View Result");
+        actionBtn.style.display = "inline-flex";
+        actionBtn.onclick = () => {
+            closeFloatingAlert();
+            actionCallback();
+        };
+    } else if (actionBtn) {
+        actionBtn.style.display = "none";
+    }
+
+    container.classList.remove("hidden");
+    void container.offsetWidth;
+    container.classList.add("show");
+
+    // Pleasant notification chime using Web Audio API
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+            const ctx = new AudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+            osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.08);
+            osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.16);
+            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.4);
+        }
+    } catch (e) {}
+
+    if (state.alertDismissTimer) clearTimeout(state.alertDismissTimer);
+    state.alertDismissTimer = setTimeout(() => {
+        closeFloatingAlert();
+    }, 8000);
+}
+window.showFloatingAlert = showFloatingAlert;
+
+function closeFloatingAlert() {
+    const container = document.getElementById("floating-alert-container");
+    if (!container) return;
+    container.classList.remove("show");
+    setTimeout(() => {
+        container.classList.add("hidden");
+    }, 400);
+}
+window.closeFloatingAlert = closeFloatingAlert;
+
+function switchTab(tabId) {
+    const navButtons = document.querySelectorAll(".nav-item");
+    const targetBtn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+    if (targetBtn) {
+        navButtons.forEach(b => b.classList.remove("active"));
+        targetBtn.classList.add("active");
+    }
+    document.querySelectorAll(".tab-pane").forEach(pane => {
+        pane.classList.remove("active");
+    });
+    const activePane = document.getElementById(tabId);
+    if (activePane) activePane.classList.add("active");
+}
+window.switchTab = switchTab;
 
 // ── Language Toggle (i18n) ─────────────────────────────────────────────────
 function toggleLanguage() {
@@ -650,7 +731,10 @@ function startJobPolling(jobId) {
                 clearInterval(state.pollTimer);
                 haptic("heavy");
                 if (progressBox) progressBox.classList.add("hidden");
-                if (resultBox) resultBox.classList.remove("hidden");
+                if (resultBox) {
+                    resultBox.classList.remove("hidden");
+                    resultBox.scrollIntoView({ behavior: "smooth" });
+                }
                 if (btnGen) btnGen.disabled = false;
 
                 const btnTg = document.getElementById("btn-voice-send-telegram");
@@ -669,6 +753,15 @@ function startJobPolling(jobId) {
                 }
                 loadUserProfile();
                 loadUserHistory();
+
+                showFloatingAlert(
+                    t("alert_voice_ready") || "🎉 AI Voice ဖန်တီးမှု ပြီးစီးပါပြီ!",
+                    currentLang === "my" ? "အသံဖိုင် ပြင်ဆင်ပြီးစီးပါပြီ။ ဖွင့်နားထောင်နိုင်ပါပြီ။" : "Your AI voice is ready to listen or send to Telegram.",
+                    () => {
+                        if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
+                    },
+                    currentLang === "my" ? "🎧 နားထောင်မည်" : "🎧 Listen"
+                );
 
             } else if (data.status === "FAILED") {
                 clearInterval(state.pollTimer);
@@ -1383,6 +1476,15 @@ function startRecapJobPolling(jobId) {
                 haptic("success");
                 loadUserProfile();
                 loadUserHistory();
+
+                showFloatingAlert(
+                    t("alert_recap_ready") || "🎉 Pro Movie Recap ဖန်တီးမှု ပြီးစီးပါပြီ!",
+                    currentLang === "my" ? "Full HD Video ပြင်ဆင်ပြီးစီးပါပြီ။ ကြည့်ရှုနိုင်ပါပြီ။" : "Your Movie Recap video is ready to watch or download.",
+                    () => {
+                        if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
+                    },
+                    currentLang === "my" ? "🎬 ကြည့်ရှုမည်" : "🎬 View Video"
+                );
             } else if (data.status === "FAILED") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
@@ -2297,6 +2399,108 @@ async function adminTriggerPurge24h() {
     }
 }
 
+// ── Deep Link Handling (Telegram WebApp & URL Query) ──────────────────────
+async function checkStartupDeepLinks() {
+    try {
+        const urlParams = new URLSearchParams(window.location.search);
+        let jobId = urlParams.get("job_id");
+        let recapJobId = urlParams.get("recap_job_id");
+
+        if (state.tg?.initDataUnsafe?.start_param) {
+            const sp = state.tg.initDataUnsafe.start_param;
+            if (sp.startsWith("job_")) jobId = sp.replace("job_", "");
+            if (sp.startsWith("recap_")) recapJobId = sp.replace("recap_", "");
+        }
+
+        if (jobId) {
+            switchTab("tab-voice");
+            const res = await fetch(`/api/jobs/${jobId}/status`, { headers: getAuthHeaders() });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === "SUCCESS") {
+                    state.activeJobId = jobId;
+                    const resultBox = document.getElementById("voice-result-box");
+                    const audioPlayer = document.getElementById("result-audio-player");
+                    const btnDl = document.getElementById("btn-download-audio");
+                    const btnTg = document.getElementById("btn-voice-send-telegram");
+
+                    if (resultBox) {
+                        resultBox.classList.remove("hidden");
+                        resultBox.scrollIntoView({ behavior: "smooth" });
+                    }
+                    if (audioPlayer && data.output_audio_url) {
+                        audioPlayer.src = data.output_audio_url;
+                    }
+                    if (btnDl && data.output_audio_url) {
+                        btnDl.href = data.output_audio_url;
+                    }
+                    if (btnTg) {
+                        btnTg.disabled = false;
+                        btnTg.classList.remove("sent");
+                        btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_voice_telegram")}</span>`;
+                    }
+                    showFloatingAlert(
+                        t("alert_voice_ready") || "🎉 AI Voice အဆင်သင့်ဖြစ်ပါပြီ!",
+                        currentLang === "my" ? "အသံဖိုင်ကို တိုက်ရိုက်ဖွင့်နားထောင်နိုင်ပါပြီ။" : "Your generated voice is ready to play.",
+                        () => {
+                            if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
+                        },
+                        currentLang === "my" ? "🎧 နားထောင်မည်" : "🎧 Listen"
+                    );
+                } else if (data.status === "RUNNING" || data.status === "QUEUED") {
+                    const progressBox = document.getElementById("voice-progress-box");
+                    if (progressBox) progressBox.classList.remove("hidden");
+                    startJobPolling(jobId);
+                }
+            }
+        } else if (recapJobId) {
+            switchTab("tab-recap");
+            const res = await fetch(`/api/recap/${recapJobId}/status`, { headers: getAuthHeaders() });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === "SUCCESS") {
+                    state.recapJobId = recapJobId;
+                    const resultBox = document.getElementById("recap-result-box");
+                    const player = document.getElementById("recap-result-player");
+                    const btnVideo = document.getElementById("btn-recap-dl-video");
+                    const btnAudio = document.getElementById("btn-recap-dl-audio");
+                    const btnSrt = document.getElementById("btn-recap-dl-srt");
+                    const btnScript = document.getElementById("btn-recap-dl-script");
+                    const btnTg = document.getElementById("btn-recap-send-telegram");
+
+                    if (resultBox) {
+                        resultBox.classList.remove("hidden");
+                        resultBox.scrollIntoView({ behavior: "smooth" });
+                    }
+                    if (player && data.download_urls?.video) {
+                        player.src = data.download_urls.video;
+                        player.classList.remove("hidden");
+                    }
+                    if (btnVideo && data.download_urls?.video) btnVideo.href = data.download_urls.video;
+                    if (btnAudio && data.download_urls?.audio) btnAudio.href = data.download_urls.audio;
+                    if (btnSrt && data.download_urls?.srt) btnSrt.href = data.download_urls.srt;
+                    if (btnScript && data.download_urls?.script) btnScript.href = data.download_urls.script;
+                    if (btnTg) {
+                        btnTg.disabled = false;
+                        btnTg.classList.remove("sent");
+                        btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
+                    }
+                    showFloatingAlert(
+                        t("alert_recap_ready") || "🎉 Pro Movie Recap အဆင်သင့်ဖြစ်ပါပြီ!",
+                        currentLang === "my" ? "Full HD Video ကို တိုက်ရိုက်ဖွင့်ကြည့်နိုင်ပါပြီ။" : "Your recap video is ready to watch.",
+                        () => {
+                            if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
+                        },
+                        currentLang === "my" ? "🎬 ကြည့်ရှုမည်" : "🎬 View Video"
+                    );
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("Deep link handling error:", e);
+    }
+}
+
 // ── App Startup ────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
@@ -2311,4 +2515,5 @@ document.addEventListener("DOMContentLoaded", () => {
     loadCuratedVoices();
     loadApplioModels();
     loadUserHistory();
+    checkStartupDeepLinks();
 });

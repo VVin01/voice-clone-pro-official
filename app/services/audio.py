@@ -166,6 +166,27 @@ async def run_applio_conversion(
 
     output_wav.parent.mkdir(parents=True, exist_ok=True)
 
+    # Resilient path resolution for model_pth and index_path
+    if not model_pth.is_file():
+        candidate = Path(settings.root) / model_pth
+        if candidate.is_file():
+            model_pth = candidate
+        else:
+            for found in Path(settings.storage_root).rglob(model_pth.name):
+                if found.is_file():
+                    model_pth = found
+                    break
+
+    if index_path and not index_path.is_file():
+        candidate_idx = Path(settings.root) / index_path
+        if candidate_idx.is_file():
+            index_path = candidate_idx
+        else:
+            for found in Path(settings.storage_root).rglob(index_path.name):
+                if found.is_file():
+                    index_path = found
+                    break
+
     if not applio_python.is_file() or not bridge_script.is_file():
         logger.warning(f"Applio not found ({applio_python}). Using direct audio fallback.")
         shutil.copy2(input_wav, output_wav)

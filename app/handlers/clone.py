@@ -617,3 +617,72 @@ async def _submit_voxcpm_job(
             if sent:
                 job.status_message_id = sent.message_id
         await session.commit()
+
+
+# ── On-Demand Delivery Callbacks from Completion Alert Notifications ───────────
+
+@clone_router.callback_query(F.data.startswith("send_audio_"))
+async def handle_send_audio_callback(callback: CallbackQuery):
+    job_id = callback.data.replace("send_audio_", "").strip()
+    await callback.answer("⏳ အသံဖိုင် ပေးပို့နေပါသည်...")
+
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Job, job_id)
+        if not job or job.status != JobStatus.SUCCESS.value:
+            await callback.message.answer("⚠️ အသံဖိုင် မတွေ့ရှိပါ သို့မဟုတ် လုပ်ဆောင်ဆဲဖြစ်ပါသည်ခင်ဗျာ။")
+            return
+
+        res_path = Path(job.result_path) if job.result_path else None
+        if res_path and not res_path.is_file():
+            # Search by filename in storage
+            for found in Path(settings.storage_root).rglob(res_path.name):
+                if found.is_file():
+                    res_path = found
+                    break
+
+        if res_path and res_path.is_file():
+            await callback.message.answer_audio(
+                audio=FSInputFile(str(res_path)),
+                caption=f"🎧 <b>AI Voice Clone:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                parse_mode="HTML",
+            )
+        else:
+            app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+            dl_url = f"{app_url}/api/voice/download/{job_id}"
+            await callback.message.answer(
+                f"📥 <b>အသံဖိုင် ဒေါင်းလုဒ် ရယူရန် Link:</b>\n<a href='{dl_url}'>ဒီနေရာကို နှိပ်၍ Download ရယူပါ</a>",
+                parse_mode="HTML",
+            )
+
+
+@clone_router.callback_query(F.data.startswith("send_recap_"))
+async def handle_send_recap_callback(callback: CallbackQuery):
+    job_id = callback.data.replace("send_recap_", "").strip()
+    await callback.answer("⏳ Recap ဗီဒီယို ပေးပို့နေပါသည်...")
+
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Job, job_id)
+        video_path = None
+        if job and job.result_path and Path(job.result_path).is_file():
+            video_path = Path(job.result_path)
+        else:
+            job_dir = settings.storage_root / "recap_output" / job_id
+            if job_dir.is_dir():
+                for f in job_dir.glob("*.mp4"):
+                    if f.is_file():
+                        video_path = f
+                        break
+
+        if video_path and video_path.is_file():
+            await callback.message.answer_video(
+                video=FSInputFile(str(video_path)),
+                caption=f"🎬 <b>Pro Movie Recap:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                parse_mode="HTML",
+            )
+        else:
+            app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+            dl_url = f"{app_url}/api/recap/download/{job_id}/video"
+            await callback.message.answer(
+                f"📥 <b>Recap Video ဒေါင်းလုဒ် ရယူရန် Link:</b>\n<a href='{dl_url}'>ဒီနေရာကို နှိပ်၍ Download ရယူပါ</a>",
+                parse_mode="HTML",
+            )

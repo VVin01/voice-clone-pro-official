@@ -62,6 +62,8 @@ async def process_single_job(
         model = None
         if job.model_id is not None:
             model = await get_authorized_model(session, job.user_id, job.model_id)
+            if not model:
+                model = await session.get(VoiceModel, job.model_id)
 
         if not model and is_voxcpm:
             stmt_v = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
@@ -85,7 +87,9 @@ async def process_single_job(
                 session.add(model)
                 await session.flush()
             else:
-                raise RuntimeError("Model is missing or not authorized")
+                model = await session.get(VoiceModel, job.model_id) if job.model_id else None
+                if not model:
+                    raise RuntimeError("Model is missing or not authorized")
 
         if not is_voxcpm:
             is_voxcpm = (
@@ -93,7 +97,24 @@ async def process_single_job(
                 or "voxcpm" in getattr(model, "slug", "").lower()
             )
 
-        if not is_voxcpm and (not model.pth_path or not Path(model.pth_path).is_file()):
+        def _resolve_model_path(pth_str: str | None) -> Path | None:
+            if not pth_str:
+                return None
+            p = Path(pth_str)
+            if p.is_file():
+                return p
+            cand = Path(settings.root) / p
+            if cand.is_file():
+                return cand
+            for found in Path(settings.storage_root).rglob(p.name):
+                if found.is_file():
+                    return found
+            return None
+
+        resolved_model_pth = _resolve_model_path(getattr(model, "pth_path", None)) if not is_voxcpm else None
+        resolved_index_path = _resolve_model_path(getattr(model, "index_path", None)) if not is_voxcpm else None
+
+        if not is_voxcpm and not resolved_model_pth:
             raise RuntimeError("Model file (.pth) is missing or not authorized on this server")
 
         display_name = model.name or "Standard"
@@ -216,8 +237,8 @@ async def process_single_job(
                     computed_timeout,
                 )
                 await run_applio_conversion(
-                    model_pth=Path(model.pth_path),
-                    index_path=Path(model.index_path) if model.index_path else None,
+                    model_pth=resolved_model_pth,
+                    index_path=resolved_index_path,
                     input_wav=norm_wav_path,
                     output_wav=converted_wav_path,
                     pitch=pitch,
@@ -264,30 +285,64 @@ async def process_single_job(
 
         job.seconds_consumed = duration_seconds
 
-        # Send completed audio to user via Telegram Bot ONLY if explicitly requested
-        # For Mini App jobs, results are previewed in-app and user can tap 'Send to Telegram' on demand
-        if bot and target_chat_id and getattr(job, "auto_deliver", False):
-            try:
-                audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
-                audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
-                caption_model_name = display_name or model.name or "Standard"
-                caption = t(
-                    "status_completed_caption",
-                    lang,
-                    completed_status=t("status_completed", lang),
-                    model_name=html.escape(str(caption_model_name)),
-                    duration_seconds=duration_seconds,
-                )
-                await bot.send_audio(
-                    chat_id=target_chat_id,
-                    audio=audio_file,
-                    caption=caption,
-                    parse_mode="HTML",
-                )
-                if target_msg_id:
-                    await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
-            except Exception as send_err:
-                logger.warning("Failed to deliver audio via Telegram for job %s: %s", job.id, send_err)
+        # Send completion audio or notification alert to user via Telegram Bot
+        if bot and target_chat_id:
+            caption_model_name = display_name or getattr(model, "name", "Standard")
+            if getattr(job, "auto_deliver", False):
+                try:
+                    audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
+                    audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
+                    caption = t(
+                        "status_completed_caption",
+                        lang,
+                        completed_status=t("status_completed", lang),
+                        model_name=html.escape(str(caption_model_name)),
+                        duration_seconds=duration_seconds,
+                    )
+                    await bot.send_audio(
+                        chat_id=target_chat_id,
+                        audio=audio_file,
+                        caption=caption,
+                        parse_mode="HTML",
+                    )
+                    if target_msg_id:
+                        await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
+                except Exception as send_err:
+                    logger.warning("Failed to deliver audio via Telegram for job %s: %s", job.id, send_err)
+            else:
+                # Mini App Job: Send push notification alert with inline action buttons
+                try:
+                    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+                    app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="🎧 Mini App တွင် နားထောင်မည်",
+                                web_app=WebAppInfo(url=f"{app_url}?tab=tab-voice")
+                            ),
+                            InlineKeyboardButton(
+                                text="📱 Audio ဖိုင် ပို့ပေးပါ",
+                                callback_data=f"send_audio_{job.id}"
+                            )
+                        ]
+                    ])
+                    notify_text = (
+                        f"🎉 <b>အသံထုတ်ယူမှု အောင်မြင်စွာ ပြီးစီးပါပြီ!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🎙️ <b>အသံမော်ဒယ်:</b> <b>{html.escape(str(caption_model_name))}</b>\n"
+                        f"⏱️ <b>အသံကြာချိန်:</b> <b>{duration_seconds:.1f} စက္ကန့်</b>\n"
+                        f"🆔 <b>Task:</b> <code>#{job.id[:8]}</code>\n\n"
+                        f"✨ သင့်အသံဖိုင် အဆင်သင့်ဖြစ်နေပါပြီခင်ဗျာ။ Mini App ထဲတွင် ချက်ချင်းဖွင့်နားထောင်နိုင်သလို "
+                        f"Telegram သို့ တိုက်ရိုက်ရယူလိုပါက အောက်ပါခလုတ်ကို နှိပ်နိုင်ပါသည်!"
+                    )
+                    await bot.send_message(
+                        chat_id=target_chat_id,
+                        text=notify_text,
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                except Exception as notify_err:
+                    logger.warning("Could not send completion alert to user %s: %s", target_chat_id, notify_err)
 
         job.status = JobStatus.SUCCESS.value
         job.finished_at = utc_now()
