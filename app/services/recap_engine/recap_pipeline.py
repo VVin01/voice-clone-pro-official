@@ -180,9 +180,11 @@ def run_recap_pipeline(
 
     if extra_text and str(extra_text).strip():
         overlays["extra_text"] = str(extra_text).strip()
-        overlays["extra_text_position"] = [0.50, 0.06]  # Elegant luxury watermark banner at top center
-        overlays["extra_text_font_size"] = 28
-        overlays["extra_text_opacity"] = 0.82
+        # Anti-Crop Strategy: Position at lower-third center [0.50, 0.68] right above subtitles
+        # This prevents users from cropping top or bottom without destroying subtitles and video composition!
+        overlays["extra_text_position"] = [0.50, 0.68]
+        overlays["extra_text_font_size"] = 30
+        overlays["extra_text_opacity"] = 0.88
 
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:

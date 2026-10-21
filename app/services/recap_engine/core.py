@@ -960,8 +960,8 @@ def _render_text_with_pillow(
         curr_x = (w - lw) // 2
         # Drop shadow
         draw.text((curr_x + 2, curr_y + 2), l, font=font, fill=(0, 0, 0, 220))
-        # Main text
-        draw.text((curr_x, curr_y), l, font=font, fill=(255, 255, 255, 255))
+        # Main text in rich luxury gold
+        draw.text((curr_x, curr_y), l, font=font, fill=(255, 225, 120, 255))
         curr_y += line_h + spacing
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1005,9 +1005,9 @@ def _render_extra_text_png(
     text: str,
     output: Path,
     font_size: int,
-    background_alpha: float = 0.18,
+    background_alpha: float = 0.40,
     max_width: int = 1500,
-) -> Path:
+):
     """Render extra-text overlay with Chromium renderer and Pillow fallback."""
     text = str(text or "").strip()
     if not text:
@@ -1455,9 +1455,9 @@ def apply_production_overlays(
         current = f"[{out}]"
 
     if extra_idx is not None and extra_file is not None:
-        pos = overlays.get("extra_text_position") or [0.50, 0.84]
+        pos = overlays.get("extra_text_position") or [0.50, 0.68]
         ex = _clamp01(pos[0] if len(pos) > 0 else 0.50, 0.50)
-        ey = _clamp01(pos[1] if len(pos) > 1 else 0.84, 0.84)
+        ey = _clamp01(pos[1] if len(pos) > 1 else 0.68, 0.68)
         eo = max(0.10, min(1.00, float(overlays.get("extra_text_opacity", 0.65))))
         if eo < 0.999:
             graph.append(f"[{extra_idx}:v]format=rgba,colorchannelmixer=aa={eo:.3f}[etxt]")
