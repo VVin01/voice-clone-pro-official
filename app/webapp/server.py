@@ -45,9 +45,67 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
 
+    # Background Movie Recap queue processor loop
+    async def _recap_queue_worker():
+        """Continuously check for any QUEUED Movie Recap jobs in DB and auto-process them."""
+        import logging
+        from app.models.schema import Job, User
+        from app.models.enums import JobStatus, JobType
+        from app.db.session import AsyncSessionLocal
+        from app.webapp.api import _run_recap_background_job, RecapConfigRequest, RECAP_JOBS_REGISTRY
+        from sqlalchemy import select
+
+        _log = logging.getLogger("RecapWorker")
+        while True:
+            try:
+                async with AsyncSessionLocal() as session:
+                    stmt = (
+                        select(Job)
+                        .where(
+                            Job.status == JobStatus.QUEUED.value,
+                            (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap")
+                        )
+                        .order_by(Job.created_at)
+                        .limit(1)
+                    )
+                    res = await session.execute(stmt)
+                    queued_recap = res.scalar_one_or_none()
+                    if queued_recap:
+                        jid = str(queued_recap.id)
+                        mem_entry = RECAP_JOBS_REGISTRY.get(jid)
+                        if not mem_entry or mem_entry.get("status") not in ("RUNNING", "QUEUED"):
+                            _log.info(f"Auto-dispatching queued recap job {jid}...")
+                            user = await session.get(User, queued_recap.user_id)
+                            is_vip = getattr(user, "is_vip", False) if user else False
+                            cfg = RecapConfigRequest(
+                                url=queued_recap.input_text or "",
+                                voice_slug=queued_recap.preset_voice or "thiha",
+                            )
+                            RECAP_JOBS_REGISTRY[jid] = {
+                                "id": jid,
+                                "status": "QUEUED",
+                                "progress_percent": 5,
+                                "progress_step": "0/4",
+                                "progress_label": "⏳ Picking up from queue...",
+                            }
+                            asyncio.create_task(
+                                _run_recap_background_job(
+                                    jid,
+                                    cfg,
+                                    queued_recap.user_id,
+                                    queued_recap.chat_id or queued_recap.user_id,
+                                    is_vip=is_vip,
+                                )
+                            )
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
     cleanup_task = asyncio.create_task(_periodic_cleanup())
+    recap_worker_task = asyncio.create_task(_recap_queue_worker())
     yield
     cleanup_task.cancel()
+    recap_worker_task.cancel()
 
 
 webapp_app = FastAPI(
