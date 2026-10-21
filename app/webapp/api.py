@@ -1341,6 +1341,45 @@ async def submit_payment_slip(
     db.add(pay_req)
     await db.commit()
 
+    # Instant alert to admins via Telegram
+    if settings.bot_token and settings.admin_ids:
+        try:
+            from aiogram import Bot
+            from aiogram.enums import ParseMode
+            from aiogram.types import FSInputFile
+            bot = Bot(token=settings.bot_token)
+            try:
+                admin_text = (
+                    f"🔔 <b>New VIP Payment Slip Submitted!</b>\n\n"
+                    f"👤 <b>User:</b> {html.escape(user.first_name or 'User')} (@{html.escape(user.username or 'none')})\n"
+                    f"🆔 <b>User ID:</b> <code>{user.id}</code>\n"
+                    f"📦 <b>Package:</b> <code>{package_code}</code>\n"
+                    f"💰 <b>Amount:</b> <b>{amount_mmk:,} MMK</b>\n"
+                    f"🧾 <b>Request ID:</b> <code>{pay_req.id}</code>\n\n"
+                    f"<i>စစ်ဆေးပြီးပါက Admin Dashboard မှ Approve ပြုလုပ်နိုင်ပါသည်။</i>"
+                )
+                for admin_id in settings.admin_ids:
+                    try:
+                        if dest_path.is_file():
+                            await bot.send_photo(
+                                chat_id=admin_id,
+                                photo=FSInputFile(str(dest_path)),
+                                caption=admin_text,
+                                parse_mode=ParseMode.HTML,
+                            )
+                        else:
+                            await bot.send_message(
+                                chat_id=admin_id,
+                                text=admin_text,
+                                parse_mode=ParseMode.HTML,
+                            )
+                    except Exception as send_err:
+                        logger.warning(f"Failed to alert admin {admin_id}: {send_err}")
+            finally:
+                await bot.session.close()
+        except Exception as alert_err:
+            logger.warning(f"Admin payment alert error: {alert_err}")
+
     return {
         "success": True,
         "request_id": pay_req.id,
@@ -1439,13 +1478,16 @@ async def approve_payment_slip(
     p_req.reviewed_by = admin.id
     p_req.reviewed_at = utc_now()
 
+    recap_added = 0
     # Upgrade user to PURCHASED
     target_user = await db.get(User, p_req.user_id)
     if target_user:
         target_user.account_category = AccountCategory.PURCHASED.value
         if "recap" in p_req.package_code:
+            recap_added = 60
             target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 60
         elif "all_in_one" in p_req.package_code or "master" in p_req.package_code:
+            recap_added = 150
             target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 150
 
     # Credit minutes
@@ -1460,7 +1502,34 @@ async def approve_payment_slip(
         )
     await db.commit()
 
-    return {"success": True, "message": f"Approved payment for User {p_req.user_id} (+{p_req.minutes} mins)"}
+    # Instant Telegram notification to the approved user
+    if settings.bot_token and p_req.user_id:
+        try:
+            from aiogram import Bot
+            from aiogram.enums import ParseMode
+            from app.ui.keyboards import main_menu_kb
+            bot = Bot(token=settings.bot_token)
+            try:
+                user_notice = (
+                    f"🎉 <b>ဂုဏ်ယူပါသည်! သင်၏ VIP ဝယ်ယူမှု အတည်ပြုပြီးပါပြီ</b> ✨\n\n"
+                    f"📦 <b>Package:</b> <code>{p_req.package_code}</code>\n"
+                    f"🎙️ <b>Voice မိနစ်:</b> <b>+{p_req.minutes} မိနစ်</b>\n"
+                    f"🎬 <b>Recap Credits:</b> <b>+{recap_added} Credits</b>\n"
+                    f"👑 <b>Status:</b> <b>VIP PURCHASED ⭐</b>\n\n"
+                    f"💡 <i>အောက်ပါခလုတ်ကို နှိပ်၍ Studio Pro (Mini App) ကို ချက်ချင်း အသုံးပြုနိုင်ပါပြီခင်ဗျာ။</i>"
+                )
+                await bot.send_message(
+                    chat_id=p_req.user_id,
+                    text=user_notice,
+                    reply_markup=main_menu_kb(lang=target_user.language_code if target_user else "my"),
+                    parse_mode=ParseMode.HTML,
+                )
+            finally:
+                await bot.session.close()
+        except Exception as notify_err:
+            logger.warning(f"Failed to notify user {p_req.user_id} of approval: {notify_err}")
+
+    return {"success": True, "message": f"Approved payment for User {p_req.user_id} (+{p_req.minutes} mins, +{recap_added} recap credits)"}
 
 
 class RejectSlipRequest(BaseModel):
@@ -1484,6 +1553,29 @@ async def reject_payment_slip(
     p_req.reviewed_at = utc_now()
     p_req.rejection_reason = req.reason
     await db.commit()
+
+    # Instant Telegram notification to the user about rejection
+    if settings.bot_token and p_req.user_id:
+        try:
+            from aiogram import Bot
+            from aiogram.enums import ParseMode
+            bot = Bot(token=settings.bot_token)
+            try:
+                reject_notice = (
+                    f"⚠️ <b>ငွေလွှဲပြေစာ အတည်မပြုနိုင်ကြောင်း အသိပေးချက်</b>\n\n"
+                    f"သင် တင်သွင်းခဲ့သော ငွေလွှဲပြေစာ (ID: <code>{p_req.id[:8]}</code>) အား စစ်ဆေးချက်အရ အတည်မပြုနိုင်သေးပါခင်ဗျာ။\n\n"
+                    f"📌 <b>အကြောင်းပြချက်:</b> <i>{html.escape(req.reason)}</i>\n\n"
+                    f"💡 <i>အချက်အလက် မှန်ကန်စွာဖြင့် ထပ်မံတင်သွင်းနိုင်သလို အခက်အခဲရှိပါက Support သို့ ဆက်သွယ်မေးမြန်းနိုင်ပါသည်။</i>"
+                )
+                await bot.send_message(
+                    chat_id=p_req.user_id,
+                    text=reject_notice,
+                    parse_mode=ParseMode.HTML,
+                )
+            finally:
+                await bot.session.close()
+        except Exception as notify_err:
+            logger.warning(f"Failed to notify user {p_req.user_id} of rejection: {notify_err}")
 
     return {"success": True, "message": f"Rejected payment request {p_req.id}"}
 
