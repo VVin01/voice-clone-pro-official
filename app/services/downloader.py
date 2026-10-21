@@ -401,13 +401,25 @@ class MediaDownloader:
             },
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['web_embedded', 'tv_samsung', 'web', 'default'],
+                    'player_client': ['tv_samsung', 'web', 'default'],
                 }
             }
         }
-        # Enable Node.js for solving YouTube JS / n challenges if installed
-        if shutil.which("node"):
-            opts['js_runtimes'] = {'node': {}}
+        # Enable Node.js for solving YouTube JS / n challenges if installed or available via package
+        node_bin = shutil.which("node")
+        if not node_bin:
+            try:
+                import nodejs_wheel.executable
+                cand = os.path.join(nodejs_wheel.executable.ROOT_DIR, 'node.exe' if os.name == 'nt' else 'bin/node')
+                if not os.path.exists(cand):
+                    cand = os.path.join(nodejs_wheel.executable.ROOT_DIR, 'node')
+                if os.path.exists(cand):
+                    node_bin = cand
+            except Exception:
+                pass
+
+        if node_bin:
+            opts['js_runtimes'] = {'node': {'path': node_bin}}
 
         # Automatic YouTube cookies loading (from env var YOUTUBE_COOKIES, COOKIES_CONTENT, or cookies.txt)
         cookie_path = None
