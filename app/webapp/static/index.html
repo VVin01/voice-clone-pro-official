@@ -540,20 +540,26 @@
                 <!-- 6. Voice Selection for Recap -->
                 <div class="card glass">
                     <div class="card-label" data-i18n="recap_voice_label">Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)</div>
-                    <select class="studio-select" id="recap-voice-select">
-                        <option value="komin">👨‍💼 Ko Min (ကိုမင်း — Master Storyteller)</option>
-                        <option value="kothura">🎙️ Ko Thura (ကိုသူရ — News & Docu)</option>
-                        <option value="kozayar">🎬 Ko Zayar (ကိုဇေယျာ — Cinema Movie Trailer)</option>
-                        <option value="koaung">⚡ Ko Aung (အောင်အောင် — Viral Shorts)</option>
-                        <option value="komyat">👁️ Ko Myat (ကိုမြတ် — Spooky Mystery / Horror)</option>
-                        <option value="kophone">💡 Ko Phone (ကိုဖုန်း — Tech & Explainer)</option>
-                        <option value="mahnin">👩‍🦰 Ma Hnin (မနှင်း — Classic Audiobook)</option>
-                        <option value="manadi">🎭 Ma Nadi (မနဒီ — Thriller Drama)</option>
-                        <option value="mamay">🌟 Ma May (မမေ — Friendly Guide)</option>
-                        <option value="mayoon">🧘 Ma Yoon (မယွန်း — Calm ASMR & Meditation)</option>
-                        <option value="machaw">🎮 Ma Chaw (မချော — Anime & Gaming)</option>
-                        <option value="mathiri">💎 Ma Thiri (မသီရိ — Luxury Lifestyle)</option>
-                    </select>
+                    <div class="recap-voice-row">
+                        <select class="studio-select" id="recap-voice-select">
+                            <option value="komin">👨‍💼 Ko Min (ကိုမင်း — Master Storyteller)</option>
+                            <option value="kothura">🎙️ Ko Thura (ကိုသူရ — News & Docu)</option>
+                            <option value="kozayar">🎬 Ko Zayar (ကိုဇေယျာ — Cinema Movie Trailer)</option>
+                            <option value="koaung">⚡ Ko Aung (အောင်အောင် — Viral Shorts)</option>
+                            <option value="komyat">👁️ Ko Myat (ကိုမြတ် — Spooky Mystery / Horror)</option>
+                            <option value="kophone">💡 Ko Phone (ကိုဖုန်း — Tech & Explainer)</option>
+                            <option value="mahnin">👩‍🦰 Ma Hnin (မနှင်း — Classic Audiobook)</option>
+                            <option value="manadi">🎭 Ma Nadi (မနဒီ — Thriller Drama)</option>
+                            <option value="mamay">🌟 Ma May (မမေ — Friendly Guide)</option>
+                            <option value="mayoon">🧘 Ma Yoon (မယွန်း — Calm ASMR & Meditation)</option>
+                            <option value="machaw">🎮 Ma Chaw (မချော — Anime & Gaming)</option>
+                            <option value="mathiri">💎 Ma Thiri (မသီရိ — Luxury Lifestyle)</option>
+                        </select>
+                        <button type="button" class="preview-recap-voice-btn" id="btn-preview-recap-voice" onclick="previewSelectedRecapVoice()">
+                            <span class="preview-icon">🔊</span>
+                            <span data-i18n="btn_preview_voice">နမူနာ နားထောင်မည်</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- 1-Click Action -->
@@ -1013,7 +1019,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=2.8.0"></script>
-    <script src="/static/js/app.js?v=2.8.0"></script>
+    <script src="/static/js/i18n.js?v=2.9.0"></script>
+    <script src="/static/js/app.js?v=2.9.0"></script>
 </body>
 </html>

@@ -218,6 +218,12 @@ function renderCuratedVoices() {
                 ${isSelected ? '<span class="selected-indicator">✓</span>' : ''}
             </div>
             <p class="persona-desc">${v.description}</p>
+            <div class="persona-footer-row">
+                <button type="button" class="voice-preview-btn" onclick="event.stopPropagation(); playVoicePreview('${v.id}', this)">
+                    <span class="preview-btn-icon">▶️</span>
+                    <span class="preview-btn-label">${t("preview_voice") || "နမူနာ နားထောင်မည်"}</span>
+                </button>
+            </div>
         `;
 
         card.addEventListener("click", () => {
@@ -294,6 +300,10 @@ async function loadApplioModels() {
                     <span class="applio-model-name">${m.name}</span>
                     <span class="applio-model-tag">RVC v2 • Local GPU</span>
                 </div>
+                <button type="button" class="voice-preview-btn mini" onclick="event.stopPropagation(); playVoicePreview('${m.slug}', this)">
+                    <span class="preview-btn-icon">▶️</span>
+                    <span class="preview-btn-label">${t("preview_voice") || "နမူနာ"}</span>
+                </button>
             `;
 
             card.addEventListener("click", () => {
@@ -312,6 +322,74 @@ async function loadApplioModels() {
     } catch (err) {
         console.warn("Could not load Applio models:", err);
     }
+}
+
+// ── Voice Preview Audio Player Controller ──────────────────────────────────
+let currentVoiceAudio = null;
+let currentPreviewButton = null;
+
+function stopCurrentVoicePreview() {
+    if (currentVoiceAudio) {
+        currentVoiceAudio.pause();
+        currentVoiceAudio.currentTime = 0;
+        currentVoiceAudio = null;
+    }
+    if (currentPreviewButton) {
+        currentPreviewButton.classList.remove("playing");
+        const icon = currentPreviewButton.querySelector(".preview-btn-icon, .preview-icon");
+        if (icon) icon.innerText = currentPreviewButton.classList.contains("preview-recap-voice-btn") ? "🔊" : "▶️";
+        const label = currentPreviewButton.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        if (label) {
+            label.innerText = currentPreviewButton.classList.contains("mini") ? (t("preview_voice") || "နမူနာ") : (t("btn_preview_voice") || "နမူနာ နားထောင်မည်");
+        }
+        currentPreviewButton = null;
+    }
+}
+
+function playVoicePreview(voiceId, buttonEl) {
+    haptic("light");
+    if (!voiceId) return;
+
+    if (currentVoiceAudio && currentPreviewButton === buttonEl) {
+        stopCurrentVoicePreview();
+        return;
+    }
+
+    stopCurrentVoicePreview();
+
+    const audioUrl = `/api/voices/sample/${encodeURIComponent(voiceId)}`;
+    const audio = new Audio(audioUrl);
+    currentVoiceAudio = audio;
+    currentPreviewButton = buttonEl;
+
+    if (buttonEl) {
+        buttonEl.classList.add("playing");
+        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
+        if (icon) icon.innerText = "⏸️";
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        if (label) label.innerText = t("preview_playing") || "ဖွင့်နေသည်...";
+    }
+
+    audio.play().catch(e => {
+        console.warn("Voice preview playback error:", e);
+        stopCurrentVoicePreview();
+    });
+
+    audio.onended = () => {
+        stopCurrentVoicePreview();
+    };
+
+    audio.onerror = () => {
+        console.warn("Audio playback failed for voice:", voiceId);
+        stopCurrentVoicePreview();
+    };
+}
+
+function previewSelectedRecapVoice() {
+    const sel = document.getElementById("recap-voice-select");
+    const btn = document.getElementById("btn-preview-recap-voice");
+    const voiceId = sel ? sel.value : "komin";
+    playVoicePreview(voiceId, btn);
 }
 
 // ── Voice Studio Controls & Sub-Modes ──────────────────────────────────────

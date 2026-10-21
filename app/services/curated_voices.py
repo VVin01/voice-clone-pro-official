@@ -219,5 +219,6 @@ def list_curated_voices(lang: str = "my") -> List[Dict[str, Any]]:
             "description": v["desc_my"] if is_my else v["desc_en"],
             "badge": v["badge_my"] if is_my else v["badge_en"],
             "avatar": v["avatar"],
+            "sample_audio_url": f"/api/voices/sample/{v['id']}",
         })
     return result

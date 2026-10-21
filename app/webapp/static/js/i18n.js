@@ -270,6 +270,9 @@ const translations = {
         btn_save_settings: "💾 အချက်အလက်များ သိမ်းဆည်းမည်",
         btn_retry_job: "🔄 ထပ်မံ ကြိုးစားမည်",
         btn_cancel_job: "⏹️ ပယ်ဖျက်မည်",
+        btn_preview_voice: "🔊 နမူနာ နားထောင်မည်",
+        preview_voice: "နမူနာ နားထောင်မည်",
+        preview_playing: "ဖွင့်နေသည်...",
 
         // 24-Hour History UI
         history_recap_title: "🕒 ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ",
@@ -558,6 +561,9 @@ const translations = {
         btn_save_settings: "💾 Save Platform Settings",
         btn_retry_job: "🔄 Retry Job",
         btn_cancel_job: "⏹️ Cancel",
+        btn_preview_voice: "🔊 Preview Voice",
+        preview_voice: "Listen Preview",
+        preview_playing: "Playing...",
 
         // 24-Hour History UI
         history_recap_title: "🕒 24-Hour Recap Productions",

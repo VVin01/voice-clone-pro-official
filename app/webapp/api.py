@@ -189,7 +189,7 @@ async def list_voice_models(
             "type": m.type,
             "allowed": allowed,
             "is_voxcpm": (m.pth_path == "voxcpm" or "voxcpm" in m.slug.lower()),
-            "sample_audio_url": f"/api/voices/sample/{m.slug}" if m.sample_audio_path else None,
+            "sample_audio_url": f"/api/voices/sample/{m.slug}",
         })
     return model_list
 
@@ -457,14 +457,45 @@ async def download_job_audio(
 
 
 @api_router.get("/voices/sample/{slug}")
+@api_router.get("/voices/preview/{slug}")
 async def get_voice_sample_audio(slug: str, db: AsyncSession = Depends(get_db_session)):
-    """Serve sample audio file for a given voice model."""
+    """Serve sample audio preview for curated voice personas and Applio models."""
+    clean_id = slug.strip().lower()
+
+    alias_map = {
+        "system-models-system-kartoon_150e_1950s-pth": "kartoon",
+        "system-models-system-ant_150e_11700s-pth": "ant-movie",
+        "system-models-system-myanmar_voice_1_100e_6600s-pth": "myanmar-voice-1",
+        "system-models-system-the_light_150e_450s-pth": "the-light",
+    }
+    target_id = alias_map.get(clean_id, clean_id)
+
+    # 1. Check static sample mp3 in static/audio/samples/
+    sample_file = settings.root / "app" / "webapp" / "static" / "audio" / "samples" / f"{target_id}.mp3"
+    if sample_file.is_file():
+        return FileResponse(
+            str(sample_file),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    # 2. Check DB VoiceModel sample_audio_path
     stmt = select(VoiceModel).where(VoiceModel.slug == slug)
     res = await db.execute(stmt)
     m = res.scalar_one_or_none()
-    if not m or not m.sample_audio_path or not Path(m.sample_audio_path).is_file():
-        raise HTTPException(status_code=404, detail="Sample audio not found")
-    return FileResponse(path=m.sample_audio_path, media_type="audio/wav")
+    if m and m.sample_audio_path and Path(m.sample_audio_path).is_file():
+        return FileResponse(path=m.sample_audio_path, media_type="audio/wav")
+
+    # 3. Fallback default sample (komin.mp3)
+    fallback = settings.root / "app" / "webapp" / "static" / "audio" / "samples" / "komin.mp3"
+    if fallback.is_file():
+        return FileResponse(
+            str(fallback),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    raise HTTPException(status_code=404, detail="Sample audio not found")
 
 
 # ── 4. Quick Downloader & Video Info ───────────────────────────────────────
