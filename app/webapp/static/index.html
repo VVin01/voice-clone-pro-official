@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=2.6.5">
+    <link rel="stylesheet" href="/static/css/style.css?v=2.7.0">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -302,7 +302,58 @@
                     </div>
                 </div>
 
-                <!-- 2. Anti-Copyright Protection (Mirror & Zoom) -->
+                <!-- 2. Custom Video Crop (ဗီဒီယို ဘောင်စိတ်ကြိုက်ဖြတ်ခြင်း) -->
+                <div class="card glass">
+                    <div class="card-header-row">
+                        <div class="card-label" data-i18n="recap_crop_label">📐 ဗီဒီယို ဘောင်စိတ်ကြိုက်ဖြတ်ခြင်း (Custom Video Crop):</div>
+                        <button class="chip-toggle active" id="btn-sync-crop" title="အပေါ်နှင့်အောက် တပြိုင်နက်ညှိမည်">
+                            <span class="chip-icon">🔗</span>
+                            <span class="chip-lbl" data-i18n="crop_sync_label">အပေါ်/အောက် တပြိုင်နက်</span>
+                        </button>
+                    </div>
+                    
+                    <!-- Crop Presets -->
+                    <div class="pill-group sm flex-wrap mt-2" id="recap-crop-presets">
+                        <button class="pill-btn active" data-crop="full" data-i18n="crop_preset_full">📐 မူရင်း (0%)</button>
+                        <button class="pill-btn" data-crop="cinema" data-i18n="crop_preset_cinema">🎞️ CinemaScope (12%)</button>
+                        <button class="pill-btn" data-crop="side" data-i18n="crop_preset_side">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
+                        <button class="pill-btn" data-crop="custom" data-i18n="crop_preset_custom">✂️ စိတ်ကြိုက်</button>
+                    </div>
+
+                    <!-- Crop Sliders -->
+                    <div class="crop-sliders-grid mt-3">
+                        <div class="slider-group">
+                            <div class="slider-header">
+                                <span data-i18n="crop_top_label">↕️ အပေါ်ဘောင်ဖြတ် (Top Crop):</span>
+                                <span class="slider-val" id="val-crop-top">0%</span>
+                            </div>
+                            <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-top">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-header">
+                                <span data-i18n="crop_bottom_label">↕️ အောက်ဘောင်ဖြတ် (Bottom Crop):</span>
+                                <span class="slider-val" id="val-crop-bottom">0%</span>
+                            </div>
+                            <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-bottom">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-header">
+                                <span data-i18n="crop_left_label">↔️ ဘယ်ဘက်ဖြတ် (Left Crop):</span>
+                                <span class="slider-val" id="val-crop-left">0%</span>
+                            </div>
+                            <input type="range" min="0" max="30" value="0" class="studio-slider" id="slider-crop-left">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-header">
+                                <span data-i18n="crop_right_label">↔️ ညာဘက်ဖြတ် (Right Crop):</span>
+                                <span class="slider-val" id="val-crop-right">0%</span>
+                            </div>
+                            <input type="range" min="0" max="30" value="0" class="studio-slider" id="slider-crop-right">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Anti-Copyright Protection (Mirror & Zoom) -->
                 <div class="card glass">
                     <div class="card-label" data-i18n="recap_anticopyright_label">မူပိုင်ခွင့် ကာကွယ်ရေး (Anti-Copyright):</div>
                     <div class="anticopyright-grid">
@@ -368,6 +419,17 @@
                     <div class="mockup-screen-container">
                         <div class="mockup-screen ratio-9-16" id="recap-mockup-frame">
                             <div class="video-bg-placeholder mirrored" id="video-bg-canvas">
+                                <!-- Inner Movie Visualizer with Crop guides -->
+                                <div class="mockup-inner-movie" id="mockup-inner-movie">
+                                    <div class="crop-shade top" id="crop-shade-top"></div>
+                                    <div class="crop-shade bottom" id="crop-shade-bottom"></div>
+                                    <div class="crop-shade left" id="crop-shade-left"></div>
+                                    <div class="crop-shade right" id="crop-shade-right"></div>
+                                    <div class="movie-center-badge">
+                                        <span class="badge-icon">🎬</span>
+                                        <span class="badge-text" id="mockup-fill-badge">Blur Background</span>
+                                    </div>
+                                </div>
                                 <div class="video-top-overlay">
                                     <span class="video-placeholder-icon">🎬 Live Canvas</span>
                                     <div class="preview-logo-watermark top-right" id="preview-logo">
@@ -853,7 +915,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=2.6.5"></script>
-    <script src="/static/js/app.js?v=2.6.5"></script>
+    <script src="/static/js/i18n.js?v=2.7.0"></script>
+    <script src="/static/js/app.js?v=2.7.0"></script>
 </body>
 </html>

@@ -22,6 +22,11 @@ const state = {
     // Recap Configuration
     recapRatio: "9:16",
     recapRatioFill: "blur",
+    recapCropTop: 0,
+    recapCropBottom: 0,
+    recapCropLeft: 0,
+    recapCropRight: 0,
+    recapSyncCrop: true,
     recapMirror: true,
     recapZoom: 1.06,
     recapSpeed: "+12%",
@@ -717,6 +722,66 @@ function setupRecapVisualEditor() {
         if (previewSub) previewSub.style.bottom = `${bottomPct}%`;
     });
 
+    // ── Helper: Real-time Live Canvas Mockup Visual Updater ──
+    function updateCanvasMockupVisuals() {
+        if (!canvas) return;
+
+        // 1. Aspect Ratio Frame Class
+        if (mockupFrame) {
+            let ratioClass = "ratio-9-16";
+            if (state.recapRatio === "16:9") ratioClass = "ratio-16-9";
+            else if (state.recapRatio === "1:1") ratioClass = "ratio-1-1";
+            else if (state.recapRatio === "Original") ratioClass = "ratio-16-9";
+            mockupFrame.className = `mockup-screen ${ratioClass}`;
+        }
+
+        // 2. Canvas Base Classes & Fill Mode
+        const fillMode = state.recapRatioFill || "blur";
+        canvas.className = `video-bg-placeholder fill-${fillMode} ${state.recapMirror ? 'mirrored' : ''}`;
+
+        // 3. Fill Badge Status
+        const fillBadge = document.getElementById("mockup-fill-badge");
+        if (fillBadge) {
+            if (fillMode === "blur") fillBadge.innerText = "🌫️ Blur Background";
+            else if (fillMode === "crop") fillBadge.innerText = "✂️ Center Crop (Full Fill)";
+            else if (fillMode === "black") fillBadge.innerText = "⬛ Black Bars";
+        }
+
+        // 4. Update Crop Shades & Inner Movie Height
+        const shadeTop = document.getElementById("crop-shade-top");
+        const shadeBottom = document.getElementById("crop-shade-bottom");
+        const shadeLeft = document.getElementById("crop-shade-left");
+        const shadeRight = document.getElementById("crop-shade-right");
+        const innerMovie = document.getElementById("mockup-inner-movie");
+
+        const cTop = state.recapCropTop || 0;
+        const cBottom = state.recapCropBottom || 0;
+        const cLeft = state.recapCropLeft || 0;
+        const cRight = state.recapCropRight || 0;
+
+        if (shadeTop) shadeTop.style.height = `${cTop}%`;
+        if (shadeBottom) shadeBottom.style.height = `${cBottom}%`;
+        if (shadeLeft) shadeLeft.style.width = `${cLeft}%`;
+        if (shadeRight) shadeRight.style.width = `${cRight}%`;
+
+        if (innerMovie && (fillMode === "blur" || fillMode === "black")) {
+            if (state.recapRatio === "9:16") {
+                // Base 16:9 height inside 9:16 canvas is 56.25%
+                const totalVerticalCrop = Math.min(60, cTop + cBottom);
+                const effectivePct = 56.25 * (1.0 - totalVerticalCrop / 100.0);
+                innerMovie.style.height = `${Math.max(28, effectivePct)}%`;
+            } else if (state.recapRatio === "1:1") {
+                const totalVerticalCrop = Math.min(60, cTop + cBottom);
+                const effectivePct = 68.0 * (1.0 - totalVerticalCrop / 100.0);
+                innerMovie.style.height = `${Math.max(34, effectivePct)}%`;
+            } else {
+                innerMovie.style.height = "100%";
+            }
+        } else if (innerMovie) {
+            innerMovie.style.height = "100%";
+        }
+    }
+
     // 2. Aspect Ratio Selector (9:16, 16:9, 1:1, Original)
     const ratioBtns = document.querySelectorAll("#recap-ratio-picker .ratio-btn");
     ratioBtns.forEach(btn => {
@@ -725,14 +790,7 @@ function setupRecapVisualEditor() {
             ratioBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapRatio = btn.getAttribute("data-ratio") || "9:16";
-
-            if (mockupFrame) {
-                let ratioClass = "ratio-9-16";
-                if (state.recapRatio === "16:9") ratioClass = "ratio-16-9";
-                else if (state.recapRatio === "1:1") ratioClass = "ratio-1-1";
-                else if (state.recapRatio === "Original") ratioClass = "ratio-16-9";
-                mockupFrame.className = `mockup-screen ${ratioClass}`;
-            }
+            updateCanvasMockupVisuals();
         });
     });
 
@@ -744,6 +802,113 @@ function setupRecapVisualEditor() {
             fillBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapRatioFill = btn.getAttribute("data-fill") || "blur";
+            updateCanvasMockupVisuals();
+        });
+    });
+
+    // ── 3.5. Custom Video Crop: Sliders, Presets & Sync Mode ──
+    const sliderCropTop = document.getElementById("slider-crop-top");
+    const sliderCropBottom = document.getElementById("slider-crop-bottom");
+    const sliderCropLeft = document.getElementById("slider-crop-left");
+    const sliderCropRight = document.getElementById("slider-crop-right");
+
+    const valCropTop = document.getElementById("val-crop-top");
+    const valCropBottom = document.getElementById("val-crop-bottom");
+    const valCropLeft = document.getElementById("val-crop-left");
+    const valCropRight = document.getElementById("val-crop-right");
+
+    const btnSyncCrop = document.getElementById("btn-sync-crop");
+    const cropPresetBtns = document.querySelectorAll("#recap-crop-presets .pill-btn");
+
+    function setCropPresetActive(presetName) {
+        cropPresetBtns.forEach(btn => {
+            btn.classList.toggle("active", btn.getAttribute("data-crop") === presetName);
+        });
+    }
+
+    function applyCropValues(top, bottom, left, right, preset = null) {
+        state.recapCropTop = top;
+        state.recapCropBottom = bottom;
+        state.recapCropLeft = left;
+        state.recapCropRight = right;
+
+        if (sliderCropTop) sliderCropTop.value = top;
+        if (sliderCropBottom) sliderCropBottom.value = bottom;
+        if (sliderCropLeft) sliderCropLeft.value = left;
+        if (sliderCropRight) sliderCropRight.value = right;
+
+        if (valCropTop) valCropTop.innerText = `${top}%`;
+        if (valCropBottom) valCropBottom.innerText = `${bottom}%`;
+        if (valCropLeft) valCropLeft.innerText = `${left}%`;
+        if (valCropRight) valCropRight.innerText = `${right}%`;
+
+        if (preset) {
+            setCropPresetActive(preset);
+        } else {
+            // Check matches
+            if (top === 0 && bottom === 0 && left === 0 && right === 0) setCropPresetActive("full");
+            else if (top === 12 && bottom === 12 && left === 0 && right === 0) setCropPresetActive("cinema");
+            else if (top === 0 && bottom === 0 && left === 10 && right === 10) setCropPresetActive("side");
+            else setCropPresetActive("custom");
+        }
+
+        updateCanvasMockupVisuals();
+    }
+
+    if (btnSyncCrop) {
+        btnSyncCrop.addEventListener("click", () => {
+            haptic("selection");
+            state.recapSyncCrop = !state.recapSyncCrop;
+            btnSyncCrop.classList.toggle("active", state.recapSyncCrop);
+            if (state.recapSyncCrop && sliderCropTop) {
+                applyCropValues(parseInt(sliderCropTop.value) || 0, parseInt(sliderCropTop.value) || 0, state.recapCropLeft, state.recapCropRight);
+            }
+        });
+    }
+
+    if (sliderCropTop) {
+        sliderCropTop.addEventListener("input", (e) => {
+            const val = parseInt(e.target.value) || 0;
+            const bottomVal = state.recapSyncCrop ? val : state.recapCropBottom;
+            applyCropValues(val, bottomVal, state.recapCropLeft, state.recapCropRight);
+        });
+    }
+
+    if (sliderCropBottom) {
+        sliderCropBottom.addEventListener("input", (e) => {
+            const val = parseInt(e.target.value) || 0;
+            const topVal = state.recapSyncCrop ? val : state.recapCropTop;
+            applyCropValues(topVal, val, state.recapCropLeft, state.recapCropRight);
+        });
+    }
+
+    if (sliderCropLeft) {
+        sliderCropLeft.addEventListener("input", (e) => {
+            const val = parseInt(e.target.value) || 0;
+            applyCropValues(state.recapCropTop, state.recapCropBottom, val, state.recapCropRight);
+        });
+    }
+
+    if (sliderCropRight) {
+        sliderCropRight.addEventListener("input", (e) => {
+            const val = parseInt(e.target.value) || 0;
+            applyCropValues(state.recapCropTop, state.recapCropBottom, state.recapCropLeft, val);
+        });
+    }
+
+    cropPresetBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            const mode = btn.getAttribute("data-crop");
+            if (mode === "full") {
+                applyCropValues(0, 0, 0, 0, "full");
+            } else if (mode === "cinema") {
+                applyCropValues(12, 12, 0, 0, "cinema");
+            } else if (mode === "side") {
+                applyCropValues(0, 0, 10, 10, "side");
+            } else if (mode === "custom") {
+                setCropPresetActive("custom");
+            }
         });
     });
 
@@ -758,6 +923,7 @@ function setupRecapVisualEditor() {
             if (statusSpan) {
                 statusSpan.innerText = state.recapMirror ? t("mirror_on") : t("mirror_off");
             }
+            updateCanvasMockupVisuals();
             if (canvas) {
                 canvas.classList.toggle("mirrored", state.recapMirror);
             }
@@ -967,6 +1133,9 @@ function setupRecapVisualEditor() {
     if (btnRecap) {
         btnRecap.addEventListener("click", handleStartRecap);
     }
+
+    // Initial canvas mockup sync
+    updateCanvasMockupVisuals();
 }
 
 async function handleStartRecap() {
@@ -1014,6 +1183,10 @@ async function handleStartRecap() {
             story_style: state.recapStoryStyle || "viral",
             ratio: state.recapRatio || "9:16",
             ratio_fill: state.recapRatioFill || "blur",
+            crop_top: state.recapCropTop || 0,
+            crop_bottom: state.recapCropBottom || 0,
+            crop_left: state.recapCropLeft || 0,
+            crop_right: state.recapCropRight || 0,
             mirror_video: state.recapMirror !== false,
             zoom_factor: state.recapZoom || 1.06,
             voice_speed: state.recapSpeed || "+12%",

@@ -2436,3 +2436,165 @@ textarea#voice-text-input:focus {
         font-size: 9px;
     }
 }
+
+/* ════ CUSTOM VIDEO CROP & LIVE CANVAS LAYOUTS ════ */
+.crop-sliders-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+@media (max-width: 480px) {
+    .crop-sliders-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+}
+
+.chip-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.chip-toggle.active {
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.45);
+    color: #fbbf24;
+}
+
+/* Inner Movie Layer inside Mockup Canvas */
+.mockup-inner-movie {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.25s ease;
+    z-index: 1;
+    border: 1px dashed rgba(245, 158, 11, 0.25);
+}
+
+/* Fill Mode variants for the Mockup Inner Movie */
+.video-bg-placeholder.fill-blur {
+    background: radial-gradient(circle at 50% 50%, rgba(30, 41, 59, 0.95), rgba(10, 15, 25, 0.98));
+}
+.video-bg-placeholder.fill-blur .mockup-inner-movie {
+    width: 100%;
+    height: 56.25%; /* 16:9 movie inside 9:16 vertical canvas */
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 15px rgba(245, 158, 11, 0.12);
+}
+.video-bg-placeholder.fill-crop .mockup-inner-movie {
+    width: 100%;
+    height: 100%;
+    box-shadow: none;
+}
+.video-bg-placeholder.fill-black {
+    background: #000000 !important;
+}
+.video-bg-placeholder.fill-black .mockup-inner-movie {
+    width: 100%;
+    height: 56.25%;
+}
+
+/* For 16:9 mockup frame */
+.mockup-screen.ratio-16-9 .video-bg-placeholder.fill-blur .mockup-inner-movie,
+.mockup-screen.ratio-16-9 .video-bg-placeholder.fill-black .mockup-inner-movie {
+    width: 100%;
+    height: 100%;
+}
+
+/* Crop Shade Overlays */
+.crop-shade {
+    position: absolute;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(239, 68, 68, 0.25),
+        rgba(239, 68, 68, 0.25) 6px,
+        rgba(15, 23, 42, 0.75) 6px,
+        rgba(15, 23, 42, 0.75) 12px
+    );
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    z-index: 2;
+    pointer-events: none;
+    transition: height 0.15s ease, width 0.15s ease;
+}
+.crop-shade.top {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 0%;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+}
+.crop-shade.bottom {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 0%;
+    border-bottom: none;
+    border-left: none;
+    border-right: none;
+}
+.crop-shade.left {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 0%;
+    border-top: none;
+    border-bottom: none;
+    border-left: none;
+}
+.crop-shade.right {
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 0%;
+    border-top: none;
+    border-bottom: none;
+    border-right: none;
+}
+
+.movie-center-badge {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 999px;
+    backdrop-filter: blur(4px);
+    z-index: 1;
+    pointer-events: none;
+}
+.movie-center-badge .badge-icon {
+    font-size: 0.95rem;
+}
+.movie-center-badge .badge-text {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-dim);
+    letter-spacing: 0.3px;
+}
+
+/* Ensure controls and draggables are above inner movie layer */
+.video-top-overlay,
+.preview-blur-box,
+.preview-sub-box {
+    z-index: 5 !important;
+}

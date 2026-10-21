@@ -85,6 +85,18 @@ const translations = {
         fill_crop: "✂️ Center Crop (အလယ်ဖြတ်)",
         fill_black: "⬛ Black Bars (ဘေးဘောင်မည်း)",
 
+        // Custom Video Crop
+        recap_crop_label: "ဗီဒီယို ဘောင်စိတ်ကြိုက်ဖြတ်ခြင်း (Custom Video Crop):",
+        crop_sync_label: "အပေါ်/အောက် တပြိုင်နက်",
+        crop_preset_full: "📐 မူရင်း (0%)",
+        crop_preset_cinema: "🎞️ CinemaScope (12%)",
+        crop_preset_side: "↔️ ဘေးဘောင်ဖြတ် (10%)",
+        crop_preset_custom: "✂️ စိတ်ကြိုက်",
+        crop_top_label: "↕️ အပေါ်ဘောင်ဖြတ် (Top Crop):",
+        crop_bottom_label: "↕️ အောက်ဘောင်ဖြတ် (Bottom Crop):",
+        crop_left_label: "↔️ ဘယ်ဘက်ဖြတ် (Left Crop):",
+        crop_right_label: "↔️ ညာဘက်ဖြတ် (Right Crop):",
+
         // Anti-Copyright Protections
         recap_anticopyright_label: "မူပိုင်ခွင့် ကာကွယ်ရေး (Anti-Copyright):",
         recap_mirror_label: "🪞 Video Mirror (ဘယ်/ညာ လှန်မည်):",
@@ -340,6 +352,18 @@ const translations = {
         fill_blur: "🌫️ Blur Background (Recommended)",
         fill_crop: "✂️ Center Crop",
         fill_black: "⬛ Black Letterbox",
+
+        // Custom Video Crop
+        recap_crop_label: "Custom Video Crop:",
+        crop_sync_label: "Sync Top/Bottom",
+        crop_preset_full: "📐 Original (0%)",
+        crop_preset_cinema: "🎞️ CinemaScope (12%)",
+        crop_preset_side: "↔️ Side Crop (10%)",
+        crop_preset_custom: "✂️ Custom",
+        crop_top_label: "↕️ Top Crop:",
+        crop_bottom_label: "↕️ Bottom Crop:",
+        crop_left_label: "↔️ Left Crop:",
+        crop_right_label: "↔️ Right Crop:",
 
         // Anti-Copyright Protections
         recap_anticopyright_label: "Anti-Copyright Protection:",

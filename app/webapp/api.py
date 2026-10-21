@@ -545,6 +545,10 @@ class RecapConfigRequest(BaseModel):
     story_style: str = "viral"        # viral, dramatic, funny, pov, standard
     ratio: str = "9:16"               # Original, 9:16, 16:9, 1:1
     ratio_fill: str = "blur"          # blur, crop, black
+    crop_top: int = Field(0, ge=0, le=35)
+    crop_bottom: int = Field(0, ge=0, le=35)
+    crop_left: int = Field(0, ge=0, le=35)
+    crop_right: int = Field(0, ge=0, le=35)
     mirror_video: bool = True
     zoom_factor: float = 1.06
     voice_speed: str = "+12%"         # +0%, +8%, +12%, +18%, +22%
@@ -676,6 +680,10 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
             voice_speed=req.voice_speed,
             output_ratio=req.ratio,
             frame_fill=req.ratio_fill,
+            crop_top=float(req.crop_top) / 100.0,
+            crop_bottom=float(req.crop_bottom) / 100.0,
+            crop_left=float(req.crop_left) / 100.0,
+            crop_right=float(req.crop_right) / 100.0,
             mirror_video=req.mirror_video,
             zoom_factor=req.zoom_factor,
             blur_subtitles=req.blur_subtitles,

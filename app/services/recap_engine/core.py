@@ -541,7 +541,11 @@ def output_canvas(ratio: str, source_w: int = 0, source_h: int = 0) -> tuple[int
 
 
 def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
-                 canvas: tuple[int, int] | None = None) -> dict[str, Any]:
+                 canvas: tuple[int, int] | None = None,
+                 crop_top: float = 0.0,
+                 crop_bottom: float = 0.0,
+                 crop_left: float = 0.0,
+                 crop_right: float = 0.0) -> dict[str, Any]:
     """Everything _visual_filters needs; `canvas` overrides the size (the preview draws smaller)."""
     ratio = ratio if ratio in OUTPUT_RATIOS else "16:9"
     cw, ch = canvas or output_canvas(ratio, source_w, source_h)
@@ -549,12 +553,30 @@ def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
     fill = fill if fill in FRAME_FILLS else "blur"
     sw, sh = int(source_w or 0) or cw, int(source_h or 0) or ch
 
-    if fill == "crop" or abs(sw / sh - cw / ch) < 0.01:
+    # Clamp custom crop margins (0.0 to 0.35 max crop per side)
+    ct = max(0.0, min(0.35, float(crop_top or 0.0)))
+    cb = max(0.0, min(0.35, float(crop_bottom or 0.0)))
+    cl = max(0.0, min(0.35, float(crop_left or 0.0)))
+    cr = max(0.0, min(0.35, float(crop_right or 0.0)))
+
+    has_crop = (ct > 0.001 or cb > 0.001 or cl > 0.001 or cr > 0.001)
+    if has_crop and (cl + cr < 0.90) and (ct + cb < 0.90):
+        c_sw = _even(sw * (1.0 - cl - cr))
+        c_sh = _even(sh * (1.0 - ct - cb))
+        c_x = int(round(float(sw * cl) / 2.0)) * 2 if cl > 0.0001 else 0
+        c_y = int(round(float(sh * ct) / 2.0)) * 2 if ct > 0.0001 else 0
+        crop_filter = f"crop={c_sw}:{c_sh}:{c_x}:{c_y}"
+    else:
+        c_sw, c_sh = sw, sh
+        c_x, c_y = 0, 0
+        crop_filter = ""
+
+    if fill == "crop" or (not has_crop and abs(sw / sh - cw / ch) < 0.01):
         pw, ph = cw, ch
         ox, oy = 0, 0
     else:
-        scale = min(cw / sw, ch / sh) if sw and sh else 1.0
-        pw, ph = min(cw, _even(sw * scale)), min(ch, _even(sh * scale))
+        scale = min(cw / c_sw, ch / c_sh) if c_sw and c_sh else 1.0
+        pw, ph = min(cw, _even(c_sw * scale)), min(ch, _even(c_sh * scale))
         ox, oy = _even((cw - pw) / 2.0) if cw > pw else 0, _even((ch - ph) / 2.0) if ch > ph else 0
 
     return {
@@ -564,6 +586,13 @@ def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
         "ch": ch,
         "sw": int(source_w or 0),
         "sh": int(source_h or 0),
+        "c_sw": c_sw,
+        "c_sh": c_sh,
+        "crop_filter": crop_filter,
+        "crop_top": ct,
+        "crop_bottom": cb,
+        "crop_left": cl,
+        "crop_right": cr,
         "pw": pw,
         "ph": ph,
         "ox": ox,
@@ -583,19 +612,27 @@ def _visual_filters(mirror_video: bool, zoom_factor: float,
     lay = layout or {"fill": "crop", "cw": 1920, "ch": 1080, "sw": 0, "sh": 0}
     cw, ch = int(lay["cw"]), int(lay["ch"])
     sw, sh = int(lay.get("sw") or 0) or cw, int(lay.get("sh") or 0) or ch
-    head = "hflip," if mirror_video else ""
+    c_sw = int(lay.get("c_sw") or sw)
+    c_sh = int(lay.get("c_sh") or sh)
+
+    crop_filt = str(lay.get("crop_filter") or "").strip()
+    prefix = f"{crop_filt}," if crop_filt else ""
+    head = f"{prefix}hflip," if mirror_video else prefix
     color_grade = ",eq=contrast=1.03:brightness=-0.01:saturation=1.05" if mirror_video else ""
-    if lay.get("fill") == "crop" or abs(sw / sh - cw / ch) < 0.01:
+
+    if lay.get("fill") == "crop" or (not crop_filt and abs(sw / sh - cw / ch) < 0.01):
         fill_w, fill_h = max(cw, _even(cw * zoom)), max(ch, _even(ch * zoom))
         return (f"{head}scale={fill_w}:{fill_h}:force_original_aspect_ratio=increase,"
                 f"crop={cw}:{ch},setsar=1{color_grade},format=yuv420p"), zoom
+
     if "pw" in lay and "ph" in lay and "ox" in lay and "oy" in lay:
         pw, ph = int(lay["pw"]), int(lay["ph"])
         ox, oy = int(lay["ox"]), int(lay["oy"])
     else:
-        scale = min(cw / sw, ch / sh)
-        pw, ph = min(cw, _even(sw * scale)), min(ch, _even(sh * scale))
+        scale = min(cw / c_sw, ch / c_sh)
+        pw, ph = min(cw, _even(c_sw * scale)), min(ch, _even(c_sh * scale))
         ox, oy = _even((cw - pw) / 2.0) if cw > pw else 0, _even((ch - ph) / 2.0) if ch > ph else 0
+
     zw, zh = max(pw, _even(pw * zoom)), max(ph, _even(ph * zoom))
     picture = f"scale={zw}:{zh},crop={pw}:{ph},setsar=1{color_grade}"
     if lay.get("fill") == "black":
@@ -1497,6 +1534,10 @@ def extract_preview_with_overlays(
     sample_text: str = "ဒီဇာတ်လမ်းမှာတော့ အဓိကဇာတ်ကောင်ဟာ မမျှော်လင့်ဘဲ...",
     work_dir: Path | str | None = None,
     ffprobe: str | None = None,
+    crop_top: float = 0.0,
+    crop_bottom: float = 0.0,
+    crop_left: float = 0.0,
+    crop_right: float = 0.0,
 ) -> Path:
     """Extracts a single representative frame with layout, blur box, and sample 1-line subtitle applied."""
     source = Path(source_video).resolve()
@@ -1521,7 +1562,16 @@ def extract_preview_with_overlays(
     else:
         seek_sec = max(0.05, vid_dur * 0.3)
 
-    layout = frame_layout(output_ratio, frame_fill, sw, sh)
+    layout = frame_layout(
+        output_ratio,
+        frame_fill,
+        sw,
+        sh,
+        crop_top=crop_top,
+        crop_bottom=crop_bottom,
+        crop_left=crop_left,
+        crop_right=crop_right,
+    )
     cw, ch = int(layout["cw"]), int(layout["ch"])
     pw, ph = int(layout.get("pw", cw)), int(layout.get("ph", ch))
     ox, oy = int(layout.get("ox", 0)), int(layout.get("oy", 0))
@@ -1742,6 +1792,10 @@ class EdgeSmartSync:
         render_final_video: bool = True,
         output_ratio: str = "16:9",
         frame_fill: str = "blur",
+        crop_top: float = 0.0,
+        crop_bottom: float = 0.0,
+        crop_left: float = 0.0,
+        crop_right: float = 0.0,
         overlays: dict[str, Any] | None = None,
         log: LogFn = _noop,
         progress: Callable[[int, int, str], None] | None = None,
@@ -1763,6 +1817,10 @@ class EdgeSmartSync:
         self.zoom_factor = max(1.0, min(float(zoom_factor), 1.25))
         self.output_ratio = output_ratio if output_ratio in OUTPUT_RATIOS else "16:9"
         self.frame_fill = frame_fill if frame_fill in FRAME_FILLS else "blur"
+        self.crop_top = float(crop_top or 0.0)
+        self.crop_bottom = float(crop_bottom or 0.0)
+        self.crop_left = float(crop_left or 0.0)
+        self.crop_right = float(crop_right or 0.0)
         self.smooth_freeze_fallback = bool(smooth_freeze_fallback)
         self.max_freeze_hold = max(0.15, min(float(max_freeze_hold), 1.50))
         self.render_final_video = bool(render_final_video)
@@ -1834,9 +1892,23 @@ class EdgeSmartSync:
         except Exception as exc:  # only the frame shape depends on it: Original falls back to 16:9
             source_w, source_h = 0, 0
             self.log(f"⚠️ Video size not readable ({exc}); Original ratio falls back to 16:9")
-        layout = frame_layout(self.output_ratio, self.frame_fill, source_w, source_h)
+        layout = frame_layout(
+            self.output_ratio,
+            self.frame_fill,
+            source_w,
+            source_h,
+            crop_top=self.crop_top,
+            crop_bottom=self.crop_bottom,
+            crop_left=self.crop_left,
+            crop_right=self.crop_right,
+        )
+        crop_msg = (
+            f" | Crop={self.crop_top*100:.0f}%T/{self.crop_bottom*100:.0f}%B/{self.crop_left*100:.0f}%L/{self.crop_right*100:.0f}%R"
+            if (self.crop_top > 0 or self.crop_bottom > 0 or self.crop_left > 0 or self.crop_right > 0)
+            else ""
+        )
         self.log(f"🪞 Mirror={'ON' if self.mirror_video else 'OFF'} | Ratio={layout['ratio']} "
-                 f"{layout['cw']}x{layout['ch']} ({layout['fill']}) from {source_w}x{source_h} | Zoom={self.zoom_factor:.3f}x")
+                 f"{layout['cw']}x{layout['ch']} ({layout['fill']}){crop_msg} from {source_w}x{source_h} | Zoom={self.zoom_factor:.3f}x")
 
         # Method 2: Optimize default Edge TTS speed (+12% to eliminate dragging robotic tone)
         effective_rate = self.edge_tts_rate
