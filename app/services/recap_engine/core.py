@@ -897,6 +897,8 @@ def _render_text_with_pillow(
     cand_fonts = [
         str(font_path or "").strip(),
         os.getenv("RECAP_MM_FONT", ""),
+        "/usr/share/fonts/truetype/padauk/Padauk-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf",
         r"C:\Windows\Fonts\mmrtext.ttf",
         r"C:\Windows\Fonts\MyanmarText.ttf",
         r"C:\Windows\Fonts\Pyidaungsu.ttf",
