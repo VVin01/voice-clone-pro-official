@@ -692,38 +692,25 @@ async def extract_media_info(
     canonical_url = unshorten_url(url)
 
     try:
-        import yt_dlp
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "nocheckcertificate": True,
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
-            }
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(canonical_url, download=False)
-            title = info.get("title", "Video Content")
-            duration_sec = info.get("duration", 0) or 0
-            mins, secs = divmod(int(duration_sec), 60)
-            duration_str = f"{mins:02d}:{secs:02d}"
-            uploader = info.get("uploader", "Creator")
-            thumbnail = info.get("thumbnail", "")
+        from app.services.downloader import MediaDownloader
+        downloader = MediaDownloader()
+        info = downloader.get_info(canonical_url)
+        duration_sec = info.get("duration", 0) or 0
+        mins, secs = divmod(int(duration_sec), 60)
+        duration_str = f"{mins:02d}:{secs:02d}"
 
-            return {
-                "success": True,
-                "url": canonical_url,
-                "platform": detect_platform(canonical_url),
-                "title": title,
-                "uploader": uploader,
-                "thumbnail": thumbnail,
-                "estimated_duration": duration_str,
-                "duration_seconds": duration_sec,
-                "has_subtitles": bool(info.get("subtitles") or info.get("automatic_captions")),
-                "formats_available": ["MP4 (Full HD Video)", "MP3 (192kbps Audio)", "SRT (Subtitles)"],
-            }
+        return {
+            "success": True,
+            "url": canonical_url,
+            "platform": info.get("platform") or detect_platform(canonical_url),
+            "title": info.get("title", "Video Content"),
+            "uploader": info.get("uploader", "Creator"),
+            "thumbnail": info.get("thumbnail", ""),
+            "estimated_duration": duration_str,
+            "duration_seconds": duration_sec,
+            "has_subtitles": info.get("has_subtitles", False),
+            "formats_available": ["MP4 (Full HD Video)", "MP3 (192kbps Audio)", "SRT (Subtitles)"],
+        }
     except Exception as e:
         logger.warning(f"yt-dlp extract error for {canonical_url}: {e}")
         # Graceful fallback response
