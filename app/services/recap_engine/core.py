@@ -1054,7 +1054,7 @@ def _render_extra_text_png(
 def _encoder_args(encoder: str) -> list[str]:
     if encoder == "h264_nvenc":
         return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19", "-b:v", "0"]
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+    return ["-c:v", "libx264", "-preset", "faster", "-crf", "20"]
 
 
 BURMESE_SYLLABLE_BREAK = re.compile(

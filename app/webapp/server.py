@@ -35,6 +35,25 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Initial 24h cleanup error: %s", cl_err)
 
+    # Recover any orphaned RUNNING recap jobs left behind by previous deploys/restarts
+    try:
+        from app.models.schema import Job
+        from app.models.enums import JobStatus, JobType
+        from app.db.session import AsyncSessionLocal
+        from sqlalchemy import update
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(Job)
+                .where(
+                    Job.status == JobStatus.RUNNING.value,
+                    (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap")
+                )
+                .values(status=JobStatus.QUEUED.value, started_at=None)
+            )
+            await session.commit()
+    except Exception as rec_err:
+        pass
+
     # Periodic background task every 30 minutes
     async def _periodic_cleanup():
         while True:

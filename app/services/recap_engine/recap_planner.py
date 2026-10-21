@@ -34,7 +34,7 @@ SENTENCE_UNIT_GAP = 1.5         # a pause this long always ends a line
 # Original V2 visual boundary: first frame to last frame, every gap between two
 # narration units split at its midpoint.
 BOUNDARY_PROFILE = "v2_full_coverage_midpoint"
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny.en")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 
 
