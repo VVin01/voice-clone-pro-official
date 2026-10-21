@@ -12,3 +12,7 @@ data/
 logs/
 temp/
 outputs/
+
+check_job.py
+reset_recap.py
+

@@ -162,6 +162,9 @@ async def main() -> None:
                     # Atomically claim oldest QUEUED job matching engine_filter
                     job = await claim_next_queued_job(session, engine_filter=engine_filter)
                     if job:
+                        if getattr(job, "job_type", "") == "recap" or getattr(job, "engine", "") == "recap" or str(getattr(job, "id", "")).startswith("rc_"):
+                            logger.info(f"Skipping Movie Recap job {job.id} on Laptop Worker (handled exclusively on Render Cloud).")
+                            continue
                         processed_count += 1
                         t_start = time.time()
                         engine_badge = (getattr(job, "engine", "") or "VOXCPM").upper()
