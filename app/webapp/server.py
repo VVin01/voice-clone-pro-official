@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,12 +79,30 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 webapp_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@webapp_app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    """Ensure Telegram Webview and browsers never serve stale cached SPA assets."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 @webapp_app.get("/")
 async def serve_index():
-    """Serve the Mini App main SPA interface."""
+    """Serve the Mini App main SPA interface with strict anti-caching headers."""
     index_file = STATIC_DIR / "index.html"
     if index_file.is_file():
-        return FileResponse(index_file)
+        return FileResponse(
+            index_file,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
     return {"message": "Voice Clone Studio Mini App API is running."}
 
 

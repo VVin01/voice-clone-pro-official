@@ -823,6 +823,39 @@ textarea#voice-text-input:focus {
     background: rgba(245, 158, 11, 0.25);
 }
 
+.send-telegram-gold-btn {
+    background: linear-gradient(135deg, #2563eb 0%, #0284c7 50%, #06b6d4 100%);
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 13.5px;
+    padding: 10px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    box-shadow: 0 4px 18px rgba(14, 165, 233, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100%;
+}
+
+.send-telegram-gold-btn:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 6px 22px rgba(14, 165, 233, 0.5);
+}
+
+.send-telegram-gold-btn:active {
+    transform: scale(0.98);
+}
+
+.send-telegram-gold-btn.sent {
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    border-color: #34d399;
+    box-shadow: 0 4px 18px rgba(16, 185, 129, 0.35);
+}
+
 .primary-btn {
     background: var(--accent-blue);
     color: #fff;
@@ -2165,6 +2198,20 @@ textarea#voice-text-input:focus {
 .history-dl-link:hover {
     background: rgba(245, 158, 11, 0.2);
     color: #fbbf24;
+}
+
+.history-dl-link.tg-btn {
+    background: rgba(14, 165, 233, 0.15);
+    border-color: rgba(56, 189, 248, 0.4);
+    color: #38bdf8;
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.history-dl-link.tg-btn:hover {
+    background: rgba(14, 165, 233, 0.35);
+    color: #ffffff;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
 }
 
 .admin-history-stats-row {

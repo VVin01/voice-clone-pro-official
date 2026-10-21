@@ -740,19 +740,9 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
         except Exception as db_succ_err:
             logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
 
-        # Send to Telegram
-        if video_path and Path(video_path).is_file():
-            await _send_recap_telegram_delivery(
-                chat_id=chat_id,
-                video_path=video_path,
-                audio_path=audio_path,
-                srt_path=srt_path,
-                script_path=script_path,
-                title="AI Movie Recap",
-                style=req.story_style,
-                voice_name=req.voice_slug,
-                duration_sec=int(recap_res.get("duration", 0)),
-            )
+        # Deliverables are stored and ready in Mini App
+        # Telegram delivery is available on-demand via /api/recap/{job_id}/send-telegram
+        logger.info(f"Recap job {job_id} successfully finished. Ready for in-app preview/download.")
 
     except Exception as e:
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
@@ -987,6 +977,86 @@ async def download_recap_file(
     }
     media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
     return FileResponse(path=str(file_path), media_type=media_type, filename=filename)
+
+
+@api_router.post("/recap/{job_id}/send-telegram")
+async def send_recap_to_telegram(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Deliver generated recap video and assets directly to user's Telegram chat on demand."""
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    video_path = entry.get("video_path") if entry else None
+    audio_path = entry.get("audio_path") if entry else None
+    srt_path = entry.get("srt_path") if entry else None
+    script_path = entry.get("script_path") if entry else None
+
+    if not video_path or not Path(video_path).is_file():
+        job_dir = settings.storage_root / "recap_output" / job_id
+        if job_dir.is_dir():
+            cands = list(job_dir.glob("*.mp4"))
+            if cands:
+                video_path = str(cands[0])
+            auds = list(job_dir.glob("*.mp3")) + list(job_dir.glob("*.wav"))
+            if auds:
+                audio_path = str(auds[0])
+            srts = list(job_dir.glob("*.srt"))
+            if srts:
+                srt_path = str(srts[0])
+
+    if not video_path or not Path(video_path).is_file():
+        raise HTTPException(status_code=404, detail="ဗီဒီယို ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
+
+    await _send_recap_telegram_delivery(
+        chat_id=user.id,
+        video_path=video_path,
+        audio_path=audio_path,
+        srt_path=srt_path,
+        script_path=script_path,
+        title="AI Movie Recap",
+        style="Pro Dubbed",
+        voice_name="Smart Sync AI",
+        duration_sec=0,
+    )
+    return {"success": True, "message": "Telegram သို့ ဗီဒီယို ပို့ပြီးပါပြီခင်ဗျာ!"}
+
+
+@api_router.post("/voices/{job_id}/send-telegram")
+async def send_voice_to_telegram(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Deliver synthesized voice audio directly to user's Telegram chat on demand."""
+    db_job = await db.get(Job, job_id)
+    audio_path = None
+    if db_job and db_job.result_path and Path(db_job.result_path).is_file():
+        audio_path = Path(db_job.result_path)
+    else:
+        cand = settings.storage_root / "audio_out" / f"{job_id}.wav"
+        if cand.is_file():
+            audio_path = cand
+
+    if not audio_path or not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="အသံဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
+
+    from aiogram import Bot
+    from aiogram.types import FSInputFile
+    bot = Bot(token=settings.bot_token)
+    try:
+        af = FSInputFile(str(audio_path), filename=f"voice_{job_id[:8]}.wav")
+        caption = (
+            f"🎙️ <b>AI Myanmar Voice Clone</b>\n"
+            f"✨ <i>Mini App မှ တောင်းဆိုချက်အရ သင့်ထံ ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
+        )
+        await bot.send_audio(chat_id=user.id, audio=af, caption=caption, parse_mode="HTML")
+        return {"success": True, "message": "Telegram သို့ အသံဖိုင် ပို့ပြီးပါပြီခင်ဗျာ!"}
+    except Exception as e:
+        logger.warning(f"Failed to send voice to Telegram chat {user.id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်: {e}")
+    finally:
+        await bot.session.close()
 
 
 # ── 5.1. 24-Hour Job History & Lifecycle Management ─────────────────────────

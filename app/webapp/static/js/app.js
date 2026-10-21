@@ -554,6 +554,13 @@ function startJobPolling(jobId) {
                 if (resultBox) resultBox.classList.remove("hidden");
                 if (btnGen) btnGen.disabled = false;
 
+                const btnTg = document.getElementById("btn-voice-send-telegram");
+                if (btnTg) {
+                    btnTg.disabled = false;
+                    btnTg.classList.remove("sent");
+                    btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_voice_telegram")}</span>`;
+                }
+
                 if (audioPlayer && data.output_audio_url) {
                     audioPlayer.src = data.output_audio_url;
                     audioPlayer.play().catch(() => {});
@@ -1081,6 +1088,13 @@ function startRecapJobPolling(jobId) {
                     resultBox.scrollIntoView({ behavior: "smooth" });
                 }
 
+                const btnTg = document.getElementById("btn-recap-send-telegram");
+                if (btnTg) {
+                    btnTg.disabled = false;
+                    btnTg.classList.remove("sent");
+                    btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
+                }
+
                 // Setup video player
                 const player = document.getElementById("recap-result-player");
                 if (player && data.download_urls?.video) {
@@ -1151,7 +1165,7 @@ function setupDownloader() {
 let activePackageCode = "voice_studio_pro";
 let activeAmount = 25000;
 
-function openPaymentDrawer(packageCode, amount, title) {
+async function openPaymentDrawer(packageCode, amount, title) {
     haptic("light");
     activePackageCode = packageCode;
     activeAmount = amount;
@@ -1166,6 +1180,31 @@ function openPaymentDrawer(packageCode, amount, title) {
         drawer.classList.remove("hidden");
         drawer.scrollIntoView({ behavior: "smooth" });
     }
+
+    // Dynamic sync of payment account numbers from API
+    try {
+        const res = await fetch("/api/vip/plans", { headers: getAuthHeaders() });
+        if (res.ok) {
+            const data = await res.json();
+            const accounts = data.payment_accounts || [];
+            accounts.forEach(acc => {
+                const prov = (acc.provider || "").toLowerCase();
+                if (prov.includes("kbz") || prov.includes("kpay")) {
+                    const elNum = document.getElementById("kpay-num");
+                    const elName = document.getElementById("kpay-name");
+                    if (elNum) elNum.innerText = acc.number;
+                    if (elName) elName.innerText = `Account Name: ${acc.name}`;
+                } else if (prov.includes("wave")) {
+                    const elNum = document.getElementById("wave-num");
+                    const elName = document.getElementById("wave-name");
+                    if (elNum) elNum.innerText = acc.number;
+                    if (elName) elName.innerText = `Account Name: ${acc.name}`;
+                }
+            });
+        }
+    } catch (err) {
+        console.warn("Could not sync payment accounts from API:", err);
+    }
 }
 
 function closePaymentDrawer() {
@@ -1175,12 +1214,90 @@ function closePaymentDrawer() {
 
 function copyAccount(accNum) {
     haptic("medium");
-    navigator.clipboard.writeText(accNum).then(() => {
-        alert(t("toast_copied"));
-    }).catch(() => {
-        prompt("Account:", accNum);
-    });
+    const numToCopy = accNum || "09790760003";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(numToCopy).then(() => {
+            alert(`${numToCopy}\n${t("toast_copied")}`);
+        }).catch(() => {
+            prompt("Account Number:", numToCopy);
+        });
+    } else {
+        prompt("Account Number:", numToCopy);
+    }
 }
+
+// ── On-Demand Telegram Delivery Actions ─────────────────────────────────────
+async function sendVoiceToTelegram(targetJobId) {
+    const jobId = targetJobId || state.activeJobId;
+    if (!jobId) {
+        alert(t("toast_empty_text") || "Voice Job ID not found");
+        return;
+    }
+    haptic("medium");
+    const btn = document.getElementById("btn-voice-send-telegram");
+    const originalContent = btn ? btn.innerHTML : "";
+    if (btn && !targetJobId) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-inline">⏳</span> <span>${t("toast_sending_telegram")}</span>`;
+    }
+    try {
+        const res = await fetch(`/api/voices/${jobId}/send-telegram`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to send to Telegram");
+        haptic("success");
+        if (btn && !targetJobId) {
+            btn.classList.add("sent");
+            btn.innerHTML = `<span>${t("btn_telegram_sent")}</span>`;
+        }
+        alert(t("toast_telegram_sent"));
+    } catch (err) {
+        alert(err.message || "Failed to send to Telegram");
+        if (btn && !targetJobId) {
+            btn.disabled = false;
+            btn.innerHTML = originalContent;
+        }
+    }
+}
+window.sendVoiceToTelegram = sendVoiceToTelegram;
+
+async function sendRecapToTelegram(targetJobId) {
+    const jobId = targetJobId || state.recapJobId;
+    if (!jobId) {
+        alert(t("toast_empty_url") || "Recap Job ID not found");
+        return;
+    }
+    haptic("medium");
+    const btn = document.getElementById("btn-recap-send-telegram");
+    const originalContent = btn ? btn.innerHTML : "";
+    if (btn && !targetJobId) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-inline">⏳</span> <span>${t("toast_sending_telegram")}</span>`;
+    }
+    try {
+        const res = await fetch(`/api/recap/${jobId}/send-telegram`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to send to Telegram");
+        haptic("success");
+        if (btn && !targetJobId) {
+            btn.classList.add("sent");
+            btn.innerHTML = `<span>${t("btn_telegram_sent")}</span>`;
+        }
+        alert(t("toast_telegram_sent"));
+    } catch (err) {
+        alert(err.message || "Failed to send to Telegram");
+        if (btn && !targetJobId) {
+            btn.disabled = false;
+            btn.innerHTML = originalContent;
+        }
+    }
+}
+window.sendRecapToTelegram = sendRecapToTelegram;
 
 function setupSlipPreview() {
     const fileInput = document.getElementById("slip-file-input");
@@ -1483,7 +1600,7 @@ async function loadUserHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago}</span>
                             <div class="history-btn-row">
-                                ${j.download_url ? `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Play / Download</a>` : ''}
+                                ${j.download_url ? `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
                             </div>
                         </div>
                     </div>
@@ -1506,7 +1623,7 @@ async function loadUserHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago}</span>
                             <div class="history-btn-row">
-                                ${j.deliverables?.video ? `<a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a>` : ''}
+                                ${j.deliverables?.video ? `<a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
                                 ${j.deliverables?.audio ? `<a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.mp3" class="history-dl-link">🎙️ Audio</a>` : ''}
                                 ${j.deliverables?.srt ? `<a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>` : ''}
                                 ${j.deliverables?.script ? `<a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>` : ''}

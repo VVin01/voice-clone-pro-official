@@ -253,6 +253,11 @@ const translations = {
         toast_empty_text: "ကျေးဇူးပြု၍ စာသား ရိုက်ထည့်ပေးပါခင်ဗျာ။",
         toast_empty_url: "ကျေးဇူးပြု၍ Video URL ထည့်သွင်းပေးပါခင်ဗျာ။",
         toast_success_slip: "ပြေစာ အောင်မြင်စွာ တင်သွင်းပြီးပါပြီ။",
+        btn_send_voice_telegram: "📱 Telegram သို့ ပို့မည်",
+        btn_send_recap_telegram: "📱 Telegram သို့ ပို့မည်",
+        btn_telegram_sent: "✅ Telegram သို့ ပို့ပြီးပါပြီ",
+        toast_telegram_sent: "Telegram သို့ အောင်မြင်စွာ ပေးပို့ပြီးပါပြီခင်ဗျာ!",
+        toast_sending_telegram: "Telegram သို့ ပေးပို့နေပါသည်...",
     },
 
     en: {
@@ -504,6 +509,11 @@ const translations = {
         toast_empty_text: "Please enter some text to synthesize.",
         toast_empty_url: "Please enter a valid video URL.",
         toast_success_slip: "Payment slip submitted successfully.",
+        btn_send_voice_telegram: "📱 Send to Telegram",
+        btn_send_recap_telegram: "📱 Send to Telegram",
+        btn_telegram_sent: "✅ Sent to Telegram",
+        toast_telegram_sent: "Delivered to Telegram successfully!",
+        toast_sending_telegram: "Delivering to Telegram...",
     }
 };
 

@@ -264,8 +264,9 @@ async def process_single_job(
 
         job.seconds_consumed = duration_seconds
 
-        # Send completed audio to user via Telegram Bot (if available)
-        if bot and target_chat_id:
+        # Send completed audio to user via Telegram Bot ONLY if explicitly requested
+        # For Mini App jobs, results are previewed in-app and user can tap 'Send to Telegram' on demand
+        if bot and target_chat_id and getattr(job, "auto_deliver", False):
             try:
                 audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
                 audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
@@ -283,7 +284,8 @@ async def process_single_job(
                     caption=caption,
                     parse_mode="HTML",
                 )
-                await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
+                if target_msg_id:
+                    await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
             except Exception as send_err:
                 logger.warning("Failed to deliver audio via Telegram for job %s: %s", job.id, send_err)
 

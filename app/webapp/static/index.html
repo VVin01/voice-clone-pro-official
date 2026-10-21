@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=2.6.5">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -204,6 +204,9 @@
                     <audio id="result-audio-player" controls class="custom-audio-player"></audio>
                     <div class="result-actions">
                         <a id="btn-download-audio" href="#" download="voice_clone.wav" class="btn secondary-btn" data-i18n="btn_download_wav">📥 Download WAV</a>
+                        <button id="btn-voice-send-telegram" class="btn send-telegram-gold-btn" onclick="sendVoiceToTelegram()">
+                            <span class="btn-icon">📱</span> <span data-i18n="btn_send_voice_telegram">Telegram သို့ ပို့မည်</span>
+                        </button>
                     </div>
                 </div>
 
@@ -518,6 +521,9 @@
                         <a id="btn-recap-dl-video" href="#" download="recap_video.mp4" class="btn gold-gradient-btn" data-i18n="btn_dl_recap_video">
                             🎬 Download Full HD Video (MP4)
                         </a>
+                        <button id="btn-recap-send-telegram" class="btn send-telegram-gold-btn mt-2" onclick="sendRecapToTelegram()">
+                            <span class="btn-icon">📱</span> <span data-i18n="btn_send_recap_telegram">Telegram သို့ ပို့မည်</span>
+                        </button>
                         <div class="dl-sub-buttons mt-2">
                             <a id="btn-recap-dl-audio" href="#" download="voiceover.mp3" class="btn mini-btn secondary-btn" data-i18n="btn_dl_recap_audio">
                                 🎙️ Voiceover (MP3)
@@ -693,18 +699,18 @@
                         <div class="pay-method kpay">
                             <div class="pay-title">KBZPay (KPay)</div>
                             <div class="pay-account">
-                                <span class="acc-num" id="kpay-num">09951234567</span>
-                                <button class="mini-copy-btn" onclick="copyAccount('09951234567')" data-i18n="copy_btn">📋 ကူးမည်</button>
+                                <span class="acc-num" id="kpay-num">09790760003</span>
+                                <button class="mini-copy-btn" onclick="copyAccount('09790760003')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
-                            <span class="acc-name">Account Name: Ko Win</span>
+                            <span class="acc-name" id="kpay-name">Account Name: Win Kyaw Oo</span>
                         </div>
                         <div class="pay-method wavepay">
                             <div class="pay-title">WavePay</div>
                             <div class="pay-account">
-                                <span class="acc-num" id="wave-num">09951234567</span>
-                                <button class="mini-copy-btn" onclick="copyAccount('09951234567')" data-i18n="copy_btn">📋 ကူးမည်</button>
+                                <span class="acc-num" id="wave-num">09790760003</span>
+                                <button class="mini-copy-btn" onclick="copyAccount('09790760003')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
-                            <span class="acc-name">Account Name: Ko Win</span>
+                            <span class="acc-name" id="wave-name">Account Name: Win Kyaw Oo</span>
                         </div>
                     </div>
                     
@@ -847,7 +853,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js"></script>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/i18n.js?v=2.6.5"></script>
+    <script src="/static/js/app.js?v=2.6.5"></script>
 </body>
 </html>
