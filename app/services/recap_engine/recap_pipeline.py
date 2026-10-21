@@ -180,7 +180,9 @@ def run_recap_pipeline(
 
     if extra_text and str(extra_text).strip():
         overlays["extra_text"] = str(extra_text).strip()
-        overlays["extra_text_position"] = [0.5, 0.84]
+        overlays["extra_text_position"] = [0.50, 0.06]  # Elegant luxury watermark banner at top center
+        overlays["extra_text_font_size"] = 28
+        overlays["extra_text_opacity"] = 0.82
 
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:

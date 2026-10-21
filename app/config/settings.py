@@ -67,8 +67,10 @@ class Settings(BaseSettings):
     # User Account Policies
     free_monthly_allowance_seconds: int = Field(default=180, alias="FREE_MONTHLY_ALLOWANCE_SECONDS")  # 3 minutes
     welcome_bonus_seconds: int = Field(default=0, alias="WELCOME_BONUS_SECONDS")  # Retired in V2 (default 0)
-    character_limit_free: int = Field(default=500, alias="CHARACTER_LIMIT_FREE")
-    character_limit_purchased: int = Field(default=2000, alias="CHARACTER_LIMIT_PURCHASED")
+    character_limit_free: int = Field(default=1000, alias="CHARACTER_LIMIT_FREE")  # Free tier: 1000 chars/generation
+    character_limit_purchased: int = Field(default=5000, alias="CHARACTER_LIMIT_PURCHASED")  # VIP: 5000 chars/generation
+    recap_free_max_duration_seconds: int = Field(default=120, alias="RECAP_FREE_MAX_DURATION_SECONDS")  # Free: 2 mins (120s)
+    recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # VIP: 10 mins (600s)
     free_daily_job_limit: int = Field(default=5, alias="FREE_DAILY_JOB_LIMIT")
     purchased_daily_job_limit: int = Field(default=0, alias="PURCHASED_DAILY_JOB_LIMIT")  # 0 = unlimited
     max_concurrent_jobs_per_user: int = Field(default=1, alias="MAX_CONCURRENT_JOBS_PER_USER")

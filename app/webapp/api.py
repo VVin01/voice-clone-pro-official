@@ -148,6 +148,9 @@ async def get_user_profile(
         "balance_minutes": round(seconds_left / 60, 1),
         "recap_credits": getattr(user, "recap_credits", 3),
         "character_limit": char_limit,
+        "recap_max_duration_seconds": 600 if is_vip else 120,
+        "recap_max_duration_minutes": 10 if is_vip else 2,
+        "has_recap_watermark": not is_vip,
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
     }
@@ -257,7 +260,8 @@ async def create_voice_job(
     if len(clean_text) > char_limit:
         raise HTTPException(
             status_code=400,
-            detail=f"အက္ခရာ အရေအတွက် {len(clean_text)} သည် ကန့်သတ်ချက် {char_limit} ထက် ကျော်လွန်နေပါသည်။ VIP ရယူပါရန်။",
+            detail=f"စာသား စာလုံးရေ ({len(clean_text)}) သည် ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါသည်။ "
+                   + ("အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ ၁၀၀၀ အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ ၅၀၀၀ အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
         )
 
     # Determine engine & resolve authorized model
@@ -351,7 +355,8 @@ async def create_voice_job_with_audio(
     if len(clean_text) > char_limit:
         raise HTTPException(
             status_code=400,
-            detail=f"အက္ခရာ အရေအတွက် {len(clean_text)} သည် ကန့်သတ်ချက် {char_limit} ထက် ကျော်လွန်နေပါသည်။",
+            detail=f"စာသား စာလုံးရေ ({len(clean_text)}) သည် ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါသည်။ "
+                   + ("အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ ၁၀၀၀ အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ ၅၀၀၀ အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
         )
 
     # Determine engine & resolve authorized model
@@ -720,7 +725,7 @@ async def _send_recap_telegram_delivery(
         logger.warning(f"Failed to send recap video to Telegram chat {chat_id}: {e}")
 
 
-async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_id: int, chat_id: int):
+async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_id: int, chat_id: int, is_vip: bool = False):
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if not entry:
         return
@@ -775,6 +780,13 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
         clean_source_url = extract_first_url(req.url) or req.url.strip()
         canonical_source_url = unshorten_url(clean_source_url)
 
+        # Free tier watermark branding vs VIP clean output
+        watermark_text = None
+        if not is_vip:
+            watermark_text = "✨ Voice Clone Pro - Recap Studio Ultra Suite တွင် ပြုလုပ်သည်"
+
+        max_dur_limit = 600 if is_vip else getattr(settings, "recap_free_max_duration_seconds", 120)
+
         recap_fn = functools.partial(
             downloader.generate_recap_video,
             url_or_path=canonical_source_url,
@@ -799,6 +811,9 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
             sub_font_size=req.sub_font_size,
             sub_style=req.sub_style,
             logo_position=logo_pos_coords if req.include_logo else None,
+            extra_text=watermark_text,
+            is_vip=is_vip,
+            max_duration_seconds=max_dur_limit,
             progress_callback=progress_cb,
         )
 
@@ -996,15 +1011,17 @@ async def create_recap_job(
             detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
         )
 
-    # Duration limit validation (Max 10 minutes per recap credit)
-    max_duration_allowed = getattr(settings, "recap_max_duration_seconds", 600)
+    # Free user duration limit: Max 2 minutes (120s); VIP: Max 10 minutes (600s)
+    max_duration_allowed = 600 if is_vip else getattr(settings, "recap_free_max_duration_seconds", 120)
     if req.duration_seconds and req.duration_seconds > max_duration_allowed:
         dur_mins = req.duration_seconds // 60
         dur_secs = req.duration_seconds % 60
         max_m = max_duration_allowed // 60
+        tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
         raise HTTPException(
             status_code=400,
-            detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်/Credit) ထက် ကျော်လွန်နေပါသည်။ ၁၀ မိနစ်အောက် ဗီဒီယိုကိုသာ အသုံးပြုပေးပါခင်ဗျာ။",
+            detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ "
+                   + ("ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
         )
 
     # Deduct credit if non-admin
@@ -1047,8 +1064,8 @@ async def create_recap_job(
     except Exception as err_db:
         logger.warning(f"Could not persist recap Job record in DB: {err_db}")
 
-    # Start background task
-    asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id))
+    # Start background task with VIP tier flag for watermark control
+    asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id, is_vip=is_vip))
 
     return {
         "success": True,

@@ -197,7 +197,7 @@ const translations = {
         plan_voice_price: "25,000",
         plan_voice_badge: "Voice Creators 🔥",
         plan_voice_f1: "✓ VoxCPM Cloud AI အသံ ၁၂ မျိုး အသုံးပြုခွင့်",
-        plan_voice_f2: "✓ Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)",
+        plan_voice_f2: "✓ တစ်ကြိမ်လျှင် စာလုံးရေ ၅၀၀၀ အထိ အသံသွင်းခွင့် (Custom Clone Upload အပါအဝင်)",
         plan_voice_f3: "✓ Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်",
         plan_voice_f4: "✓ High-Speed Priority Cloud Processing Queue",
         plan_voice_f5: "✓ အရည်အသွေးမြင့် 24kHz PCM WAV တိုက်ရိုက်ဒေါင်းလုဒ်",
@@ -209,7 +209,7 @@ const translations = {
         plan_recap_f1: "✓ Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား (အများဆုံး ၁၀ မိနစ်/ကား)",
         plan_recap_f2: "✓ ဇာတ်လမ်းစတိုင် ၅ မျိုး & စာတန်းထိုးစတိုင် ၄ မျိုး",
         plan_recap_f3: "✓ မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)",
-        plan_recap_f4: "✓ Channel Watermark Logo ထည့်သွင်းခွင့်",
+        plan_recap_f4: "✓ Watermark လုံးဝမပါ (Clean 1080p) & Channel Logo သီးသန့်ထည့်ခွင့်",
         plan_recap_f5: "✓ High-Speed Multi-Threaded Video Rendering",
 
         plan_master_name: "👑 All-in-One Master Suite",
@@ -223,9 +223,9 @@ const translations = {
         plan_master_f5: "✓ Commercial Copyright Safe & 24/7 VIP Direct Support",
 
         // Recap Duration Limit UI
-        recap_limit_notice: "🎬 ၁ Credit = ဗီဒီယို ၁ ပုဒ် (အများဆုံး ၁၀ မိနစ်အထိ)",
-        recap_duration_warning: "⚠️ ဗီဒီယို ကြာချိန် ၁၀ မိနစ်ထက် ကျော်လွန်နေပါသည် (၁ Credit လျှင် အများဆုံး ၁၀ မိနစ်သာ ခွင့်ပြုထားပါသည်)",
-        recap_duration_valid: "✅ ၁၀ မိနစ်အတွင်း အကျုံးဝင်သည်",
+        recap_limit_notice: "🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP: ၁၀ မိနစ်အထိ (No Watermark)",
+        recap_duration_warning: "⚠️ ကြာချိန်ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည် (VIP ရယူပါ)",
+        recap_duration_valid: "✅ ကြာချိန် သတ်မှတ်ချက်အတွင်း အကျုံးဝင်ပါသည်",
 
         btn_buy_voice: "💎 Voice Plan ဝယ်ယူမည်",
         btn_buy_recap: "🎬 Recap Plan ဝယ်ယူမည်",
@@ -506,7 +506,7 @@ const translations = {
         plan_voice_price: "25,000",
         plan_voice_badge: "Voice Creators 🔥",
         plan_voice_f1: "✓ 12 VoxCPM Cloud AI Personas (6M / 6F)",
-        plan_voice_f2: "✓ Custom Voice Clone (Audio Sample Upload)",
+        plan_voice_f2: "✓ Up to 5,000 characters per generation (Custom Clone Upload Included)",
         plan_voice_f3: "✓ Applio RVC Local GPU Trained Models",
         plan_voice_f4: "✓ High-Speed Priority Cloud Processing Queue",
         plan_voice_f5: "✓ High-Fidelity 24kHz PCM WAV Direct Download",
@@ -518,7 +518,7 @@ const translations = {
         plan_recap_f1: "✓ 60 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
         plan_recap_f2: "✓ 5 Story Styles & 4 Subtitle Typography Presets",
         plan_recap_f3: "✓ Anti-Copyright Smart Blur Box (Y, H sliders)",
-        plan_recap_f4: "✓ Custom Channel Logo Watermark Overlay",
+        plan_recap_f4: "✓ 100% Watermark-Free (Clean 1080p) & Custom Channel Logo Support",
         plan_recap_f5: "✓ High-Speed Multi-Threaded Video Rendering",
 
         plan_master_name: "👑 All-in-One Master Suite",
@@ -532,9 +532,9 @@ const translations = {
         plan_master_f5: "✓ Commercial Copyright Safe & 24/7 VIP Support",
 
         // Recap Duration Limit UI
-        recap_limit_notice: "🎬 1 Credit = 1 Video (Max 10 mins duration)",
-        recap_duration_warning: "⚠️ Video duration exceeds 10 minutes limit (1 Credit allows up to 10 mins)",
-        recap_duration_valid: "✅ Within 10 mins limit",
+        recap_limit_notice: "🎬 Free Creator: Max 2 Mins (Watermark Included) • VIP: Up to 10 Mins (No Watermark)",
+        recap_duration_warning: "⚠️ Video duration exceeds tier limit (Upgrade to VIP)",
+        recap_duration_valid: "✅ Within allowed duration limit",
 
         btn_buy_voice: "💎 Get Voice Plan",
         btn_buy_recap: "🎬 Get Recap Plan",

@@ -1043,7 +1043,7 @@ def _render_extra_text_png(
             font_size=max(18, int(font_size)),
             max_width=int(max_width),
             bg_alpha=max(0.1, float(background_alpha)),
-            border_color=(100, 150, 255, 180)
+            border_color=(255, 215, 0, 200)
         )
 
 def _encoder_args(encoder: str) -> list[str]:

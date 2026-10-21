@@ -267,7 +267,21 @@ async function loadUserProfile() {
         }
 
         if (charCount) {
-            charCount.innerText = `0 / ${data.character_limit} chars`;
+            const limit = data.character_limit || (data.is_vip ? 5000 : 1000);
+            charCount.innerText = `0 / ${limit} chars`;
+        }
+
+        const recapLimitText = document.getElementById("recap-tier-limit-text");
+        if (recapLimitText) {
+            if (data.is_vip) {
+                recapLimitText.innerText = (currentLang === "my")
+                    ? "🎬 VIP အဖွဲ့ဝင်: ဗီဒီယိုကြာချိန် ၁၀ မိနစ်အထိ • Watermark ကင်းလွတ်ခွင့် ရရှိထားပါသည် ✨"
+                    : "🎬 VIP Member: Up to 10 Minutes per Recap • Watermark-Free Output ✨";
+            } else {
+                recapLimitText.innerText = (currentLang === "my")
+                    ? "🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP ရယူပါက Watermark မပါဝင်ပါ"
+                    : "🎬 Free Creator: Max 2 Minutes (Watermark Included) • Upgrade to VIP for Watermark-Free";
+            }
         }
 
         // Enable Admin Tab if user is administrator
@@ -568,7 +582,7 @@ function setupVoiceStudio() {
     if (textInput && charCount) {
         textInput.addEventListener("input", () => {
             const len = textInput.value.length;
-            const max = state.user?.character_limit || 500;
+            const max = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
             charCount.innerText = `${len} / ${max} chars`;
             charCount.style.color = len > max ? "#ef4444" : "var(--text-muted)";
         });
@@ -685,6 +699,14 @@ async function handleVoiceGenerate() {
     const text = textInput ? textInput.value.trim() : "";
     if (!text) {
         alert(t("toast_empty_text"));
+        return;
+    }
+
+    const maxChars = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
+    if (text.length > maxChars) {
+        alert(currentLang === "my"
+            ? `စာသား စာလုံးရေ (${text.length}) သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (${maxChars} လုံး) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "" : "ကန့်သတ်ချက်မရှိ (စာလုံးရေ ၅၀၀၀ အထိ) အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
+            : `Text length (${text.length}) exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${maxChars} characters.`);
         return;
     }
 
@@ -1353,14 +1375,19 @@ function setupRecapVisualEditor() {
                 if (titleSpan) titleSpan.innerText = data.title || "Video";
 
                 state.recapSourceDuration = data.duration_seconds || 0;
-                const isOverLimit = (data.duration_seconds && data.duration_seconds > 600);
+                const maxAllowed = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
+                const isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
                 if (durSpan) {
                     if (isOverLimit) {
                         durSpan.className = "mini-tag text-danger";
-                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${t("recap_duration_warning")})</span>`;
+                        const maxM = Math.floor(maxAllowed / 60);
+                        const msg = (currentLang === "my")
+                            ? (state.user?.is_vip ? `အများဆုံး ${maxM} မိနစ်ထက် ကျော်လွန်နေပါသည်` : `အများဆုံး ၂ မိနစ်ထက် ကျော်လွန်နေပါသည် (VIP ရယူပါ)`)
+                            : (state.user?.is_vip ? `Exceeds max ${maxM}m` : `Exceeds Free 2m limit (Upgrade to VIP)`);
+                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${msg})</span>`;
                     } else {
                         durSpan.className = "mini-tag";
-                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid")})</span>`;
+                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid") || "Ready"})</span>`;
                     }
                 }
 
@@ -1403,9 +1430,13 @@ async function handleStartRecap() {
     haptic("heavy");
     const btn = document.getElementById("btn-start-recap");
 
-    // Strictly enforce 10-minute maximum duration per recap credit
-    if (state.recapSourceDuration && state.recapSourceDuration > 600) {
-        alert(t("recap_duration_warning"));
+    // Strictly enforce maximum duration: Free = 2 minutes (120s), VIP = 10 minutes (600s)
+    const maxRecapSec = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
+    if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec) {
+        const m = Math.floor(maxRecapSec / 60);
+        alert(currentLang === "my"
+            ? `ဗီဒီယို ကြာချိန်သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး ${m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "" : "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
+            : `Video duration exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${m} minutes. Upgrade to VIP for up to 10 minutes.`);
         return;
     }
 

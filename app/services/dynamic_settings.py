@@ -14,6 +14,8 @@ SETTING_TYPES: dict[str, type] = {
     "free_monthly_allowance_seconds": int,
     "character_limit_free": int,
     "character_limit_purchased": int,
+    "recap_free_max_duration_seconds": int,
+    "recap_max_duration_seconds": int,
     "free_daily_job_limit": int,
     "required_channel_id": str,
     "required_group_id": str,

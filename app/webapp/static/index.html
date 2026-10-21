@@ -267,10 +267,10 @@
                     <span class="notice-text" data-i18n="queue_notice_recap">⚡ Movie Recap ခန့်မှန်းကြာချိန်: ၁-၂ မိနစ် (Full HD 1080p Render)</span>
                 </div>
 
-                <!-- 1 Credit = 10 Minutes Limit Banner -->
-                <div class="duration-limit-pill">
+                <!-- Tier Duration & Watermark Policy Banner -->
+                <div class="duration-limit-pill" id="recap-limit-pill">
                     <span class="limit-icon">⏱️</span>
-                    <span class="limit-text" data-i18n="recap_limit_notice">🎬 ၁ Credit = ဗီဒီယို ၁ ပုဒ် (အများဆုံး ၁၀ မိနစ်အထိ)</span>
+                    <span class="limit-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP: ၁၀ မိနစ်အထိ (No Watermark)</span>
                 </div>
 
                 <!-- 🎬 Responsive Split Studio Layout (Desktop Multi-column / Mobile Fluid) -->
@@ -736,7 +736,7 @@
                         </div>
                         <ul class="plan-features">
                             <li data-i18n="plan_voice_f1">✓ VoxCPM Cloud AI အသံ ၁၂ မျိုး အသုံးပြုခွင့်</li>
-                            <li data-i18n="plan_voice_f2">✓ Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)</li>
+                            <li data-i18n="plan_voice_f2">✓ တစ်ကြိမ်လျှင် စာလုံးရေ ၅၀၀၀ အထိ အသံသွင်းခွင့် (Custom Clone Upload အပါအဝင်)</li>
                             <li data-i18n="plan_voice_f3">✓ Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်</li>
                             <li data-i18n="plan_voice_f4">✓ High-Speed Priority Cloud Processing Queue</li>
                             <li data-i18n="plan_voice_f5">✓ အရည်အသွေးမြင့် 24kHz PCM WAV တိုက်ရိုက်ဒေါင်းလုဒ်</li>
@@ -759,7 +759,7 @@
                             <li data-i18n="plan_recap_f1">✓ Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား (အများဆုံး ၁၀ မိနစ်/ကား)</li>
                             <li data-i18n="plan_recap_f2">✓ ဇာတ်လမ်းစတိုင် ၅ မျိုး & စာတန်းထိုးစတိုင် ၄ မျိုး</li>
                             <li data-i18n="plan_recap_f3">✓ မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)</li>
-                            <li data-i18n="plan_recap_f4">✓ Channel Watermark Logo ထည့်သွင်းခွင့်</li>
+                            <li data-i18n="plan_recap_f4">✓ Watermark လုံးဝမပါ (Clean 1080p) & Channel Logo သီးသန့်ထည့်ခွင့်</li>
                             <li data-i18n="plan_recap_f5">✓ High-Speed Multi-Threaded Video Rendering</li>
                         </ul>
                         <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 35000, '🎬 Movie Recap Studio Pro')" data-i18n="btn_buy_recap">

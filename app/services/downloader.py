@@ -967,6 +967,8 @@ class MediaDownloader:
         crop_bottom: float = 0.0,
         crop_left: float = 0.0,
         crop_right: float = 0.0,
+        is_vip: bool = False,
+        max_duration_seconds: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
@@ -996,18 +998,26 @@ class MediaDownloader:
                 progress_callback(0, 4, "📥 Downloading source video from URL...")
             source_video_path, _ = self.download_video(url_or_path, target_dir=dest_dir)
 
-        # Enforce maximum video duration limit per credit (default 10 minutes / 600 seconds)
+        # Enforce maximum video duration limit: Free users = 2 mins (120s), VIP = 10 mins (600s)
         try:
             from app.config import settings
-            max_dur = getattr(settings, "recap_max_duration_seconds", 600)
+            if max_duration_seconds is not None:
+                max_dur = max_duration_seconds
+            elif is_vip:
+                max_dur = getattr(settings, "recap_max_duration_seconds", 600)
+            else:
+                max_dur = getattr(settings, "recap_free_max_duration_seconds", 120)
+
             meta = probe_local_media(source_video_path)
             actual_dur = float(meta.get("duration", 0.0) or 0.0)
             if actual_dur > max_dur:
                 m = int(actual_dur // 60)
                 s = int(actual_dur % 60)
-                max_m = max_dur // 60
+                max_m = int(max_dur // 60)
+                tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
                 raise ValueError(
-                    f"ဗီဒီယို ကြာချိန် ({m:02d}:{s:02d}) သည် ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်/Credit) ထက် ကျော်လွန်နေပါသည်။ ၁၀ မိနစ်အောက် ဗီဒီယိုကိုသာ အသုံးပြုပေးပါခင်ဗျာ။"
+                    f"ဗီဒီယို ကြာချိန် ({m:02d}:{s:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ "
+                    + ("ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else "")
                 )
         except ValueError:
             raise
