@@ -43,6 +43,9 @@ def run_recap_pipeline(
     narrative_style: str = "narrator",
     voice_speed: str = "+12%",
     tts_engine: str = "edge_tts",
+    voxcpm_control: Optional[str] = None,
+    voxcpm_ref_audio: Optional[str] = None,
+    is_female: bool = False,
     bgm_path: Optional[str] = None,
     bgm_volume: float = 0.18,
     log_fn: Optional[Callable[[str], None]] = None,
@@ -126,7 +129,7 @@ def run_recap_pipeline(
     target_job_dir.mkdir(parents=True, exist_ok=True)
     _log(f"🎬 Starting Recap English → Myanmar: {source.name}")
     _log(f"📁 Job Workspace: {target_job_dir}")
-    _log(f"🎙️ Voice: {voice}")
+    _log(f"🎙️ TTS Engine: {tts_engine.upper() if str(tts_engine).lower() == 'voxcpm' else 'Edge TTS'} | Voice: {voice}")
 
     gemini_env = Path(env_path) if env_path else root_dir / ".env"
 
@@ -195,12 +198,18 @@ def run_recap_pipeline(
     overlays["subtitles_font_size"] = int(sub_font_size)
     overlays["sub_style"] = str(sub_style or "yellow")
     overlays["tts_engine"] = str(tts_engine or "edge_tts")
+    if voxcpm_control:
+        overlays["voxcpm_control"] = str(voxcpm_control)
+    if voxcpm_ref_audio:
+        overlays["voxcpm_ref_audio"] = str(voxcpm_ref_audio)
+    overlays["is_female"] = bool(is_female)
     if bgm_path:
         overlays["bgm_path"] = str(bgm_path)
         overlays["bgm_volume"] = float(bgm_volume or 0.18)
 
-    # Step 2: RENDER (Edge TTS + Smart Sync Video)
-    _progress(3, 4, "🗣️ [3/4] Microsoft Edge TTS & Smart Sync Render...")
+    # Step 2: RENDER (Edge TTS or VoxCPM + Smart Sync Video)
+    tts_lbl = "VoxCPM Cloud Voice" if str(tts_engine).lower() == "voxcpm" else "Microsoft Edge TTS"
+    _progress(3, 4, f"🗣️ [3/4] {tts_lbl} & Smart Sync Render...")
     runner = EdgeSmartSync(
         job_dir=target_job_dir,
         source_path=source,

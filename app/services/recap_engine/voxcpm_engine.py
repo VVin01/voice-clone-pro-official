@@ -22,7 +22,11 @@ from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_VOXCPM_SPACE = "openbmb/VoxCPM-Demo"
+DEFAULT_VOXCPM_SPACE = (
+    os.getenv("VOXCPM_SPACE_URL", "").strip()
+    or os.getenv("VOXCPM_API_URL", "").strip()
+    or "openbmb/VoxCPM-Demo"
+)
 DEFAULT_BURMESE_CONTROL = (
     "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone "
     "and fluent pronunciation. Speak in Myanmar language with authentic accent."

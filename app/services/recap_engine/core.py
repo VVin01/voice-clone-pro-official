@@ -1963,11 +1963,14 @@ class EdgeSmartSync:
         if use_voxcpm:
             try:
                 try:
-                    from recap_engine.voxcpm_engine import VoxCPMEngine
+                    from app.services.recap_engine.voxcpm_engine import VoxCPMEngine
                 except ImportError:
-                    from voxcpm_engine import VoxCPMEngine
+                    try:
+                        from recap_engine.voxcpm_engine import VoxCPMEngine
+                    except ImportError:
+                        from voxcpm_engine import VoxCPMEngine
                 vox_engine = VoxCPMEngine(work_dir=paths.work / "voxcpm_temp", log_fn=self.log)
-                self.log("🎙️ Initialized VoxCPM Cloud Neural Voice Engine (Zero-shot human audio)")
+                self.log(f"🎙️ Initialized VoxCPM Cloud Neural Voice Engine ({self.voice})")
             except Exception as vox_init_err:
                 self.log(f"⚠️ VoxCPM init error ({vox_init_err}) — will use Edge TTS")
                 use_voxcpm = False
@@ -1976,13 +1979,18 @@ class EdgeSmartSync:
         if str(self.voice).startswith(("clone_", "clone:")):
             try:
                 try:
-                    from recap_engine.voice_clone_bridge import resolve_clone_model
+                    from app.services.recap_engine.voice_clone_bridge import resolve_clone_model
                 except ImportError:
-                    from voice_clone_bridge import resolve_clone_model
+                    try:
+                        from recap_engine.voice_clone_bridge import resolve_clone_model
+                    except ImportError:
+                        from voice_clone_bridge import resolve_clone_model
                 minfo = resolve_clone_model(self.voice)
                 base_edge_voice = minfo.get("edge_base", "my-MM-ThihaNeural") if minfo else "my-MM-ThihaNeural"
             except Exception:
                 base_edge_voice = "my-MM-ThihaNeural"
+        elif str(self.voice).startswith("voxcpm"):
+            base_edge_voice = "my-MM-NilarNeural" if (self.overlays.get("is_female") or "nilar" in str(self.voice).lower()) else "my-MM-ThihaNeural"
 
         engine_provider = "voxcpm" if use_voxcpm else "edge_tts"
         fingerprint_voice = (

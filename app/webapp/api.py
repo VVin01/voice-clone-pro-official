@@ -977,11 +977,30 @@ async def _run_recap_background_job(
                 pct = int(min(95, max(15, (cur / max(1, tot)) * 100)))
                 entry["progress_percent"] = pct
 
-        selected_voice = "my-MM-ThihaNeural"
-        if req.voice_slug in ("mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"):
+        from app.services.curated_voices import get_curated_voice
+        p_info = get_curated_voice(req.voice_slug)
+        is_female = False
+        voxcpm_control = None
+        voxcpm_ref_audio = None
+        tts_engine = "edge_tts"
+
+        if p_info:
+            is_female = (p_info.get("gender") == "female")
+            voxcpm_control = p_info.get("control_instruction")
+            selected_voice = f"voxcpm_{req.voice_slug}"
+            tts_engine = "voxcpm"
+
+            # Check for static persona sample audio for zero-shot cloning
+            sample_ref = settings.root / "app" / "webapp" / "static" / "audio" / "samples" / f"{req.voice_slug}.mp3"
+            if sample_ref.is_file():
+                voxcpm_ref_audio = str(sample_ref)
+        elif req.voice_slug in ("mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"):
+            is_female = True
             selected_voice = "my-MM-NilarNeural"
+            tts_engine = "edge_tts"
         else:
             selected_voice = "my-MM-ThihaNeural"
+            tts_engine = "edge_tts"
 
         logo_pos_map = {
             "top-right": [0.82, 0.04],
@@ -1014,6 +1033,10 @@ async def _run_recap_background_job(
             voice=selected_voice,
             narrative_style=req.story_style,
             voice_speed=req.voice_speed,
+            tts_engine=tts_engine,
+            voxcpm_control=voxcpm_control,
+            voxcpm_ref_audio=voxcpm_ref_audio,
+            is_female=is_female,
             output_ratio=req.ratio,
             frame_fill=req.ratio_fill,
             crop_top=float(req.crop_top) / 100.0,
