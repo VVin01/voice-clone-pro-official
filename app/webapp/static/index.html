@@ -1045,19 +1045,20 @@
                 </div>
 
                 <!-- 🤖 Gemini Model Chain Configuration Card -->
-                <div class="card glass mt-3" id="admin-gemini-models-card">
+                <div class="card glass mt-3 gemini-model-card" id="admin-gemini-models-card">
                     <div class="card-header-row">
-                        <div class="card-label">🤖 Gemini AI Model Chain (မော်ဒယ် ဦးစားပေး အဆင့်ဆင့် သတ်မှတ်ချက်)</div>
+                        <div class="card-label">🤖 Gemini AI Model Chain (မော်ဒယ် ဦးစားပေး အဆင့်ဆင့်)</div>
                         <span class="badge-studio gold">AI PIPELINE</span>
                     </div>
                     <p class="text-xs text-muted mb-3">
-                        Gemini API အတွက် မူလမော်ဒယ် (Primary) နှင့် အရန်မော်ဒယ်များ (Fallback 1, 2, 3) ကို စိတ်ကြိုက် ရွေးချယ်နိုင်ပါသည်။ Google ဘက်မှ Error တက်ပါက အောက်ပါ အစဉ်အတိုင်း အလိုအလျောက် ကျော်လွှား အသုံးပြုသွားပါမည်။
+                        Gemini API အတွက် မူလမော်ဒယ် (Primary) နှင့် အရန်မော်ဒယ်များ (Fallback 1, 2, 3) ကို ဦးစားပေး အစဉ်အတိုင်း သတ်မှတ်နိုင်ပါသည်။ Rate limit သို့မဟုတ် Error တက်ပါက အလိုအလျောက် အဆင့်ဆင့် ကျော်လွှား အသုံးပြုသွားပါမည်။
                     </p>
 
-                    <div class="form-row-2 mb-2">
-                        <div>
-                            <label class="input-label text-xs">🥇 Primary Model (မူလ ပထမ သုံးမည့် Model)</label>
-                            <div class="model-select-wrap">
+                    <div class="gemini-chain-grid mb-3">
+                        <!-- Tier 1: Primary -->
+                        <div class="model-tier-box">
+                            <div class="tier-badge tier-primary">🥇 ၁။ Primary (အဓိက ဦးစားပေး)</div>
+                            <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-primary" class="studio-input" onchange="checkCustomModel('adm-gemini-primary')">
                                     <option value="gemini-3.8-flash">gemini-3.8-flash (Recommended / Fast & Stable)</option>
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
@@ -1075,9 +1076,10 @@
                             </div>
                         </div>
 
-                        <div>
-                            <label class="input-label text-xs">🥈 Fallback 1 (ဒုတိယ အရန် Model)</label>
-                            <div class="model-select-wrap">
+                        <!-- Tier 2: Fallback 1 -->
+                        <div class="model-tier-box">
+                            <div class="tier-badge tier-fb1">🥈 ၂။ Fallback 1 (ဒုတိယ အရန်)</div>
+                            <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-fb1" class="studio-input" onchange="checkCustomModel('adm-gemini-fb1')">
                                     <option value="gemini-3.5-flash">gemini-3.5-flash (Standard Fallback)</option>
                                     <option value="gemini-3.8-flash">gemini-3.8-flash</option>
@@ -1092,14 +1094,13 @@
                                 <input type="text" id="adm-gemini-fb1-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash">
                             </div>
                         </div>
-                    </div>
 
-                    <div class="form-row-2 mb-3">
-                        <div>
-                            <label class="input-label text-xs">🥉 Fallback 2 (တတိယ အရန် Model)</label>
-                            <div class="model-select-wrap">
+                        <!-- Tier 3: Fallback 2 -->
+                        <div class="model-tier-box">
+                            <div class="tier-badge tier-fb2">🥉 ၃။ Fallback 2 (တတိယ အရန်)</div>
+                            <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-fb2" class="studio-input" onchange="checkCustomModel('adm-gemini-fb2')">
-                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Lightweight Fallback)</option>
+                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Lightweight)</option>
                                     <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
                                     <option value="gemini-3.7-flash">gemini-3.7-flash</option>
@@ -1113,11 +1114,12 @@
                             </div>
                         </div>
 
-                        <div>
-                            <label class="input-label text-xs">🎖️ Fallback 3 (စတုတ္ထ အရန် Model)</label>
-                            <div class="model-select-wrap">
+                        <!-- Tier 4: Fallback 3 -->
+                        <div class="model-tier-box">
+                            <div class="tier-badge tier-fb3">🎖️ ၄။ Fallback 3 (စတုတ္ထ အရန်)</div>
+                            <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-fb3" class="studio-input" onchange="checkCustomModel('adm-gemini-fb3')">
-                                    <option value="gemini-3.7-flash">gemini-3.7-flash (Emergency Fallback)</option>
+                                    <option value="gemini-3.7-flash">gemini-3.7-flash (Emergency)</option>
                                     <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
                                     <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
@@ -1134,7 +1136,7 @@
 
                     <button class="btn gold-gradient-btn" onclick="saveGeminiModelSettings()">
                         <span class="btn-icon">⚡</span>
-                        <span>Gemini Model သတ်မှတ်ချက် သိမ်းဆည်းမည် (Save Model Chain)</span>
+                        <span>Gemini Model သတ်မှတ်ချက် သိမ်းဆည်းမည် (Save Chain)</span>
                     </button>
                 </div>
 
@@ -1158,10 +1160,10 @@
                     </div>
 
                     <!-- Filter Controls Bar -->
-                    <div class="admin-filter-bar glass-inset mt-2 p-2" style="border-radius: 12px;">
+                    <div class="admin-filter-bar glass-inset mt-2 p-2">
                         <!-- Filter Row 1: Timeframe -->
                         <div class="filter-group mb-2">
-                            <span class="text-xs text-muted">⏱️ အချိန်ကာလ:</span>
+                            <span class="text-xs text-muted font-bold">⏱️ အချိန်ကာလ ရွေးချယ်ရန်:</span>
                             <div class="filter-chips-row mt-1">
                                 <button class="filter-chip active" data-filter-type="timeframe" data-val="24h" onclick="setAdminHistFilter('timeframe', '24h')">၂၄ နာရီအတွင်း</button>
                                 <button class="filter-chip" data-filter-type="timeframe" data-val="7d" onclick="setAdminHistFilter('timeframe', '7d')">၇ ရက်အတွင်း</button>
@@ -1194,19 +1196,19 @@
                     </div>
 
                     <!-- Selective Purge Action Bar -->
-                    <div class="admin-purge-bar mt-2 mb-2 p-2 glass-inset" style="border-radius: 12px; border: 1px solid rgba(239, 68, 68, 0.3);">
+                    <div class="admin-purge-bar mt-2 mb-2 p-2">
                         <div class="card-subtitle-row mb-1">
-                            <span class="text-xs text-danger font-bold">🗑️ စိတ်ကြိုက် ရှင်းလင်းဖျက်သိမ်းနိုင်သော ခလုတ်များ (Selective Purge)</span>
+                            <span class="text-xs text-danger font-bold">🗑️ စိတ်ကြိုက် ရှင်းလင်းဖျက်သိမ်းခြင်း (Selective Purge)</span>
                         </div>
-                        <div class="admin-header-actions" style="flex-wrap: wrap; gap: 6px;">
-                            <button class="btn mini-btn danger-btn" onclick="adminPurgeHistory('failed')">
-                                ❌ မအောင်မြင်သော (FAILED) များ ရှင်းမည်
+                        <div class="admin-purge-grid mt-1">
+                            <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('failed')">
+                                <span>❌ FAILED ရှင်းမည်</span>
                             </button>
-                            <button class="btn mini-btn danger-btn" onclick="adminPurgeHistory('older_24h')">
-                                ⏱️ ၂၄ နာရီကျော်လွန်သမျှ ရှင်းမည်
+                            <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('older_24h')">
+                                <span>⏱️ >၂၄ နာရီ ရှင်းမည်</span>
                             </button>
-                            <button class="btn mini-btn secondary-btn" onclick="adminPurgeHistory('matching')">
-                                🎯 လက်ရှိ Filter မိသမျှ အကုန်ရှင်းမည်
+                            <button class="btn mini-btn secondary-btn purge-btn" onclick="adminPurgeHistory('matching')">
+                                <span>🎯 Filter မိသမျှ ရှင်းမည်</span>
                             </button>
                         </div>
                     </div>

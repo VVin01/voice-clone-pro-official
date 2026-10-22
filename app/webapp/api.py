@@ -1175,20 +1175,40 @@ async def create_recap_job(
 async def get_recap_status(
     job_id: str,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Poll recap job status, progress percentage, and deliverables."""
     entry = RECAP_JOBS_REGISTRY.get(job_id)
-    if not entry:
+    if entry:
+        return {
+            "id": job_id,
+            "status": entry.get("status", "PENDING"),
+            "progress_percent": entry.get("progress_percent", 0),
+            "progress_step": entry.get("progress_step", ""),
+            "progress_label": entry.get("progress_label", ""),
+            "error_message": entry.get("error_message"),
+            "download_urls": entry.get("download_urls", {}),
+        }
+
+    job = await db.get(Job, job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Recap job not found")
 
+    is_success = (job.status == JobStatus.SUCCESS.value)
+    is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
     return {
         "id": job_id,
-        "status": entry.get("status", "PENDING"),
-        "progress_percent": entry.get("progress_percent", 0),
-        "progress_step": entry.get("progress_step", ""),
-        "progress_label": entry.get("progress_label", ""),
-        "error_message": entry.get("error_message"),
-        "download_urls": entry.get("download_urls", {}),
+        "status": job.status,
+        "progress_percent": 100 if is_success else (15 if is_active else 0),
+        "progress_step": "4/4" if is_success else ("1/4" if is_active else ""),
+        "progress_label": "Completed" if is_success else ("Processing in background..." if is_active else (job.error_message or "Failed")),
+        "error_message": job.error_message,
+        "download_urls": {
+            "video": f"/api/recap/download/{job_id}/video" if is_success else None,
+            "audio": f"/api/recap/download/{job_id}/audio" if is_success else None,
+            "srt": f"/api/recap/download/{job_id}/srt" if is_success else None,
+            "script": f"/api/recap/download/{job_id}/script" if is_success else None,
+        },
     }
 
 
@@ -2020,6 +2040,8 @@ async def retry_queued_job(
     if job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap":
         try:
             from app.webapp.api import _run_recap_background_job, RecapConfigRequest
+            u = await db.get(User, job.user_id)
+            is_vip = (u.is_vip if u else False) or settings.is_admin(job.user_id)
             cfg = RecapConfigRequest(
                 url=job.input_text or "",
                 voice_slug=job.preset_voice or "thiha",
@@ -2031,7 +2053,7 @@ async def retry_queued_job(
                 "progress_step": "0/4",
                 "progress_label": "🔄 Re-queued by Administrator...",
             }
-            asyncio.create_task(_run_recap_background_job(job_id, cfg, job.user_id, job.chat_id or job.user_id))
+            asyncio.create_task(_run_recap_background_job(job_id, cfg, job.user_id, job.chat_id or job.user_id, is_vip=is_vip))
         except Exception as e:
             logger.warning(f"Could not re-dispatch recap job background task: {e}")
 

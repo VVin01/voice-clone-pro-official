@@ -2889,9 +2889,12 @@ async function loadAdminHistory() {
                     const delivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
                     const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
                     const isFailed = (j.status === "FAILED");
+                    const isSuccess = (j.status === "SUCCESS");
+                    const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
+                    const borderCls = isFailed ? 'border-danger-dim' : (isSuccess ? 'border-success-dim' : (isRunning ? 'border-running-dim' : ''));
 
                     return `
-                    <div class="history-item ${isFailed ? 'border-danger-dim' : ''}" id="adm-job-item-${j.id}" style="${isFailed ? 'border-left: 3px solid #ef4444;' : ''}">
+                    <div class="history-item ${borderCls}" id="adm-job-item-${j.id}">
                         <div class="history-item-header">
                             <div>
                                 <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">
@@ -2904,14 +2907,15 @@ async function loadAdminHistory() {
                         <div class="history-item-body">
                             <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
                             ${j.error_message ? `
-                                <div class="text-xs text-danger mt-1 p-1 glass-inset" style="border-radius: 6px; word-break: break-all; color: #fca5a5;">
-                                    ⚠️ <strong>Error:</strong> ${escapeHtml(j.error_message.slice(0, 160))}${j.error_message.length > 160 ? '...' : ''}
+                                <div class="history-error-snippet text-xs text-danger mt-1 p-2 glass-inset" style="border-radius: 8px; word-break: break-all; color: #fca5a5; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25);">
+                                    ⚠️ <strong>Error:</strong> ${escapeHtml(j.error_message.slice(0, 180))}${j.error_message.length > 180 ? '...' : ''}
                                 </div>
                             ` : ''}
+                            <div id="retry-status-box-${j.id}"></div>
                         </div>
                         <div class="history-item-footer">
-                            <span>⏱️ ${j.time_ago} (${j.id.slice(0,8)})</span>
-                            <div class="history-btn-row">
+                            <span>⏱️ ${j.time_ago} <code style="opacity: 0.7; font-size: 10px;">(${j.id.slice(0,8)})</code></span>
+                            <div class="history-btn-row" id="adm-actions-row-${j.id}">
                                 ${j.download_url ? `
                                     <button class="btn-play-preview" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${delivStr}', '${titleStr}')">
                                         ▶️ Preview
@@ -2919,7 +2923,7 @@ async function loadAdminHistory() {
                                     <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
                                 ` : ''}
                                 ${isFailed ? `
-                                    <button class="btn mini-btn secondary-btn" onclick="adminRetryJob('${j.id}')" title="Re-queue this failed job">
+                                    <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')" title="Re-queue this failed job">
                                         🔄 Retry
                                     </button>
                                 ` : ''}
@@ -2938,8 +2942,34 @@ async function loadAdminHistory() {
     }
 }
 
+let activeRetryPollers = {};
+
 async function adminRetryJob(jobId) {
     haptic("medium");
+    const itemEl = document.getElementById(`adm-job-item-${jobId}`);
+    const retryBtn = document.getElementById(`btn-retry-${jobId}`);
+    const statusBox = document.getElementById(`retry-status-box-${jobId}`);
+
+    if (retryBtn) {
+        retryBtn.disabled = true;
+        retryBtn.innerText = "⏳ စတင်နေဆဲ...";
+    }
+    if (itemEl) {
+        itemEl.className = "history-item border-running-dim";
+        const badge = itemEl.querySelector('.history-item-badge[class*="status-"]');
+        if (badge) {
+            badge.className = "history-item-badge status-running";
+            badge.innerText = "QUEUED";
+        }
+    }
+    if (statusBox) {
+        statusBox.innerHTML = `
+            <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
+                ⏳ <strong>Queue ထဲသို့ ထည့်သွင်းပြီး စတင်လုပ်ဆောင်နေပါပြီ...</strong>
+            </div>
+        `;
+    }
+
     try {
         const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
             method: "POST",
@@ -2947,14 +2977,117 @@ async function adminRetryJob(jobId) {
         });
         const data = await res.json();
         if (res.ok) {
-            alert(`✅ Job ${jobId.slice(0,8)} ကို Queue ထဲသို့ ပြန်လည်ထည့်သွင်းပြီးပါပြီ။`);
-            loadAdminHistory();
+            pollAdminJobProgress(jobId);
         } else {
             alert("Retry failed: " + (data.detail || data.message || "Unknown error"));
+            if (retryBtn) {
+                retryBtn.disabled = false;
+                retryBtn.innerText = "🔄 Retry";
+            }
         }
     } catch (e) {
         alert("Retry error: " + e.message);
+        if (retryBtn) {
+            retryBtn.disabled = false;
+            retryBtn.innerText = "🔄 Retry";
+        }
     }
+}
+
+function pollAdminJobProgress(jobId) {
+    if (activeRetryPollers[jobId]) {
+        clearInterval(activeRetryPollers[jobId]);
+    }
+
+    let pollCount = 0;
+    const maxPolls = 80; // Up to ~3.5 mins
+
+    activeRetryPollers[jobId] = setInterval(async () => {
+        pollCount++;
+        if (pollCount > maxPolls) {
+            clearInterval(activeRetryPollers[jobId]);
+            delete activeRetryPollers[jobId];
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/recap/${jobId}/status`, { headers: getAuthHeaders() });
+            if (!res.ok) return;
+
+            const data = await res.json();
+            const itemEl = document.getElementById(`adm-job-item-${jobId}`);
+            const statusBox = document.getElementById(`retry-status-box-${jobId}`);
+            const badge = itemEl ? itemEl.querySelector('.history-item-badge[class*="status-"]') : null;
+            const actionsRow = document.getElementById(`adm-actions-row-${jobId}`);
+            const retryBtn = document.getElementById(`btn-retry-${jobId}`);
+
+            if (data.status === "RUNNING" || data.status === "QUEUED") {
+                if (badge) {
+                    badge.className = "history-item-badge status-running";
+                    badge.innerText = data.status;
+                }
+                if (statusBox) {
+                    const step = data.progress_step ? `[${data.progress_step}] ` : '';
+                    const label = data.progress_label || "လုပ်ဆောင်နေဆဲ...";
+                    const pct = data.progress_percent || 0;
+                    statusBox.innerHTML = `
+                        <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
+                            ⏳ <strong>${step}${escapeHtml(label)}</strong> (${pct}%)
+                        </div>
+                    `;
+                }
+            } else if (data.status === "SUCCESS") {
+                clearInterval(activeRetryPollers[jobId]);
+                delete activeRetryPollers[jobId];
+
+                if (itemEl) itemEl.className = "history-item border-success-dim";
+                if (badge) {
+                    badge.className = "history-item-badge status-success";
+                    badge.innerText = "SUCCESS";
+                }
+                if (statusBox) {
+                    statusBox.innerHTML = `
+                        <div class="text-xs mt-1 p-2" style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; color: #34d399;">
+                            🎉 <strong>အလုပ်ပြီးမြောက်ပါပြီ! (100%)</strong>
+                        </div>
+                    `;
+                }
+                if (retryBtn) retryBtn.remove();
+                if (actionsRow && !actionsRow.querySelector('.btn-play-preview')) {
+                    const videoUrl = data.download_urls?.video || `/api/recap/stream/${jobId}/video`;
+                    const previewBtn = document.createElement('button');
+                    previewBtn.className = 'btn-play-preview';
+                    previewBtn.innerText = '▶️ Preview';
+                    previewBtn.onclick = () => openAdminMediaModal(jobId, 'RECAP', videoUrl, JSON.stringify(data.download_urls || {}), `Job #${jobId.slice(0,8)}`);
+                    actionsRow.prepend(previewBtn);
+                }
+                // Refresh global history counters
+                setTimeout(loadAdminHistory, 2500);
+            } else if (data.status === "FAILED") {
+                clearInterval(activeRetryPollers[jobId]);
+                delete activeRetryPollers[jobId];
+
+                if (itemEl) itemEl.className = "history-item border-danger-dim";
+                if (badge) {
+                    badge.className = "history-item-badge status-failed";
+                    badge.innerText = "FAILED";
+                }
+                if (statusBox) {
+                    statusBox.innerHTML = `
+                        <div class="text-xs mt-1 p-2" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
+                            ⚠️ <strong>Error:</strong> ${escapeHtml(data.error_message || "Execution failed")}
+                        </div>
+                    `;
+                }
+                if (retryBtn) {
+                    retryBtn.disabled = false;
+                    retryBtn.innerText = "🔄 Retry";
+                }
+            }
+        } catch (pollErr) {
+            console.debug("Admin poller tick error:", pollErr);
+        }
+    }, 2500);
 }
 
 async function adminDeleteSingleJob(jobId) {

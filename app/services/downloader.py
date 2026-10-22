@@ -592,14 +592,18 @@ class MediaDownloader:
         # Output template
         outtmpl = os.path.join(dest_dir, "%(id)s_%(title).50s.%(ext)s")
 
-        # Select compatible format: MP4 with H.264 video and AAC audio
-        # Telegram native video player plays best with h264 + aac
+        # Select compatible format: MP4 with H.264 video and AAC audio if available,
+        # otherwise gracefully accept ANY video+audio stream (including vertical Shorts, WebM, VP9, AV01)
+        # and let FFmpeg convert it to pristine MP4.
         if max_height:
             fmt = (
                 f"bestvideo[height<={max_height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
                 f"bestvideo[height<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[width<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
                 f"bestvideo[height<={max_height}]+bestaudio/"
+                f"bestvideo[width<={max_height}]+bestaudio/"
                 f"best[height<={max_height}]/"
+                f"best[width<={max_height}]/"
                 "bestvideo+bestaudio/"
                 "best"
             )
@@ -645,6 +649,30 @@ class MediaDownloader:
                 return file_path, info
         except Exception as e:
             err_msg = str(e)
+            logger.warning(f"Primary download_video failed ({err_msg}). Attempting resilient format fallback...")
+            try:
+                fallback_opts = dict(opts)
+                fallback_opts['format'] = 'bestvideo+bestaudio/best'
+                fallback_opts['ignoreerrors'] = False
+                # If cookies caused invalid session / reload error, drop cookiefile for clean fallback
+                if "page needs to be reloaded" in err_msg or "Requested format is not available" in err_msg:
+                    fallback_opts.pop('cookiefile', None)
+                with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+                    info = ydl.extract_info(expanded_url, download=True)
+                    file_path = ydl.prepare_filename(info)
+                    if not file_path.endswith('.mp4'):
+                        base, _ = os.path.splitext(file_path)
+                        file_path = f"{base}.mp4"
+                    if not os.path.exists(file_path):
+                        media_id = info.get("id")
+                        for fname in os.listdir(dest_dir):
+                            if media_id in fname and fname.endswith(('.mp4', '.mkv', '.webm')):
+                                file_path = os.path.join(dest_dir, fname)
+                                break
+                    return file_path, info
+            except Exception as fb_err:
+                logger.warning(f"Fallback download also failed: {fb_err}")
+
             if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
                 logger.warning(f"YouTube anti-bot challenge encountered in download_video: {err_msg}")
                 raise RuntimeError(
