@@ -2185,12 +2185,22 @@ class EdgeSmartSync:
                             self.overlays.get("voxcpm_control")
                             or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
                         )
+                        preset_v = None
+                        if str(self.voice).startswith("voxcpm_"):
+                            preset_v = str(self.voice).replace("voxcpm_", "")
+                        elif str(self.voice) in (
+                            "komin", "kozayar", "kothura", "koaung", "mahnin",
+                            "manadi", "mamay", "komyat", "kophone", "mayoon",
+                            "machaw", "mathiri"
+                        ):
+                            preset_v = str(self.voice)
                         produced = vox_engine.synthesize(
                             text=speak,
                             output_wav=dst,
                             control_instruction=ctrl_prompt,
                             reference_wav=ref_wav,
-                            speed=1.06,
+                            preset_voice=preset_v,
+                            speed=effective_rate or 1.10,
                         )
                     except Exception as vox_exc:
                         self.log(f"⚠️ Fish Audio failed ({vox_exc}) — falling back to Edge TTS for line {idx}")

@@ -218,6 +218,8 @@ async def process_single_job(
                             output_wav=converted_wav_path,
                             reference_wav=ref_wav,
                             control_instruction=control_instruction or "A clear, natural, emotionally expressive Burmese speaker with warm tone and fluent pronunciation",
+                            preset_voice=getattr(job, "preset_voice", None),
+                            speed=job.speed_preset or "normal",
                             progress_cb=tracker.set_custom_note,
                         )
                     )
@@ -228,22 +230,27 @@ async def process_single_job(
                     except Exception:
                         pass
 
-                    is_female = False
-                    if getattr(job, "preset_voice", None):
-                        from app.services.curated_voices import get_curated_voice
-                        p_info = get_curated_voice(job.preset_voice)
-                        if p_info and p_info.get("gender") == "female":
-                            is_female = True
+                    from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
+                    persona_id = getattr(job, "preset_voice", None)
+                    if not persona_id or not get_curated_voice(persona_id):
+                        is_female = False
+                        if persona_id:
+                            p_info = get_curated_voice(persona_id)
+                            if p_info and p_info.get("gender") == "female":
+                                is_female = True
+                        persona_id = "mahnin" if is_female else "komin"
 
-                    edge_voice = "my-MM-NilarNeural" if is_female else "my-MM-ThihaNeural"
-                    temp_mp3 = temp_dir / "fallback.mp3"
-                    await generate_edge_tts(
-                        text=clean_text,
-                        out_path=temp_mp3,
-                        voice=edge_voice,
-                        speed=job.speed_preset or "normal",
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        None,
+                        functools.partial(
+                            synthesize_curated_persona,
+                            text=clean_text,
+                            persona_id=persona_id,
+                            output_wav=converted_wav_path,
+                            speed=job.speed_preset or "normal",
+                        )
                     )
-                    await normalize_audio_to_wav(temp_mp3, converted_wav_path)
                     logger.info("Resilient fallback audio generated successfully for job %s: %s", job.id, converted_wav_path)
             else:
                 pitch = GENDER_PITCH_MAP.get(job.gender_preset or "m2m", 0)

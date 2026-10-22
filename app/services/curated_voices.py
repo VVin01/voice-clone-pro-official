@@ -1,12 +1,22 @@
 """
-curated_voices.py - Pre-built Curated Voice Personas for VoxCPM Cloud AI.
-Provides 6 meticulously tuned Burmese voice personas (3 Male, 3 Female)
-with Gemini-optimized vocal control prompts for storytelling, movie recaps,
-news documentaries, energetic TikTok/Shorts, audiobooks, and commercials.
+curated_voices.py - Studio-Mastered Curated Voice Personas for Burmese TTS & Voice Clone Pro.
+Provides 12 meticulously tuned Burmese voice personas (6 Male, 6 Female)
+with authentic native Burmese pronunciation, tailored vocal pitch, pacing,
+and broadcast-grade acoustic studio mastering (FFmpeg EQ, dynamics & limiting).
 """
 
 from __future__ import annotations
-from typing import Dict, Any, List
+
+import os
+import re
+import shutil
+import logging
+import asyncio
+import subprocess
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Callable
+
+logger = logging.getLogger(__name__)
 
 CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "komin": {
@@ -19,6 +29,16 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "👨‍💼",
         "badge_my": "လူကြိုက်အများဆုံး 🔥",
         "badge_en": "Most Popular 🔥",
+        "edge_voice": "my-MM-ThihaNeural",
+        "pitch": "-2Hz",
+        "rate_offset": 12,
+        "af_filter": (
+            "highpass=f=65,lowpass=f=12000,"
+            "equalizer=f=120:width_type=o:w=1:g=3.5,"
+            "equalizer=f=3200:width_type=o:w=1.2:g=1.5,"
+            "acompressor=threshold=-16dB:ratio=3:attack=15:release=120:makeup=2.2,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A warm, deep, authoritative, emotionally resonant Burmese male movie recap storyteller. "
             "Natural human breathing, velvety cadence, warm acoustic studio presence with pristine Burmese pronunciation, zero robotic artifact."
@@ -35,6 +55,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "🎙️",
         "badge_my": "သန့်ရှင်းပြတ်သား ⚡",
         "badge_en": "Formal Anchor ⚡",
+        "edge_voice": "my-MM-ThihaNeural",
+        "pitch": "0Hz",
+        "rate_offset": 18,
+        "af_filter": (
+            "highpass=f=75,lowpass=f=12500,"
+            "equalizer=f=2500:width_type=o:w=1:g=2.5,"
+            "acompressor=threshold=-18dB:ratio=2.8:attack=10:release=100:makeup=2,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A professional, formal, crisp Burmese male documentary narrator and news anchor. "
             "Clear natural cadence, warm studio acoustic presence, articulate diction with zero metallic noise."
@@ -51,6 +80,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "⚡",
         "badge_my": "TikTok & Shorts 🚀",
         "badge_en": "TikTok & Shorts 🚀",
+        "edge_voice": "my-MM-ThihaNeural",
+        "pitch": "+2Hz",
+        "rate_offset": 24,
+        "af_filter": (
+            "highpass=f=80,lowpass=f=13000,"
+            "equalizer=f=3500:width_type=o:w=1:g=3,"
+            "acompressor=threshold=-15dB:ratio=3.2:attack=10:release=90:makeup=2.5,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "An enthusiastic, upbeat, vibrant young Burmese male creator. "
             "Natural conversational rhythm, expressive organic inflection for TikTok and Shorts, clear studio clarity without distortion."
@@ -67,6 +105,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "👩‍🦰",
         "badge_my": "နူးညံ့ချိုသာ 🌸",
         "badge_en": "Gentle Melody 🌸",
+        "edge_voice": "my-MM-NilarNeural",
+        "pitch": "-1Hz",
+        "rate_offset": 6,
+        "af_filter": (
+            "highpass=f=75,lowpass=f=12000,"
+            "equalizer=f=250:width_type=o:w=1:g=1.5,"
+            "acompressor=threshold=-19dB:ratio=2.2:attack=20:release=140:makeup=1.5,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A gentle, sweet, emotionally tender Burmese female audiobook narrator. "
             "Soft, melodious tone, soothing organic delivery, warm intimate presence with no robotic buzz."
@@ -83,6 +130,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "🎭",
         "badge_my": "သည်းထိတ်ရင်ဖို 🎬",
         "badge_en": "Thriller Drama 🎬",
+        "edge_voice": "my-MM-NilarNeural",
+        "pitch": "-2Hz",
+        "rate_offset": 14,
+        "af_filter": (
+            "highpass=f=70,lowpass=f=12000,"
+            "equalizer=f=200:width_type=o:w=1:g=2.5,"
+            "acompressor=threshold=-17dB:ratio=3:attack=15:release=110:makeup=2.2,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A dramatic, suspenseful, emotionally intense Burmese female movie recap narrator. "
             "Dynamic vocal contrast, natural cinematic inflection, zero digital clipping or harsh sibilance."
@@ -99,6 +155,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "🌟",
         "badge_my": "ကြော်ငြာ & ပရိုမိုးရှင်း 💎",
         "badge_en": "Commercial Pro 💎",
+        "edge_voice": "my-MM-NilarNeural",
+        "pitch": "+2Hz",
+        "rate_offset": 18,
+        "af_filter": (
+            "highpass=f=80,lowpass=f=13000,"
+            "equalizer=f=3200:width_type=o:w=1:g=2.8,"
+            "acompressor=threshold=-16dB:ratio=3:attack=10:release=100:makeup=2.3,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A bright, articulate, friendly, and persuasive Burmese female commercial voice. "
             "Polite, trustworthy, modern clear studio broadcast timbre with organic smoothness."
@@ -115,6 +180,16 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "🎬",
         "badge_my": "Epic Cinema 👑",
         "badge_en": "Epic Cinema 👑",
+        "edge_voice": "my-MM-ThihaNeural",
+        "pitch": "-5Hz",
+        "rate_offset": 8,
+        "af_filter": (
+            "highpass=f=55,lowpass=f=11000,"
+            "bass=g=5:f=100,"
+            "equalizer=f=75:width_type=o:w=1.2:g=4,"
+            "acompressor=threshold=-16dB:ratio=3.5:attack=20:release=150:makeup=2.8,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A deep, bass-rich, resonant, dramatic blockbuster movie trailer narrator. "
             "Authoritative gravitas, cinematic impact, velvety low-end warmth with pristine Burmese pronunciation."
@@ -131,6 +206,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "👻",
         "badge_my": "သရဲတစ္ဆေ 🕯️",
         "badge_en": "Spooky Dark 🕯️",
+        "edge_voice": "my-MM-ThihaNeural",
+        "pitch": "-3Hz",
+        "rate_offset": -4,
+        "af_filter": (
+            "highpass=f=60,lowpass=f=10500,"
+            "equalizer=f=150:width_type=o:w=1:g=2,"
+            "acompressor=threshold=-18dB:ratio=2.5:attack=25:release=160:makeup=1.8,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A mysterious, chilling, suspenseful, dark Burmese male ghost story narrator. "
             "Atmospheric, brooding, captivating cadence with organic breath and natural dynamics."
@@ -147,6 +231,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "💻",
         "badge_my": "Tech & Science 💡",
         "badge_en": "Tech & Science 💡",
+        "edge_voice": "my-MM-ThihaNeural",
+        "pitch": "+1Hz",
+        "rate_offset": 18,
+        "af_filter": (
+            "highpass=f=75,lowpass=f=12500,"
+            "equalizer=f=2800:width_type=o:w=1:g=2,"
+            "acompressor=threshold=-17dB:ratio=2.8:attack=12:release=100:makeup=2,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "An articulate, engaging, intelligent Burmese male explainer. "
             "Clean, friendly, informative pacing ideal for technology and educational tutorials with zero robotic noise."
@@ -163,6 +256,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "🌙",
         "badge_my": "အေးချမ်း ASMR ✨",
         "badge_en": "Peaceful ASMR ✨",
+        "edge_voice": "my-MM-NilarNeural",
+        "pitch": "-1Hz",
+        "rate_offset": -8,
+        "af_filter": (
+            "highpass=f=80,lowpass=f=10000,"
+            "equalizer=f=300:width_type=o:w=1:g=1.5,"
+            "acompressor=threshold=-22dB:ratio=2:attack=25:release=180:makeup=1.2,"
+            "alimiter=limit=0.90"
+        ),
         "control_instruction": (
             "An ultra-soft, serene, tranquil, whispery Burmese female voice. "
             "Extremely relaxing, gentle, calm tempo ideal for meditation, ASMR and bedtime stories, pristine natural warmth."
@@ -179,6 +281,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "🎮",
         "badge_my": "Anime & Gaming 🎀",
         "badge_en": "Anime & Gaming 🎀",
+        "edge_voice": "my-MM-NilarNeural",
+        "pitch": "+4Hz",
+        "rate_offset": 22,
+        "af_filter": (
+            "highpass=f=85,lowpass=f=13500,"
+            "equalizer=f=4000:width_type=o:w=1:g=3,"
+            "acompressor=threshold=-15dB:ratio=3.2:attack=10:release=80:makeup=2.5,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "A high-energy, youthful, playful, vibrant Burmese female anime dubbing artist and gaming creator. "
             "Expressive, colorful intonation with bright personality and crisp acoustic presence."
@@ -195,6 +306,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "avatar": "💎",
         "badge_my": "Luxury Lifestyle 👑",
         "badge_en": "Luxury Lifestyle 👑",
+        "edge_voice": "my-MM-NilarNeural",
+        "pitch": "-1Hz",
+        "rate_offset": 12,
+        "af_filter": (
+            "highpass=f=75,lowpass=f=12500,"
+            "equalizer=f=2500:width_type=o:w=1:g=2,"
+            "acompressor=threshold=-18dB:ratio=2.6:attack=15:release=120:makeup=2,"
+            "alimiter=limit=0.95"
+        ),
         "control_instruction": (
             "An elegant, chic, highly sophisticated Burmese female influencer and brand ambassador. "
             "Confident, modern, silky smooth vocal texture for luxury and lifestyle with zero distortion."
@@ -205,7 +325,12 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
 
 
 def get_curated_voice(voice_id: str) -> Dict[str, Any] | None:
-    return CURATED_VOICES.get(str(voice_id).lower())
+    if not voice_id:
+        return None
+    slug = str(voice_id).strip().lower()
+    if slug.startswith("voxcpm_"):
+        slug = slug.replace("voxcpm_", "")
+    return CURATED_VOICES.get(slug)
 
 
 def list_curated_voices(lang: str = "my") -> List[Dict[str, Any]]:
@@ -222,3 +347,107 @@ def list_curated_voices(lang: str = "my") -> List[Dict[str, Any]]:
             "sample_audio_url": f"/api/voices/sample/{v['id']}",
         })
     return result
+
+
+def compute_curated_rate(base_offset: int, user_speed: float | str | None) -> str:
+    """Calculate the combined speech rate string for Edge TTS (e.g. '+18%')."""
+    extra = 0
+    if isinstance(user_speed, (int, float)):
+        extra = int(round((float(user_speed) - 1.0) * 100))
+    elif isinstance(user_speed, str):
+        s = user_speed.strip().lower()
+        if s in ("fast", "1.2x", "1.2"):
+            extra = 15
+        elif s in ("slow", "0.8x", "0.8"):
+            extra = -15
+        elif s in ("normal", "1.0x", "1.0"):
+            extra = 0
+        elif "%" in s:
+            m = re.search(r"([+-]?\d+)", s)
+            if m:
+                extra = int(m.group(1))
+    total = max(-50, min(100, base_offset + extra))
+    return f"{total:+d}%"
+
+
+def synthesize_curated_persona(
+    text: str,
+    persona_id: str,
+    output_wav: Path | str,
+    speed: float | str | None = "normal",
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> Path:
+    """
+    Synthesize authentic native Burmese speech with persona-specific pitch,
+    cadence, and broadcast studio audio mastering.
+    """
+    out_path = Path(output_wav).resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        raise ValueError("Cannot synthesize empty text.")
+
+    info = get_curated_voice(persona_id) or CURATED_VOICES["komin"]
+    voice = info.get("edge_voice", "my-MM-ThihaNeural")
+    pitch = info.get("pitch", "0Hz")
+    rate_offset = int(info.get("rate_offset", 10))
+    rate_str = compute_curated_rate(rate_offset, speed)
+    af_filter = info.get(
+        "af_filter",
+        "highpass=f=75,lowpass=f=12000,acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2,alimiter=limit=0.95"
+    )
+
+    msg = f"🎙️ Curated Persona [{info['id']}] ({info['name_en']}): voice={voice}, rate={rate_str}, pitch={pitch}"
+    logger.info(msg)
+    if log_fn:
+        try:
+            log_fn(msg)
+        except Exception:
+            pass
+
+    import edge_tts
+    temp_mp3 = out_path.with_suffix(".persona_temp.mp3")
+
+    async def _run_edge():
+        comm = edge_tts.Communicate(clean_text, voice, rate=rate_str, pitch=pitch)
+        await comm.save(str(temp_mp3))
+
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            fut = executor.submit(lambda: asyncio.run(_run_edge()))
+            fut.result(timeout=30)
+    except Exception as e_run:
+        logger.warning("ThreadPoolExecutor failed for persona TTS: %s; falling back to direct run", e_run)
+        asyncio.run(_run_edge())
+
+    if not temp_mp3.is_file() or temp_mp3.stat().st_size < 1000:
+        raise RuntimeError(f"Edge TTS failed to synthesize audio for persona {persona_id}")
+
+    # Studio Broadcast Mastering via FFmpeg (44.1kHz mono PCM 16-bit WAV with exact header)
+    ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+    converted_cleanly = False
+    if ffmpeg_bin:
+        try:
+            cmd = [
+                ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", str(temp_mp3),
+                "-af", af_filter,
+                "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
+                str(out_path)
+            ]
+            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+            if out_path.is_file() and out_path.stat().st_size > 1000:
+                converted_cleanly = True
+        except Exception as e_ff:
+            logger.warning("FFmpeg persona mastering failed: %s", e_ff)
+
+    if not converted_cleanly:
+        shutil.copy2(str(temp_mp3), str(out_path))
+
+    try:
+        temp_mp3.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return out_path

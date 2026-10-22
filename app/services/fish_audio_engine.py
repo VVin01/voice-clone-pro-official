@@ -185,59 +185,22 @@ def _synthesize_neural_tts_fallback(
     text: str,
     output_wav: Path,
     control_instruction: str = "",
+    persona_id: Optional[str] = None,
     is_female: bool = False,
+    speed: float | str = "normal",
 ) -> bool:
-    """Seamless fallback using Microsoft Edge Neural TTS (Burmese) if Fish Audio API is unavailable."""
+    """Seamless fallback using Microsoft Edge Neural TTS with Curated Personas and broadcast mastering."""
     try:
-        import asyncio
-        import edge_tts
-        import subprocess
+        from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
+        target_pid = persona_id
+        if not target_pid or not get_curated_voice(target_pid):
+            female_keywords = ["female", "woman", "girl", "hnin", "nadi", "may", "နှင်း", "နဒီ", "မေမေ", "nilar", "machaw", "mathiri"]
+            if not is_female and any(w in str(control_instruction).lower() for w in female_keywords):
+                is_female = True
+            target_pid = "mahnin" if is_female else "komin"
 
-        female_keywords = ["female", "woman", "girl", "hnin", "nadi", "may", "နှင်း", "နဒီ", "မေမေ", "nilar"]
-        if not is_female and any(w in str(control_instruction).lower() for w in female_keywords):
-            is_female = True
-
-        voice_id = "my-MM-NilarNeural" if is_female else "my-MM-ThihaNeural"
-        temp_mp3 = output_wav.with_suffix(".fallback.mp3")
-
-        async def _run():
-            comm = edge_tts.Communicate(text, voice_id)
-            await comm.save(str(temp_mp3))
-
-        try:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                fut = executor.submit(lambda: asyncio.run(_run()))
-                fut.result(timeout=25)
-        except Exception as e_run:
-            logger.warning("Direct fallback thread failed: %s; attempting direct asyncio.run", e_run)
-            asyncio.run(_run())
-
-        if temp_mp3.is_file() and temp_mp3.stat().st_size > 1000:
-            ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
-            if ffmpeg_bin:
-                af_master = (
-                    "highpass=f=75,"
-                    "lowpass=f=11000,"
-                    "acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2,"
-                    "alimiter=limit=0.95:level=disabled"
-                )
-                cmd = [
-                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-                    "-i", str(temp_mp3),
-                    "-af", af_master,
-                    "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
-                    str(output_wav)
-                ]
-                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-                try:
-                    temp_mp3.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                return output_wav.is_file() and output_wav.stat().st_size > 1000
-            else:
-                shutil.move(str(temp_mp3), str(output_wav))
-                return True
+        synthesize_curated_persona(text, target_pid, output_wav, speed=speed)
+        return output_wav.is_file() and output_wav.stat().st_size > 1000
     except Exception as e_fb:
         logger.warning("Neural TTS fallback error: %s", e_fb)
     return False
@@ -287,27 +250,65 @@ class FishAudioEngine:
         reference_wav: Optional[Path | str] = None,
         reference_id: Optional[str] = None,
         prompt_text: str = "",
-        speed: float = 1.05,
+        speed: float | str = 1.05,
+        preset_voice: Optional[str] = None,
         progress_cb: Optional[Callable[[str], None]] = None,
         retries: int = 3,
         **kwargs: Any,
     ) -> Path:
         """
-        Synthesize Burmese speech using the Fish Audio Multi-Key Pool.
+        Synthesize speech using Studio-Mastered Burmese Engine for Myanmar script,
+        and Fish Audio Multi-Key Pool for English/foreign text.
         """
         out_path = Path(output_wav).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         clean_text = str(text or "").strip()
         if not clean_text:
-            raise ValueError("Fish Audio input text is empty.")
+            raise ValueError("Input text is empty.")
 
-        # Cache check for non-custom-reference generations
+        # 🇲🇲 Burmese Script Detection:
+        # Fish Audio S2.1 does NOT support Myanmar Unicode script (which causes token collision
+        # and foreign language hallucinations like Vietnamese or Hmong).
+        # We seamlessly route Burmese text to the studio-mastered Burmese Neural Engine!
+        burmese_match = re.search(r"[\u1000-\u109f\uaa60-\uaa7f]", clean_text)
+        if burmese_match:
+            from app.services.curated_voices import synthesize_curated_persona, CURATED_VOICES, get_curated_voice
+            target_pid = preset_voice or kwargs.get("preset_voice")
+            if not target_pid:
+                ctrl_lower = str(control_instruction or "").lower()
+                for pid, pdata in CURATED_VOICES.items():
+                    if pid in ctrl_lower or pdata["name_en"].lower() in ctrl_lower:
+                        target_pid = pid
+                        break
+            if not target_pid or not get_curated_voice(target_pid):
+                is_fem = any(w in str(control_instruction).lower() for w in ["female", "woman", "girl", "hnin", "nadi", "may", "နှင်း", "နဒီ", "မေမေ", "nilar", "machaw", "mathiri"])
+                target_pid = "mahnin" if is_fem else "komin"
+
+            self._log(f"🇲🇲 Burmese text detected. Routing to studio-mastered Burmese Neural Persona Engine [{target_pid}]...")
+            if progress_cb:
+                try:
+                    p_info = get_curated_voice(target_pid)
+                    p_name = p_info["name_my"] if p_info else target_pid
+                    progress_cb(f"🎙️ သဘာဝကျသော မြန်မာအသံစနစ်ဖြင့် ဖန်တီးနေပါသည် ({p_name})...")
+                except Exception:
+                    pass
+
+            return synthesize_curated_persona(
+                text=clean_text,
+                persona_id=target_pid,
+                output_wav=out_path,
+                speed=speed,
+                log_fn=self.log_fn,
+            )
+
+        # Cache check for non-custom-reference generations (English/Foreign text)
         cache_key = None
         cached_file = None
         if not reference_wav:
+            speed_str = f"{float(speed):.2f}" if isinstance(speed, (int, float)) else str(speed or "normal")
             cache_key = hashlib.sha256(
-                f"{clean_text}_{self.model}_{reference_id}_{speed:.2f}".encode("utf-8")
+                f"{clean_text}_{self.model}_{reference_id}_{speed_str}".encode("utf-8")
             ).hexdigest()[:16]
             cached_file = self.work_dir / f"fish_{cache_key}.wav"
             if cached_file.is_file() and cached_file.stat().st_size > 4000:
@@ -316,6 +317,11 @@ class FishAudioEngine:
                 return out_path
 
         import requests
+
+        try:
+            numeric_speed = float(speed)
+        except (ValueError, TypeError):
+            numeric_speed = 1.15 if str(speed).lower() in ("fast", "1.2x") else (0.85 if str(speed).lower() in ("slow", "0.8x") else 1.05)
 
         # Check if reference audio exists for inline zero-shot cloning
         ref_bytes = None
@@ -349,7 +355,7 @@ class FishAudioEngine:
                 "format": "wav",
                 "normalize": True,
                 "prosody": {
-                    "speed": float(speed or 1.05),
+                    "speed": float(numeric_speed),
                     "volume": 0.0,
                     "normalize_loudness": True,
                 },
@@ -363,7 +369,7 @@ class FishAudioEngine:
                 "format": "wav",
                 "normalize": True,
                 "prosody": {
-                    "speed": float(speed or 1.05),
+                    "speed": float(numeric_speed),
                     "volume": 0.0,
                     "normalize_loudness": True,
                 },
@@ -518,8 +524,8 @@ class FishAudioEngine:
             except Exception:
                 pass
 
-        is_fem = any(w in str(control_instruction).lower() for w in ["female", "woman", "girl", "hnin", "nadi", "may", "နှင်း", "နဒီ", "မေမေ", "nilar"])
-        if _synthesize_neural_tts_fallback(clean_text, out_path, control_instruction, is_female=is_fem):
+        is_fem = any(w in str(control_instruction).lower() for w in ["female", "woman", "girl", "hnin", "nadi", "may", "နှင်း", "နဒီ", "မေမေ", "nilar", "machaw", "mathiri"])
+        if _synthesize_neural_tts_fallback(clean_text, out_path, control_instruction, persona_id=preset_voice, is_female=is_fem, speed=speed):
             self._log(f"✅ Fallback Neural Audio successfully delivered: {out_path.name} ({out_path.stat().st_size} bytes)")
             return out_path
 
