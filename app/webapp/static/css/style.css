@@ -2739,6 +2739,194 @@ textarea#voice-text-input:focus {
     z-index: 5 !important;
 }
 
+/* ════ DUAL-MODE VIDEO SOURCE (URL VS UPLOAD) ════ */
+.source-mode-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    background: rgba(15, 23, 42, 0.65);
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.source-tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted, #94a3b8);
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.22s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+.source-tab-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.05);
+}
+.source-tab-btn.active {
+    background: rgba(212, 175, 55, 0.16);
+    color: #ffd700;
+    border: 1px solid rgba(212, 175, 55, 0.45);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.video-drop-zone {
+    border: 2px dashed rgba(212, 175, 55, 0.35);
+    background: rgba(212, 175, 55, 0.03);
+    border-radius: 14px;
+    padding: 22px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.25s ease;
+}
+.video-drop-zone:hover, .video-drop-zone.dragover {
+    border-color: #ffd700;
+    background: rgba(212, 175, 55, 0.08);
+    transform: translateY(-1px);
+}
+.drop-zone-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+.drop-icon {
+    font-size: 2.2rem;
+    line-height: 1;
+}
+.drop-text {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #f8fafc;
+}
+.drop-subtext {
+    font-size: 0.76rem;
+    color: var(--text-muted, #94a3b8);
+}
+
+/* ════ CANVAS VIDEO PLAYER (60FPS FRAME SEEKING) ════ */
+.canvas-video-player {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 2;
+    pointer-events: none;
+    border-radius: inherit;
+    transition: opacity 0.2s ease;
+}
+
+/* ════ CANVAS TIMELINE FRAME SCRUBBER BAR ════ */
+.canvas-seek-timeline-bar {
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 12px 14px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.seek-info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    color: var(--text-muted, #94a3b8);
+    margin-bottom: 6px;
+}
+.seek-title {
+    font-weight: 600;
+    color: #cbd5e1;
+}
+.seek-time-badge {
+    background: rgba(212, 175, 55, 0.15);
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    color: #ffd700;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.3px;
+}
+.seek-slider-wrap {
+    width: 100%;
+    display: flex;
+    align-items: center;
+}
+.seek-slider {
+    width: 100%;
+    height: 6px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    accent-color: #ffd700;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.seek-slider:hover {
+    height: 8px;
+}
+.seek-actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+.mini-btn-seek {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #f1f5f9;
+    padding: 5px 11px;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.mini-btn-seek:hover {
+    background: rgba(212, 175, 55, 0.22);
+    border-color: #ffd700;
+    color: #ffd700;
+}
+.mini-btn-seek.active {
+    background: rgba(212, 175, 55, 0.28);
+    border-color: #ffd700;
+    color: #ffd700;
+}
+.seek-presets-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-left: auto;
+}
+.seek-pill-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #94a3b8;
+    padding: 4px 9px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+.seek-pill-btn:hover {
+    color: #ffd700;
+    border-color: rgba(212, 175, 55, 0.4);
+    background: rgba(212, 175, 55, 0.1);
+}
+.seek-pill-btn.active {
+    background: #ffd700;
+    color: #000;
+    border-color: #ffd700;
+    font-weight: 700;
+}
+
 /* ════ ADMIN LIVE QUEUE & ENGINE INSPECTOR ════ */
 .card-label-col {
     display: flex;

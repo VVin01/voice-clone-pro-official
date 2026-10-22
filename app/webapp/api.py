@@ -729,6 +729,89 @@ async def extract_media_info(
         }
 
 
+@api_router.post("/recap/upload_video")
+async def upload_recap_video(
+    video_file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """Directly upload a video file (MP4/MKV/MOV/WEBM) for Movie Recap."""
+    if not video_file.filename:
+        raise HTTPException(status_code=400, detail="ဗီဒီယိုဖိုင် ရွေးချယ်ပေးပါခင်ဗျာ")
+
+    clean_name = Path(video_file.filename).name
+    ext = Path(clean_name).suffix.lower()
+    if ext not in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m4v"}:
+        raise HTTPException(status_code=400, detail="MP4, MKV, MOV သို့မဟုတ် WEBM ဗီဒီယိုဖိုင်သာ လက်ခံပါသည်")
+
+    temp_dir = settings.storage_root / "temp" / "recap_uploads"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    file_id = f"up_{uuid.uuid4().hex[:10]}"
+    saved_path = temp_dir / f"{file_id}{ext}"
+
+    try:
+        content = await video_file.read()
+        with open(saved_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        logger.error(f"Failed to save uploaded recap video: {e}")
+        raise HTTPException(status_code=500, detail=f"ဗီဒီယိုဖိုင် သိမ်းဆည်းခြင်း မအောင်မြင်ပါ: {e}")
+
+    # Inspect media duration & metadata
+    from app.services.downloader import probe_local_media, extract_thumbnail_from_media, format_duration, find_best_preview_timestamp
+    meta = probe_local_media(str(saved_path))
+    dur_sec = meta.get("duration", 0.0) or 0.0
+
+    # Extract optimal preview thumbnail
+    thumb_path = temp_dir / f"{file_id}_thumb.jpg"
+    best_ts = find_best_preview_timestamp(str(saved_path), target_dir=str(temp_dir))
+    extract_thumbnail_from_media(str(saved_path), str(thumb_path), timestamp_sec=best_ts)
+
+    thumb_url = f"/api/recap/frame?path={file_id}_thumb.jpg" if thumb_path.is_file() else ""
+
+    return {
+        "success": True,
+        "file_id": file_id,
+        "local_path": str(saved_path),
+        "filename": clean_name,
+        "title": Path(clean_name).stem,
+        "duration_seconds": int(round(dur_sec)),
+        "estimated_duration": format_duration(int(round(dur_sec))),
+        "thumbnail": thumb_url,
+        "platform": "Uploaded Video",
+        "has_subtitles": True,
+        "preview_ts": best_ts,
+    }
+
+
+@api_router.get("/recap/frame")
+async def get_recap_frame(
+    path: str = Query(...),
+    t: Optional[float] = Query(None),
+):
+    """Serve or dynamically generate video frame snapshot at timestamp t."""
+    clean_p = Path(path).name
+    # Search in temp dirs
+    cand = settings.storage_root / "temp" / "recap_uploads" / clean_p
+    if cand.is_file():
+        return FileResponse(cand, media_type="image/jpeg")
+
+    # If t is given and path points to a video file
+    actual_path = settings.storage_root / "temp" / "recap_uploads" / path
+    if not actual_path.is_file():
+        actual_path = Path(path)
+
+    if actual_path.is_file():
+        seek_sec = max(0.1, float(t or 1.0))
+        out_thumb = settings.storage_root / "temp" / f"frame_{uuid.uuid4().hex[:8]}.jpg"
+        from app.services.downloader import extract_thumbnail_from_media
+        res = extract_thumbnail_from_media(str(actual_path), str(out_thumb), timestamp_sec=seek_sec)
+        if res and Path(res).is_file():
+            return FileResponse(res, media_type="image/jpeg")
+
+    raise HTTPException(status_code=404, detail="Frame not found")
+
+
 # ── 5. Recap Studio Configuration & Background Pipeline ─────────────────────
 RECAP_JOBS_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
@@ -860,9 +943,12 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
         logo_pos_coords = logo_pos_map.get(req.logo_pos, [0.82, 0.04])
 
         loop = asyncio.get_running_loop()
-        from app.services.downloader import extract_first_url, unshorten_url
-        clean_source_url = extract_first_url(req.url) or req.url.strip()
-        canonical_source_url = unshorten_url(clean_source_url)
+        from app.services.downloader import extract_first_url, unshorten_url, is_local_media
+        if is_local_media(req.url):
+            canonical_source_url = str(req.url).strip('\'"')
+        else:
+            clean_source_url = extract_first_url(req.url) or req.url.strip()
+            canonical_source_url = unshorten_url(clean_source_url)
 
         # Free tier watermark branding vs VIP clean output
         watermark_text = None

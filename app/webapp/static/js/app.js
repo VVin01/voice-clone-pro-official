@@ -987,6 +987,215 @@ function setupRecapVisualEditor() {
     const previewLogo = document.getElementById("preview-logo");
     const canvas = document.getElementById("video-bg-canvas");
     const mockupFrame = document.getElementById("recap-mockup-frame");
+    const canvasVideo = document.getElementById("canvas-video-player");
+
+    // ── 0. Dual Mode Video Source Switcher (URL vs Direct File Upload) ──
+    const btnModeUrl = document.getElementById("btn-source-mode-url");
+    const btnModeFile = document.getElementById("btn-source-mode-file");
+    const panelUrl = document.getElementById("panel-source-url");
+    const panelFile = document.getElementById("panel-source-file");
+    const fileInput = document.getElementById("recap-video-file-input");
+    const dropZone = document.getElementById("recap-video-drop-zone");
+
+    if (btnModeUrl && btnModeFile) {
+        btnModeUrl.addEventListener("click", () => {
+            haptic("selection");
+            btnModeUrl.classList.add("active");
+            btnModeFile.classList.remove("active");
+            if (panelUrl) panelUrl.classList.remove("hidden");
+            if (panelFile) panelFile.classList.add("hidden");
+        });
+        btnModeFile.addEventListener("click", () => {
+            haptic("selection");
+            btnModeFile.classList.add("active");
+            btnModeUrl.classList.remove("active");
+            if (panelFile) panelFile.classList.remove("hidden");
+            if (panelUrl) panelUrl.classList.add("hidden");
+        });
+    }
+
+    async function handleVideoFileSelect(file) {
+        if (!file) return;
+        haptic("medium");
+
+        // Instant client-side video preview via Object URL
+        const objectUrl = URL.createObjectURL(file);
+        if (canvasVideo) {
+            canvasVideo.src = objectUrl;
+            canvasVideo.classList.remove("hidden");
+            canvasVideo.load();
+            canvasVideo.onloadedmetadata = () => {
+                const dur = canvasVideo.duration || 60;
+                state.recapSourceDuration = dur;
+                if (sliderSeek) {
+                    sliderSeek.max = Math.min(600, Math.floor(dur));
+                    sliderSeek.value = Math.min(5, Math.floor(dur));
+                }
+                updateSeekTimeDisplay(sliderSeek ? parseFloat(sliderSeek.value) : 5, dur);
+                canvasVideo.currentTime = Math.min(5, dur * 0.2);
+            };
+        }
+
+        // Show info card with file name
+        const recapInfoBox = document.getElementById("recap-video-info-box");
+        const titleSpan = document.getElementById("recap-info-title");
+        const platformSpan = document.getElementById("recap-info-platform");
+        const fillBadge = document.getElementById("mockup-fill-badge");
+        if (fillBadge) fillBadge.style.display = "none";
+        if (recapInfoBox) recapInfoBox.classList.remove("hidden");
+        if (titleSpan) titleSpan.innerText = file.name;
+        if (platformSpan) platformSpan.innerText = "Direct Upload (MP4)";
+
+        // Upload asynchronously
+        const progressWrap = document.getElementById("recap-upload-progress");
+        const progressBar = document.getElementById("recap-upload-bar");
+        const progressLabel = document.getElementById("recap-upload-label");
+        if (progressWrap) progressWrap.classList.remove("hidden");
+        if (progressBar) progressBar.style.width = "40%";
+        if (progressLabel) progressLabel.innerText = "Uploading to Cloud Studio... 40%";
+
+        try {
+            const formData = new FormData();
+            formData.append("video_file", file);
+            const res = await fetch("/api/recap/upload_video", {
+                method: "POST",
+                headers: getAuthHeaders(false),
+                body: formData
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Upload failed");
+
+            state.uploadedVideoPath = data.local_path;
+            state.recapSourceDuration = data.duration_seconds;
+            if (progressBar) progressBar.style.width = "100%";
+            if (progressLabel) progressLabel.innerText = "✅ Video Ready for 1080p Recap!";
+            setTimeout(() => {
+                if (progressWrap) progressWrap.classList.add("hidden");
+            }, 1500);
+
+            const durSpan = document.getElementById("recap-info-dur");
+            if (durSpan) durSpan.innerText = `⏱️ ${data.estimated_duration}`;
+            haptic("success");
+        } catch (err) {
+            alert("Video upload error: " + err.message);
+            if (progressWrap) progressWrap.classList.add("hidden");
+        }
+    }
+
+    if (dropZone) {
+        dropZone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            dropZone.classList.add("dragover");
+        });
+        dropZone.addEventListener("dragleave", () => {
+            dropZone.classList.remove("dragover");
+        });
+        dropZone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dropZone.classList.remove("dragover");
+            if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+                handleVideoFileSelect(e.dataTransfer.files[0]);
+            }
+        });
+    }
+
+    if (fileInput) {
+        fileInput.addEventListener("change", (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                handleVideoFileSelect(e.target.files[0]);
+            }
+        });
+    }
+
+    // ── 0.5. Timeline Frame Scrubber & Second-Skipping (Like in the Bot) ──
+    const sliderSeek = document.getElementById("slider-canvas-seek");
+    const seekBadge = document.getElementById("canvas-seek-time-badge");
+    const btnPrev5 = document.getElementById("btn-seek-prev-5");
+    const btnNext5 = document.getElementById("btn-seek-next-5");
+    const btnPlayToggle = document.getElementById("btn-canvas-play-toggle");
+    const seekPills = document.querySelectorAll(".seek-pill-btn");
+
+    function formatSecToMMSS(sec) {
+        const s = Math.max(0, Math.floor(sec || 0));
+        const m = Math.floor(s / 60);
+        const remS = s % 60;
+        return `${m < 10 ? '0' : ''}${m}:${remS < 10 ? '0' : ''}${remS}`;
+    }
+
+    function updateSeekTimeDisplay(currentSec, totalSec) {
+        if (!seekBadge) return;
+        const curStr = formatSecToMMSS(currentSec);
+        const totStr = formatSecToMMSS(totalSec || state.recapSourceDuration || 60);
+        seekBadge.innerText = `⏱️ ${curStr}s / ${totStr}s`;
+    }
+
+    function seekCanvasFrame(targetSec) {
+        const total = state.recapSourceDuration || 60;
+        const clamped = Math.max(0, Math.min(total, targetSec));
+        if (sliderSeek) sliderSeek.value = clamped;
+        updateSeekTimeDisplay(clamped, total);
+
+        if (canvasVideo && !canvasVideo.classList.contains("hidden")) {
+            canvasVideo.currentTime = clamped;
+        }
+
+        seekPills.forEach(pill => {
+            const pSec = parseFloat(pill.getAttribute("data-sec"));
+            pill.classList.toggle("active", Math.abs(pSec - clamped) < 1.0);
+        });
+    }
+
+    if (sliderSeek) {
+        sliderSeek.addEventListener("input", (e) => {
+            seekCanvasFrame(parseFloat(e.target.value));
+        });
+    }
+
+    if (btnPrev5) {
+        btnPrev5.addEventListener("click", () => {
+            haptic("selection");
+            const cur = sliderSeek ? parseFloat(sliderSeek.value) : 5;
+            seekCanvasFrame(cur - 5);
+        });
+    }
+
+    if (btnNext5) {
+        btnNext5.addEventListener("click", () => {
+            haptic("selection");
+            const cur = sliderSeek ? parseFloat(sliderSeek.value) : 5;
+            seekCanvasFrame(cur + 5);
+        });
+    }
+
+    if (btnPlayToggle && canvasVideo) {
+        btnPlayToggle.addEventListener("click", () => {
+            haptic("selection");
+            if (canvasVideo.paused) {
+                canvasVideo.play();
+                btnPlayToggle.innerText = "⏸️ ရပ်မည်";
+                btnPlayToggle.classList.add("active");
+            } else {
+                canvasVideo.pause();
+                btnPlayToggle.innerText = "⏯️ နမူနာကြည့်";
+                btnPlayToggle.classList.remove("active");
+            }
+        });
+
+        canvasVideo.addEventListener("timeupdate", () => {
+            if (!canvasVideo.paused && sliderSeek) {
+                sliderSeek.value = canvasVideo.currentTime;
+                updateSeekTimeDisplay(canvasVideo.currentTime, canvasVideo.duration);
+            }
+        });
+    }
+
+    seekPills.forEach(pill => {
+        pill.addEventListener("click", () => {
+            haptic("selection");
+            const pSec = parseFloat(pill.getAttribute("data-sec") || 0);
+            seekCanvasFrame(pSec);
+        });
+    });
 
     // 1. Slider Controls for Original Blur and Subtitle Y
     if (sliderBlurY && previewBlur && valBlurY) {
@@ -1503,8 +1712,26 @@ function setupRecapVisualEditor() {
                     state.recapThumbnailUrl = data.thumbnail;
                     updateCanvasMockupVisuals();
                 }
+
+                state.uploadedVideoPath = null;
+                const sliderSeek = document.getElementById("slider-canvas-seek");
+                const seekBadge = document.getElementById("canvas-seek-time-badge");
+                if (sliderSeek) {
+                    sliderSeek.max = Math.min(600, data.duration_seconds || 60);
+                    sliderSeek.value = Math.min(5, data.duration_seconds || 5);
+                }
+                if (seekBadge) {
+                    seekBadge.innerText = `⏱️ 00:05s / ${data.estimated_duration || "00:00"}s`;
+                }
             } catch (err) {
-                alert(err.message || "Failed to inspect video link");
+                const msg = err.message || "";
+                if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
+                    alert(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် လင့်ခ်ဖြင့် တိုက်ရိုက်စစ်ဆေးမရပါခင်ဗျာ။\n\nဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။`);
+                    const btnFileTab = document.getElementById("btn-source-mode-file");
+                    if (btnFileTab) btnFileTab.click();
+                } else {
+                    alert(err.message || "Failed to inspect video link");
+                }
             } finally {
                 btnAnalyze.disabled = false;
                 btnAnalyze.innerText = originalText;
@@ -1607,7 +1834,7 @@ window.toggleAdvancedRecapStudio = function() {
 
 async function handleStartRecap() {
     const urlInput = document.getElementById("recap-url-input");
-    const url = urlInput ? urlInput.value.trim() : "";
+    const url = state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : "");
     if (!url) {
         alert(t("toast_empty_url"));
         return;
@@ -1785,7 +2012,15 @@ function startRecapJobPolling(jobId) {
                 state.recapPollTimer = null;
                 if (btn) btn.disabled = false;
                 if (progressBox) progressBox.classList.add("hidden");
-                alert(`❌ Recap Generation Failed: ${data.error_message || "Processing error"}\n\nCredit has been refunded to your account.`);
+
+                const errMsg = data.error_message || "Processing error";
+                if (errMsg.includes("Douyin") || errMsg.includes("Fresh cookies")) {
+                    alert(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် တိုက်ရိုက်ဒေါင်းလုဒ် မအောင်မြင်ပါခင်ဗျာ။\n\nCredit ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်။ ဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်ပြုလုပ်နိုင်ပါသည်ခင်ဗျာ။`);
+                    const btnFileTab = document.getElementById("btn-source-mode-file");
+                    if (btnFileTab) btnFileTab.click();
+                } else {
+                    alert(`❌ Recap Generation Failed: ${errMsg}\n\nCredit has been refunded to your account.`);
+                }
                 loadUserProfile();
             }
         } catch (err) {

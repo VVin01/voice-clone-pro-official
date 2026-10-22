@@ -427,29 +427,29 @@ class MediaDownloader:
             opts['js_runtimes'] = {'node': {'path': node_bin}}
             logger.info(f"Using Node.js runtime for YouTube JS challenges: {node_bin}")
 
-        # Automatic YouTube cookies loading (from env var YOUTUBE_COOKIES, COOKIES_CONTENT, or cookies.txt)
+        # Automatic YouTube & Douyin cookies loading (from env var YOUTUBE_COOKIES, DOUYIN_COOKIES, COOKIES_FILE, or cookies.txt)
         cookie_path = None
-        cookies_env = os.getenv("YOUTUBE_COOKIES") or os.getenv("COOKIES_FILE") or os.getenv("COOKIES_CONTENT")
+        cookies_env = os.getenv("YOUTUBE_COOKIES") or os.getenv("DOUYIN_COOKIES") or os.getenv("COOKIES_FILE") or os.getenv("COOKIES_CONTENT")
         if cookies_env:
             if os.path.isfile(cookies_env):
                 cookie_path = os.path.abspath(cookies_env)
-            elif "# Netscape" in cookies_env or "youtube.com" in cookies_env or ".google.com" in cookies_env:
+            elif "# Netscape" in cookies_env or "youtube.com" in cookies_env or ".google.com" in cookies_env or "douyin.com" in cookies_env:
                 try:
                     data_dir = os.path.join(os.getcwd(), "data")
                     os.makedirs(data_dir, exist_ok=True)
-                    tmp_cookie = os.path.join(data_dir, "youtube_cookies.txt")
+                    tmp_cookie = os.path.join(data_dir, "auth_cookies.txt")
                     with open(tmp_cookie, "w", encoding="utf-8") as cf:
                         cf.write(cookies_env.strip())
                     cookie_path = tmp_cookie
                 except Exception as ce:
                     try:
                         import tempfile
-                        tmp_cookie = os.path.join(tempfile.gettempdir(), "youtube_cookies.txt")
+                        tmp_cookie = os.path.join(tempfile.gettempdir(), "auth_cookies.txt")
                         with open(tmp_cookie, "w", encoding="utf-8") as cf:
                             cf.write(cookies_env.strip())
                         cookie_path = tmp_cookie
                     except Exception as ce2:
-                        logger.warning(f"Failed to write YOUTUBE_COOKIES from env: {ce2}")
+                        logger.warning(f"Failed to write authentication cookies from env: {ce2}")
 
         if not cookie_path:
             repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -458,6 +458,8 @@ class MediaDownloader:
                 os.path.join(os.getcwd(), "data", "cookies.txt"),
                 os.path.join(os.getcwd(), "youtube_cookies.txt"),
                 os.path.join(os.getcwd(), "data", "youtube_cookies.txt"),
+                os.path.join(os.getcwd(), "douyin_cookies.txt"),
+                os.path.join(os.getcwd(), "data", "douyin_cookies.txt"),
                 os.path.join(repo_root, "cookies.txt"),
                 os.path.join(repo_root, "data", "cookies.txt"),
             ]:
@@ -467,7 +469,7 @@ class MediaDownloader:
 
         if cookie_path and os.path.isfile(cookie_path):
             opts['cookiefile'] = cookie_path
-            logger.info(f"Loaded YouTube authentication cookies from: {cookie_path}")
+            logger.info(f"Loaded platform authentication cookies from: {cookie_path}")
 
         return opts
 
@@ -538,6 +540,15 @@ class MediaDownloader:
                     raise ValueError("Could not extract media info from the provided URL.")
         except Exception as e:
             err_msg = str(e)
+            if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
+                if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
+                    logger.warning(f"Douyin anti-bot cookie verification needed: {err_msg}")
+                    raise RuntimeError(
+                        "⚠️ Douyin (တရုတ်ပြည်တွင်း TikTok) သည် ဒေသတွင်း Anti-Bot Cookie အကာအကွယ် စစ်ဆေးနေပါသဖြင့် လင့်ခ်ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
+                        "ဖုန်း/ကွန်ပျူတာထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို '📁 Video Upload' ခလုတ်ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍သော်လည်းကောင်း၊ "
+                        "TikTok (International) / YouTube / Facebook Video Link များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
+                    ) from e
+
             if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
                 logger.warning(f"YouTube anti-bot challenge encountered in get_info: {err_msg}")
                 raise RuntimeError(
@@ -673,6 +684,15 @@ class MediaDownloader:
             except Exception as fb_err:
                 logger.warning(f"Fallback download also failed: {fb_err}")
 
+            if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
+                if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
+                    logger.warning(f"Douyin anti-bot cookie verification needed in download_video: {err_msg}")
+                    raise RuntimeError(
+                        "⚠️ Douyin (တရုတ်ပြည်တွင်း TikTok) သည် ဒေသတွင်း Anti-Bot Cookie အကာအကွယ် စစ်ဆေးနေပါသဖြင့် လင့်ခ်ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
+                        "ဖုန်း/ကွန်ပျူတာထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Video Upload' ခလုတ်ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍သော်လည်းကောင်း၊ "
+                        "TikTok (International) / YouTube / Facebook Video Link များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
+                    ) from e
+
             if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
                 logger.warning(f"YouTube anti-bot challenge encountered in download_video: {err_msg}")
                 raise RuntimeError(
@@ -733,6 +753,14 @@ class MediaDownloader:
                 return mp3_path, info
         except Exception as e:
             err_msg = str(e)
+            if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
+                if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
+                    logger.warning(f"Douyin anti-bot cookie verification needed in download_audio: {err_msg}")
+                    raise RuntimeError(
+                        "⚠️ Douyin (တရုတ်ပြည်တွင်း TikTok) သည် ဒေသတွင်း Anti-Bot Cookie အကာအကွယ် စစ်ဆေးနေပါသဖြင့် လင့်ခ်ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
+                        "ဖုန်း/ကွန်ပျူတာထဲရှိ အသံ/ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / YouTube လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
+                    ) from e
+
             if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
                 logger.warning(f"YouTube anti-bot challenge encountered in download_audio: {err_msg}")
                 raise RuntimeError(
