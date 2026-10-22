@@ -1,8 +1,6 @@
 """
 fish_audio_engine.py - Zero-shot Multilingual Neural TTS & Voice Cloning via Fish Audio API.
-Replaces legacy VoxCPM with Fish Audio's high-fidelity "s2.1-pro-free" model.
-Supports inline zero-shot voice cloning via MessagePack, curated personas,
-prosody controls, live rate-limit logging, and seamless Edge Neural TTS fallback.
+Includes Multi-Key Pool, Smart Load Balancing, Rate-Limit Failover, and Edge Neural TTS fallback.
 
 API Reference (Fish Audio v1 TTS):
   endpoint: https://api.fish.audio/v1/tts
@@ -13,6 +11,7 @@ API Reference (Fish Audio v1 TTS):
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import shutil
@@ -20,9 +19,11 @@ import hashlib
 import logging
 import threading
 from pathlib import Path
-from typing import Optional, Any, Callable
+from typing import Optional, Any, Callable, List, Set
 
 logger = logging.getLogger(__name__)
+
+BUILTIN_FISH_AUDIO_KEY = "sk-fish-LWGEkWhc5XBzIKwC11vJXvjmreeUS-Jd-haRWvuQKUw"
 
 DEFAULT_FISH_AUDIO_ENDPOINT = (
     os.getenv("FISH_AUDIO_ENDPOINT", "").strip()
@@ -32,18 +33,152 @@ DEFAULT_FISH_AUDIO_MODEL = (
     os.getenv("FISH_AUDIO_MODEL", "").strip()
     or "s2.1-pro-free"
 )
-DEFAULT_FISH_AUDIO_API_KEY = (
-    os.getenv("FISH_AUDIO_API_KEY", "").strip()
-    or "sk-fish-LWGEkWhc5XBzIKwC11vJXvjmreeUS-Jd-haRWvuQKUw"
-)
 DEFAULT_BURMESE_CONTROL = (
     "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone "
     "and fluent pronunciation. Speak in Myanmar language with authentic accent."
 )
 
-# Concurrency semaphore to stay well within Fish Audio Free limit (5 concurrent requests)
-_MAX_CONCURRENT_REQUESTS = int(os.getenv("FISH_AUDIO_MAX_CONCURRENCY", "3"))
-_FISH_AUDIO_SEMAPHORE = threading.BoundedSemaphore(_MAX_CONCURRENT_REQUESTS)
+# Max concurrent requests per individual API key (Fish Audio free tier limit is 5)
+_PER_KEY_CONCURRENCY = int(os.getenv("FISH_AUDIO_PER_KEY_CONCURRENCY", "3"))
+
+
+def mask_api_key(key: str) -> str:
+    """Format key safely for logging without leaking secrets."""
+    k = (key or "").strip()
+    if len(k) > 12:
+        return f"{k[:7]}...{k[-4:]}"
+    return "sk-***"
+
+
+def discover_fish_audio_keys(explicit_key: Optional[str] = None) -> List[str]:
+    """
+    Discover all configured Fish Audio API keys from environment variables and built-in defaults.
+    Combines keys from:
+      1. Explicit key argument
+      2. FISH_AUDIO_API_KEYS (comma/semicolon/newline separated)
+      3. FISH_AUDIO_API_KEY (comma/semicolon/newline separated or single)
+      4. BUILTIN_FISH_AUDIO_KEY
+    Returns deduplicated list of valid keys.
+    """
+    keys: List[str] = []
+
+    def _add_candidates(val: str) -> None:
+        for part in re.split(r"[,;\s\n]+", str(val or "")):
+            token = part.strip().strip("'\"")
+            if token and token.startswith("sk-") and token not in keys:
+                keys.append(token)
+
+    if explicit_key:
+        _add_candidates(explicit_key)
+
+    _add_candidates(os.getenv("FISH_AUDIO_API_KEYS", ""))
+    _add_candidates(os.getenv("FISH_AUDIO_API_KEY", ""))
+
+    # Always ensure the built-in key is in the pool for zero-downtime reliability
+    if BUILTIN_FISH_AUDIO_KEY not in keys:
+        keys.append(BUILTIN_FISH_AUDIO_KEY)
+
+    return keys
+
+
+class FishKeySlot:
+    """Represents a single API key with independent concurrency gate and rate-limit tracking."""
+
+    def __init__(self, key: str, max_concurrency: int = _PER_KEY_CONCURRENCY):
+        self.key = key
+        self.masked = mask_api_key(key)
+        self.max_concurrency = max(1, max_concurrency)
+        self.semaphore = threading.BoundedSemaphore(self.max_concurrency)
+        self.in_flight = 0
+        self.cooldown_until = 0.0
+        self.total_requests = 0
+        self.total_successes = 0
+        self.total_failures = 0
+        self.last_concurrency_seen: Optional[int] = None
+        self._lock = threading.Lock()
+
+    @property
+    def is_cooling_down(self) -> bool:
+        with self._lock:
+            return time.time() < self.cooldown_until
+
+    def mark_cooldown(self, seconds: float = 45.0) -> None:
+        with self._lock:
+            self.cooldown_until = time.time() + seconds
+
+    def acquire(self, timeout: float = 12.0) -> bool:
+        acquired = self.semaphore.acquire(timeout=timeout)
+        if acquired:
+            with self._lock:
+                self.in_flight += 1
+                self.total_requests += 1
+        return acquired
+
+    def release(self) -> None:
+        with self._lock:
+            self.in_flight = max(0, self.in_flight - 1)
+        try:
+            self.semaphore.release()
+        except ValueError:
+            pass
+
+
+class FishKeyPool:
+    """
+    Thread-safe dynamic load balancer across multiple Fish Audio API keys.
+    Selects the least-busy, non-cooldown key slot and enables immediate failover
+    upon HTTP 429 (Rate Limit) or network errors.
+    """
+
+    def __init__(self, keys: List[str], max_concurrency_per_key: int = _PER_KEY_CONCURRENCY):
+        self.slots = [FishKeySlot(k, max_concurrency=max_concurrency_per_key) for k in keys]
+        self._lock = threading.Lock()
+        self._rr_counter = 0
+
+    @property
+    def total_capacity(self) -> int:
+        return sum(s.max_concurrency for s in self.slots)
+
+    def select_slot(self, exclude_keys: Optional[Set[str]] = None) -> Optional[FishKeySlot]:
+        now = time.time()
+        excluded = exclude_keys or set()
+
+        with self._lock:
+            # 1. Candidate slots that are not excluded and not currently in rate-limit cooldown
+            available = [s for s in self.slots if s.key not in excluded and now >= s.cooldown_until]
+
+            if not available:
+                # If all available are on cooldown or excluded, pick from non-excluded with earliest cooldown
+                non_excluded = [s for s in self.slots if s.key not in excluded]
+                if non_excluded:
+                    available = non_excluded
+                else:
+                    available = self.slots
+
+            # 2. Pick the slot with the lowest in-flight load (Least-Busy Load Balancing)
+            # Break ties using round-robin index for fair distribution
+            self._rr_counter += 1
+            available.sort(key=lambda s: (s.in_flight, s.cooldown_until))
+            return available[0] if available else None
+
+
+# Global singleton pool for unified worker & recap concurrency control
+_GLOBAL_KEY_POOL: Optional[FishKeyPool] = None
+_POOL_INIT_LOCK = threading.Lock()
+
+
+def get_global_fish_key_pool(explicit_keys: Optional[List[str]] = None) -> FishKeyPool:
+    global _GLOBAL_KEY_POOL
+    with _POOL_INIT_LOCK:
+        if _GLOBAL_KEY_POOL is None or explicit_keys:
+            keys = explicit_keys or discover_fish_audio_keys()
+            _GLOBAL_KEY_POOL = FishKeyPool(keys, max_concurrency_per_key=_PER_KEY_CONCURRENCY)
+            logger.info(
+                "🔑 Initialized Fish Audio Key Pool: %d keys | Total concurrency capacity: %d requests",
+                len(_GLOBAL_KEY_POOL.slots),
+                _GLOBAL_KEY_POOL.total_capacity,
+            )
+        return _GLOBAL_KEY_POOL
 
 
 def _synthesize_neural_tts_fallback(
@@ -111,12 +246,13 @@ def _synthesize_neural_tts_fallback(
 class FishAudioEngine:
     """
     High-level client for Fish Audio Text-to-Speech & Voice Cloning.
-    Uses official 's2.1-pro-free' developer tier model with:
-      - MessagePack inline zero-shot voice cloning
-      - Native Burmese pronunciation support
-      - Active concurrency control (max 3 concurrent requests)
-      - Audio mastering & normalization
-      - Automatic fallback to Microsoft Edge Neural TTS
+    Features:
+      - Dynamic Multi-Key Pool with Least-Busy Load Balancing
+      - Zero-shot Voice Cloning with MessagePack serialization
+      - Per-key Concurrency Gate (max 3 concurrent requests per key, avoiding the 5 cap)
+      - Automatic HTTP 429 Cooldown & Instant Failover to Alternative Keys
+      - Broadcast audio mastering via FFmpeg
+      - Automatic Microsoft Edge Neural TTS fallback
     """
 
     def __init__(
@@ -127,7 +263,8 @@ class FishAudioEngine:
         work_dir: Optional[Path | str] = None,
         log_fn: Optional[Callable[[str], None]] = None,
     ):
-        self.api_key = (api_key or os.getenv("FISH_AUDIO_API_KEY", "")).strip() or DEFAULT_FISH_AUDIO_API_KEY
+        self.keys = discover_fish_audio_keys(api_key)
+        self.key_pool = get_global_fish_key_pool(self.keys)
         self.model = (model or os.getenv("FISH_AUDIO_MODEL", "")).strip() or DEFAULT_FISH_AUDIO_MODEL
         self.endpoint = (endpoint or os.getenv("FISH_AUDIO_ENDPOINT", "")).strip() or DEFAULT_FISH_AUDIO_ENDPOINT
         self.work_dir = Path(work_dir) if work_dir else Path(os.environ.get("TEMP", ".")) / "fish_audio_cache"
@@ -152,24 +289,11 @@ class FishAudioEngine:
         prompt_text: str = "",
         speed: float = 1.05,
         progress_cb: Optional[Callable[[str], None]] = None,
-        retries: int = 2,
+        retries: int = 3,
         **kwargs: Any,
     ) -> Path:
         """
-        Synthesize Burmese speech for given text using Fish Audio API.
-
-        Args:
-            text: Input text to synthesize (Burmese script)
-            output_wav: Destination path for output WAV file
-            control_instruction: Style description / emotion guide
-            reference_wav: Optional audio file for inline zero-shot voice cloning
-            reference_id: Optional pre-uploaded Fish Audio voice ID
-            prompt_text: Optional transcript of the reference audio
-            speed: Speech rate multiplier (default 1.05 for natural movie recap pace)
-            progress_cb: Callback for status updates
-            retries: Number of retry attempts on failure
-        Returns:
-            Path to the output WAV file
+        Synthesize Burmese speech using the Fish Audio Multi-Key Pool.
         """
         out_path = Path(output_wav).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,11 +317,6 @@ class FishAudioEngine:
 
         import requests
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "model": self.model,
-        }
-
         # Check if reference audio exists for inline zero-shot cloning
         ref_bytes = None
         if reference_wav:
@@ -214,11 +333,11 @@ class FishAudioEngine:
             import msgpack
         except ImportError:
             if use_msgpack:
-                logger.warning("msgpack module not found; inline audio cloning cannot serialize binary. Falling back to JSON.")
+                logger.warning("msgpack module not found; falling back to JSON.")
                 use_msgpack = False
 
         if use_msgpack:
-            headers["Content-Type"] = "application/msgpack"
+            content_type = "application/msgpack"
             payload: dict[str, Any] = {
                 "text": clean_text,
                 "references": [
@@ -236,9 +355,10 @@ class FishAudioEngine:
                 },
             }
             body_data = msgpack.packb(payload)
+            json_payload = None
         else:
-            headers["Content-Type"] = "application/json"
-            json_payload: dict[str, Any] = {
+            content_type = "application/json"
+            json_payload = {
                 "text": clean_text,
                 "format": "wav",
                 "normalize": True,
@@ -253,48 +373,83 @@ class FishAudioEngine:
             body_data = None
 
         last_err: Exception | None = None
-        for attempt in range(1, retries + 2):
+        tried_keys: Set[str] = set()
+
+        max_attempts = max(retries + 1, len(self.key_pool.slots) + 1)
+        for attempt in range(1, max_attempts + 1):
+            slot = self.key_pool.select_slot(exclude_keys=tried_keys)
+            if not slot:
+                # Reset excluded keys if all were tried
+                tried_keys.clear()
+                slot = self.key_pool.select_slot()
+
+            if not slot:
+                break
+
+            slot_acquired = slot.acquire(timeout=10.0)
+            if not slot_acquired:
+                tried_keys.add(slot.key)
+                continue
+
             try:
+                headers = {
+                    "Authorization": f"Bearer {slot.key}",
+                    "model": self.model,
+                    "Content-Type": content_type,
+                }
+
                 self._log(
-                    f"🐟 [Fish Audio API] Attempt {attempt}/{retries+1} | "
-                    f"model={self.model} | chars={len(clean_text)} | ref={'audio' if ref_bytes else (reference_id or 'none')}"
+                    f"🐟 [Fish Audio API] Key {slot.masked} (in-flight: {slot.in_flight}/{slot.max_concurrency}) | "
+                    f"Attempt {attempt}/{max_attempts} | chars={len(clean_text)} | pool={len(self.key_pool.slots)} keys"
                 )
                 if progress_cb:
                     try:
-                        progress_cb(f"🎙️ Fish Audio AI ဖြင့် အသံဖန်တီးနေပါသည် ({attempt}/{retries+1})...")
+                        progress_cb(f"🎙️ Fish Audio AI ဖြင့် အသံဖန်တီးနေပါသည် (Key: {slot.masked})...")
                     except Exception:
                         pass
 
-                # Acquire concurrency semaphore
-                with _FISH_AUDIO_SEMAPHORE:
-                    t0 = time.time()
-                    if use_msgpack:
-                        resp = requests.post(
-                            self.endpoint,
-                            data=body_data,
-                            headers=headers,
-                            timeout=60,
-                        )
-                    else:
-                        resp = requests.post(
-                            self.endpoint,
-                            json=json_payload,
-                            headers=headers,
-                            timeout=60,
-                        )
-                    elapsed = time.time() - t0
+                t0 = time.time()
+                if use_msgpack:
+                    resp = requests.post(
+                        self.endpoint,
+                        data=body_data,
+                        headers=headers,
+                        timeout=60,
+                    )
+                else:
+                    resp = requests.post(
+                        self.endpoint,
+                        json=json_payload,
+                        headers=headers,
+                        timeout=60,
+                    )
+                elapsed = time.time() - t0
 
-                # Log rate limits & trace info from headers
+                # Read rate limits & trace info from headers
                 limit_concur = resp.headers.get("ratelimit-limit-concurrency", "N/A")
                 curr_concur = resp.headers.get("ratelimit-current-concurrency", "N/A")
                 trace_id = resp.headers.get("x-fish-trace-id", "")
                 dc = resp.headers.get("x-fishaudio-datacenter", "")
+                slot.last_concurrency_seen = int(curr_concur) if str(curr_concur).isdigit() else None
+
                 self._log(
-                    f"📊 Fish Audio Response: {resp.status_code} in {elapsed:.2f}s | "
+                    f"📊 Fish Audio Response [{slot.masked}]: {resp.status_code} in {elapsed:.2f}s | "
                     f"concurrency={curr_concur}/{limit_concur} | dc={dc} | trace={trace_id[:12]}"
                 )
 
+                # HTTP 429: Rate limit hit - activate cooldown and failover immediately
+                if resp.status_code == 429:
+                    slot.mark_cooldown(seconds=45.0)
+                    slot.total_failures += 1
+                    tried_keys.add(slot.key)
+                    self._log(
+                        f"⚠️ Key {slot.masked} rate-limited (HTTP 429). Put on 45s cooldown. "
+                        f"Failing over to alternative key in pool..."
+                    )
+                    continue
+
                 if resp.status_code == 200 and len(resp.content) > 1000:
+                    slot.total_successes += 1
                     raw_audio_temp = out_path.with_suffix(".raw.wav")
                     raw_audio_temp.write_bytes(resp.content)
 
@@ -338,23 +493,25 @@ class FishAudioEngine:
                         except Exception:
                             pass
 
-                    self._log(f"✅ Fish Audio Success: {out_path.name} ({out_path.stat().st_size} bytes)")
+                    self._log(f"✅ Fish Audio Success [{slot.masked}]: {out_path.name} ({out_path.stat().st_size} bytes)")
                     return out_path
                 else:
-                    err_msg = f"HTTP {resp.status_code}: {resp.text[:300]}"
-                    raise RuntimeError(f"Fish Audio API returned error: {err_msg}")
+                    slot.total_failures += 1
+                    err_msg = f"HTTP {resp.status_code}: {resp.text[:250]}"
+                    raise RuntimeError(f"Fish Audio API returned error on key {slot.masked}: {err_msg}")
 
             except Exception as e:
                 last_err = e
-                self._log(f"⚠️ Fish Audio attempt {attempt} failed: {e}")
-                if attempt <= retries:
-                    # Exponential backoff for rate limits or server saturation
-                    sleep_sec = 2.0 * attempt
-                    self._log(f"⏳ Backing off for {sleep_sec:.1f}s before retry...")
-                    time.sleep(sleep_sec)
+                slot.total_failures += 1
+                tried_keys.add(slot.key)
+                self._log(f"⚠️ Key {slot.masked} attempt {attempt} error: {e}")
+                if attempt < max_attempts:
+                    time.sleep(1.0)
+            finally:
+                slot.release()
 
         # Resilient fallback to Microsoft Edge Neural TTS
-        self._log(f"⚠️ Fish Audio API busy or failed ({last_err}). Invoking High-Fidelity Neural Engine fallback...")
+        self._log(f"⚠️ All Fish Audio keys exhausted or busy ({last_err}). Invoking High-Fidelity Neural Engine fallback...")
         if progress_cb:
             try:
                 progress_cb("🔄 Fish Audio ချိတ်ဆက်မှု အချိန်ကုန်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
@@ -367,5 +524,5 @@ class FishAudioEngine:
             return out_path
 
         raise RuntimeError(
-            f"Fish Audio speech synthesis failed after {retries + 1} attempts: {last_err}"
+            f"Fish Audio speech synthesis failed across all {len(self.key_pool.slots)} keys in pool: {last_err}"
         )

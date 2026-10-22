@@ -127,6 +127,7 @@ class Settings(BaseSettings):
 
     # Fish Audio Neural TTS
     fish_audio_api_key: str = Field(default="", alias="FISH_AUDIO_API_KEY")
+    fish_audio_api_keys: str = Field(default="", alias="FISH_AUDIO_API_KEYS")
     fish_audio_model: str = Field(default="s2.1-pro-free", alias="FISH_AUDIO_MODEL")
     fish_audio_endpoint: str = Field(default="https://api.fish.audio/v1/tts", alias="FISH_AUDIO_ENDPOINT")
 
