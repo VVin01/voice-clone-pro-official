@@ -2664,7 +2664,7 @@ textarea#voice-text-input:focus {
 }
 .video-bg-placeholder.fill-blur .mockup-inner-movie {
     width: 100%;
-    height: 56.25%; /* 16:9 movie inside 9:16 vertical canvas */
+    height: 31.64%; /* True 16:9 movie inside 9:16 vertical canvas (81/256 = 31.64%) */
     box-shadow: 0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25);
 }
 .video-bg-placeholder.fill-crop .mockup-inner-movie {
@@ -2677,7 +2677,7 @@ textarea#voice-text-input:focus {
 }
 .video-bg-placeholder.fill-black .mockup-inner-movie {
     width: 100%;
-    height: 56.25%;
+    height: 31.64%; /* True 16:9 movie inside 9:16 vertical canvas */
 }
 
 /* For 16:9 mockup frame */
@@ -2685,6 +2685,13 @@ textarea#voice-text-input:focus {
 .mockup-screen.ratio-16-9 .video-bg-placeholder.fill-black .mockup-inner-movie {
     width: 100%;
     height: 100%;
+}
+
+/* For 1:1 square mockup frame */
+.mockup-screen.ratio-1-1 .video-bg-placeholder.fill-blur .mockup-inner-movie,
+.mockup-screen.ratio-1-1 .video-bg-placeholder.fill-black .mockup-inner-movie {
+    width: 100%;
+    height: 56.25%; /* 16:9 inside 1:1 square is 9/16 = 56.25% */
 }
 
 /* Crop Shade Overlays */
@@ -2846,7 +2853,7 @@ textarea#voice-text-input:focus {
     left: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     z-index: 2;
     pointer-events: none;
     border-radius: inherit;

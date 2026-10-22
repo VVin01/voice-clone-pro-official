@@ -1175,175 +1175,150 @@ def split_into_burmese_syllables(text: str) -> list[str]:
     return merged
 
 
+def canonicalize_burmese_text(text: str) -> str:
+    """Fix common typing inversions, redundant spaces, and normalize Myanmar Unicode."""
+    if not text:
+        return ""
+    # 1. Swap visual 'ေ' (U+1031) preceding consonant to after consonant (e.g. အေမ -> အမေ)
+    t = re.sub(r'(\u1031)([\u1000-\u1021])', r'\2\1', str(text))
+    # 2. Fix medial order if reversed (e.g. ွ before ျ/ြ)
+    t = re.sub(r'(\u103D)(\u103B|\u103C)', r'\2\1', t)
+    # 3. Fix ေ before medials (e.g. က + ေ + ျ -> က + ျ + ေ)
+    t = re.sub(r'([\u1000-\u1021])(\u1031)([\u103B-\u103E]+)', r'\1\3\2', t)
+    # 4. Remove unwanted spaces before punctuation or dependent vowels
+    t = re.sub(r'\s+([\u102B-\u103E\u104A\u104B])', r'\1', t)
+    # 5. Clean up multiple spaces
+    t = re.sub(r'[ \t]+', ' ', t).strip()
+    return t
+
+
+BURMESE_PROTECTED_WORDS = [
+    "သူငယ်ချင်း", "အရင်းနှီးဆုံး", "အရင်းနှီး", "ကျွန်တော်", "ကျွန်မ", "သူမ", "သူတို့",
+    "ကောင်မလေး", "ကောင်လေး", "လူငယ်လေး", "အမျိုးသမီး", "အမျိုးသား", "မအိပ်ရသေးဘူး",
+    "မထင်မှတ်ဘဲ", "မထင်မှတ်ထား", "တစ်ယောက်တည်း", "တစ်ယောက်", "အခုချက်ချင်း", "ကျေးဇူးတင်ပါတယ်",
+    "ကျေးဇူးတင်", "အဆင်ပြေ", "ပင်ပန်း", "ဒေါသထွက်", "သတိထား", "ပြန်ရောက်", "ဖြစ်သွားတာလဲ",
+    "အခြေအနေ", "အဆင်ပြေရဲ့လား", "ဘာတွေဖြစ်", "ဘာမှမလိုတော့ဘူး", "ငြိမ်ငြိမ်လေး"
+]
+
+
+def _format_cue_lines(text: str, lines_cnt: int) -> str:
+    """Format subtitle text into 1 or 2 lines without cutting words in half."""
+    text = canonicalize_burmese_text(text)
+    if lines_cnt == 1:
+        if len(text) <= 45:
+            return re.sub(r'\s+', ' ', text.replace("\n", " ")).strip()
+        lines_cnt = 2  # Long lines wrap to 2 lines to prevent cut-off
+
+    if "\n" in text:
+        return text
+
+    # If spaces exist, try breaking at the most balanced space
+    words = text.split(" ")
+    if len(words) > 1:
+        half = len(text) // 2
+        best_idx = 1
+        best_diff = 9999
+        for i in range(1, len(words)):
+            l1 = " ".join(words[:i])
+            diff = abs(len(l1) - half)
+            if diff < best_diff:
+                best_diff = diff
+                best_idx = i
+        l1 = " ".join(words[:best_idx]).strip()
+        l2 = " ".join(words[best_idx:]).strip()
+        if l1 and l2:
+            return f"{l1}\n{l2}"
+
+    # If no spaces, tokenize preserving protected words and particle boundaries
+    tokens = []
+    i = 0
+    while i < len(text):
+        matched = False
+        for pw in BURMESE_PROTECTED_WORDS:
+            if text[i:].startswith(pw):
+                tokens.append(pw)
+                i += len(pw)
+                matched = True
+                break
+        if not matched:
+            for p in ['ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်', 'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ', 'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်', '၊', '။']:
+                if text[i:].startswith(p):
+                    tokens.append(p)
+                    i += len(p)
+                    matched = True
+                    break
+        if not matched:
+            m = BURMESE_SYLLABLE_BREAK.search(text, i + 1)
+            next_idx = m.start() if m else len(text)
+            tokens.append(text[i:next_idx])
+            i = next_idx
+
+    if len(tokens) > 1:
+        half_len = len(text) // 2
+        best_idx = 1
+        best_diff = 9999
+        for k in range(1, len(tokens)):
+            l1 = "".join(tokens[:k])
+            diff = abs(len(l1) - half_len)
+            prev_tok = tokens[k - 1].strip()
+            if prev_tok in ('။', '၊', 'ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်'):
+                diff -= 15
+            elif prev_tok in ('ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ', 'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်'):
+                diff -= 8
+            if diff < best_diff:
+                best_diff = diff
+                best_idx = k
+        p1 = "".join(tokens[:best_idx]).strip()
+        p2 = "".join(tokens[best_idx:]).strip()
+        if p1 and p2:
+            return f"{p1}\n{p2}"
+
+    return text
+
+
 def split_burmese_subtitle_cues(
     start_sec: float,
     end_sec: float,
     text: str,
-    max_cue_chars: int = 28,
+    max_cue_chars: int = 42,
     lines_per_cue: int = 1,
 ) -> list[tuple[float, float, str]]:
     """
-    Splits long segment narration into short, balanced, and readable subtitle cues.
-    - Preserves whole thoughts and sentences without fragmented micro-cues.
-    - Prevents single lines from overflowing beyond the screen borders on 9:16 or 16:9.
-    - Uses strict Burmese compound & syllable tokenization so words (e.g. 'လိုက်', 'ကောင်မလေး')
-      are NEVER sliced across lines or cues.
+    Formats spoken segment narration into synchronized, comfortable, and readable subtitle cues.
+    - NEVER creates micro-cues (< 1.2s) that flash on screen unreadably.
+    - NEVER cuts words in half (e.g. 'သူငယ်ချင်း' or 'အရင်းနှီးဆုံး').
+    - Keeps the full segment duration for the subtitle cue so the viewer can read comfortably.
+    - If lines_per_cue == 2 or text > 36 chars: cleanly wraps onto 2 balanced lines using \\n
+      within the SAME cue, so words stay intact and both lines are visible together.
+    - Only splits across time if total duration >= 4.0s AND contains distinct full sentences (။)
+      where each resulting cue is >= 1.8s.
     """
-    text = str(text or "").strip()
+    text = canonicalize_burmese_text(text)
     if not text:
         return []
 
     lines_cnt = 2 if int(lines_per_cue) == 2 else 1
-    total_dur = max(0.4, float(end_sec) - float(start_sec))
-    cue_limit = int(max_cue_chars or (54 if lines_cnt == 2 else 28))
+    total_dur = max(0.6, float(end_sec) - float(start_sec))
 
-    # If the segment text fits on screen, keep as single cue
-    if len(text) <= cue_limit:
-        clean_text = text
-        if lines_cnt == 1:
-            clean_text = re.sub(r'\s+', ' ', clean_text.replace("\n", " ")).strip()
-        elif lines_cnt == 2 and "\n" not in clean_text and len(clean_text) > 28:
-            syls = split_into_burmese_syllables(clean_text)
-            if len(syls) > 1:
-                half = len(clean_text) // 2
-                best_idx = 1
-                best_diff = 9999
-                cand = []
-                for i in range(1, len(syls)):
-                    left_len = sum(len(s) for s in syls[:i])
-                    diff = abs(left_len - half)
-                    curr = syls[i - 1].strip()
-                    if curr in PARTICLE_SYLS or any(curr.endswith(p) for p in ['ပြီး', 'တော့', 'က', 'နဲ့', 'မှာ', 'ကို', 'တယ်', 'တာ', '၊', ' ']):
-                        cand.append((diff, i))
-                if cand:
-                    cand.sort(key=lambda x: x[0])
-                    best_idx = cand[0][1]
-                else:
-                    for i in range(1, len(syls)):
-                        left_len = sum(len(s) for s in syls[:i])
-                        diff = abs(left_len - half)
-                        if diff < best_diff:
-                            best_diff = diff
-                            best_idx = i
-                l1 = "".join(syls[:best_idx]).strip()
-                l2 = "".join(syls[best_idx:]).strip()
-                if l1 and l2:
-                    clean_text = f"{l1}\n{l2}"
-        return [(round(start_sec, 3), round(end_sec, 3), clean_text)]
+    # If the segment duration is long (>= 4.0s) and has multiple sentences ending with ။,
+    # split cleanly across sentences as long as each sentence gets at least 1.8s.
+    if total_dur >= 4.0 and "။" in text:
+        sentences = [s.strip() for s in re.split(r'(?<=[။])\s*', text) if s.strip()]
+        if len(sentences) >= 2 and (total_dur / len(sentences)) >= 1.8:
+            tot_chars = sum(len(s) for s in sentences) or 1
+            cur_t = start_sec
+            results = []
+            for i, sent in enumerate(sentences):
+                s_dur = max(1.8, (len(sent) / tot_chars) * total_dur)
+                s_end = cur_t + s_dur if i < len(sentences) - 1 else end_sec
+                formatted = _format_cue_lines(sent, lines_cnt)
+                results.append((round(cur_t, 3), round(s_end, 3), formatted))
+                cur_t = s_end
+            return results
 
-    # 1. Break into natural sentences or clauses (။, \n)
-    initial_chunks = [s.strip() for s in re.split(r'(?<=[။\n])\s*', text) if s.strip()]
-
-    def _split_chunk(chunk: str) -> list[str]:
-        chunk = chunk.strip()
-        if len(chunk) <= cue_limit:
-            return [chunk]
-
-        # Try splitting at comma ၊
-        if "၊" in chunk:
-            parts = [p.strip() for p in re.split(r'(?<=[၊])\s*', chunk) if p.strip()]
-            if len(parts) > 1:
-                res: list[str] = []
-                for p in parts:
-                    res.extend(_split_chunk(p))
-                return res
-
-        syls = split_into_burmese_syllables(chunk)
-        if len(syls) <= 1:
-            return [chunk]
-
-        half_chars = len(chunk) // 2
-        best_idx = 1
-        best_diff = 9999
-
-        candidate_splits = []
-        for i in range(1, len(syls)):
-            left_len = sum(len(s) for s in syls[:i])
-            diff = abs(left_len - half_chars)
-            curr_syl = syls[i - 1].strip()
-            # Prioritize major clause connectives for natural grammatical breaks
-            if any(curr_syl == c or curr_syl.endswith(c) for c in ['တာနဲ့', 'တာမို့', 'တာကြောင့်', 'တဲ့အခါ', 'တဲ့အတွက်', 'ပြီးတော့', 'ပြီးနောက်', 'ပြီး', 'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်']):
-                score = diff - 25
-                candidate_splits.append((score, i))
-            elif curr_syl in PARTICLE_SYLS or any(curr_syl.endswith(p) for p in ['တော့', 'က', 'နဲ့', 'မှာ', 'ကို', 'တယ်', 'တာ', '၊', ' ']):
-                score = diff
-                candidate_splits.append((score, i))
-
-        if candidate_splits:
-            candidate_splits.sort(key=lambda x: x[0])
-            best_idx = candidate_splits[0][1]
-        else:
-            for i in range(1, len(syls)):
-                left_len = sum(len(s) for s in syls[:i])
-                diff = abs(left_len - half_chars)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_idx = i
-
-        p1 = "".join(syls[:best_idx]).strip()
-        p2 = "".join(syls[best_idx:]).strip()
-        if not p1 or not p2:
-            return [chunk]
-        return _split_chunk(p1) + _split_chunk(p2)
-
-    raw_cues: list[str] = []
-    for s in initial_chunks:
-        raw_cues.extend(_split_chunk(s))
-
-    # Merge very short cues (< 12 characters) into previous cue if fits
-    merged_cues: list[str] = []
-    for c in raw_cues:
-        if merged_cues and len(c) < 12 and (len(merged_cues[-1]) + len(c) <= cue_limit + 4):
-            merged_cues[-1] = (merged_cues[-1] + " " + c).strip()
-        else:
-            merged_cues.append(c)
-
-    # 3. Format cues according to lines_per_cue
-    formatted: list[tuple[float, float, str]] = []
-    total_len = sum(max(1, len(c)) for c in merged_cues) or 1
-    cur_t = start_sec
-
-    for i, c in enumerate(merged_cues):
-        c_dur = (len(c) / total_len) * total_dur
-        end_t = cur_t + c_dur if i < len(merged_cues) - 1 else end_sec
-        c_clean = c.strip()
-
-        if lines_cnt == 1:
-            c_clean = re.sub(r'\s+', ' ', c_clean.replace("\n", " ")).strip()
-        else:
-            c_clean = c_clean.replace("\r", "")
-            if "\n" not in c_clean and len(c_clean) > 35:
-                syls = split_into_burmese_syllables(c_clean)
-                if len(syls) > 1:
-                    half_chars = len(c_clean) // 2
-                    best_idx = 1
-                    best_diff = 9999
-                    candidates = []
-                    for k in range(1, len(syls)):
-                        left_len = sum(len(s) for s in syls[:k])
-                        diff = abs(left_len - half_chars)
-                        curr_syl = syls[k - 1].strip()
-                        if curr_syl in PARTICLE_SYLS or any(curr_syl.endswith(p) for p in ['ပြီး', 'တော့', 'က', 'နဲ့', 'မှာ', 'ကို', 'တယ်', 'တာ', '၊', ' ']):
-                            candidates.append((diff, k))
-                    if candidates:
-                        candidates.sort(key=lambda x: x[0])
-                        best_idx = candidates[0][1]
-                    else:
-                        for k in range(1, len(syls)):
-                            left_len = sum(len(s) for s in syls[:k])
-                            diff = abs(left_len - half_chars)
-                            if diff < best_diff:
-                                best_diff = diff
-                                best_idx = k
-                    line1 = "".join(syls[:best_idx]).strip()
-                    line2 = "".join(syls[best_idx:]).strip()
-                    if line1 and line2:
-                        c_clean = f"{line1}\n{line2}"
-
-        formatted.append((round(cur_t, 3), round(end_t, 3), c_clean))
-        cur_t = end_t
-
-    return formatted
+    # Otherwise, keep as ONE cue spanning the full spoken segment duration!
+    formatted_text = _format_cue_lines(text, lines_cnt)
+    return [(round(start_sec, 3), round(end_sec, 3), formatted_text)]
 
 
 def apply_production_overlays(
@@ -1421,15 +1396,24 @@ def apply_production_overlays(
     current = "[0:v]"
     blur_strength = max(4, min(40, int(overlays.get("blur_strength", 18))))
     for i, b in enumerate(boxes):
-        # Precise coordinates mapped directly onto the video picture
-        x = ox + min(pw - 8, int(round(_clamp01(b.get("x")) * pw)))
-        y = oy + min(ph - 8, int(round(_clamp01(b.get("y")) * ph)))
-        w = int(round(_clamp01(b.get("w"), 0.1) * pw))
-        h = int(round(_clamp01(b.get("h"), 0.1) * ph))
-        w = max(8, min(w, (ox + pw) - x))
-        h = max(8, min(h, (oy + ph) - y))
+        # Precise coordinates mapped directly onto the output canvas frame (WYSIWYG with Live Canvas Preview)
+        w = int(round(_clamp01(b.get("w"), 0.1) * cw))
+        h = int(round(_clamp01(b.get("h"), 0.1) * ch))
+        w = max(8, min(w, cw - 8))
+        h = max(8, min(h, ch - 8))
         w = w if w % 2 == 0 else w - 1
         h = h if h % 2 == 0 else h - 1
+
+        # b.get("x") is left fraction (0.05 default); b.get("y") is center Y fraction (0.81 default)
+        x_val = _clamp01(b.get("x"), 0.05) * cw
+        y_center = _clamp01(b.get("y"), 0.81) * ch
+        y_top = y_center - (h / 2.0)
+
+        x = int(round(max(0, min(cw - w, x_val))))
+        y = int(round(max(0, min(ch - h, y_top))))
+        x = x if x % 2 == 0 else x - 1
+        y = y if y % 2 == 0 else y - 1
+
         # Prevent boxblur crashes by strictly clamping luma radius < min(w, h) / 2
         safe_luma = max(2, min(blur_strength, (min(w, h) // 2) - 1))
         safe_chroma = max(1, min(safe_luma // 2, 9))
@@ -1497,11 +1481,10 @@ def apply_production_overlays(
             sub_size = max(9, min(22, int(round(raw_size * 0.72)))) if sub_lines == 1 else max(10, min(24, raw_size))
         else:
             sub_size = max(11, min(26, raw_size))
-        # Distance from bottom of canvas to bottom of picture
-        bottom_pad = ch - (oy + ph)
+        # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
         if "sub_y" in overlays and overlays["sub_y"] is not None:
             sy = _clamp01(float(overlays["sub_y"]), 0.85)
-            pixels_from_bottom = ph * (1.0 - sy) + bottom_pad
+            pixels_from_bottom = ch * (1.0 - sy)
         elif "subtitles_margin_v" in overlays:
             mv_val = float(overlays["subtitles_margin_v"])
             pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
@@ -1510,9 +1493,9 @@ def apply_production_overlays(
             by = _clamp01(b0.get("y", 0.81))
             bh = _clamp01(b0.get("h", 0.13))
             sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
-            pixels_from_bottom = ph * sub_center + bottom_pad
+            pixels_from_bottom = ch * sub_center
         else:
-            pixels_from_bottom = max(14, int(round(ph * 0.045))) + bottom_pad
+            pixels_from_bottom = max(14, int(round(ch * 0.045)))
 
         # FFmpeg's subtitles filter (libass on SRT) uses a 288 reference scale for MarginV
         sub_margin = max(4, min(280, int(round((pixels_from_bottom / max(1, ch)) * 288))))
@@ -1611,14 +1594,24 @@ def extract_preview_with_overlays(
     blur_strength = max(4, min(40, int(overlays.get("blur_strength", 18))))
 
     for i, b in enumerate(boxes):
-        x = ox + min(pw - 8, int(round(_clamp01(b.get("x")) * pw)))
-        y = oy + min(ph - 8, int(round(_clamp01(b.get("y")) * ph)))
-        w = int(round(_clamp01(b.get("w"), 0.1) * pw))
-        h = int(round(_clamp01(b.get("h"), 0.1) * ph))
-        w = max(8, min(w, (ox + pw) - x))
-        h = max(8, min(h, (oy + ph) - y))
+        # Precise coordinates mapped directly onto the output canvas frame (WYSIWYG with Live Canvas Preview)
+        w = int(round(_clamp01(b.get("w"), 0.1) * cw))
+        h = int(round(_clamp01(b.get("h"), 0.1) * ch))
+        w = max(8, min(w, cw - 8))
+        h = max(8, min(h, ch - 8))
         w = w if w % 2 == 0 else w - 1
         h = h if h % 2 == 0 else h - 1
+
+        # b.get("x") is left fraction (0.05 default); b.get("y") is center Y fraction (0.81 default)
+        x_val = _clamp01(b.get("x"), 0.05) * cw
+        y_center = _clamp01(b.get("y"), 0.81) * ch
+        y_top = y_center - (h / 2.0)
+
+        x = int(round(max(0, min(cw - w, x_val))))
+        y = int(round(max(0, min(ch - h, y_top))))
+        x = x if x % 2 == 0 else x - 1
+        y = y if y % 2 == 0 else y - 1
+
         safe_luma = max(2, min(blur_strength, (min(w, h) // 2) - 1))
         safe_chroma = max(1, min(safe_luma // 2, 9))
 
@@ -1718,11 +1711,10 @@ def extract_preview_with_overlays(
         else:
             sub_size = max(11, min(26, raw_size))
 
-        bottom_pad = ch - (oy + ph)
-
+        # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
         if "sub_y" in overlays and overlays["sub_y"] is not None:
             sy = _clamp01(float(overlays["sub_y"]), 0.85)
-            pixels_from_bottom = ph * (1.0 - sy) + bottom_pad
+            pixels_from_bottom = ch * (1.0 - sy)
         elif "subtitles_margin_v" in overlays:
             mv_val = float(overlays["subtitles_margin_v"])
             pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
@@ -1731,9 +1723,9 @@ def extract_preview_with_overlays(
             by = _clamp01(b0.get("y", 0.81))
             bh = _clamp01(b0.get("h", 0.13))
             sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
-            pixels_from_bottom = ph * sub_center + bottom_pad
+            pixels_from_bottom = ch * sub_center
         else:
-            pixels_from_bottom = max(14, int(round(ph * 0.045))) + bottom_pad
+            pixels_from_bottom = max(14, int(round(ch * 0.045)))
 
         # FFmpeg's subtitles filter (libass on SRT) uses a 288 reference scale for MarginV
         sub_margin = max(4, min(280, int(round((pixels_from_bottom / max(1, ch)) * 288))))
@@ -2176,9 +2168,9 @@ class EdgeSmartSync:
                 ch_val = int(layout.get("ch", 1080))
                 is_vert = (ch_val > cw_val) or (self.output_ratio == "9:16")
                 if lines_per_cue == 1:
-                    max_chars = 24 if is_vert else 32
+                    max_chars = 45 if is_vert else 52
                 else:
-                    max_chars = 48 if is_vert else 68
+                    max_chars = 80 if is_vert else 96
                 sub_cues = split_burmese_subtitle_cues(
                     raw_st, raw_en, txt,
                     max_cue_chars=max_chars,

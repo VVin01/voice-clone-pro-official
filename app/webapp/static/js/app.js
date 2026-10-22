@@ -1307,7 +1307,7 @@ function setupRecapVisualEditor() {
             // Calculate percentage from canvas top (0% top to 100% bottom)
             const relativeY = clientY - canvasRect.top;
             const rawPercent = (relativeY / canvasRect.height) * 100;
-            const clampedY = Math.max(50, Math.min(95, Math.round(rawPercent)));
+            const clampedY = Math.max(10, Math.min(95, Math.round(rawPercent)));
             onUpdateY(clampedY);
         }
 
@@ -1522,14 +1522,15 @@ function setupRecapVisualEditor() {
 
         if (innerMovie && (fillMode === "blur" || fillMode === "black")) {
             if (state.recapRatio === "9:16") {
-                // Base 16:9 height inside 9:16 canvas is 56.25%
+                // Base 16:9 height inside 9:16 canvas is 31.64% (81 / 256)
+                const totalVerticalCrop = Math.min(60, cTop + cBottom);
+                const effectivePct = 31.64 * (1.0 - totalVerticalCrop / 100.0);
+                innerMovie.style.height = `${Math.max(16, effectivePct)}%`;
+            } else if (state.recapRatio === "1:1") {
+                // Base 16:9 height inside 1:1 square canvas is 56.25% (9 / 16)
                 const totalVerticalCrop = Math.min(60, cTop + cBottom);
                 const effectivePct = 56.25 * (1.0 - totalVerticalCrop / 100.0);
                 innerMovie.style.height = `${Math.max(28, effectivePct)}%`;
-            } else if (state.recapRatio === "1:1") {
-                const totalVerticalCrop = Math.min(60, cTop + cBottom);
-                const effectivePct = 68.0 * (1.0 - totalVerticalCrop / 100.0);
-                innerMovie.style.height = `${Math.max(34, effectivePct)}%`;
             } else {
                 innerMovie.style.height = "100%";
             }

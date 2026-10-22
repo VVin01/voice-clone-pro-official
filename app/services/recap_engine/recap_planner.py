@@ -34,8 +34,8 @@ SENTENCE_UNIT_GAP = 1.5         # a pause this long always ends a line
 # Original V2 visual boundary: first frame to last frame, every gap between two
 # narration units split at its midpoint.
 BOUNDARY_PROFILE = "v2_full_coverage_midpoint"
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny.en")
-WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "auto")
 
 
 GEMINI_MODEL_FALLBACK_CHAIN = [
@@ -639,20 +639,18 @@ def _repeated_line_share(transcript: dict[str, Any]) -> tuple[float, int, list[t
 
 
 def _check_english_speech(transcript: dict[str, Any], transcript_name: str) -> None:
-    """Stop before any Gemini request when Whisper clearly did not hear English speech."""
+    """Stop before any Gemini request when Whisper clearly hallucinated repeating lines."""
+    detected = str(transcript.get("language") or "").lower().strip()
+    if detected and detected not in ("en", "english", "auto", ""):
+        # Legitimate non-English speech (e.g. Chinese zh, Korean ko, Japanese ja, Thai th, etc.)
+        return
     share, count, top = _repeated_line_share(transcript)
     if count < NOT_ENGLISH_MIN_LINES or share < NOT_ENGLISH_REPEAT_SHARE:
         return
     examples = ", ".join(f'"{text}" ×{n}' for text, n in top if n > 1)
     raise RuntimeError(
-        f"ဒီဗီဒီယိုမှာ English စကား မကြားရပါဘူး — Whisper transcript ရဲ့ စာကြောင်း {share:.0%} က "
-        f"တူတူ ထပ်နေပါတယ် ({examples})။\n"
-        "ဒီ tool က English ပြောတဲ့ ဗီဒီယို → မြန်မာ အတွက်ပဲ ဖြစ်ပါတယ်။ တရုတ် / ဟိန္ဒီ / ကိုရီးယား စတဲ့ "
-        "တခြားဘာသာ ဗီဒီယိုဆိုရင် English Whisper က စကားကို မကြားဘဲ ဒီလို English စာကြောင်းတွေ ထပ်ခါထပ်ခါ ရေးပြီး "
-        "မြန်မာအသံ မှားထွက်ပါတယ်။\n"
-        f"English ဗီဒီယို ဖြစ်ရင် {transcript_name} ကို ဖွင့်စစ်ပါ (သီချင်း / နောက်ခံဆူညံသံ များနေတာ ဖြစ်နိုင်ပါတယ်)။\n"
-        f"Not English speech: {share:.0%} of the Whisper lines repeat ({examples}). "
-        "This tool is for English-speaking videos only."
+        f"Whisper transcript ထဲတွင် ထပ်ခါထပ်ခါ စာကြောင်း {share:.0%} ဖြစ်နေပါသည် ({examples})။ "
+        f"နောက်ခံဆူညံသံ သို့မဟုတ် စကားသံမကြည်လင်ခြင်း ဖြစ်နိုင်ပါသည်။"
     )
 
 
@@ -1247,66 +1245,67 @@ def translate_batch(
         style_prompt = """PRESENTATION STYLE: VIRAL SENSATIONAL HOOK & HIGH-RETENTION PACING (🔥 ဗိုင်းရပ်စ် Hook စတိုင် - ALGORITHM & HIGH VIEWS OPTIMIZED)
 - SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The Burmese spoken narration must match the EXACT onscreen visual events happening in that specific segment frame-for-frame.
 - HIGH-RETENTION CURIOSITY HOOKS: Hook the audience immediately with magnetic, suspenseful, and emotionally gripping spoken phrases designed to prevent scrolling on TikTok, Reels, and Shorts.
-- Build continuous curiosity gaps (open loops) throughout the scenes ('ဒါပေမဲ့ တကယ်တမ်းမှာတော့...', 'အဲ့ဒီအချိန်မှာပဲ မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...', 'သူမ နောက်ကွယ်က လျှို့ဝှက်ချက်ကို သိသွားတဲ့အခါ...').
+- Build continuous curiosity gaps (open loops) throughout the scenes ('ဒီနေ့မှာတော့ ပရိသတ်ကြီးတို့အတွက်...', 'ကြည့်ပါဦးဗျာ...', 'ဒါပေမဲ့ တကယ်တမ်းမှာတော့...', 'အဲ့ဒီအချိန်မှာပဲ မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...', 'သူ နောက်ကွယ်က လျှို့ဝှက်ချက်ကို သိသွားတဲ့အခါ...').
 - High momentum, captivating storytelling, and cliffhanger anticipation that makes viewers watch all the way to the very end.
-- Tone: Highly engaging, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော စကားပြောဟန်) as used by million-view viral movie recap creators.
+- Tone: Highly engaging, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်) as used by top viral movie recap creators.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်' (these ruin speech synthesis). ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     elif style == "funny":
         style_prompt = """PRESENTATION STYLE: HUMOROUS ROAST & SARCASTIC COMMENTARY (😂 ဟာသရွဲ့စောင်း စတိုင် - HIGH ENGAGEMENT, COMMENTS & SHARES)
 - SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The Burmese spoken narration must match the EXACT onscreen visual events happening in that specific segment frame-for-frame.
-- Witty, sarcastic, and funny commentary roasting characters' questionable decisions, awkward moments, goofy expressions, and hilarious mishaps ('ဒီလူကြီးကတော့ ကွိုင်ရှာလိုက်ပြန်ပါပြီဗျာ...', 'ကြည့်ပါဦးဗျာ... ဘယ်လိုတောင် လုပ်ချလိုက်တာလဲ...', 'တွေ့လား... မိုက်ရူးရဲဆန်တဲ့ ရလဒ်ကတော့...').
+- Witty, sarcastic, and funny commentary roasting characters' questionable decisions, awkward moments, goofy expressions, and hilarious mishaps ('ဒီလူကတော့ ကွိုင်ရှာလိုက်ပြန်ပါပြီဗျာ...', 'ကြည့်ပါဦးဗျာ... ဘယ်လိုတောင် လုပ်ချလိုက်တာလဲ...', 'တွေ့လား... မိုက်ရူးရဲဆန်တဲ့ ရလဒ်ကတော့ ခံပေဦးပေါ့...', 'တကယ်ကို အူကြောင်ကြောင်နိုင်လွန်းပါတယ်...').
 - Lighthearted, amusing storytelling that triggers laughter, active discussions, comments, and social media shares.
 - Maintain 100% factual story continuity — enrich it with humorous commentary and playful charm.
 - Tone: Playful, comedic, witty spoken Burmese (ဟာသစကားပြောဟန်).
 - STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ဗျာ'၊ 'ပါပဲ'၊ 'လိုက်တာနော်'။"""
     elif style == "pov":
-        style_prompt = """PRESENTATION STYLE: CHARACTER DUBBING & IMMERSIVE POV (ဇာတ်ကောင် အသံသွင်း ဒက်ဘင်း စတိုင်)
+        style_prompt = """PRESENTATION STYLE: CHARACTER DUBBING & IMMERSIVE POV (👁️ ဇာတ်ကောင် အသံသွင်း ဒက်ဘင်း စတိုင်)
 - SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The Burmese spoken narration must match the EXACT onscreen visual events happening in that specific segment frame-for-frame.
-- DO NOT ALTER WHO PERFORMS AN ACTION: If someone else on screen is acting or speaking, state that person's action faithfully — DO NOT replace it with 1st-person 'ကျွန်တော်'/'ငါ'! Only speak from 1st-person when the protagonist is directly speaking, acting, or reacting.
-- Maintain 100% of the true storyline, character identities, cause-and-effect, and timeline. Never distort the plot, invert who did what, or invent false events.
+- First-person immersive storytelling from the protagonist's view ('ငါ့ဘဝမှာ ဒီလိုအဖြစ်ဆိုးမျိုး ကြုံရလိမ့်မယ်လို့ မထင်ခဲ့ဘူး...', 'အဲ့ဒီအချိန်မှာ ငါဖုန်းကိုကောက်ကိုင်လိုက်တော့...', 'ငါ့ရင်ထဲမှာ ဒေါသတွေ တလိပ်လိပ်ထွက်လာခဲ့တယ်...').
+- If someone else on screen is speaking, express their dialogue or protagonist's reaction naturally.
+- Maintain 100% of the true storyline, character identities, cause-and-effect, and timeline.
 - Tone: Expressive, cinematic, emotionally immersive conversational spoken Burmese (စကားပြောဟန်) as used in movie dubbing.
-- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်' (these cause robotic speech synthesis). ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ဗျာ/ရှင့်'၊ 'ပါပဲ'၊ 'လိုက်တယ်'။"""
+- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ဗျာ/ရှင့်'၊ 'ပါပဲ'၊ 'လိုက်တယ်'။"""
     elif style == "dramatic":
-        style_prompt = """PRESENTATION STYLE: SUSPENSE / THRILLER DRAMATIC (သည်းထိတ်ရင်ဖို ဒရာမာ စတိုင်)
+        style_prompt = """PRESENTATION STYLE: SUSPENSE / THRILLER DRAMATIC (🎭 သည်းထိတ်ရင်ဖို ဒရာမာ စတိုင်)
 - SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The spoken words must describe the EXACT visual action, person, and event occurring in that specific segment frame-for-frame.
 - Emphasize tension, sudden twists, shocking revelations, urgency, and mystery in the story.
-- Use punchy, gripping, cinematic spoken Burmese phrases ('မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...', 'ချက်ချင်းပဲ အခြေအနေတွေ ပြောင်းလဲသွားတယ်...').
+- Use punchy, gripping, cinematic spoken Burmese phrases ('ချက်ချင်းပဲ အခြေအနေတွေက တင်းမာသွားခဲ့တယ်...', 'သူ့ရင်ထဲမှာ မသင်္ကာစိတ်တွေ တရိပ်ရိပ်တက်လာပြီး...', 'ဒီကိစ္စရဲ့ အဆုံးသတ်မှာ ဘာတွေဆက်ဖြစ်လာမလဲ...').
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
-    else:  # narrator
-        style_prompt = """PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (ဆွဲဆောင်မှုရှိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
+    else:  # standard / narrator
+        style_prompt = """PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (📖 ဆွဲဆောင်မှုရှိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
 - SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The spoken words must describe the EXACT visual action, person, and event occurring in that specific segment frame-for-frame.
-- Tell the recap with high energy, engagement, and storytelling charm ('ဒီဇာတ်လမ်းမှာတော့...', 'အဲ့ဒီအချိန်မှာပဲ...', 'သူမကတော့...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲဆိုတာ...').
+- Tell the recap with high energy, engagement, and storytelling charm ('ဒီဇာတ်လမ်းလေးမှာတော့...', 'အဲ့ဒီအချိန်မှာပဲ...', 'သူမကတော့...', 'ဒီလိုနဲ့ သူတို့နှစ်ယောက်ဟာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲဆိုတာ...').
 - 100% accurate character identities, names, relationships, and chronological events.
 - Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on viral YouTube/Facebook recap channels.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
 
     task_rules = f"""
-You are an AWARD-WINNING CONTEXT-AWARE BURMESE VOICE/DUBBING TRANSLATOR.
-Translate ONLY the CURRENT English items into smooth, natural spoken Burmese that sounds captivating, emotionally alive, and natural when read aloud by Burmese Text-to-Speech.
+You are an AWARD-WINNING CONTEXT-AWARE BURMESE MOVIE RECAP NARRATOR & VOICE DUBBING TRANSLATOR.
+Convert the CURRENT spoken dialogue/narration items (transcribed from the video in any language: Chinese, English, Korean, etc.) into smooth, captivating spoken Burmese movie recap narration that sounds emotionally alive, natural, and entertaining when read aloud by Burmese Text-to-Speech.
 
 {style_prompt}
 
 CORE PRINCIPLE:
-Preserve the SOURCE MEANING and VISUAL EVENTS 100%, NOT the original wording or sentence structure.
+Capture the true story meaning, character emotions, and onscreen visual events 100%, expressing them in natural, captivating spoken Burmese rather than literal word-by-word translation.
 
 NATIVE BURMESE NATURAL PHRASING:
-- Restructure phrasing and clause order INSIDE THE SAME ID when needed so it rolls naturally off the tongue.
+- Transform stiff, fragmented dialogue into smooth, engaging recap narration tailored to the selected PRESENTATION STYLE.
 - Keep Burmese pronouns, kinship terms, honorifics, gendered self-reference, names, and relationships contextually accurate.
 - Dialogue and narration must be vibrant and engaging.
 
 HARD RULES:
-1. Do NOT remove, condense away, or omit meaningful source information. Every action, event, object, person, relationship, cause/effect, dialogue, and important visual detail must remain in the same ID.
-2. Do NOT translate word-for-word when it sounds stiff, awkward, or machine-like. Restructure wording freely INSIDE THE SAME ID for natural Burmese speech.
+1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every event, dialogue, and visual detail must be faithfully narrated in the corresponding timing segment.
+2. Do NOT translate word-for-word. Restructure wording freely into natural, engaging spoken recap narration that fits the requested PRESENTATION STYLE.
 3. STRICT SPOKEN BURMESE ONLY: Do NOT write formal literary Burmese endings ("သည်", "သဖြင့်", "ပေသည်", "ခဲ့ပေသည်"). The TTS engine will sound like a broken robot if you use them. Use spoken colloquial Burmese ("တယ်", "ခဲ့တယ်", "နေတာ", "လိုက်တယ်").
-4. Write EVERY word in Burmese script — no English/Latin words (the Burmese voice cannot pronounce Latin characters). Translate titles/terms, and transliterate proper names phonetically into Burmese script.
-5. Small natural expansion is allowed for clarity/flow; never invent fake plot events, opinions, intros, or outros.
+4. Write EVERY word in Burmese script — no foreign/Latin letters (the Burmese TTS voice cannot pronounce Latin characters). Translate titles/terms, and transliterate proper names phonetically into Burmese script.
+5. Small natural expansion and cinematic connectives are allowed for narrative flow and engagement; never invent completely fake plot events or false facts.
 6. Keep every CURRENT ID exactly once, in order. Do not merge or split IDs.
 7. Context is READ-ONLY. Never copy events from previous/next context into a current ID.
 8. Maintain consistent names, relationships, places, objects, and terminology throughout the story.
 9. Timestamps are local metadata. Return no timestamps.
 10. Return JSON only with top-level key "items". Each item must contain integer "id" and non-empty string "translation".
 11. NEVER return placeholders such as "...", "…", dashes, or empty text.
-12. A sentence often runs across two IDs. Each ID says only its own source words: never tell the next ID's part early, never repeat what the previous ID already said.
+12. When consecutive IDs continue a sentence or thought, maintain smooth grammatical continuity between them while ensuring each ID contains concise, natural spoken narration that fits its timing.
 """
     prompt = f"""
 {task_rules}
@@ -1452,7 +1451,7 @@ def audit_and_repair_batch(
     """
     previous_context = list(previous_context or [])
     next_context = list(next_context or [])
-    target_name = "Burmese/Myanmar narrator output"
+    target_name = f"Burmese movie recap narration ({narrative_style.upper()} style)"
 
     def _audit_window(
         current_rows: list[dict[str, Any]],
@@ -1474,9 +1473,9 @@ def audit_and_repair_batch(
             })
         sample_json = json.dumps({"checks": sample_checks}, ensure_ascii=False)
         base_prompt = f"""
-You are a STRICT SENTENCE-LOCKED TRANSLATION AUDITOR.
-Audit the {target_name}. Every action/fact/object/dialogue/detail must remain inside the same ID as its SOURCE.
-PREVIOUS and NEXT context are READ-ONLY. This is never a summarization task.
+You are an EXPERT BURMESE MOVIE RECAP NARRATION AUDITOR.
+Audit the {target_name}. Every visual event, dialogue, and plot development must remain faithfully narrated inside its corresponding timing ID.
+PREVIOUS and NEXT context are READ-ONLY.
 
 CRITICAL ID PROTOCOL:
 - CURRENT IDs are SOURCE IDs, not positions and not local row numbers.
@@ -1486,11 +1485,12 @@ CRITICAL ID PROTOCOL:
 - The exact required CURRENT ID sequence is: {exact_ids_json}
 
 For EVERY CURRENT ID check:
-- semantic completeness: no meaningful source information omitted or condensed away;
-- no event borrowed from previous/next IDs;
-- no shifted chain where a row translates another row;
+- faithful scene narration: accurately reflects the events, dialogues, and characters in the segment;
+- style adherence: maintain the requested {narrative_style.upper()} style and captivating conversational energy;
+- natural spoken colloquial style: strictly avoid formal literary 'သည်'/'သဖြင့်' bookish endings, no English/Latin words;
+- no shifted chain where a row narrates another row;
 - no adjacent duplicate/near-duplicate outputs for different sources;
-- natural spoken colloquial style (avoid formal 'သည်'/'သဖြင့်' bookish endings, no English words), consistent names/pronouns, and no invented information.
+- consistent names/pronouns throughout the story.
 
 Return JSON ONLY with every CURRENT ID once and in the exact sequence above.
 Example shape using ACTUAL IDs from this batch:
@@ -1873,7 +1873,8 @@ class RecapPlanBuilder:
                 raise InterruptedError("STOP requested before local Whisper")
             runtime_cfg = _load_runtime_config(self.runtime_root)
             engine_label = "Groq Cloud Whisper Turbo (128x Speed)" if has_groq else f"Local Whisper ({whisper_model})"
-            self.log(f"🌐 English → Myanmar | Speech Engine: {engine_label} | lang={whisper_language}")
+            whisper_lang_arg = None if str(whisper_language).lower().strip() in ("auto", "none", "") else whisper_language
+            self.log(f"🌐 Multilingual Audio → Myanmar Recap | Speech Engine: {engine_label} | lang={whisper_language}")
             self.progress(0, 4, "Speech timestamp transcription")
             self.log(f"🎙️ [1/4] {engine_label} — video timestamp transcript...")
             whisper = whisper_mod.WhisperTimestampService(
@@ -1881,7 +1882,7 @@ class RecapPlanBuilder:
                 backend=str(runtime_cfg.get("whisper_backend", os.getenv("WHISPER_BACKEND", "auto"))),
                 device=str(runtime_cfg.get("whisper_device", os.getenv("WHISPER_DEVICE", "cuda"))),
                 compute_type=str(runtime_cfg.get("whisper_compute_type", os.getenv("WHISPER_COMPUTE_TYPE", "float16"))),
-                language=whisper_language,
+                language=whisper_lang_arg,
                 log=self.log,
             )
             whisper_media = _prepare_whisper_audio(self.ffmpeg, source, job_dir, duration, self.log)
@@ -1889,7 +1890,9 @@ class RecapPlanBuilder:
             transcript["source_title"] = source_title or source.stem
             transcript["backend"] = transcript.get("backend") or ("groq-whisper" if has_groq else "faster-whisper")
             transcript["model"] = transcript.get("model") or ("whisper-large-v3-turbo" if has_groq else whisper_model)
-            transcript["language"] = transcript.get("language") or whisper_language
+            detected_lang = transcript.get("language") or "auto"
+            self.log(f"🎧 Spoken language detected in video: {detected_lang.upper()}")
+            transcript["language"] = detected_lang
             _atomic_json(transcript_file, transcript)
             transcript_text_file.write_text(str(transcript.get("text") or ""), encoding="utf-8")
             self.log(f"✅ Whisper raw segments: {len(transcript.get('segments') or [])}")

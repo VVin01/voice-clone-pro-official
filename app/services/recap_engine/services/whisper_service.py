@@ -63,7 +63,8 @@ class WhisperTimestampService:
         self.backend = (backend or os.getenv("WHISPER_BACKEND", "auto")).lower()
         self.device = device or os.getenv("WHISPER_DEVICE", "cpu")
         self.compute_type = compute_type or os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-        self.language = language or os.getenv("WHISPER_LANGUAGE") or None
+        raw_lang = language or os.getenv("WHISPER_LANGUAGE") or None
+        self.language = None if (not raw_lang or str(raw_lang).lower().strip() in ("auto", "none")) else str(raw_lang).strip()
         self.log = log
         self._model: Any = None
         self._active_backend: Optional[str] = None
