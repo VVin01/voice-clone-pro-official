@@ -1777,34 +1777,64 @@ class RecapPlanBuilder:
         ai_mod = _load_module("timestamp_ai_service", self.runtime_root / "services" / "ai_service.py")
 
         env_file = self.gemini_env_path
-        key_pool: list[tuple[str, str]] = []
+        merged_env: dict[str, str] = {}
         if env_file and env_file.is_file():
             from dotenv import dotenv_values, load_dotenv
             load_dotenv(env_file, override=True)
             self.log(f"🔑 Gemini .env loaded: {env_file}")
-            env_values = dotenv_values(env_file)
-            seen_keys: set[str] = set()
-            # Every GEMINI_IMAGE_PROJECT_<N>_KEY in numeric order, else GEMINI_API_KEY.
-            numbers = sorted(
-                int(m.group(1)) for m in (re.fullmatch(r"GEMINI_IMAGE_PROJECT_(\d+)_KEY", str(k or "").strip())
-                                          for k in env_values) if m)
-            for number in numbers:
-                label = f"GEMINI_IMAGE_PROJECT_{number}_KEY"
-                key = str(env_values.get(label) or "").strip()
-                if key and key not in seen_keys:
-                    key_pool.append((label, key))
-                    seen_keys.add(key)
-            if not key_pool:
-                key = str(env_values.get("GEMINI_API_KEY") or "").strip()
-                if key:
-                    key_pool.append(("GEMINI_API_KEY", key))
-        if not key_pool:
-            inherited_key = str(os.getenv("GEMINI_API_KEY") or "").strip()
-            if inherited_key:
-                key_pool.append(("GEMINI_API_KEY", inherited_key))
+            for k, v in dotenv_values(env_file).items():
+                if v:
+                    merged_env[str(k).strip()] = str(v).strip()
+
+        # Also pull from os.environ (essential for Render Cloud, Docker, and Linux containers)
+        for k, v in os.environ.items():
+            k_clean = str(k).strip()
+            if v and k_clean not in merged_env:
+                merged_env[k_clean] = str(v).strip()
+
+        key_pool: list[tuple[str, str]] = []
+        seen_keys: set[str] = set()
+
+        # 1. Every GEMINI_IMAGE_PROJECT_<N>_KEY in numeric order
+        numbers = sorted(
+            int(m.group(1)) for m in (re.fullmatch(r"GEMINI_IMAGE_PROJECT_(\d+)_KEY", str(k or "").strip())
+                                      for k in merged_env) if m)
+        for number in numbers:
+            label = f"GEMINI_IMAGE_PROJECT_{number}_KEY"
+            key = str(merged_env.get(label) or "").strip()
+            if key and key not in seen_keys:
+                key_pool.append((label, key))
+                seen_keys.add(key)
+
+        # 2. Every GEMINI_API_KEY_<N> in numeric order
+        key_numbers = sorted(
+            int(m.group(1)) for m in (re.fullmatch(r"GEMINI_API_KEY_(\d+)", str(k or "").strip())
+                                      for k in merged_env) if m)
+        for number in key_numbers:
+            label = f"GEMINI_API_KEY_{number}"
+            key = str(merged_env.get(label) or "").strip()
+            if key and key not in seen_keys:
+                key_pool.append((label, key))
+                seen_keys.add(key)
+
+        # 3. Comma-separated GEMINI_API_KEYS
+        csv_keys = str(merged_env.get("GEMINI_API_KEYS") or "").strip()
+        if csv_keys:
+            for idx, raw_k in enumerate(csv_keys.split(",")):
+                k_clean = raw_k.strip()
+                if k_clean and k_clean not in seen_keys:
+                    key_pool.append((f"GEMINI_API_KEYS[{idx+1}]", k_clean))
+                    seen_keys.add(k_clean)
+
+        # 4. Standard single GEMINI_API_KEY fallback
+        single_key = str(merged_env.get("GEMINI_API_KEY") or "").strip()
+        if single_key and single_key not in seen_keys:
+            key_pool.append(("GEMINI_API_KEY", single_key))
+            seen_keys.add(single_key)
+
         if not key_pool:
             raise RuntimeError(
-                "Gemini API key မတွေ့ပါ။ .env ထဲမှာ GEMINI_API_KEY=... "
+                "Gemini API key မတွေ့ပါ။ .env သို့မဟုတ် Environment Variables ထဲတွင် GEMINI_API_KEY=... "
                 "(သို့) GEMINI_IMAGE_PROJECT_1_KEY, GEMINI_IMAGE_PROJECT_2_KEY ... ထည့်ပေးပါ။"
             )
         os.environ["GEMINI_API_KEY"] = key_pool[0][1]
