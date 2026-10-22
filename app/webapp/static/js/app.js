@@ -64,8 +64,11 @@ function haptic(type = "light") {
     } catch (e) {}
 }
 
-function getAuthHeaders() {
-    const headers = { "Content-Type": "application/json" };
+function getAuthHeaders(includeContentType = true) {
+    const headers = {};
+    if (includeContentType) {
+        headers["Content-Type"] = "application/json";
+    }
     if (state.tg && state.tg.initData) {
         headers["X-Telegram-Init-Data"] = state.tg.initData;
     }
@@ -1067,14 +1070,48 @@ function setupRecapVisualEditor() {
 
             state.uploadedVideoPath = data.local_path;
             state.recapSourceDuration = data.duration_seconds;
+            if (data.thumbnail) {
+                state.recapThumbnailUrl = data.thumbnail;
+                updateCanvasMockupVisuals();
+            }
+
+            const maxAllowed = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
+            const isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+            const btnStartRecap = document.getElementById("btn-start-recap");
+            const durSpan = document.getElementById("recap-info-dur");
+
+            if (durSpan) {
+                if (isOverLimit) {
+                    durSpan.className = "mini-tag text-danger";
+                    const maxM = Math.floor(maxAllowed / 60);
+                    const tierLabel = state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)";
+                    const durM = Math.floor(data.duration_seconds / 60);
+                    const durS = Math.floor(data.duration_seconds % 60);
+                    const durStr = `${durM}:${durS < 10 ? '0' : ''}${durS}`;
+                    durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${tierLabel} ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်)</span>`;
+                    if (btnStartRecap) {
+                        btnStartRecap.disabled = true;
+                        btnStartRecap.style.opacity = "0.5";
+                    }
+                    alert(currentLang === "my"
+                        ? `⚠️ သတိပေးချက်: တင်သွင်းထားသော ဗီဒီယိုဖိုင် ကြာချိန် (${durStr}) သည် ${tierLabel} ကန့်သတ်ချက် (အများဆုံး ${maxM} မိနစ်) ထက် ကျော်လွန်နေပါသည်ခင်ဗျာ။\n\nကျေးဇူးပြု၍ မိနစ်ပိုတိုသော ဗီဒီယိုကို ရွေးချယ်ပါ သို့မဟုတ် ၁၀ မိနစ်အထိ ပြုလုပ်နိုင်သော VIP သို့ အဆင့်မြှင့်တင်ပါရန်။`
+                        : `⚠️ Warning: Video duration (${durStr}) exceeds ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`);
+                } else {
+                    durSpan.className = "mini-tag";
+                    durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#10b981; font-weight:700; margin-left:4px;">(Ready)</span>`;
+                    if (btnStartRecap) {
+                        btnStartRecap.disabled = false;
+                        btnStartRecap.style.opacity = "";
+                    }
+                }
+            }
+
             if (progressBar) progressBar.style.width = "100%";
             if (progressLabel) progressLabel.innerText = "✅ Video Ready for 1080p Recap!";
             setTimeout(() => {
                 if (progressWrap) progressWrap.classList.add("hidden");
             }, 1500);
 
-            const durSpan = document.getElementById("recap-info-dur");
-            if (durSpan) durSpan.innerText = `⏱️ ${data.estimated_duration}`;
             haptic("success");
         } catch (err) {
             alert("Video upload error: " + err.message);
