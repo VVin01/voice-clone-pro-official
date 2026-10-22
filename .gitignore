@@ -16,3 +16,8 @@ outputs/
 check_job.py
 reset_recap.py
 
+
+audit_system.py
+
+
+cookies.txt

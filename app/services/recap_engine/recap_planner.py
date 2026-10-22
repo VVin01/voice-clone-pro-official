@@ -39,12 +39,14 @@ WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 
 
 GEMINI_MODEL_FALLBACK_CHAIN = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
     "gemini-3.5-flash-lite",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
 ]
 
 
@@ -1818,8 +1820,8 @@ class RecapPlanBuilder:
             transcript = whisper.transcribe(str(whisper_media), duration)
             transcript["source_title"] = source_title or source.stem
             transcript["backend"] = transcript.get("backend") or "faster-whisper"
-            transcript["model"] = whisper_model
-            transcript["language"] = whisper_language
+            transcript["model"] = transcript.get("model") or whisper_model
+            transcript["language"] = transcript.get("language") or whisper_language
             _atomic_json(transcript_file, transcript)
             transcript_text_file.write_text(str(transcript.get("text") or ""), encoding="utf-8")
             self.log(f"✅ Whisper raw segments: {len(transcript.get('segments') or [])}")

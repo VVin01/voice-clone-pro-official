@@ -460,6 +460,127 @@ class WhisperTimestampService:
             "avg_no_speech_prob": avg_no_speech_prob,
         }
 
+    def _transcribe_groq(self, media_path: str, media_duration: Optional[float] = None) -> Optional[dict[str, Any]]:
+        """Transcribe audio via Groq Cloud Whisper API for ultra-fast (sub-2s), zero-RAM processing.
+
+        Falls back to None if no keys configured or if all Groq attempts fail.
+        """
+        raw_keys = os.getenv("GROQ_API_KEYS", "") or os.getenv("GROQ_API_KEY", "")
+        api_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+        if not api_keys:
+            return None
+
+        try:
+            import requests
+        except ImportError:
+            _safe_print("⚠️ 'requests' module not available for Groq API call")
+            return None
+
+        path = Path(media_path)
+        upload_path = path
+
+        # Groq max file size is 25 MB. If file > 24 MB, downsample or compress via ffmpeg
+        temp_audio: Optional[Path] = None
+        if path.stat().st_size > 24 * 1024 * 1024:
+            ff = shutil.which("ffmpeg")
+            if ff:
+                temp_audio = path.parent / f"_groq_compressed_{path.stem}.mp3"
+                cmd = [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-ac", "1", "-ar", "16000", "-b:a", "64k", str(temp_audio)]
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if proc.returncode == 0 and temp_audio.is_file():
+                    upload_path = temp_audio
+
+        groq_model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+        for idx, key in enumerate(api_keys, 1):
+            key_masked = f"{key[:7]}...{key[-4:]}" if len(key) > 12 else "key"
+            try:
+                _safe_print(f"🚀 Attempting Groq Cloud Whisper API ({key_masked}, model={groq_model})...")
+                t0 = time.time()
+                with open(upload_path, "rb") as f:
+                    files = {"file": (upload_path.name, f, "audio/wav" if upload_path.suffix == ".wav" else "audio/mpeg")}
+                    data = {
+                        "model": groq_model,
+                        "response_format": "verbose_json",
+                        "temperature": "0.0",
+                    }
+                    if self.language:
+                        data["language"] = self.language
+
+                    resp = requests.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {key}"},
+                        files=files,
+                        data=data,
+                        timeout=90,
+                    )
+
+                if resp.status_code == 200:
+                    raw_json = resp.json()
+                    raw_segments = raw_json.get("segments") or []
+                    if not raw_segments and raw_json.get("text"):
+                        dur = float(raw_json.get("duration") or media_duration or 1.0)
+                        raw_segments = [{"id": 0, "start": 0.0, "end": dur, "text": raw_json.get("text")}]
+
+                    segments = []
+                    words_total = 0
+                    for s_idx, seg in enumerate(raw_segments):
+                        text = self._clean_text(str(seg.get("text") or ""))
+                        start = float(seg.get("start", 0.0) or 0.0)
+                        end = float(seg.get("end", 0.0) or 0.0)
+                        if not text or end <= start:
+                            continue
+                        words = []
+                        for word in seg.get("words") or []:
+                            w_text = self._clean_text(word.get("word") or "")
+                            w_start = float(word.get("start", start) or start)
+                            w_end = float(word.get("end", w_start) or w_start)
+                            if not w_text or w_end <= w_start:
+                                continue
+                            words.append({
+                                "start": round(w_start, 3),
+                                "end": round(w_end, 3),
+                                "text": w_text,
+                            })
+                        words_total += len(words)
+                        segments.append({
+                            "id": s_idx,
+                            "start": round(start, 3),
+                            "end": round(end, 3),
+                            "duration": round(max(0.0, end - start), 3),
+                            "text": text,
+                            "words": words,
+                            "avg_logprob": round(float(seg.get("avg_logprob") or 0.0), 3),
+                            "no_speech_prob": round(float(seg.get("no_speech_prob") or 0.0), 3),
+                            "compression_ratio": round(float(seg.get("compression_ratio") or 0.0), 3),
+                        })
+
+                    elapsed = time.time() - t0
+                    _safe_print(f"⚡ Groq Cloud Whisper succeeded in {elapsed:.2f}s ({len(segments)} segments)")
+                    return {
+                        "backend": "groq-whisper",
+                        "model": groq_model,
+                        "language": raw_json.get("language") or self.language or "en",
+                        "language_probability": 1.0,
+                        "segments": segments,
+                        "word_count": words_total or len((raw_json.get("text") or "").split()),
+                        "avg_logprob": round(float(sum(s.get("avg_logprob", 0.0) for s in segments) / max(1, len(segments))), 3),
+                        "avg_no_speech_prob": round(float(sum(s.get("no_speech_prob", 0.0) for s in segments) / max(1, len(segments))), 3),
+                        "compression_ratio": round(float(sum(s.get("compression_ratio", 0.0) for s in segments) / max(1, len(segments))), 3),
+                    }
+                else:
+                    _safe_print(f"⚠️ Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
+            except Exception as exc:
+                _safe_print(f"⚠️ Groq Whisper key {idx} failed: {exc}")
+            finally:
+                if temp_audio and temp_audio.is_file():
+                    try:
+                        temp_audio.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+        _safe_print("↩️ All Groq keys exhausted or unavailable — falling back to local Whisper...")
+        return None
+
     def transcribe(self, media_path: str, media_duration: Optional[float] = None) -> dict[str, Any]:
         path = Path(media_path).resolve()
         if not path.exists() or not path.is_file():
@@ -469,31 +590,36 @@ class WhisperTimestampService:
         if audio_probe is False:
             raise NoUsableSpeechError("NO_USABLE_SPEECH: ffprobe found no audio stream in source media.")
 
-        self._ensure_model()
-        _safe_print(f"🎙️ Local Whisper timestamp transcription: {path.name}")
-
-        if self._active_backend == "faster-whisper":
-            try:
-                result = self._transcribe_faster(str(path), vad_filter=True, media_duration=media_duration)
-            except RuntimeError as exc:
-                # An NVIDIA GPU without the CUDA 12 libraries (cublas64_12.dll / cuDNN) loads the
-                # model but fails on the first audio: finish on the CPU instead of stopping.
-                text = str(exc).lower()
-                if self.device == "cpu" or not any(word in text for word in ("cublas", "cudnn", "cuda", ".dll")):
-                    raise
-                _safe_print(f"⚠️ GPU Whisper failed ({exc}); using the CPU instead (slower)")
-                self._model = None
-                self.device, self.compute_type = "cpu", "int8"
-                self._ensure_model()
-                result = self._transcribe_faster(str(path), vad_filter=True, media_duration=media_duration)
-            if not result.get("segments"):
-                _safe_print("⚠️ Whisper VAD=ON returned 0 segments — retrying SAME source once with VAD=OFF...")
-                result = self._transcribe_faster(str(path), vad_filter=False, media_duration=media_duration)
-                result["vad_fallback_used"] = True
-        elif self._active_backend == "openai-whisper":
-            result = self._transcribe_openai(str(path))
+        # Try Groq Cloud Whisper first if configured
+        groq_result = self._transcribe_groq(str(path), media_duration=media_duration)
+        if groq_result and groq_result.get("segments"):
+            result = groq_result
         else:
-            raise RuntimeError("Whisper backend မရွေးရသေးပါ။")
+            self._ensure_model()
+            _safe_print(f"🎙️ Local Whisper timestamp transcription: {path.name}")
+
+            if self._active_backend == "faster-whisper":
+                try:
+                    result = self._transcribe_faster(str(path), vad_filter=True, media_duration=media_duration)
+                except RuntimeError as exc:
+                    # An NVIDIA GPU without the CUDA 12 libraries (cublas64_12.dll / cuDNN) loads the
+                    # model but fails on the first audio: finish on the CPU instead of stopping.
+                    text = str(exc).lower()
+                    if self.device == "cpu" or not any(word in text for word in ("cublas", "cudnn", "cuda", ".dll")):
+                        raise
+                    _safe_print(f"⚠️ GPU Whisper failed ({exc}); using the CPU instead (slower)")
+                    self._model = None
+                    self.device, self.compute_type = "cpu", "int8"
+                    self._ensure_model()
+                    result = self._transcribe_faster(str(path), vad_filter=True, media_duration=media_duration)
+                if not result.get("segments"):
+                    _safe_print("⚠️ Whisper VAD=ON returned 0 segments — retrying SAME source once with VAD=OFF...")
+                    result = self._transcribe_faster(str(path), vad_filter=False, media_duration=media_duration)
+                    result["vad_fallback_used"] = True
+            elif self._active_backend == "openai-whisper":
+                result = self._transcribe_openai(str(path))
+            else:
+                raise RuntimeError("Whisper backend မရွေးရသေးပါ။")
 
         if not result.get("segments"):
             raise NoUsableSpeechError(
