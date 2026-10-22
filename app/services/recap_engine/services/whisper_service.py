@@ -57,14 +57,24 @@ class WhisperTimestampService:
         device: Optional[str] = None,
         compute_type: Optional[str] = None,
         language: Optional[str] = None,
+        log: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.model_size = model_size or os.getenv("WHISPER_MODEL", "base")
         self.backend = (backend or os.getenv("WHISPER_BACKEND", "auto")).lower()
         self.device = device or os.getenv("WHISPER_DEVICE", "cpu")
         self.compute_type = compute_type or os.getenv("WHISPER_COMPUTE_TYPE", "int8")
         self.language = language or os.getenv("WHISPER_LANGUAGE") or None
+        self.log = log
         self._model: Any = None
         self._active_backend: Optional[str] = None
+
+    def _log_msg(self, msg: str) -> None:
+        _safe_print(msg)
+        if self.log:
+            try:
+                self.log(msg)
+            except Exception:
+                pass
 
     def _download_model_once(self) -> None:
         """First run on a PC: the model (~460 MB for small.en) comes from huggingface.co.
@@ -473,32 +483,38 @@ class WhisperTimestampService:
         try:
             import requests
         except ImportError:
-            _safe_print("⚠️ 'requests' module not available for Groq API call")
+            self._log_msg("⚠️ 'requests' module not available for Groq API call")
             return None
 
         path = Path(media_path)
         upload_path = path
 
-        # Groq max file size is 25 MB. If file > 24 MB, downsample or compress via ffmpeg
+        # Pre-compress to lightweight mono 64k MP3 for lightning-fast network upload if file is >8MB or not mp3
         temp_audio: Optional[Path] = None
-        if path.stat().st_size > 24 * 1024 * 1024:
-            ff = shutil.which("ffmpeg")
-            if ff:
-                temp_audio = path.parent / f"_groq_compressed_{path.stem}.mp3"
-                cmd = [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-ac", "1", "-ar", "16000", "-b:a", "64k", str(temp_audio)]
+        ff = shutil.which("ffmpeg")
+        if ff and (path.suffix.lower() != ".mp3" or path.stat().st_size > 8 * 1024 * 1024):
+            try:
+                temp_audio = path.parent / f"_groq_fast_{path.stem}_{int(time.time())}.mp3"
+                cmd = [
+                    ff, "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+                    str(temp_audio)
+                ]
                 proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                if proc.returncode == 0 and temp_audio.is_file():
+                if proc.returncode == 0 and temp_audio.is_file() and temp_audio.stat().st_size > 0:
                     upload_path = temp_audio
+            except Exception as comp_err:
+                _safe_print(f"⚠️ Audio pre-compression skipped: {comp_err}")
 
         groq_model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
         for idx, key in enumerate(api_keys, 1):
             key_masked = f"{key[:7]}...{key[-4:]}" if len(key) > 12 else "key"
             try:
-                _safe_print(f"🚀 Attempting Groq Cloud Whisper API ({key_masked}, model={groq_model})...")
+                self._log_msg(f"⚡ [1/4] Groq Cloud Whisper Turbo active ({key_masked}, model={groq_model})...")
                 t0 = time.time()
                 with open(upload_path, "rb") as f:
-                    files = {"file": (upload_path.name, f, "audio/wav" if upload_path.suffix == ".wav" else "audio/mpeg")}
-                    data = {
+                    files = {"file": (upload_path.name, f, "audio/mpeg" if upload_path.suffix == ".mp3" else "audio/wav")}
+                    data: dict[str, Any] = {
                         "model": groq_model,
                         "response_format": "verbose_json",
                         "temperature": "0.0",
@@ -521,6 +537,7 @@ class WhisperTimestampService:
                         dur = float(raw_json.get("duration") or media_duration or 1.0)
                         raw_segments = [{"id": 0, "start": 0.0, "end": dur, "text": raw_json.get("text")}]
 
+                    top_words = raw_json.get("words") or []
                     segments = []
                     words_total = 0
                     for s_idx, seg in enumerate(raw_segments):
@@ -529,9 +546,17 @@ class WhisperTimestampService:
                         end = float(seg.get("end", 0.0) or 0.0)
                         if not text or end <= start:
                             continue
+                        
+                        seg_words = seg.get("words") or []
+                        if not seg_words and top_words:
+                            seg_words = [
+                                w for w in top_words
+                                if start - 0.05 <= float(w.get("start", 0.0) or 0.0) <= end + 0.05
+                            ]
+
                         words = []
-                        for word in seg.get("words") or []:
-                            w_text = self._clean_text(word.get("word") or "")
+                        for word in seg_words:
+                            w_text = self._clean_text(word.get("word") or word.get("text") or "")
                             w_start = float(word.get("start", start) or start)
                             w_end = float(word.get("end", w_start) or w_start)
                             if not w_text or w_end <= w_start:
@@ -555,7 +580,7 @@ class WhisperTimestampService:
                         })
 
                     elapsed = time.time() - t0
-                    _safe_print(f"⚡ Groq Cloud Whisper succeeded in {elapsed:.2f}s ({len(segments)} segments)")
+                    self._log_msg(f"⚡ Groq Cloud Whisper succeeded in {elapsed:.2f}s ({len(segments)} segments, {words_total} words)")
                     return {
                         "backend": "groq-whisper",
                         "model": groq_model,
@@ -568,9 +593,9 @@ class WhisperTimestampService:
                         "compression_ratio": round(float(sum(s.get("compression_ratio", 0.0) for s in segments) / max(1, len(segments))), 3),
                     }
                 else:
-                    _safe_print(f"⚠️ Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
+                    self._log_msg(f"⚠️ Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
             except Exception as exc:
-                _safe_print(f"⚠️ Groq Whisper key {idx} failed: {exc}")
+                self._log_msg(f"⚠️ Groq Whisper key {idx} failed: {exc}")
             finally:
                 if temp_audio and temp_audio.is_file():
                     try:
@@ -578,7 +603,7 @@ class WhisperTimestampService:
                     except Exception:
                         pass
 
-        _safe_print("↩️ All Groq keys exhausted or unavailable — falling back to local Whisper...")
+        self._log_msg("↩️ All Groq keys exhausted or unavailable — falling back to local Neural Whisper...")
         return None
 
     def transcribe(self, media_path: str, media_duration: Optional[float] = None) -> dict[str, Any]:
@@ -596,7 +621,7 @@ class WhisperTimestampService:
             result = groq_result
         else:
             self._ensure_model()
-            _safe_print(f"🎙️ Local Whisper timestamp transcription: {path.name}")
+            self._log_msg(f"🎙️ Local Whisper timestamp transcription: {path.name}")
 
             if self._active_backend == "faster-whisper":
                 try:

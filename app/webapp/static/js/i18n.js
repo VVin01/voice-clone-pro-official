@@ -161,7 +161,10 @@ const translations = {
         sub_lines_label: "စာကြောင်းရေ:",
 
         recap_voice_label: "Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)",
-        queue_notice_recap: "⚡ Movie Recap ခန့်မှန်းကြာချိန်: ၁-၂ မိနစ် (Full HD 1080p Render)",
+        queue_notice_recap: "⚡ High-Speed Studio: Shorts (၁-၃ မိနစ်) ~ ၁.၅ မိနစ် • Cinema (၅-၁၀ မိနစ်) ~ ၃-၄ မိနစ် (Groq Whisper Turbo + 1080p Cinema Compositing)",
+        telegram_bg_assurance: "✨ ဖုန်း Screen ရှေ့တွင် စောင့်မနေပါနှင့် — Cloud AI Render ပြီးစီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ဆောင်ပေးပါမည်။",
+        telegram_leave_hint: "💡 ဤစာမျက်နှာကို ပိတ်၍ ထွက်သွားနိုင်ပါသည်။ Video အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ အကြောင်းကြားစာနှင့် ဗီဒီယို ပို့ပေးပါမည်။",
+        recap_eta_text: "ခန့်မှန်းကြာချိန်: ၂-၃ မိနစ် (Groq Turbo Ingestion + Neural Smart Sync)",
         btn_start_recap: "⚡ 1-Click Pro Recap ဖန်တီးမည် (1 Credit)",
 
         // Deliverables
@@ -471,7 +474,10 @@ const translations = {
         sub_lines_label: "Lines:",
 
         recap_voice_label: "Narrator Dubbing Voice",
-        queue_notice_recap: "⚡ Movie Recap Estimate: 1-2 mins (Full HD 1080p Render)",
+        queue_notice_recap: "⚡ High-Speed Studio: Shorts (1-3m) ~ 1.5 mins • Cinema (5-10m) ~ 3-4 mins (Groq Whisper Turbo + 1080p Cinema Compositing)",
+        telegram_bg_assurance: "✨ No need to wait on screen — Finished video will be delivered directly to your Telegram Bot.",
+        telegram_leave_hint: "💡 You may safely close or leave this page. Once rendering completes, the Telegram Bot will deliver your video and deliverables.",
+        recap_eta_text: "Estimated time: 2-3 mins (Groq Turbo Ingestion + Neural Smart Sync)",
         btn_start_recap: "⚡ Generate 1-Click Pro Recap (1 Credit)",
 
         // Deliverables

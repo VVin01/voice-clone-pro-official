@@ -1839,7 +1839,9 @@ class RecapPlanBuilder:
             )
         os.environ["GEMINI_API_KEY"] = key_pool[0][1]
         os.environ["GEMINI_TEXT_MODEL"] = self.gemini_text_model
-        self.log(f"🔑 Gemini key pool ready — {len(key_pool)} key(s) | translation only (English source uses local Whisper {whisper_model})")
+        has_groq = bool(os.getenv("GROQ_API_KEYS") or os.getenv("GROQ_API_KEY"))
+        whisper_label = "Groq Cloud Whisper Turbo (128x Speed)" if has_groq else f"local Whisper ({whisper_model})"
+        self.log(f"🔑 Gemini key pool ready — {len(key_pool)} key(s) | speech engine: {whisper_label}")
 
         transcript = None
         if reuse and transcript_file.is_file() and state_file.is_file():
@@ -1847,15 +1849,22 @@ class RecapPlanBuilder:
                 state = json.loads(state_file.read_text(encoding="utf-8"))
                 if state.get("source_fingerprint") == fp and state.get("transcript_ready") is True:
                     candidate = json.loads(transcript_file.read_text(encoding="utf-8"))
+                    c_backend = str(candidate.get("backend") or "")
+                    c_model = str(candidate.get("model") or "")
+                    backend_valid = c_backend in {"faster-whisper", "openai-whisper", "groq-whisper"}
+                    model_valid = (
+                        c_model in {whisper_model, "whisper-large-v3-turbo", "whisper-large-v3"}
+                        or c_backend == "groq-whisper"
+                    )
                     if (
-                        candidate.get("backend") in {"faster-whisper", "openai-whisper"}
-                        and candidate.get("model") == whisper_model
+                        backend_valid
+                        and model_valid
                         and str(candidate.get("language") or "").lower().startswith(whisper_language.lower())
                     ):
                         transcript = candidate
                         if not transcript_text_file.is_file():
                             transcript_text_file.write_text(str(transcript.get("text") or ""), encoding="utf-8")
-                        self.log("♻️ Full local Whisper transcript reuse")
+                        self.log(f"♻️ Full transcript reuse ({c_backend} / {c_model})")
             except Exception:
                 transcript = None
 
@@ -1863,21 +1872,23 @@ class RecapPlanBuilder:
             if self.should_stop():
                 raise InterruptedError("STOP requested before local Whisper")
             runtime_cfg = _load_runtime_config(self.runtime_root)
-            self.log(f"🌐 English → Myanmar | Local Whisper language={whisper_language} | model={whisper_model}")
-            self.progress(0, 4, "Whisper timestamp transcript")
-            self.log("🎙️ [1/4] Local Whisper — full video timestamp transcript...")
+            engine_label = "Groq Cloud Whisper Turbo (128x Speed)" if has_groq else f"Local Whisper ({whisper_model})"
+            self.log(f"🌐 English → Myanmar | Speech Engine: {engine_label} | lang={whisper_language}")
+            self.progress(0, 4, "Speech timestamp transcription")
+            self.log(f"🎙️ [1/4] {engine_label} — video timestamp transcript...")
             whisper = whisper_mod.WhisperTimestampService(
                 model_size=whisper_model,
                 backend=str(runtime_cfg.get("whisper_backend", os.getenv("WHISPER_BACKEND", "auto"))),
                 device=str(runtime_cfg.get("whisper_device", os.getenv("WHISPER_DEVICE", "cuda"))),
                 compute_type=str(runtime_cfg.get("whisper_compute_type", os.getenv("WHISPER_COMPUTE_TYPE", "float16"))),
                 language=whisper_language,
+                log=self.log,
             )
             whisper_media = _prepare_whisper_audio(self.ffmpeg, source, job_dir, duration, self.log)
             transcript = whisper.transcribe(str(whisper_media), duration)
             transcript["source_title"] = source_title or source.stem
-            transcript["backend"] = transcript.get("backend") or "faster-whisper"
-            transcript["model"] = transcript.get("model") or whisper_model
+            transcript["backend"] = transcript.get("backend") or ("groq-whisper" if has_groq else "faster-whisper")
+            transcript["model"] = transcript.get("model") or ("whisper-large-v3-turbo" if has_groq else whisper_model)
             transcript["language"] = transcript.get("language") or whisper_language
             _atomic_json(transcript_file, transcript)
             transcript_text_file.write_text(str(transcript.get("text") or ""), encoding="utf-8")
@@ -1921,7 +1932,7 @@ class RecapPlanBuilder:
             "source_fingerprint": fp,
             "source_path": str(source),
             "translation_direction": TRANSLATION_DIRECTION,
-            "transcript_backend": "faster-whisper",
+            "transcript_backend": str(transcript.get("backend") or "faster-whisper"),
             "transcript_ready": True,
             "plan_ready": False,
         })

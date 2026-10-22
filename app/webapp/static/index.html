@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261022_premium">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261022_groq_turbo">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -264,7 +264,13 @@
                 <!-- Recap Duration Notice -->
                 <div class="queue-notice-banner">
                     <span class="notice-icon">⚡</span>
-                    <span class="notice-text" data-i18n="queue_notice_recap">⚡ Movie Recap ခန့်မှန်းကြာချိန်: ၁-၂ မိနစ် (Full HD 1080p Render)</span>
+                    <span class="notice-text" data-i18n="queue_notice_recap">⚡ High-Speed Studio: Shorts (၁-၃ မိနစ်) ~ ၁.၅ မိနစ် • Cinema (၅-၁၀ မိနစ်) ~ ၃-၄ မိနစ် (Groq Whisper Turbo + 1080p Cinema Compositing)</span>
+                </div>
+
+                <!-- Telegram Background Delivery Assurance -->
+                <div class="telegram-bg-assurance-pill">
+                    <span class="assurance-icon">✨</span>
+                    <span class="assurance-text" data-i18n="telegram_bg_assurance">ဖုန်း Screen ရှေ့တွင် စောင့်မနေပါနှင့် — Cloud AI Render ပြီးစီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ဆောင်ပေးပါမည်။</span>
                 </div>
 
                 <!-- Tier Duration & Watermark Policy Banner -->
@@ -608,12 +614,13 @@
                         <div class="card glass progress-card hidden" id="recap-progress-box">
                             <div class="progress-status-header">
                                 <span class="spinner-wave" id="recap-spinner">⚡</span>
-                                <span class="status-msg" id="recap-status-msg" data-i18n="recap_processing_msg">Recap စတင်လုပ်ဆောင်နေပါသည်...</span>
+                                <span class="status-msg" id="recap-status-msg" data-i18n="recap_processing_msg">⚡ [1/4] Groq Cloud Whisper Turbo Audio Ingestion...</span>
                             </div>
                             <div class="progress-bar-track">
                                 <div class="progress-bar-fill" id="recap-progress-fill" style="width: 15%;"></div>
                             </div>
-                            <div class="eta-tag" id="recap-step-text">ခန့်မှန်းစောင့်ဆိုင်းချိန်: ၁-၂ မိနစ်...</div>
+                            <div class="eta-tag" id="recap-step-text" data-i18n="recap_eta_text">ခန့်မှန်းကြာချိန်: ၂-၃ မိနစ် (1080p Cinema Compositing)</div>
+                            <div class="telegram-leave-hint" data-i18n="telegram_leave_hint">💡 ဤစာမျက်နှာကို ပိတ်၍ ထွက်သွားနိုင်ပါသည်။ Video အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ အကြောင်းကြားစာနှင့် ဗီဒီယို ပို့ပေးပါမည်။</div>
                         </div>
 
                         <!-- Completed Deliverables Card -->
@@ -1293,7 +1300,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261022_premium"></script>
-    <script src="/static/js/app.js?v=20261022_premium"></script>
+    <script src="/static/js/i18n.js?v=20261022_groq_turbo"></script>
+    <script src="/static/js/app.js?v=20261022_groq_turbo"></script>
 </body>
 </html>

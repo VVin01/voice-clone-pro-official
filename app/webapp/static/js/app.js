@@ -1556,8 +1556,19 @@ async function handleStartRecap() {
         progressBox.scrollIntoView({ behavior: "smooth" });
     }
     if (progressFill) progressFill.style.width = "10%";
-    if (statusMsg) statusMsg.innerText = t("recap_processing_msg");
-    if (stepText) stepText.innerText = t("queue_notice_recap");
+    if (statusMsg) statusMsg.innerText = (state.lang === "my"
+        ? "⚡ [1/4] Groq Cloud Whisper Turbo Audio Ingestion စတင်နေပါသည်..."
+        : "⚡ [1/4] Groq Cloud Whisper Turbo Audio Ingestion starting...");
+
+    let estMinutes = "၁.၅ - ၂.၅ မိနစ်";
+    if (state.recapSourceDuration && state.recapSourceDuration > 180) {
+        estMinutes = "၃ - ၄ မိနစ်";
+    }
+    if (stepText) {
+        stepText.innerText = (state.lang === "my"
+            ? `⚡ ခန့်မှန်းကြာချိန်: ~${estMinutes} (Groq Turbo Engine + 1080p Cinema Compositing)`
+            : `⚡ Estimated time: ~${estMinutes} (Groq Turbo Engine + 1080p Cinema Compositing)`);
+    }
 
     try {
         const sliderBlurY = document.getElementById("slider-blur-y");

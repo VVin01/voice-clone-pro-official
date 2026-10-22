@@ -131,7 +131,9 @@ def run_recap_pipeline(
     gemini_env = Path(env_path) if env_path else root_dir / ".env"
 
     # Step 1: PLANNER (Whisper -> Gemini Context -> Translation -> Smart Sync Plan)
-    _progress(1, 4, "🎙️ [1/4] Whisper English Audio Transcription...")
+    has_groq = bool(os.getenv("GROQ_API_KEYS") or os.getenv("GROQ_API_KEY"))
+    groq_label = "⚡ [1/4] Groq Cloud Whisper Turbo Transcription..." if has_groq else "🎙️ [1/4] Neural Whisper Audio Transcription..."
+    _progress(1, 4, groq_label)
     planner = RecapPlanBuilder(
         runtime_root=HERE,
         gemini_env_path=gemini_env if gemini_env.is_file() else None,
