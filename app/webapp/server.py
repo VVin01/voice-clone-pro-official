@@ -100,12 +100,22 @@ async def lifespan(app: FastAPI):
                                 url=queued_recap.input_text or "",
                                 voice_slug=queued_recap.preset_voice or "thiha",
                             )
+                            import time
                             RECAP_JOBS_REGISTRY[jid] = {
                                 "id": jid,
+                                "user_id": queued_recap.user_id,
+                                "title": queued_recap.input_text or "Movie Recap Video",
                                 "status": "QUEUED",
                                 "progress_percent": 5,
                                 "progress_step": "0/4",
                                 "progress_label": "⏳ Picking up from queue...",
+                                "created_at": time.time(),
+                                "video_path": None,
+                                "audio_path": None,
+                                "srt_path": None,
+                                "script_path": None,
+                                "download_urls": {},
+                                "error_message": None,
                             }
                             asyncio.create_task(
                                 _run_recap_background_job(

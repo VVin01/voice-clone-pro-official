@@ -704,18 +704,41 @@ async def handle_send_recap_callback(callback: CallbackQuery):
             else:
                 job_dir = settings.storage_root / "recap_output" / job_id
                 if job_dir.is_dir():
-                    for f in job_dir.glob("*.mp4"):
+                    for f in job_dir.rglob("*.mp4"):
                         if f.is_file():
                             video_path = f
                             break
 
             if video_path and video_path.is_file():
-                await callback.bot.send_video(
-                    chat_id=target_chat_id,
-                    video=FSInputFile(str(video_path)),
-                    caption=f"🎬 <b>Pro Movie Recap:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
-                    parse_mode="HTML",
-                )
+                file_size = video_path.stat().st_size
+                if file_size <= 50 * 1024 * 1024:
+                    await callback.bot.send_video(
+                        chat_id=target_chat_id,
+                        video=FSInputFile(str(video_path)),
+                        caption=f"🎬 <b>Pro Movie Recap:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                        parse_mode="HTML",
+                    )
+                else:
+                    app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                    dl_url = f"{app_url}/api/recap/download/{job_id}/video"
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="📥 ဗီဒီယို တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန်",
+                                url=dl_url
+                            )
+                        ]
+                    ])
+                    await callback.bot.send_message(
+                        chat_id=target_chat_id,
+                        text=(
+                            f"🎬 <b>Movie Recap Video အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
+                            f"📁 ဖိုင်ဆိုဒ်မှာ Telegram ကန့်သတ်ချက် (50MB) ထက် ကြီးမားသဖြင့် အောက်ပါလင့်ခ်မှ တိုက်ရိုက် ဒေါင်းလုဒ် ရယူနိုင်ပါသည်ခင်ဗျာ:\n\n"
+                            f"📥 <a href=\"{dl_url}\">ဗီဒီယို ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
+                        ),
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
             else:
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
                 dl_url = f"{app_url}/api/recap/download/{job_id}/video"

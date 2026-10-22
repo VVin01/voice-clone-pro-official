@@ -445,6 +445,14 @@ class MediaDownloader:
             combined_cookies.append(yt_env)
         if general_env and ("# Netscape" in general_env):
             combined_cookies.append(general_env)
+        elif general_env and os.path.isfile(general_env):
+            try:
+                with open(general_env, "r", encoding="utf-8", errors="replace") as gf:
+                    g_content = gf.read().strip()
+                    if g_content:
+                        combined_cookies.append(g_content)
+            except Exception:
+                pass
 
         if combined_cookies:
             try:

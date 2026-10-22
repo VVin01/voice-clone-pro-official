@@ -879,8 +879,30 @@ async def _send_recap_telegram_delivery(
                 vf = FSInputFile(video_path, filename=Path(video_path).name)
                 await bot.send_video(chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML")
             else:
-                vf = FSInputFile(video_path, filename=Path(video_path).name)
-                await bot.send_document(chat_id=chat_id, document=vf, caption=caption, parse_mode="HTML")
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                v_parent = Path(video_path).parent.name
+                v_grand = Path(video_path).parent.parent.name
+                jid = v_parent if v_parent.startswith("rc_") else (v_grand if v_grand.startswith("rc_") else Path(video_path).stem)
+                dl_url = f"{app_url}/api/recap/download/{jid}/video"
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🎬 Mini App တွင် ကြည့်ရှုမည်",
+                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap")
+                        ),
+                        InlineKeyboardButton(
+                            text="📥 ဗီဒီယို တိုက်ရိုက်ဒေါင်းလုဒ်",
+                            url=dl_url
+                        )
+                    ]
+                ])
+                over_caption = (
+                    f"🎬 <b>Pro Movie Recap:</b> <code>#{jid[:8]}</code>\n"
+                    f"📁 <b>ဖိုင်ဆိုဒ်:</b> <code>{size_formatted}</code> (Telegram ကန့်သတ်ချက် 50MB ထက် ကြီးပါသည်)\n\n"
+                    f"💡 <i>ဖိုင်ဆိုဒ်ကြီးမားသဖြင့် Telegram မှ တိုက်ရိုက်မပေးပို့နိုင်ပါ။ အောက်ပါလင့်ခ်မှ အမြန်ဆုံး ဒေါင်းလုဒ် ရယူနိုင်ပါသည်ခင်ဗျာ။</i>"
+                )
+                await bot.send_message(chat_id=chat_id, text=over_caption, reply_markup=kb, parse_mode="HTML")
 
             if srt_path and os.path.isfile(srt_path):
                 sf = FSInputFile(srt_path, filename=f"subtitles_{Path(srt_path).name}")
@@ -1324,18 +1346,19 @@ async def download_recap_file(
     # Fallback to checking storage directory directly if in-memory entry evicted
     if not file_path or not Path(file_path).is_file():
         job_dir = settings.storage_root / "recap_output" / job_id
-        if file_type == "video":
-            cands = list(job_dir.glob("*.mp4"))
-            if cands: file_path = str(cands[0])
-        elif file_type == "audio":
-            cands = list(job_dir.glob("*.mp3")) + list(job_dir.glob("*.wav"))
-            if cands: file_path = str(cands[0])
-        elif file_type == "srt":
-            cands = list(job_dir.glob("*.srt"))
-            if cands: file_path = str(cands[0])
-        elif file_type == "script":
-            cands = list(job_dir.glob("*script*.txt")) + list(job_dir.glob("*.txt"))
-            if cands: file_path = str(cands[0])
+        if job_dir.is_dir():
+            if file_type == "video":
+                cands = list(job_dir.rglob("*.mp4"))
+                if cands: file_path = str(cands[0])
+            elif file_type == "audio":
+                cands = list(job_dir.rglob("*.mp3")) + list(job_dir.rglob("*.wav"))
+                if cands: file_path = str(cands[0])
+            elif file_type == "srt":
+                cands = list(job_dir.rglob("*.srt"))
+                if cands: file_path = str(cands[0])
+            elif file_type == "script":
+                cands = list(job_dir.rglob("*script*.txt")) + list(job_dir.rglob("*.txt"))
+                if cands: file_path = str(cands[0])
 
     if not file_path or not Path(file_path).is_file():
         try:
@@ -1385,13 +1408,13 @@ async def send_recap_to_telegram(
     if not video_path or not Path(video_path).is_file():
         job_dir = settings.storage_root / "recap_output" / job_id
         if job_dir.is_dir():
-            cands = list(job_dir.glob("*.mp4"))
+            cands = list(job_dir.rglob("*.mp4"))
             if cands:
                 video_path = str(cands[0])
-            auds = list(job_dir.glob("*.mp3")) + list(job_dir.glob("*.wav"))
+            auds = list(job_dir.rglob("*.mp3")) + list(job_dir.rglob("*.wav"))
             if auds:
                 audio_path = str(auds[0])
-            srts = list(job_dir.glob("*.srt"))
+            srts = list(job_dir.rglob("*.srt"))
             if srts:
                 srt_path = str(srts[0])
 
@@ -1459,12 +1482,11 @@ def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str
     """Safely check if the completed job's output media file exists on container disk."""
     try:
         if is_recap:
-            job_dir = settings.storage_root / "recap_output" / job_id
-            v_cand = job_dir / f"{job_id}_final.mp4"
-            if v_cand.is_file():
-                return True
             if result_path and Path(result_path).is_file():
                 return True
+            job_dir = settings.storage_root / "recap_output" / job_id
+            if job_dir.is_dir():
+                return any(job_dir.rglob("*.mp4"))
             return False
         else:
             if result_path and Path(result_path).is_file():
@@ -2197,10 +2219,19 @@ async def retry_queued_job(
             )
             RECAP_JOBS_REGISTRY[job_id] = {
                 "id": job_id,
+                "user_id": job.user_id,
+                "title": job.input_text or "Movie Recap Video",
                 "status": "QUEUED",
                 "progress_percent": 5,
                 "progress_step": "0/4",
                 "progress_label": "🔄 Re-queued by Administrator...",
+                "created_at": time.time(),
+                "video_path": None,
+                "audio_path": None,
+                "srt_path": None,
+                "script_path": None,
+                "download_urls": {},
+                "error_message": None,
             }
             asyncio.create_task(_run_recap_background_job(job_id, cfg, job.user_id, job.chat_id or job.user_id, is_vip=is_vip))
         except Exception as e:

@@ -2438,6 +2438,34 @@ function setupDownloader() {
                 btnDl.disabled = false;
             }
         });
+
+        const btnUseInRecap = document.getElementById("btn-dl-use-in-recap");
+        if (btnUseInRecap) {
+            btnUseInRecap.addEventListener("click", () => {
+                const urlInput = document.getElementById("dl-url-input");
+                const url = urlInput ? urlInput.value.trim() : "";
+                if (!url) return;
+
+                haptic("success");
+                // 1. Switch to tab-recap
+                const tabRecapBtn = document.querySelector('[data-tab="tab-recap"]');
+                if (tabRecapBtn) tabRecapBtn.click();
+
+                // 2. Set recap URL and trigger inspection
+                const recapInput = document.getElementById("recap-url-input");
+                if (recapInput) {
+                    recapInput.value = url;
+                    // Trigger mode URL if currently on File mode
+                    const btnModeUrl = document.getElementById("btn-source-mode-url");
+                    if (btnModeUrl) btnModeUrl.click();
+
+                    const btnExtract = document.getElementById("btn-extract-info");
+                    if (btnExtract) {
+                        setTimeout(() => btnExtract.click(), 300);
+                    }
+                }
+            });
+        }
     }
 }
 

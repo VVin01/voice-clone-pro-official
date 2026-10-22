@@ -1733,12 +1733,22 @@ async def handle_admin_job_retry_confirm(callback: CallbackQuery, session: Async
                     url=j.input_text or "",
                     voice_slug=j.preset_voice or "thiha",
                 )
+                import time
                 RECAP_JOBS_REGISTRY[str(j.id)] = {
                     "id": str(j.id),
+                    "user_id": j.user_id,
+                    "title": j.input_text or "Movie Recap Video",
                     "status": "QUEUED",
                     "progress_percent": 5,
                     "progress_step": "0/4",
                     "progress_label": "🔄 Re-queued by Administrator...",
+                    "created_at": time.time(),
+                    "video_path": None,
+                    "audio_path": None,
+                    "srt_path": None,
+                    "script_path": None,
+                    "download_urls": {},
+                    "error_message": None,
                 }
                 asyncio.create_task(_run_recap_background_job(str(j.id), cfg, j.user_id, j.chat_id or j.user_id))
             except Exception as recap_err:

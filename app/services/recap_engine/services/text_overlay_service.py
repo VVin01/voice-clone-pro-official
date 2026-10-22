@@ -61,6 +61,12 @@ def find_mm_font() -> Path:
     for name in exact_names:
         candidates.append(win_fonts / name)
 
+    # Priority: Project bundled fonts in app/assets/fonts/
+    bundled_font_dir = Path(__file__).resolve().parents[3] / "assets" / "fonts"
+    if bundled_font_dir.is_dir():
+        for name in exact_names:
+            candidates.insert(0, bundled_font_dir / name)
+
     candidates += [
         Path("/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf"),
         Path("/usr/share/fonts/truetype/noto/NotoSansMyanmar-Bold.ttf"),
