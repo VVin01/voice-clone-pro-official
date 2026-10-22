@@ -1480,11 +1480,11 @@ def apply_production_overlays(
         current = f"[{out}]"
 
     if subtitles_path and subtitles_path.is_file():
-        sub_esc = subtitles_path.resolve().as_posix().replace(":", r"\:")
+        sub_esc = subtitles_path.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
         fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
         fonts_arg = ""
         if fonts_dir.is_dir():
-            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:")
+            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
 
         # Bind authentic Myanmar Unicode standard font (Pyidaungsu) for accurate complex script text shaping
@@ -1703,12 +1703,12 @@ def extract_preview_with_overlays(
 
         srt_temp = temp_dir / "preview_sample.srt"
         srt_temp.write_text(f"1\n00:00:00,000 --> 00:00:10,000\n{sample}\n", encoding="utf-8")
-        sub_esc = srt_temp.resolve().as_posix().replace(":", r"\:")
+        sub_esc = srt_temp.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
         sub_font = str(overlays.get("subtitles_font", "Pyidaungsu"))
         fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
         fonts_arg = ""
         if fonts_dir.is_dir():
-            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:")
+            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
 
         raw_size = int(overlays.get("subtitles_font_size", 16))

@@ -789,21 +789,38 @@ async def get_recap_frame(
     path: str = Query(...),
     t: Optional[float] = Query(None),
 ):
-    """Serve or dynamically generate video frame snapshot at timestamp t."""
+    """Serve or dynamically generate video frame snapshot at timestamp t with caching and security containment."""
     clean_p = Path(path).name
-    # Search in temp dirs
+    # Search in temp uploads dir
     cand = settings.storage_root / "temp" / "recap_uploads" / clean_p
     if cand.is_file():
         return FileResponse(cand, media_type="image/jpeg")
 
-    # If t is given and path points to a video file
-    actual_path = settings.storage_root / "temp" / "recap_uploads" / path
+    # If t is given and path points to an uploaded or local video file
+    actual_path = settings.storage_root / "temp" / "recap_uploads" / clean_p
     if not actual_path.is_file():
         actual_path = Path(path)
 
+    # Security check: Ensure file is contained within configured storage root
+    try:
+        res_actual = actual_path.resolve()
+        res_storage = settings.storage_root.resolve()
+        if not str(res_actual).startswith(str(res_storage)):
+            raise HTTPException(status_code=403, detail="Access denied")
+    except Exception:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     if actual_path.is_file():
         seek_sec = max(0.1, float(t or 1.0))
-        out_thumb = settings.storage_root / "temp" / f"frame_{uuid.uuid4().hex[:8]}.jpg"
+        # Deterministic cache key based on file modification time and seek timestamp
+        import hashlib
+        mtime = actual_path.stat().st_mtime
+        cache_key = hashlib.md5(f"{clean_p}_{mtime}_{seek_sec:.1f}".encode()).hexdigest()[:12]
+        out_thumb = settings.storage_root / "temp" / f"frame_{cache_key}.jpg"
+
+        if out_thumb.is_file() and out_thumb.stat().st_size > 500:
+            return FileResponse(out_thumb, media_type="image/jpeg")
+
         from app.services.downloader import extract_thumbnail_from_media
         res = extract_thumbnail_from_media(str(actual_path), str(out_thumb), timestamp_sec=seek_sec)
         if res and Path(res).is_file():
@@ -914,7 +931,14 @@ async def _send_recap_telegram_delivery(
         logger.warning(f"Failed to send recap video to Telegram chat {chat_id}: {e}")
 
 
-async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_id: int, chat_id: int, is_vip: bool = False):
+async def _run_recap_background_job(
+    job_id: str,
+    req: RecapConfigRequest,
+    user_id: int,
+    chat_id: int,
+    is_vip: bool = False,
+    credit_deducted: bool = False,
+):
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if not entry:
         return
@@ -1119,9 +1143,10 @@ async def _run_recap_background_job(job_id: str, req: RecapConfigRequest, user_i
                         finished_at=func.now(),
                     )
                 )
-                u = await session.get(User, user_id)
-                if u and not settings.is_admin(u.id):
-                    u.recap_credits = (getattr(u, "recap_credits", 0) or 0) + 1
+                if credit_deducted:
+                    u = await session.get(User, user_id)
+                    if u and not settings.is_admin(u.id):
+                        u.recap_credits = (getattr(u, "recap_credits", 0) or 0) + 1
                 await session.commit()
         except Exception as ref_err:
             logger.warning(f"Credit refund failed: {ref_err}")
@@ -1234,9 +1259,11 @@ async def create_recap_job(
         )
 
     # Deduct credit if non-admin
+    deducted_credit = False
     if not settings.is_admin(user.id) and hasattr(user, "recap_credits") and user.recap_credits > 0:
         user.recap_credits -= 1
         await db.commit()
+        deducted_credit = True
 
     job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     RECAP_JOBS_REGISTRY[job_id] = {
@@ -1274,8 +1301,8 @@ async def create_recap_job(
     except Exception as err_db:
         logger.warning(f"Could not persist recap Job record in DB: {err_db}")
 
-    # Start background task with VIP tier flag for watermark control
-    asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id, is_vip=is_vip))
+    # Start background task with VIP tier flag for watermark control and credit tracking
+    asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id, is_vip=is_vip, credit_deducted=deducted_credit))
 
     return {
         "success": True,

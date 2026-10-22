@@ -1066,7 +1066,21 @@ class MediaDownloader:
         ]
         res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         if res.returncode != 0 or not os.path.exists(out_mp3):
-            raise RuntimeError(f"Audio extraction failed for {file_path}")
+            # Fallback: Video may have no audio track (silent video)
+            # Generate synthetic silent audio so pipeline does not crash
+            dur = max(5.0, float(info.get("duration") or 10.0))
+            silent_cmd = [
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", str(dur),
+                "-acodec", "libmp3lame",
+                "-b:a", "192k",
+                out_mp3
+            ]
+            res_sil = subprocess.run(silent_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if res_sil.returncode != 0 or not os.path.exists(out_mp3):
+                raise RuntimeError(f"Audio extraction failed for {file_path}")
 
         return out_mp3, info
 
