@@ -1141,7 +1141,6 @@ function setupRecapVisualEditor() {
         const shadeBottom = document.getElementById("crop-shade-bottom");
         const shadeLeft = document.getElementById("crop-shade-left");
         const shadeRight = document.getElementById("crop-shade-right");
-        const innerMovie = document.getElementById("mockup-inner-movie");
 
         const cTop = state.recapCropTop || 0;
         const cBottom = state.recapCropBottom || 0;
@@ -1443,14 +1442,6 @@ function setupRecapVisualEditor() {
             }
         });
     });
-
-    // 13. Dub Voice Selector
-    const voiceSelect = document.getElementById("recap-voice-select");
-    if (voiceSelect) {
-        voiceSelect.addEventListener("change", (e) => {
-            state.recapVoice = e.target.value;
-        });
-    }
 
     // 14. Analyze / Video Info Check Button
     const btnAnalyze = document.getElementById("btn-fetch-recap-info");
