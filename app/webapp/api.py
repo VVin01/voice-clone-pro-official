@@ -1220,6 +1220,7 @@ async def create_recap_job(
     RECAP_JOBS_REGISTRY[job_id] = {
         "id": job_id,
         "user_id": user.id,
+        "title": req.url or "Movie Recap Video",
         "status": "QUEUED",
         "progress_percent": 5,
         "progress_step": "0/4",
@@ -1253,16 +1254,6 @@ async def create_recap_job(
 
     # Start background task with VIP tier flag for watermark control
     asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id, is_vip=is_vip))
-
-    return {
-        "success": True,
-        "recap_id": job_id,
-        "status": "QUEUED",
-        "story_style": req.story_style,
-        "ratio": req.ratio,
-        "remaining_credits": getattr(user, "recap_credits", 0),
-        "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
-    }
 
     return {
         "success": True,

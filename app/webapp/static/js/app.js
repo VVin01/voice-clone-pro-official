@@ -1574,7 +1574,6 @@ function setupRecapVisualEditor() {
     const valCropRight = document.getElementById("val-crop-right");
 
     const btnSyncCrop = document.getElementById("btn-sync-crop");
-    const cropPresetBtns = document.querySelectorAll("#recap-crop-presets .pill-btn");
 
     function setCropPresetActive(presetName) {
         document.querySelectorAll("#recap-crop-presets .pill-btn, #recap-crop-presets-toolbar .pill-btn").forEach(btn => {
@@ -2410,6 +2409,28 @@ function setupDownloader() {
                     body: JSON.stringify({ url: url }),
                 });
                 const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Extraction failed");
+
+                // Populate result info header
+                const dlThumb = document.getElementById("dl-result-thumb");
+                const dlTitle = document.getElementById("dl-result-title");
+                const dlPlatform = document.getElementById("dl-result-platform");
+                const dlUploader = document.getElementById("dl-result-uploader");
+                const dlDuration = document.getElementById("dl-result-duration");
+
+                if (dlTitle) dlTitle.innerText = data.title || "Video Content";
+                if (dlPlatform) dlPlatform.innerText = data.platform || "";
+                if (dlUploader) dlUploader.innerText = data.uploader || "Creator";
+                if (dlDuration) dlDuration.innerText = data.estimated_duration || "";
+                if (dlThumb) {
+                    if (data.thumbnail) {
+                        dlThumb.src = data.thumbnail;
+                        dlThumb.style.display = "block";
+                    } else {
+                        dlThumb.style.display = "none";
+                    }
+                }
+
                 resultCard.classList.remove("hidden");
             } catch (err) {
                 alert(err.message);

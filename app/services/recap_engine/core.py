@@ -1711,7 +1711,6 @@ def extract_preview_with_overlays(
             fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
 
-        sub_lines = int(overlays.get("sub_lines", 1))
         raw_size = int(overlays.get("subtitles_font_size", 16))
         wrap_style = 2 if sub_lines == 1 else 0
         if ch > cw:
