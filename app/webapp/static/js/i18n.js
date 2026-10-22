@@ -161,6 +161,10 @@ const translations = {
         sub_lines_label: "စာကြောင်းရေ:",
 
         recap_voice_label: "Recap အတွက် အသုံးပြုမည့် အသံ (Dub Voice)",
+        recap_step1_title: "ဗီဒီယိုလင့်ခ် ထည့်သွင်းပါ (Video Link)",
+        recap_step2_title: "ဇာတ်လမ်းပြောမည့် မြန်မာအသံ ရွေးချယ်ပါ (Dub Voice)",
+        advanced_settings_title: "စိတ်ကြိုက် အသေးစိတ် ပြင်ဆင်ရန် (Advanced Customization)",
+        advanced_settings_sub: "Aspect Ratio၊ မူပိုင်ခွင့်ကာကွယ်ရေးနှင့် Live Canvas နေရာညှိရန်",
         queue_notice_recap: "⚡ High-Speed Studio: Shorts (၁-၃ မိနစ်) ~ ၁.၅ မိနစ် • Cinema (၅-၁၀ မိနစ်) ~ ၃-၄ မိနစ် (Groq Whisper Turbo + 1080p Cinema Compositing)",
         telegram_bg_assurance: "✨ ဖုန်း Screen ရှေ့တွင် စောင့်မနေပါနှင့် — Cloud AI Render ပြီးစီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ဆောင်ပေးပါမည်။",
         telegram_leave_hint: "💡 ဤစာမျက်နှာကို ပိတ်၍ ထွက်သွားနိုင်ပါသည်။ Video အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ အကြောင်းကြားစာနှင့် ဗီဒီယို ပို့ပေးပါမည်။",
@@ -474,6 +478,10 @@ const translations = {
         sub_lines_label: "Lines:",
 
         recap_voice_label: "Narrator Dubbing Voice",
+        recap_step1_title: "Step 1: Paste Video Link",
+        recap_step2_title: "Step 2: Choose Narrator Voice",
+        advanced_settings_title: "Advanced Studio Settings",
+        advanced_settings_sub: "Aspect Ratio, Anti-Copyright & Canvas Repositioning",
         queue_notice_recap: "⚡ High-Speed Studio: Shorts (1-3m) ~ 1.5 mins • Cinema (5-10m) ~ 3-4 mins (Groq Whisper Turbo + 1080p Cinema Compositing)",
         telegram_bg_assurance: "✨ No need to wait on screen — Finished video will be delivered directly to your Telegram Bot.",
         telegram_leave_hint: "💡 You may safely close or leave this page. Once rendering completes, the Telegram Bot will deliver your video and deliverables.",

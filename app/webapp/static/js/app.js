@@ -1117,12 +1117,23 @@ function setupRecapVisualEditor() {
         const fillMode = state.recapRatioFill || "blur";
         canvas.className = `video-bg-placeholder fill-${fillMode} ${state.recapMirror ? 'mirrored' : ''}`;
 
-        // 3. Fill Badge Status
+        // 3. Keep thumbnail on Canvas & Inner Movie
+        const innerMovie = document.getElementById("mockup-inner-movie");
         const fillBadge = document.getElementById("mockup-fill-badge");
-        if (fillBadge) {
-            if (fillMode === "blur") fillBadge.innerText = "🌫️ Blur Background";
-            else if (fillMode === "crop") fillBadge.innerText = "✂️ Center Crop (Full Fill)";
-            else if (fillMode === "black") fillBadge.innerText = "⬛ Black Bars";
+        if (state.recapThumbnailUrl) {
+            canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
+            canvas.style.backgroundSize = "cover";
+            canvas.style.backgroundPosition = "center";
+            if (innerMovie) {
+                innerMovie.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
+                innerMovie.style.backgroundSize = "cover";
+                innerMovie.style.backgroundPosition = "center";
+            }
+            if (fillBadge) fillBadge.style.display = "none";
+        } else {
+            canvas.style.backgroundImage = "";
+            if (innerMovie) innerMovie.style.backgroundImage = "";
+            if (fillBadge) fillBadge.style.display = "";
         }
 
         // 4. Update Crop Shades & Inner Movie Height
@@ -1496,11 +1507,10 @@ function setupRecapVisualEditor() {
                 if (platformSpan) platformSpan.innerText = data.platform || "Video";
                 if (subSpan) subSpan.innerText = data.has_subtitles ? "✅ Subtitle Ready" : "⚠️ AI Auto Sub";
 
-                // Reflect thumbnail on live preview canvas
-                if (canvas && data.thumbnail) {
-                    canvas.style.backgroundImage = `url('${data.thumbnail}')`;
-                    canvas.style.backgroundSize = "cover";
-                    canvas.style.backgroundPosition = "center";
+                // Reflect thumbnail on live preview canvas & state
+                if (data.thumbnail) {
+                    state.recapThumbnailUrl = data.thumbnail;
+                    updateCanvasMockupVisuals();
                 }
             } catch (err) {
                 alert(err.message || "Failed to inspect video link");
@@ -1508,6 +1518,61 @@ function setupRecapVisualEditor() {
                 btnAnalyze.disabled = false;
                 btnAnalyze.innerText = originalText;
             }
+        });
+    }
+
+    // Auto-detect on input / paste with live YouTube thumbnail & debounce
+    let recapUrlTimer = null;
+    const urlInput = document.getElementById("recap-url-input");
+    if (urlInput) {
+        urlInput.addEventListener("input", () => {
+            const val = urlInput.value.trim();
+            if (!val) {
+                state.recapThumbnailUrl = null;
+                updateCanvasMockupVisuals();
+                if (recapInfoBox) recapInfoBox.classList.add("hidden");
+                return;
+            }
+
+            // Real-time instant YouTube thumbnail extraction
+            const ytMatch = val.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
+            if (ytMatch && ytMatch[1]) {
+                state.recapThumbnailUrl = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+                updateCanvasMockupVisuals();
+            }
+
+            // Auto-fetch video info after 700ms pause
+            clearTimeout(recapUrlTimer);
+            recapUrlTimer = setTimeout(() => {
+                if (val && btnAnalyze && !btnAnalyze.disabled) {
+                    btnAnalyze.click();
+                }
+            }, 700);
+        });
+    }
+
+    // Wire up Voice Cards in Step 2
+    const voiceCards = document.querySelectorAll("#recap-top-voices .voice-card");
+    const voiceSelect = document.getElementById("recap-voice-select");
+    voiceCards.forEach(card => {
+        card.addEventListener("click", () => {
+            haptic("selection");
+            const voice = card.getAttribute("data-voice");
+            voiceCards.forEach(c => c.classList.remove("active"));
+            card.classList.add("active");
+            state.recapVoice = voice;
+            if (voiceSelect) voiceSelect.value = voice;
+        });
+    });
+
+    if (voiceSelect) {
+        voiceSelect.addEventListener("change", (e) => {
+            const v = e.target.value;
+            state.recapVoice = v;
+            voiceCards.forEach(c => {
+                if (c.getAttribute("data-voice") === v) c.classList.add("active");
+                else c.classList.remove("active");
+            });
         });
     }
 
@@ -1520,6 +1585,34 @@ function setupRecapVisualEditor() {
     // Initial canvas mockup sync
     updateCanvasMockupVisuals();
 }
+
+// ── Streamlined Studio Global Window Helpers ─────────────────────────────────
+window.previewVoiceSlug = function(slug, e) {
+    if (e) e.stopPropagation();
+    const btn = e ? e.currentTarget : null;
+    playVoicePreview(slug, btn);
+};
+
+window.toggleAllRecapVoices = function() {
+    const dropdown = document.getElementById("all-voices-dropdown-wrap");
+    const txt = document.getElementById("all-voices-toggle-text");
+    if (!dropdown) return;
+    const isHidden = dropdown.classList.toggle("hidden");
+    if (txt) {
+        txt.innerText = isHidden ? "အခြားအသံများ ရွေးချယ်ရန် (Show all 12 voices) ▼" : "အသံစာရင်း ပိတ်မည် (Hide) ▲";
+    }
+};
+
+window.toggleAdvancedRecapStudio = function() {
+    const body = document.getElementById("recap-advanced-body");
+    const chevron = document.getElementById("accordion-chevron");
+    if (!body) return;
+    const isHidden = body.classList.toggle("hidden");
+    if (chevron) chevron.innerText = isHidden ? "▼" : "▲";
+    if (!isHidden) {
+        updateCanvasMockupVisuals();
+    }
+};
 
 async function handleStartRecap() {
     const urlInput = document.getElementById("recap-url-input");
