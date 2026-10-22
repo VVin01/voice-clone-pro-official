@@ -1175,12 +1175,185 @@ def split_into_burmese_syllables(text: str) -> list[str]:
     return merged
 
 
+MYANMAR_HOMOGLYPHS: dict[str, str] = {
+    "\u1293": "\u1014\u102c",  # Ethiopic NAA -> Burmese 'နာ'
+    "\u1290": "\u1014",        # Ethiopic NA -> Burmese 'န'
+    "\u1260": "\u1018",        # Ethiopic BA -> Burmese 'ဗ'
+    "\u1261": "\u1018\u102f",   # Ethiopic BU -> Burmese 'ဗု'
+    "\u1220": "\u101e",        # Ethiopic SA -> Burmese 'သ'
+    "\u1223": "\u101e\u102c",  # Ethiopic SAA -> Burmese 'သာ'
+    "\u12d0": "\u1025",        # Ethiopic A -> Burmese 'ဥ'
+    "\u10dd": "\u101d",        # Georgian ON -> Burmese 'ဝ'
+    "\u10d8": "\u102d",        # Georgian INI -> Burmese 'ိ'
+    "\u10d0": "\u1001",        # Georgian ANI -> Burmese 'ခ'
+    "\u10d2": "\u101e",        # Georgian GANI -> Burmese 'သ'
+    "\u10e7": "\u101c",        # Georgian QARI -> Burmese 'လ'
+    "\u10e3": "\u1015",        # Georgian UNI -> Burmese 'ပ'
+    "\u10e9": "\u101b",        # Georgian CHINI -> Burmese 'ရ'
+}
+
+
+def normalize_burmese_homoglyphs(text: Any) -> str:
+    """Normalize foreign homoglyphs (Ethiopic/Georgian look-alikes) to authentic Myanmar Unicode."""
+    s = str(text or "")
+    if not s:
+        return ""
+    for k, v in MYANMAR_HOMOGLYPHS.items():
+        if k in s:
+            s = s.replace(k, v)
+    return s
+
+
+def ensure_system_myanmar_fonts() -> str:
+    """Ensure authentic Myanmar Unicode fonts (Pyidaungsu / Noto Sans Myanmar) are registered
+    with Fontconfig on Linux, and return the best available font family name."""
+    fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+    if sys.platform.startswith("linux"):
+        try:
+            sys_font_dir = Path("/usr/share/fonts/truetype/myanmar")
+            user_font_dir = Path.home() / ".local" / "share" / "fonts" / "myanmar"
+            target_dir = sys_font_dir if sys_font_dir.exists() and os.access(str(sys_font_dir), os.W_OK) else user_font_dir
+            if not target_dir.is_dir():
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+            needs_cache = False
+            for ttf in fonts_dir.glob("*.ttf"):
+                dest = target_dir / ttf.name
+                if not dest.is_file() or dest.stat().st_size != ttf.stat().st_size:
+                    try:
+                        shutil.copy2(ttf, dest)
+                        needs_cache = True
+                    except Exception:
+                        pass
+
+            if needs_cache and shutil.which("fc-cache"):
+                subprocess.run(["fc-cache", "-f", str(target_dir)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        except Exception:
+            pass
+
+    # Resolve active font family via fc-match if available
+    if shutil.which("fc-match"):
+        try:
+            res = subprocess.run(["fc-match", "-f", "%{family}\n", "Pyidaungsu"], capture_output=True, text=True, timeout=5)
+            matched = (res.stdout or "").strip().lower()
+            if "pyidaungsu" in matched:
+                return "Pyidaungsu"
+            res2 = subprocess.run(["fc-match", "-f", "%{family}\n", "Noto Sans Myanmar"], capture_output=True, text=True, timeout=5)
+            matched2 = (res2.stdout or "").strip().lower()
+            if "noto" in matched2 or "myanmar" in matched2:
+                return "Noto Sans Myanmar"
+            res3 = subprocess.run(["fc-match", "-f", "%{family}\n", "Padauk"], capture_output=True, text=True, timeout=5)
+            if "padauk" in (res3.stdout or "").lower():
+                return "Padauk"
+        except Exception:
+            pass
+    return "Pyidaungsu"
+
+
+def _fmt_ass_time(sec: float) -> str:
+    """Format seconds into ASS timestamp H:MM:SS.cs."""
+    cs = max(0, int(round(sec * 100)))
+    h = cs // 360000
+    m = (cs % 360000) // 6000
+    s = (cs % 6000) // 100
+    c = cs % 100
+    return f"{h}:{m:02d}:{s:02d}.{c:02d}"
+
+
+def write_synced_ass_file(
+    cues: list[tuple[float, float, str]],
+    ass_path: Path,
+    cw: int,
+    ch: int,
+    font_name: str = "Pyidaungsu",
+    raw_font_size: int = 16,
+    sub_style: str = "yellow",
+    sub_lines: int = 1,
+    sub_y: float | None = None,
+    subtitles_margin_v: float | None = None,
+    boxes: list[dict[str, Any]] | None = None,
+) -> Path:
+    """Generate a pixel-accurate ASS subtitle file with complex Myanmar script text shaping."""
+    cw = max(320, int(cw))
+    ch = max(240, int(ch))
+    is_vert = ch > cw
+
+    # Canvas-scaled font size based on height
+    scale_factor = (raw_font_size / 288.0)
+    if is_vert:
+        target_size = int(round(ch * scale_factor * 0.72)) if sub_lines == 1 else int(round(ch * scale_factor * 0.85))
+        font_size = max(24, min(68, target_size))
+    else:
+        target_size = int(round(ch * scale_factor * 0.95))
+        font_size = max(28, min(72, target_size))
+
+    # Canvas-normalized subtitle positioning
+    if sub_y is not None:
+        sy = _clamp01(float(sub_y), 0.85)
+        pixels_from_bottom = ch * (1.0 - sy)
+    elif subtitles_margin_v is not None:
+        mv_val = float(subtitles_margin_v)
+        pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
+    elif boxes:
+        b0 = boxes[0]
+        by = _clamp01(b0.get("y", 0.81))
+        bh = _clamp01(b0.get("h", 0.13))
+        sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
+        pixels_from_bottom = ch * sub_center
+    else:
+        pixels_from_bottom = max(20, int(round(ch * 0.05)))
+
+    margin_v = max(10, min(ch - 100, int(round(pixels_from_bottom))))
+
+    st_key = str(sub_style or "yellow").lower()
+    st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
+    p_col = st["primary"]
+    o_col = st["outline_col"]
+    b_col = st["back_col"]
+    b_style = st["border_style"]
+    outl = max(1.5, float(st["outline"]) * (ch / 720.0))
+    shad = max(1.0, float(st["shadow"]) * (ch / 720.0))
+    wrap_style = 2 if sub_lines == 1 else 0
+    margin_h = max(20, int(round(cw * 0.04)))
+
+    header = f"""[Script Info]
+Title: Synced Myanmar Subtitles
+ScriptType: v4.00+
+WrapStyle: {wrap_style}
+ScaledBorderAndShadow: yes
+YCbCr Matrix: None
+PlayResX: {cw}
+PlayResY: {ch}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},{font_size},{p_col},&H000000FF,{o_col},{b_col},-1,0,0,0,100,100,0,0,{b_style},{outl:.2f},{shad:.2f},2,{margin_h},{margin_h},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    dialogues = []
+    for st_sec, en_sec, cue_text in cues:
+        c_text = canonicalize_burmese_text(cue_text)
+        if not c_text:
+            continue
+        ass_line_text = c_text.replace("\r\n", r"\N").replace("\n", r"\N").strip()
+        st_str = _fmt_ass_time(st_sec)
+        en_str = _fmt_ass_time(en_sec)
+        dialogues.append(f"Dialogue: 0,{st_str},{en_str},Default,,0,0,0,,{ass_line_text}")
+
+    ass_path.write_text(header + "\n".join(dialogues) + "\n", encoding="utf-8")
+    return ass_path
+
+
 def canonicalize_burmese_text(text: str) -> str:
     """Fix common typing inversions, redundant spaces, and normalize Myanmar Unicode."""
     if not text:
         return ""
+    # 0. Normalize foreign homoglyphs (Ethiopic/Georgian)
+    t = normalize_burmese_homoglyphs(text)
     # 1. Swap visual 'ေ' (U+1031) preceding consonant to after consonant (e.g. အေမ -> အမေ)
-    t = re.sub(r'(\u1031)([\u1000-\u1021])', r'\2\1', str(text))
+    t = re.sub(r'(\u1031)([\u1000-\u1021])', r'\2\1', t)
     # 2. Fix medial order if reversed (e.g. ွ before ျ/ြ)
     t = re.sub(r'(\u103D)(\u103B|\u103C)', r'\2\1', t)
     # 3. Fix ေ before medials (e.g. က + ေ + ျ -> က + ျ + ေ)
@@ -1471,47 +1644,52 @@ def apply_production_overlays(
             fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
 
-        # Bind authentic Myanmar Unicode standard font (Pyidaungsu) for accurate complex script text shaping
-        sub_font = str(overlays.get("subtitles_font", "Pyidaungsu"))
-        sub_lines = int(overlays.get("sub_lines", 1))
-        raw_size = int(overlays.get("subtitles_font_size", 16))
-        # WrapStyle=2 is NO WRAPPING (strictly keeps 1 line). WrapStyle=0 is smart multi-line wrapping.
-        wrap_style = 2 if sub_lines == 1 else 0
-        if ch > cw:  # 9:16 Vertical
-            sub_size = max(9, min(22, int(round(raw_size * 0.72)))) if sub_lines == 1 else max(10, min(24, raw_size))
-        else:
-            sub_size = max(11, min(26, raw_size))
-        # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
-        if "sub_y" in overlays and overlays["sub_y"] is not None:
-            sy = _clamp01(float(overlays["sub_y"]), 0.85)
-            pixels_from_bottom = ch * (1.0 - sy)
-        elif "subtitles_margin_v" in overlays:
-            mv_val = float(overlays["subtitles_margin_v"])
-            pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
-        elif boxes:
-            b0 = boxes[0]
-            by = _clamp01(b0.get("y", 0.81))
-            bh = _clamp01(b0.get("h", 0.13))
-            sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
-            pixels_from_bottom = ch * sub_center
-        else:
-            pixels_from_bottom = max(14, int(round(ch * 0.045)))
-
-        # FFmpeg's subtitles filter (libass on SRT) uses a 288 reference scale for MarginV
-        sub_margin = max(4, min(280, int(round((pixels_from_bottom / max(1, ch)) * 288))))
-        st_key = str(overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow").lower()
-        st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
-        p_col = st["primary"]
-        o_col = st["outline_col"]
-        b_col = st["back_col"]
-        b_style = st["border_style"]
-        outl = st["outline"]
-        shad = st["shadow"]
         out = "vsub"
-        graph.append(
-            f"{current}subtitles='{sub_esc}'{fonts_arg}:force_style='Fontname={sub_font},FontSize={sub_size},"
-            f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=20,MarginR=20,Alignment=2,WrapStyle={wrap_style}'[{out}]"
-        )
+        if subtitles_path.suffix.lower() == ".ass":
+            # For ASS subtitles, libass strictly follows the styles, resolution (PlayResX/Y),
+            # margins, and fonts embedded inside the ASS header.
+            graph.append(f"{current}subtitles='{sub_esc}'{fonts_arg}[{out}]")
+        else:
+            # Bind authentic Myanmar Unicode standard font (Pyidaungsu) for accurate complex script text shaping
+            sub_font = str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+            sub_lines = int(overlays.get("sub_lines", 1))
+            raw_size = int(overlays.get("subtitles_font_size", 16))
+            # WrapStyle=2 is NO WRAPPING (strictly keeps 1 line). WrapStyle=0 is smart multi-line wrapping.
+            wrap_style = 2 if sub_lines == 1 else 0
+            if ch > cw:  # 9:16 Vertical
+                sub_size = max(9, min(22, int(round(raw_size * 0.72)))) if sub_lines == 1 else max(10, min(24, raw_size))
+            else:
+                sub_size = max(11, min(26, raw_size))
+            # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
+            if "sub_y" in overlays and overlays["sub_y"] is not None:
+                sy = _clamp01(float(overlays["sub_y"]), 0.85)
+                pixels_from_bottom = ch * (1.0 - sy)
+            elif "subtitles_margin_v" in overlays:
+                mv_val = float(overlays["subtitles_margin_v"])
+                pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
+            elif boxes:
+                b0 = boxes[0]
+                by = _clamp01(b0.get("y", 0.81))
+                bh = _clamp01(b0.get("h", 0.13))
+                sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
+                pixels_from_bottom = ch * sub_center
+            else:
+                pixels_from_bottom = max(14, int(round(ch * 0.045)))
+
+            # FFmpeg's subtitles filter (libass on SRT) uses a 288 reference scale for MarginV
+            sub_margin = max(4, min(280, int(round((pixels_from_bottom / max(1, ch)) * 288))))
+            st_key = str(overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow").lower()
+            st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
+            p_col = st["primary"]
+            o_col = st["outline_col"]
+            b_col = st["back_col"]
+            b_style = st["border_style"]
+            outl = st["outline"]
+            shad = st["shadow"]
+            graph.append(
+                f"{current}subtitles='{sub_esc}'{fonts_arg}:force_style='Fontname={sub_font},FontSize={sub_size},"
+                f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=20,MarginR=20,Alignment=2,WrapStyle={wrap_style}'[{out}]"
+            )
         current = f"[{out}]"
 
     graph.append(f"{current}format=yuv420p[vout]")
@@ -1694,55 +1872,30 @@ def extract_preview_with_overlays(
         elif sub_lines == 1:
             sample = sample.replace("\n", " ").strip()
 
-        srt_temp = temp_dir / "preview_sample.srt"
-        srt_temp.write_text(f"1\n00:00:00,000 --> 00:00:10,000\n{sample}\n", encoding="utf-8")
-        sub_esc = srt_temp.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
-        sub_font = str(overlays.get("subtitles_font", "Pyidaungsu"))
+        ass_temp = temp_dir / "preview_sample.ass"
+        sub_font = str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+        write_synced_ass_file(
+            cues=[(0.0, 10.0, sample)],
+            ass_path=ass_temp,
+            cw=cw,
+            ch=ch,
+            font_name=sub_font,
+            raw_font_size=int(overlays.get("subtitles_font_size", 16)),
+            sub_style=str(overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow"),
+            sub_lines=sub_lines,
+            sub_y=overlays.get("sub_y"),
+            subtitles_margin_v=overlays.get("subtitles_margin_v"),
+            boxes=boxes,
+        )
+        sub_esc = ass_temp.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
         fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
         fonts_arg = ""
         if fonts_dir.is_dir():
             fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
 
-        raw_size = int(overlays.get("subtitles_font_size", 16))
-        wrap_style = 2 if sub_lines == 1 else 0
-        if ch > cw:
-            sub_size = max(9, min(22, int(round(raw_size * 0.72)))) if sub_lines == 1 else max(10, min(24, raw_size))
-        else:
-            sub_size = max(11, min(26, raw_size))
-
-        # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
-        if "sub_y" in overlays and overlays["sub_y"] is not None:
-            sy = _clamp01(float(overlays["sub_y"]), 0.85)
-            pixels_from_bottom = ch * (1.0 - sy)
-        elif "subtitles_margin_v" in overlays:
-            mv_val = float(overlays["subtitles_margin_v"])
-            pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
-        elif boxes:
-            b0 = boxes[0]
-            by = _clamp01(b0.get("y", 0.81))
-            bh = _clamp01(b0.get("h", 0.13))
-            sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
-            pixels_from_bottom = ch * sub_center
-        else:
-            pixels_from_bottom = max(14, int(round(ch * 0.045)))
-
-        # FFmpeg's subtitles filter (libass on SRT) uses a 288 reference scale for MarginV
-        sub_margin = max(4, min(280, int(round((pixels_from_bottom / max(1, ch)) * 288))))
-
-        st_key = str(overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow").lower()
-        st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
-        p_col = st["primary"]
-        o_col = st["outline_col"]
-        b_col = st["back_col"]
-        b_style = st["border_style"]
-        outl = st["outline"]
-        shad = st["shadow"]
         out = "vsub"
-        graph.append(
-            f"{current}subtitles='{sub_esc}'{fonts_arg}:force_style='Fontname={sub_font},FontSize={sub_size},"
-            f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=20,MarginR=20,Alignment=2,WrapStyle={wrap_style}'[{out}]"
-        )
+        graph.append(f"{current}subtitles='{sub_esc}'{fonts_arg}[{out}]")
         current = f"[{out}]"
 
     graph.append(f"{current}format=yuv420p[vout]")
@@ -1759,8 +1912,8 @@ def extract_preview_with_overlays(
         str(out_img),
     ]
     p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if srt_temp and srt_temp.is_file():
-        srt_temp.unlink(missing_ok=True)
+    if ass_temp and ass_temp.is_file():
+        ass_temp.unlink(missing_ok=True)
     if p.returncode != 0 or not out_img.is_file():
         raise RuntimeError("Preview extraction failed: " + p.stderr[-1500:])
     return out_img
@@ -2160,25 +2313,25 @@ class EdgeSmartSync:
         out_plan["production_overlays"] = self.overlays
         atomic_write_json(paths.plan, out_plan)
 
-        # Generate synchronized Myanmar SRT subtitle file (split into 1-2 line balanced cues)
+        # Generate synchronized Myanmar SRT & ASS subtitle files
         srt_file = paths.root / "recap_myanmar_synced.srt"
+        ass_file = paths.root / "recap_myanmar_synced.ass"
+        all_sub_cues: list[tuple[float, float, str]] = []
         try:
             srt_lines = []
             cue_counter = 1
+            cw_val = int(layout.get("cw", 1920))
+            ch_val = int(layout.get("ch", 1080))
+            is_vert = (ch_val > cw_val) or (self.output_ratio == "9:16")
+            lines_per_cue = int(self.overlays.get("sub_lines", 1))
+            max_chars = (45 if is_vert else 52) if lines_per_cue == 1 else (80 if is_vert else 96)
+
             for s_item in timing:
                 raw_st = float(s_item.get("audio_start", 0.0))
                 raw_en = float(s_item.get("audio_end", 0.0))
                 txt = str(s_item.get("text", "")).strip()
                 if not txt:
                     continue
-                lines_per_cue = int(self.overlays.get("sub_lines", 1))
-                cw_val = int(layout.get("cw", 1920))
-                ch_val = int(layout.get("ch", 1080))
-                is_vert = (ch_val > cw_val) or (self.output_ratio == "9:16")
-                if lines_per_cue == 1:
-                    max_chars = 45 if is_vert else 52
-                else:
-                    max_chars = 80 if is_vert else 96
                 sub_cues = split_burmese_subtitle_cues(
                     raw_st, raw_en, txt,
                     max_cue_chars=max_chars,
@@ -2187,6 +2340,7 @@ class EdgeSmartSync:
                 if not sub_cues:
                     sub_cues = [(raw_st, raw_en, txt)]
                 for c_st, c_en, c_txt in sub_cues:
+                    all_sub_cues.append((c_st, c_en, c_txt))
                     st_ms = max(0, int(round(c_st * 1000)))
                     en_ms = max(0, int(round(c_en * 1000)))
                     st_str = f"{st_ms // 3600000:02d}:{(st_ms % 3600000) // 60000:02d}:{(st_ms % 60000) // 1000:02d},{st_ms % 1000:03d}"
@@ -2195,11 +2349,28 @@ class EdgeSmartSync:
                     cue_counter += 1
             srt_file.write_text("\n".join(srt_lines) + "\n", encoding="utf-8")
             self.log(f"📝 Synced Myanmar SRT saved: {srt_file.name} ({cue_counter - 1} cues)")
-        except Exception as srt_err:
-            self.log(f"⚠️ Failed to write synced SRT: {srt_err}")
 
-        if self.overlays.get("burn_subtitles") and srt_file.is_file():
-            self.overlays["subtitles_file"] = str(srt_file)
+            # Generate pixel-perfect ASS subtitle with HarfBuzz complex script shaping
+            active_font = str(self.overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+            write_synced_ass_file(
+                cues=all_sub_cues,
+                ass_path=ass_file,
+                cw=cw_val,
+                ch=ch_val,
+                font_name=active_font,
+                raw_font_size=int(self.overlays.get("subtitles_font_size", 16)),
+                sub_style=str(self.overlays.get("sub_style") or self.overlays.get("subtitles_style") or "yellow"),
+                sub_lines=lines_per_cue,
+                sub_y=self.overlays.get("sub_y"),
+                subtitles_margin_v=self.overlays.get("subtitles_margin_v"),
+                boxes=self.overlays.get("boxes"),
+            )
+            self.log(f"📝 Synced Myanmar ASS saved: {ass_file.name} (font={active_font})")
+        except Exception as srt_err:
+            self.log(f"⚠️ Failed to write synced subtitles: {srt_err}")
+
+        if self.overlays.get("burn_subtitles"):
+            self.overlays["subtitles_file"] = str(ass_file) if ass_file.is_file() else (str(srt_file) if srt_file.is_file() else None)
 
         if not self.render_final_video:
             self.log("✅ Audio + Smart Sync plan READY (final video render skipped).")
@@ -2342,11 +2513,18 @@ class EdgeSmartSync:
         )
         final_duration = probe_duration(self.ffprobe, paths.final)
 
-        # Copy synced SRT next to final video
+        # Copy synced SRT and ASS next to final video
         final_srt = paths.final.with_suffix(".srt")
         if srt_file.is_file():
             try:
                 shutil.copy2(srt_file, final_srt)
+            except Exception:
+                pass
+
+        final_ass = paths.final.with_suffix(".ass")
+        if ass_file.is_file():
+            try:
+                shutil.copy2(ass_file, final_ass)
             except Exception:
                 pass
 
@@ -2373,6 +2551,7 @@ class EdgeSmartSync:
             "plan": str(paths.plan),
             "final": str(paths.final),
             "subtitles_srt": str(final_srt) if final_srt.is_file() else (str(srt_file) if srt_file.is_file() else None),
+            "subtitles_ass": str(final_ass) if final_ass.is_file() else (str(ass_file) if ass_file.is_file() else None),
             "segments": len(timing),
             "duration": final_duration,
         }

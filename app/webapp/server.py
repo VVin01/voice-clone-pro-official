@@ -19,6 +19,16 @@ from app.webapp.api import api_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize authentic Myanmar fonts for recap engine subtitle rendering
+    try:
+        from app.services.recap_engine.core import ensure_system_myanmar_fonts
+        active_font = ensure_system_myanmar_fonts()
+        import logging
+        logging.getLogger(__name__).info("🔤 Myanmar subtitle fonts initialized: %s", active_font)
+    except Exception as font_err:
+        import logging
+        logging.getLogger(__name__).warning("Myanmar font setup error: %s", font_err)
+
     # Initialize database tables and metadata
     try:
         await init_db()

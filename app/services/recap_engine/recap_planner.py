@@ -364,6 +364,35 @@ def _has_speakable_content(value: Any) -> bool:
     return any(ch.isalnum() for ch in text)
 
 
+MYANMAR_HOMOGLYPHS: dict[str, str] = {
+    "\u1293": "\u1014\u102c",  # Ethiopic NAA -> Burmese 'နာ'
+    "\u1290": "\u1014",        # Ethiopic NA -> Burmese 'န'
+    "\u1260": "\u1018",        # Ethiopic BA -> Burmese 'ဗ'
+    "\u1261": "\u1018\u102f",   # Ethiopic BU -> Burmese 'ဗု'
+    "\u1220": "\u101e",        # Ethiopic SA -> Burmese 'သ'
+    "\u1223": "\u101e\u102c",  # Ethiopic SAA -> Burmese 'သာ'
+    "\u12d0": "\u1025",        # Ethiopic A -> Burmese 'ဥ'
+    "\u10dd": "\u101d",        # Georgian ON -> Burmese 'ဝ'
+    "\u10d8": "\u102d",        # Georgian INI -> Burmese 'ိ'
+    "\u10d0": "\u1001",        # Georgian ANI -> Burmese 'ခ'
+    "\u10d2": "\u101e",        # Georgian GANI -> Burmese 'သ'
+    "\u10e7": "\u101c",        # Georgian QARI -> Burmese 'လ'
+    "\u10e3": "\u1015",        # Georgian UNI -> Burmese 'ပ'
+    "\u10e9": "\u101b",        # Georgian CHINI -> Burmese 'ရ'
+}
+
+
+def normalize_burmese_homoglyphs(text: Any) -> str:
+    """Normalize foreign look-alike homoglyphs (e.g. Ethiopic \u1293) to authentic Myanmar Unicode."""
+    s = str(text or "")
+    if not s:
+        return ""
+    for k, v in MYANMAR_HOMOGLYPHS.items():
+        if k in s:
+            s = s.replace(k, v)
+    return s
+
+
 def _sanitize_translation_text(value: Any) -> str:
     """Strip known Gemini audit/meta wrappers while preserving translated speech.
 
@@ -375,6 +404,7 @@ def _sanitize_translation_text(value: Any) -> str:
     that exact wrapper appears, keep only the faithful translation inside it.
     """
     text = _clean(value)
+    text = normalize_burmese_homoglyphs(text)
     match = re.fullmatch(
         r"\[\s*Unused filler adjustment skipped\s*[-–—:]\s*translated faithfully\s*:\s*(.*?)\s*\]",
         text,
@@ -383,14 +413,15 @@ def _sanitize_translation_text(value: Any) -> str:
     if match:
         inner = _clean(match.group(1))
         if inner:
-            return inner
+            return normalize_burmese_homoglyphs(inner)
     return text
 
 
 def _foreign_letters(text: Any) -> list[str]:
     """Letters that are neither Myanmar nor Latin outside ( ): Gemini sometimes writes Georgian
     letters inside a Burmese word (ဧည့်ခန်း came back as "მისခန်း"), which the voice cannot read."""
-    bare = re.sub(r"\([^()]*\)", "", str(text or ""))
+    norm = normalize_burmese_homoglyphs(text)
+    bare = re.sub(r"\([^()]*\)", "", norm)
     return list(dict.fromkeys(
         ch for ch in bare
         if ch.isalpha() and not (0x1000 <= ord(ch) <= 0x109F or 0xA9E0 <= ord(ch) <= 0xA9FF
@@ -400,14 +431,17 @@ def _foreign_letters(text: Any) -> list[str]:
 
 
 def _drop_foreign_letters(items: list[dict[str, Any]], log: LogFn) -> list[dict[str, Any]]:
-    """Last resort after the re-asks: drop the stray letters and name the line for review."""
+    """Last resort after the re-asks: normalize homoglyphs, drop stray letters and name the line for review."""
     out = []
     for item in items:
-        letters = _foreign_letters(item.get("translation"))
+        trans = normalize_burmese_homoglyphs(item.get("translation"))
+        letters = _foreign_letters(trans)
         if letters:
-            text = _clean("".join(ch for ch in str(item["translation"]) if ch not in letters))
+            text = _clean("".join(ch for ch in trans if ch not in letters))
             log(f"⚠️ ID {int(item['id']):05d}: removed letters of another script ({' '.join(letters)}); check this line")
             item = {**item, "translation": text}
+        else:
+            item = {**item, "translation": trans}
         out.append(item)
     return out
 
@@ -1306,6 +1340,8 @@ HARD RULES:
 10. Return JSON only with top-level key "items". Each item must contain integer "id" and non-empty string "translation".
 11. NEVER return placeholders such as "...", "…", dashes, or empty text.
 12. When consecutive IDs continue a sentence or thought, maintain smooth grammatical continuity between them while ensuring each ID contains concise, natural spoken narration that fits its timing.
+13. MULTILINGUAL DIALOGUE & CINEMATIC NARRATIVE FLOW: When source dialogues come from Chinese, Korean, Thai, or English dramas/movies, do NOT generate awkward, literal word-by-word translations or disjointed sentence fragments. Seamlessly blend characters' words into engaging recap narrator commentary (e.g. formulate natural cinematic sentences like 'ဒီအချိန်မှာပဲ မကြီးရယ် ကျွန်မမှာလည်း ပိုက်ဆံမရှိပါဘူးလို့ ပြောလိုက်ပေမဲ့...' rather than detached broken fragments).
+14. STRICT BURMESE UNICODE ONLY: Always generate standard Myanmar Unicode characters (U+1000 to U+109F). NEVER generate visually similar homoglyphs from other Unicode scripts (such as Ethiopic \u1293 for 'နာ' or Georgian letters).
 """
     prompt = f"""
 {task_rules}
@@ -1488,6 +1524,8 @@ For EVERY CURRENT ID check:
 - faithful scene narration: accurately reflects the events, dialogues, and characters in the segment;
 - style adherence: maintain the requested {narrative_style.upper()} style and captivating conversational energy;
 - natural spoken colloquial style: strictly avoid formal literary 'သည်'/'သဖြင့်' bookish endings, no English/Latin words;
+- cinematic narrative flow: ensure natural, complete spoken sentences instead of awkward word-by-word literal translations or broken dialogue fragments;
+- strictly standard Myanmar Unicode characters only (no homoglyphs from Ethiopic or Georgian scripts);
 - no shifted chain where a row narrates another row;
 - no adjacent duplicate/near-duplicate outputs for different sources;
 - consistent names/pronouns throughout the story.
