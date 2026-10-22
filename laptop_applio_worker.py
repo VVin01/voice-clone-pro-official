@@ -93,9 +93,9 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Voice Clone Pro High-Speed Local GPU Worker")
     parser.add_argument(
         "--engine",
-        choices=["all", "applio", "voxcpm"],
+        choices=["all", "applio", "voxcpm", "fish_audio"],
         default=os.getenv("WORKER_ENGINE", "all").lower(),
-        help="Engine to process: 'all' (default, claims both Applio & VoxCPM), 'applio', or 'voxcpm'",
+        help="Engine to process: 'all' (default, claims both Applio & Fish Audio), 'applio', or 'voxcpm'/'fish_audio'",
     )
     parser.add_argument(
         "--interval",

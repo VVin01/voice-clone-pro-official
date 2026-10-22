@@ -8,6 +8,7 @@ storage/
 data/
 *.db
 *.sqlite
+*.bak
 .env
 logs/
 temp/

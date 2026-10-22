@@ -347,17 +347,17 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
     is_voxcpm_model = False
     if model_obj:
         is_voxcpm_model = (
-            getattr(model_obj, "pth_path", "") == "voxcpm"
-            or "voxcpm" in getattr(model_obj, "slug", "").lower()
+            getattr(model_obj, "pth_path", "") in ("voxcpm", "fish_audio")
+            or any(k in getattr(model_obj, "slug", "").lower() for k in ("voxcpm", "fish"))
         )
 
-    # ── VoxCPM flow: ask for optional reference audio first ───────────────────
+    # ── Fish Audio / VoxCPM flow: ask for optional reference audio first ─────────
     if is_voxcpm_model:
         await state.update_data(model_id=model_id)
         await state.set_state(CloneFSM.waiting_for_voxcpm_reference)
 
         ref_prompt = (
-            "🎙️ <b>VoxCPM Cloud AI — Reference Voice</b>\n\n"
+            "🎙️ <b>Fish Audio AI — Reference Voice (s2.1-pro-free)</b>\n\n"
             "အကောင်းဆုံးအသံ Clone ရရှိရန် <b>Reference Audio</b> (ကိုးကားသံ) တစ်ခု ပေးပို့ပေးပါ။\n\n"
             "📌 <b>လိုအပ်ချက်:</b>\n"
             "• WAV / MP3 / OGG ဖိုင် (၃-၃၀ စက္ကန့်)\n"
@@ -466,7 +466,7 @@ async def handle_voxcpm_reference_audio(message: Message, state: FSMContext):
 
     confirm_msg = await message.answer(
         f"✅ Reference Audio ရရှိပါပြီ <code>{clean_name}</code>\n"
-        "🚀 VoxCPM Cloud AI ဖြင့် အသံ Clone ပြုလုပ်ရန် Queue ထဲသို့ ထည့်နေပါသည်...",
+        "🚀 Fish Audio AI ဖြင့် အသံ Clone ပြုလုပ်ရန် Queue ထဲသို့ ထည့်နေပါသည်...",
         parse_mode="HTML",
     )
 

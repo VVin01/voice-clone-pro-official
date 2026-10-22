@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     # Edge TTS defaults
     default_tts_voice: str = "my-MM-ThihaNeural"
 
+    # Fish Audio Neural TTS
+    fish_audio_api_key: str = Field(default="", alias="FISH_AUDIO_API_KEY")
+    fish_audio_model: str = Field(default="s2.1-pro-free", alias="FISH_AUDIO_MODEL")
+    fish_audio_endpoint: str = Field(default="https://api.fish.audio/v1/tts", alias="FISH_AUDIO_ENDPOINT")
+
     # Recap Studio Policies
     recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # Max 10 minutes per recap credit
 
