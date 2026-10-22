@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261022_studio_luxury_v5">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261022_studio_luxury_v6">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -378,15 +378,6 @@
                                             <span>[ Original English Subtitle: "The secret is finally revealed..." ]</span>
                                         </div>
 
-                                        <!-- Interactive Touch Drag-to-Crop & Framing Handles -->
-                                        <div class="crop-drag-guide" id="crop-drag-guide">
-                                            <div class="crop-handle crop-handle-top" id="crop-handle-t"></div>
-                                            <div class="crop-handle crop-handle-bottom" id="crop-handle-b"></div>
-                                            <div class="crop-handle crop-handle-left" id="crop-handle-l"></div>
-                                            <div class="crop-handle crop-handle-right" id="crop-handle-r"></div>
-                                            <div class="crop-center-indicator" id="crop-center-indicator">↔️ Drag to Frame</div>
-                                        </div>
-
                                         <div class="movie-center-badge" id="mockup-fill-badge">
                                             <span class="badge-icon">🎬</span>
                                             <span class="badge-text">Cinema Frame Ready</span>
@@ -499,15 +490,43 @@
                                 </div>
                             </div>
 
-                            <!-- Tab Panel 3: Subtitle Presets (Yellow, White, Boxed, Neon) -->
+                            <!-- Tab Panel 3: Subtitle Presets, Lines, Size & Framing -->
                             <div class="tb-tab-panel hidden" id="tb-panel-style">
                                 <div class="style-selector-row">
-                                    <span class="style-lbl" data-i18n="sub_style_label">စာတန်းထိုး စတိုင်လ် (Subtitle Style):</span>
+                                    <span class="style-lbl" data-i18n="sub_style_label">စာတန်းထိုး အရောင် (Subtitle Style):</span>
                                     <div class="chip-options" id="sub-style-picker">
                                         <button class="style-chip active" data-style="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</button>
                                         <button class="style-chip" data-style="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</button>
                                         <button class="style-chip" data-style="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</button>
                                         <button class="style-chip" data-style="neon" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</button>
+                                    </div>
+                                </div>
+
+                                <div class="style-selector-grid-2 mt-2">
+                                    <div class="spec-col-half">
+                                        <span class="style-lbl">စာကြောင်းရေ (Lines):</span>
+                                        <div class="pill-group sm" id="sub-lines-picker-toolbar">
+                                            <button class="pill-btn active" data-lines="1">1 Line</button>
+                                            <button class="pill-btn" data-lines="2">2 Lines</button>
+                                        </div>
+                                    </div>
+                                    <div class="spec-col-half">
+                                        <span class="style-lbl">စာလုံးအရွယ် (Size):</span>
+                                        <div class="pill-group sm" id="font-size-picker-toolbar">
+                                            <button class="pill-btn" data-size="13">13pt</button>
+                                            <button class="pill-btn active" data-size="16">16pt</button>
+                                            <button class="pill-btn" data-size="19">19pt</button>
+                                            <button class="pill-btn" data-size="22">22pt</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="style-selector-row mt-2">
+                                    <span class="style-lbl">📐 ဘောင်ဖြတ်ခြင်း (Framing Crop Presets):</span>
+                                    <div class="pill-group sm" id="recap-crop-presets-toolbar">
+                                        <button class="pill-btn active" data-crop="full">📐 မူရင်း (0%)</button>
+                                        <button class="pill-btn" data-crop="cinema">🎞️ CinemaScope (12%)</button>
+                                        <button class="pill-btn" data-crop="side">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
                                     </div>
                                 </div>
                             </div>
@@ -1471,7 +1490,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261022_studio_luxury_v5"></script>
-    <script src="/static/js/app.js?v=20261022_studio_luxury_v5"></script>
+    <script src="/static/js/i18n.js?v=20261022_studio_luxury_v6"></script>
+    <script src="/static/js/app.js?v=20261022_studio_luxury_v6"></script>
 </body>
 </html>

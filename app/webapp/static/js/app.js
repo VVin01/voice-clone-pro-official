@@ -1023,9 +1023,14 @@ function setupRecapVisualEditor() {
 
         // Instant client-side video preview via Object URL
         const objectUrl = URL.createObjectURL(file);
+        const innerMovie = document.getElementById("mockup-inner-movie");
+        if (innerMovie) innerMovie.style.backgroundImage = "none";
+        if (canvas) canvas.style.backgroundImage = "none";
         if (canvasVideo) {
             canvasVideo.src = objectUrl;
             canvasVideo.classList.remove("hidden");
+            canvasVideo.style.display = "block";
+            canvasVideo.style.opacity = "1";
             canvasVideo.load();
             canvasVideo.onloadedmetadata = () => {
                 const dur = canvasVideo.duration || 60;
@@ -1035,7 +1040,7 @@ function setupRecapVisualEditor() {
                     sliderSeek.value = Math.min(5, Math.floor(dur));
                 }
                 updateSeekTimeDisplay(sliderSeek ? parseFloat(sliderSeek.value) : 5, dur);
-                canvasVideo.currentTime = Math.min(5, dur * 0.2);
+                seekCanvasFrame(Math.min(5, Math.floor(dur * 0.2)));
             };
         }
 
@@ -1167,13 +1172,21 @@ function setupRecapVisualEditor() {
     }
 
     function seekCanvasFrame(targetSec) {
-        const total = state.recapSourceDuration || 60;
+        const total = state.recapSourceDuration || (canvasVideo?.duration) || 60;
         const clamped = Math.max(0, Math.min(total, targetSec));
         if (sliderSeek) sliderSeek.value = clamped;
         updateSeekTimeDisplay(clamped, total);
 
-        if (canvasVideo && !canvasVideo.classList.contains("hidden")) {
+        if (canvasVideo && canvasVideo.src && !canvasVideo.classList.contains("hidden")) {
             canvasVideo.currentTime = clamped;
+            if (canvasVideo.paused) {
+                const playPromise = canvasVideo.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        canvasVideo.pause();
+                    }).catch(() => {});
+                }
+            }
         }
 
         seekPills.forEach(pill => {
@@ -1207,14 +1220,23 @@ function setupRecapVisualEditor() {
     if (btnPlayToggle && canvasVideo) {
         btnPlayToggle.addEventListener("click", () => {
             haptic("selection");
-            if (canvasVideo.paused) {
-                canvasVideo.play();
-                btnPlayToggle.innerText = "⏸️ ရပ်မည်";
-                btnPlayToggle.classList.add("active");
+            if (canvasVideo.src && !canvasVideo.classList.contains("hidden")) {
+                if (canvasVideo.paused) {
+                    canvasVideo.play().then(() => {
+                        btnPlayToggle.innerText = "⏸️ ရပ်မည် (Pause)";
+                        btnPlayToggle.classList.add("active");
+                    }).catch(err => {
+                        console.warn("Play error:", err);
+                    });
+                } else {
+                    canvasVideo.pause();
+                    btnPlayToggle.innerText = "⏯️ နမူနာကြည့် (Play)";
+                    btnPlayToggle.classList.remove("active");
+                }
             } else {
-                canvasVideo.pause();
-                btnPlayToggle.innerText = "⏯️ နမူနာကြည့်";
-                btnPlayToggle.classList.remove("active");
+                alert(currentLang === "my"
+                    ? "💡 တိုက်ရိုက်ဗီဒီယို (Live Video Scrubbing) ကို Frame အလိုက် ကြည့်ရှုလိုပါက အဆင့် (၁) ရှိ '📁 Video Upload' ခလုတ်ဖြင့် MP4 ဗီဒီယိုကို တိုက်ရိုက်တင်သွင်း၍ အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
+                    : "💡 Live real-time video scrubbing is active when you upload an MP4 video file.");
             }
         });
 
@@ -1223,6 +1245,10 @@ function setupRecapVisualEditor() {
                 sliderSeek.value = canvasVideo.currentTime;
                 updateSeekTimeDisplay(canvasVideo.currentTime, canvasVideo.duration);
             }
+        });
+        canvasVideo.addEventListener("ended", () => {
+            btnPlayToggle.innerText = "⏯️ နမူနာကြည့် (Play)";
+            btnPlayToggle.classList.remove("active");
         });
     }
 
@@ -1457,7 +1483,12 @@ function setupRecapVisualEditor() {
             origSub.style.display = hasActiveMedia ? "none" : "";
         }
 
-        if (state.recapThumbnailUrl) {
+        if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
+            if (innerMovie) innerMovie.style.backgroundImage = "none";
+            canvasVideo.style.display = "block";
+            canvasVideo.style.opacity = "1";
+            if (fillBadge) fillBadge.style.display = "none";
+        } else if (state.recapThumbnailUrl) {
             canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
             canvas.style.backgroundSize = "cover";
             canvas.style.backgroundPosition = "center";
@@ -1546,7 +1577,7 @@ function setupRecapVisualEditor() {
     const cropPresetBtns = document.querySelectorAll("#recap-crop-presets .pill-btn");
 
     function setCropPresetActive(presetName) {
-        cropPresetBtns.forEach(btn => {
+        document.querySelectorAll("#recap-crop-presets .pill-btn, #recap-crop-presets-toolbar .pill-btn").forEach(btn => {
             btn.classList.toggle("active", btn.getAttribute("data-crop") === presetName);
         });
     }
@@ -1621,7 +1652,7 @@ function setupRecapVisualEditor() {
         });
     }
 
-    cropPresetBtns.forEach(btn => {
+    document.querySelectorAll("#recap-crop-presets .pill-btn, #recap-crop-presets-toolbar .pill-btn").forEach(btn => {
         btn.addEventListener("click", () => {
             haptic("selection");
             const mode = btn.getAttribute("data-crop");
@@ -1740,29 +1771,62 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // 10. Font Size Picker
-    const sizePills = document.querySelectorAll("#font-size-picker .pill-btn");
-    sizePills.forEach(pill => {
+    // 10. Subtitle Live Preview Renderer
+    function updateSubtitleVisualPreview() {
+        const previewText = document.getElementById("preview-sub-text-el");
+        const previewBox = document.getElementById("preview-sub-box");
+        if (!previewText || !previewBox) return;
+
+        const lines = state.recapLines || 1;
+        const size = state.recapFontSize || 16;
+
+        // Font scaling for miniature live canvas mockup
+        const fontScaleMap = { 13: 11, 16: 13, 19: 15, 22: 17 };
+        const px = fontScaleMap[size] || 13;
+        previewText.style.fontSize = `${px}px`;
+
+        if (lines === 1) {
+            previewBox.classList.remove("two-lines");
+            previewBox.classList.add("one-line");
+            previewText.innerHTML = '"အခုတော့ အစီအစဉ် စတင်ပါပြီ..."';
+            previewText.style.whiteSpace = "nowrap";
+            previewText.style.lineHeight = "1.2";
+        } else {
+            previewBox.classList.remove("one-line");
+            previewBox.classList.add("two-lines");
+            previewText.innerHTML = '"အခုတော့ ကျွန်တော်တို့ရဲ့<br>အစီအစဉ် စတင်ပါပြီ..."';
+            previewText.style.whiteSpace = "normal";
+            previewText.style.lineHeight = "1.3";
+        }
+    }
+
+    // 11. Font Size Picker (Synchronized across toolbar & advanced settings)
+    function syncSubtitleFontSize(sizeVal) {
+        state.recapFontSize = parseInt(sizeVal || "16");
+        document.querySelectorAll("#font-size-picker .pill-btn, #font-size-picker-toolbar .pill-btn").forEach(p => {
+            p.classList.toggle("active", parseInt(p.getAttribute("data-size")) === state.recapFontSize);
+        });
+        updateSubtitleVisualPreview();
+    }
+    document.querySelectorAll("#font-size-picker .pill-btn, #font-size-picker-toolbar .pill-btn").forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
-            sizePills.forEach(p => p.classList.remove("active"));
-            pill.classList.add("active");
-            state.recapFontSize = parseInt(pill.getAttribute("data-size") || "16");
-            const previewText = document.getElementById("preview-sub-text-el");
-            if (previewText) {
-                previewText.style.fontSize = `${state.recapFontSize * 0.85}px`;
-            }
+            syncSubtitleFontSize(pill.getAttribute("data-size"));
         });
     });
 
-    // 11. Subtitle Lines Picker
-    const linePills = document.querySelectorAll("#sub-lines-picker .pill-btn");
-    linePills.forEach(pill => {
+    // 12. Subtitle Lines Picker (Synchronized across toolbar & advanced settings)
+    function syncSubtitleLines(linesVal) {
+        state.recapLines = parseInt(linesVal || "1");
+        document.querySelectorAll("#sub-lines-picker .pill-btn, #sub-lines-picker-toolbar .pill-btn").forEach(p => {
+            p.classList.toggle("active", parseInt(p.getAttribute("data-lines")) === state.recapLines);
+        });
+        updateSubtitleVisualPreview();
+    }
+    document.querySelectorAll("#sub-lines-picker .pill-btn, #sub-lines-picker-toolbar .pill-btn").forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
-            linePills.forEach(p => p.classList.remove("active"));
-            pill.classList.add("active");
-            state.recapLines = parseInt(pill.getAttribute("data-lines") || "1");
+            syncSubtitleLines(pill.getAttribute("data-lines"));
         });
     });
 
@@ -1786,10 +1850,16 @@ function setupRecapVisualEditor() {
     if (btnAnalyze) {
         btnAnalyze.addEventListener("click", async () => {
             const urlInput = document.getElementById("recap-url-input");
-            const url = urlInput ? urlInput.value.trim() : "";
+            let url = urlInput ? urlInput.value.trim() : "";
             if (!url) {
                 alert(t("toast_empty_url"));
                 return;
+            }
+            // Auto extract clean URL from Douyin/TikTok share text
+            const urlMatch = url.match(/https?:\/\/[^\s]+/i);
+            if (urlMatch) {
+                url = urlMatch[0];
+                if (urlInput) urlInput.value = url;
             }
             haptic("medium");
             btnAnalyze.disabled = true;
@@ -1951,7 +2021,7 @@ function setupRecapVisualEditor() {
         const handleL = document.getElementById("crop-handle-l");
         const handleR = document.getElementById("crop-handle-r");
         const innerMovie = document.getElementById("mockup-inner-movie");
-        if (!innerMovie) return;
+        if (!innerMovie || (!handleT && !handleB && !handleL && !handleR)) return;
 
         function attachHandleDrag(handle, onDelta) {
             if (!handle) return;
@@ -2075,6 +2145,7 @@ function setupRecapVisualEditor() {
 
     // Initial canvas mockup sync
     updateCanvasMockupVisuals();
+    updateSubtitleVisualPreview();
 }
 
 // ── Streamlined Studio Global Window Helpers ─────────────────────────────────
@@ -2107,7 +2178,11 @@ window.toggleAdvancedRecapStudio = function() {
 
 async function handleStartRecap() {
     const urlInput = document.getElementById("recap-url-input");
-    const url = state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : "");
+    let url = state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : "");
+    if (!state.uploadedVideoPath && url) {
+        const urlMatch = url.match(/https?:\/\/[^\s]+/i);
+        if (urlMatch) url = urlMatch[0];
+    }
     if (!url) {
         alert(t("toast_empty_url"));
         return;

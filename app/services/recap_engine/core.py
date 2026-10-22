@@ -1489,7 +1489,14 @@ def apply_production_overlays(
 
         # Bind authentic Myanmar Unicode standard font (Pyidaungsu) for accurate complex script text shaping
         sub_font = str(overlays.get("subtitles_font", "Pyidaungsu"))
-        sub_size = int(overlays.get("subtitles_font_size", 16))
+        sub_lines = int(overlays.get("sub_lines", 1))
+        raw_size = int(overlays.get("subtitles_font_size", 16))
+        # WrapStyle=2 is NO WRAPPING (strictly keeps 1 line). WrapStyle=0 is smart multi-line wrapping.
+        wrap_style = 2 if sub_lines == 1 else 0
+        if ch > cw:  # 9:16 Vertical
+            sub_size = max(9, min(22, int(round(raw_size * 0.72)))) if sub_lines == 1 else max(10, min(24, raw_size))
+        else:
+            sub_size = max(11, min(26, raw_size))
         # Distance from bottom of canvas to bottom of picture
         bottom_pad = ch - (oy + ph)
         if "sub_y" in overlays and overlays["sub_y"] is not None:
@@ -1520,7 +1527,7 @@ def apply_production_overlays(
         out = "vsub"
         graph.append(
             f"{current}subtitles='{sub_esc}'{fonts_arg}:force_style='Fontname={sub_font},FontSize={sub_size},"
-            f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=16,MarginR=16,Alignment=2,WrapStyle=0'[{out}]"
+            f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=20,MarginR=20,Alignment=2,WrapStyle={wrap_style}'[{out}]"
         )
         current = f"[{out}]"
 
@@ -1697,8 +1704,21 @@ def extract_preview_with_overlays(
         srt_temp = temp_dir / "preview_sample.srt"
         srt_temp.write_text(f"1\n00:00:00,000 --> 00:00:10,000\n{sample}\n", encoding="utf-8")
         sub_esc = srt_temp.resolve().as_posix().replace(":", r"\:")
-        sub_font = str(overlays.get("subtitles_font", "Myanmar Text"))
-        sub_size = int(overlays.get("subtitles_font_size", 16))
+        sub_font = str(overlays.get("subtitles_font", "Pyidaungsu"))
+        fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+        fonts_arg = ""
+        if fonts_dir.is_dir():
+            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:")
+            fonts_arg = f":fontsdir='{fonts_dir_esc}'"
+
+        sub_lines = int(overlays.get("sub_lines", 1))
+        raw_size = int(overlays.get("subtitles_font_size", 16))
+        wrap_style = 2 if sub_lines == 1 else 0
+        if ch > cw:
+            sub_size = max(9, min(22, int(round(raw_size * 0.72)))) if sub_lines == 1 else max(10, min(24, raw_size))
+        else:
+            sub_size = max(11, min(26, raw_size))
+
         bottom_pad = ch - (oy + ph)
 
         if "sub_y" in overlays and overlays["sub_y"] is not None:
@@ -1729,8 +1749,8 @@ def extract_preview_with_overlays(
         shad = st["shadow"]
         out = "vsub"
         graph.append(
-            f"{current}subtitles='{sub_esc}':force_style='Fontname={sub_font},FontSize={sub_size},"
-            f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=16,MarginR=16,Alignment=2,WrapStyle=0'[{out}]"
+            f"{current}subtitles='{sub_esc}'{fonts_arg}:force_style='Fontname={sub_font},FontSize={sub_size},"
+            f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=20,MarginR=20,Alignment=2,WrapStyle={wrap_style}'[{out}]"
         )
         current = f"[{out}]"
 
@@ -2157,9 +2177,9 @@ class EdgeSmartSync:
                 ch_val = int(layout.get("ch", 1080))
                 is_vert = (ch_val > cw_val) or (self.output_ratio == "9:16")
                 if lines_per_cue == 1:
-                    max_chars = 28 if is_vert else 36
+                    max_chars = 24 if is_vert else 32
                 else:
-                    max_chars = 54 if is_vert else 72
+                    max_chars = 48 if is_vert else 68
                 sub_cues = split_burmese_subtitle_cues(
                     raw_st, raw_en, txt,
                     max_cue_chars=max_chars,

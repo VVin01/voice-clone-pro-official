@@ -1111,11 +1111,30 @@ textarea#voice-text-input:focus {
 
 .preview-sub-box {
     position: absolute;
-    left: 8%;
-    right: 8%;
+    left: 4%;
+    right: 4%;
     text-align: center;
     transition: bottom 0.1s;
-    z-index: 4;
+    z-index: 5;
+    pointer-events: auto;
+}
+
+.preview-sub-box.one-line {
+    white-space: nowrap;
+}
+
+.preview-sub-box.one-line .preview-sub-text {
+    white-space: nowrap !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    max-width: 95%;
+}
+
+.preview-sub-box.two-lines .preview-sub-text {
+    white-space: normal !important;
+    display: inline-block;
+    max-width: 95%;
 }
 
 .preview-sub-text {
@@ -1204,6 +1223,17 @@ textarea#voice-text-input:focus {
     color: var(--text-secondary);
     display: block;
     margin-bottom: 8px;
+}
+
+.style-selector-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.spec-col-half {
+    display: flex;
+    flex-direction: column;
 }
 
 .chip-options {
