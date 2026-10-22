@@ -1329,15 +1329,43 @@ textarea#voice-text-input:focus {
 .pricing-card {
     position: relative;
     overflow: hidden;
-    padding: 18px;
-    border: 1px solid var(--card-border);
-    transition: transform 0.2s, border-color 0.2s;
+    padding: 22px 20px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(13, 17, 27, 0.82);
+    backdrop-filter: blur(16px);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+#card-plan-voice {
+    border-color: rgba(56, 189, 248, 0.28);
+    background: linear-gradient(160deg, rgba(14, 28, 48, 0.85), rgba(10, 15, 28, 0.9));
+}
+
+#card-plan-voice:hover {
+    border-color: rgba(56, 189, 248, 0.65);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 24px rgba(56, 189, 248, 0.22);
+}
+
+#card-plan-recap {
+    border-color: rgba(249, 115, 22, 0.32);
+    background: linear-gradient(160deg, rgba(38, 22, 14, 0.85), rgba(15, 12, 24, 0.9));
+}
+
+#card-plan-recap:hover {
+    border-color: rgba(249, 115, 22, 0.7);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 24px rgba(249, 115, 22, 0.25);
 }
 
 .pricing-card.featured-master {
-    border-color: rgba(245, 158, 11, 0.6);
-    box-shadow: 0 0 28px rgba(245, 158, 11, 0.2);
-    background: linear-gradient(135deg, rgba(26, 34, 52, 0.9), rgba(18, 24, 38, 0.85));
+    border-color: rgba(245, 158, 11, 0.7);
+    box-shadow: 0 0 35px rgba(245, 158, 11, 0.22), 0 14px 40px rgba(0, 0, 0, 0.6);
+    background: linear-gradient(145deg, rgba(32, 26, 18, 0.92), rgba(16, 20, 32, 0.95));
+}
+
+.pricing-card.featured-master:hover {
+    border-color: rgba(251, 191, 36, 0.95);
+    box-shadow: 0 0 45px rgba(245, 158, 11, 0.38), 0 18px 48px rgba(0, 0, 0, 0.7);
 }
 
 .plan-header-badge {

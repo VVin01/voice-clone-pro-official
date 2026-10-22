@@ -1696,15 +1696,16 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "id": "voice_studio_pro",
                 "name": "🎙️ Voice Clone Studio Pro" if is_my else "🎙️ Voice Clone Studio Pro",
                 "category": "voice",
-                "allocation": "300 Usable Minutes (5 Hours)" if is_my else "300 Usable Minutes (5 Hours)",
-                "price": "25,000",
+                "allocation": "250 Usable Minutes (4 Hours+)" if is_my else "250 Usable Minutes (4 Hours+)",
+                "price": "45,000",
                 "currency": "MMK",
                 "features": [
-                    "VoxCPM Cloud AI အသံ ၁၂ မျိုး အသုံးပြုခွင့်" if is_my else "12 VoxCPM Cloud AI Personas (6M / 6F)",
-                    "Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)" if is_my else "Custom Voice Clone (Audio Sample Upload)",
-                    "Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်" if is_my else "Applio RVC Local GPU Trained Models",
-                    "High-Speed Priority Cloud Processing Queue" if is_my else "High-Speed Priority Cloud Processing Queue",
-                    "အရည်အသွေးမြင့် 24kHz PCM WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct 24kHz PCM WAV Audio Downloads",
+                    "VoxCPM Cloud AI မြန်မာအသံ ၁၂ မျိုး (၆ ကျား / ၆ မ) အပြည့်အဝ အသုံးပြုခွင့်" if is_my else "12 VoxCPM Cloud AI Personas (6M / 6F)",
+                    "Custom Voice Clone (မိမိနှစ်သက်ရာ အသံဖိုင် တင်၍ အသံတူပွားယူခွင့်)" if is_my else "Custom Voice Clone (Audio Sample Upload)",
+                    "Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့် (သဘာဝကျကျ အသံထွက်)" if is_my else "Applio RVC Local GPU Trained Models",
+                    "High-Speed Priority Cloud Processing Queue (စောင့်ဆိုင်းစရာမလို)" if is_my else "High-Speed Priority Cloud Processing Queue",
+                    "အရည်အသွေးမြင့် 24kHz PCM Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct 24kHz PCM Lossless WAV Audio Downloads",
+                    "တစ်ကြိမ်လျှင် စာလုံးရေ ၅၀၀၀ အထိ အကန့်အသတ်မရှိ ထုတ်လုပ်နိုင်ခွင့်" if is_my else "5,000 Chars per Generation with Unlimited Daily Quota",
                 ],
                 "badge": "Voice Creators 🔥",
             },
@@ -1712,33 +1713,33 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "id": "recap_studio_pro",
                 "name": "🎬 Movie Recap Studio Pro" if is_my else "🎬 Movie Recap Studio Pro",
                 "category": "recap",
-                "allocation": "60 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "60 Movie Recap Credits (Max 10 mins/video)",
-                "price": "35,000",
+                "allocation": "25 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "25 Movie Recap Credits (Max 10 mins/video)",
+                "price": "75,000",
                 "currency": "MMK",
                 "features": [
-                    "Full HD 1080p Movie Recap ဗီဒီယို (၆၀) ကား (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "60 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
-                    "ဇာတ်လမ်းစတိုင် ၅ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်)" if is_my else "5 Narration Styles (Viral Hook, Dramatic, POV)",
-                    "စာတန်းထိုးစတိုင် ၄ မျိုး (Classic Gold, White, Dark Box, Neon)" if is_my else "4 Subtitle Presets (Gold, White, Dark Box, Neon)",
-                    "မူရင်းစာတန်းဖျက် Smart Blur (Y, H စိတ်ကြိုက်ချိန်ညှိ)" if is_my else "Anti-Copyright Custom Blur Box (Y, H Sliders)",
-                    "Channel Watermark Logo ထည့်သွင်းခွင့်" if is_my else "Custom Channel Logo Watermark Integration",
+                    "Full HD 1080p Movie Recap ဗီဒီယို (၂၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
+                    "🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)" if is_my else "100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
+                    "ဇာတ်လမ်းစတိုင် ၅ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်) & ရွှေရောင်စာတန်းထိုး ၄ မျိုး" if is_my else "5 Narration Styles (Viral Hook, Dramatic, POV) & 4 Subtitle Presets",
+                    "Watermark လုံးဝမပါ (Clean 1080p) & Channel Logo သီးသန့်ထည့်ခွင့်" if is_my else "Zero Watermark (Clean 1080p) & Custom Channel Logo Branding",
+                    "Multi-Threaded High-Speed Video Rendering Node" if is_my else "Multi-Threaded High-Speed Video Rendering Node",
                 ],
-                "badge": "Video Editors 🎬",
+                "badge": "Cinema Suite 🎬",
             },
             {
                 "id": "all_in_one_master",
                 "name": "👑 All-in-One Master Suite" if is_my else "👑 All-in-One Master Suite",
                 "category": "bundle",
-                "allocation": "600 Mins + 150 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "600 Mins + 150 Recap Credits (Max 10 mins/video)",
-                "price": "55,000",
+                "allocation": "500 Mins + 60 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "500 Mins + 60 Recap Credits (Max 10 mins/video)",
+                "price": "125,000",
                 "currency": "MMK",
                 "features": [
-                    "Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၆၀၀ - ၁၀ နာရီ)" if is_my else "Full Voice Clone Studio Pro (600 Mins)",
-                    "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၁၅၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Movie Recap Studio Pro (150 Videos - Max 10 mins/video)",
-                    "မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း" if is_my else "1 Free Custom Trained Voice Model Slot",
-                    "Dedicated High-Speed Processing Server" if is_my else "Dedicated High-Speed Cloud Node Priority",
-                    "Commercial Copyright Safe & 24/7 VIP Direct Support" if is_my else "Commercial Copyright Safe & 24/7 VIP Support",
+                    "Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော် အသံသွင်းခွင့်)" if is_my else "Full Voice Clone Studio Pro (500 Mins - 8+ Hours)",
+                    "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Movie Recap Studio Pro (60 Full HD Videos - Max 10 mins/video)",
+                    "👑 မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း (Personal GPU Train)" if is_my else "1 Free Custom Trained Voice Model Slot (Dedicated GPU Training)",
+                    "🛡️ 100% Commercial Copyright Safe & Monetization Ready" if is_my else "100% Commercial Copyright Safe & Monetization Ready",
+                    "Dedicated High-Speed Node Priority & 24/7 VIP Direct 1-on-1 Support" if is_my else "Dedicated High-Speed Cloud Node & 24/7 VIP Direct 1-on-1 Support",
                 ],
-                "badge": "အကောင်းဆုံး တန်ဖိုး 💎" if is_my else "Best Value Master 💎",
+                "badge": "Agency Master Suite 👑" if is_my else "Agency Master Suite 👑",
             },
         ],
         "payment_accounts": [
@@ -1782,9 +1783,9 @@ async def submit_payment_slip(
     if "recap" in package_code:
         minutes = 0
     elif "all_in_one" in package_code or "master" in package_code:
-        minutes = 600
+        minutes = 500
     else:
-        minutes = 300
+        minutes = 250
 
     pay_req = PaymentRequest(
         id=str(uuid.uuid4()),
@@ -2258,11 +2259,11 @@ async def approve_payment_slip(
     if target_user:
         target_user.account_category = AccountCategory.PURCHASED.value
         if "recap" in p_req.package_code:
+            recap_added = 25
+            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 25
+        elif "all_in_one" in p_req.package_code or "master" in p_req.package_code:
             recap_added = 60
             target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 60
-        elif "all_in_one" in p_req.package_code or "master" in p_req.package_code:
-            recap_added = 150
-            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 150
 
     # Credit minutes
     if p_req.minutes > 0:

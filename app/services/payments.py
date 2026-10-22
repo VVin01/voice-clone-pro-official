@@ -13,9 +13,9 @@ from app.services.ledger import credit_purchased_minutes, get_or_create_user
 logger = logging.getLogger(__name__)
 
 DEFAULT_PRICING_PLANS = [
-    {"code": "MIN_10", "minutes": 10, "price_mmk": 5000, "sort_order": 1},
-    {"code": "MIN_30", "minutes": 30, "price_mmk": 15000, "sort_order": 2},
-    {"code": "MIN_60", "minutes": 60, "price_mmk": 27000, "sort_order": 3},
+    {"code": "MIN_10", "minutes": 10, "price_mmk": 8000, "sort_order": 1},
+    {"code": "MIN_30", "minutes": 30, "price_mmk": 20000, "sort_order": 2},
+    {"code": "MIN_60", "minutes": 60, "price_mmk": 38000, "sort_order": 3},
 ]
 
 
