@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
+    nodejs \
     fonts-sil-padauk \
     fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
