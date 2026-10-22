@@ -389,7 +389,7 @@ class MediaDownloader:
         self.download_dir = download_dir or os.path.join(os.getcwd(), "downloads")
         os.makedirs(self.download_dir, exist_ok=True)
 
-    def _get_base_opts(self) -> Dict[str, Any]:
+    def _get_base_opts(self, target_url: str = "") -> Dict[str, Any]:
         """Common yt-dlp options for reliable extraction, JS challenge solving, and 403 bypass."""
         opts = {
             'quiet': True,
@@ -405,6 +405,11 @@ class MediaDownloader:
                 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
             },
         }
+
+        target_lower = str(target_url or "").lower()
+        if "douyin.com" in target_lower or "iesdouyin.com" in target_lower:
+            opts['http_headers']['Referer'] = 'https://www.douyin.com/'
+
         # Enable Node.js for solving YouTube JS / n challenges if installed or available via package
         node_bin = shutil.which("node") or shutil.which("nodejs")
         if not node_bin:
@@ -427,42 +432,62 @@ class MediaDownloader:
             opts['js_runtimes'] = {'node': {'path': node_bin}}
             logger.info(f"Using Node.js runtime for YouTube JS challenges: {node_bin}")
 
-        # Automatic YouTube & Douyin cookies loading (from env var YOUTUBE_COOKIES, DOUYIN_COOKIES, COOKIES_FILE, or cookies.txt)
+        # Intelligent Multi-Platform Cookies Loading (YouTube & Douyin combined support)
         cookie_path = None
-        cookies_env = os.getenv("YOUTUBE_COOKIES") or os.getenv("DOUYIN_COOKIES") or os.getenv("COOKIES_FILE") or os.getenv("COOKIES_CONTENT")
-        if cookies_env:
-            if os.path.isfile(cookies_env):
-                cookie_path = os.path.abspath(cookies_env)
-            elif "# Netscape" in cookies_env or "youtube.com" in cookies_env or ".google.com" in cookies_env or "douyin.com" in cookies_env:
-                try:
-                    data_dir = os.path.join(os.getcwd(), "data")
-                    os.makedirs(data_dir, exist_ok=True)
-                    tmp_cookie = os.path.join(data_dir, "auth_cookies.txt")
-                    with open(tmp_cookie, "w", encoding="utf-8") as cf:
-                        cf.write(cookies_env.strip())
-                    cookie_path = tmp_cookie
-                except Exception as ce:
-                    try:
-                        import tempfile
-                        tmp_cookie = os.path.join(tempfile.gettempdir(), "auth_cookies.txt")
-                        with open(tmp_cookie, "w", encoding="utf-8") as cf:
-                            cf.write(cookies_env.strip())
-                        cookie_path = tmp_cookie
-                    except Exception as ce2:
-                        logger.warning(f"Failed to write authentication cookies from env: {ce2}")
+        yt_env = (os.getenv("YOUTUBE_COOKIES") or "").strip()
+        dy_env = (os.getenv("DOUYIN_COOKIES") or "").strip()
+        general_env = (os.getenv("COOKIES_FILE") or os.getenv("COOKIES_CONTENT") or "").strip()
 
-        if not cookie_path:
+        combined_cookies = []
+        if dy_env and ("# Netscape" in dy_env or "douyin.com" in dy_env):
+            combined_cookies.append(dy_env)
+        if yt_env and ("# Netscape" in yt_env or "youtube.com" in yt_env or ".google.com" in yt_env):
+            combined_cookies.append(yt_env)
+        if general_env and ("# Netscape" in general_env):
+            combined_cookies.append(general_env)
+
+        if combined_cookies:
+            try:
+                data_dir = os.path.join(os.getcwd(), "data")
+                os.makedirs(data_dir, exist_ok=True)
+                unified_cookie = os.path.join(data_dir, "auth_cookies.txt")
+                with open(unified_cookie, "w", encoding="utf-8") as cf:
+                    cf.write("# Netscape HTTP Cookie File\n\n" + "\n\n".join(combined_cookies) + "\n")
+                cookie_path = unified_cookie
+            except Exception as ce:
+                try:
+                    import tempfile
+                    tmp_cookie = os.path.join(tempfile.gettempdir(), "auth_cookies.txt")
+                    with open(tmp_cookie, "w", encoding="utf-8") as cf:
+                        cf.write("# Netscape HTTP Cookie File\n\n" + "\n\n".join(combined_cookies) + "\n")
+                    cookie_path = tmp_cookie
+                except Exception as ce2:
+                    logger.warning(f"Failed to write authentication cookies from env: {ce2}")
+
+        if not cookie_path or not os.path.isfile(cookie_path):
             repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            for cand in [
+            cands = []
+            if "douyin" in target_lower:
+                cands += [
+                    os.path.join(os.getcwd(), "douyin_cookies.txt"),
+                    os.path.join(os.getcwd(), "data", "douyin_cookies.txt"),
+                    os.path.join(repo_root, "douyin_cookies.txt"),
+                ]
+            elif "youtube" in target_lower or "youtu.be" in target_lower:
+                cands += [
+                    os.path.join(os.getcwd(), "youtube_cookies.txt"),
+                    os.path.join(os.getcwd(), "data", "youtube_cookies.txt"),
+                    os.path.join(repo_root, "youtube_cookies.txt"),
+                ]
+            cands += [
                 os.path.join(os.getcwd(), "cookies.txt"),
                 os.path.join(os.getcwd(), "data", "cookies.txt"),
-                os.path.join(os.getcwd(), "youtube_cookies.txt"),
-                os.path.join(os.getcwd(), "data", "youtube_cookies.txt"),
                 os.path.join(os.getcwd(), "douyin_cookies.txt"),
                 os.path.join(os.getcwd(), "data", "douyin_cookies.txt"),
                 os.path.join(repo_root, "cookies.txt"),
                 os.path.join(repo_root, "data", "cookies.txt"),
-            ]:
+            ]
+            for cand in cands:
                 if os.path.isfile(cand):
                     cookie_path = cand
                     break
@@ -530,7 +555,7 @@ class MediaDownloader:
         if is_local_media(url):
             return self.get_local_info(url)
         expanded_url = unshorten_url(url)
-        opts = self._get_base_opts()
+        opts = self._get_base_opts(expanded_url)
         opts['extract_flat'] = False
 
         try:
@@ -626,7 +651,7 @@ class MediaDownloader:
                 "best"
             )
 
-        opts = self._get_base_opts()
+        opts = self._get_base_opts(expanded_url)
         opts.update({
             'format': fmt,
             'outtmpl': outtmpl,
@@ -717,7 +742,7 @@ class MediaDownloader:
 
         outtmpl = os.path.join(dest_dir, "%(id)s_%(title).50s.%(ext)s")
 
-        opts = self._get_base_opts()
+        opts = self._get_base_opts(expanded_url)
         opts.update({
             'format': 'bestaudio/best',
             'outtmpl': outtmpl,
@@ -780,7 +805,7 @@ class MediaDownloader:
         expanded_url = unshorten_url(url)
 
         outtmpl = os.path.join(dest_dir, "transcribe_%(id)s.%(ext)s")
-        opts = self._get_base_opts()
+        opts = self._get_base_opts(expanded_url)
         opts.update({
             'format': 'ba/b',
             'outtmpl': outtmpl,
@@ -841,7 +866,7 @@ class MediaDownloader:
 
         outtmpl = os.path.join(dest_dir, "%(id)s.%(ext)s")
 
-        opts = self._get_base_opts()
+        opts = self._get_base_opts(expanded_url)
         opts.update({
             'skip_download': True,
             'writesubtitles': True,

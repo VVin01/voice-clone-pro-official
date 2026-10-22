@@ -16,9 +16,10 @@ outputs/
 check_job.py
 reset_recap.py
 
-
 audit_system.py
 
-
 cookies.txt
+douyin_cookies.txt
+youtube_cookies.txt
+*cookies.txt
 downloads/
