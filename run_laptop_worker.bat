@@ -26,7 +26,9 @@ echo.
 
 cd /d "%~dp0"
 
-if exist ".venv\Scripts\python.exe" (
+if exist "C:\Users\awint\AppData\Local\Programs\Python\Python310\python.exe" (
+    "C:\Users\awint\AppData\Local\Programs\Python\Python310\python.exe" laptop_applio_worker.py --engine %ENGINE_ARG%
+) else if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" laptop_applio_worker.py --engine %ENGINE_ARG%
 ) else (
     python laptop_applio_worker.py --engine %ENGINE_ARG%
