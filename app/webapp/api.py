@@ -557,9 +557,10 @@ async def download_job_audio(
         target_path = Path(job.result_path)
     else:
         outputs_dir = settings.storage_root / "outputs"
-        matches = list(outputs_dir.glob(f"{job.id}*"))
-        if matches and matches[0].is_file():
-            target_path = matches[0]
+        if outputs_dir.is_dir():
+            matches = list(outputs_dir.glob(f"{job.id}*"))
+            if matches and matches[0].is_file():
+                target_path = matches[0]
 
     if not target_path or not target_path.is_file():
         # Also check local output variations or storage subdirs
@@ -1360,6 +1361,35 @@ async def send_voice_to_telegram(
 
 
 # ── 5.1. 24-Hour Job History & Lifecycle Management ─────────────────────────
+def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str] = None) -> bool:
+    """Safely check if the completed job's output media file exists on container disk."""
+    try:
+        if is_recap:
+            job_dir = settings.storage_root / "recap_output" / job_id
+            v_cand = job_dir / f"{job_id}_final.mp4"
+            if v_cand.is_file():
+                return True
+            if result_path and Path(result_path).is_file():
+                return True
+            return False
+        else:
+            if result_path and Path(result_path).is_file():
+                return True
+            outputs_dir = settings.storage_root / "outputs"
+            if outputs_dir.is_dir():
+                matches = list(outputs_dir.glob(f"{job_id}*"))
+                if matches and matches[0].is_file():
+                    return True
+            for cand_dir in [settings.storage_root / "outputs", settings.storage_root / "temp", settings.storage_root / "voices", settings.storage_root / "recap_output"]:
+                if cand_dir.is_dir():
+                    m = list(cand_dir.glob(f"*{job_id}*"))
+                    if m and m[0].is_file():
+                        return True
+            return False
+    except Exception:
+        return False
+
+
 @api_router.get("/history")
 async def get_user_history(
     user: User = Depends(get_current_user),
@@ -1388,6 +1418,12 @@ async def get_user_history(
         deliverables = {}
         download_url = None
         is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_"))
+
+        # Verify whether output file actually exists on current container disk
+        file_exists = False
+        if j.status == JobStatus.SUCCESS.value:
+            file_exists = check_job_file_exists(j.id, is_recap, j.result_path)
+        is_expired = bool(j.status == JobStatus.SUCCESS.value and not file_exists)
 
         if is_recap:
             recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
@@ -1421,6 +1457,8 @@ async def get_user_history(
             "download_url": download_url,
             "deliverables": deliverables,
             "error_message": j.error_message,
+            "file_exists": file_exists,
+            "is_expired": is_expired,
         })
 
     return {
@@ -1493,6 +1531,12 @@ async def get_admin_global_history(
         mins_ago = int((time.time() - created_ts) // 60)
         time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
 
+        # Verify whether output file actually exists on current container disk
+        file_exists = False
+        if job.status == JobStatus.SUCCESS.value:
+            file_exists = check_job_file_exists(job.id, is_recap, job.result_path)
+        is_expired = bool(job.status == JobStatus.SUCCESS.value and not file_exists)
+
         deliverables = {}
         download_url = None
         if is_recap:
@@ -1525,6 +1569,8 @@ async def get_admin_global_history(
             "download_url": download_url,
             "deliverables": deliverables,
             "error_message": job.error_message,
+            "file_exists": file_exists,
+            "is_expired": is_expired,
         })
 
     return {
@@ -1965,6 +2011,12 @@ async def get_admin_queue(
 
         is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_") or j.engine == "recap")
 
+        # Verify whether output file actually exists on current container disk
+        file_exists = False
+        if j.status == JobStatus.SUCCESS.value:
+            file_exists = check_job_file_exists(j.id, is_recap, j.result_path)
+        is_expired = bool(j.status == JobStatus.SUCCESS.value and not file_exists)
+
         download_url = None
         deliverables = {}
         if is_recap:
@@ -2002,6 +2054,8 @@ async def get_admin_queue(
             "download_url": download_url,
             "deliverables": deliverables,
             "error_message": j.error_message,
+            "file_exists": file_exists,
+            "is_expired": is_expired,
         })
 
     worker_info = await _get_laptop_worker_status(db)

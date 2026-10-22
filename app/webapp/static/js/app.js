@@ -2036,7 +2036,9 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             const videoUrl = deliverables.video || downloadUrl;
             bodyEl.innerHTML = `
                 <div class="modal-video-wrapper">
-                    <video id="admin-modal-video" src="${videoUrl}" controls autoplay playsinline class="admin-modal-player-video">
+                    <video id="admin-modal-video" src="${videoUrl}" controls autoplay playsinline class="admin-modal-player-video"
+                           onerror="handleAdminMediaError(this, '${jobId}', '${jobType}')"
+                           onloadedmetadata="handleAdminMediaLoaded(this)">
                         Browser does not support HTML5 video.
                     </video>
                 </div>
@@ -2046,7 +2048,9 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             bodyEl.innerHTML = `
                 <div class="modal-audio-wrapper">
                     <div class="modal-audio-icon">🎧</div>
-                    <audio id="admin-modal-audio" src="${audioUrl}" controls autoplay class="admin-modal-player-audio">
+                    <audio id="admin-modal-audio" src="${audioUrl}" controls autoplay class="admin-modal-player-audio"
+                           onerror="handleAdminMediaError(this, '${jobId}', '${jobType}')"
+                           onloadedmetadata="handleAdminMediaLoaded(this)">
                         Browser does not support HTML5 audio.
                     </audio>
                 </div>
@@ -2096,6 +2100,50 @@ function closeAdminMediaModal() {
         bodyEl.innerHTML = "";
     }
     modal.classList.add("hidden");
+}
+
+function handleAdminMediaError(mediaEl, jobId, jobType) {
+    console.warn("Admin media failed to load (expired/missing on server):", jobId);
+    const wrapper = mediaEl.parentElement;
+    if (wrapper) {
+        mediaEl.style.display = "none";
+        const oldErr = wrapper.querySelector(".admin-media-err-banner");
+        if (!oldErr) {
+            const errDiv = document.createElement("div");
+            errDiv.className = "admin-media-err-banner mt-3 p-3 text-center";
+            errDiv.style.borderRadius = "12px";
+            errDiv.style.border = "1px solid rgba(239, 68, 68, 0.35)";
+            errDiv.style.background = "rgba(239, 68, 68, 0.08)";
+            errDiv.innerHTML = `
+                <div style="font-size: 1.6rem; margin-bottom: 4px;">⌛</div>
+                <strong style="color: #fca5a5; font-size: 13px;">အသံ/ဗီဒီယို ဖိုင် သက်တမ်းကုန်ဆုံးသွားပါပြီ (Media Expired / 404)</strong>
+                <p class="text-xs text-muted mt-1" style="line-height: 1.5;">
+                    ဤအလုပ်သည် ၂၄ နာရီကျော်လွန်သွားပြီဖြစ်၍ (သို့မဟုတ် Cloud Server အသစ် Deploy တင်ချိန်တွင် ယာယီ Disk Storage ဖိုင် ရှင်းလင်းခံရသဖြင့်) အသံဖိုင် မရှိတော့ပါ။
+                </p>
+                <div class="mt-2" style="display: flex; gap: 8px; justify-content: center;">
+                    <button class="btn mini-btn secondary-btn" onclick="closeAdminMediaModal(); adminRetryJob('${jobId}');">
+                        🔄 ပြန်လည် ထုတ်လုပ်မည် (Regenerate / Retry)
+                    </button>
+                </div>
+            `;
+            wrapper.appendChild(errDiv);
+        }
+    }
+}
+
+function handleAdminMediaLoaded(mediaEl) {
+    const wrapper = mediaEl.parentElement;
+    if (wrapper && mediaEl.duration && !isNaN(mediaEl.duration)) {
+        let durDiv = wrapper.querySelector(".admin-media-dur-badge");
+        if (!durDiv) {
+            durDiv = document.createElement("div");
+            durDiv.className = "admin-media-dur-badge text-xs text-muted mt-2 text-center";
+            wrapper.appendChild(durDiv);
+        }
+        const m = Math.floor(mediaEl.duration / 60);
+        const s = Math.floor(mediaEl.duration % 60);
+        durDiv.innerText = `⏱️ အသံဖိုင် ကြာချိန်: ${m}:${s < 10 ? '0' : ''}${s} (${Math.round(mediaEl.duration)} စက္ကန့်)`;
+    }
 }
 
 async function adminApproveSlip(reqId) {
@@ -2447,7 +2495,10 @@ async function loadAdminQueue(isSilent = false) {
                 actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ Cancel</button>`;
             }
 
-            if (j.download_url) {
+            if (j.is_expired) {
+                actionsHtml += `<span class="badge-expired text-xs" title="ဖိုင်သက်တမ်းကုန်သွားပါပြီ (Expired)">⌛ သက်တမ်းကုန်</span>`;
+                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')" title="ပြန်လည်ထုတ်လုပ်မည်">🔄 Re-gen</button>`;
+            } else if (j.download_url) {
                 const qDelivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
                 const qTitleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
                 actionsHtml += `<button class="queue-act-btn uid" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${qDelivStr}', '${qTitleStr}')">▶️ Play</button>`;
@@ -2779,7 +2830,9 @@ async function loadUserHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago}</span>
                             <div class="history-btn-row">
-                                ${j.download_url ? `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
+                                ${j.is_expired ? `
+                                    <span class="badge-expired text-xs" title="ဖိုင်သက်တမ်းကုန်သွားပါပြီ">⌛ သက်တမ်းကုန်</span>
+                                ` : (j.download_url ? `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : '')}
                             </div>
                         </div>
                     </div>
@@ -2802,10 +2855,14 @@ async function loadUserHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago}</span>
                             <div class="history-btn-row">
-                                ${j.deliverables?.video ? `<a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
-                                ${j.deliverables?.audio ? `<a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.mp3" class="history-dl-link">🎙️ Audio</a>` : ''}
-                                ${j.deliverables?.srt ? `<a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>` : ''}
-                                ${j.deliverables?.script ? `<a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>` : ''}
+                                ${j.is_expired ? `
+                                    <span class="badge-expired text-xs" title="ဗီဒီယိုဖိုင်သက်တမ်းကုန်သွားပါပြီ">⌛ သက်တမ်းကုန်</span>
+                                ` : `
+                                    ${j.deliverables?.video ? `<a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
+                                    ${j.deliverables?.audio ? `<a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.mp3" class="history-dl-link">🎙️ Audio</a>` : ''}
+                                    ${j.deliverables?.srt ? `<a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>` : ''}
+                                    ${j.deliverables?.script ? `<a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>` : ''}
+                                `}
                             </div>
                         </div>
                     </div>
@@ -2891,7 +2948,7 @@ async function loadAdminHistory() {
                     const isFailed = (j.status === "FAILED");
                     const isSuccess = (j.status === "SUCCESS");
                     const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
-                    const borderCls = isFailed ? 'border-danger-dim' : (isSuccess ? 'border-success-dim' : (isRunning ? 'border-running-dim' : ''));
+                    const borderCls = isFailed ? 'border-danger-dim' : (isSuccess ? (j.is_expired ? 'border-warning-dim' : 'border-success-dim') : (isRunning ? 'border-running-dim' : ''));
 
                     return `
                     <div class="history-item ${borderCls}" id="adm-job-item-${j.id}">
@@ -2902,7 +2959,10 @@ async function loadAdminHistory() {
                                 </span>
                                 <span class="mini-tag" style="margin-left: 4px;">👤 ${escapeHtml(j.username ? '@' + j.username : 'ID: ' + j.user_id)}</span>
                             </div>
-                            <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
+                            <div>
+                                <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
+                                ${j.is_expired ? `<span class="badge-expired" style="margin-left: 4px;">⌛ သက်တမ်းကုန်</span>` : ''}
+                            </div>
                         </div>
                         <div class="history-item-body">
                             <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
@@ -2916,12 +2976,16 @@ async function loadAdminHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago} <code style="opacity: 0.7; font-size: 10px;">(${j.id.slice(0,8)})</code></span>
                             <div class="history-btn-row" id="adm-actions-row-${j.id}">
-                                ${j.download_url ? `
+                                ${j.is_expired ? `
+                                    <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')" title="ဖိုင်သက်တမ်းကုန်သွားသဖြင့် အသစ်ပြန်လည်ထုတ်ယူမည်">
+                                        🔄 ပြန်ထုတ်မည်
+                                    </button>
+                                ` : (j.download_url ? `
                                     <button class="btn-play-preview" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${delivStr}', '${titleStr}')">
                                         ▶️ Preview
                                     </button>
                                     <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
-                                ` : ''}
+                                ` : '')}
                                 ${isFailed ? `
                                     <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')" title="Re-queue this failed job">
                                         🔄 Retry
@@ -3011,11 +3075,14 @@ function pollAdminJobProgress(jobId) {
         }
 
         try {
-            const res = await fetch(`/api/recap/${jobId}/status`, { headers: getAuthHeaders() });
+            const itemEl = document.getElementById(`adm-job-item-${jobId}`);
+            const isRecap = jobId.startsWith("rc_") || (itemEl && itemEl.querySelector('.badge-recap'));
+            const statusUrl = isRecap ? `/api/recap/${jobId}/status` : `/api/jobs/${jobId}/status`;
+
+            const res = await fetch(statusUrl, { headers: getAuthHeaders() });
             if (!res.ok) return;
 
             const data = await res.json();
-            const itemEl = document.getElementById(`adm-job-item-${jobId}`);
             const statusBox = document.getElementById(`retry-status-box-${jobId}`);
             const badge = itemEl ? itemEl.querySelector('.history-item-badge[class*="status-"]') : null;
             const actionsRow = document.getElementById(`adm-actions-row-${jobId}`);
@@ -3027,9 +3094,12 @@ function pollAdminJobProgress(jobId) {
                     badge.innerText = data.status;
                 }
                 if (statusBox) {
+                    let label = data.progress_label || (data.status === "QUEUED" ? "တန်းစီဇယားထဲတွင် စောင့်ဆိုင်းနေပါသည်..." : "လုပ်ဆောင်နေဆဲ...");
+                    if (data.is_waiting_laptop_worker) {
+                        label = "Laptop Worker (Applio GPU) ကို စောင့်ဆိုင်းနေပါသည် (run_laptop_worker.bat ဖွင့်ပေးရန် လိုအပ်သည်)";
+                    }
                     const step = data.progress_step ? `[${data.progress_step}] ` : '';
-                    const label = data.progress_label || "လုပ်ဆောင်နေဆဲ...";
-                    const pct = data.progress_percent || 0;
+                    const pct = data.progress_percent || (data.status === "RUNNING" ? 50 : 10);
                     statusBox.innerHTML = `
                         <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
                             ⏳ <strong>${step}${escapeHtml(label)}</strong> (${pct}%)
@@ -3053,12 +3123,23 @@ function pollAdminJobProgress(jobId) {
                     `;
                 }
                 if (retryBtn) retryBtn.remove();
+                const expiredBadge = itemEl ? itemEl.querySelector('.badge-expired') : null;
+                if (expiredBadge) expiredBadge.remove();
+
                 if (actionsRow && !actionsRow.querySelector('.btn-play-preview')) {
-                    const videoUrl = data.download_urls?.video || `/api/recap/stream/${jobId}/video`;
+                    const mediaUrl = isRecap
+                        ? (data.download_urls?.video || `/api/recap/stream/${jobId}/video`)
+                        : (data.output_audio_url || `/api/audio/stream/${jobId}`);
                     const previewBtn = document.createElement('button');
                     previewBtn.className = 'btn-play-preview';
                     previewBtn.innerText = '▶️ Preview';
-                    previewBtn.onclick = () => openAdminMediaModal(jobId, 'RECAP', videoUrl, JSON.stringify(data.download_urls || {}), `Job #${jobId.slice(0,8)}`);
+                    previewBtn.onclick = () => openAdminMediaModal(
+                        jobId,
+                        isRecap ? 'RECAP' : 'VOICE_CLONE',
+                        mediaUrl,
+                        JSON.stringify(data.download_urls || {}),
+                        `Job #${jobId.slice(0, 8)}`
+                    );
                     actionsRow.prepend(previewBtn);
                 }
                 // Refresh global history counters
