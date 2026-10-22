@@ -1044,6 +1044,100 @@
                     </div>
                 </div>
 
+                <!-- 🤖 Gemini Model Chain Configuration Card -->
+                <div class="card glass mt-3" id="admin-gemini-models-card">
+                    <div class="card-header-row">
+                        <div class="card-label">🤖 Gemini AI Model Chain (မော်ဒယ် ဦးစားပေး အဆင့်ဆင့် သတ်မှတ်ချက်)</div>
+                        <span class="badge-studio gold">AI PIPELINE</span>
+                    </div>
+                    <p class="text-xs text-muted mb-3">
+                        Gemini API အတွက် မူလမော်ဒယ် (Primary) နှင့် အရန်မော်ဒယ်များ (Fallback 1, 2, 3) ကို စိတ်ကြိုက် ရွေးချယ်နိုင်ပါသည်။ Google ဘက်မှ Error တက်ပါက အောက်ပါ အစဉ်အတိုင်း အလိုအလျောက် ကျော်လွှား အသုံးပြုသွားပါမည်။
+                    </p>
+
+                    <div class="form-row-2 mb-2">
+                        <div>
+                            <label class="input-label text-xs">🥇 Primary Model (မူလ ပထမ သုံးမည့် Model)</label>
+                            <div class="model-select-wrap">
+                                <select id="adm-gemini-primary" class="studio-input" onchange="checkCustomModel('adm-gemini-primary')">
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash (Recommended / Fast & Stable)</option>
+                                    <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                    <option value="gemini-3.7-flash">gemini-3.7-flash</option>
+                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                                    <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
+                                </select>
+                                <input type="text" id="adm-gemini-primary-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="input-label text-xs">🥈 Fallback 1 (ဒုတိယ အရန် Model)</label>
+                            <div class="model-select-wrap">
+                                <select id="adm-gemini-fb1" class="studio-input" onchange="checkCustomModel('adm-gemini-fb1')">
+                                    <option value="gemini-3.5-flash">gemini-3.5-flash (Standard Fallback)</option>
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                    <option value="gemini-3.7-flash">gemini-3.7-flash</option>
+                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
+                                </select>
+                                <input type="text" id="adm-gemini-fb1-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-row-2 mb-3">
+                        <div>
+                            <label class="input-label text-xs">🥉 Fallback 2 (တတိယ အရန် Model)</label>
+                            <div class="model-select-wrap">
+                                <select id="adm-gemini-fb2" class="studio-input" onchange="checkCustomModel('adm-gemini-fb2')">
+                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Lightweight Fallback)</option>
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                    <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                    <option value="gemini-3.7-flash">gemini-3.7-flash</option>
+                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
+                                </select>
+                                <input type="text" id="adm-gemini-fb2-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash-lite">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="input-label text-xs">🎖️ Fallback 3 (စတုတ္ထ အရန် Model)</label>
+                            <div class="model-select-wrap">
+                                <select id="adm-gemini-fb3" class="studio-input" onchange="checkCustomModel('adm-gemini-fb3')">
+                                    <option value="gemini-3.7-flash">gemini-3.7-flash (Emergency Fallback)</option>
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                    <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
+                                </select>
+                                <input type="text" id="adm-gemini-fb3-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.7-flash">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="btn gold-gradient-btn" onclick="saveGeminiModelSettings()">
+                        <span class="btn-icon">⚡</span>
+                        <span>Gemini Model သတ်မှတ်ချက် သိမ်းဆည်းမည် (Save Model Chain)</span>
+                    </button>
+                </div>
+
                 <!-- Broadcast Sender -->
                 <div class="card glass mt-3">
                     <div class="card-label" data-i18n="admin_broadcast_header">📢 Telegram Bot အားလုံးသို့ Broadcast စာပို့ရန်</div>
@@ -1056,23 +1150,78 @@
                     <div id="adm-broadcast-report" class="broadcast-report-box mt-3 hidden"></div>
                 </div>
 
-                <!-- 24-Hour All Users Job Production History & Purge Control -->
+                <!-- All Users Job Production History & Selective Purge Control -->
                 <div class="card glass mt-3" id="admin-history-card">
                     <div class="card-header-row">
-                        <div class="card-label" data-i18n="admin_history_header">📊 အသုံးပြုသူအားလုံး၏ ၂၄ နာရီ ထုတ်ယူမှု မှတ်တမ်း</div>
-                        <div class="admin-header-actions">
-                            <button class="btn mini-btn danger-btn" onclick="adminTriggerPurge24h()" data-i18n="admin_history_purge_btn">🧹 ၂၄ နာရီကျော်ဖိုင်များ ရှင်းမည်</button>
-                            <button class="mini-chip" onclick="loadAdminHistory()">🔄 Refresh</button>
+                        <div class="card-label" data-i18n="admin_history_header">📊 ထုတ်ယူမှု မှတ်တမ်းနှင့် စိတ်ကြိုက် ရှင်းလင်းမှု (History & Purge)</div>
+                        <button class="mini-chip" onclick="loadAdminHistory()">🔄 Refresh</button>
+                    </div>
+
+                    <!-- Filter Controls Bar -->
+                    <div class="admin-filter-bar glass-inset mt-2 p-2" style="border-radius: 12px;">
+                        <!-- Filter Row 1: Timeframe -->
+                        <div class="filter-group mb-2">
+                            <span class="text-xs text-muted">⏱️ အချိန်ကာလ:</span>
+                            <div class="filter-chips-row mt-1">
+                                <button class="filter-chip active" data-filter-type="timeframe" data-val="24h" onclick="setAdminHistFilter('timeframe', '24h')">၂၄ နာရီအတွင်း</button>
+                                <button class="filter-chip" data-filter-type="timeframe" data-val="7d" onclick="setAdminHistFilter('timeframe', '7d')">၇ ရက်အတွင်း</button>
+                                <button class="filter-chip" data-filter-type="timeframe" data-val="older_24h" onclick="setAdminHistFilter('timeframe', 'older_24h')">၂၄ နာရီကျော်လွန်</button>
+                                <button class="filter-chip" data-filter-type="timeframe" data-val="all" onclick="setAdminHistFilter('timeframe', 'all')">အချိန်အားလုံး</button>
+                            </div>
+                        </div>
+
+                        <!-- Filter Row 2: Status & Type -->
+                        <div class="form-row-2">
+                            <div>
+                                <label class="input-label text-xs">🚦 အခြေအနေ (Status)</label>
+                                <select id="adm-hist-status-sel" class="studio-input text-xs" onchange="setAdminHistFilter('status', this.value)">
+                                    <option value="all">အားလုံး (All Statuses)</option>
+                                    <option value="SUCCESS">✅ အောင်မြင်ပြီး (SUCCESS)</option>
+                                    <option value="FAILED">❌ မအောင်မြင်သော Error များ (FAILED)</option>
+                                    <option value="RUNNING">⏳ လည်ပတ်ဆဲ (RUNNING)</option>
+                                    <option value="QUEUED">📋 တန်းစီနေဆဲ (QUEUED)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="input-label text-xs">🎬 အမျိုးအစား (Job Type)</label>
+                                <select id="adm-hist-type-sel" class="studio-input text-xs" onchange="setAdminHistFilter('job_type', this.value)">
+                                    <option value="all">အားလုံး (Recap & Voice)</option>
+                                    <option value="RECAP">🎬 Movie Recap သီးသန့်</option>
+                                    <option value="VOICE_CLONE">🎙️ Voice Clone သီးသန့်</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
-                    <p class="history-expiry-note" data-i18n="admin_history_note">⏱️ User များနှင့် Admin တို့၏ ၂၄ နာရီအတွင်း ထုတ်ယူထားသော အသံနှင့် ဗီဒီယို ဖိုင်များအားလုံး (၂၄ နာရီကျော်ပါက အလိုအလျောက် ပယ်ဖျက်သည်)</p>
+
+                    <!-- Selective Purge Action Bar -->
+                    <div class="admin-purge-bar mt-2 mb-2 p-2 glass-inset" style="border-radius: 12px; border: 1px solid rgba(239, 68, 68, 0.3);">
+                        <div class="card-subtitle-row mb-1">
+                            <span class="text-xs text-danger font-bold">🗑️ စိတ်ကြိုက် ရှင်းလင်းဖျက်သိမ်းနိုင်သော ခလုတ်များ (Selective Purge)</span>
+                        </div>
+                        <div class="admin-header-actions" style="flex-wrap: wrap; gap: 6px;">
+                            <button class="btn mini-btn danger-btn" onclick="adminPurgeHistory('failed')">
+                                ❌ မအောင်မြင်သော (FAILED) များ ရှင်းမည်
+                            </button>
+                            <button class="btn mini-btn danger-btn" onclick="adminPurgeHistory('older_24h')">
+                                ⏱️ ၂၄ နာရီကျော်လွန်သမျှ ရှင်းမည်
+                            </button>
+                            <button class="btn mini-btn secondary-btn" onclick="adminPurgeHistory('matching')">
+                                🎯 လက်ရှိ Filter မိသမျှ အကုန်ရှင်းမည်
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Stats Row -->
                     <div class="admin-history-stats-row mt-2">
-                        <span class="mini-tag">Total 24h: <strong id="adm-hist-total">0</strong></span>
+                        <span class="mini-tag">ပြသထားမှု: <strong id="adm-hist-total">0</strong></span>
+                        <span class="mini-tag">မအောင်မြင်: <strong id="adm-hist-failed" class="text-danger">0</strong></span>
+                        <span class="mini-tag">အောင်မြင်: <strong id="adm-hist-success" class="text-success">0</strong></span>
                         <span class="mini-tag">Recap: <strong id="adm-hist-recap" class="text-gold">0</strong></span>
                         <span class="mini-tag">Voice: <strong id="adm-hist-voice" class="text-cyan">0</strong></span>
                     </div>
+
                     <div id="admin-global-history-list" class="admin-history-container mt-2">
-                        <p class="text-muted">Loading 24h history...</p>
+                        <p class="text-muted">Loading history...</p>
                     </div>
                 </div>
             </section>

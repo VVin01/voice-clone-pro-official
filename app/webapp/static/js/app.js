@@ -2597,9 +2597,93 @@ async function loadAdminSettings() {
         if (elTutRecapTitle) elTutRecapTitle.value = s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
         if (elTutRecapLink) elTutRecapLink.value = s.tutorial_recap_link || s.tutorial_video_link || "";
 
+        setSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", s.gemini_primary_model || "gemini-3.8-flash");
+        setSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", s.gemini_fallback_1 || "gemini-3.5-flash");
+        setSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", s.gemini_fallback_2 || "gemini-3.5-flash-lite");
+        setSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", s.gemini_fallback_3 || "gemini-3.7-flash");
+
         updateTutorialUI(s);
     } catch (e) {
         console.warn("Could not load dynamic settings:", e);
+    }
+}
+
+function setSelectOrCustom(selectId, customInputId, val) {
+    const sel = document.getElementById(selectId);
+    const custom = document.getElementById(customInputId);
+    if (!sel) return;
+    val = (val || "").trim();
+    let found = false;
+    for (let i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === val) {
+            sel.selectedIndex = i;
+            found = true;
+            break;
+        }
+    }
+    if (!found && val) {
+        sel.value = "custom";
+        if (custom) {
+            custom.value = val;
+            custom.classList.remove("hidden");
+        }
+    } else {
+        if (custom) custom.classList.add("hidden");
+    }
+}
+
+function getSelectOrCustom(selectId, customInputId, defaultVal) {
+    const sel = document.getElementById(selectId);
+    const custom = document.getElementById(customInputId);
+    if (!sel) return defaultVal;
+    if (sel.value === "custom") {
+        return (custom?.value?.trim()) || defaultVal;
+    }
+    return sel.value || defaultVal;
+}
+
+function checkCustomModel(selectId) {
+    const sel = document.getElementById(selectId);
+    const custom = document.getElementById(selectId + "-custom");
+    if (sel && custom) {
+        if (sel.value === "custom") {
+            custom.classList.remove("hidden");
+            custom.focus();
+        } else {
+            custom.classList.add("hidden");
+        }
+    }
+}
+
+async function saveGeminiModelSettings() {
+    haptic("medium");
+    const primary = getSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", "gemini-3.8-flash");
+    const fb1 = getSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", "gemini-3.5-flash");
+    const fb2 = getSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", "gemini-3.5-flash-lite");
+    const fb3 = getSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", "gemini-3.7-flash");
+
+    const payload = {
+        gemini_primary_model: primary,
+        gemini_fallback_1: fb1,
+        gemini_fallback_2: fb2,
+        gemini_fallback_3: fb3,
+    };
+
+    try {
+        const res = await fetch("/api/admin/settings", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        alert("✅ Gemini Model Chain အောင်မြင်စွာ ပြောင်းလဲသိမ်းဆည်းပြီးပါပြီ!\n\n" +
+              `Primary: ${primary}\nFallback 1: ${fb1}\nFallback 2: ${fb2}\nFallback 3: ${fb3}`);
+        loadAdminSettings();
+    } catch (e) {
+        alert("Failed to save Gemini models: " + e.message);
     }
 }
 
@@ -2733,33 +2817,81 @@ async function loadUserHistory() {
     }
 }
 
+let adminHistFilter = {
+    timeframe: "24h",
+    status: "all",
+    job_type: "all"
+};
+
+function setAdminHistFilter(key, val) {
+    if (key) {
+        adminHistFilter[key] = val;
+    }
+    // Update active state on timeframe chips
+    const chips = document.querySelectorAll('.filter-chip[data-filter-type="timeframe"]');
+    chips.forEach(c => {
+        if (c.getAttribute('data-val') === adminHistFilter.timeframe) {
+            c.classList.add('active');
+        } else {
+            c.classList.remove('active');
+        }
+    });
+
+    const selStatus = document.getElementById("adm-hist-status-sel");
+    if (selStatus && selStatus.value !== adminHistFilter.status) {
+        selStatus.value = adminHistFilter.status;
+    }
+
+    const selType = document.getElementById("adm-hist-type-sel");
+    if (selType && selType.value !== adminHistFilter.job_type) {
+        selType.value = adminHistFilter.job_type;
+    }
+
+    loadAdminHistory();
+}
+
 async function loadAdminHistory() {
     try {
-        const res = await fetch("/api/admin/history", {
+        const params = new URLSearchParams({
+            timeframe: adminHistFilter.timeframe || "24h",
+            status: adminHistFilter.status || "all",
+            job_type: adminHistFilter.job_type || "all",
+            limit: "100"
+        });
+        const res = await fetch(`/api/admin/history?${params.toString()}`, {
             headers: getAuthHeaders(),
         });
         if (!res.ok) return;
 
         const data = await res.json();
         const elTotal = document.getElementById("adm-hist-total");
+        const elFailed = document.getElementById("adm-hist-failed");
+        const elSuccess = document.getElementById("adm-hist-success");
         const elRecap = document.getElementById("adm-hist-recap");
         const elVoice = document.getElementById("adm-hist-voice");
         const container = document.getElementById("admin-global-history-list");
 
-        if (elTotal) elTotal.innerText = data.total_24h || 0;
+        if (elTotal) elTotal.innerText = data.total_count ?? (data.history?.length || 0);
+        if (elFailed) elFailed.innerText = data.total_failed || 0;
+        if (elSuccess) elSuccess.innerText = data.total_success || 0;
         if (elRecap) elRecap.innerText = data.total_recap || 0;
         if (elVoice) elVoice.innerText = data.total_voice || 0;
 
         const history = data.history || [];
         if (container) {
             if (history.length === 0) {
-                container.innerHTML = `<p class="text-muted" data-i18n="history_empty">${t("history_empty")}</p>`;
+                container.innerHTML = `<div class="p-4 text-center text-muted" style="border: 1px dashed rgba(255,255,255,0.1); border-radius: 12px;">
+                    <p style="font-size: 1.1rem; margin-bottom: 4px;">📭 မှတ်တမ်းမရှိပါ</p>
+                    <span class="text-xs">ရွေးချယ်ထားသော Filter နှင့် ကိုက်ညီသည့် အလုပ်မှတ်တမ်း ရှာမတွေ့ပါ။</span>
+                </div>`;
             } else {
                 container.innerHTML = history.map(j => {
                     const delivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
                     const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
+                    const isFailed = (j.status === "FAILED");
+
                     return `
-                    <div class="history-item">
+                    <div class="history-item ${isFailed ? 'border-danger-dim' : ''}" id="adm-job-item-${j.id}" style="${isFailed ? 'border-left: 3px solid #ef4444;' : ''}">
                         <div class="history-item-header">
                             <div>
                                 <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">
@@ -2771,16 +2903,29 @@ async function loadAdminHistory() {
                         </div>
                         <div class="history-item-body">
                             <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
+                            ${j.error_message ? `
+                                <div class="text-xs text-danger mt-1 p-1 glass-inset" style="border-radius: 6px; word-break: break-all; color: #fca5a5;">
+                                    ⚠️ <strong>Error:</strong> ${escapeHtml(j.error_message.slice(0, 160))}${j.error_message.length > 160 ? '...' : ''}
+                                </div>
+                            ` : ''}
                         </div>
                         <div class="history-item-footer">
-                            <span>⏱️ ${j.time_ago} (${j.id.slice(0,10)})</span>
+                            <span>⏱️ ${j.time_ago} (${j.id.slice(0,8)})</span>
                             <div class="history-btn-row">
                                 ${j.download_url ? `
                                     <button class="btn-play-preview" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${delivStr}', '${titleStr}')">
-                                        ▶️ ဖွင့်ကြည့်မည် (Preview)
+                                        ▶️ Preview
                                     </button>
                                     <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
                                 ` : ''}
+                                ${isFailed ? `
+                                    <button class="btn mini-btn secondary-btn" onclick="adminRetryJob('${j.id}')" title="Re-queue this failed job">
+                                        🔄 Retry
+                                    </button>
+                                ` : ''}
+                                <button class="btn mini-btn danger-btn" onclick="adminDeleteSingleJob('${j.id}')" title="Delete record and media files">
+                                    🗑️ ဖျက်မည်
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -2793,20 +2938,98 @@ async function loadAdminHistory() {
     }
 }
 
-async function adminTriggerPurge24h() {
-    if (!confirm("၂၄ နာရီကျော်လွန်နေသော အသံနှင့် ဗီဒီယို ဖိုင်များအားလုံးကို ရှင်းလင်းဖျက်သိမ်းမည်မှာ သေချာပါသလား?")) return;
-    haptic("heavy");
+async function adminRetryJob(jobId) {
+    haptic("medium");
     try {
-        const res = await fetch("/api/admin/cleanup-24h", {
+        const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
             method: "POST",
             headers: getAuthHeaders(),
         });
         const data = await res.json();
-        alert(data.message || `Cleaned ${data.purged_count} files`);
-        loadAdminHistory();
+        if (res.ok) {
+            alert(`✅ Job ${jobId.slice(0,8)} ကို Queue ထဲသို့ ပြန်လည်ထည့်သွင်းပြီးပါပြီ။`);
+            loadAdminHistory();
+        } else {
+            alert("Retry failed: " + (data.detail || data.message || "Unknown error"));
+        }
     } catch (e) {
-        alert("Cleanup error: " + e.message);
+        alert("Retry error: " + e.message);
     }
+}
+
+async function adminDeleteSingleJob(jobId) {
+    if (!confirm(`ဤအလုပ် (Job: ${jobId.slice(0,8)}) နှင့် သက်ဆိုင်ရာ အသံ/ဗီဒီယို ဖိုင်များကို Database နှင့် Disk မှ လုံးဝ ဖျက်ပစ်မည်မှာ သေချာပါသလား?`)) {
+        return;
+    }
+    haptic("heavy");
+    try {
+        const res = await fetch("/api/admin/history/purge", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                mode: "single",
+                job_id: jobId,
+            }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            const el = document.getElementById(`adm-job-item-${jobId}`);
+            if (el) el.remove();
+            loadAdminHistory();
+        } else {
+            alert("Delete failed: " + (data.detail || data.message || "Unknown error"));
+        }
+    } catch (e) {
+        alert("Delete error: " + e.message);
+    }
+}
+
+async function adminPurgeHistory(mode) {
+    let confirmMsg = "";
+    if (mode === "failed") {
+        confirmMsg = "❌ မအောင်မြင်ဘဲ ရပ်တန့်နေသော Error ဖြစ်ထားသည့် အလုပ်များ (FAILED Jobs) အားလုံးကို ဖိုင်များနှင့်တကွ လုံးဝရှင်းလင်းမည်မှာ သေချာပါသလား?";
+    } else if (mode === "older_24h") {
+        confirmMsg = "⏱️ ၂၄ နာရီကျော်လွန်နေသော အလုပ်များနှင့် ဖိုင်များအားလုံးကို ရှင်းလင်းဖျက်သိမ်းမည်မှာ သေချာပါသလား?";
+    } else if (mode === "matching") {
+        confirmMsg = `🎯 လက်ရှိ Filter သတ်မှတ်ချက် (အချိန်: ${adminHistFilter.timeframe}, အခြေအနေ: ${adminHistFilter.status}, အမျိုးအစား: ${adminHistFilter.job_type}) နှင့် ကိုက်ညီသည့် အလုပ်များအားလုံးကို ရှင်းလင်းမည်မှာ သေချာပါသလား?`;
+    } else {
+        confirmMsg = "အလုပ်မှတ်တမ်းများနှင့် ဖိုင်များကို ရှင်းလင်းမည်မှာ သေချာပါသလား?";
+    }
+
+    if (!confirm(confirmMsg)) return;
+    haptic("heavy");
+
+    try {
+        const res = await fetch("/api/admin/history/purge", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                mode: mode,
+                timeframe: adminHistFilter.timeframe,
+                status: adminHistFilter.status,
+                job_type: adminHistFilter.job_type,
+            }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert(`✅ ${data.message || `အောင်မြင်စွာ ရှင်းလင်းပြီးပါပြီ (ဖျက်ပြီးသမျှ: ${data.purged_count})`}`);
+            loadAdminHistory();
+        } else {
+            alert("Purge failed: " + (data.detail || data.message || "Unknown error"));
+        }
+    } catch (e) {
+        alert("Purge error: " + e.message);
+    }
+}
+
+async function adminTriggerPurge24h() {
+    return adminPurgeHistory("older_24h");
 }
 
 // ── Deep Link Handling (Telegram WebApp & URL Query) ──────────────────────

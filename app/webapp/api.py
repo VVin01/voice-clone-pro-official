@@ -1413,36 +1413,61 @@ async def get_user_history(
 
 @api_router.get("/admin/history")
 async def get_admin_global_history(
+    timeframe: str = "24h",
+    status: str = "all",
+    job_type: str = "all",
+    limit: int = 150,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Admin Only: View all users' generated jobs (and admin's own) within the last 24 hours.
+    Admin Only: Filter and view all users' generated jobs with custom timeframe & status filters.
     """
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    now_utc = datetime.now(timezone.utc)
     stmt = (
         select(Job, User.username, User.first_name)
         .outerjoin(User, Job.user_id == User.id)
-        .where(Job.created_at >= cutoff)
-        .order_by(Job.created_at.desc())
-        .limit(100)
     )
+
+    if timeframe == "24h":
+        stmt = stmt.where(Job.created_at >= now_utc - timedelta(hours=24))
+    elif timeframe == "7d":
+        stmt = stmt.where(Job.created_at >= now_utc - timedelta(days=7))
+    elif timeframe == "older_24h":
+        stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
+
+    if status and status != "all":
+        stmt = stmt.where(Job.status == status.upper())
+
+    if job_type == "RECAP":
+        stmt = stmt.where((Job.job_type == JobType.RECAP.value) | Job.id.startswith("rc_") | (Job.engine == "recap"))
+    elif job_type == "VOICE_CLONE":
+        stmt = stmt.where((Job.job_type != JobType.RECAP.value) & (~Job.id.startswith("rc_")) & (Job.engine != "recap"))
+
+    stmt = stmt.order_by(Job.created_at.desc()).limit(min(300, max(10, limit)))
     res = await db.execute(stmt)
     rows = res.all()
 
     total_recap = 0
     total_voice = 0
+    total_failed = 0
+    total_success = 0
     out = []
 
     for job, username, first_name in rows:
-        is_recap = (job.job_type == JobType.RECAP.value or job.id.startswith("rc_"))
+        is_recap = (job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap")
         if is_recap:
             total_recap += 1
         else:
             total_voice += 1
+
+        if job.status == JobStatus.FAILED.value:
+            total_failed += 1
+        elif job.status == JobStatus.SUCCESS.value:
+            total_success += 1
 
         created_ts = job.created_at.timestamp() if job.created_at else time.time()
         mins_ago = int((time.time() - created_ts) // 60)
@@ -1484,26 +1509,112 @@ async def get_admin_global_history(
 
     return {
         "success": True,
-        "total_24h": len(out),
+        "total_count": len(out),
+        "total_failed": total_failed,
+        "total_success": total_success,
         "total_voice": total_voice,
         "total_recap": total_recap,
+        "timeframe": timeframe,
+        "status_filter": status,
         "history": out,
+    }
+
+
+class AdminPurgeHistoryRequest(BaseModel):
+    mode: str = "failed"  # "failed", "older_24h", "all_completed", "single", "matching"
+    job_id: Optional[str] = None
+    timeframe: Optional[str] = None
+    status: Optional[str] = None
+    job_type: Optional[str] = None
+
+
+@api_router.post("/admin/history/purge")
+async def purge_admin_history(
+    req: AdminPurgeHistoryRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Admin Only: Selectively purge jobs, physical media files, and DB records by criteria."""
+    if not settings.is_admin(user.id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    now_utc = datetime.now(timezone.utc)
+    stmt = select(Job)
+
+    if req.mode == "single" and req.job_id:
+        stmt = stmt.where(Job.id == req.job_id)
+    elif req.mode == "failed":
+        stmt = stmt.where(Job.status == JobStatus.FAILED.value)
+    elif req.mode == "older_24h":
+        stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
+    elif req.mode == "all_completed":
+        stmt = stmt.where(Job.status.in_([JobStatus.SUCCESS.value, JobStatus.FAILED.value]))
+    elif req.mode == "matching":
+        if req.timeframe == "older_24h":
+            stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
+        elif req.timeframe == "24h":
+            stmt = stmt.where(Job.created_at >= now_utc - timedelta(hours=24))
+        elif req.timeframe == "7d":
+            stmt = stmt.where(Job.created_at >= now_utc - timedelta(days=7))
+
+        if req.status and req.status != "all":
+            stmt = stmt.where(Job.status == req.status.upper())
+
+        if req.job_type == "RECAP":
+            stmt = stmt.where((Job.job_type == JobType.RECAP.value) | Job.id.startswith("rc_") | (Job.engine == "recap"))
+        elif req.job_type == "VOICE_CLONE":
+            stmt = stmt.where((Job.job_type != JobType.RECAP.value) & (~Job.id.startswith("rc_")) & (Job.engine != "recap"))
+
+    res = await db.execute(stmt)
+    jobs_to_delete = res.scalars().all()
+    deleted_count = 0
+
+    for j in jobs_to_delete:
+        try:
+            # 1. Clean recap output directory
+            if j.job_type == JobType.RECAP.value or j.id.startswith("rc_") or j.engine == "recap":
+                job_dir = settings.storage_root / "recap_output" / j.id
+                if job_dir.is_dir():
+                    shutil.rmtree(job_dir, ignore_errors=True)
+
+            # 2. Clean voice files
+            if j.result_path and Path(j.result_path).is_file():
+                try:
+                    Path(j.result_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if j.source_audio_path and Path(j.source_audio_path).is_file():
+                try:
+                    Path(j.source_audio_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            # 3. Clean memory registry
+            RECAP_JOBS_REGISTRY.pop(j.id, None)
+
+            # 4. Delete record
+            await db.delete(j)
+            deleted_count += 1
+        except Exception as e:
+            logger.warning(f"Error purging job {j.id}: {e}")
+
+    await db.commit()
+    return {
+        "success": True,
+        "purged_count": deleted_count,
+        "message": f"မှတ်တမ်းနှင့် ဖိုင်တွဲ {deleted_count} ခုကို အောင်မြင်စွာ ရှင်းလင်းဖျက်သိမ်းပြီးပါပြီ။",
     }
 
 
 @api_router.post("/admin/cleanup-24h")
 async def trigger_admin_cleanup(
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Admin Only: Manually purge all expired jobs and disk files older than 24 hours."""
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin access required")
-    count = await cleanup_expired_jobs_24h()
-    return {
-        "success": True,
-        "purged_count": count,
-        "message": f"၂၄ နာရီကျော်လွန်သော ဖိုင်နှင့် မှတ်တမ်း {count} ခုကို အောင်မြင်စွာ ရှင်းလင်းပြီးပါပြီ။",
-    }
+    return await purge_admin_history(AdminPurgeHistoryRequest(mode="older_24h"), user=user, db=db)
 
 
 # ── 6. VIP Pricing Plans & Payments ────────────────────────────────────────
@@ -1964,6 +2075,10 @@ class AdminSettingsPayload(BaseModel):
     tutorial_recap_link: Optional[str] = None
     tutorial_recap_enabled: Optional[bool] = None
     maintenance_mode: Optional[bool] = None
+    gemini_primary_model: Optional[str] = None
+    gemini_fallback_1: Optional[str] = None
+    gemini_fallback_2: Optional[str] = None
+    gemini_fallback_3: Optional[str] = None
 
 
 @api_router.get("/admin/settings")
@@ -1988,6 +2103,10 @@ async def get_admin_settings(
         "tutorial_recap_link": getattr(settings, "tutorial_recap_link", "https://t.me/VoiceClonePro/16"),
         "tutorial_recap_enabled": getattr(settings, "tutorial_recap_enabled", True),
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
+        "gemini_primary_model": getattr(settings, "gemini_primary_model", "gemini-3.8-flash"),
+        "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),
+        "gemini_fallback_2": getattr(settings, "gemini_fallback_2", "gemini-3.5-flash-lite"),
+        "gemini_fallback_3": getattr(settings, "gemini_fallback_3", "gemini-3.7-flash"),
     }
 
 

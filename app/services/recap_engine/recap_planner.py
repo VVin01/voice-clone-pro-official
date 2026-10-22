@@ -134,9 +134,29 @@ def _configure_gemini_key_pool(
     if not key_pool:
         return
 
-    models = [str(x).strip() for x in (model_chain or GEMINI_MODEL_FALLBACK_CHAIN) if str(x).strip()]
+    try:
+        from app.config import settings
+        primary = getattr(settings, "gemini_primary_model", None)
+        fb1 = getattr(settings, "gemini_fallback_1", None)
+        fb2 = getattr(settings, "gemini_fallback_2", None)
+        fb3 = getattr(settings, "gemini_fallback_3", None)
+    except Exception:
+        primary = fb1 = fb2 = fb3 = None
+
+    primary = primary or os.getenv("GEMINI_PRIMARY_MODEL") or os.getenv("GEMINI_TEXT_MODEL") or "gemini-3.8-flash"
+    fb1 = fb1 or os.getenv("GEMINI_FALLBACK_1") or "gemini-3.5-flash"
+    fb2 = fb2 or os.getenv("GEMINI_FALLBACK_2") or "gemini-3.5-flash-lite"
+    fb3 = fb3 or os.getenv("GEMINI_FALLBACK_3") or "gemini-3.7-flash"
+
+    admin_chain = [primary, fb1, fb2, fb3]
+    models = []
+    for x in admin_chain + (model_chain or GEMINI_MODEL_FALLBACK_CHAIN):
+        clean = str(x or "").strip()
+        if clean and clean not in models:
+            models.append(clean)
+
     if not models:
-        models = [str(getattr(ai, "text_model", "gemini-3.5-flash") or "gemini-3.5-flash")]
+        models = [str(getattr(ai, "text_model", "gemini-3.8-flash") or "gemini-3.8-flash")]
 
     model_index = 0
     key_index = 0
