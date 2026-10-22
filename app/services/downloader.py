@@ -165,6 +165,11 @@ def unshorten_url(url: str) -> str:
     """
     clean_url = extract_first_url(url) or str(url).strip()
 
+    # YouTube Shorts and youtu.be normalization to canonical watch?v= URL
+    yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/)([a-zA-Z0-9_-]{11})', clean_url)
+    if yt_match:
+        return f"https://www.youtube.com/watch?v={yt_match.group(1)}"
+
     # Douyin (抖音) specific resolution
     clean_lower = clean_url.lower()
     if "douyin.com" in clean_lower or "iesdouyin.com" in clean_lower:
@@ -403,7 +408,7 @@ class MediaDownloader:
         # Enable Node.js for solving YouTube JS / n challenges if installed or available via package
         node_bin = shutil.which("node") or shutil.which("nodejs")
         if not node_bin:
-            for sys_cand in ["/usr/bin/node", "/usr/local/bin/node", "/opt/render/project/src/.venv/bin/node"]:
+            for sys_cand in ["/usr/bin/node", "/usr/bin/nodejs", "/usr/local/bin/node", "/opt/render/project/src/.venv/bin/node"]:
                 if os.path.isfile(sys_cand) and os.access(sys_cand, os.X_OK):
                     node_bin = sys_cand
                     break
