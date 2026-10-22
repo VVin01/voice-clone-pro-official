@@ -1309,6 +1309,89 @@ function setupRecapVisualEditor() {
         if (previewSub) previewSub.style.bottom = `${bottomPct}%`;
     });
 
+    // ── Resize Handles for Blur Box Height ──
+    const blurResizeTop = previewBlur ? previewBlur.querySelector(".box-resize-handle.top") : null;
+    const blurResizeBottom = previewBlur ? previewBlur.querySelector(".box-resize-handle.bottom") : null;
+
+    function attachBlurResize(handle, isTop) {
+        if (!handle) return;
+        let startY = 0;
+        let isResizing = false;
+
+        function startResize(y) {
+            isResizing = true;
+            startY = y;
+            haptic("light");
+        }
+        function moveResize(y) {
+            if (!isResizing) return;
+            const delta = (y - startY) * (isTop ? -0.5 : 0.5);
+            startY = y;
+            const curH = sliderBlurH ? parseInt(sliderBlurH.value) : 13;
+            const newH = Math.max(6, Math.min(30, Math.round(curH + delta)));
+            if (sliderBlurH) sliderBlurH.value = newH;
+            if (valBlurH) valBlurH.innerText = `${newH}%`;
+            if (previewBlur) previewBlur.style.height = `${newH}%`;
+        }
+        function endResize() {
+            isResizing = false;
+        }
+
+        handle.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+            startResize(e.clientY);
+            const mm = (ev) => { ev.preventDefault(); moveResize(ev.clientY); };
+            const mu = () => { endResize(); window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); };
+            window.addEventListener("mousemove", mm);
+            window.addEventListener("mouseup", mu);
+        });
+
+        handle.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length > 0) {
+                e.stopPropagation();
+                startResize(e.touches[0].clientY);
+            }
+        }, { passive: true });
+
+        handle.addEventListener("touchmove", (e) => {
+            if (isResizing && e.touches && e.touches.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                moveResize(e.touches[0].clientY);
+            }
+        }, { passive: false });
+
+        handle.addEventListener("touchend", endResize);
+        handle.addEventListener("touchcancel", endResize);
+    }
+    attachBlurResize(blurResizeTop, true);
+    attachBlurResize(blurResizeBottom, false);
+
+    // ── Setup Compact Live Canvas Toolbar Tabs ──
+    const tbTabBtns = document.querySelectorAll(".tb-tab-btn");
+    const tbPanels = {
+        seek: document.getElementById("tb-panel-seek"),
+        mask: document.getElementById("tb-panel-mask"),
+        style: document.getElementById("tb-panel-style"),
+    };
+
+    tbTabBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            const target = btn.getAttribute("data-tb-tab");
+            if (!target) return;
+            haptic("selection");
+            tbTabBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+
+            Object.entries(tbPanels).forEach(([key, panel]) => {
+                if (panel) {
+                    if (key === target) panel.classList.remove("hidden");
+                    else panel.classList.add("hidden");
+                }
+            });
+        });
+    });
+
     // ── Helper: Real-time Live Canvas Mockup Visual Updater ──
     function updateCanvasMockupVisuals() {
         if (!canvas) return;
@@ -1329,6 +1412,14 @@ function setupRecapVisualEditor() {
         // 3. Keep thumbnail on Canvas & Inner Movie
         const innerMovie = document.getElementById("mockup-inner-movie");
         const fillBadge = document.getElementById("mockup-fill-badge");
+        const origSub = document.getElementById("mockup-orig-sub");
+        const hasActiveMedia = Boolean(state.recapThumbnailUrl || state.uploadedVideoPath || (canvasVideo && !canvasVideo.classList.contains("hidden")));
+        
+        // Hide mock English subtitles if user has loaded a video/thumbnail
+        if (origSub) {
+            origSub.style.display = hasActiveMedia ? "none" : "";
+        }
+
         if (state.recapThumbnailUrl) {
             canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
             canvas.style.backgroundSize = "cover";
@@ -1690,17 +1781,33 @@ function setupRecapVisualEditor() {
                 state.recapSourceDuration = data.duration_seconds || 0;
                 const maxAllowed = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
                 const isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+                const btnStartRecap = document.getElementById("btn-start-recap");
                 if (durSpan) {
                     if (isOverLimit) {
                         durSpan.className = "mini-tag text-danger";
                         const maxM = Math.floor(maxAllowed / 60);
+                        const tierLabel = state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)";
+                        const durM = Math.floor(data.duration_seconds / 60);
+                        const durS = Math.floor(data.duration_seconds % 60);
+                        const durStr = `${durM}:${durS < 10 ? '0' : ''}${durS}`;
                         const msg = (currentLang === "my")
                             ? (state.user?.is_vip ? `အများဆုံး ${maxM} မိနစ်ထက် ကျော်လွန်နေပါသည်` : `အများဆုံး ၂ မိနစ်ထက် ကျော်လွန်နေပါသည် (VIP ရယူပါ)`)
                             : (state.user?.is_vip ? `Exceeds max ${maxM}m` : `Exceeds Free 2m limit (Upgrade to VIP)`);
                         durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${msg})</span>`;
+                        if (btnStartRecap) {
+                            btnStartRecap.disabled = true;
+                            btnStartRecap.style.opacity = "0.5";
+                        }
+                        alert(currentLang === "my"
+                            ? `⚠️ သတိပေးချက်: သင်ထည့်သွင်းထားသော ဗီဒီယို ကြာချိန် (${durStr}) သည် ${tierLabel} ကန့်သတ်ချက် (အများဆုံး ${maxM} မိနစ်) ထက် ကျော်လွန်နေပါသည်ခင်ဗျာ။\n\nကျေးဇူးပြု၍ မိနစ်ပိုတိုသော ဗီဒီယိုကို ရွေးချယ်ပါ သို့မဟုတ် ၁၀ မိနစ်အထိ ပြုလုပ်နိုင်သော VIP သို့ အဆင့်မြှင့်တင်ပါရန်။`
+                            : `⚠️ Warning: Video duration (${durStr}) exceeds your ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`);
                     } else {
                         durSpan.className = "mini-tag";
                         durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid") || "Ready"})</span>`;
+                        if (btnStartRecap) {
+                            btnStartRecap.disabled = false;
+                            btnStartRecap.style.opacity = "";
+                        }
                     }
                 }
 
@@ -1799,6 +1906,135 @@ function setupRecapVisualEditor() {
     if (btnRecap) {
         btnRecap.addEventListener("click", handleStartRecap);
     }
+
+    // ── Interactive Touch / Mouse Crop Guide Handles ──
+    function setupInteractiveCropHandles() {
+        const handleT = document.getElementById("crop-handle-t");
+        const handleB = document.getElementById("crop-handle-b");
+        const handleL = document.getElementById("crop-handle-l");
+        const handleR = document.getElementById("crop-handle-r");
+        const innerMovie = document.getElementById("mockup-inner-movie");
+        if (!innerMovie) return;
+
+        function attachHandleDrag(handle, onDelta) {
+            if (!handle) return;
+            let startCoord = 0;
+            let isDragging = false;
+
+            function onStart(coord) {
+                isDragging = true;
+                startCoord = coord;
+                haptic("light");
+            }
+            function onMove(coord) {
+                if (!isDragging) return;
+                const delta = coord - startCoord;
+                if (Math.abs(delta) >= 3) {
+                    startCoord = coord;
+                    onDelta(delta > 0 ? 1 : -1);
+                    updateCanvasMockupVisuals();
+                }
+            }
+            function onEnd() {
+                isDragging = false;
+            }
+
+            // Desktop Mouse Drag
+            handle.addEventListener("mousedown", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const isHoriz = (handle === handleL || handle === handleR);
+                onStart(isHoriz ? e.clientX : e.clientY);
+                const mm = (ev) => {
+                    ev.preventDefault();
+                    onMove(isHoriz ? ev.clientX : ev.clientY);
+                };
+                const mu = () => {
+                    onEnd();
+                    window.removeEventListener("mousemove", mm);
+                    window.removeEventListener("mouseup", mu);
+                };
+                window.addEventListener("mousemove", mm);
+                window.addEventListener("mouseup", mu);
+            });
+
+            // Mobile Touch Drag
+            handle.addEventListener("touchstart", (e) => {
+                if (e.touches && e.touches.length > 0) {
+                    e.stopPropagation();
+                    const isHoriz = (handle === handleL || handle === handleR);
+                    onStart(isHoriz ? e.touches[0].clientX : e.touches[0].clientY);
+                }
+            }, { passive: true });
+
+            handle.addEventListener("touchmove", (e) => {
+                if (isDragging && e.touches && e.touches.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const isHoriz = (handle === handleL || handle === handleR);
+                    onMove(isHoriz ? e.touches[0].clientX : e.touches[0].clientY);
+                }
+            }, { passive: false });
+
+            handle.addEventListener("touchend", onEnd);
+            handle.addEventListener("touchcancel", onEnd);
+        }
+
+        attachHandleDrag(handleT, (dir) => {
+            state.recapCropTop = Math.max(0, Math.min(30, (state.recapCropTop || 0) + dir));
+            if (sliderCropTop) sliderCropTop.value = state.recapCropTop;
+            if (valCropTop) valCropTop.innerText = `${state.recapCropTop}%`;
+        });
+        attachHandleDrag(handleB, (dir) => {
+            state.recapCropBottom = Math.max(0, Math.min(30, (state.recapCropBottom || 0) - dir));
+            if (sliderCropBottom) sliderCropBottom.value = state.recapCropBottom;
+            if (valCropBottom) valCropBottom.innerText = `${state.recapCropBottom}%`;
+        });
+        attachHandleDrag(handleL, (dir) => {
+            state.recapCropLeft = Math.max(0, Math.min(30, (state.recapCropLeft || 0) + dir));
+            if (sliderCropLeft) sliderCropLeft.value = state.recapCropLeft;
+            if (valCropLeft) valCropLeft.innerText = `${state.recapCropLeft}%`;
+        });
+        attachHandleDrag(handleR, (dir) => {
+            state.recapCropRight = Math.max(0, Math.min(30, (state.recapCropRight || 0) - dir));
+            if (sliderCropRight) sliderCropRight.value = state.recapCropRight;
+            if (valCropRight) valCropRight.innerText = `${state.recapCropRight}%`;
+        });
+
+        // Touch Pinch-to-Zoom on innerMovie
+        let initDistance = 0;
+        let initCrop = 0;
+
+        innerMovie.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                initDistance = Math.hypot(dx, dy);
+                initCrop = (state.recapCropTop || 0);
+            }
+        }, { passive: true });
+
+        innerMovie.addEventListener("touchmove", (e) => {
+            if (e.touches && e.touches.length === 2 && initDistance > 0) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                const scaleDiff = (initDistance - dist) * 0.08;
+                const newCrop = Math.max(0, Math.min(25, Math.round(initCrop + scaleDiff)));
+                state.recapCropTop = newCrop;
+                state.recapCropBottom = newCrop;
+                if (sliderCropTop) sliderCropTop.value = newCrop;
+                if (sliderCropBottom) sliderCropBottom.value = newCrop;
+                if (valCropTop) valCropTop.innerText = `${newCrop}%`;
+                if (valCropBottom) valCropBottom.innerText = `${newCrop}%`;
+                updateCanvasMockupVisuals();
+            }
+        }, { passive: false });
+
+        innerMovie.addEventListener("touchend", () => { initDistance = 0; });
+    }
+    setupInteractiveCropHandles();
 
     // Initial canvas mockup sync
     updateCanvasMockupVisuals();
@@ -1990,10 +2226,22 @@ function startRecapJobPolling(jobId) {
                 const btnSrt = document.getElementById("btn-recap-dl-srt");
                 const btnScript = document.getElementById("btn-recap-dl-script");
 
-                if (btnVideo && data.download_urls?.video) btnVideo.href = data.download_urls.video;
-                if (btnAudio && data.download_urls?.audio) btnAudio.href = data.download_urls.audio;
-                if (btnSrt && data.download_urls?.srt) btnSrt.href = data.download_urls.srt;
-                if (btnScript && data.download_urls?.script) btnScript.href = data.download_urls.script;
+                if (btnVideo && data.download_urls?.video) {
+                    btnVideo.href = data.download_urls.video;
+                    btnVideo.setAttribute("data-dl-url", data.download_urls.video);
+                }
+                if (btnAudio && data.download_urls?.audio) {
+                    btnAudio.href = data.download_urls.audio;
+                    btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
+                }
+                if (btnSrt && data.download_urls?.srt) {
+                    btnSrt.href = data.download_urls.srt;
+                    btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
+                }
+                if (btnScript && data.download_urls?.script) {
+                    btnScript.href = data.download_urls.script;
+                    btnScript.setAttribute("data-dl-url", data.download_urls.script);
+                }
 
                 haptic("success");
                 loadUserProfile();
@@ -3655,10 +3903,22 @@ async function checkStartupDeepLinks() {
                         player.src = data.download_urls.video;
                         player.classList.remove("hidden");
                     }
-                    if (btnVideo && data.download_urls?.video) btnVideo.href = data.download_urls.video;
-                    if (btnAudio && data.download_urls?.audio) btnAudio.href = data.download_urls.audio;
-                    if (btnSrt && data.download_urls?.srt) btnSrt.href = data.download_urls.srt;
-                    if (btnScript && data.download_urls?.script) btnScript.href = data.download_urls.script;
+                    if (btnVideo && data.download_urls?.video) {
+                        btnVideo.href = data.download_urls.video;
+                        btnVideo.setAttribute("data-dl-url", data.download_urls.video);
+                    }
+                    if (btnAudio && data.download_urls?.audio) {
+                        btnAudio.href = data.download_urls.audio;
+                        btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
+                    }
+                    if (btnSrt && data.download_urls?.srt) {
+                        btnSrt.href = data.download_urls.srt;
+                        btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
+                    }
+                    if (btnScript && data.download_urls?.script) {
+                        btnScript.href = data.download_urls.script;
+                        btnScript.setAttribute("data-dl-url", data.download_urls.script);
+                    }
                     if (btnTg) {
                         btnTg.disabled = false;
                         btnTg.classList.remove("sent");
@@ -3680,6 +3940,178 @@ async function checkStartupDeepLinks() {
     }
 }
 
+// ── Deliverable Downloads (Telegram Mini App & Mobile Browser Compatible) ──
+function downloadDeliverable(url, defaultFilename) {
+    if (!url || url === "#") return;
+    const absUrl = url.startsWith("http") ? url : (window.location.origin + url);
+
+    // If running in Telegram WebApp
+    if (window.Telegram?.WebApp?.openLink) {
+        try {
+            window.Telegram.WebApp.openLink(absUrl);
+            return;
+        } catch (e) {
+            console.warn("Telegram openLink fallback:", e);
+        }
+    }
+
+    try {
+        const link = document.createElement("a");
+        link.href = absUrl;
+        link.download = defaultFilename || "file";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    } catch (e) {
+        window.open(absUrl, "_blank");
+    }
+}
+
+function setupDeliverablesDownloads() {
+    const btnVideo = document.getElementById("btn-recap-dl-video");
+    const btnAudio = document.getElementById("btn-recap-dl-audio");
+    const btnSrt = document.getElementById("btn-recap-dl-srt");
+    const btnScript = document.getElementById("btn-recap-dl-script");
+
+    if (btnVideo) {
+        btnVideo.addEventListener("click", (e) => {
+            const url = btnVideo.getAttribute("data-dl-url") || btnVideo.href;
+            if (url && url !== "#") {
+                e.preventDefault();
+                downloadDeliverable(url, "recap_video.mp4");
+            }
+        });
+    }
+    if (btnAudio) {
+        btnAudio.addEventListener("click", (e) => {
+            const url = btnAudio.getAttribute("data-dl-url") || btnAudio.href;
+            if (url && url !== "#") {
+                e.preventDefault();
+                downloadDeliverable(url, "voiceover.mp3");
+            }
+        });
+    }
+    if (btnSrt) {
+        btnSrt.addEventListener("click", (e) => {
+            const url = btnSrt.getAttribute("data-dl-url") || btnSrt.href;
+            if (url && url !== "#") {
+                e.preventDefault();
+                downloadDeliverable(url, "subtitles.srt");
+            }
+        });
+    }
+    if (btnScript) {
+        btnScript.addEventListener("click", (e) => {
+            const url = btnScript.getAttribute("data-dl-url") || btnScript.href;
+            if (url && url !== "#") {
+                e.preventDefault();
+                downloadDeliverable(url, "script.txt");
+            }
+        });
+    }
+}
+
+// ── Alert Boxes Auto-Sliding Carousel ───────────────────────────────────────
+function setupAlertCarousel() {
+    const carousel = document.getElementById("studio-alert-carousel");
+    if (!carousel) return;
+    const slides = carousel.querySelectorAll(".carousel-slide");
+    const dots = carousel.querySelectorAll(".carousel-dot");
+    const btnPrev = document.getElementById("btn-carousel-prev");
+    const btnNext = document.getElementById("btn-carousel-next");
+    if (!slides.length) return;
+
+    let currentIndex = 0;
+    let timer = null;
+    let isPaused = false;
+
+    function goToSlide(idx, direction = "next") {
+        slides.forEach((s, i) => {
+            s.classList.remove("active", "slide-out-left");
+            if (i === currentIndex && direction === "next") {
+                s.classList.add("slide-out-left");
+            }
+        });
+        dots.forEach(d => d.classList.remove("active"));
+
+        currentIndex = (idx + slides.length) % slides.length;
+        slides[currentIndex].classList.add("active");
+        if (dots[currentIndex]) dots[currentIndex].classList.add("active");
+    }
+
+    function nextSlide() {
+        goToSlide(currentIndex + 1, "next");
+    }
+
+    function prevSlide() {
+        goToSlide(currentIndex - 1, "prev");
+    }
+
+    function startAutoSlide() {
+        if (timer) clearInterval(timer);
+        timer = setInterval(() => {
+            if (!isPaused) nextSlide();
+        }, 3500); // 3.5 seconds auto rotation
+    }
+
+    if (btnNext) {
+        btnNext.addEventListener("click", () => {
+            haptic("selection");
+            nextSlide();
+            startAutoSlide();
+        });
+    }
+
+    if (btnPrev) {
+        btnPrev.addEventListener("click", () => {
+            haptic("selection");
+            prevSlide();
+            startAutoSlide();
+        });
+    }
+
+    dots.forEach((dot, idx) => {
+        dot.addEventListener("click", () => {
+            haptic("selection");
+            goToSlide(idx);
+            startAutoSlide();
+        });
+    });
+
+    // Touch Swipe Gestures for Mobile
+    let touchStartX = 0;
+    let touchEndX = 0;
+
+    carousel.addEventListener("touchstart", (e) => {
+        isPaused = true;
+        if (e.touches && e.touches.length > 0) {
+            touchStartX = e.touches[0].clientX;
+        }
+    }, { passive: true });
+
+    carousel.addEventListener("touchend", (e) => {
+        if (e.changedTouches && e.changedTouches.length > 0) {
+            touchEndX = e.changedTouches[0].clientX;
+            const diffX = touchEndX - touchStartX;
+            if (diffX > 40) {
+                haptic("selection");
+                prevSlide();
+            } else if (diffX < -40) {
+                haptic("selection");
+                nextSlide();
+            }
+        }
+        setTimeout(() => { isPaused = false; }, 2000);
+    }, { passive: true });
+
+    carousel.addEventListener("mouseenter", () => { isPaused = true; });
+    carousel.addEventListener("mouseleave", () => { isPaused = false; });
+
+    startAutoSlide();
+}
+
 // ── App Startup ────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
@@ -3687,6 +4119,8 @@ document.addEventListener("DOMContentLoaded", () => {
     setupTabs();
     setupVoiceStudio();
     setupRecapVisualEditor();
+    setupAlertCarousel();
+    setupDeliverablesDownloads();
     setupDownloader();
     setupSlipPreview();
 

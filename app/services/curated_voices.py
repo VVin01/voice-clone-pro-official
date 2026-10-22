@@ -21,7 +21,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Most Popular 🔥",
         "control_instruction": (
             "A warm, deep, authoritative, emotionally resonant Burmese male movie recap storyteller. "
-            "Calm, confident, cinematic narration with articulate Burmese pronunciation."
+            "Natural human breathing, velvety cadence, warm acoustic studio presence with pristine Burmese pronunciation, zero robotic artifact."
         ),
         "cfg_value": 2.0,
     },
@@ -37,9 +37,9 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Formal Anchor ⚡",
         "control_instruction": (
             "A professional, formal, crisp Burmese male documentary narrator and news anchor. "
-            "Clear cadence, steady pace, articulate diction."
+            "Clear natural cadence, warm studio acoustic presence, articulate diction with zero metallic noise."
         ),
-        "cfg_value": 2.2,
+        "cfg_value": 2.1,
     },
     "koaung": {
         "id": "koaung",
@@ -53,7 +53,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "TikTok & Shorts 🚀",
         "control_instruction": (
             "An enthusiastic, upbeat, vibrant young Burmese male creator. "
-            "Energetic, casual, expressive, engaging rhythm ideal for TikTok and Shorts."
+            "Natural conversational rhythm, expressive organic inflection for TikTok and Shorts, clear studio clarity without distortion."
         ),
         "cfg_value": 2.0,
     },
@@ -69,7 +69,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Gentle Melody 🌸",
         "control_instruction": (
             "A gentle, sweet, emotionally tender Burmese female audiobook narrator. "
-            "Soft, melodious tone, soothing and heartfelt delivery."
+            "Soft, melodious tone, soothing organic delivery, warm intimate presence with no robotic buzz."
         ),
         "cfg_value": 2.0,
     },
@@ -85,9 +85,9 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Thriller Drama 🎬",
         "control_instruction": (
             "A dramatic, suspenseful, emotionally intense Burmese female movie recap narrator. "
-            "Dynamic vocal contrast, gripping and captivating inflection."
+            "Dynamic vocal contrast, natural cinematic inflection, zero digital clipping or harsh sibilance."
         ),
-        "cfg_value": 2.2,
+        "cfg_value": 2.1,
     },
     "mamay": {
         "id": "mamay",
@@ -101,7 +101,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Commercial Pro 💎",
         "control_instruction": (
             "A bright, articulate, friendly, and persuasive Burmese female commercial voice. "
-            "Modern, polite, trustworthy, and cheerful."
+            "Polite, trustworthy, modern clear studio broadcast timbre with organic smoothness."
         ),
         "cfg_value": 2.0,
     },
@@ -117,9 +117,9 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Epic Cinema 👑",
         "control_instruction": (
             "A deep, bass-rich, resonant, dramatic blockbuster movie trailer narrator. "
-            "Authoritative, powerful gravitas, cinematic impact with pristine Burmese pronunciation."
+            "Authoritative gravitas, cinematic impact, velvety low-end warmth with pristine Burmese pronunciation."
         ),
-        "cfg_value": 2.3,
+        "cfg_value": 2.2,
     },
     "komyat": {
         "id": "komyat",
@@ -133,9 +133,9 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Spooky Dark 🕯️",
         "control_instruction": (
             "A mysterious, chilling, suspenseful, dark Burmese male ghost story narrator. "
-            "Atmospheric, brooding, captivating eerie cadence."
+            "Atmospheric, brooding, captivating cadence with organic breath and natural dynamics."
         ),
-        "cfg_value": 2.1,
+        "cfg_value": 2.0,
     },
     "kophone": {
         "id": "kophone",
@@ -149,7 +149,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Tech & Science 💡",
         "control_instruction": (
             "An articulate, engaging, intelligent Burmese male explainer. "
-            "Clean, friendly, informative pacing ideal for technology, educational videos and tutorials."
+            "Clean, friendly, informative pacing ideal for technology and educational tutorials with zero robotic noise."
         ),
         "cfg_value": 2.0,
     },
@@ -165,7 +165,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Peaceful ASMR ✨",
         "control_instruction": (
             "An ultra-soft, serene, tranquil, whispery Burmese female voice. "
-            "Extremely relaxing, gentle, calm tempo ideal for meditation, ASMR and bedtime stories."
+            "Extremely relaxing, gentle, calm tempo ideal for meditation, ASMR and bedtime stories, pristine natural warmth."
         ),
         "cfg_value": 1.8,
     },
@@ -181,7 +181,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Anime & Gaming 🎀",
         "control_instruction": (
             "A high-energy, youthful, playful, vibrant Burmese female anime dubbing artist and gaming creator. "
-            "Expressive, colorful intonation with bright personality."
+            "Expressive, colorful intonation with bright personality and crisp acoustic presence."
         ),
         "cfg_value": 2.0,
     },
@@ -197,7 +197,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_en": "Luxury Lifestyle 👑",
         "control_instruction": (
             "An elegant, chic, highly sophisticated Burmese female influencer and brand ambassador. "
-            "Confident, modern, silky smooth vocal texture for luxury and lifestyle."
+            "Confident, modern, silky smooth vocal texture for luxury and lifestyle with zero distortion."
         ),
         "cfg_value": 2.1,
     },

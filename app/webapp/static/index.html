@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261022_fix_syntax_interactive">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261022_studio_luxury_v3">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -261,22 +261,34 @@
                     <span class="tutorial-banner-btn" data-i18n="btn_watch">ကြည့်ရှုရန် ▶️</span>
                 </div>
 
-                <!-- Recap Duration Notice -->
-                <div class="queue-notice-banner">
-                    <span class="notice-icon">⚡</span>
-                    <span class="notice-text" data-i18n="queue_notice_recap">⚡ High-Speed Studio: Shorts (၁-၃ မိနစ်) ~ ၁.၅ မိနစ် • Cinema (၅-၁၀ မိနစ်) ~ ၃-၄ မိနစ် (Groq Whisper Turbo + 1080p Cinema Compositing)</span>
-                </div>
-
-                <!-- Telegram Background Delivery Assurance -->
-                <div class="telegram-bg-assurance-pill">
-                    <span class="assurance-icon">✨</span>
-                    <span class="assurance-text" data-i18n="telegram_bg_assurance">ဖုန်း Screen ရှေ့တွင် စောင့်မနေပါနှင့် — Cloud AI Render ပြီးစီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ဆောင်ပေးပါမည်။</span>
-                </div>
-
-                <!-- Tier Duration & Watermark Policy Banner -->
-                <div class="duration-limit-pill" id="recap-limit-pill">
-                    <span class="limit-icon">⏱️</span>
-                    <span class="limit-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP: ၁၀ မိနစ်အထိ (No Watermark)</span>
+                <!-- 🌟 AUTO-SLIDING STUDIO ANNOUNCEMENT & POLICY CAROUSEL (CLEAN & COMPACT) 🌟 -->
+                <div class="studio-alert-carousel" id="studio-alert-carousel">
+                    <div class="carousel-track" id="carousel-track">
+                        <!-- Slide 0: High-Speed Studio -->
+                        <div class="carousel-slide active" data-slide="0">
+                            <span class="slide-icon">⚡</span>
+                            <span class="slide-text" data-i18n="queue_notice_recap">⚡ High-Speed Studio: Shorts (၁-၃ မိနစ်) ~ ၁.၅ မိနစ် • Cinema (၅-၁၀ မိနစ်) ~ ၃-၄ မိနစ် (Groq Whisper Turbo + 1080p Cinema Compositing)</span>
+                        </div>
+                        <!-- Slide 1: Telegram Background Delivery -->
+                        <div class="carousel-slide" data-slide="1">
+                            <span class="slide-icon">✨</span>
+                            <span class="slide-text" data-i18n="telegram_bg_assurance">✨ ဖုန်း Screen ရှေ့တွင် စောင့်မနေပါနှင့် — Cloud AI Render ပြီးစီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ဆောင်ပေးပါမည်။</span>
+                        </div>
+                        <!-- Slide 2: Tier Limit & Watermark Policy -->
+                        <div class="carousel-slide" data-slide="2" id="recap-limit-pill">
+                            <span class="slide-icon">⏱️</span>
+                            <span class="slide-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP: ၁၀ မိနစ်အထိ (No Watermark)</span>
+                        </div>
+                    </div>
+                    <div class="carousel-nav-bar">
+                        <button type="button" class="carousel-arrow prev" id="btn-carousel-prev" aria-label="Previous Slide">‹</button>
+                        <div class="carousel-dots" id="carousel-dots">
+                            <span class="carousel-dot active" data-slide-idx="0"></span>
+                            <span class="carousel-dot" data-slide-idx="1"></span>
+                            <span class="carousel-dot" data-slide-idx="2"></span>
+                        </div>
+                        <button type="button" class="carousel-arrow next" id="btn-carousel-next" aria-label="Next Slide">›</button>
+                    </div>
                 </div>
 
                 <!-- 🎬 STREAMLINED STUDIO UX: 3-STEP PRIMARY FLOW + ADVANCED ACCORDION -->
@@ -361,9 +373,18 @@
                                         <div class="crop-shade left" id="crop-shade-left"></div>
                                         <div class="crop-shade right" id="crop-shade-right"></div>
                                         
-                                        <!-- Simulated Original Subtitle -->
+                                        <!-- Simulated Original Subtitle (Demo only, hidden once video/thumbnail is loaded) -->
                                         <div class="mockup-orig-sub" id="mockup-orig-sub">
                                             <span>[ Original English Subtitle: "The secret is finally revealed..." ]</span>
+                                        </div>
+
+                                        <!-- Interactive Touch Drag-to-Crop & Framing Handles -->
+                                        <div class="crop-drag-guide" id="crop-drag-guide">
+                                            <div class="crop-handle crop-handle-top" id="crop-handle-t"></div>
+                                            <div class="crop-handle crop-handle-bottom" id="crop-handle-b"></div>
+                                            <div class="crop-handle crop-handle-left" id="crop-handle-l"></div>
+                                            <div class="crop-handle crop-handle-right" id="crop-handle-r"></div>
+                                            <div class="crop-center-indicator" id="crop-center-indicator">↔️ Drag to Frame</div>
                                         </div>
 
                                         <div class="movie-center-badge" id="mockup-fill-badge">
@@ -378,8 +399,10 @@
                                         </div>
                                     </div>
                                     <div class="preview-blur-box draggable-box" id="preview-blur-box" style="bottom: 12%; height: 14%;" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ">
+                                        <div class="box-resize-handle top"></div>
                                         <span class="drag-grip-icon">⠿</span>
                                         <span class="blur-label" data-i18n="blur_box_label">🌫️ မူရင်းစာတန်းဖျက် Blur Box</span>
+                                        <div class="box-resize-handle bottom"></div>
                                     </div>
                                     <div class="preview-sub-box yellow draggable-box" id="preview-sub-box" style="bottom: 15%;" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ">
                                         <span class="drag-grip-icon sub-grip">⠿</span>
@@ -389,88 +412,106 @@
                             </div>
                         </div>
 
-                        <!-- ⏱️ Timeline Frame Scrubber & Second Skipping Control (Just like in the Bot) -->
-                        <div class="canvas-seek-timeline-bar mt-2">
-                            <div class="seek-info-header">
-                                <span class="seek-title">⏱️ စက္ကန့်ကျော်၍ စာတန်းနေရာ စစ်ဆေးရန် (Frame Seek):</span>
-                                <span class="seek-time-badge" id="canvas-seek-time-badge">⏱️ 00:05s / 00:00s</span>
-                            </div>
-                            
-                            <!-- Scrubber Range Slider -->
-                            <div class="seek-slider-wrap mt-1">
-                                <input type="range" id="slider-canvas-seek" min="0" max="60" value="5" step="0.5" class="studio-slider seek-slider">
+                        <!-- 🎛️ COMPACT STUDIO TOOLBAR (NO VERTICAL SCROLL FATIGUE) 🎛️ -->
+                        <div class="canvas-compact-toolbar mt-2" id="canvas-compact-toolbar">
+                            <!-- Segmented Navigation Pills -->
+                            <div class="toolbar-tabs-nav">
+                                <button type="button" class="tb-tab-btn active" data-tb-tab="seek" id="tab-btn-seek">
+                                    <span>⏱️ Frame Seek</span>
+                                </button>
+                                <button type="button" class="tb-tab-btn" data-tb-tab="mask" id="tab-btn-mask">
+                                    <span>🌫️ Blur & စာတန်း</span>
+                                </button>
+                                <button type="button" class="tb-tab-btn" data-tb-tab="style" id="tab-btn-style">
+                                    <span>🎨 စတိုင်လ်</span>
+                                </button>
                             </div>
 
-                            <!-- Quick Jump Buttons & Scene Presets -->
-                            <div class="seek-actions-row mt-2">
-                                <button type="button" class="mini-btn-seek" id="btn-seek-prev-5" title="5 စက္ကန့် နောက်ဆုတ်မည်">⏪ -5s</button>
-                                <button type="button" class="mini-btn-seek active" id="btn-canvas-play-toggle" title="Play/Pause Frame">⏯️ နမူနာကြည့်</button>
-                                <button type="button" class="mini-btn-seek" id="btn-seek-next-5" title="5 စက္ကန့် ရှေ့တိုးမည်">⏩ +5s</button>
+                            <!-- Tab Panel 1: Frame Seeker Timeline Bar -->
+                            <div class="tb-tab-panel active" id="tb-panel-seek">
+                                <div class="seek-info-header">
+                                    <span class="seek-title">⏱️ စက္ကန့်ကျော်၍ စာတန်းနေရာ စစ်ဆေးပါ:</span>
+                                    <span class="seek-time-badge" id="canvas-seek-time-badge">⏱️ 00:05s / 00:00s</span>
+                                </div>
+                                <div class="seek-slider-wrap mt-1">
+                                    <input type="range" id="slider-canvas-seek" min="0" max="60" value="5" step="0.5" class="studio-slider seek-slider">
+                                </div>
+                                <div class="seek-actions-row mt-2">
+                                    <button type="button" class="mini-btn-seek" id="btn-seek-prev-5" title="5 စက္ကန့် နောက်ဆုတ်မည်">⏪ -5s</button>
+                                    <button type="button" class="mini-btn-seek active" id="btn-canvas-play-toggle" title="Play/Pause Frame">⏯️ နမူနာကြည့်</button>
+                                    <button type="button" class="mini-btn-seek" id="btn-seek-next-5" title="5 စက္ကန့် ရှေ့တိုးမည်">⏩ +5s</button>
+                                    <div class="seek-presets-pills">
+                                        <button type="button" class="seek-pill-btn" data-sec="0">0s</button>
+                                        <button type="button" class="seek-pill-btn active" data-sec="5">5s</button>
+                                        <button type="button" class="seek-pill-btn" data-sec="15">15s</button>
+                                        <button type="button" class="seek-pill-btn" data-sec="30">30s</button>
+                                        <button type="button" class="seek-pill-btn" data-sec="60">60s</button>
+                                    </div>
+                                </div>
+                            </div>
 
-                                <div class="seek-presets-pills">
-                                    <button type="button" class="seek-pill-btn" data-sec="0">0s (စတင်)</button>
-                                    <button type="button" class="seek-pill-btn active" data-sec="5">5s</button>
-                                    <button type="button" class="seek-pill-btn" data-sec="15">15s (စကားပြော)</button>
-                                    <button type="button" class="seek-pill-btn" data-sec="30">30s</button>
-                                    <button type="button" class="seek-pill-btn" data-sec="60">60s</button>
+                            <!-- Tab Panel 2: Blur Mask & Subtitle Position Sliders -->
+                            <div class="tb-tab-panel hidden" id="tb-panel-mask">
+                                <!-- Overlay Toggles -->
+                                <div class="overlays-toggle-row">
+                                    <button class="mini-toggle active" id="btn-toggle-subs">
+                                        <span class="t-icon">📝</span>
+                                        <span class="t-lbl" data-i18n="recap_burn_subs_label">စာတန်းထိုး:</span>
+                                        <span class="t-val" data-i18n="toggle_on">ON ✅</span>
+                                    </button>
+                                    <button class="mini-toggle active" id="btn-toggle-blur">
+                                        <span class="t-icon">🌫️</span>
+                                        <span class="t-lbl" data-i18n="recap_blur_subs_label">Blur Box:</span>
+                                        <span class="t-val" data-i18n="toggle_on">ON ✅</span>
+                                    </button>
+                                    <button class="mini-toggle active" id="btn-toggle-logo">
+                                        <span class="t-icon">⭐</span>
+                                        <span class="t-lbl" data-i18n="recap_logo_toggle_label">Logo:</span>
+                                        <span class="t-val" data-i18n="toggle_on">ON ✅</span>
+                                    </button>
+                                </div>
+
+                                <!-- Sliders Controls -->
+                                <div class="editor-controls mt-2">
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_y">🔲 မူရင်းစာတန်းဖျက် Blur အနိမ့်အမြင့် (Y):</span>
+                                            <span class="slider-val" id="val-blur-y">81%</span>
+                                        </div>
+                                        <input type="range" min="50" max="95" value="81" class="studio-slider" id="slider-blur-y">
+                                    </div>
+
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_h">↕️ Blur Box အထူ/အမြင့် (H):</span>
+                                            <span class="slider-val" id="val-blur-h">13%</span>
+                                        </div>
+                                        <input type="range" min="5" max="30" value="13" class="studio-slider" id="slider-blur-h">
+                                    </div>
+
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_sub_y">📝 မြန်မာစာတန်းထိုး နေရာ (Sub Y):</span>
+                                            <span class="slider-val" id="val-sub-y">85%</span>
+                                        </div>
+                                        <input type="range" min="50" max="95" value="85" class="studio-slider" id="slider-sub-y">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tab Panel 3: Subtitle Presets (Yellow, White, Boxed, Neon) -->
+                            <div class="tb-tab-panel hidden" id="tb-panel-style">
+                                <div class="style-selector-row">
+                                    <span class="style-lbl" data-i18n="sub_style_label">စာတန်းထိုး စတိုင်လ် (Subtitle Style):</span>
+                                    <div class="chip-options" id="sub-style-picker">
+                                        <button class="style-chip active" data-style="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</button>
+                                        <button class="style-chip" data-style="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</button>
+                                        <button class="style-chip" data-style="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</button>
+                                        <button class="style-chip" data-style="neon" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-
-                        <!-- Overlay Toggles (Subtitles, Blur, Logo) -->
-                        <div class="overlays-toggle-row mt-3">
-                            <button class="mini-toggle active" id="btn-toggle-subs">
-                                <span class="t-icon">📝</span>
-                                <span class="t-lbl" data-i18n="recap_burn_subs_label">စာတန်းထိုး:</span>
-                                <span class="t-val" data-i18n="toggle_on">ON ✅</span>
-                            </button>
-                            <button class="mini-toggle active" id="btn-toggle-blur">
-                                <span class="t-icon">🌫️</span>
-                                <span class="t-lbl" data-i18n="recap_blur_subs_label">Blur Box:</span>
-                                <span class="t-val" data-i18n="toggle_on">ON ✅</span>
-                            </button>
-                            <button class="mini-toggle active" id="btn-toggle-logo">
-                                <span class="t-icon">⭐</span>
-                                <span class="t-lbl" data-i18n="recap_logo_toggle_label">Logo:</span>
-                                <span class="t-val" data-i18n="toggle_on">ON ✅</span>
-                            </button>
-                        </div>
-
-                        <!-- Sliders Controls -->
-                        <div class="editor-controls mt-3">
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="slider_blur_y">🔲 မူရင်းစာတန်းဖျက် Blur အနိမ့်အမြင့် (Y):</span>
-                                    <span class="slider-val" id="val-blur-y">81%</span>
-                                </div>
-                                <input type="range" min="50" max="95" value="81" class="studio-slider" id="slider-blur-y">
-                            </div>
-
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="slider_blur_h">↕️ Blur Box အထူ/အမြင့် (H):</span>
-                                    <span class="slider-val" id="val-blur-h">13%</span>
-                                </div>
-                                <input type="range" min="5" max="30" value="13" class="studio-slider" id="slider-blur-h">
-                            </div>
-
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="slider_sub_y">📝 မြန်မာစာတန်းထိုး နေရာ (Sub Y):</span>
-                                    <span class="slider-val" id="val-sub-y">85%</span>
-                                </div>
-                                <input type="range" min="50" max="95" value="85" class="studio-slider" id="slider-sub-y">
-                            </div>
-                        </div>
-
-                        <!-- Subtitle Presets (Yellow, White, Boxed, Neon) -->
-                        <div class="style-selector-row mt-3">
-                            <span class="style-lbl" data-i18n="sub_style_label">စာတန်းထိုး စတိုင်လ် (Subtitle Style):</span>
-                            <div class="chip-options" id="sub-style-picker">
-                                <button class="style-chip active" data-style="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</button>
-                                <button class="style-chip" data-style="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</button>
-                                <button class="style-chip" data-style="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</button>
-                                <button class="style-chip" data-style="neon" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</button>
                             </div>
                         </div>
                     </div>
@@ -1434,7 +1475,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261022_canvas_scrub_v2"></script>
-    <script src="/static/js/app.js?v=20261022_canvas_scrub_v2"></script>
+    <script src="/static/js/i18n.js?v=20261022_studio_luxury_v3"></script>
+    <script src="/static/js/app.js?v=20261022_studio_luxury_v3"></script>
 </body>
 </html>

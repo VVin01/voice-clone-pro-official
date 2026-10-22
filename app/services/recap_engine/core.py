@@ -837,7 +837,7 @@ def mux_audio(
         # Studio ducking: Voice triggers sidechain compressor on BGM
         # When voice is active, BGM ducks smoothly; when voice pauses, BGM rises gently.
         filter_complex = (
-            f"[1:a]highpass=f=60,lowpass=f=12000,volume={vol_scale:.3f}[v_master];"
+            f"[1:a]highpass=f=75,lowpass=f=11000,acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2,volume={vol_scale:.3f}[v_master];"
             f"[v_master]asplit=2[v_out][v_sc];"
             f"[2:a]volume={bgm_volume:.3f},aloop=loop=-1:size=2e+09[bgm_loop];"
             f"[bgm_loop][v_sc]sidechaincompress=threshold=0.08:ratio=4:attack=50:release=350[bgm_ducked];"
@@ -852,8 +852,9 @@ def mux_audio(
         ]
     else:
         af_filters = [
-            "highpass=f=60",
-            "lowpass=f=12000",
+            "highpass=f=75",
+            "lowpass=f=11000",
+            "acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2",
             f"volume={vol_scale:.3f}",
             "alimiter=limit=0.95:level=disabled",
         ]
@@ -894,8 +895,11 @@ def _render_text_with_pillow(
     except ImportError:
         raise RuntimeError("Pillow is required for rendering title text. Install with: pip install pillow")
 
+    fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
     cand_fonts = [
         str(font_path or "").strip(),
+        str(fonts_dir / "Pyidaungsu.ttf"),
+        str(fonts_dir / "NotoSansMyanmar.ttf"),
         os.getenv("RECAP_MM_FONT", ""),
         "/usr/share/fonts/truetype/padauk/Padauk-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf",
@@ -1055,8 +1059,9 @@ def _render_extra_text_png(
 
 def _encoder_args(encoder: str) -> list[str]:
     if encoder == "h264_nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19", "-b:v", "0"]
-    return ["-c:v", "libx264", "-preset", "faster", "-crf", "20"]
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "20", "-b:v", "0"]
+    # Accelerated CPU encoding preset with multi-threading for fast render times on cloud instances
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-threads", "0"]
 
 
 BURMESE_SYLLABLE_BREAK = re.compile(
@@ -1476,7 +1481,14 @@ def apply_production_overlays(
 
     if subtitles_path and subtitles_path.is_file():
         sub_esc = subtitles_path.resolve().as_posix().replace(":", r"\:")
-        sub_font = str(overlays.get("subtitles_font", "Myanmar Text"))
+        fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+        fonts_arg = ""
+        if fonts_dir.is_dir():
+            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:")
+            fonts_arg = f":fontsdir='{fonts_dir_esc}'"
+
+        # Bind authentic Myanmar Unicode standard font (Pyidaungsu) for accurate complex script text shaping
+        sub_font = str(overlays.get("subtitles_font", "Pyidaungsu"))
         sub_size = int(overlays.get("subtitles_font_size", 16))
         # Distance from bottom of canvas to bottom of picture
         bottom_pad = ch - (oy + ph)
@@ -1507,7 +1519,7 @@ def apply_production_overlays(
         shad = st["shadow"]
         out = "vsub"
         graph.append(
-            f"{current}subtitles='{sub_esc}':force_style='Fontname={sub_font},FontSize={sub_size},"
+            f"{current}subtitles='{sub_esc}'{fonts_arg}:force_style='Fontname={sub_font},FontSize={sub_size},"
             f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=16,MarginR=16,Alignment=2,WrapStyle=0'[{out}]"
         )
         current = f"[{out}]"

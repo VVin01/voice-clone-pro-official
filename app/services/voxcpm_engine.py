@@ -89,10 +89,18 @@ def _synthesize_neural_tts_fallback(
         if temp_mp3.is_file() and temp_mp3.stat().st_size > 1000:
             ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
             if ffmpeg_bin:
+                # Studio-grade acoustic mastering filter chain: remove metallic artifacts & dynamic smoothing
+                af_master = (
+                    "highpass=f=75,"
+                    "lowpass=f=11000,"
+                    "acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2,"
+                    "alimiter=limit=0.95:level=disabled"
+                )
                 cmd = [
                     ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
                     "-i", str(temp_mp3),
-                    "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
+                    "-af", af_master,
+                    "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le",
                     str(output_wav)
                 ]
                 subprocess.run(cmd, check=True, capture_output=True, timeout=30)
@@ -265,16 +273,23 @@ class VoxCPMEngine:
                     and os.path.isfile(result_path_str)
                     and os.path.getsize(result_path_str) > 1000
                 ):
-                    # Convert to genuine WAV PCM 16-bit mono 24000Hz via ffmpeg for maximum compatibility
+                    # Convert to genuine WAV PCM 16-bit mono 48000Hz with broadcast voice mastering filters
                     converted_cleanly = False
                     ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
                     if ffmpeg_bin:
                         try:
                             import subprocess
+                            af_master = (
+                                "highpass=f=75,"
+                                "lowpass=f=11000,"
+                                "acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2,"
+                                "alimiter=limit=0.95:level=disabled"
+                            )
                             cmd = [
                                 ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
                                 "-i", str(result_path_str),
-                                "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
+                                "-af", af_master,
+                                "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le",
                                 str(out_path)
                             ]
                             subprocess.run(cmd, check=True, capture_output=True, timeout=30)

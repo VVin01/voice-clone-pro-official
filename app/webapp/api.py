@@ -1183,9 +1183,26 @@ async def create_recap_job(
 
     # Free user duration limit: Max 2 minutes (120s); VIP: Max 10 minutes (600s)
     max_duration_allowed = 600 if is_vip else getattr(settings, "recap_free_max_duration_seconds", 120)
-    if req.duration_seconds and req.duration_seconds > max_duration_allowed:
-        dur_mins = req.duration_seconds // 60
-        dur_secs = req.duration_seconds % 60
+    checked_duration = req.duration_seconds
+
+    # Early duration validation via yt-dlp or ffprobe before deducting credits or queueing
+    if (not checked_duration or checked_duration <= 0) and req.url:
+        try:
+            if req.url.startswith("http://") or req.url.startswith("https://"):
+                from app.services.downloader import extract_first_url, unshorten_url, MediaDownloader
+                can_url = unshorten_url(extract_first_url(req.url) or req.url)
+                info = MediaDownloader().get_info(can_url)
+                checked_duration = info.get("duration", 0) or 0
+            elif os.path.isfile(req.url):
+                from app.services.recap_engine.core import probe_duration, find_ffprobe
+                ffprobe_bin = find_ffprobe()
+                checked_duration = probe_duration(ffprobe_bin, Path(req.url))
+        except Exception as probe_err:
+            logger.warning(f"Could not pre-probe video duration for {req.url}: {probe_err}")
+
+    if checked_duration and checked_duration > max_duration_allowed:
+        dur_mins = int(checked_duration) // 60
+        dur_secs = int(checked_duration) % 60
         max_m = max_duration_allowed // 60
         tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
         raise HTTPException(
