@@ -1035,6 +1035,11 @@ function setupRecapVisualEditor() {
             canvasVideo.onloadedmetadata = () => {
                 const dur = canvasVideo.duration || 60;
                 state.recapSourceDuration = dur;
+                if (canvasVideo.videoWidth && canvasVideo.videoHeight) {
+                    state.recapSourceWidth = canvasVideo.videoWidth;
+                    state.recapSourceHeight = canvasVideo.videoHeight;
+                    updateCanvasMockupVisuals();
+                }
                 if (sliderSeek) {
                     sliderSeek.max = Math.min(600, Math.floor(dur));
                     sliderSeek.value = Math.min(5, Math.floor(dur));
@@ -1075,8 +1080,21 @@ function setupRecapVisualEditor() {
 
             state.uploadedVideoPath = data.local_path;
             state.recapSourceDuration = data.duration_seconds;
+            if (data.width && data.height) {
+                state.recapSourceWidth = data.width;
+                state.recapSourceHeight = data.height;
+            }
             if (data.thumbnail) {
                 state.recapThumbnailUrl = data.thumbnail;
+                const probeImg = new Image();
+                probeImg.onload = () => {
+                    if (probeImg.naturalWidth && probeImg.naturalHeight && (!state.recapSourceWidth || !state.recapSourceHeight)) {
+                        state.recapSourceWidth = probeImg.naturalWidth;
+                        state.recapSourceHeight = probeImg.naturalHeight;
+                        updateCanvasMockupVisuals();
+                    }
+                };
+                probeImg.src = data.thumbnail;
                 updateCanvasMockupVisuals();
             }
 
@@ -1520,22 +1538,77 @@ function setupRecapVisualEditor() {
         if (shadeLeft) shadeLeft.style.width = `${cLeft}%`;
         if (shadeRight) shadeRight.style.width = `${cRight}%`;
 
-        if (innerMovie && (fillMode === "blur" || fillMode === "black")) {
-            if (state.recapRatio === "9:16") {
-                // Base 16:9 height inside 9:16 canvas is 31.64% (81 / 256)
-                const totalVerticalCrop = Math.min(60, cTop + cBottom);
-                const effectivePct = 31.64 * (1.0 - totalVerticalCrop / 100.0);
-                innerMovie.style.height = `${Math.max(16, effectivePct)}%`;
-            } else if (state.recapRatio === "1:1") {
-                // Base 16:9 height inside 1:1 square canvas is 56.25% (9 / 16)
-                const totalVerticalCrop = Math.min(60, cTop + cBottom);
-                const effectivePct = 56.25 * (1.0 - totalVerticalCrop / 100.0);
-                innerMovie.style.height = `${Math.max(28, effectivePct)}%`;
-            } else {
-                innerMovie.style.height = "100%";
+        // 4. Calculate Dynamic Source vs Canvas Aspect Ratio Fit
+        if (innerMovie) {
+            // Determine Canvas Aspect Ratio
+            let rCanvas = 9 / 16; // default 0.5625
+            if (state.recapRatio === "16:9") rCanvas = 16 / 9;
+            else if (state.recapRatio === "1:1") rCanvas = 1.0;
+
+            // Determine Source Media Aspect Ratio
+            let rSource = null;
+            if (state.recapSourceWidth && state.recapSourceHeight && state.recapSourceHeight > 0) {
+                rSource = state.recapSourceWidth / state.recapSourceHeight;
+            } else if (canvasVideo && canvasVideo.videoWidth && canvasVideo.videoHeight) {
+                rSource = canvasVideo.videoWidth / canvasVideo.videoHeight;
             }
-        } else if (innerMovie) {
-            innerMovie.style.height = "100%";
+
+            // If user selected "Original", canvas dynamically matches the source aspect ratio
+            if (state.recapRatio === "Original") {
+                if (rSource) {
+                    rCanvas = rSource;
+                    if (mockupFrame) {
+                        let ratioClass = "ratio-9-16";
+                        if (rSource > 1.3) ratioClass = "ratio-16-9";
+                        else if (rSource >= 0.8 && rSource <= 1.3) ratioClass = "ratio-1-1";
+                        mockupFrame.className = `mockup-screen ${ratioClass}`;
+                    }
+                } else {
+                    rCanvas = 16 / 9;
+                }
+            }
+
+            // Fallback source ratio if media not yet analyzed
+            if (!rSource) {
+                rSource = (state.recapRatio === "9:16" || state.recapRatio === "1:1") ? (16 / 9) : (9 / 16);
+            }
+
+            if (fillMode === "crop") {
+                // Center crop: fills 100% of canvas, no letterbox/pillarbox
+                innerMovie.style.width = "100%";
+                innerMovie.style.height = "100%";
+                innerMovie.style.boxShadow = "none";
+                if (canvasVideo) canvasVideo.style.objectFit = "cover";
+            } else {
+                // Blur or Black fill mode
+                if (canvasVideo) canvasVideo.style.objectFit = "contain";
+                const ratioDiff = Math.abs(rSource - rCanvas);
+
+                if (ratioDiff < 0.04) {
+                    // Source aspect ratio matches canvas (e.g. 9:16 vertical video in 9:16 vertical canvas!)
+                    innerMovie.style.width = "100%";
+                    innerMovie.style.height = "100%";
+                    innerMovie.style.boxShadow = "none";
+                } else if (rSource > rCanvas) {
+                    // Source is wider than canvas (e.g. 16:9 movie inside 9:16 vertical canvas)
+                    // Fills width, letterbox bars on top & bottom
+                    const baseHeightPct = (rCanvas / rSource) * 100;
+                    const totalVCrop = Math.min(60, cTop + cBottom);
+                    const effectiveHeight = baseHeightPct * (1.0 - totalVCrop / 100.0);
+                    innerMovie.style.width = "100%";
+                    innerMovie.style.height = `${Math.max(15, Math.min(100, effectiveHeight))}%`;
+                    innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
+                } else {
+                    // Source is narrower/taller than canvas (e.g. 9:16 vertical video inside 16:9 canvas)
+                    // Fills height, pillarbox bars on left & right
+                    const baseWidthPct = (rSource / rCanvas) * 100;
+                    const totalHCrop = Math.min(60, cLeft + cRight);
+                    const effectiveWidth = baseWidthPct * (1.0 - totalHCrop / 100.0);
+                    innerMovie.style.height = "100%";
+                    innerMovie.style.width = `${Math.max(15, Math.min(100, effectiveWidth))}%`;
+                    innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
+                }
+            }
         }
     }
 
@@ -1921,9 +1994,22 @@ function setupRecapVisualEditor() {
                 if (platformSpan) platformSpan.innerText = data.platform || "Video";
                 if (subSpan) subSpan.innerText = data.has_subtitles ? "✅ Subtitle Ready" : "⚠️ AI Auto Sub";
 
+                if (data.width && data.height) {
+                    state.recapSourceWidth = data.width;
+                    state.recapSourceHeight = data.height;
+                }
                 // Reflect thumbnail on live preview canvas & state
                 if (data.thumbnail) {
                     state.recapThumbnailUrl = data.thumbnail;
+                    const probeImg = new Image();
+                    probeImg.onload = () => {
+                        if (probeImg.naturalWidth && probeImg.naturalHeight && (!state.recapSourceWidth || !state.recapSourceHeight)) {
+                            state.recapSourceWidth = probeImg.naturalWidth;
+                            state.recapSourceHeight = probeImg.naturalHeight;
+                            updateCanvasMockupVisuals();
+                        }
+                    };
+                    probeImg.src = data.thumbnail;
                     updateCanvasMockupVisuals();
                 }
 
