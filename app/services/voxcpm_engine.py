@@ -265,10 +265,11 @@ class VoxCPMEngine:
 
                 # Poll status with queue tracking
                 poll_start = time.time()
+                timeout_sec = int(kwargs.get("timeout") or os.getenv("VOXCPM_TIMEOUT", "60"))
                 while not job.done():
-                    # Fail over if queue exceeds 30 seconds
-                    if time.time() - poll_start > 30:
-                        raise TimeoutError(f"VoxCPM 2 Space '{space_name}' queue timed out after 30s")
+                    # Fail over if queue exceeds timeout
+                    if time.time() - poll_start > timeout_sec:
+                        raise TimeoutError(f"VoxCPM 2 Space '{space_name}' queue timed out after {timeout_sec}s")
 
                     try:
                         st = job.status()

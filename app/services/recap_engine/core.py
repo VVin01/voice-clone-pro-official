@@ -2200,6 +2200,8 @@ class EdgeSmartSync:
                             reference_wav=ref_wav,
                             preset_voice=preset_v,
                             speed=effective_rate or 1.10,
+                            timeout=75,
+                            retries=2,
                         )
                     except Exception as vox_exc:
                         self.log(f"⚠️ VoxCPM 2 failed ({vox_exc}) — falling back to Edge TTS for line {idx}")
