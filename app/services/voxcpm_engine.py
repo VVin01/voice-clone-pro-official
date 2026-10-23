@@ -72,6 +72,7 @@ def _resolve_result_path(result: Any) -> Optional[str]:
 def get_available_hf_tokens() -> List[str]:
     """Discover configured Hugging Face tokens for increased rate limits and priority queue."""
     tokens: List[str] = []
+    # 1. Environment variables
     for env_var in ("HF_TOKEN", "HUGGINGFACE_TOKEN", "HF_TOKENS"):
         val = os.getenv(env_var, "").strip()
         if val:
@@ -79,6 +80,19 @@ def get_available_hf_tokens() -> List[str]:
                 tok = part.strip().strip("'\"")
                 if tok and tok.startswith("hf_") and tok not in tokens:
                     tokens.append(tok)
+
+    # 2. Config settings (.env via pydantic)
+    try:
+        from app.config import settings
+        for val in (getattr(settings, "hf_token", None), getattr(settings, "hf_tokens", None)):
+            if val:
+                for part in re.split(r"[,;\s\n]+", str(val)):
+                    tok = part.strip().strip("'\"")
+                    if tok and tok.startswith("hf_") and tok not in tokens:
+                        tokens.append(tok)
+    except Exception:
+        pass
+
     return tokens
 
 
