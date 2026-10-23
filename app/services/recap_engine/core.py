@@ -2107,26 +2107,25 @@ class EdgeSmartSync:
             log=self.log,
         )
 
-        # Method 1: Check if Fish Audio / VoxCPM Cloud Engine is requested
+        # Method 1: Check if VoxCPM Cloud Engine is requested
         use_voxcpm = (
-            str(self.voice).lower().startswith(("voxcpm", "vox_", "fish_", "fishaudio"))
-            or str(self.overlays.get("tts_engine") or "").lower() in ("voxcpm", "fish_audio", "fishaudio")
+            str(self.voice).lower().startswith(("voxcpm", "vox_"))
+            or str(self.overlays.get("tts_engine") or "").lower() == "voxcpm"
         )
         vox_engine = None
         if use_voxcpm:
             try:
                 try:
-                    from app.services.fish_audio_engine import FishAudioEngine
-                    vox_engine = FishAudioEngine(work_dir=paths.work / "fish_temp", log_fn=self.log)
+                    from app.services.recap_engine.voxcpm_engine import VoxCPMEngine
                 except ImportError:
                     try:
-                        from app.services.recap_engine.voxcpm_engine import VoxCPMEngine
+                        from recap_engine.voxcpm_engine import VoxCPMEngine
                     except ImportError:
                         from voxcpm_engine import VoxCPMEngine
-                    vox_engine = VoxCPMEngine(work_dir=paths.work / "voxcpm_temp", log_fn=self.log)
-                self.log(f"🎙️ Initialized Fish Audio Neural Voice Engine ({self.voice}) | Model: s2.1-pro-free")
+                vox_engine = VoxCPMEngine(work_dir=paths.work / "voxcpm_temp", log_fn=self.log)
+                self.log(f"🎙️ Initialized VoxCPM 2 Cloud Neural Voice Engine ({self.voice})")
             except Exception as vox_init_err:
-                self.log(f"⚠️ Fish Audio init error ({vox_init_err}) — will use Edge TTS")
+                self.log(f"⚠️ VoxCPM 2 init error ({vox_init_err}) — will use Edge TTS")
                 use_voxcpm = False
 
         base_edge_voice = self.voice
@@ -2175,10 +2174,10 @@ class EdgeSmartSync:
                 speak = spoken_text(seg["narration"])
                 produced = None
 
-                # 1. Try Fish Audio / VoxCPM if selected
+                # 1. Try VoxCPM 2 if selected
                 if use_voxcpm and vox_engine:
-                    self.progress(idx - 1, len(segments), f"Fish Audio {idx}/{len(segments)}")
-                    self.log(f"🎙️ [{idx}/{len(segments)}] {base} generate via Fish Audio AI (s2.1-pro-free)")
+                    self.progress(idx - 1, len(segments), f"VoxCPM 2 {idx}/{len(segments)}")
+                    self.log(f"🎙️ [{idx}/{len(segments)}] {base} generate via VoxCPM 2 Cloud AI")
                     try:
                         ref_wav = self.overlays.get("voxcpm_ref_audio")
                         ctrl_prompt = (
@@ -2203,7 +2202,7 @@ class EdgeSmartSync:
                             speed=effective_rate or 1.10,
                         )
                     except Exception as vox_exc:
-                        self.log(f"⚠️ Fish Audio failed ({vox_exc}) — falling back to Edge TTS for line {idx}")
+                        self.log(f"⚠️ VoxCPM 2 failed ({vox_exc}) — falling back to Edge TTS for line {idx}")
                         produced = None
 
                 # 2. Edge TTS (either default or fallback)

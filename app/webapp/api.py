@@ -338,10 +338,9 @@ async def create_voice_job(
 
     # Determine engine & resolve authorized model
     is_vox = (
-        req.engine in ("voxcpm", "fish_audio", "fishaudio")
+        req.engine == "voxcpm"
         or req.preset_voice is not None
         or "voxcpm" in (req.model_slug or "").lower()
-        or "fish" in (req.model_slug or "").lower()
     )
     actual_engine = "voxcpm" if is_vox else "applio"
 
@@ -434,10 +433,9 @@ async def create_voice_job_with_audio(
 
     # Determine engine & resolve authorized model
     is_vox = (
-        engine in ("voxcpm", "fish_audio", "fishaudio")
+        engine == "voxcpm"
         or preset_voice is not None
         or "voxcpm" in (model_slug or "").lower()
-        or "fish" in (model_slug or "").lower()
     )
     actual_engine = "voxcpm" if is_vox else "applio"
 

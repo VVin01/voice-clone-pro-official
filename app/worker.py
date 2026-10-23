@@ -77,7 +77,7 @@ async def process_single_job(
     try:
         # Stage 1: Validation
         is_voxcpm = (
-            getattr(job, "engine", "") in ("voxcpm", "fish_audio", "fishaudio")
+            getattr(job, "engine", "") == "voxcpm"
             or getattr(job, "preset_voice", None) is not None
         )
 
@@ -188,10 +188,10 @@ async def process_single_job(
         await tracker.start_ticker(step=3)
         try:
             if is_voxcpm:
-                logger.info("Starting Fish Audio AI (s2.1-pro-free) synthesis for job %s", job.id)
+                logger.info("Starting VoxCPM 2 Cloud AI synthesis for job %s", job.id)
                 import functools
-                from app.services.fish_audio_engine import FishAudioEngine
-                engine_inst = FishAudioEngine(work_dir=temp_dir)
+                from app.services.voxcpm_engine import VoxCPMEngine
+                engine_inst = VoxCPMEngine(work_dir=temp_dir)
 
                 ref_wav = None
                 if getattr(job, "source_audio_path", None) and Path(job.source_audio_path).is_file():
@@ -206,7 +206,7 @@ async def process_single_job(
                     p_info = get_curated_voice(job.preset_voice)
                     if p_info:
                         control_instruction = p_info.get("control_instruction")
-                        logger.info("Using curated persona '%s' for Fish Audio job %s", job.preset_voice, job.id)
+                        logger.info("Using curated persona '%s' for VoxCPM 2 job %s", job.preset_voice, job.id)
 
                 try:
                     loop = asyncio.get_running_loop()
@@ -224,9 +224,9 @@ async def process_single_job(
                         )
                     )
                 except Exception as e_vox:
-                    logger.warning("Fish Audio primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", e_vox)
+                    logger.warning("VoxCPM 2 primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", e_vox)
                     try:
-                        tracker.set_custom_note("🔄 Fish Audio အချိန်ကုန်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
+                        tracker.set_custom_note("🔄 VoxCPM Queue အချိန်ကုန်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
                     except Exception:
                         pass
 

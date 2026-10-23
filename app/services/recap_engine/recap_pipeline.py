@@ -207,8 +207,8 @@ def run_recap_pipeline(
         overlays["bgm_path"] = str(bgm_path)
         overlays["bgm_volume"] = float(bgm_volume or 0.18)
 
-    # Step 2: RENDER (Edge TTS or Fish Audio + Smart Sync Video)
-    tts_lbl = "Fish Audio AI" if str(tts_engine).lower() in ("voxcpm", "fish_audio") else "Microsoft Edge TTS"
+    # Step 2: RENDER (Edge TTS or VoxCPM 2 + Smart Sync Video)
+    tts_lbl = "VoxCPM 2 Cloud Voice" if str(tts_engine).lower() == "voxcpm" else "Microsoft Edge TTS"
     _progress(3, 4, f"🗣️ [3/4] {tts_lbl} & Smart Sync Render...")
     runner = EdgeSmartSync(
         job_dir=target_job_dir,
