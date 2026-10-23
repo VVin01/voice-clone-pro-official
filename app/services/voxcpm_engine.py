@@ -4,11 +4,11 @@ Connects seamlessly to OpenBMB's VoxCPM-Demo on Hugging Face Spaces for human-li
 tokenizer-free multilingual speech synthesis supporting Burmese, English, and 30 languages.
 
 Features:
+  - Multi-Token Pool & Round-Robin Rotation (HF_TOKEN, HF_TOKENS)
   - Multi-Space Pool & Failover (VOXCPM_SPACES, VOXCPM_SPACE_URL)
-  - Hugging Face Token Support (HF_TOKEN) for elevated rate limits & priority
-  - Live Queue ETA monitoring & dynamic timeout handling
+  - Live Queue ETA monitoring & dynamic timeout handling (30s)
   - Curated Voice Persona guidance (Voice Design via natural language control prompt)
-  - Broadcast-grade audio mastering via FFmpeg (48kHz/44.1kHz PCM 16-bit mono WAV)
+  - Broadcast-grade audio mastering via FFmpeg (44.1kHz PCM 16-bit mono WAV)
   - Resilient Microsoft Edge Neural TTS fallback for zero-downtime reliability
 """
 
@@ -21,8 +21,9 @@ import time
 import shutil
 import hashlib
 import logging
+import threading
 from pathlib import Path
-from typing import Optional, Any, Callable, List
+from typing import Optional, Any, Callable, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,16 @@ DEFAULT_BURMESE_CONTROL = (
     "A clear, natural, emotionally expressive Burmese speaker with warm tone "
     "and fluent pronunciation. Speak in Myanmar language with authentic accent."
 )
+
+
+def mask_hf_token(tok: Optional[str]) -> str:
+    """Safely format HF token for logging."""
+    if not tok:
+        return "anonymous"
+    t = tok.strip()
+    if len(t) > 10:
+        return f"{t[:7]}...{t[-4:]}"
+    return "hf_***"
 
 
 def _resolve_result_path(result: Any) -> Optional[str]:
@@ -93,11 +104,13 @@ def get_configured_spaces() -> List[str]:
 class VoxCPMEngine:
     """
     High-level client for VoxCPM 2 speech synthesis and voice cloning.
-    Connects to Hugging Face Spaces with Multi-Space redundancy, HF token prioritization,
+    Connects to Hugging Face Spaces with Multi-Token Pool & Rotation, Multi-Space redundancy,
     real-time Queue ETA tracking, and studio broadcast audio mastering.
     """
     _clients: dict[str, Any] = {}
     _last_init_times: dict[str, float] = {}
+    _token_rr_counter: int = 0
+    _lock = threading.Lock()
 
     def __init__(
         self,
@@ -123,24 +136,25 @@ class VoxCPMEngine:
                 pass
 
     @classmethod
-    def get_client(cls, space_name: str, hf_token: Optional[str] = None):
-        """Get or initialize cached Gradio client for a specific space with optional HF token."""
+    def get_client(cls, space_name: str, hf_token: Optional[str] = None) -> Any:
+        """Get or initialize cached Gradio client for a specific space and HF token."""
         now = time.time()
-        last_time = cls._last_init_times.get(space_name, 0.0)
-        client = cls._clients.get(space_name)
+        cache_key = f"{space_name}::{hf_token or 'anon'}"
+
+        last_time = cls._last_init_times.get(cache_key, 0.0)
+        client = cls._clients.get(cache_key)
 
         if client is None or (now - last_time > 1800):
             try:
                 from gradio_client import Client
-                token = hf_token or (get_available_hf_tokens()[0] if get_available_hf_tokens() else None)
-                tok_info = f" with HF_TOKEN ({token[:8]}...)" if token else " (anonymous)"
+                tok_info = f" with HF_TOKEN ({mask_hf_token(hf_token)})" if hf_token else " (anonymous)"
                 logger.info("Connecting to VoxCPM 2 Space: %s%s...", space_name, tok_info)
-                client = Client(space_name, token=token)
-                cls._clients[space_name] = client
-                cls._last_init_times[space_name] = now
+                client = Client(space_name, token=hf_token)
+                cls._clients[cache_key] = client
+                cls._last_init_times[cache_key] = now
             except Exception as e:
                 logger.error("Failed to connect to VoxCPM 2 Space %s: %s", space_name, e)
-                cls._clients.pop(space_name, None)
+                cls._clients.pop(cache_key, None)
                 raise
         return client
 
@@ -155,11 +169,11 @@ class VoxCPMEngine:
         preset_voice: Optional[str] = None,
         speed: float | str | None = "normal",
         progress_cb: Optional[Callable[[str], None]] = None,
-        retries: int = 1,
+        retries: int = 2,
         **kwargs: Any,
     ) -> Path:
         """
-        Synthesize speech using VoxCPM 2.
+        Synthesize speech using VoxCPM 2 with Multi-Token Rotation & Multi-Space redundancy.
         Supports zero-shot voice cloning, voice design, live queue ETA tracking,
         and broadcast audio mastering.
         """
@@ -204,110 +218,123 @@ class VoxCPMEngine:
                 cfg_value = p_info.get("cfg_value") or cfg_value
                 self._log(f"🎭 Applied Curated Persona [{preset_voice}] for VoxCPM 2 Voice Design")
 
-        # Try candidate spaces in pool
-        last_err: Exception | None = None
+        # Build candidate (space, token) pairs
+        tokens_pool = self.hf_tokens or [None]
         candidate_spaces = self.spaces.copy()
+        pairs: List[Tuple[str, Optional[str]]] = []
+        for sp in candidate_spaces:
+            for tok in tokens_pool:
+                pairs.append((sp, tok))
 
-        for attempt in range(1, retries + 2):
-            for space_name in candidate_spaces:
-                try:
-                    self._log(
-                        f"🌐 [VoxCPM 2] Attempt {attempt}/{retries+1} on Space '{space_name}' "
-                        f"| chars={len(clean_text)} | ref={'yes' if ref_file else 'no'}"
-                    )
-                    if progress_cb:
+        # Rotate pairs across requests so we evenly distribute load across tokens
+        if len(tokens_pool) > 1:
+            with self._lock:
+                shift = self._token_rr_counter % len(pairs)
+                self._token_rr_counter += 1
+                pairs = pairs[shift:] + pairs[:shift]
+
+        last_err: Exception | None = None
+        max_attempts = min(len(pairs), retries + 1)
+
+        for attempt, (space_name, active_token) in enumerate(pairs[:max_attempts], 1):
+            tok_masked = mask_hf_token(active_token)
+            try:
+                self._log(
+                    f"🌐 [VoxCPM 2] Attempt {attempt}/{max_attempts} on Space '{space_name}' "
+                    f"| Token: {tok_masked} | Pool: {len(tokens_pool)} tokens | chars={len(clean_text)}"
+                )
+                if progress_cb:
+                    try:
+                        progress_cb(f"🎙️ VoxCPM 2 AI ဖြင့် အသံဖန်တီးနေပါသည် (Key: {tok_masked})...")
+                    except Exception:
+                        pass
+
+                client = self.get_client(space_name, hf_token=active_token)
+
+                job = client.submit(
+                    text_input=clean_text,
+                    control_instruction=control_instruction or DEFAULT_BURMESE_CONTROL,
+                    reference_wav_path_input=ref_file,
+                    use_prompt_text=bool(prompt_text),
+                    prompt_text_input=prompt_text or "",
+                    cfg_value_input=float(cfg_value or 2.0),
+                    do_normalize=True,
+                    denoise=False,
+                    api_name="/generate",
+                )
+
+                # Poll status with queue tracking
+                poll_start = time.time()
+                while not job.done():
+                    # Fail over if queue exceeds 30 seconds
+                    if time.time() - poll_start > 30:
+                        raise TimeoutError(f"VoxCPM 2 Space '{space_name}' queue timed out after 30s")
+
+                    try:
+                        st = job.status()
+                        eta_val = getattr(st, "eta", None)
+                        pos_val = getattr(st, "queue_position", None) or getattr(st, "position", None)
+                        if eta_val is not None and float(eta_val) > 0:
+                            eta_sec = int(round(float(eta_val)))
+                            pos_str = f" (အဆင့်: {pos_val})" if pos_val is not None else ""
+                            msg = f"⏳ VoxCPM 2 Queue စောင့်ဆိုင်းနေပါသည်{pos_str} — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
+                            self._log(msg)
+                            if progress_cb:
+                                try:
+                                    progress_cb(msg)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    time.sleep(2)
+
+                raw_result = job.result()
+                result_path_str = _resolve_result_path(raw_result)
+
+                if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
+                    # Studio Broadcast Audio Mastering via FFmpeg (44.1kHz mono PCM 16-bit WAV)
+                    converted_cleanly = False
+                    ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+                    if ffmpeg_bin:
                         try:
-                            progress_cb(f"🎙️ VoxCPM 2 AI ဖြင့် အသံဖန်တီးနေပါသည် ({space_name})...")
+                            import subprocess
+                            af_master = (
+                                "highpass=f=65,"
+                                "lowpass=f=12000,"
+                                "acompressor=threshold=-16dB:ratio=2.5:attack=15:release=120:makeup=2,"
+                                "alimiter=limit=0.95:level=disabled"
+                            )
+                            cmd = [
+                                ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                                "-i", str(result_path_str),
+                                "-af", af_master,
+                                "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
+                                str(out_path)
+                            ]
+                            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                            if out_path.is_file() and out_path.stat().st_size > 1000:
+                                converted_cleanly = True
+                        except Exception as e_ffmpeg:
+                            logger.debug("FFmpeg mastering fallback: %s", e_ffmpeg)
+
+                    if not converted_cleanly:
+                        shutil.copy2(result_path_str, out_path)
+
+                    if cached_file and not ref_file:
+                        try:
+                            shutil.copy2(out_path, cached_file)
                         except Exception:
                             pass
 
-                    client = self.get_client(space_name)
+                    self._log(f"✅ VoxCPM 2 Success [{tok_masked}]: {out_path.name} ({out_path.stat().st_size} bytes)")
+                    return out_path
+                else:
+                    raise RuntimeError(f"VoxCPM 2 returned empty result from space '{space_name}'")
 
-                    job = client.submit(
-                        text_input=clean_text,
-                        control_instruction=control_instruction or DEFAULT_BURMESE_CONTROL,
-                        reference_wav_path_input=ref_file,
-                        use_prompt_text=bool(prompt_text),
-                        prompt_text_input=prompt_text or "",
-                        cfg_value_input=float(cfg_value or 2.0),
-                        do_normalize=True,
-                        denoise=False,
-                        api_name="/generate",
-                    )
-
-                    # Poll status with queue tracking
-                    poll_start = time.time()
-                    while not job.done():
-                        # Fail over if queue exceeds 30 seconds
-                        if time.time() - poll_start > 30:
-                            raise TimeoutError(f"VoxCPM 2 Space '{space_name}' queue timed out after 30s")
-
-                        try:
-                            st = job.status()
-                            eta_val = getattr(st, "eta", None)
-                            pos_val = getattr(st, "queue_position", None) or getattr(st, "position", None)
-                            if eta_val is not None and float(eta_val) > 0:
-                                eta_sec = int(round(float(eta_val)))
-                                pos_str = f" (အဆင့်: {pos_val})" if pos_val is not None else ""
-                                msg = f"⏳ VoxCPM 2 Queue စောင့်ဆိုင်းနေပါသည်{pos_str} — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
-                                self._log(msg)
-                                if progress_cb:
-                                    try:
-                                        progress_cb(msg)
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
-                        time.sleep(2)
-
-                    raw_result = job.result()
-                    result_path_str = _resolve_result_path(raw_result)
-
-                    if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
-                        # Studio Broadcast Audio Mastering via FFmpeg (44.1kHz mono PCM 16-bit WAV)
-                        converted_cleanly = False
-                        ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
-                        if ffmpeg_bin:
-                            try:
-                                import subprocess
-                                af_master = (
-                                    "highpass=f=65,"
-                                    "lowpass=f=12000,"
-                                    "acompressor=threshold=-16dB:ratio=2.5:attack=15:release=120:makeup=2,"
-                                    "alimiter=limit=0.95:level=disabled"
-                                )
-                                cmd = [
-                                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-                                    "-i", str(result_path_str),
-                                    "-af", af_master,
-                                    "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
-                                    str(out_path)
-                                ]
-                                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-                                if out_path.is_file() and out_path.stat().st_size > 1000:
-                                    converted_cleanly = True
-                            except Exception as e_ffmpeg:
-                                logger.debug("FFmpeg mastering fallback: %s", e_ffmpeg)
-
-                        if not converted_cleanly:
-                            shutil.copy2(result_path_str, out_path)
-
-                        if cached_file and not ref_file:
-                            try:
-                                shutil.copy2(out_path, cached_file)
-                            except Exception:
-                                pass
-
-                        self._log(f"✅ VoxCPM 2 Success: {out_path.name} ({out_path.stat().st_size} bytes)")
-                        return out_path
-                    else:
-                        raise RuntimeError(f"VoxCPM 2 returned empty result from space '{space_name}'")
-
-                except Exception as e_sp:
-                    last_err = e_sp
-                    self._log(f"⚠️ VoxCPM 2 Space '{space_name}' attempt {attempt} error: {e_sp}")
-                    self._clients.pop(space_name, None)
-                    time.sleep(1.0)
+            except Exception as e_pair:
+                last_err = e_pair
+                self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {e_pair}")
+                time.sleep(1.0)
 
         # Seamless Fallback to High-Fidelity Burmese Studio Persona Engine
         self._log(f"⚠️ VoxCPM 2 Spaces busy or queue full ({last_err}). Invoking High-Fidelity Burmese Neural Engine fallback...")
@@ -332,8 +359,8 @@ class VoxCPMEngine:
             logger.warning("Neural fallback error: %s", e_fb)
 
         raise RuntimeError(
-            f"VoxCPM 2 speech synthesis failed after retrying all spaces: {last_err}"
+            f"VoxCPM 2 speech synthesis failed after retrying all tokens and spaces: {last_err}"
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens"]
