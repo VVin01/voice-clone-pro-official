@@ -124,6 +124,15 @@ async def create_voice_clone_job(
             return None, "INSUFFICIENT_BALANCE"
 
     import uuid
+    if not edge_voice:
+        if preset_voice:
+            from app.services.curated_voices import get_curated_voice
+            p_info = get_curated_voice(preset_voice)
+            if p_info:
+                edge_voice = p_info.get("edge_voice") or ("my-MM-NilarNeural" if p_info.get("gender") == "female" else "my-MM-ThihaNeural")
+        if not edge_voice:
+            edge_voice = "my-MM-NilarNeural" if gender_preset in ("m2f", "f2f") else "my-MM-ThihaNeural"
+
     job = Job(
         id=str(uuid.uuid4()),
         user_id=user_id,

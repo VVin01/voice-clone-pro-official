@@ -208,6 +208,22 @@ async def process_single_job(
                         control_instruction = p_info.get("control_instruction")
                         logger.info("Using curated persona '%s' for VoxCPM 2 job %s", job.preset_voice, job.id)
 
+                if not control_instruction:
+                    is_female = (
+                        getattr(job, "edge_voice", "") == "my-MM-NilarNeural"
+                        or getattr(job, "gender_preset", "") in ("m2f", "f2f")
+                    )
+                    if is_female:
+                        control_instruction = (
+                            "A sweet, gentle, natural Burmese female speaker with soft melodious voice, "
+                            "clear feminine tone, warm studio acoustics, and fluent authentic native pronunciation."
+                        )
+                    else:
+                        control_instruction = (
+                            "A clear, natural, emotionally expressive Burmese male speaker with warm tone, "
+                            "deep resonance, velvety cadence, and fluent authentic native pronunciation."
+                        )
+
                 try:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -217,7 +233,7 @@ async def process_single_job(
                             text=clean_text,
                             output_wav=converted_wav_path,
                             reference_wav=ref_wav,
-                            control_instruction=control_instruction or "A clear, natural, emotionally expressive Burmese speaker with warm tone and fluent pronunciation",
+                            control_instruction=control_instruction,
                             preset_voice=getattr(job, "preset_voice", None),
                             speed=job.speed_preset or "normal",
                             progress_cb=tracker.set_custom_note,
@@ -233,11 +249,10 @@ async def process_single_job(
                     from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
                     persona_id = getattr(job, "preset_voice", None)
                     if not persona_id or not get_curated_voice(persona_id):
-                        is_female = False
-                        if persona_id:
-                            p_info = get_curated_voice(persona_id)
-                            if p_info and p_info.get("gender") == "female":
-                                is_female = True
+                        is_female = (
+                            getattr(job, "edge_voice", "") == "my-MM-NilarNeural"
+                            or getattr(job, "gender_preset", "") in ("m2f", "f2f")
+                        )
                         persona_id = "mahnin" if is_female else "komin"
 
                     loop = asyncio.get_running_loop()

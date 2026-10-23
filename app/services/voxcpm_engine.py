@@ -130,6 +130,7 @@ class VoxCPMEngine:
     """
     _clients: dict[str, Any] = {}
     _last_init_times: dict[str, float] = {}
+    _token_cooldowns: dict[str, float] = {}
     _token_rr_counter: int = 0
     _lock = threading.Lock()
 
@@ -239,15 +240,21 @@ class VoxCPMEngine:
                 cfg_value = p_info.get("cfg_value") or cfg_value
                 self._log(f"🎭 Applied Curated Persona [{preset_voice}] for VoxCPM 2 Voice Design")
 
-        # Build candidate (space, token) pairs
-        tokens_pool = self.hf_tokens or [None]
+        # Build candidate (space, token) pairs with health-aware sorting
+        now = time.time()
+        raw_tokens = self.hf_tokens or [None]
+        # Healthy tokens (not on ZeroGPU quota cooldown) come first
+        tokens_pool = sorted(
+            raw_tokens,
+            key=lambda t: 1 if (t and self._token_cooldowns.get(t, 0) > now) else 0
+        )
         candidate_spaces = self.spaces.copy()
         pairs: List[Tuple[str, Optional[str]]] = []
         for sp in candidate_spaces:
             for tok in tokens_pool:
                 pairs.append((sp, tok))
 
-        # Rotate pairs across requests so we evenly distribute load across tokens
+        # Rotate pairs across requests so we evenly distribute load across healthy tokens
         if len(tokens_pool) > 1:
             with self._lock:
                 shift = self._token_rr_counter % len(pairs)
@@ -255,9 +262,9 @@ class VoxCPMEngine:
                 pairs = pairs[shift:] + pairs[:shift]
 
         last_err: Exception | None = None
-        max_attempts = min(len(pairs), retries + 1)
+        max_attempts = len(pairs)
 
-        for attempt, (space_name, active_token) in enumerate(pairs[:max_attempts], 1):
+        for attempt, (space_name, active_token) in enumerate(pairs, 1):
             tok_masked = mask_hf_token(active_token)
             try:
                 self._log(
@@ -291,11 +298,33 @@ class VoxCPMEngine:
                             api_name="/generate_clone",
                         )
                     else:
-                        job = client.submit(
-                            style=effective_control,
-                            target_text=clean_text,
-                            api_name="/generate_style",
-                        )
+                        PRESET_MAP_YEYEE = {
+                            "mahnin": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
+                            "manadi": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
+                            "machaw": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
+                            "mayoon": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
+                            "mamay": "👩 သတင်းကြေညာသူ (Professional)",
+                            "mathiri": "👩 သတင်းကြေညာသူ (Professional)",
+                            "komin": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
+                            "kothura": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
+                            "koaung": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
+                            "kophone": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
+                            "kozayar": "👻 သရဲဇာတ်လမ်း (အသံသြသြ)",
+                            "komyat": "👻 သရဲဇာတ်လမ်း (အသံသြသြ)",
+                        }
+                        chosen_preset = PRESET_MAP_YEYEE.get(preset_voice) if preset_voice else None
+                        if chosen_preset:
+                            job = client.submit(
+                                voice_name=chosen_preset,
+                                target_text=clean_text,
+                                api_name="/generate_preset",
+                            )
+                        else:
+                            job = client.submit(
+                                style=effective_control,
+                                target_text=clean_text,
+                                api_name="/generate_style",
+                            )
                 elif "chenchenaoyang" in space_name:
                     job = client.submit(
                         text=clean_text,
@@ -407,8 +436,12 @@ class VoxCPMEngine:
 
             except Exception as e_pair:
                 last_err = e_pair
+                err_lower = str(e_pair).lower()
+                if active_token and ("zerogpu" in err_lower or "quota" in err_lower or "runs limit" in err_lower):
+                    self._token_cooldowns[active_token] = time.time() + 1800
+                    self._log(f"⚠️ Token {tok_masked} exceeded ZeroGPU quota; switching to other tokens...")
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {e_pair}")
-                time.sleep(1.0)
+                time.sleep(0.5)
 
         # Seamless Fallback to High-Fidelity Burmese Studio Persona Engine
         self._log(f"⚠️ VoxCPM 2 Spaces busy or queue full ({last_err}). Invoking High-Fidelity Burmese Neural Engine fallback...")

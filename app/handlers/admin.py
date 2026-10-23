@@ -1731,7 +1731,7 @@ async def handle_admin_job_retry_confirm(callback: CallbackQuery, session: Async
                 from app.webapp.api import _run_recap_background_job, RecapConfigRequest, RECAP_JOBS_REGISTRY
                 cfg = RecapConfigRequest(
                     url=j.input_text or "",
-                    voice_slug=j.preset_voice or "thiha",
+                    voice_slug=j.preset_voice or ("nilar" if getattr(j, "edge_voice", "") == "my-MM-NilarNeural" else "komin"),
                 )
                 import time
                 RECAP_JOBS_REGISTRY[str(j.id)] = {

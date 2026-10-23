@@ -375,6 +375,16 @@ async def create_voice_job(
         if not model:
             raise HTTPException(status_code=404, detail="အသံမော်ဒယ် မတွေ့ရှိပါ")
 
+    # Dynamically resolve edge_voice from preset_voice or gender_preset
+    resolved_edge_voice = "my-MM-ThihaNeural"
+    if req.preset_voice:
+        from app.services.curated_voices import get_curated_voice
+        p_info = get_curated_voice(req.preset_voice)
+        if p_info:
+            resolved_edge_voice = p_info.get("edge_voice") or ("my-MM-NilarNeural" if p_info.get("gender") == "female" else "my-MM-ThihaNeural")
+    elif req.gender_preset in ("m2f", "f2f"):
+        resolved_edge_voice = "my-MM-NilarNeural"
+
     job = Job(
         id=str(uuid.uuid4()),
         user_id=user.id,
@@ -383,7 +393,7 @@ async def create_voice_job(
         input_text=clean_text,
         speed_preset=req.speed,
         gender_preset=req.gender_preset,
-        edge_voice="my-MM-ThihaNeural",
+        edge_voice=resolved_edge_voice,
         engine=actual_engine,
         preset_voice=req.preset_voice,
         status=JobStatus.QUEUED.value,
@@ -483,6 +493,16 @@ async def create_voice_job_with_audio(
                 f.write(content)
             ref_audio_path = str(save_file)
 
+    # Dynamically resolve edge_voice from preset_voice or gender_preset
+    resolved_edge_voice = "my-MM-ThihaNeural"
+    if preset_voice:
+        from app.services.curated_voices import get_curated_voice
+        p_info = get_curated_voice(preset_voice)
+        if p_info:
+            resolved_edge_voice = p_info.get("edge_voice") or ("my-MM-NilarNeural" if p_info.get("gender") == "female" else "my-MM-ThihaNeural")
+    elif gender_preset in ("m2f", "f2f"):
+        resolved_edge_voice = "my-MM-NilarNeural"
+
     job = Job(
         id=str(uuid.uuid4()),
         user_id=user.id,
@@ -492,7 +512,7 @@ async def create_voice_job_with_audio(
         source_audio_path=ref_audio_path,
         speed_preset=speed,
         gender_preset=gender_preset,
-        edge_voice="my-MM-ThihaNeural",
+        edge_voice=resolved_edge_voice,
         engine=actual_engine,
         preset_voice=preset_voice,
         status=JobStatus.QUEUED.value,
@@ -989,11 +1009,8 @@ async def _run_recap_background_job(
             voxcpm_control = p_info.get("control_instruction")
             selected_voice = f"voxcpm_{req.voice_slug}"
             tts_engine = "voxcpm"
-
-            # Check for static persona sample audio for zero-shot cloning
-            sample_ref = settings.root / "app" / "webapp" / "static" / "audio" / "samples" / f"{req.voice_slug}.mp3"
-            if sample_ref.is_file():
-                voxcpm_ref_audio = str(sample_ref)
+            # Curated personas use direct VoxCPM Voice Design with control_instruction
+            voxcpm_ref_audio = None
         elif req.voice_slug in ("mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"):
             is_female = True
             selected_voice = "my-MM-NilarNeural"

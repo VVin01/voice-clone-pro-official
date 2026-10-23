@@ -383,9 +383,10 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
     # ── Standard Applio flow: submit job immediately ──────────────────────────
     input_text = data.get("input_text", "")
     source_audio_path = data.get("source_audio_path")
-    edge_voice = data.get("edge_voice", "my-MM-ThihaNeural")
-    speed_preset = data.get("speed_preset", "normal")
     gender_preset = data.get("gender_preset", "m2m")
+    default_voice = "my-MM-NilarNeural" if gender_preset in ("m2f", "f2f") else "my-MM-ThihaNeural"
+    edge_voice = data.get("edge_voice") or default_voice
+    speed_preset = data.get("speed_preset", "normal")
 
     await state.clear()
 
@@ -460,9 +461,10 @@ async def handle_voxcpm_reference_audio(message: Message, state: FSMContext):
 
     # Retrieve FSM data and submit job
     input_text = data.get("input_text", "")
-    edge_voice = data.get("edge_voice", "my-MM-ThihaNeural")
-    speed_preset = data.get("speed_preset", "normal")
     gender_preset = data.get("gender_preset", "m2m")
+    default_voice = "my-MM-NilarNeural" if gender_preset in ("m2f", "f2f") else "my-MM-ThihaNeural"
+    edge_voice = data.get("edge_voice") or default_voice
+    speed_preset = data.get("speed_preset", "normal")
     await state.clear()
 
     confirm_msg = await message.answer(
@@ -491,9 +493,10 @@ async def handle_voxcpm_reference_skip(callback: CallbackQuery, state: FSMContex
     lang = data.get("lang", "my")
     model_id = data.get("model_id")
     input_text = data.get("input_text", "")
-    edge_voice = data.get("edge_voice", "my-MM-ThihaNeural")
-    speed_preset = data.get("speed_preset", "normal")
     gender_preset = data.get("gender_preset", "m2m")
+    default_voice = "my-MM-NilarNeural" if gender_preset in ("m2f", "f2f") else "my-MM-ThihaNeural"
+    edge_voice = data.get("edge_voice") or default_voice
+    speed_preset = data.get("speed_preset", "normal")
     source_audio_path = data.get("source_audio_path")
 
     await state.clear()
