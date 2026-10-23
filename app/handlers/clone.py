@@ -4,12 +4,13 @@ import logging
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo, FSInputFile
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo, FSInputFile, BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
-from app.models.enums import AccountCategory
+from app.models.enums import AccountCategory, JobStatus
+from app.models.schema import Job, VoiceModel
 from app.services.audio import CURATED_TTS_VOICES, SPEED_RATES
 from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
@@ -658,23 +659,41 @@ async def handle_send_audio_callback(callback: CallbackQuery):
             else:
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
                 dl_url = f"{app_url}/api/audio/download/{job_id}"
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🎧 Mini App တွင် ဖွင့်နားထောင်မည်",
-                            web_app=WebAppInfo(url=f"{app_url}?job_id={job_id}")
-                        )
-                    ]
-                ])
-                await callback.bot.send_message(
-                    chat_id=target_chat_id,
-                    text=(
-                        f"🎧 <b>အသံဖိုင် အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
-                        f"📥 <a href=\"{dl_url}\">တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
-                    ),
-                    reply_markup=kb,
-                    parse_mode="HTML",
-                )
+                downloaded_audio = None
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        r = await client.get(dl_url)
+                        if r.status_code == 200 and len(r.content) > 1000:
+                            downloaded_audio = r.content
+                except Exception:
+                    pass
+
+                if downloaded_audio:
+                    await callback.bot.send_audio(
+                        chat_id=target_chat_id,
+                        audio=BufferedInputFile(downloaded_audio, filename=f"voice_clone_{job_id[:8]}.wav"),
+                        caption=f"🎧 <b>AI Voice Clone:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                        parse_mode="HTML",
+                    )
+                else:
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="🎧 Mini App တွင် ဖွင့်နားထောင်မည်",
+                                web_app=WebAppInfo(url=f"{app_url}?job_id={job_id}")
+                            )
+                        ]
+                    ])
+                    await callback.bot.send_message(
+                        chat_id=target_chat_id,
+                        text=(
+                            f"🎧 <b>အသံဖိုင် အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
+                            f"📥 <a href=\"{dl_url}\">တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
+                        ),
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
     except Exception as e:
         logger.error(f"Error handling send_audio callback for job {job_id}: {e}", exc_info=True)
         try:
