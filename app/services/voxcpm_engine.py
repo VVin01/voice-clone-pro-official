@@ -33,8 +33,9 @@ DEFAULT_VOXCPM_SPACE = (
     or "openbmb/VoxCPM-Demo"
 )
 DEFAULT_BURMESE_CONTROL = (
-    "A clear, natural, emotionally expressive Burmese speaker with warm tone "
-    "and fluent pronunciation. Speak in Myanmar language with authentic accent."
+    "A clear, natural, emotionally expressive Burmese speaker with warm tone, "
+    "smooth studio acoustic, velvety cadence, and pristine pronunciation without harsh sibilance or background noise. "
+    "Speak in Myanmar language with authentic accent."
 )
 
 
@@ -259,7 +260,7 @@ class VoxCPMEngine:
                     prompt_text_input=prompt_text or "",
                     cfg_value_input=float(cfg_value or 2.0),
                     do_normalize=True,
-                    denoise=False,
+                    denoise=True,
                     api_name="/generate",
                 )
 
@@ -294,29 +295,42 @@ class VoxCPMEngine:
 
                 if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
                     # Studio Broadcast Audio Mastering via FFmpeg (44.1kHz mono PCM 16-bit WAV)
+                    # Eliminates harsh sibilance ("စီး" / "ဆူးဆူးအသံ") and normalizes broadcast loudness.
                     converted_cleanly = False
                     ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
                     if ffmpeg_bin:
-                        try:
-                            import subprocess
-                            af_master = (
-                                "highpass=f=65,"
-                                "lowpass=f=12000,"
-                                "acompressor=threshold=-16dB:ratio=2.5:attack=15:release=120:makeup=2,"
-                                "alimiter=limit=0.95:level=disabled"
-                            )
-                            cmd = [
-                                ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-                                "-i", str(result_path_str),
-                                "-af", af_master,
-                                "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
-                                str(out_path)
-                            ]
-                            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-                            if out_path.is_file() and out_path.stat().st_size > 1000:
-                                converted_cleanly = True
-                        except Exception as e_ffmpeg:
-                            logger.debug("FFmpeg mastering fallback: %s", e_ffmpeg)
+                        import subprocess
+                        af_master_primary = (
+                            "highpass=f=75,"
+                            "afftdn=nr=10:nf=-50:tn=1,"
+                            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+                            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+                            "lowpass=f=9500,"
+                            "loudnorm=I=-15:TP=-1.0:LRA=7"
+                        )
+                        af_master_fallback = (
+                            "highpass=f=75,"
+                            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+                            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+                            "lowpass=f=9500,"
+                            "acompressor=threshold=-18dB:ratio=2.2:attack=20:release=120:makeup=1.2,"
+                            "alimiter=limit=0.92"
+                        )
+                        for af_candidate in (af_master_primary, af_master_fallback):
+                            try:
+                                cmd = [
+                                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                                    "-i", str(result_path_str),
+                                    "-af", af_candidate,
+                                    "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
+                                    str(out_path)
+                                ]
+                                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                                if out_path.is_file() and out_path.stat().st_size > 1000:
+                                    converted_cleanly = True
+                                    break
+                            except Exception as e_ffmpeg:
+                                logger.debug("FFmpeg mastering attempt failed: %s", e_ffmpeg)
 
                     if not converted_cleanly:
                         shutil.copy2(result_path_str, out_path)

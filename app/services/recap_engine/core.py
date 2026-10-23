@@ -837,7 +837,7 @@ def mux_audio(
         # Studio ducking: Voice triggers sidechain compressor on BGM
         # When voice is active, BGM ducks smoothly; when voice pauses, BGM rises gently.
         filter_complex = (
-            f"[1:a]highpass=f=75,lowpass=f=11000,acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2,volume={vol_scale:.3f}[v_master];"
+            f"[1:a]highpass=f=75,deesser=i=0.45:m=0.5:f=0.5:s=o,equalizer=f=7200:width_type=q:w=2:g=-3.0,lowpass=f=9500,acompressor=threshold=-18dB:ratio=2.5:attack=15:release=120:makeup=1.3,volume={vol_scale:.3f}[v_master];"
             f"[v_master]asplit=2[v_out][v_sc];"
             f"[2:a]volume={bgm_volume:.3f},aloop=loop=-1:size=2e+09[bgm_loop];"
             f"[bgm_loop][v_sc]sidechaincompress=threshold=0.08:ratio=4:attack=50:release=350[bgm_ducked];"
@@ -853,8 +853,10 @@ def mux_audio(
     else:
         af_filters = [
             "highpass=f=75",
-            "lowpass=f=11000",
-            "acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2",
+            "deesser=i=0.45:m=0.5:f=0.5:s=o",
+            "equalizer=f=7200:width_type=q:w=2:g=-3.0",
+            "lowpass=f=9500",
+            "acompressor=threshold=-18dB:ratio=2.5:attack=15:release=120:makeup=1.3",
             f"volume={vol_scale:.3f}",
             "alimiter=limit=0.95:level=disabled",
         ]

@@ -33,11 +33,11 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-2Hz",
         "rate_offset": 12,
         "af_filter": (
-            "highpass=f=65,lowpass=f=12000,"
-            "equalizer=f=120:width_type=o:w=1:g=3.5,"
-            "equalizer=f=3200:width_type=o:w=1.2:g=1.5,"
-            "acompressor=threshold=-16dB:ratio=3:attack=15:release=120:makeup=2.2,"
-            "alimiter=limit=0.95"
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=120:width_type=o:w=1:g=2.5,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A warm, deep, authoritative, emotionally resonant Burmese male movie recap storyteller. "
@@ -56,13 +56,14 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "သန့်ရှင်းပြတ်သား ⚡",
         "badge_en": "Formal Anchor ⚡",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "0Hz",
+        "pitch": "+0Hz",
         "rate_offset": 18,
         "af_filter": (
-            "highpass=f=75,lowpass=f=12500,"
-            "equalizer=f=2500:width_type=o:w=1:g=2.5,"
-            "acompressor=threshold=-18dB:ratio=2.8:attack=10:release=100:makeup=2,"
-            "alimiter=limit=0.95"
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=2200:width_type=o:w=1:g=1.2,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A professional, formal, crisp Burmese male documentary narrator and news anchor. "
@@ -84,10 +85,10 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "+2Hz",
         "rate_offset": 24,
         "af_filter": (
-            "highpass=f=80,lowpass=f=13000,"
-            "equalizer=f=3500:width_type=o:w=1:g=3,"
-            "acompressor=threshold=-15dB:ratio=3.2:attack=10:release=90:makeup=2.5,"
-            "alimiter=limit=0.95"
+            "highpass=f=80,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "An enthusiastic, upbeat, vibrant young Burmese male creator. "
@@ -109,10 +110,11 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-1Hz",
         "rate_offset": 6,
         "af_filter": (
-            "highpass=f=75,lowpass=f=12000,"
-            "equalizer=f=250:width_type=o:w=1:g=1.5,"
-            "acompressor=threshold=-19dB:ratio=2.2:attack=20:release=140:makeup=1.5,"
-            "alimiter=limit=0.95"
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=250:width_type=o:w=1:g=1.2,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A gentle, sweet, emotionally tender Burmese female audiobook narrator. "
@@ -134,10 +136,11 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-2Hz",
         "rate_offset": 14,
         "af_filter": (
-            "highpass=f=70,lowpass=f=12000,"
-            "equalizer=f=200:width_type=o:w=1:g=2.5,"
-            "acompressor=threshold=-17dB:ratio=3:attack=15:release=110:makeup=2.2,"
-            "alimiter=limit=0.95"
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=200:width_type=o:w=1:g=1.8,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A dramatic, suspenseful, emotionally intense Burmese female movie recap narrator. "
@@ -159,10 +162,10 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "+2Hz",
         "rate_offset": 18,
         "af_filter": (
-            "highpass=f=80,lowpass=f=13000,"
-            "equalizer=f=3200:width_type=o:w=1:g=2.8,"
-            "acompressor=threshold=-16dB:ratio=3:attack=10:release=100:makeup=2.3,"
-            "alimiter=limit=0.95"
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A bright, articulate, friendly, and persuasive Burmese female commercial voice. "
@@ -184,11 +187,11 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-5Hz",
         "rate_offset": 8,
         "af_filter": (
-            "highpass=f=55,lowpass=f=11000,"
-            "bass=g=5:f=100,"
-            "equalizer=f=75:width_type=o:w=1.2:g=4,"
-            "acompressor=threshold=-16dB:ratio=3.5:attack=20:release=150:makeup=2.8,"
-            "alimiter=limit=0.95"
+            "highpass=f=60,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "bass=g=3:f=100,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9200,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A deep, bass-rich, resonant, dramatic blockbuster movie trailer narrator. "
@@ -210,10 +213,11 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-3Hz",
         "rate_offset": -4,
         "af_filter": (
-            "highpass=f=60,lowpass=f=10500,"
-            "equalizer=f=150:width_type=o:w=1:g=2,"
-            "acompressor=threshold=-18dB:ratio=2.5:attack=25:release=160:makeup=1.8,"
-            "alimiter=limit=0.95"
+            "highpass=f=65,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=150:width_type=o:w=1:g=1.5,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A mysterious, chilling, suspenseful, dark Burmese male ghost story narrator. "
@@ -235,10 +239,10 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "+1Hz",
         "rate_offset": 18,
         "af_filter": (
-            "highpass=f=75,lowpass=f=12500,"
-            "equalizer=f=2800:width_type=o:w=1:g=2,"
-            "acompressor=threshold=-17dB:ratio=2.8:attack=12:release=100:makeup=2,"
-            "alimiter=limit=0.95"
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "An articulate, engaging, intelligent Burmese male explainer. "
@@ -260,10 +264,10 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-1Hz",
         "rate_offset": -8,
         "af_filter": (
-            "highpass=f=80,lowpass=f=10000,"
-            "equalizer=f=300:width_type=o:w=1:g=1.5,"
-            "acompressor=threshold=-22dB:ratio=2:attack=25:release=180:makeup=1.2,"
-            "alimiter=limit=0.90"
+            "highpass=f=80,afftdn=nr=12:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-4.0,"
+            "lowpass=f=9000,loudnorm=I=-16:TP=-1.5:LRA=6"
         ),
         "control_instruction": (
             "An ultra-soft, serene, tranquil, whispery Burmese female voice. "
@@ -285,10 +289,10 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "+4Hz",
         "rate_offset": 22,
         "af_filter": (
-            "highpass=f=85,lowpass=f=13500,"
-            "equalizer=f=4000:width_type=o:w=1:g=3,"
-            "acompressor=threshold=-15dB:ratio=3.2:attack=10:release=80:makeup=2.5,"
-            "alimiter=limit=0.95"
+            "highpass=f=80,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "A high-energy, youthful, playful, vibrant Burmese female anime dubbing artist and gaming creator. "
@@ -310,10 +314,10 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-1Hz",
         "rate_offset": 12,
         "af_filter": (
-            "highpass=f=75,lowpass=f=12500,"
-            "equalizer=f=2500:width_type=o:w=1:g=2,"
-            "acompressor=threshold=-18dB:ratio=2.6:attack=15:release=120:makeup=2,"
-            "alimiter=limit=0.95"
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
             "An elegant, chic, highly sophisticated Burmese female influencer and brand ambassador. "
@@ -389,12 +393,24 @@ def synthesize_curated_persona(
 
     info = get_curated_voice(persona_id) or CURATED_VOICES["komin"]
     voice = info.get("edge_voice", "my-MM-ThihaNeural")
-    pitch = info.get("pitch", "0Hz")
+    pitch = str(info.get("pitch") or "+0Hz").strip()
+    if not (pitch.startswith("+") or pitch.startswith("-")):
+        pitch = f"+{pitch}"
     rate_offset = int(info.get("rate_offset", 10))
     rate_str = compute_curated_rate(rate_offset, speed)
     af_filter = info.get(
         "af_filter",
-        "highpass=f=75,lowpass=f=12000,acompressor=threshold=-18dB:ratio=3:attack=15:release=120:makeup=2,alimiter=limit=0.95"
+        (
+            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
+        )
+    )
+    af_fallback = (
+        "highpass=f=75,deesser=i=0.5:m=0.5:f=0.5:s=o,"
+        "equalizer=f=7200:width_type=q:w=2:g=-3.5,lowpass=f=9500,"
+        "acompressor=threshold=-18dB:ratio=2.2:attack=20:release=120:makeup=1.2,alimiter=limit=0.92"
     )
 
     msg = f"🎙️ Curated Persona [{info['id']}] ({info['name_en']}): voice={voice}, rate={rate_str}, pitch={pitch}"
@@ -428,19 +444,21 @@ def synthesize_curated_persona(
     ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
     converted_cleanly = False
     if ffmpeg_bin:
-        try:
-            cmd = [
-                ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-                "-i", str(temp_mp3),
-                "-af", af_filter,
-                "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
-                str(out_path)
-            ]
-            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-            if out_path.is_file() and out_path.stat().st_size > 1000:
-                converted_cleanly = True
-        except Exception as e_ff:
-            logger.warning("FFmpeg persona mastering failed: %s", e_ff)
+        for candidate_af in (af_filter, af_fallback):
+            try:
+                cmd = [
+                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", str(temp_mp3),
+                    "-af", candidate_af,
+                    "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
+                    str(out_path)
+                ]
+                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                if out_path.is_file() and out_path.stat().st_size > 1000:
+                    converted_cleanly = True
+                    break
+            except Exception as e_ff:
+                logger.debug("FFmpeg persona mastering candidate failed: %s", e_ff)
 
     if not converted_cleanly:
         shutil.copy2(str(temp_mp3), str(out_path))
