@@ -19,6 +19,7 @@ import re
 import sys
 import time
 import shutil
+import base64
 import hashlib
 import logging
 import threading
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_VOXCPM_SPACES = [
     "soemintheinsmt6/myanmar-voxcpm2",
     "yeyee2609/voxcpm2",
+    "yeyee2609/voxcpm",
     "openbmb/VoxCPM-Demo",
 ]
 DEFAULT_VOXCPM_SPACE = (

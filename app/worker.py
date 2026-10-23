@@ -186,6 +186,7 @@ async def process_single_job(
 
         await tracker.update_step(3)
         await tracker.start_ticker(step=3)
+        used_fallback = False
         try:
             if is_voxcpm:
                 logger.info("Starting VoxCPM 2 Cloud AI synthesis for job %s", job.id)
@@ -240,9 +241,10 @@ async def process_single_job(
                         )
                     )
                 except Exception as e_vox:
+                    used_fallback = True
                     logger.warning("VoxCPM 2 primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", e_vox)
                     try:
-                        tracker.set_custom_note("🔄 VoxCPM Queue အချိန်ကုန်နေသဖြင့် အရန် Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
+                        tracker.set_custom_note("⚠️ VoxCPM ZeroGPU Quota ပြည့်သွားသဖြင့် အရန် Neural Audio ဖြင့် ထုတ်ပေးနေပါသည်...")
                     except Exception:
                         pass
 
@@ -336,6 +338,7 @@ async def process_single_job(
         # Send completion audio or notification alert to user via Telegram Bot
         if bot and target_chat_id:
             caption_model_name = display_name or getattr(model, "name", "Standard")
+            fallback_note = "\n\n⚠️ <i>(မှတ်ချက်: Hugging Face ZeroGPU Free Quota ပြည့်သွားသဖြင့် အရန် Neural Audio ဖြင့် ထုတ်ယူပေးထားပါသည်)</i>" if used_fallback else ""
             if getattr(job, "auto_deliver", False):
                 try:
                     audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
@@ -346,7 +349,7 @@ async def process_single_job(
                         completed_status=t("status_completed", lang),
                         model_name=html.escape(str(caption_model_name)),
                         duration_seconds=duration_seconds,
-                    )
+                    ) + fallback_note
                     await bot.send_audio(
                         chat_id=target_chat_id,
                         audio=audio_file,
@@ -382,7 +385,7 @@ async def process_single_job(
                         f"🆔 <b>Task:</b> <code>#{job.id[:8]}</code>\n\n"
                         f"✨ သင့်အသံဖိုင် အဆင်သင့်ဖြစ်နေပါပြီခင်ဗျာ။ Mini App ထဲတွင် ချက်ချင်းဖွင့်နားထောင်နိုင်သလို "
                         f"Telegram သို့ တိုက်ရိုက်ရယူလိုပါက အောက်ပါခလုတ်ကို နှိပ်နိုင်ပါသည်!"
-                    )
+                    ) + fallback_note
                     await bot.send_message(
                         chat_id=target_chat_id,
                         text=notify_text,

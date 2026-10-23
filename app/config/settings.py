@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     default_tts_voice: str = "my-MM-ThihaNeural"
 
     # VoxCPM 2 Neural TTS & Voice Cloning
-    voxcpm_space_url: str = Field(default="openbmb/VoxCPM-Demo", alias="VOXCPM_SPACE_URL")
+    voxcpm_space_url: str = Field(default="", alias="VOXCPM_SPACE_URL")
     voxcpm_spaces: str = Field(default="", alias="VOXCPM_SPACES")
     hf_token: str = Field(default="", alias="HF_TOKEN")
     hf_tokens: str = Field(default="", alias="HF_TOKENS")
