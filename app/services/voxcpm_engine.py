@@ -27,10 +27,15 @@ from typing import Optional, Any, Callable, List, Tuple
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_VOXCPM_SPACES = [
+    "soemintheinsmt6/myanmar-voxcpm2",
+    "yeyee2609/voxcpm2",
+    "openbmb/VoxCPM-Demo",
+]
 DEFAULT_VOXCPM_SPACE = (
     os.getenv("VOXCPM_SPACE_URL", "").strip()
     or os.getenv("VOXCPM_API_URL", "").strip()
-    or "openbmb/VoxCPM-Demo"
+    or DEFAULT_VOXCPM_SPACES[0]
 )
 DEFAULT_BURMESE_CONTROL = (
     "A clear, natural, emotionally expressive Burmese speaker with warm tone, "
@@ -110,8 +115,9 @@ def get_configured_spaces() -> List[str]:
     if single_url and single_url not in spaces:
         spaces.insert(0, single_url)
 
-    if DEFAULT_VOXCPM_SPACE not in spaces:
-        spaces.append(DEFAULT_VOXCPM_SPACE)
+    for sp in DEFAULT_VOXCPM_SPACES:
+        if sp not in spaces:
+            spaces.append(sp)
 
     return spaces
 
@@ -265,18 +271,57 @@ class VoxCPMEngine:
                         pass
 
                 client = self.get_client(space_name, hf_token=active_token)
+                effective_control = control_instruction or DEFAULT_BURMESE_CONTROL
 
-                job = client.submit(
-                    text_input=clean_text,
-                    control_instruction=control_instruction or DEFAULT_BURMESE_CONTROL,
-                    reference_wav_path_input=ref_file,
-                    use_prompt_text=bool(prompt_text),
-                    prompt_text_input=prompt_text or "",
-                    cfg_value_input=float(cfg_value or 2.0),
-                    do_normalize=True,
-                    denoise=True,
-                    api_name="/generate",
-                )
+                if "soemintheinsmt6" in space_name:
+                    if ref_file:
+                        self._log(f"ℹ️ Space '{space_name}' specializes in voice design without reference file; skipping to next space...")
+                        continue
+                    job = client.submit(
+                        text=clean_text,
+                        voice_description=effective_control,
+                        api_name="/tts",
+                    )
+                elif "yeyee2609" in space_name:
+                    if ref_file:
+                        job = client.submit(
+                            ref_audio_path=ref_file,
+                            ref_text=prompt_text or "မင်္ဂလာပါခင်ဗျာ",
+                            target_text=clean_text,
+                            api_name="/generate_clone",
+                        )
+                    else:
+                        job = client.submit(
+                            style=effective_control,
+                            target_text=clean_text,
+                            api_name="/generate_style",
+                        )
+                elif "chenchenaoyang" in space_name:
+                    job = client.submit(
+                        text=clean_text,
+                        control_instruction=effective_control,
+                        ref_wav=ref_file,
+                        use_prompt_text=bool(prompt_text),
+                        prompt_text_value=prompt_text or "",
+                        cfg_value=float(cfg_value or 2.0),
+                        do_normalize=True,
+                        denoise=True,
+                        dit_steps=10.0,
+                        api_name="/generate",
+                    )
+                else:
+                    # openbmb/VoxCPM-Demo and standard Gradio spaces
+                    job = client.submit(
+                        text_input=clean_text,
+                        control_instruction=effective_control,
+                        reference_wav_path_input=ref_file,
+                        use_prompt_text=bool(prompt_text),
+                        prompt_text_input=prompt_text or "",
+                        cfg_value_input=float(cfg_value or 2.0),
+                        do_normalize=True,
+                        denoise=True,
+                        api_name="/generate",
+                    )
 
                 # Poll status with queue tracking
                 poll_start = time.time()
