@@ -2232,8 +2232,9 @@ class EdgeSmartSync:
                         raise RuntimeError(f"TTS FAILED at segment {idx} ({base}): {exc}\n\n"
                                            f"Text: {seg['narration'][:200]}") from exc
                 produced_path = Path(produced).resolve()
-                shutil.copy2(produced_path, dst)
-                produced_path.unlink(missing_ok=True)
+                if produced_path != dst.resolve():
+                    shutil.copy2(produced_path, dst)
+                    produced_path.unlink(missing_ok=True)
                 duration = probe_duration(self.ffprobe, dst)
                 if duration <= 0.05:
                     raise RuntimeError(f"Generated audio duration invalid: {dst}")
@@ -2530,14 +2531,14 @@ class EdgeSmartSync:
 
         # Copy synced SRT and ASS next to final video
         final_srt = paths.final.with_suffix(".srt")
-        if srt_file.is_file():
+        if srt_file.is_file() and srt_file.resolve() != final_srt.resolve():
             try:
                 shutil.copy2(srt_file, final_srt)
             except Exception:
                 pass
 
         final_ass = paths.final.with_suffix(".ass")
-        if ass_file.is_file():
+        if ass_file.is_file() and ass_file.resolve() != final_ass.resolve():
             try:
                 shutil.copy2(ass_file, final_ass)
             except Exception:

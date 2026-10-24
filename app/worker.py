@@ -302,7 +302,8 @@ async def process_single_job(
         outputs_dir.mkdir(parents=True, exist_ok=True)
         permanent_wav_path = outputs_dir / f"{job.id}_{out_filename}"
         try:
-            shutil.copy2(converted_wav_path, permanent_wav_path)
+            if converted_wav_path.resolve() != permanent_wav_path.resolve():
+                shutil.copy2(converted_wav_path, permanent_wav_path)
             job.result_path = str(permanent_wav_path)
         except Exception as copy_err:
             logger.warning("Could not persist generated audio to %s: %s", permanent_wav_path, copy_err)
