@@ -763,8 +763,9 @@ def render_video_part(
     common_input = [
         ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
         "-ss", f"{float(seg['video_start']):.6f}",
+        "-i", str(source),
         "-t", f"{source_duration:.6f}",
-        "-i", str(source), "-an",
+        "-an",
     ]
 
     if metrics.get("hybrid_used", 0.0) >= 0.5:
@@ -1283,11 +1284,11 @@ def write_synced_ass_file(
     # Canvas-scaled font size based on height
     scale_factor = (raw_font_size / 288.0)
     if is_vert:
-        target_size = int(round(ch * scale_factor * 0.72)) if sub_lines == 1 else int(round(ch * scale_factor * 0.85))
-        font_size = max(24, min(68, target_size))
+        target_size = int(round(ch * scale_factor * 0.42)) if sub_lines == 1 else int(round(ch * scale_factor * 0.62))
+        font_size = max(22, min(44 if sub_lines == 1 else 56, target_size))
     else:
-        target_size = int(round(ch * scale_factor * 0.95))
-        font_size = max(28, min(72, target_size))
+        target_size = int(round(ch * scale_factor * 0.60)) if sub_lines == 1 else int(round(ch * scale_factor * 0.80))
+        font_size = max(26, min(48 if sub_lines == 1 else 62, target_size))
 
     # Canvas-normalized subtitle positioning
     if sub_y is not None:
@@ -1339,7 +1340,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         c_text = canonicalize_burmese_text(cue_text)
         if not c_text:
             continue
-        ass_line_text = c_text.replace("\r\n", r"\N").replace("\n", r"\N").strip()
+        if sub_lines == 1:
+            ass_line_text = re.sub(r'\s+', ' ', c_text.replace("\r\n", " ").replace("\n", " ")).strip()
+        else:
+            ass_line_text = c_text.replace("\r\n", r"\N").replace("\n", r"\N").strip()
         st_str = _fmt_ass_time(st_sec)
         en_str = _fmt_ass_time(en_sec)
         dialogues.append(f"Dialogue: 0,{st_str},{en_str},Default,,0,0,0,,{ass_line_text}")
@@ -1376,13 +1380,92 @@ BURMESE_PROTECTED_WORDS = [
 ]
 
 
+def tokenize_burmese_words(text: str) -> list[str]:
+    """Tokenize Burmese text into natural words/particles without breaking syllables or vowel clusters."""
+    tokens = []
+    i = 0
+    vowels_re = re.compile(r'[\u102B-\u103E\u1039\u103A]')
+    while i < len(text):
+        matched = False
+        for pw in BURMESE_PROTECTED_WORDS:
+            if text[i:].startswith(pw):
+                tokens.append(pw)
+                i += len(pw)
+                matched = True
+                break
+        if not matched:
+            for p in ['ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်', 'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ', 'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်', '၊', '။', ' ']:
+                if text[i:].startswith(p):
+                    rest = text[i + len(p):]
+                    if len(p) == 1 and p in ['က', 'နဲ့', 'မှာ', 'ကို', 'မှ', 'သို့'] and rest and vowels_re.match(rest[0]):
+                        continue
+                    tokens.append(p)
+                    i += len(p)
+                    matched = True
+                    break
+        if not matched:
+            m = BURMESE_SYLLABLE_BREAK.search(text, i + 1)
+            next_idx = m.start() if m else len(text)
+            tokens.append(text[i:next_idx])
+            i = next_idx
+    return tokens
+
+
+def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> list[str]:
+    """Split text into 1-line chunks without cutting words or syllables in half."""
+    text = re.sub(r'\s+', ' ', text.replace("\r\n", " ").replace("\n", " ")).strip()
+    if len(text) <= max_chars:
+        return [text]
+
+    # If full sentences exist, split first at ။
+    if "။" in text:
+        parts = [p.strip() for p in re.split(r'(?<=[။])\s*', text) if p.strip()]
+        if len(parts) > 1:
+            res = []
+            for p in parts:
+                res.extend(_split_burmese_into_single_line_chunks(p, max_chars=max_chars))
+            return res
+
+    # If clauses exist, split at ၊
+    if "၊" in text:
+        parts = [p.strip() for p in re.split(r'(?<=[၊])\s*', text) if p.strip()]
+        if len(parts) > 1:
+            res = []
+            for p in parts:
+                res.extend(_split_burmese_into_single_line_chunks(p, max_chars=max_chars))
+            return res
+
+    # Otherwise split into words/tokens
+    tokens = tokenize_burmese_words(text)
+    if not tokens:
+        return [text]
+
+    chunks = []
+    curr = ""
+    for tok in tokens:
+        if curr and (len(curr) + len(tok) > max_chars):
+            chunks.append(curr.strip())
+            curr = tok
+        else:
+            curr += tok
+    if curr.strip():
+        chunks.append(curr.strip())
+
+    # Merge very short tail chunk (< 12 chars) with preceding chunk so it doesn't flash awkwardly
+    if len(chunks) > 1 and len(chunks[-1]) < 12:
+        merged_tail = (chunks[-2] + " " + chunks[-1]).strip()
+        chunks[-2] = merged_tail
+        chunks.pop()
+
+    return chunks if chunks else [text]
+
+
 def _format_cue_lines(text: str, lines_cnt: int) -> str:
     """Format subtitle text into 1 or 2 lines without cutting words in half."""
     text = canonicalize_burmese_text(text)
     if lines_cnt == 1:
-        if len(text) <= 45:
-            return re.sub(r'\s+', ' ', text.replace("\n", " ")).strip()
-        lines_cnt = 2  # Long lines wrap to 2 lines to prevent cut-off
+        # Strictly return a single line with no embedded newlines!
+        return re.sub(r'\s+', ' ', text.replace("\r\n", " ").replace("\n", " ")).strip()
 
     if "\n" in text:
         return text
@@ -1405,28 +1488,7 @@ def _format_cue_lines(text: str, lines_cnt: int) -> str:
             return f"{l1}\n{l2}"
 
     # If no spaces, tokenize preserving protected words and particle boundaries
-    tokens = []
-    i = 0
-    while i < len(text):
-        matched = False
-        for pw in BURMESE_PROTECTED_WORDS:
-            if text[i:].startswith(pw):
-                tokens.append(pw)
-                i += len(pw)
-                matched = True
-                break
-        if not matched:
-            for p in ['ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်', 'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ', 'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်', '၊', '။']:
-                if text[i:].startswith(p):
-                    tokens.append(p)
-                    i += len(p)
-                    matched = True
-                    break
-        if not matched:
-            m = BURMESE_SYLLABLE_BREAK.search(text, i + 1)
-            next_idx = m.start() if m else len(text)
-            tokens.append(text[i:next_idx])
-            i = next_idx
+    tokens = tokenize_burmese_words(text)
 
     if len(tokens) > 1:
         half_len = len(text) // 2
@@ -1455,28 +1517,41 @@ def split_burmese_subtitle_cues(
     start_sec: float,
     end_sec: float,
     text: str,
-    max_cue_chars: int = 42,
+    max_cue_chars: int = 40,
     lines_per_cue: int = 1,
 ) -> list[tuple[float, float, str]]:
     """
     Formats spoken segment narration into synchronized, comfortable, and readable subtitle cues.
-    - NEVER creates micro-cues (< 1.2s) that flash on screen unreadably.
-    - NEVER cuts words in half (e.g. 'သူငယ်ချင်း' or 'အရင်းနှီးဆုံး').
-    - Keeps the full segment duration for the subtitle cue so the viewer can read comfortably.
-    - If lines_per_cue == 2 or text > 36 chars: cleanly wraps onto 2 balanced lines using \\n
-      within the SAME cue, so words stay intact and both lines are visible together.
-    - Only splits across time if total duration >= 4.0s AND contains distinct full sentences (။)
-      where each resulting cue is >= 1.8s.
+    - If lines_per_cue == 1: strictly splits long sentences across time into sequential 1-line cues.
+      NEVER forces 2 lines onto screen when 1 line is selected!
+    - If lines_per_cue == 2: wraps into 2 balanced lines within the same cue.
+    - NEVER cuts words in half (preserves compounds and syllables).
     """
     text = canonicalize_burmese_text(text)
     if not text:
         return []
 
-    lines_cnt = 2 if int(lines_per_cue) == 2 else 1
+    lines_cnt = 1 if int(lines_per_cue) == 1 else 2
     total_dur = max(0.6, float(end_sec) - float(start_sec))
 
-    # If the segment duration is long (>= 4.0s) and has multiple sentences ending with ။,
-    # split cleanly across sentences as long as each sentence gets at least 1.8s.
+    if lines_cnt == 1:
+        chunks = _split_burmese_into_single_line_chunks(text, max_chars=max_cue_chars)
+        if len(chunks) <= 1:
+            return [(round(start_sec, 3), round(end_sec, 3), _format_cue_lines(text, 1))]
+
+        tot_chars = sum(len(c) for c in chunks) or 1
+        cur_t = start_sec
+        results = []
+        for i, chunk in enumerate(chunks):
+            c_dur = max(1.1, (len(chunk) / tot_chars) * total_dur)
+            c_end = cur_t + c_dur if i < len(chunks) - 1 else end_sec
+            if c_end > end_sec:
+                c_end = end_sec
+            results.append((round(cur_t, 3), round(c_end, 3), _format_cue_lines(chunk, 1)))
+            cur_t = c_end
+        return results
+
+    # If lines_per_cue == 2:
     if total_dur >= 4.0 and "။" in text:
         sentences = [s.strip() for s in re.split(r'(?<=[။])\s*', text) if s.strip()]
         if len(sentences) >= 2 and (total_dur / len(sentences)) >= 1.8:
@@ -1486,13 +1561,13 @@ def split_burmese_subtitle_cues(
             for i, sent in enumerate(sentences):
                 s_dur = max(1.8, (len(sent) / tot_chars) * total_dur)
                 s_end = cur_t + s_dur if i < len(sentences) - 1 else end_sec
-                formatted = _format_cue_lines(sent, lines_cnt)
+                formatted = _format_cue_lines(sent, 2)
                 results.append((round(cur_t, 3), round(s_end, 3), formatted))
                 cur_t = s_end
             return results
 
     # Otherwise, keep as ONE cue spanning the full spoken segment duration!
-    formatted_text = _format_cue_lines(text, lines_cnt)
+    formatted_text = _format_cue_lines(text, 2)
     return [(round(start_sec, 3), round(end_sec, 3), formatted_text)]
 
 
@@ -2206,14 +2281,30 @@ class EdgeSmartSync:
                             retries=2,
                         )
                     except Exception as vox_exc:
-                        self.log(f"⚠️ VoxCPM 2 failed ({vox_exc}) — falling back to Edge TTS for line {idx}")
+                        self.log(f"⚠️ VoxCPM 2 failed on line {idx} ({vox_exc}) — switching to consistent Studio Persona engine for entire recap")
                         produced = None
+                        use_voxcpm = False  # Keep whole recap uniform! Never hop between voices!
 
-                # 2. Edge TTS (either default or fallback)
+                # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
                 if not produced or not Path(produced).is_file():
-                    self.progress(idx - 1, len(segments), f"Edge TTS {idx}/{len(segments)}")
-                    self.log(f"🗣️ [{idx}/{len(segments)}] {base} generate via Edge TTS")
+                    curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
+                    self.progress(idx - 1, len(segments), f"Studio TTS {idx}/{len(segments)}")
+                    self.log(f"🗣️ [{idx}/{len(segments)}] {base} generate via Studio Persona ({curr_persona})")
                     try:
+                        from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
+                        if get_curated_voice(curr_persona):
+                            synthesize_curated_persona(
+                                text=speak,
+                                persona_id=curr_persona,
+                                output_wav=dst,
+                                speed=effective_rate or 1.10,
+                                log_fn=self.log,
+                            )
+                            produced = dst
+                        else:
+                            produced = engine.generate_channel99_voice(speak, base_edge_voice)
+                    except Exception as persona_err:
+                        self.log(f"⚠️ Persona TTS notice: {persona_err} — using standard engine")
                         try:
                             produced = engine.generate_channel99_voice(speak, base_edge_voice)
                         except Exception as first:
@@ -2228,7 +2319,7 @@ class EdgeSmartSync:
                             raise RuntimeError("TTS output path မရပါ။")
                     except Exception as exc:
                         if is_edge_refused(exc):
-                            raise RuntimeError(f"Edge TTS stopped at line {idx}/{len(segments)}.\n\n{exc}") from exc
+                            raise RuntimeError(f"TTS stopped at line {idx}/{len(segments)}.\n\n{exc}") from exc
                         raise RuntimeError(f"TTS FAILED at segment {idx} ({base}): {exc}\n\n"
                                            f"Text: {seg['narration'][:200]}") from exc
                 produced_path = Path(produced).resolve()

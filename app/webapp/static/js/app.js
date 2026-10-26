@@ -1300,7 +1300,7 @@ function setupRecapVisualEditor() {
         sliderSubY.addEventListener("input", (e) => {
             const val = parseInt(e.target.value);
             valSubY.innerText = `${val}%`;
-            const bottomPct = Math.max(4, 100 - val);
+            const bottomPct = Math.max(2, 100 - val);
             previewSub.style.bottom = `${bottomPct}%`;
         });
     }
@@ -1325,7 +1325,7 @@ function setupRecapVisualEditor() {
             // Calculate percentage from canvas top (0% top to 100% bottom)
             const relativeY = clientY - canvasRect.top;
             const rawPercent = (relativeY / canvasRect.height) * 100;
-            const clampedY = Math.max(10, Math.min(95, Math.round(rawPercent)));
+            const clampedY = Math.max(5, Math.min(95, Math.round(rawPercent)));
             onUpdateY(clampedY);
         }
 
@@ -1386,7 +1386,7 @@ function setupRecapVisualEditor() {
     enableVerticalDrag(previewSub, (y) => {
         if (sliderSubY) sliderSubY.value = y;
         if (valSubY) valSubY.innerText = `${y}%`;
-        const bottomPct = Math.max(4, 100 - y);
+        const bottomPct = Math.max(2, 100 - y);
         if (previewSub) previewSub.style.bottom = `${bottomPct}%`;
     });
 

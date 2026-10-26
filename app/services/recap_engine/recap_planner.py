@@ -923,26 +923,47 @@ def atomicize_timestamp_segments(
 
 
 def assign_full_coverage_boundaries(units: list[dict[str, Any]], video_duration: float) -> list[dict[str, Any]]:
-    """Give every atomic narration unit a contiguous visual interval.
+    """Give every atomic narration unit a contiguous visual interval anchored tightly around speech.
 
-    Source speech timestamps remain stored as speech_start/speech_end. Gaps between
-    spoken units are split at the midpoint so the final rendered video retains full
-    source coverage without merging narration IDs.
+    Source speech timestamps remain stored as speech_start/speech_end.
+    Crucially anchors each video segment around its actual dialogue to prevent dialogue scenes
+    from being cut off or displaced by long intros or silent non-speaking gaps.
     """
     if not units:
         return []
     out = [dict(x) for x in units]
-    out[0]["video_start"] = 0.0
+
+    # Cap intro lead-in before the first speech unit so speech is never trimmed away by intro silence!
+    first_speech_start = float(out[0]["speech_start"])
+    out[0]["video_start"] = max(0.0, first_speech_start - 1.2) if first_speech_start > 2.0 else 0.0
+
     for i in range(len(out) - 1):
         left = out[i]
         right = out[i + 1]
         le = float(left["speech_end"])
         rs = float(right["speech_start"])
-        boundary = (le + rs) / 2.0 if rs >= le else max(le, rs)
-        boundary = max(0.0, min(float(video_duration), boundary))
-        left["video_end"] = round(boundary, 3)
-        right["video_start"] = round(boundary, 3)
-    out[-1]["video_end"] = round(float(video_duration), 3)
+        gap = rs - le
+        if gap > 3.0:
+            # When there is a notable gap (e.g. action scene, silence), anchor each segment close
+            # to its speech (up to 1.5s context padding) rather than stretching midpoint across 10-20s.
+            boundary = (le + rs) / 2.0
+            left_end = min(le + 1.5, boundary)
+            right_start = max(rs - 1.5, boundary)
+            left["video_end"] = round(left_end, 3)
+            right["video_start"] = round(right_start, 3)
+        else:
+            boundary = (le + rs) / 2.0 if rs >= le else max(le, rs)
+            boundary = max(0.0, min(float(video_duration), boundary))
+            left["video_end"] = round(boundary, 3)
+            right["video_start"] = round(boundary, 3)
+
+    last_speech_end = float(out[-1]["speech_end"])
+    # Cap trailing silence so ending dialogue is not delayed or stretched into dark credits
+    if float(video_duration) - last_speech_end > 4.0:
+        out[-1]["video_end"] = round(min(float(video_duration), last_speech_end + 2.5), 3)
+    else:
+        out[-1]["video_end"] = round(float(video_duration), 3)
+
     for i, unit in enumerate(out):
         unit.setdefault("video_start", 0.0 if i == 0 else out[i - 1]["video_end"])
         unit.setdefault("video_end", round(float(unit["speech_end"]), 3))
