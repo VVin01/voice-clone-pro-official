@@ -2656,7 +2656,7 @@ function setupDownloader() {
                     const btnModeUrl = document.getElementById("btn-source-mode-url");
                     if (btnModeUrl) btnModeUrl.click();
 
-                    const btnExtract = document.getElementById("btn-extract-info");
+                    const btnExtract = document.getElementById("btn-fetch-recap-info");
                     if (btnExtract) {
                         setTimeout(() => btnExtract.click(), 300);
                     }
@@ -3500,24 +3500,6 @@ async function loadAdminQueue(isSilent = false) {
     }
 }
 
-async function adminRetryJob(jobId) {
-    haptic("medium");
-    try {
-        const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
-            method: "POST",
-            headers: getAuthHeaders(),
-        });
-        const data = await res.json();
-        if (data.success) {
-            loadAdminQueue();
-        } else {
-            alert(data.message || "Failed to retry job");
-        }
-    } catch (e) {
-        alert("Retry error: " + e.message);
-    }
-}
-
 async function adminCancelJob(jobId) {
     if (!confirm("Are you sure you want to cancel this job?")) return;
     haptic("medium");
@@ -3985,6 +3967,7 @@ async function adminRetryJob(jobId) {
         });
         const data = await res.json();
         if (res.ok) {
+            loadAdminQueue(true);
             pollAdminJobProgress(jobId);
         } else {
             alert("Retry failed: " + (data.detail || data.message || "Unknown error"));

@@ -104,11 +104,15 @@ async def lifespan(app: FastAPI):
                         mem_entry = RECAP_JOBS_REGISTRY.get(jid)
                         if not mem_entry or mem_entry.get("status") not in ("RUNNING", "QUEUED"):
                             _log.info(f"Auto-dispatching queued recap job {jid}...")
+                            from app.config import settings
+                            from app.models.enums import AccountCategory
                             user = await session.get(User, queued_recap.user_id)
-                            is_vip = getattr(user, "is_vip", False) if user else False
+                            is_vip = ((user.account_category == AccountCategory.PURCHASED.value) if user else False) or settings.is_admin(queued_recap.user_id)
+                            source_url = getattr(queued_recap, "source_audio_path", None) or queued_recap.input_text or ""
                             cfg = RecapConfigRequest(
-                                url=queued_recap.input_text or "",
-                                voice_slug=queued_recap.preset_voice or "thiha",
+                                url=source_url,
+                                title=queued_recap.input_text or "Movie Recap Video",
+                                voice_slug=queued_recap.preset_voice or "komin",
                             )
                             import time
                             RECAP_JOBS_REGISTRY[jid] = {

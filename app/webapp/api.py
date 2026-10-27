@@ -14,6 +14,7 @@ Supports:
 from __future__ import annotations
 
 import os
+import re
 import time
 import json
 import uuid
@@ -1567,6 +1568,7 @@ async def create_recap_job(
             engine="recap",
             preset_voice=req.voice_slug,
             input_text=clean_display_title,
+            source_audio_path=req.url,
             seconds_estimated=120,
         )
         db.add(db_job)
@@ -2488,15 +2490,18 @@ async def retry_queued_job(
         try:
             from app.webapp.api import _run_recap_background_job, RecapConfigRequest
             u = await db.get(User, job.user_id)
-            is_vip = (u.is_vip if u else False) or settings.is_admin(job.user_id)
+            is_vip = ((u.account_category == AccountCategory.PURCHASED.value) if u else False) or settings.is_admin(job.user_id)
+            source_url = job.source_audio_path or job.input_text or ""
+            clean_title = _clean_recap_display_title(job.input_text, source_url)
             cfg = RecapConfigRequest(
-                url=job.input_text or "",
-                voice_slug=job.preset_voice or "thiha",
+                url=source_url,
+                title=clean_title,
+                voice_slug=job.preset_voice or "komin",
             )
             RECAP_JOBS_REGISTRY[job_id] = {
                 "id": job_id,
                 "user_id": job.user_id,
-                "title": job.input_text or "Movie Recap Video",
+                "title": clean_title,
                 "status": "QUEUED",
                 "progress_percent": 5,
                 "progress_step": "0/4",

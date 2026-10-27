@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.enums import AccountCategory, JobStatus, JobType
-from app.models.schema import Job, User, utc_now
+from app.models.schema import Job, User, VoiceModel, utc_now
 from app.services.ledger import get_minute_balance, get_or_create_user, grant_monthly_free_allowance
 from app.services.models import get_authorized_model
 

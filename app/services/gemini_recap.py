@@ -96,6 +96,8 @@ Format your output strictly using these two delimiters:
     from google import genai
     client = genai.Client(api_key=key)
 
+    raw_env_model = os.environ.get("GEMINI_MODEL", "").strip()
+    env_model = raw_env_model if (raw_env_model and "2.5" not in raw_env_model and "3.8" not in raw_env_model) else ""
     # Use active fast Gemini models (gemini-3.6-flash, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-flash-lite-latest)
     candidate_models = [m for m in [env_model, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"] if m]
     response = None

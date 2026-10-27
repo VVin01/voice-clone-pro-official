@@ -1325,6 +1325,7 @@ class MediaDownloader:
         logo_position: Optional[list[float]] = None,
         logo_scale: float = 0.16,
         logo_opacity: float = 0.70,
+        is_vip: bool = False,
     ) -> str:
         """
         Extracts a single frame snapshot with blur box and sample subtitle for preview.

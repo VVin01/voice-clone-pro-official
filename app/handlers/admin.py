@@ -1728,12 +1728,15 @@ async def handle_admin_job_retry_confirm(callback: CallbackQuery, session: Async
         # If it's a Movie Recap job, dispatch background processing task
         if str(j.job_type).lower() == "recap" or str(j.id).startswith("rc_") or getattr(j, "engine", "") == "recap":
             try:
-                from app.webapp.api import _run_recap_background_job, RecapConfigRequest, RECAP_JOBS_REGISTRY
-                cfg = RecapConfigRequest(
-                    url=j.input_text or "",
-                    voice_slug=j.preset_voice or ("nilar" if getattr(j, "edge_voice", "") == "my-MM-NilarNeural" else "komin"),
-                )
+                import asyncio
                 import time
+                from app.webapp.api import _run_recap_background_job, RecapConfigRequest, RECAP_JOBS_REGISTRY
+                source_url = getattr(j, "source_audio_path", None) or j.input_text or ""
+                cfg = RecapConfigRequest(
+                    url=source_url,
+                    title=j.input_text or "Movie Recap Video",
+                    voice_slug=j.preset_voice or ("mahnin" if getattr(j, "edge_voice", "") == "my-MM-NilarNeural" else "komin"),
+                )
                 RECAP_JOBS_REGISTRY[str(j.id)] = {
                     "id": str(j.id),
                     "user_id": j.user_id,
