@@ -487,6 +487,11 @@
                                         </div>
                                         <input type="range" min="5" max="95" value="85" class="studio-slider" id="slider-sub-y">
                                     </div>
+                                    <div class="mt-2" style="display:flex; justify-content:flex-end;">
+                                        <button type="button" class="mini-btn-seek" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" style="font-size:11px; padding:5px 10px;">
+                                            🔄 မူလနေရာ ပြန်ထားမည် (Reset Layout)
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -602,6 +607,28 @@
                                         <span data-i18n="btn_preview_voice">နမူနာ နားထောင်မည်</span>
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Story Style Selector in Step 3 -->
+                        <div class="mt-3" style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+                            <div class="card-label" style="font-size:12px; margin-bottom:6px;" data-i18n="recap_style_label">🎭 ဇာတ်လမ်းပြော စတိုင်လ် (Story Style):</div>
+                            <div class="style-pills-grid" id="story-style-picker-quick">
+                                <button type="button" class="style-select-pill active" data-story="viral">
+                                    <span class="pill-main" data-i18n="style_viral">🔥 Viral Hook (စိတ်လှုပ်ရှားဖွယ်)</span>
+                                </button>
+                                <button type="button" class="style-select-pill" data-story="dramatic">
+                                    <span class="pill-main" data-i18n="style_dramatic">🎭 သည်းထိတ်ရင်ဖို (Drama)</span>
+                                </button>
+                                <button type="button" class="style-select-pill" data-story="funny">
+                                    <span class="pill-main" data-i18n="style_funny">😂 ဟာသရယ်မောဖွယ်</span>
+                                </button>
+                                <button type="button" class="style-select-pill" data-story="pov">
+                                    <span class="pill-main" data-i18n="style_pov">👁️ ဇာတ်ကောင် POV</span>
+                                </button>
+                                <button type="button" class="style-select-pill" data-story="standard">
+                                    <span class="pill-main" data-i18n="style_standard">📖 ပုံမှန်ဇာတ်ကြောင်း</span>
+                                </button>
                             </div>
                         </div>
                     </div>

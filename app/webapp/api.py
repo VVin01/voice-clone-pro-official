@@ -166,6 +166,31 @@ async def get_user_profile(
         default="true",
     )
 
+    # Check if user has an active or recently finished Recap/Voice job so Mini App can auto-resume
+    active_recap_job_id = None
+    active_voice_job_id = None
+    try:
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+        stmt_active = (
+            select(Job)
+            .where(
+                Job.user_id == user.id,
+                Job.created_at >= recent_cutoff,
+                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+            )
+            .order_by(Job.created_at.desc())
+            .limit(5)
+        )
+        res_act = await db.execute(stmt_active)
+        for aj in res_act.scalars().all():
+            is_rc = (aj.job_type == JobType.RECAP.value or aj.id.startswith("rc_") or aj.engine == "recap")
+            if is_rc and not active_recap_job_id:
+                active_recap_job_id = aj.id
+            elif not is_rc and not active_voice_job_id:
+                active_voice_job_id = aj.id
+    except Exception:
+        pass
+
     return {
         "id": user.id,
         "first_name": user.first_name,
@@ -181,6 +206,8 @@ async def get_user_profile(
         "recap_max_duration_seconds": 600 if is_vip else 120,
         "recap_max_duration_minutes": 10 if is_vip else 2,
         "has_recap_watermark": not is_vip,
+        "active_recap_job_id": active_recap_job_id,
+        "active_voice_job_id": active_voice_job_id,
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
         "tutorial_voice_title": tut_voice_title,
@@ -886,6 +913,167 @@ def _clean_recap_display_title(raw_title: Optional[str], fallback_url: Optional[
     return "Movie Recap Video"
 
 
+def _build_clean_recap_script_file(
+    job_dir: Path,
+    job_id: str,
+    story_style: str = "viral",
+    srt_path: Optional[str] = None,
+) -> Optional[str]:
+    """Build a clean, full-sentence Burmese script file from the Smart Sync JSON plan (with SRT fallback)."""
+    try:
+        job_dir.mkdir(parents=True, exist_ok=True)
+        script_file = job_dir / f"{job_id}_script.txt"
+        plan_candidates = [
+            job_dir / "edge_tts_smart_sync" / "smart_sync_plan_edge_tts.json",
+            job_dir / "smart_sync_plan_edge_tts.json",
+        ]
+        timed_lines: List[str] = []
+        plain_sentences: List[str] = []
+
+        for plan_file in plan_candidates:
+            if plan_file.is_file():
+                try:
+                    plan_data = json.loads(plan_file.read_text(encoding="utf-8", errors="replace"))
+                    timing_segs = plan_data.get("tts_timing_segments") or plan_data.get("segments") or []
+                    for seg in timing_segs:
+                        txt = str(seg.get("text") or seg.get("narration") or "").strip()
+                        if not txt:
+                            continue
+                        st = float(seg.get("audio_start") if seg.get("audio_start") is not None else seg.get("video_start", 0.0))
+                        en = float(seg.get("audio_end") if seg.get("audio_end") is not None else seg.get("video_end", 0.0))
+                        st_mm, st_ss = int(st) // 60, int(st) % 60
+                        en_mm, en_ss = int(en) // 60, int(en) % 60
+                        timed_lines.append(f"[{st_mm:02d}:{st_ss:02d} - {en_mm:02d}:{en_ss:02d}] {txt}")
+                        plain_sentences.append(txt)
+                    if plain_sentences:
+                        break
+                except Exception:
+                    pass
+
+        if not plain_sentences and srt_path and Path(srt_path).is_file():
+            with open(srt_path, "r", encoding="utf-8", errors="replace") as f:
+                for l in f:
+                    s = l.strip()
+                    if s and not s.isdigit() and "-->" not in s and s not in plain_sentences:
+                        plain_sentences.append(s)
+
+        if not plain_sentences:
+            return None
+
+        header = (
+            f"🎬 Pro Movie Recap Script ({story_style.upper()})\n"
+            f"🆔 Task: #{job_id[:8]}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+        full_paragraph = " ".join(plain_sentences)
+        body = f"📖 ဇာတ်လမ်းအပြည့်အစုံ (Full Narration Copy):\n{full_paragraph}\n\n"
+        if timed_lines:
+            body += "⏱️ အခန်းအလိုက် အချိန်နှင့် စာသား (Scene-by-Scene Breakdown):\n" + "\n\n".join(timed_lines) + "\n"
+        else:
+            body += "📝 စာသားများ:\n" + "\n\n".join(plain_sentences) + "\n"
+
+        script_file.write_text(header + body, encoding="utf-8")
+        return str(script_file)
+    except Exception as e:
+        logger.warning(f"Failed to build clean recap script for {job_id}: {e}")
+        return None
+
+
+def resolve_recap_deliverable_path(
+    job_id: str,
+    file_type: str,
+    result_path: Optional[str] = None,
+) -> Optional[str]:
+    """Deterministically resolve the final deliverable file for a recap job without matching intermediate work files."""
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if entry:
+        reg_path = entry.get(f"{file_type}_path")
+        if reg_path and Path(reg_path).is_file():
+            return str(reg_path)
+
+    job_dir = settings.storage_root / "recap_output" / job_id
+
+    if file_type == "video":
+        if result_path and Path(result_path).is_file():
+            return str(result_path)
+        explicit_videos = [
+            job_dir / "edge_tts_smart_sync" / "final_edge_tts_smart_sync.mp4",
+            job_dir / "final_edge_tts_smart_sync.mp4",
+            job_dir / "final_recap.mp4",
+        ]
+        for cand in explicit_videos:
+            if cand.is_file() and cand.stat().st_size > 1000:
+                return str(cand)
+        if job_dir.is_dir():
+            for cand in job_dir.rglob("*.mp4"):
+                parts_lower = {p.lower() for p in cand.parts}
+                name_lower = cand.name.lower()
+                if "video_parts" in parts_lower or "work" in parts_lower:
+                    continue
+                if name_lower.startswith(("source", "up_", "seg_")) or "noaudio" in name_lower:
+                    continue
+                if cand.is_file() and cand.stat().st_size > 1000:
+                    return str(cand)
+        return None
+
+    if file_type == "audio":
+        explicit_audios = [
+            job_dir / "edge_tts_smart_sync" / "recap_voice_cloned.wav",
+            job_dir / "edge_tts_smart_sync" / "voice_edge_tts.wav",
+            job_dir / "voice_edge_tts.wav",
+            job_dir / "final_audio.mp3",
+            job_dir / "final_audio.wav",
+        ]
+        for cand in explicit_audios:
+            if cand.is_file() and cand.stat().st_size > 500:
+                return str(cand)
+        if job_dir.is_dir():
+            for cand in list(job_dir.rglob("*.mp3")) + list(job_dir.rglob("*.wav")):
+                parts_lower = {p.lower() for p in cand.parts}
+                name_lower = cand.name.lower()
+                if "tts_parts" in parts_lower or "work" in parts_lower:
+                    continue
+                if "whisper" in name_lower or name_lower.startswith("seg_"):
+                    continue
+                if cand.is_file() and cand.stat().st_size > 500:
+                    return str(cand)
+        return None
+
+    if file_type == "srt":
+        explicit_srts = [
+            job_dir / "edge_tts_smart_sync" / "recap_myanmar_synced.srt",
+            job_dir / "recap_myanmar_synced.srt",
+        ]
+        for cand in explicit_srts:
+            if cand.is_file():
+                return str(cand)
+        if job_dir.is_dir():
+            srts = [c for c in job_dir.rglob("*.srt") if c.is_file()]
+            if srts:
+                return str(srts[0])
+        return None
+
+    if file_type == "script":
+        explicit_scripts = [
+            job_dir / f"{job_id}_script.txt",
+            job_dir / "edge_tts_smart_sync" / "recap_script_clean.txt",
+        ]
+        for cand in explicit_scripts:
+            if cand.is_file():
+                return str(cand)
+        if job_dir.is_dir():
+            srt_cand = resolve_recap_deliverable_path(job_id, "srt")
+            built = _build_clean_recap_script_file(job_dir, job_id, "viral", srt_cand)
+            if built and Path(built).is_file():
+                return built
+            txts = [c for c in job_dir.rglob("*.txt") if c.is_file()]
+            if txts:
+                return str(txts[0])
+        return None
+
+    return None
+
+
 class RecapConfigRequest(BaseModel):
     url: str
     title: Optional[str] = None
@@ -1113,22 +1301,7 @@ async def _run_recap_background_job(
         video_path = recap_res.get("final_video") or recap_res.get("final_video_path")
         audio_path = recap_res.get("audio") or recap_res.get("final_audio_path")
         srt_path = recap_res.get("subtitles_srt")
-        script_path = None
-
-        if srt_path and Path(srt_path).is_file():
-            try:
-                script_file = job_dir / f"{job_id}_script.txt"
-                lines = []
-                with open(srt_path, "r", encoding="utf-8", errors="replace") as f:
-                    for l in f:
-                        s = l.strip()
-                        if s and not s.isdigit() and "-->" not in s and s not in lines:
-                            lines.append(s)
-                with open(script_file, "w", encoding="utf-8") as f:
-                    f.write(f"🎬 Recap Script: {req.story_style}\n\n" + "\n\n".join(lines))
-                script_path = str(script_file)
-            except Exception:
-                pass
+        script_path = _build_clean_recap_script_file(job_dir, job_id, req.story_style, srt_path)
 
         entry["status"] = "SUCCESS"
         entry["progress_percent"] = 100
@@ -1172,7 +1345,7 @@ async def _run_recap_background_job(
                     [
                         InlineKeyboardButton(
                             text="🎬 Mini App တွင် ကြည့်ရှုမည်",
-                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap")
+                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
                         ),
                         InlineKeyboardButton(
                             text="📱 Video ဖိုင် ပို့ပေးပါ",
@@ -1225,6 +1398,30 @@ async def _run_recap_background_job(
                 await session.commit()
         except Exception as ref_err:
             logger.warning(f"Credit refund failed: {ref_err}")
+
+        if settings.bot_token and chat_id:
+            try:
+                from aiogram import Bot
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+                bot_err = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                try:
+                    err_short = html.escape(str(e)[:180])
+                    refund_note = "✅ သင့် Recap Credit (1c) ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။" if credit_deducted else ""
+                    await bot_err.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"⚠️ <b>Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်</b>\n"
+                            f"🆔 <b>Task:</b> <code>#{job_id[:8]}</code>\n"
+                            f"📋 <b>အကြောင်းရင်း:</b> <i>{err_short}</i>\n\n"
+                            f"{refund_note}\n"
+                            f"💡 <i>လင့်ခ် အကာအကွယ်ရှိနေပါက ဗီဒီယိုဖိုင်ကို ဒေါင်းလုဒ်ဆွဲ၍ Mini App ရှိ '📁 Video Upload' မှ တိုက်ရိုက်တင်သွင်းကာ ပြုလုပ်နိုင်ပါသည်ခင်ဗျာ။</i>"
+                        ),
+                    )
+                finally:
+                    await bot_err.session.close()
+            except Exception:
+                pass
 
 
 async def cleanup_expired_jobs_24h() -> int:
@@ -1439,46 +1636,29 @@ async def download_recap_file(
     file_type: str,
     request: Request,
 ):
-    """Download or stream generated recap MP4 video, MP3 audio, SRT subtitles, or TXT script."""
-    entry = RECAP_JOBS_REGISTRY.get(job_id)
-    file_path = None
-    if entry:
-        path_key = f"{file_type}_path"
-        file_path = entry.get(path_key)
-
-    # Fallback to checking storage directory directly if in-memory entry evicted
-    if not file_path or not Path(file_path).is_file():
-        job_dir = settings.storage_root / "recap_output" / job_id
-        if job_dir.is_dir():
-            if file_type == "video":
-                cands = list(job_dir.rglob("*.mp4"))
-                if cands: file_path = str(cands[0])
-            elif file_type == "audio":
-                cands = list(job_dir.rglob("*.mp3")) + list(job_dir.rglob("*.wav"))
-                if cands: file_path = str(cands[0])
-            elif file_type == "srt":
-                cands = list(job_dir.rglob("*.srt"))
-                if cands: file_path = str(cands[0])
-            elif file_type == "script":
-                cands = list(job_dir.rglob("*script*.txt")) + list(job_dir.rglob("*.txt"))
-                if cands: file_path = str(cands[0])
-
-    if not file_path or not Path(file_path).is_file():
+    """Download or stream generated recap MP4 video, WAV/MP3 audio, SRT subtitles, or TXT script."""
+    db_result_path = None
+    if file_type == "video":
         try:
             from app.db.session import AsyncSessionLocal
             async with AsyncSessionLocal() as session:
                 j = await session.get(Job, job_id)
                 if j and j.result_path and Path(j.result_path).is_file():
-                    file_path = j.result_path
+                    db_result_path = j.result_path
         except Exception:
             pass
 
+    file_path = resolve_recap_deliverable_path(job_id, file_type, result_path=db_result_path)
     if not file_path or not Path(file_path).is_file():
         raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} file not ready or not found")
 
+    actual_ext = Path(file_path).suffix.lower()
+    audio_mime = "audio/wav" if actual_ext == ".wav" else "audio/mpeg"
+    audio_ext = ".wav" if actual_ext == ".wav" else ".mp3"
+
     mime_map = {
         "video": ("video/mp4", f"recap_{job_id[:8]}.mp4"),
-        "audio": ("audio/mpeg", f"voiceover_{job_id[:8]}.mp3"),
+        "audio": (audio_mime, f"voiceover_{job_id[:8]}{audio_ext}"),
         "srt": ("text/plain; charset=utf-8", f"subtitles_{job_id[:8]}.srt"),
         "script": ("text/plain; charset=utf-8", f"script_{job_id[:8]}.txt"),
     }
@@ -1502,27 +1682,20 @@ async def send_recap_to_telegram(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Deliver generated recap video and assets directly to user's Telegram chat on demand."""
-    entry = RECAP_JOBS_REGISTRY.get(job_id)
-    video_path = entry.get("video_path") if entry else None
-    audio_path = entry.get("audio_path") if entry else None
-    srt_path = entry.get("srt_path") if entry else None
-    script_path = entry.get("script_path") if entry else None
+    db_job = await db.get(Job, job_id)
+    db_res_path = db_job.result_path if db_job else None
 
-    if not video_path or not Path(video_path).is_file():
-        job_dir = settings.storage_root / "recap_output" / job_id
-        if job_dir.is_dir():
-            cands = list(job_dir.rglob("*.mp4"))
-            if cands:
-                video_path = str(cands[0])
-            auds = list(job_dir.rglob("*.mp3")) + list(job_dir.rglob("*.wav"))
-            if auds:
-                audio_path = str(auds[0])
-            srts = list(job_dir.rglob("*.srt"))
-            if srts:
-                srt_path = str(srts[0])
+    video_path = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
+    audio_path = resolve_recap_deliverable_path(job_id, "audio")
+    srt_path = resolve_recap_deliverable_path(job_id, "srt")
+    script_path = resolve_recap_deliverable_path(job_id, "script")
 
     if not video_path or not Path(video_path).is_file():
         raise HTTPException(status_code=404, detail="ဗီဒီယို ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
+
+    entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
+    clean_title = entry.get("title") or _clean_recap_display_title(db_job.input_text if db_job else None)
+    voice_label = (db_job.preset_voice.capitalize() if (db_job and db_job.preset_voice) else "Smart Sync AI")
 
     await _send_recap_telegram_delivery(
         chat_id=user.id,
@@ -1530,9 +1703,9 @@ async def send_recap_to_telegram(
         audio_path=audio_path,
         srt_path=srt_path,
         script_path=script_path,
-        title="AI Movie Recap",
+        title=clean_title,
         style="Pro Dubbed",
-        voice_name="Smart Sync AI",
+        voice_name=voice_label,
         duration_sec=0,
     )
     return {"success": True, "message": "Telegram သို့ ဗီဒီယို ပို့ပြီးပါပြီခင်ဗျာ!"}
@@ -1585,12 +1758,8 @@ def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str
     """Safely check if the completed job's output media file exists on container disk."""
     try:
         if is_recap:
-            if result_path and Path(result_path).is_file():
-                return True
-            job_dir = settings.storage_root / "recap_output" / job_id
-            if job_dir.is_dir():
-                return any(job_dir.rglob("*.mp4"))
-            return False
+            vid = resolve_recap_deliverable_path(job_id, "video", result_path=result_path)
+            return bool(vid and Path(vid).is_file())
         else:
             if result_path and Path(result_path).is_file():
                 return True
@@ -1644,25 +1813,26 @@ async def get_user_history(
             file_exists = check_job_file_exists(j.id, is_recap, j.result_path)
         is_expired = bool(j.status == JobStatus.SUCCESS.value and not file_exists)
 
-        if is_recap:
-            recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
-            if recap_entry and recap_entry.get("download_urls"):
-                deliverables = recap_entry["download_urls"]
-                download_url = deliverables.get("video")
+        if j.status == JobStatus.SUCCESS.value and not is_expired:
+            if is_recap:
+                recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
+                if recap_entry and recap_entry.get("download_urls"):
+                    deliverables = recap_entry["download_urls"]
+                    download_url = deliverables.get("video")
+                else:
+                    download_url = f"/api/recap/stream/{j.id}/video"
+                    deliverables = {
+                        "video": f"/api/recap/stream/{j.id}/video",
+                        "audio": f"/api/recap/stream/{j.id}/audio",
+                        "srt": f"/api/recap/download/{j.id}/srt",
+                        "script": f"/api/recap/download/{j.id}/script",
+                    }
             else:
-                download_url = f"/api/recap/stream/{j.id}/video"
+                download_url = f"/api/audio/stream/{j.id}"
                 deliverables = {
-                    "video": f"/api/recap/stream/{j.id}/video",
-                    "audio": f"/api/recap/stream/{j.id}/audio",
-                    "srt": f"/api/recap/download/{j.id}/srt",
-                    "script": f"/api/recap/download/{j.id}/script",
+                    "audio": f"/api/audio/stream/{j.id}",
+                    "download": f"/api/audio/download/{j.id}",
                 }
-        else:
-            download_url = f"/api/audio/stream/{j.id}" if j.status == JobStatus.SUCCESS.value else None
-            deliverables = {
-                "audio": f"/api/audio/stream/{j.id}",
-                "download": f"/api/audio/download/{j.id}",
-            }
 
         raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
         out.append({
@@ -1759,20 +1929,21 @@ async def get_admin_global_history(
 
         deliverables = {}
         download_url = None
-        if is_recap:
-            download_url = f"/api/recap/stream/{job.id}/video" if job.status == JobStatus.SUCCESS.value else None
-            deliverables = {
-                "video": f"/api/recap/stream/{job.id}/video",
-                "audio": f"/api/recap/stream/{job.id}/audio",
-                "srt": f"/api/recap/download/{job.id}/srt",
-                "script": f"/api/recap/download/{job.id}/script",
-            }
-        else:
-            download_url = f"/api/audio/stream/{job.id}" if job.status == JobStatus.SUCCESS.value else None
-            deliverables = {
-                "audio": f"/api/audio/stream/{job.id}",
-                "download": f"/api/audio/download/{job.id}",
-            }
+        if job.status == JobStatus.SUCCESS.value and not is_expired:
+            if is_recap:
+                download_url = f"/api/recap/stream/{job.id}/video"
+                deliverables = {
+                    "video": f"/api/recap/stream/{job.id}/video",
+                    "audio": f"/api/recap/stream/{job.id}/audio",
+                    "srt": f"/api/recap/download/{job.id}/srt",
+                    "script": f"/api/recap/download/{job.id}/script",
+                }
+            else:
+                download_url = f"/api/audio/stream/{job.id}"
+                deliverables = {
+                    "audio": f"/api/audio/stream/{job.id}",
+                    "download": f"/api/audio/download/{job.id}",
+                }
 
         raw_snippet = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
         out.append({

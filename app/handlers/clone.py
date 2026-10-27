@@ -718,25 +718,21 @@ async def handle_send_recap_callback(callback: CallbackQuery):
 
     try:
         target_chat_id = callback.from_user.id
+        from app.webapp.api import resolve_recap_deliverable_path
         async with AsyncSessionLocal() as session:
             job = await session.get(Job, job_id)
-            video_path = None
-            if job and job.result_path and Path(job.result_path).is_file():
-                video_path = Path(job.result_path)
-            else:
-                job_dir = settings.storage_root / "recap_output" / job_id
-                if job_dir.is_dir():
-                    for f in job_dir.rglob("*.mp4"):
-                        if f.is_file():
-                            video_path = f
-                            break
+            db_res_path = job.result_path if job else None
+            resolved_vid = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
+            resolved_srt = resolve_recap_deliverable_path(job_id, "srt")
+            video_path = Path(resolved_vid) if resolved_vid and Path(resolved_vid).is_file() else None
+            srt_path = Path(resolved_srt) if resolved_srt and Path(resolved_srt).is_file() else None
 
             if video_path and video_path.is_file():
                 file_size = video_path.stat().st_size
                 if file_size <= 50 * 1024 * 1024:
                     await callback.bot.send_video(
                         chat_id=target_chat_id,
-                        video=FSInputFile(str(video_path)),
+                        video=FSInputFile(str(video_path), filename=f"recap_{job_id[:8]}.mp4"),
                         caption=f"🎬 <b>Pro Movie Recap:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
                         parse_mode="HTML",
                     )
@@ -761,6 +757,16 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                         reply_markup=kb,
                         parse_mode="HTML",
                     )
+                if srt_path and srt_path.is_file():
+                    try:
+                        await callback.bot.send_document(
+                            chat_id=target_chat_id,
+                            document=FSInputFile(str(srt_path), filename=f"subtitles_{job_id[:8]}.srt"),
+                            caption="📝 <b>Myanmar Subtitles (SRT)</b>",
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
             else:
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
                 dl_url = f"{app_url}/api/recap/download/{job_id}/video"
@@ -768,7 +774,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     [
                         InlineKeyboardButton(
                             text="🎬 Mini App တွင် ကြည့်ရှုမည်",
-                            web_app=WebAppInfo(url=f"{app_url}?recap_job_id={job_id}")
+                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
                         )
                     ]
                 ])

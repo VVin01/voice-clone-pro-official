@@ -395,6 +395,19 @@ async function loadUserProfile() {
             if (adminTab) adminTab.classList.remove("hidden");
         }
 
+        // Auto-resume active background Recap or Voice job if user closed and reopened Mini App
+        if (data.active_recap_job_id && !state.recapPollTimer) {
+            state.recapJobId = data.active_recap_job_id;
+            try { localStorage.setItem("vcp_active_recap_job_id", data.active_recap_job_id); } catch (e) {}
+            startRecapJobPolling(data.active_recap_job_id);
+        }
+        if (data.active_voice_job_id && !state.pollTimer) {
+            state.activeJobId = data.active_voice_job_id;
+            const vProg = document.getElementById("voice-progress-box");
+            if (vProg) vProg.classList.remove("hidden");
+            startJobPolling(data.active_voice_job_id);
+        }
+
     } catch (err) {
         console.warn("User profile fetch error:", err);
     }
@@ -1836,16 +1849,49 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // 7. Narration Story Style Picker (viral, dramatic, funny, pov, standard)
-    const storyPills = document.querySelectorAll("#story-style-picker .style-select-pill");
+    // 7. Narration Story Style Picker (viral, dramatic, funny, pov, standard) — synced across Step 3 & Advanced
+    const storyPills = document.querySelectorAll("#story-style-picker .style-select-pill, #story-style-picker-quick .style-select-pill");
     storyPills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
-            storyPills.forEach(p => p.classList.remove("active"));
-            pill.classList.add("active");
-            state.recapStoryStyle = pill.getAttribute("data-story") || "viral";
+            const chosenStory = pill.getAttribute("data-story") || "viral";
+            state.recapStoryStyle = chosenStory;
+            storyPills.forEach(p => p.classList.toggle("active", p.getAttribute("data-story") === chosenStory));
         });
     });
+
+    // Reset Layout Helper (Blur Y/H, Sub Y, Crop, Zoom)
+    function resetRecapCanvasLayout() {
+        haptic("medium");
+        if (sliderBlurY) sliderBlurY.value = "81";
+        if (sliderBlurH) sliderBlurH.value = "13";
+        if (sliderSubY) sliderSubY.value = "85";
+        syncBlurBoxVisual();
+        syncSubBoxVisual();
+
+        state.recapCropTop = 0;
+        state.recapCropBottom = 0;
+        state.recapCropLeft = 0;
+        state.recapCropRight = 0;
+        const sTop = document.getElementById("slider-crop-top");
+        const sBot = document.getElementById("slider-crop-bottom");
+        const sLeft = document.getElementById("slider-crop-left");
+        const sRight = document.getElementById("slider-crop-right");
+        if (sTop) sTop.value = "0";
+        if (sBot) sBot.value = "0";
+        if (sLeft) sLeft.value = "0";
+        if (sRight) sRight.value = "0";
+        document.querySelectorAll("#recap-crop-presets .pill-btn, #recap-crop-presets-toolbar .pill-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-crop") === "full");
+        });
+
+        state.recapZoom = 1.06;
+        document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-zoom") === "1.06");
+        });
+        updateCanvasMockupVisuals();
+    }
+    window.resetRecapCanvasLayout = resetRecapCanvasLayout;
 
     // 8. Overlay Toggles: Subtitles, Blur, Logo
     const btnToggleSubs = document.getElementById("btn-toggle-subs");
@@ -2413,6 +2459,7 @@ async function handleStartRecap() {
         if (!res.ok) throw new Error(data.detail || "Recap creation failed");
 
         state.recapJobId = data.recap_id;
+        try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
         loadUserProfile();
         startRecapJobPolling(data.recap_id);
 
@@ -2432,6 +2479,9 @@ function startRecapJobPolling(jobId) {
     const statusMsg = document.getElementById("recap-status-msg");
     const stepText = document.getElementById("recap-step-text");
     const btn = document.getElementById("btn-start-recap");
+
+    if (progressBox) progressBox.classList.remove("hidden");
+    if (btn) btn.disabled = true;
 
     state.recapPollTimer = setInterval(async () => {
         try {
@@ -2454,6 +2504,7 @@ function startRecapJobPolling(jobId) {
             if (data.status === "SUCCESS") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
+                try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
                 if (btn) btn.disabled = false;
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
@@ -2513,6 +2564,7 @@ function startRecapJobPolling(jobId) {
             } else if (data.status === "FAILED") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
+                try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
                 if (btn) btn.disabled = false;
                 if (progressBox) progressBox.classList.add("hidden");
 
@@ -2522,9 +2574,10 @@ function startRecapJobPolling(jobId) {
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
                 } else {
-                    alert(`❌ Recap Generation Failed: ${errMsg}\n\nCredit has been refunded to your account.`);
+                    alert(`⚠️ Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်:\n${errMsg}\n\n✅ သင့် Recap Credit ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။`);
                 }
                 loadUserProfile();
+                loadUserHistory();
             }
         } catch (err) {
             console.warn("Recap polling error:", err);
@@ -3713,7 +3766,11 @@ async function loadUserHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago}</span>
                             <div class="history-btn-row">
-                                ${j.is_expired ? `
+                                ${j.status === "FAILED" ? `
+                                    <span class="badge-expired text-xs" style="color:#f87171;">❌ မအောင်မြင်ပါ</span>
+                                ` : (j.status === "RUNNING" || j.status === "QUEUED") ? `
+                                    <button type="button" onclick="startJobPolling('${j.id}')" class="history-dl-link">⏳ ထုတ်လုပ်နေဆဲ (ကြည့်မည်)</button>
+                                ` : j.is_expired ? `
                                     <span class="badge-expired text-xs" title="ဖိုင်သက်တမ်းကုန်သွားပါပြီ">⌛ သက်တမ်းကုန်</span>
                                 ` : (j.download_url ? `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : '')}
                             </div>
@@ -3738,11 +3795,15 @@ async function loadUserHistory() {
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago}</span>
                             <div class="history-btn-row">
-                                ${j.is_expired ? `
+                                ${j.status === "FAILED" ? `
+                                    <span class="badge-expired text-xs" style="color:#f87171;">❌ မအောင်မြင်ပါ (Credit ပြန်အမ်းပြီး)</span>
+                                ` : (j.status === "RUNNING" || j.status === "QUEUED") ? `
+                                    <button type="button" onclick="startRecapJobPolling('${j.id}')" class="history-dl-link">⏳ ထုတ်လုပ်နေဆဲ (ခြေရာခံမည်)</button>
+                                ` : j.is_expired ? `
                                     <span class="badge-expired text-xs" title="ဗီဒီယိုဖိုင်သက်တမ်းကုန်သွားပါပြီ">⌛ သက်တမ်းကုန်</span>
                                 ` : `
-                                    ${j.deliverables?.video ? `<a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
-                                    ${j.deliverables?.audio ? `<a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.mp3" class="history-dl-link">🎙️ Audio</a>` : ''}
+                                    ${j.deliverables?.video ? `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link" title="Mini App တွင် တိုက်ရိုက်ကြည့်မည်">▶️ ကြည့်မည်</button> <a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
+                                    ${j.deliverables?.audio ? `<a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.wav" class="history-dl-link">🎙️ Audio</a>` : ''}
                                     ${j.deliverables?.srt ? `<a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>` : ''}
                                     ${j.deliverables?.script ? `<a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>` : ''}
                                 `}
@@ -4129,17 +4190,87 @@ async function adminTriggerPurge24h() {
     return adminPurgeHistory("older_24h");
 }
 
+async function openRecapInPlayer(recapJobId) {
+    if (!recapJobId) return;
+    haptic("light");
+    switchTab("tab-recap");
+    try {
+        const res = await fetch(`/api/recap/${recapJobId}/status`, { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.status === "SUCCESS") {
+            state.recapJobId = recapJobId;
+            const resultBox = document.getElementById("recap-result-box");
+            const player = document.getElementById("recap-result-player");
+            const btnVideo = document.getElementById("btn-recap-dl-video");
+            const btnAudio = document.getElementById("btn-recap-dl-audio");
+            const btnSrt = document.getElementById("btn-recap-dl-srt");
+            const btnScript = document.getElementById("btn-recap-dl-script");
+            const btnTg = document.getElementById("btn-recap-send-telegram");
+
+            if (resultBox) {
+                resultBox.classList.remove("hidden");
+                resultBox.scrollIntoView({ behavior: "smooth" });
+            }
+            if (player && data.download_urls?.video) {
+                player.src = data.download_urls.video;
+                player.classList.remove("hidden");
+                player.play().catch(() => {});
+            }
+            if (btnVideo && data.download_urls?.video) {
+                btnVideo.href = data.download_urls.video;
+                btnVideo.setAttribute("data-dl-url", data.download_urls.video);
+            }
+            if (btnAudio && data.download_urls?.audio) {
+                btnAudio.href = data.download_urls.audio;
+                btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
+            }
+            if (btnSrt && data.download_urls?.srt) {
+                btnSrt.href = data.download_urls.srt;
+                btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
+            }
+            if (btnScript && data.download_urls?.script) {
+                btnScript.href = data.download_urls.script;
+                btnScript.setAttribute("data-dl-url", data.download_urls.script);
+            }
+            if (btnTg) {
+                btnTg.disabled = false;
+                btnTg.classList.remove("sent");
+                btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
+            }
+        } else if (data.status === "RUNNING" || data.status === "QUEUED") {
+            state.recapJobId = recapJobId;
+            startRecapJobPolling(recapJobId);
+        }
+    } catch (e) {
+        console.warn("Could not open recap in player:", e);
+    }
+}
+window.openRecapInPlayer = openRecapInPlayer;
+
 // ── Deep Link Handling (Telegram WebApp & URL Query) ──────────────────────
 async function checkStartupDeepLinks() {
     try {
         const urlParams = new URLSearchParams(window.location.search);
+        const tabParam = urlParams.get("tab");
         let jobId = urlParams.get("job_id");
         let recapJobId = urlParams.get("recap_job_id");
+
+        if (tabParam) {
+            switchTab(tabParam);
+        }
 
         if (state.tg?.initDataUnsafe?.start_param) {
             const sp = state.tg.initDataUnsafe.start_param;
             if (sp.startsWith("job_")) jobId = sp.replace("job_", "");
             if (sp.startsWith("recap_")) recapJobId = sp.replace("recap_", "");
+        }
+
+        if (!recapJobId) {
+            try {
+                const savedRecap = localStorage.getItem("vcp_active_recap_job_id");
+                if (savedRecap) recapJobId = savedRecap;
+            } catch (e) {}
         }
 
         if (jobId) {
@@ -4186,11 +4317,14 @@ async function checkStartupDeepLinks() {
                 }
             }
         } else if (recapJobId) {
-            switchTab("tab-recap");
+            if (urlParams.get("recap_job_id") || tabParam === "tab-recap") {
+                switchTab("tab-recap");
+            }
             const res = await fetch(`/api/recap/${recapJobId}/status`, { headers: getAuthHeaders() });
             if (res.ok) {
                 const data = await res.json();
                 if (data.status === "SUCCESS") {
+                    try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
                     state.recapJobId = recapJobId;
                     const resultBox = document.getElementById("recap-result-box");
                     const player = document.getElementById("recap-result-player");
@@ -4202,7 +4336,9 @@ async function checkStartupDeepLinks() {
 
                     if (resultBox) {
                         resultBox.classList.remove("hidden");
-                        resultBox.scrollIntoView({ behavior: "smooth" });
+                        if (urlParams.get("recap_job_id")) {
+                            resultBox.scrollIntoView({ behavior: "smooth" });
+                        }
                     }
                     if (player && data.download_urls?.video) {
                         player.src = data.download_urls.video;
@@ -4233,10 +4369,16 @@ async function checkStartupDeepLinks() {
                         t("alert_recap_ready") || "🎉 Pro Movie Recap အဆင်သင့်ဖြစ်ပါပြီ!",
                         currentLang === "my" ? "Full HD Video ကို တိုက်ရိုက်ဖွင့်ကြည့်နိုင်ပါပြီ။" : "Your recap video is ready to watch.",
                         () => {
+                            switchTab("tab-recap");
                             if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
                         },
                         currentLang === "my" ? "🎬 ကြည့်ရှုမည်" : "🎬 View Video"
                     );
+                } else if (data.status === "RUNNING" || data.status === "QUEUED") {
+                    state.recapJobId = recapJobId;
+                    startRecapJobPolling(recapJobId);
+                } else if (data.status === "FAILED") {
+                    try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
                 }
             }
         }

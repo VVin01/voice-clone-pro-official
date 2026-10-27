@@ -2022,6 +2022,8 @@ def extract_preview_with_overlays(
 
         ass_temp = temp_dir / "preview_sample.ass"
         sub_font = str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+        if sub_font.strip().lower() == "pyidaungsu":
+            sub_font = "Noto Sans Myanmar"
         write_synced_ass_file(
             cues=[(0.0, 10.0, sample)],
             ass_path=ass_temp,
@@ -2037,9 +2039,20 @@ def extract_preview_with_overlays(
         )
         sub_esc = ass_temp.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
         fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+        safe_fonts_dir = temp_dir / "fonts"
+        safe_fonts_dir.mkdir(parents=True, exist_ok=True)
+        for safe_font_file in ("NotoSansMyanmar.ttf", "PadaukBook.ttf"):
+            src_f = fonts_dir / safe_font_file
+            dst_f = safe_fonts_dir / safe_font_file
+            if src_f.is_file() and not dst_f.exists():
+                try:
+                    shutil.copy2(src_f, dst_f)
+                except Exception:
+                    pass
+        active_fonts_dir = safe_fonts_dir if any(safe_fonts_dir.iterdir()) else fonts_dir
         fonts_arg = ""
-        if fonts_dir.is_dir():
-            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
+        if active_fonts_dir.is_dir():
+            fonts_dir_esc = active_fonts_dir.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
 
         out = "vsub"
