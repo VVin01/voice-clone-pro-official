@@ -29,10 +29,10 @@ from typing import Optional, Any, Callable, List, Tuple
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOXCPM_SPACES = [
-    "soemintheinsmt6/myanmar-voxcpm2",
+    "openbmb/VoxCPM-Demo",
     "yeyee2609/voxcpm2",
     "yeyee2609/voxcpm",
-    "openbmb/VoxCPM-Demo",
+    "soemintheinsmt6/myanmar-voxcpm2",
 ]
 DEFAULT_VOXCPM_SPACE = (
     os.getenv("VOXCPM_SPACE_URL", "").strip()
@@ -194,12 +194,16 @@ class VoxCPMEngine:
         speed: float | str | None = "normal",
         progress_cb: Optional[Callable[[str], None]] = None,
         retries: int = 2,
+        allow_fallback: bool = True,
         **kwargs: Any,
     ) -> Path:
         """
         Synthesize speech using VoxCPM 2 with Multi-Token Rotation & Multi-Space redundancy.
         Supports zero-shot voice cloning, voice design, live queue ETA tracking,
         and broadcast audio mastering.
+
+        allow_fallback=False raises instead of silently returning Edge-TTS persona audio, so a
+        caller that needs ONE uniform voice for a whole video (Recap) can decide what to do.
         """
         out_path = Path(output_wav).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,12 +212,46 @@ class VoxCPMEngine:
         if not clean_text:
             raise ValueError("VoxCPM input text is empty.")
 
-        # Check local cache for identical non-reference text
+        # Resolve brisk narration tempo multiplier from speed & persona
+        tempo_val = 1.12
+        if isinstance(speed, (int, float)):
+            tempo_val = float(speed)
+        elif isinstance(speed, str):
+            s_low = speed.strip().lower()
+            if s_low in ("fast", "1.2x", "1.2"):
+                tempo_val = 1.20
+            elif s_low in ("slow", "0.8x", "0.8"):
+                tempo_val = 0.94
+            elif s_low in ("normal", "1.0x", "1.0"):
+                tempo_val = 1.12
+            elif "%" in s_low:
+                m_spd = re.search(r"([+-]?\d+)", s_low)
+                if m_spd:
+                    tempo_val = 1.0 + int(m_spd.group(1)) / 100.0
+        tempo_val = max(0.88, min(1.45, round(tempo_val, 3)))
+
+        # Persona-based control instruction & reference sample tuning
+        is_persona_ref = False
+        if preset_voice:
+            from app.services.curated_voices import get_curated_voice, get_persona_reference
+            p_info = get_curated_voice(preset_voice)
+            if p_info:
+                control_instruction = p_info.get("control_instruction") or control_instruction
+                cfg_value = p_info.get("cfg_value") or cfg_value
+                if not reference_wav:
+                    p_ref_path, p_ref_text = get_persona_reference(preset_voice)
+                    if p_ref_path:
+                        reference_wav = p_ref_path
+                        prompt_text = prompt_text or p_ref_text
+                        is_persona_ref = True
+                self._log(f"🎭 Applied Curated Persona [{preset_voice}] for VoxCPM 2 (tempo={tempo_val:.2f}x)")
+
+        # Check local cache for identical text + voice configuration
         cache_key = None
         cached_file = None
-        if not reference_wav:
+        if not reference_wav or is_persona_ref:
             cache_key = hashlib.sha256(
-                f"{clean_text}_{control_instruction}_{prompt_text}_{cfg_value:.2f}_{preset_voice}".encode("utf-8")
+                f"{clean_text}_{control_instruction}_{prompt_text}_{cfg_value:.2f}_{preset_voice}_{tempo_val:.3f}".encode("utf-8")
             ).hexdigest()[:16]
             cached_file = self.work_dir / f"voxcpm_{cache_key}.wav"
             if cached_file.is_file() and cached_file.stat().st_size > 4000:
@@ -233,35 +271,34 @@ class VoxCPMEngine:
             else:
                 logger.warning("VoxCPM reference_wav not found: %s — proceeding with Voice Design", reference_wav)
 
-        # Persona-based control instruction tuning
-        if preset_voice:
-            from app.services.curated_voices import get_curated_voice
-            p_info = get_curated_voice(preset_voice)
-            if p_info:
-                control_instruction = p_info.get("control_instruction") or control_instruction
-                cfg_value = p_info.get("cfg_value") or cfg_value
-                self._log(f"🎭 Applied Curated Persona [{preset_voice}] for VoxCPM 2 Voice Design")
-
         # Build candidate (space, token) pairs with health-aware sorting
         now = time.time()
-        raw_tokens = self.hf_tokens or [None]
-        # Healthy tokens (not on ZeroGPU quota cooldown) come first
-        tokens_pool = sorted(
-            raw_tokens,
-            key=lambda t: 1 if (t and self._token_cooldowns.get(t, 0) > now) else 0
-        )
+        raw_tokens: List[Optional[str]] = list(self.hf_tokens) if self.hf_tokens else [None]
+        if None not in raw_tokens:
+            raw_tokens.append(None)  # include anonymous per-IP ZeroGPU quota as backup
+        # Healthy authenticated tokens first, then anonymous, then cooldown tokens
+        def _token_sort_key(t: Optional[str]) -> int:
+            if t is None:
+                return 1
+            return 2 if self._token_cooldowns.get(t, 0) > now else 0
+
+        tokens_pool = sorted(raw_tokens, key=_token_sort_key)
         candidate_spaces = self.spaces.copy()
         pairs: List[Tuple[str, Optional[str]]] = []
         for sp in candidate_spaces:
             for tok in tokens_pool:
                 pairs.append((sp, tok))
 
-        # Rotate pairs across requests so we evenly distribute load across healthy tokens
-        if len(tokens_pool) > 1:
+        # Rotate healthy tokens across requests while keeping primary space priority
+        healthy_auth = [t for t in tokens_pool if t is not None and self._token_cooldowns.get(t, 0) <= now]
+        if len(healthy_auth) > 1:
             with self._lock:
-                shift = self._token_rr_counter % len(pairs)
+                shift = self._token_rr_counter % len(healthy_auth)
                 self._token_rr_counter += 1
-                pairs = pairs[shift:] + pairs[:shift]
+            rotated_auth = healthy_auth[shift:] + healthy_auth[:shift]
+            other_toks = [t for t in tokens_pool if t not in healthy_auth]
+            ordered_toks = rotated_auth + other_toks
+            pairs = [(sp, tok) for sp in candidate_spaces for tok in ordered_toks]
 
         last_err: Exception | None = None
         max_attempts = len(pairs)
@@ -281,21 +318,27 @@ class VoxCPMEngine:
 
                 client = self.get_client(space_name, hf_token=active_token)
                 effective_control = control_instruction or DEFAULT_BURMESE_CONTROL
+                if ref_file and prompt_text:
+                    # Locked-timbre cloning: the reference clip alone defines the voice.
+                    effective_control = ""
 
                 if "soemintheinsmt6" in space_name:
-                    if ref_file:
-                        self._log(f"ℹ️ Space '{space_name}' specializes in voice design without reference file; skipping to next space...")
+                    if ref_file and not is_persona_ref:
+                        self._log(f"ℹ️ Space '{space_name}' specializes in voice design without custom reference file; skipping to next space...")
                         continue
                     job = client.submit(
                         text=clean_text,
-                        voice_description=effective_control,
+                        voice_description=control_instruction or DEFAULT_BURMESE_CONTROL,
                         api_name="/tts",
                     )
                 elif "yeyee2609" in space_name:
                     if ref_file:
+                        if not prompt_text:
+                            self._log(f"ℹ️ Space '{space_name}' cloning needs the reference transcript; skipping to next space...")
+                            continue
                         job = client.submit(
                             ref_audio_path=ref_file,
-                            ref_text=prompt_text or "မင်္ဂလာပါခင်ဗျာ",
+                            ref_text=prompt_text,
                             target_text=clean_text,
                             api_name="/generate_clone",
                         )
@@ -390,7 +433,9 @@ class VoxCPMEngine:
                     ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
                     if ffmpeg_bin:
                         import subprocess
+                        atempo_prefix = f"atempo={tempo_val:.3f}," if abs(tempo_val - 1.0) > 0.01 else ""
                         af_master_primary = (
+                            f"{atempo_prefix}"
                             "highpass=f=75,"
                             "afftdn=nr=10:nf=-50:tn=1,"
                             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
@@ -399,6 +444,7 @@ class VoxCPMEngine:
                             "loudnorm=I=-15:TP=-1.0:LRA=7"
                         )
                         af_master_fallback = (
+                            f"{atempo_prefix}"
                             "highpass=f=75,"
                             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
                             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
@@ -425,7 +471,7 @@ class VoxCPMEngine:
                     if not converted_cleanly:
                         shutil.copy2(result_path_str, out_path)
 
-                    if cached_file and not ref_file:
+                    if cached_file and (not ref_file or is_persona_ref):
                         try:
                             shutil.copy2(out_path, cached_file)
                         except Exception:
@@ -440,12 +486,18 @@ class VoxCPMEngine:
                 last_err = e_pair
                 err_lower = str(e_pair).lower()
                 if active_token and ("zerogpu" in err_lower or "quota" in err_lower or "runs limit" in err_lower):
-                    self._token_cooldowns[active_token] = time.time() + 1800
-                    self._log(f"⚠️ Token {tok_masked} exceeded ZeroGPU quota; switching to other tokens...")
+                    # Only mark token globally on cooldown if it wasn't just a 180s-decorator rejection
+                    if "180s requested" not in err_lower:
+                        self._token_cooldowns[active_token] = time.time() + 1800
+                    self._log(f"⚠️ Token {tok_masked} hit ZeroGPU quota on '{space_name}'; rotating...")
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {e_pair}")
                 time.sleep(0.5)
 
         # Seamless Fallback to High-Fidelity Burmese Studio Persona Engine
+        if not allow_fallback:
+            raise RuntimeError(
+                f"VoxCPM 2 speech synthesis failed after retrying all tokens and spaces: {last_err}"
+            )
         self._log(f"⚠️ VoxCPM 2 Spaces busy or queue full ({last_err}). Invoking High-Fidelity Burmese Neural Engine fallback...")
         if progress_cb:
             try:

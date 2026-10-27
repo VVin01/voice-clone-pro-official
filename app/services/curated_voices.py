@@ -30,12 +30,16 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "လူကြိုက်အများဆုံး 🔥",
         "badge_en": "Most Popular 🔥",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "-2Hz",
-        "rate_offset": 12,
+        "pitch": "-3Hz",
+        "rate_offset": 10,
+        "formant_ratio": 0.96,
+        "sample_text": "မင်္ဂလာပါခင်ဗျာ။ ကျွန်တော်ကတော့ မင်းမင်းပါ။ ရုပ်ရှင်ဇာတ်လမ်းကောင်းတွေကို စိတ်ဝင်စားဖွယ် တင်ဆက်ပေးသွားမှာ ဖြစ်ပါတယ်။",
         "af_filter": (
-            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "asetrate=42336,aresample=44100,atempo=1.0417,"
+            "highpass=f=70,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-            "equalizer=f=120:width_type=o:w=1:g=2.5,"
+            "equalizer=f=130:width_type=o:w=1:g=3.0,"
+            "equalizer=f=3200:width_type=o:w=1:g=1.5,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -56,12 +60,14 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "သန့်ရှင်းပြတ်သား ⚡",
         "badge_en": "Formal Anchor ⚡",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "+0Hz",
-        "rate_offset": 18,
+        "pitch": "+1Hz",
+        "rate_offset": 12,
+        "formant_ratio": 1.00,
+        "sample_text": "မင်္ဂလာပါခင်ဗျာ။ ဒီကနေ့ သတင်းနှင့် မှတ်တမ်းတင် အကြောင်းအရာများကို ရှင်းလင်းပြတ်သားစွာ တင်ဆက်ပေးသွားပါမည်။",
         "af_filter": (
-            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            "highpass=f=80,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-            "equalizer=f=2200:width_type=o:w=1:g=1.2,"
+            "equalizer=f=2400:width_type=o:w=1:g=2.2,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -82,11 +88,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "TikTok & Shorts 🚀",
         "badge_en": "TikTok & Shorts 🚀",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "+2Hz",
-        "rate_offset": 24,
+        "pitch": "+4Hz",
+        "rate_offset": 16,
+        "formant_ratio": 1.055,
+        "sample_text": "ဟေး အားလုံးပဲ မင်္ဂလာပါဗျာ။ အောင်အောင်ပါ၊ ခေတ်မီတဲ့ အကြောင်းအရာသစ်တွေကို အတူတူ လေ့လာကြရအောင်!",
         "af_filter": (
-            "highpass=f=80,afftdn=nr=10:nf=-50:tn=1,"
+            "asetrate=46526,aresample=44100,atempo=0.9479,"
+            "highpass=f=85,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=2800:width_type=o:w=1:g=2.0,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -107,12 +117,16 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "နူးညံ့ချိုသာ 🌸",
         "badge_en": "Gentle Melody 🌸",
         "edge_voice": "my-MM-NilarNeural",
-        "pitch": "-1Hz",
-        "rate_offset": 6,
+        "pitch": "+2Hz",
+        "rate_offset": 9,
+        "formant_ratio": 1.025,
+        "sample_text": "မင်္ဂလာပါရှင်။ နှင်းနှင်း ဖြစ်ပါတယ်။ ချိုသာနူးညံ့တဲ့ အသံလေးနဲ့ ဝတ္ထုဇာတ်လမ်းလေးတွေ ဖတ်ပြပေးပါ့မယ်နော်။",
         "af_filter": (
+            "asetrate=45203,aresample=44100,atempo=0.9756,"
             "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-            "equalizer=f=250:width_type=o:w=1:g=1.2,"
+            "equalizer=f=240:width_type=o:w=1:g=1.8,"
+            "equalizer=f=3500:width_type=o:w=1:g=1.5,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -133,12 +147,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "သည်းထိတ်ရင်ဖို 🎬",
         "badge_en": "Thriller Drama 🎬",
         "edge_voice": "my-MM-NilarNeural",
-        "pitch": "-2Hz",
-        "rate_offset": 14,
+        "pitch": "-3Hz",
+        "rate_offset": 11,
+        "formant_ratio": 0.965,
+        "sample_text": "သည်းထိတ်ရင်ဖိုနဲ့ လျှို့ဝှက်ဆန်းကြယ်တဲ့ အဖြစ်အပျက်တွေကို နဒီနဲ့အတူ အဆုံးထိ ရင်ခုန်စွာ နားဆင်လိုက်ကြရအောင်။",
         "af_filter": (
+            "asetrate=42557,aresample=44100,atempo=1.0363,"
             "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-            "equalizer=f=200:width_type=o:w=1:g=1.8,"
+            "equalizer=f=190:width_type=o:w=1:g=2.4,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -159,11 +176,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "ကြော်ငြာ & ပရိုမိုးရှင်း 💎",
         "badge_en": "Commercial Pro 💎",
         "edge_voice": "my-MM-NilarNeural",
-        "pitch": "+2Hz",
-        "rate_offset": 18,
+        "pitch": "+3Hz",
+        "rate_offset": 13,
+        "formant_ratio": 1.04,
+        "sample_text": "မင်္ဂလာပါရှင်။ သင့်လုပ်ငန်းနှင့် ပရိုမိုးရှင်းများကို ပိုမိုဆွဲဆောင်မှုရှိစေဖို့ မေမေက အကောင်းဆုံး ကူညီပေးပါရစေရှင်။",
         "af_filter": (
+            "asetrate=45864,aresample=44100,atempo=0.9615,"
             "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=3000:width_type=o:w=1:g=1.8,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -184,12 +205,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "Epic Cinema 👑",
         "badge_en": "Epic Cinema 👑",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "-5Hz",
-        "rate_offset": 8,
+        "pitch": "-6Hz",
+        "rate_offset": 9,
+        "formant_ratio": 0.925,
+        "sample_text": "မင်္ဂလာပါ။ ရင်ခုန်စိတ်လှုပ်ရှားဖွယ် အက်ရှင်ဇာတ်ကားကြီးများ၏ အကောင်းဆုံး ဇာတ်ဝင်ခန်းများကို ခံစားကြည့်ရှုလိုက်ပါ။",
         "af_filter": (
+            "asetrate=40793,aresample=44100,atempo=1.0811,"
             "highpass=f=60,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-            "bass=g=3:f=100,"
+            "bass=g=3.5:f=105,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9200,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -210,12 +234,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "သရဲတစ္ဆေ 🕯️",
         "badge_en": "Spooky Dark 🕯️",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "-3Hz",
-        "rate_offset": -4,
+        "pitch": "-4Hz",
+        "rate_offset": 8,
+        "formant_ratio": 0.94,
+        "sample_text": "သန်းခေါင်ယံ အမှောင်ထုထဲက ကြက်သီးထဖွယ် သရဲဇာတ်လမ်းများကို ကျွန်တော် ကိုမြတ်က ပြောပြပေးသွားပါ့မယ်။",
         "af_filter": (
+            "asetrate=41454,aresample=44100,atempo=1.0638,"
             "highpass=f=65,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-            "equalizer=f=150:width_type=o:w=1:g=1.5,"
+            "equalizer=f=150:width_type=o:w=1:g=2.2,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -236,11 +263,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "Tech & Science 💡",
         "badge_en": "Tech & Science 💡",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "+1Hz",
-        "rate_offset": 18,
+        "pitch": "+2Hz",
+        "rate_offset": 13,
+        "formant_ratio": 1.03,
+        "sample_text": "နည်းပညာနှင့် ဗဟုသုတဆိုင်ရာ အကြောင်းအရာများကို လွယ်ကူရှင်းလင်းစွာ မျှဝေပေးနေတဲ့ ကိုဘုန်း ဖြစ်ပါတယ်။",
         "af_filter": (
+            "asetrate=45423,aresample=44100,atempo=0.9709,"
             "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=2600:width_type=o:w=1:g=1.8,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -261,11 +292,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "အေးချမ်း ASMR ✨",
         "badge_en": "Peaceful ASMR ✨",
         "edge_voice": "my-MM-NilarNeural",
-        "pitch": "-1Hz",
-        "rate_offset": -8,
+        "pitch": "-2Hz",
+        "rate_offset": 7,
+        "formant_ratio": 0.985,
+        "sample_text": "တစ်နေ့တာ ပင်ပန်းသမျှတွေကို မေ့ဖျောက်ပြီး စိတ်အေးချမ်းစွာ အိပ်စက်အနားယူနိုင်ဖို့ မယွန်းက ကူညီပေးပါ့မယ်နော်။",
         "af_filter": (
+            "asetrate=43439,aresample=44100,atempo=1.0152,"
             "highpass=f=80,afftdn=nr=12:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=220:width_type=o:w=1:g=1.6,"
             "equalizer=f=7200:width_type=q:w=2:g=-4.0,"
             "lowpass=f=9000,loudnorm=I=-16:TP=-1.5:LRA=6"
         ),
@@ -286,11 +321,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "Anime & Gaming 🎀",
         "badge_en": "Anime & Gaming 🎀",
         "edge_voice": "my-MM-NilarNeural",
-        "pitch": "+4Hz",
-        "rate_offset": 22,
+        "pitch": "+6Hz",
+        "rate_offset": 16,
+        "formant_ratio": 1.075,
+        "sample_text": "ဟိုင်း အားလုံးပဲ မင်္ဂလာပါရှင်! ဂိမ်းဆော့ရင်း အန်နီမေး ကြည့်ရင်း ပျော်ရွှင်စရာ အချိန်တွေကို မချောနဲ့အတူ ဖြတ်သန်းကြစို့နော်!",
         "af_filter": (
-            "highpass=f=80,afftdn=nr=10:nf=-50:tn=1,"
+            "asetrate=47408,aresample=44100,atempo=0.9302,"
+            "highpass=f=85,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=3400:width_type=o:w=1:g=2.0,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -311,11 +350,15 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "Luxury Lifestyle 👑",
         "badge_en": "Luxury Lifestyle 👑",
         "edge_voice": "my-MM-NilarNeural",
-        "pitch": "-1Hz",
-        "rate_offset": 12,
+        "pitch": "+1Hz",
+        "rate_offset": 11,
+        "formant_ratio": 1.015,
+        "sample_text": "ခေတ်မီဆန်းပြားပြီး အဆင့်အတန်းမြင့်မားတဲ့ လူနေမှုဘဝပုံစံ အကြောင်းအရာများကို မသီရိက တင်ဆက်ပေးသွားမှာ ဖြစ်ပါတယ်ရှင်။",
         "af_filter": (
+            "asetrate=44762,aresample=44100,atempo=0.9852,"
             "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=2800:width_type=o:w=1:g=1.5,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
@@ -326,6 +369,20 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "cfg_value": 2.1,
     },
 }
+
+
+def get_persona_reference(voice_id: str) -> tuple[Optional[str], str]:
+    """Return (sample_audio_path, sample_transcript) for the given curated persona."""
+    info = get_curated_voice(voice_id)
+    if not info:
+        return None, ""
+    pid = info["id"]
+    sample_text = str(info.get("sample_text") or "").strip()
+    samples_dir = Path(__file__).resolve().parent.parent / "webapp" / "static" / "audio" / "samples"
+    cand = samples_dir / f"{pid}.mp3"
+    if cand.is_file() and cand.stat().st_size > 1000:
+        return str(cand.resolve()), sample_text
+    return None, sample_text
 
 
 def get_curated_voice(voice_id: str) -> Dict[str, Any] | None:
@@ -354,23 +411,23 @@ def list_curated_voices(lang: str = "my") -> List[Dict[str, Any]]:
 
 
 def compute_curated_rate(base_offset: int, user_speed: float | str | None) -> str:
-    """Calculate the combined speech rate string for Edge TTS (e.g. '+18%')."""
-    extra = 0
+    """Calculate the combined speech rate string for Edge TTS (e.g. '+20%')."""
+    extra = 8
     if isinstance(user_speed, (int, float)):
         extra = int(round((float(user_speed) - 1.0) * 100))
     elif isinstance(user_speed, str):
         s = user_speed.strip().lower()
         if s in ("fast", "1.2x", "1.2"):
-            extra = 15
+            extra = 18
         elif s in ("slow", "0.8x", "0.8"):
-            extra = -15
+            extra = -8
         elif s in ("normal", "1.0x", "1.0"):
-            extra = 0
+            extra = 8
         elif "%" in s:
             m = re.search(r"([+-]?\d+)", s)
             if m:
                 extra = int(m.group(1))
-    total = max(-50, min(100, base_offset + extra))
+    total = max(-20, min(100, base_offset + extra))
     return f"{total:+d}%"
 
 
@@ -398,17 +455,23 @@ def synthesize_curated_persona(
         pitch = f"+{pitch}"
     rate_offset = int(info.get("rate_offset", 10))
     rate_str = compute_curated_rate(rate_offset, speed)
+    formant_ratio = float(info.get("formant_ratio", 1.0) or 1.0)
+    formant_prefix = ""
+    if abs(formant_ratio - 1.0) > 0.005:
+        sr_shift = int(round(44100 * formant_ratio))
+        atempo_comp = 1.0 / formant_ratio
+        formant_prefix = f"asetrate={sr_shift},aresample=44100,atempo={atempo_comp:.4f},"
     af_filter = info.get(
         "af_filter",
         (
-            "highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
+            f"{formant_prefix}highpass=f=75,afftdn=nr=10:nf=-50:tn=1,"
             "deesser=i=0.5:m=0.5:f=0.5:s=o,"
             "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         )
     )
     af_fallback = (
-        "highpass=f=75,deesser=i=0.5:m=0.5:f=0.5:s=o,"
+        f"{formant_prefix}highpass=f=75,deesser=i=0.5:m=0.5:f=0.5:s=o,"
         "equalizer=f=7200:width_type=q:w=2:g=-3.5,lowpass=f=9500,"
         "acompressor=threshold=-18dB:ratio=2.2:attack=20:release=120:makeup=1.2,alimiter=limit=0.92"
     )

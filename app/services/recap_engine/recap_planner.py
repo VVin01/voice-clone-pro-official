@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
-PLANNER_MODE = "timestamp_translation_en_to_mm_narrator_v1"
+PLANNER_MODE = "timestamp_translation_en_to_mm_narrator_v2"
 TRANSLATION_DIRECTION = "en_to_mm"
 # Whole-sentence lines like VOXCPM recap (2026-10-12): a line ends at a sentence end (or a clause after 6.5 s,
 # a breath after 10 s, at most 24 s). The old 4-6 s lines cut 20-35% of sentences in two, and Gemini then told a
@@ -39,16 +39,12 @@ WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "auto")
 
 
 GEMINI_MODEL_FALLBACK_CHAIN = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.7-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-3.6-flash",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
     "gemini-1.5-pro",
 ]
 
@@ -1296,73 +1292,70 @@ def translate_batch(
     _split_depth: int = 0,
 ) -> list[dict[str, Any]]:
     style = str(narrative_style or "viral").lower().strip()
+    is_very_first_batch = not previous_context and bool(current) and int(current[0].get("id", 0)) == 1
+    intro_rule = (
+        "- For ID 1 ONLY (the opening line of the video), you may open with a brief, punchy hook introducing the situation, then immediately narrate ID 1's actual scene event."
+        if is_very_first_batch
+        else "- DO NOT use opening intro phrases ('ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', 'ပရိသတ်ကြီးတို့ရေ...') anywhere in this batch because the story is already in progress!"
+    )
     if style == "viral":
-        style_prompt = """PRESENTATION STYLE: VIRAL SENSATIONAL HOOK & HIGH-RETENTION PACING (🔥 ဗိုင်းရပ်စ် Hook စတိုင် - ALGORITHM & HIGH VIEWS OPTIMIZED)
-- SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The Burmese spoken narration must match the EXACT onscreen visual events happening in that specific segment frame-for-frame.
-- HIGH-RETENTION CURIOSITY HOOKS: Hook the audience immediately with magnetic, suspenseful, and emotionally gripping spoken phrases designed to prevent scrolling on TikTok, Reels, and Shorts.
-- Build continuous curiosity gaps (open loops) throughout the scenes ('ဒီနေ့မှာတော့ ပရိသတ်ကြီးတို့အတွက်...', 'ကြည့်ပါဦးဗျာ...', 'ဒါပေမဲ့ တကယ်တမ်းမှာတော့...', 'အဲ့ဒီအချိန်မှာပဲ မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...', 'သူ နောက်ကွယ်က လျှို့ဝှက်ချက်ကို သိသွားတဲ့အခါ...').
-- High momentum, captivating storytelling, and cliffhanger anticipation that makes viewers watch all the way to the very end.
-- Tone: Highly engaging, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်) as used by top viral movie recap creators.
-- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်' (these ruin speech synthesis). ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
+        style_prompt = f"""PRESENTATION STYLE: VIRAL MOVIE RECAP STORYTELLER (🔥 ဆွဲဆောင်မှုရှိပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင်)
+- SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the listener clearly understands WHO is doing WHAT, TO WHOM, and WHY (ဇာတ်လမ်း အချိတ်အဆက် မိပြီး အဓိပ္ပာယ်ပြည့်စုံရမည်).
+{intro_rule}
+- NEVER insert random generic filler phrases ('ကြည့်ပါဦးဗျာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲ...', 'မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...') that disconnect consecutive sentences or replace actual plot meaning.
+- Turn short or fragmented source dialogues into clear, connected third-person Burmese recap storytelling using natural transition words ('အဲ့ဒီအခါမှာတော့...', 'ဒါကိုမြင်တော့...', 'ဒါကြောင့် သူက...', 'အဲ့ဒီနောက်မှာတော့...').
+- Tone: Engaging, clear, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်).
+- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     elif style == "funny":
-        style_prompt = """PRESENTATION STYLE: HUMOROUS ROAST & SARCASTIC COMMENTARY (😂 ဟာသရွဲ့စောင်း စတိုင် - HIGH ENGAGEMENT, COMMENTS & SHARES)
-- SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The Burmese spoken narration must match the EXACT onscreen visual events happening in that specific segment frame-for-frame.
-- Witty, sarcastic, and funny commentary roasting characters' questionable decisions, awkward moments, goofy expressions, and hilarious mishaps ('ဒီလူကတော့ ကွိုင်ရှာလိုက်ပြန်ပါပြီဗျာ...', 'ကြည့်ပါဦးဗျာ... ဘယ်လိုတောင် လုပ်ချလိုက်တာလဲ...', 'တွေ့လား... မိုက်ရူးရဲဆန်တဲ့ ရလဒ်ကတော့ ခံပေဦးပေါ့...', 'တကယ်ကို အူကြောင်ကြောင်နိုင်လွန်းပါတယ်...').
-- Lighthearted, amusing storytelling that triggers laughter, active discussions, comments, and social media shares.
-- Maintain 100% factual story continuity — enrich it with humorous commentary and playful charm.
-- Tone: Playful, comedic, witty spoken Burmese (ဟာသစကားပြောဟန်).
-- STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ဗျာ'၊ 'ပါပဲ'၊ 'လိုက်တာနော်'။"""
+        style_prompt = f"""PRESENTATION STYLE: HUMOROUS & WITTY MOVIE RECAP (😂 ပေါ့ပါးသွက်လက်ပြီး အချိတ်အဆက်မိသော ဟာသဇာတ်လမ်းပြော စတိုင်)
+- SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the plot is 100% coherent and easy to follow.
+{intro_rule}
+- Keep 100% of the real plot and cause-and-effect intact while narrating characters' actions and reactions in a lively, witty, entertaining spoken Burmese tone.
+- NEVER replace actual story events with disconnected generic jokes or repetitive filler phrases.
+- STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ဗျာ'၊ 'ပါပဲ'၊ 'လိုက်ပါတယ်'။"""
     elif style == "pov":
-        style_prompt = """PRESENTATION STYLE: CHARACTER DUBBING & IMMERSIVE POV (👁️ ဇာတ်ကောင် အသံသွင်း ဒက်ဘင်း စတိုင်)
-- SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The Burmese spoken narration must match the EXACT onscreen visual events happening in that specific segment frame-for-frame.
-- First-person immersive storytelling from the protagonist's view ('ငါ့ဘဝမှာ ဒီလိုအဖြစ်ဆိုးမျိုး ကြုံရလိမ့်မယ်လို့ မထင်ခဲ့ဘူး...', 'အဲ့ဒီအချိန်မှာ ငါဖုန်းကိုကောက်ကိုင်လိုက်တော့...', 'ငါ့ရင်ထဲမှာ ဒေါသတွေ တလိပ်လိပ်ထွက်လာခဲ့တယ်...').
-- If someone else on screen is speaking, express their dialogue or protagonist's reaction naturally.
-- Maintain 100% of the true storyline, character identities, cause-and-effect, and timeline.
-- Tone: Expressive, cinematic, emotionally immersive conversational spoken Burmese (စကားပြောဟန်) as used in movie dubbing.
-- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ဗျာ/ရှင့်'၊ 'ပါပဲ'၊ 'လိုက်တယ်'။"""
+        style_prompt = f"""PRESENTATION STYLE: CHARACTER IMMERSIVE POV (👁️ ဇာတ်ကောင်ရှုထောင့်မှ အချိတ်အဆက်မိမိ ပြောပြသော စတိုင်)
+- SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment from the main character's perspective ('ကျွန်တော်/ကျွန်မ').
+{intro_rule}
+- Clearly convey what is happening in each scene and how the protagonist and other characters interact so the storyline flows smoothly without confusing jumps.
+- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'။"""
     elif style == "dramatic":
-        style_prompt = """PRESENTATION STYLE: SUSPENSE / THRILLER DRAMATIC (🎭 သည်းထိတ်ရင်ဖို ဒရာမာ စတိုင်)
-- SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The spoken words must describe the EXACT visual action, person, and event occurring in that specific segment frame-for-frame.
-- Emphasize tension, sudden twists, shocking revelations, urgency, and mystery in the story.
-- Use punchy, gripping, cinematic spoken Burmese phrases ('ချက်ချင်းပဲ အခြေအနေတွေက တင်းမာသွားခဲ့တယ်...', 'သူ့ရင်ထဲမှာ မသင်္ကာစိတ်တွေ တရိပ်ရိပ်တက်လာပြီး...', 'ဒီကိစ္စရဲ့ အဆုံးသတ်မှာ ဘာတွေဆက်ဖြစ်လာမလဲ...').
+        style_prompt = f"""PRESENTATION STYLE: SUSPENSE / THRILLER DRAMATIC RECAP (🎭 သည်းထိတ်ရင်ဖို ဒရာမာ ဇာတ်လမ်းပြော စတိုင်)
+- SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment, clearly explaining the cause-and-effect of every tense moment.
+{intro_rule}
+- Convey the true emotional stakes, motives, and actions of the characters in smooth, gripping spoken Burmese without inserting generic filler hooks.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     else:  # standard / narrator
-        style_prompt = """PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (📖 ဆွဲဆောင်မှုရှိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
-- SCENE & VISUAL SYNCHRONIZATION IS PRIORITY #1: The spoken words must describe the EXACT visual action, person, and event occurring in that specific segment frame-for-frame.
-- Tell the recap with high energy, engagement, and storytelling charm ('ဒီဇာတ်လမ်းလေးမှာတော့...', 'အဲ့ဒီအချိန်မှာပဲ...', 'သူမကတော့...', 'ဒီလိုနဲ့ သူတို့နှစ်ယောက်ဟာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲဆိုတာ...').
-- 100% accurate character identities, names, relationships, and chronological events.
-- Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on viral YouTube/Facebook recap channels.
+        style_prompt = f"""PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (📖 သဘာဝကျပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
+- SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the entire video sounds like ONE continuous, coherent story.
+{intro_rule}
+- Clearly state who is speaking or acting, to whom, and why, using natural Burmese narrative connectives ('အဲ့ဒီနောက်...', 'ဒါကိုကြားတော့...', 'ဒါပေမဲ့လည်း...').
+- Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
 
     task_rules = f"""
-You are an AWARD-WINNING CONTEXT-AWARE BURMESE MOVIE RECAP NARRATOR & VOICE DUBBING TRANSLATOR.
-Convert the CURRENT spoken dialogue/narration items (transcribed from the video in any language: Chinese, English, Korean, etc.) into smooth, captivating spoken Burmese movie recap narration that sounds emotionally alive, natural, and entertaining when read aloud by Burmese Text-to-Speech.
+You are an AWARD-WINNING CONTEXT-AWARE BURMESE MOVIE RECAP NARRATOR & STORYTELLING TRANSLATOR.
+Convert the CURRENT spoken dialogue/narration items (transcribed from the video in any language: Chinese, English, Korean, Thai, etc.) into a SINGLE COHERENT, MEANINGFUL, CONTINUOUS Burmese movie recap story that sounds natural and clear when read aloud by Burmese Text-to-Speech.
 
 {style_prompt}
 
-CORE PRINCIPLE:
-Capture the true story meaning, character emotions, and onscreen visual events 100%, expressing them in natural, captivating spoken Burmese rather than literal word-by-word translation.
-
-NATIVE BURMESE NATURAL PHRASING:
-- Transform stiff, fragmented dialogue into smooth, engaging recap narration tailored to the selected PRESENTATION STYLE.
-- Keep Burmese pronouns, kinship terms, honorifics, gendered self-reference, names, and relationships contextually accurate.
-- Dialogue and narration must be vibrant and engaging.
+CORE PRINCIPLE — LOGICAL STORY COHERENCE (ဇာတ်လမ်း အချိတ်အဆက် မိစေရန်):
+1. Source transcripts from movies/dramas often contain short dialogue lines or idiomatic expressions. NEVER translate them as isolated, disconnected, literal fragments that make no sense on their own!
+2. Always read STORY CONTEXT MEMORY, PREVIOUS CONTEXT, CURRENT ITEMS, and NEXT CONTEXT together to understand the full scene: WHO is the subject, WHO are they talking to, WHAT just happened in the previous line, and WHY are they saying/doing this.
+3. Weave each CURRENT item into a smooth, meaningful Burmese recap sentence that flows naturally from the preceding ID into the next ID.
 
 HARD RULES:
-1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every event, dialogue, and visual detail must be faithfully narrated in the corresponding timing segment.
-2. Do NOT translate word-for-word. Restructure wording freely into natural, engaging spoken recap narration that fits the requested PRESENTATION STYLE.
-3. STRICT SPOKEN BURMESE ONLY: Do NOT write formal literary Burmese endings ("သည်", "သဖြင့်", "ပေသည်", "ခဲ့ပေသည်"). The TTS engine will sound like a broken robot if you use them. Use spoken colloquial Burmese ("တယ်", "ခဲ့တယ်", "နေတာ", "လိုက်တယ်").
-4. Write EVERY word in Burmese script — no foreign/Latin letters (the Burmese TTS voice cannot pronounce Latin characters). Translate titles/terms, and transliterate proper names phonetically into Burmese script.
-5. Small natural expansion and cinematic connectives are allowed for narrative flow and engagement; never invent completely fake plot events or false facts.
+1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every segment's true meaning must be faithfully narrated inside its own ID.
+2. Do NOT translate word-for-word literally. Express the true meaning and cause-and-effect in natural spoken Burmese recap narration.
+3. STRICT SPOKEN BURMESE ONLY: Do NOT write formal literary Burmese endings ("သည်", "သဖြင့်", "ပေသည်", "ခဲ့ပေသည်"). Use spoken colloquial Burmese ("တယ်", "ခဲ့တယ်", "နေတာ", "လိုက်တယ်", "သွားတယ်").
+4. Write EVERY word in standard Myanmar Unicode script (U+1000 to U+109F) with correct Myanmar spelling — no foreign/Latin letters and no Ethiopic/Georgian homoglyphs.
+5. NEVER insert repetitive filler hooks ('ဒီနေ့မှာတော့...', 'ကြည့်ပါဦးဗျာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲ...') on middle segments.
 6. Keep every CURRENT ID exactly once, in order. Do not merge or split IDs.
-7. Context is READ-ONLY. Never copy events from previous/next context into a current ID.
-8. Maintain consistent names, relationships, places, objects, and terminology throughout the story.
+7. Context is READ-ONLY. Use PREVIOUS and NEXT context to make transitions smooth and pronouns/subjects clear, but never shift another ID's event into the wrong ID.
+8. Maintain consistent character names/roles, relationships, and pronouns throughout the entire story.
 9. Timestamps are local metadata. Return no timestamps.
 10. Return JSON only with top-level key "items". Each item must contain integer "id" and non-empty string "translation".
 11. NEVER return placeholders such as "...", "…", dashes, or empty text.
-12. When consecutive IDs continue a sentence or thought, maintain smooth grammatical continuity between them while ensuring each ID contains concise, natural spoken narration that fits its timing.
-13. MULTILINGUAL DIALOGUE & CINEMATIC NARRATIVE FLOW: When source dialogues come from Chinese, Korean, Thai, or English dramas/movies, do NOT generate awkward, literal word-by-word translations or disjointed sentence fragments. Seamlessly blend characters' words into engaging recap narrator commentary (e.g. formulate natural cinematic sentences like 'ဒီအချိန်မှာပဲ မကြီးရယ် ကျွန်မမှာလည်း ပိုက်ဆံမရှိပါဘူးလို့ ပြောလိုက်ပေမဲ့...' rather than detached broken fragments).
-14. STRICT BURMESE UNICODE ONLY: Always generate standard Myanmar Unicode characters (U+1000 to U+109F). NEVER generate visually similar homoglyphs from other Unicode scripts (such as Ethiopic \u1293 for 'နာ' or Georgian letters).
 """
     prompt = f"""
 {task_rules}

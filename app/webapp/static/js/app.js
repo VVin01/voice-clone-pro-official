@@ -1278,30 +1278,41 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // 1. Slider Controls for Original Blur and Subtitle Y
+    // 1. Slider Controls for Original Blur and Subtitle Y (100% synced with backend FFmpeg coordinates)
+    function syncBlurBoxVisual() {
+        if (!previewBlur) return;
+        const y = sliderBlurY ? parseFloat(sliderBlurY.value) : 81;
+        const h = sliderBlurH ? parseFloat(sliderBlurH.value) : 13;
+        if (valBlurY) valBlurY.innerText = `${Math.round(y)}%`;
+        if (valBlurH) valBlurH.innerText = `${Math.round(h)}%`;
+        const bottomPct = Math.max(0, Math.min(100 - h, 100 - y - (h / 2)));
+        previewBlur.style.height = `${h}%`;
+        previewBlur.style.bottom = `${bottomPct}%`;
+    }
+
+    function syncSubBoxVisual() {
+        if (!previewSub) return;
+        const y = sliderSubY ? parseFloat(sliderSubY.value) : 85;
+        if (valSubY) valSubY.innerText = `${Math.round(y)}%`;
+        const bottomPct = Math.max(0, Math.min(95, 100 - y));
+        previewSub.style.bottom = `${bottomPct}%`;
+    }
+
     if (sliderBlurY && previewBlur && valBlurY) {
-        sliderBlurY.addEventListener("input", (e) => {
-            const val = parseInt(e.target.value);
-            valBlurY.innerText = `${val}%`;
-            const bottomPct = Math.max(2, 100 - val - (sliderBlurH ? parseInt(sliderBlurH.value)/2 : 7));
-            previewBlur.style.bottom = `${bottomPct}%`;
+        sliderBlurY.addEventListener("input", () => {
+            syncBlurBoxVisual();
         });
     }
 
     if (sliderBlurH && previewBlur && valBlurH) {
-        sliderBlurH.addEventListener("input", (e) => {
-            const val = parseInt(e.target.value);
-            valBlurH.innerText = `${val}%`;
-            previewBlur.style.height = `${val}%`;
+        sliderBlurH.addEventListener("input", () => {
+            syncBlurBoxVisual();
         });
     }
 
     if (sliderSubY && previewSub && valSubY) {
-        sliderSubY.addEventListener("input", (e) => {
-            const val = parseInt(e.target.value);
-            valSubY.innerText = `${val}%`;
-            const bottomPct = Math.max(2, 100 - val);
-            previewSub.style.bottom = `${bottomPct}%`;
+        sliderSubY.addEventListener("input", () => {
+            syncSubBoxVisual();
         });
     }
 
@@ -1377,17 +1388,13 @@ function setupRecapVisualEditor() {
     // Attach dragging to Blur Box
     enableVerticalDrag(previewBlur, (y) => {
         if (sliderBlurY) sliderBlurY.value = y;
-        if (valBlurY) valBlurY.innerText = `${y}%`;
-        const bottomPct = Math.max(2, 100 - y - (sliderBlurH ? parseInt(sliderBlurH.value)/2 : 7));
-        if (previewBlur) previewBlur.style.bottom = `${bottomPct}%`;
+        syncBlurBoxVisual();
     });
 
     // Attach dragging to Subtitle Box
     enableVerticalDrag(previewSub, (y) => {
         if (sliderSubY) sliderSubY.value = y;
-        if (valSubY) valSubY.innerText = `${y}%`;
-        const bottomPct = Math.max(2, 100 - y);
-        if (previewSub) previewSub.style.bottom = `${bottomPct}%`;
+        syncSubBoxVisual();
     });
 
     // ── Resize Handles for Blur Box Height ──
@@ -1410,9 +1417,14 @@ function setupRecapVisualEditor() {
             startY = y;
             const curH = sliderBlurH ? parseInt(sliderBlurH.value) : 13;
             const newH = Math.max(6, Math.min(30, Math.round(curH + delta)));
+            const actualDeltaH = newH - curH;
             if (sliderBlurH) sliderBlurH.value = newH;
-            if (valBlurH) valBlurH.innerText = `${newH}%`;
-            if (previewBlur) previewBlur.style.height = `${newH}%`;
+            if (sliderBlurY && actualDeltaH !== 0) {
+                const curY = parseFloat(sliderBlurY.value) || 81;
+                const newY = Math.max(5, Math.min(95, Math.round(curY + (isTop ? -actualDeltaH / 2 : actualDeltaH / 2))));
+                sliderBlurY.value = newY;
+            }
+            syncBlurBoxVisual();
         }
         function endResize() {
             isResizing = false;
@@ -1447,6 +1459,8 @@ function setupRecapVisualEditor() {
     }
     attachBlurResize(blurResizeTop, true);
     attachBlurResize(blurResizeBottom, false);
+    syncBlurBoxVisual();
+    syncSubBoxVisual();
 
     // ── Setup Compact Live Canvas Toolbar Tabs ──
     const tbTabBtns = document.querySelectorAll(".tb-tab-btn");
@@ -1477,6 +1491,8 @@ function setupRecapVisualEditor() {
     function updateCanvasMockupVisuals() {
         if (!canvas) return;
 
+        const zoom = state.recapZoom || 1.06;
+
         // 1. Aspect Ratio Frame Class
         if (mockupFrame) {
             let ratioClass = "ratio-9-16";
@@ -1484,6 +1500,7 @@ function setupRecapVisualEditor() {
             else if (state.recapRatio === "1:1") ratioClass = "ratio-1-1";
             else if (state.recapRatio === "Original") ratioClass = "ratio-16-9";
             mockupFrame.className = `mockup-screen ${ratioClass}`;
+            mockupFrame.style.aspectRatio = "";
         }
 
         // 2. Canvas Base Classes & Fill Mode
@@ -1505,6 +1522,8 @@ function setupRecapVisualEditor() {
             if (innerMovie) innerMovie.style.backgroundImage = "none";
             canvasVideo.style.display = "block";
             canvasVideo.style.opacity = "1";
+            canvasVideo.style.transform = zoom > 1.001 ? `scale(${zoom})` : "";
+            canvasVideo.style.transformOrigin = "center center";
             if (fillBadge) fillBadge.style.display = "none";
         } else if (state.recapThumbnailUrl) {
             canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
@@ -1512,7 +1531,7 @@ function setupRecapVisualEditor() {
             canvas.style.backgroundPosition = "center";
             if (innerMovie) {
                 innerMovie.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
-                innerMovie.style.backgroundSize = "cover";
+                innerMovie.style.backgroundSize = zoom > 1.001 ? `${Math.round(zoom * 100)}%` : "cover";
                 innerMovie.style.backgroundPosition = "center";
             }
             if (fillBadge) fillBadge.style.display = "none";
@@ -1562,6 +1581,9 @@ function setupRecapVisualEditor() {
                         if (rSource > 1.3) ratioClass = "ratio-16-9";
                         else if (rSource >= 0.8 && rSource <= 1.3) ratioClass = "ratio-1-1";
                         mockupFrame.className = `mockup-screen ${ratioClass}`;
+                        if (state.recapSourceWidth && state.recapSourceHeight) {
+                            mockupFrame.style.aspectRatio = `${state.recapSourceWidth} / ${state.recapSourceHeight}`;
+                        }
                     }
                 } else {
                     rCanvas = 16 / 9;
@@ -1580,16 +1602,16 @@ function setupRecapVisualEditor() {
                 innerMovie.style.boxShadow = "none";
                 if (canvasVideo) canvasVideo.style.objectFit = "cover";
             } else {
-                // Blur or Black fill mode
-                if (canvasVideo) canvasVideo.style.objectFit = "contain";
+                // Blur or Black fill mode — innerMovie is already sized to exact fitted picture (pw x ph)
+                if (canvasVideo) canvasVideo.style.objectFit = "cover";
                 const ratioDiff = Math.abs(rSource - rCanvas);
 
-                if (ratioDiff < 0.04) {
+                if (ratioDiff < 0.015 && cTop === 0 && cBottom === 0 && cLeft === 0 && cRight === 0) {
                     // Source aspect ratio matches canvas (e.g. 9:16 vertical video in 9:16 vertical canvas!)
                     innerMovie.style.width = "100%";
                     innerMovie.style.height = "100%";
                     innerMovie.style.boxShadow = "none";
-                } else if (rSource > rCanvas) {
+                } else if (rSource >= rCanvas) {
                     // Source is wider than canvas (e.g. 16:9 movie inside 9:16 vertical canvas)
                     // Fills width, letterbox bars on top & bottom
                     const baseHeightPct = (rCanvas / rSource) * 100;
@@ -1610,6 +1632,8 @@ function setupRecapVisualEditor() {
                 }
             }
         }
+        syncBlurBoxVisual();
+        syncSubBoxVisual();
     }
 
     // 2. Aspect Ratio Selector (9:16, 16:9, 1:1, Original)
@@ -1767,6 +1791,7 @@ function setupRecapVisualEditor() {
             zoomBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapZoom = parseFloat(btn.getAttribute("data-zoom") || "1.06");
+            updateCanvasMockupVisuals();
         });
     });
 

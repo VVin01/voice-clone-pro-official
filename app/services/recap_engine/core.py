@@ -343,8 +343,8 @@ def trim_edge_silence(
     source: Path,
     target: Path,
     *,
-    keep_lead: float = 0.12,
-    keep_tail: float = 0.38,
+    keep_lead: float = 0.08,
+    keep_tail: float = 0.22,
     min_duration: float = 0.0,
     threshold_db: float = -50.0,
 ) -> tuple[Path, float]:
@@ -1358,8 +1358,11 @@ def canonicalize_burmese_text(text: str) -> str:
         return ""
     # 0. Normalize foreign homoglyphs (Ethiopic/Georgian)
     t = normalize_burmese_homoglyphs(text)
-    # 1. Swap visual 'ေ' (U+1031) preceding consonant to after consonant (e.g. အေမ -> အမေ)
-    t = re.sub(r'(\u1031)([\u1000-\u1021])', r'\2\1', t)
+    # 1. Visual-order 'ေ' typed BEFORE its consonant (e.g. "ေမ" at a word start -> "မေ").
+    #    ONLY when the ေ is not attached to a preceding Myanmar letter/mark — in correct Unicode
+    #    "ေ" always follows its consonant, and the next syllable's consonant must never be swapped
+    #    (the old unconditional swap turned "မေမေ"->"မမေေ", "တွေကို"->"တွကေို", "နေတယ်"->"နတေယ်").
+    t = re.sub(r'(?<![\u1000-\u103F\u1050-\u109F])\u1031([\u1000-\u1021][\u103B-\u103E]*)', '\\1\u1031', t)
     # 2. Fix medial order if reversed (e.g. ွ before ျ/ြ)
     t = re.sub(r'(\u103D)(\u103B|\u103C)', r'\2\1', t)
     # 3. Fix ေ before medials (e.g. က + ေ + ျ -> က + ျ + ေ)
@@ -1435,8 +1438,20 @@ def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> li
                 res.extend(_split_burmese_into_single_line_chunks(p, max_chars=max_chars))
             return res
 
-    # Otherwise split into words/tokens
-    tokens = tokenize_burmese_words(text)
+    # Otherwise split into words/tokens. Prefer the natural phrase spaces Gemini writes
+    # (never break inside a space-delimited phrase); only an over-long phrase falls back to
+    # syllable-safe particle tokenization.
+    tokens: list[str] = []
+    for word in text.split(" "):
+        if not word:
+            continue
+        if len(word) > max_chars:
+            tokens.extend(t for t in tokenize_burmese_words(word) if t)
+        else:
+            tokens.append(word)
+        tokens.append(" ")
+    if tokens and tokens[-1] == " ":
+        tokens.pop()
     if not tokens:
         return [text]
 
@@ -1453,7 +1468,8 @@ def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> li
 
     # Merge very short tail chunk (< 12 chars) with preceding chunk so it doesn't flash awkwardly
     if len(chunks) > 1 and len(chunks[-1]) < 12:
-        merged_tail = (chunks[-2] + " " + chunks[-1]).strip()
+        sep = " " if (chunks[-2] + " " + chunks[-1]) in text else ""
+        merged_tail = (chunks[-2] + sep + chunks[-1]).strip()
         chunks[-2] = merged_tail
         chunks.pop()
 
@@ -1646,7 +1662,8 @@ def apply_production_overlays(
     current = "[0:v]"
     blur_strength = max(4, min(40, int(overlays.get("blur_strength", 18))))
     for i, b in enumerate(boxes):
-        # Precise coordinates mapped directly onto the output canvas frame (WYSIWYG with Live Canvas Preview)
+        # Coordinates are fractions of the FULL output canvas (cw×ch) — the UI blur box is
+        # absolutely positioned against the whole Live Canvas frame, not the inner picture.
         w = int(round(_clamp01(b.get("w"), 0.1) * cw))
         h = int(round(_clamp01(b.get("h"), 0.1) * ch))
         w = max(8, min(w, cw - 8))
@@ -2084,8 +2101,8 @@ class EdgeSmartSync:
         self.smooth_freeze_fallback = bool(smooth_freeze_fallback)
         self.max_freeze_hold = max(0.15, min(float(max_freeze_hold), 1.50))
         self.render_final_video = bool(render_final_video)
-        # Short pauses: see trim_edge_silence. Set by render_worker from the UI box.
-        self.short_pauses = False
+        # Short pauses: see trim_edge_silence. Trims excessive TTS dead air while keeping natural breath.
+        self.short_pauses = True
         self.overlays = dict(overlays or {})
         self.log = log
         self.progress = progress or (lambda a, b, c: None)
@@ -2222,146 +2239,195 @@ class EdgeSmartSync:
         elif str(self.voice).startswith("voxcpm"):
             base_edge_voice = "my-MM-NilarNeural" if (self.overlays.get("is_female") or "nilar" in str(self.voice).lower()) else "my-MM-ThihaNeural"
 
-        engine_provider = "voxcpm" if use_voxcpm else "edge_tts"
-        fingerprint_voice = (
-            f"{engine_provider}|{base_edge_voice}|rate={effective_rate}|pitch={effective_pitch}"
-        )
-        checkpoint["tts_provider"] = engine_provider
+        short_pauses = bool(self.short_pauses)
+
+        # AUDIO: timestamp segment = master save unit. The user's engine may split
+        # sentences internally, but only one deterministic WAV is kept per timestamp segment.
+        # Resolve preset persona ONCE before the segment loop (used by both VoxCPM and fallback)
+        _voice_str = str(self.voice)
+        if _voice_str.startswith("voxcpm_"):
+            _global_preset_v: str | None = _voice_str.replace("voxcpm_", "")
+        elif _voice_str in (
+            "komin", "kozayar", "kothura", "koaung", "mahnin",
+            "manadi", "mamay", "komyat", "kophone", "mayoon",
+            "machaw", "mathiri"
+        ):
+            _global_preset_v = _voice_str
+        else:
+            _global_preset_v = None
+
+        # Convert Edge-TTS rate string (e.g. "+12%") → VoxCPM float speed (e.g. 1.12)
+        def _rate_to_float(rate_str: str) -> float:
+            import re as _re
+            m = _re.search(r"([+-]?\d+)", str(rate_str or ""))
+            if m:
+                return round(1.0 + int(m.group(1)) / 100.0, 3)
+            return 1.10
+
+        voxcpm_speed_float = _rate_to_float(effective_rate)
+
+        # Persona reference clip (the exact preview sample) — VoxCPM clones THIS voice for every
+        # segment, so the recap sounds like the preview and never drifts between lines.
+        persona_ref_wav: str | None = self.overlays.get("voxcpm_ref_audio") or None
+        persona_ref_text: str = str(self.overlays.get("voxcpm_ref_text") or "")
+        if not persona_ref_wav and _global_preset_v:
+            try:
+                from app.services.curated_voices import get_persona_reference
+                persona_ref_wav, persona_ref_text = get_persona_reference(_global_preset_v)
+            except Exception as ref_err:
+                self.log(f"⚠️ Persona reference lookup failed ({ref_err}) — VoxCPM voice design only")
+        if use_voxcpm:
+            if persona_ref_wav and persona_ref_text:
+                self.log(f"🎯 VoxCPM 2 locked-voice cloning from persona sample: {Path(persona_ref_wav).name}")
+            else:
+                self.log("⚠️ No persona sample transcript — VoxCPM voice design (voice may vary slightly)")
 
         timing: list[dict[str, Any]] = []
         audio_parts: list[Path] = []
         cursor = 0.0
-        short_pauses = bool(self.short_pauses)
         tts_total = 0.0
+        for _tts_pass in range(2):
+            engine_provider = "voxcpm" if use_voxcpm else "edge_tts"
+            fingerprint_voice = (
+                f"{engine_provider}|{base_edge_voice}|persona={_global_preset_v}|"
+                f"ref={Path(persona_ref_wav).name if persona_ref_wav else '-'}|"
+                f"rate={effective_rate}|pitch={effective_pitch}"
+            )
+            checkpoint["tts_provider"] = engine_provider
+            timing = []
+            audio_parts = []
+            cursor = 0.0
+            tts_total = 0.0
+            restart_uniform = False
 
-        # AUDIO: timestamp segment = master save unit. The user's engine may split
-        # sentences internally, but only one deterministic WAV is kept per timestamp segment.
-        for idx, seg in enumerate(segments, 1):
-            if self.should_stop():
-                raise InterruptedError("STOP requested — လက်ရှိပြီးထားတာတွေ checkpoint ထဲသိမ်းထားပါတယ်။")
-            base = segment_basename(seg)
-            dst = paths.tts_parts / f"{base}.wav"
-            fp = segment_fingerprint(seg, fingerprint_voice)
-            rec = checkpoint["audio"].get(base, {})
-            reusable = rec.get("fingerprint") == fp and dst.is_file() and dst.stat().st_size > 1000
-            if reusable:
-                duration = probe_duration(self.ffprobe, dst)
-                self.log(f"♻️ [{idx}/{len(segments)}] {base}.wav reuse ({duration:.2f}s)")
-            else:
-                speak = spoken_text(seg["narration"])
-                produced = None
+            for idx, seg in enumerate(segments, 1):
+                if self.should_stop():
+                    raise InterruptedError("STOP requested — လက်ရှိပြီးထားတာတွေ checkpoint ထဲသိမ်းထားပါတယ်။")
+                base = segment_basename(seg)
+                dst = paths.tts_parts / f"{base}.wav"
+                fp = segment_fingerprint(seg, fingerprint_voice)
+                rec = checkpoint["audio"].get(base, {})
+                reusable = rec.get("fingerprint") == fp and dst.is_file() and dst.stat().st_size > 1000
+                if reusable:
+                    duration = probe_duration(self.ffprobe, dst)
+                    self.log(f"♻️ [{idx}/{len(segments)}] {base}.wav reuse ({duration:.2f}s)")
+                else:
+                    speak = spoken_text(seg["narration"])
+                    produced = None
+                    preset_v = _global_preset_v  # always defined for both VoxCPM and fallback paths
 
-                # 1. Try VoxCPM 2 if selected
-                if use_voxcpm and vox_engine:
-                    self.progress(idx - 1, len(segments), f"VoxCPM 2 {idx}/{len(segments)}")
-                    self.log(f"🎙️ [{idx}/{len(segments)}] {base} generate via VoxCPM 2 Cloud AI")
-                    try:
-                        ref_wav = self.overlays.get("voxcpm_ref_audio")
-                        ctrl_prompt = (
-                            self.overlays.get("voxcpm_control")
-                            or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
-                        )
-                        preset_v = None
-                        if str(self.voice).startswith("voxcpm_"):
-                            preset_v = str(self.voice).replace("voxcpm_", "")
-                        elif str(self.voice) in (
-                            "komin", "kozayar", "kothura", "koaung", "mahnin",
-                            "manadi", "mamay", "komyat", "kophone", "mayoon",
-                            "machaw", "mathiri"
-                        ):
-                            preset_v = str(self.voice)
-                        produced = vox_engine.synthesize(
-                            text=speak,
-                            output_wav=dst,
-                            control_instruction=ctrl_prompt,
-                            reference_wav=ref_wav,
-                            preset_voice=preset_v,
-                            speed=effective_rate or 1.10,
-                            timeout=75,
-                            retries=2,
-                        )
-                    except Exception as vox_exc:
-                        self.log(f"⚠️ VoxCPM 2 failed on line {idx} ({vox_exc}) — switching to consistent Studio Persona engine for entire recap")
-                        produced = None
-                        use_voxcpm = False  # Keep whole recap uniform! Never hop between voices!
-
-                # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
-                if not produced or not Path(produced).is_file():
-                    curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
-                    self.progress(idx - 1, len(segments), f"Studio TTS {idx}/{len(segments)}")
-                    self.log(f"🗣️ [{idx}/{len(segments)}] {base} generate via Studio Persona ({curr_persona})")
-                    try:
-                        from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
-                        if get_curated_voice(curr_persona):
-                            synthesize_curated_persona(
-                                text=speak,
-                                persona_id=curr_persona,
-                                output_wav=dst,
-                                speed=effective_rate or 1.10,
-                                log_fn=self.log,
-                            )
-                            produced = dst
-                        else:
-                            produced = engine.generate_channel99_voice(speak, base_edge_voice)
-                    except Exception as persona_err:
-                        self.log(f"⚠️ Persona TTS notice: {persona_err} — using standard engine")
+                    # 1. Try VoxCPM 2 if selected
+                    if use_voxcpm and vox_engine:
+                        self.progress(idx - 1, len(segments), f"VoxCPM 2 {idx}/{len(segments)}")
+                        self.log(f"🎙️ [{idx}/{len(segments)}] {base} generate via VoxCPM 2 Cloud AI")
                         try:
-                            produced = engine.generate_channel99_voice(speak, base_edge_voice)
-                        except Exception as first:
-                            plain = without_english(speak)
-                            if is_edge_refused(first) or plain == speak or not any(ch.isalpha() for ch in plain):
-                                raise
-                            # A line mixing English and Burmese sometimes gets no audio at all
-                            self.log(f"⚠️ [{idx}/{len(segments)}] no audio — trying again without the English words "
-                                     "(Edit Text can rewrite the line)")
-                            produced = engine.generate_channel99_voice(plain, base_edge_voice)
-                        if not produced or not Path(produced).is_file():
-                            raise RuntimeError("TTS output path မရပါ။")
-                    except Exception as exc:
-                        if is_edge_refused(exc):
-                            raise RuntimeError(f"TTS stopped at line {idx}/{len(segments)}.\n\n{exc}") from exc
-                        raise RuntimeError(f"TTS FAILED at segment {idx} ({base}): {exc}\n\n"
-                                           f"Text: {seg['narration'][:200]}") from exc
-                produced_path = Path(produced).resolve()
-                if produced_path != dst.resolve():
-                    shutil.copy2(produced_path, dst)
-                    produced_path.unlink(missing_ok=True)
-                duration = probe_duration(self.ffprobe, dst)
-                if duration <= 0.05:
-                    raise RuntimeError(f"Generated audio duration invalid: {dst}")
-                checkpoint["audio"][base] = {
-                    "fingerprint": fp,
-                    "file": str(dst),
-                    "duration": round(duration, 3),
+                            ctrl_prompt = (
+                                self.overlays.get("voxcpm_control")
+                                or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
+                            )
+                            produced = vox_engine.synthesize(
+                                text=speak,
+                                output_wav=dst,
+                                control_instruction=ctrl_prompt,
+                                reference_wav=persona_ref_wav,
+                                prompt_text=persona_ref_text,
+                                preset_voice=preset_v,
+                                speed=voxcpm_speed_float,
+                                timeout=75,
+                                retries=2,
+                                allow_fallback=False,
+                            )
+                        except Exception as vox_exc:
+                            self.log(f"⚠️ VoxCPM 2 failed on line {idx} ({vox_exc}) — switching to consistent Studio Persona engine for entire recap")
+                            produced = None
+                            use_voxcpm = False  # Keep whole recap uniform! Never hop between voices!
+                            if idx > 1:
+                                restart_uniform = True
+                                break
+
+                    # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
+                    if not produced or not Path(produced).is_file():
+                        curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
+                        self.progress(idx - 1, len(segments), f"Studio TTS {idx}/{len(segments)}")
+                        self.log(f"🗣️ [{idx}/{len(segments)}] {base} generate via Studio Persona ({curr_persona})")
+                        try:
+                            from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
+                            if get_curated_voice(curr_persona):
+                                synthesize_curated_persona(
+                                    text=speak,
+                                    persona_id=curr_persona,
+                                    output_wav=dst,
+                                    speed=effective_rate or 1.10,
+                                    log_fn=self.log,
+                                )
+                                produced = dst
+                            else:
+                                produced = engine.generate_channel99_voice(speak, base_edge_voice)
+                        except Exception as persona_err:
+                            self.log(f"⚠️ Persona TTS notice: {persona_err} — using standard engine")
+                            try:
+                                produced = engine.generate_channel99_voice(speak, base_edge_voice)
+                            except Exception as first:
+                                plain = without_english(speak)
+                                if is_edge_refused(first) or plain == speak or not any(ch.isalpha() for ch in plain):
+                                    raise
+                                # A line mixing English and Burmese sometimes gets no audio at all
+                                self.log(f"⚠️ [{idx}/{len(segments)}] no audio — trying again without the English words "
+                                         "(Edit Text can rewrite the line)")
+                                produced = engine.generate_channel99_voice(plain, base_edge_voice)
+                            if not produced or not Path(produced).is_file():
+                                raise RuntimeError("TTS output path မရပါ။")
+                        except Exception as exc:
+                            if is_edge_refused(exc):
+                                raise RuntimeError(f"TTS stopped at line {idx}/{len(segments)}.\n\n{exc}") from exc
+                            raise RuntimeError(f"TTS FAILED at segment {idx} ({base}): {exc}\n\n"
+                                               f"Text: {seg['narration'][:200]}") from exc
+                    produced_path = Path(produced).resolve()
+                    if produced_path != dst.resolve():
+                        shutil.copy2(produced_path, dst)
+                        produced_path.unlink(missing_ok=True)
+                    duration = probe_duration(self.ffprobe, dst)
+                    if duration <= 0.05:
+                        raise RuntimeError(f"Generated audio duration invalid: {dst}")
+                    checkpoint["audio"][base] = {
+                        "fingerprint": fp,
+                        "file": str(dst),
+                        "duration": round(duration, 3),
+                        "video_start": seg["video_start"],
+                        "video_end": seg["video_end"],
+                        "text": seg["narration"],
+                    }
+                    atomic_write_json(paths.checkpoint, checkpoint)
+                    self.log(f"✅ {base}.wav = {duration:.2f}s")
+
+                part = dst
+                tts_total += duration
+                if short_pauses:
+                    window = float(seg["video_end"]) - float(seg["video_start"])
+                    part, duration = trim_edge_silence(dst, paths.tts_parts.parent / "tts_parts_short" / dst.name,
+                                                       min_duration=window / self.max_video_speed)
+                start = cursor
+                end = cursor + duration
+                timing.append({
+                    "segment_id": seg["segment_id"],
+                    "source_index": seg["source_index"],
                     "video_start": seg["video_start"],
                     "video_end": seg["video_end"],
+                    "audio_start": round(start, 3),
+                    "audio_end": round(end, 3),
+                    "audio_duration": round(duration, 3),
                     "text": seg["narration"],
-                }
-                atomic_write_json(paths.checkpoint, checkpoint)
-                self.log(f"✅ {base}.wav = {duration:.2f}s")
+                    "audio_file": str(part),
+                })
+                cursor = end
+                audio_parts.append(part)
+                self.progress(idx, len(segments), f"Audio {idx}/{len(segments)}")
 
-            part = dst
-            tts_total += duration
-            if short_pauses:
-                window = float(seg["video_end"]) - float(seg["video_start"])
-                part, duration = trim_edge_silence(dst, paths.tts_parts.parent / "tts_parts_short" / dst.name,
-                                                   min_duration=window / self.max_video_speed)
-            start = cursor
-            end = cursor + duration
-            timing.append({
-                "segment_id": seg["segment_id"],
-                "source_index": seg["source_index"],
-                "video_start": seg["video_start"],
-                "video_end": seg["video_end"],
-                "audio_start": round(start, 3),
-                "audio_end": round(end, 3),
-                "audio_duration": round(duration, 3),
-                "text": seg["narration"],
-                "audio_file": str(part),
-            })
-            cursor = end
-            audio_parts.append(part)
-            self.progress(idx, len(segments), f"Audio {idx}/{len(segments)}")
+
+            if not restart_uniform:
+                break
+            self.log("🔁 VoxCPM 2 became unavailable mid-video — regenerating ALL lines with the same "
+                     "Studio Persona engine so the whole recap keeps ONE uniform voice")
 
         if short_pauses:
             self.log(f"✂️ Short pauses: Edge TTS silence trimmed · voice {tts_total / 60:.1f} → {cursor / 60:.1f} min "
