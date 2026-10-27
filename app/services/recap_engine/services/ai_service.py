@@ -32,7 +32,7 @@ class AIService:
         self._enable_proxy()
         self.client = genai.Client(api_key=self.api_key)
         self._disable_proxy()
-        self.text_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.8-flash")
+        self.text_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash")
 
     def _enable_proxy(self):
         if self.proxy:

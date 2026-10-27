@@ -144,9 +144,10 @@ def run_recap_pipeline(
         log=_log,
         progress=lambda cur, tot, lbl: _progress(1 + int(cur * 2 / max(1, tot)), 4, lbl),
         should_stop=stop_check,
-        gemini_text_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
-        gemini_request_timeout_seconds=120,
+        gemini_text_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash"),
+        gemini_request_timeout_seconds=45,
         narrative_style=narrative_style,
+        is_female=bool(is_female),
     )
 
     plan_path, plan = planner.build(

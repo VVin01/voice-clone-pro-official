@@ -96,8 +96,8 @@ Format your output strictly using these two delimiters:
     from google import genai
     client = genai.Client(api_key=key)
 
-    # Use active Gemini models (gemini-3.8-flash, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-3.6-flash)
-    candidate_models = [m for m in [env_model, "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.8-flash"] if m]
+    # Use active fast Gemini models (gemini-3.6-flash, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-flash-lite-latest)
+    candidate_models = [m for m in [env_model, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"] if m]
     response = None
     last_err = None
 

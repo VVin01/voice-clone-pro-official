@@ -1274,19 +1274,15 @@
                             <div class="tier-badge tier-primary">🥇 ၁။ Primary (အဓိက ဦးစားပေး)</div>
                             <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-primary" class="studio-input" onchange="checkCustomModel('adm-gemini-primary')">
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash (Recommended / Fast & Stable)</option>
+                                    <option value="gemini-3.6-flash">gemini-3.6-flash (Recommended / Fast & Stable)</option>
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
                                     <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                    <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="gemini-3.7-flash">gemini-3.7-flash</option>
-                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                                    <option value="gemini-3.6-flash">gemini-3.6-flash</option>
-                                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
-                                <input type="text" id="adm-gemini-primary-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash">
+                                <input type="text" id="adm-gemini-primary-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.6-flash">
                             </div>
                         </div>
 
@@ -1296,13 +1292,10 @@
                             <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-fb1" class="studio-input" onchange="checkCustomModel('adm-gemini-fb1')">
                                     <option value="gemini-3.5-flash">gemini-3.5-flash (Standard Fallback)</option>
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                    <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                     <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
-                                    <option value="gemini-3.7-flash">gemini-3.7-flash</option>
-                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
                                 <input type="text" id="adm-gemini-fb1-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash">
@@ -1314,14 +1307,11 @@
                             <div class="tier-badge tier-fb2">🥉 ၃။ Fallback 2 (တတိယ အရန်)</div>
                             <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-fb2" class="studio-input" onchange="checkCustomModel('adm-gemini-fb2')">
-                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Lightweight)</option>
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Lightweight Fast)</option>
+                                    <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                                    <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                    <option value="gemini-3.7-flash">gemini-3.7-flash</option>
-                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
                                 <input type="text" id="adm-gemini-fb2-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash-lite">
@@ -1333,17 +1323,14 @@
                             <div class="tier-badge tier-fb3">🎖️ ၄။ Fallback 3 (စတုတ္ထ အရန်)</div>
                             <div class="model-select-wrap mt-1">
                                 <select id="adm-gemini-fb3" class="studio-input" onchange="checkCustomModel('adm-gemini-fb3')">
-                                    <option value="gemini-3.7-flash">gemini-3.7-flash (Emergency)</option>
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
-                                    <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                    <option value="gemini-flash-lite-latest">gemini-flash-lite-latest (Emergency Fast)</option>
                                     <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
-                                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                    <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
-                                <input type="text" id="adm-gemini-fb3-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.7-flash">
+                                <input type="text" id="adm-gemini-fb3-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-flash-lite-latest">
                             </div>
                         </div>
                     </div>

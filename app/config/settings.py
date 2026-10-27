@@ -134,11 +134,11 @@ class Settings(BaseSettings):
     # Recap Studio Policies
     recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # Max 10 minutes per recap credit
 
-    # Gemini AI Dynamic Model Chain
-    gemini_primary_model: str = Field(default="gemini-3.8-flash", alias="GEMINI_PRIMARY_MODEL")
+    # Gemini AI Dynamic Model Chain (Active 3.x models; 2.5/2.0/1.5 are retired on Google API)
+    gemini_primary_model: str = Field(default="gemini-3.6-flash", alias="GEMINI_PRIMARY_MODEL")
     gemini_fallback_1: str = Field(default="gemini-3.5-flash", alias="GEMINI_FALLBACK_1")
     gemini_fallback_2: str = Field(default="gemini-3.5-flash-lite", alias="GEMINI_FALLBACK_2")
-    gemini_fallback_3: str = Field(default="gemini-3.7-flash", alias="GEMINI_FALLBACK_3")
+    gemini_fallback_3: str = Field(default="gemini-flash-lite-latest", alias="GEMINI_FALLBACK_3")
 
     # Payment accounts
     payment_kpay_number: str = "09790760003"

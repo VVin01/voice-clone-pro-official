@@ -1079,6 +1079,7 @@ function setupRecapVisualEditor() {
             if (!res.ok) throw new Error(data.detail || "Upload failed");
 
             state.uploadedVideoPath = data.local_path;
+            state.recapVideoTitle = data.title || file.name;
             state.recapSourceDuration = data.duration_seconds;
             if (data.width && data.height) {
                 state.recapSourceWidth = data.width;
@@ -1518,46 +1519,29 @@ function setupRecapVisualEditor() {
             origSub.style.display = hasActiveMedia ? "none" : "";
         }
 
-        if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
-            if (innerMovie) innerMovie.style.backgroundImage = "none";
-            canvasVideo.style.display = "block";
-            canvasVideo.style.opacity = "1";
-            canvasVideo.style.transform = zoom > 1.001 ? `scale(${zoom})` : "";
-            canvasVideo.style.transformOrigin = "center center";
-            if (fillBadge) fillBadge.style.display = "none";
-        } else if (state.recapThumbnailUrl) {
-            canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
-            canvas.style.backgroundSize = "cover";
-            canvas.style.backgroundPosition = "center";
-            if (innerMovie) {
-                innerMovie.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
-                innerMovie.style.backgroundSize = zoom > 1.001 ? `${Math.round(zoom * 100)}%` : "cover";
-                innerMovie.style.backgroundPosition = "center";
-            }
-            if (fillBadge) fillBadge.style.display = "none";
-        } else {
-            canvas.style.backgroundImage = "";
-            if (innerMovie) innerMovie.style.backgroundImage = "";
-            if (fillBadge) fillBadge.style.display = "";
-        }
+        const cTop = Math.max(0, Math.min(35, state.recapCropTop || 0));
+        const cBottom = Math.max(0, Math.min(35, state.recapCropBottom || 0));
+        const cLeft = Math.max(0, Math.min(35, state.recapCropLeft || 0));
+        const cRight = Math.max(0, Math.min(35, state.recapCropRight || 0));
 
-        // 4. Update Crop Shades & Inner Movie Height
+        const ct = cTop / 100.0;
+        const cb = cBottom / 100.0;
+        const cl = cLeft / 100.0;
+        const cr = cRight / 100.0;
+        const keepW = Math.max(0.10, 1.0 - cl - cr);
+        const keepH = Math.max(0.10, 1.0 - ct - cb);
+
+        // Hide crop-shade overlays because innerMovie + media positioning already applies the exact FFmpeg crop
         const shadeTop = document.getElementById("crop-shade-top");
         const shadeBottom = document.getElementById("crop-shade-bottom");
         const shadeLeft = document.getElementById("crop-shade-left");
         const shadeRight = document.getElementById("crop-shade-right");
+        if (shadeTop) shadeTop.style.height = "0%";
+        if (shadeBottom) shadeBottom.style.height = "0%";
+        if (shadeLeft) shadeLeft.style.width = "0%";
+        if (shadeRight) shadeRight.style.width = "0%";
 
-        const cTop = state.recapCropTop || 0;
-        const cBottom = state.recapCropBottom || 0;
-        const cLeft = state.recapCropLeft || 0;
-        const cRight = state.recapCropRight || 0;
-
-        if (shadeTop) shadeTop.style.height = `${cTop}%`;
-        if (shadeBottom) shadeBottom.style.height = `${cBottom}%`;
-        if (shadeLeft) shadeLeft.style.width = `${cLeft}%`;
-        if (shadeRight) shadeRight.style.width = `${cRight}%`;
-
-        // 4. Calculate Dynamic Source vs Canvas Aspect Ratio Fit
+        // 4. Calculate Dynamic Source vs Canvas Aspect Ratio Fit (matching FFmpeg frame_layout + _visual_filters)
         if (innerMovie) {
             // Determine Canvas Aspect Ratio
             let rCanvas = 9 / 16; // default 0.5625
@@ -1595,41 +1579,87 @@ function setupRecapVisualEditor() {
                 rSource = (state.recapRatio === "9:16" || state.recapRatio === "1:1") ? (16 / 9) : (9 / 16);
             }
 
-            if (fillMode === "crop") {
-                // Center crop: fills 100% of canvas, no letterbox/pillarbox
+            // Cropped source aspect ratio matching FFmpeg's crop=c_sw:c_sh:c_x:c_y
+            const rCropped = rSource * (keepW / keepH);
+            const hasCrop = (ct > 0.001 || cb > 0.001 || cl > 0.001 || cr > 0.001);
+            const ratioDiff = Math.abs(rSource - rCanvas);
+
+            let cropCoverW = 100.0 * zoom;
+            let cropCoverH = 100.0 * zoom;
+
+            if (fillMode === "crop" || (!hasCrop && ratioDiff < 0.01)) {
                 innerMovie.style.width = "100%";
                 innerMovie.style.height = "100%";
                 innerMovie.style.boxShadow = "none";
-                if (canvasVideo) canvasVideo.style.objectFit = "cover";
-            } else {
-                // Blur or Black fill mode — innerMovie is already sized to exact fitted picture (pw x ph)
-                if (canvasVideo) canvasVideo.style.objectFit = "cover";
-                const ratioDiff = Math.abs(rSource - rCanvas);
-
-                if (ratioDiff < 0.015 && cTop === 0 && cBottom === 0 && cLeft === 0 && cRight === 0) {
-                    // Source aspect ratio matches canvas (e.g. 9:16 vertical video in 9:16 vertical canvas!)
-                    innerMovie.style.width = "100%";
-                    innerMovie.style.height = "100%";
-                    innerMovie.style.boxShadow = "none";
-                } else if (rSource >= rCanvas) {
-                    // Source is wider than canvas (e.g. 16:9 movie inside 9:16 vertical canvas)
-                    // Fills width, letterbox bars on top & bottom
-                    const baseHeightPct = (rCanvas / rSource) * 100;
-                    const totalVCrop = Math.min(60, cTop + cBottom);
-                    const effectiveHeight = baseHeightPct * (1.0 - totalVCrop / 100.0);
-                    innerMovie.style.width = "100%";
-                    innerMovie.style.height = `${Math.max(15, Math.min(100, effectiveHeight))}%`;
-                    innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
+                if (rCropped >= rCanvas) {
+                    cropCoverH = 100.0 * zoom;
+                    cropCoverW = 100.0 * zoom * (rCropped / rCanvas);
                 } else {
-                    // Source is narrower/taller than canvas (e.g. 9:16 vertical video inside 16:9 canvas)
-                    // Fills height, pillarbox bars on left & right
-                    const baseWidthPct = (rSource / rCanvas) * 100;
-                    const totalHCrop = Math.min(60, cLeft + cRight);
-                    const effectiveWidth = baseWidthPct * (1.0 - totalHCrop / 100.0);
-                    innerMovie.style.height = "100%";
-                    innerMovie.style.width = `${Math.max(15, Math.min(100, effectiveWidth))}%`;
-                    innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
+                    cropCoverW = 100.0 * zoom;
+                    cropCoverH = 100.0 * zoom * (rCanvas / rCropped);
                 }
+            } else if (rCropped >= rCanvas) {
+                // Cropped picture is wider than canvas (letterbox bars on top & bottom)
+                const effectiveHeight = (rCanvas / rCropped) * 100.0;
+                innerMovie.style.width = "100%";
+                innerMovie.style.height = `${Math.max(12, Math.min(100, effectiveHeight)).toFixed(3)}%`;
+                innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
+            } else {
+                // Cropped picture is narrower/taller than canvas (pillarbox bars on left & right)
+                const effectiveWidth = (rCropped / rCanvas) * 100.0;
+                innerMovie.style.height = "100%";
+                innerMovie.style.width = `${Math.max(12, Math.min(100, effectiveWidth)).toFixed(3)}%`;
+                innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
+            }
+
+            // Exact asymmetric crop + center zoom coordinates inside innerMovie
+            const vidW = cropCoverW / keepW;
+            const vidH = cropCoverH / keepH;
+            const vidLeft = 50.0 - (cl + 0.5 * keepW) * vidW;
+            const vidTop = 50.0 - (ct + 0.5 * keepH) * vidH;
+
+            let thumbImg = document.getElementById("canvas-thumb-img");
+            if (!thumbImg && innerMovie) {
+                thumbImg = document.createElement("img");
+                thumbImg.id = "canvas-thumb-img";
+                thumbImg.className = "canvas-video-player hidden";
+                thumbImg.alt = "";
+                innerMovie.insertBefore(thumbImg, innerMovie.firstChild);
+            }
+
+            if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
+                innerMovie.style.backgroundImage = "none";
+                if (thumbImg) thumbImg.classList.add("hidden");
+                canvasVideo.style.display = "block";
+                canvasVideo.style.opacity = "1";
+                canvasVideo.style.objectFit = "fill";
+                canvasVideo.style.transform = "none";
+                canvasVideo.style.width = `${vidW.toFixed(3)}%`;
+                canvasVideo.style.height = `${vidH.toFixed(3)}%`;
+                canvasVideo.style.left = `${vidLeft.toFixed(3)}%`;
+                canvasVideo.style.top = `${vidTop.toFixed(3)}%`;
+                if (fillBadge) fillBadge.style.display = "none";
+            } else if (state.recapThumbnailUrl) {
+                canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
+                canvas.style.backgroundSize = "cover";
+                canvas.style.backgroundPosition = "center";
+                innerMovie.style.backgroundImage = "none";
+                if (thumbImg) {
+                    thumbImg.src = state.recapThumbnailUrl;
+                    thumbImg.classList.remove("hidden");
+                    thumbImg.style.display = "block";
+                    thumbImg.style.objectFit = "fill";
+                    thumbImg.style.width = `${vidW.toFixed(3)}%`;
+                    thumbImg.style.height = `${vidH.toFixed(3)}%`;
+                    thumbImg.style.left = `${vidLeft.toFixed(3)}%`;
+                    thumbImg.style.top = `${vidTop.toFixed(3)}%`;
+                }
+                if (fillBadge) fillBadge.style.display = "none";
+            } else {
+                canvas.style.backgroundImage = "";
+                innerMovie.style.backgroundImage = "";
+                if (thumbImg) thumbImg.classList.add("hidden");
+                if (fillBadge) fillBadge.style.display = "";
             }
         }
         syncBlurBoxVisual();
@@ -1982,6 +2012,7 @@ function setupRecapVisualEditor() {
 
                 if (thumbImg && data.thumbnail) thumbImg.src = data.thumbnail;
                 if (titleSpan) titleSpan.innerText = data.title || "Video";
+                state.recapVideoTitle = data.title || "Movie Recap Video";
 
                 state.recapSourceDuration = data.duration_seconds || 0;
                 const maxAllowed = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
@@ -2347,6 +2378,7 @@ async function handleStartRecap() {
 
         const payload = {
             url: url,
+            title: state.recapVideoTitle || null,
             voice_slug: state.recapVoice || "komin",
             story_style: state.recapStoryStyle || "viral",
             ratio: state.recapRatio || "9:16",
@@ -3499,10 +3531,10 @@ async function loadAdminSettings() {
         if (elTutRecapTitle) elTutRecapTitle.value = s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
         if (elTutRecapLink) elTutRecapLink.value = s.tutorial_recap_link || s.tutorial_video_link || "";
 
-        setSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", s.gemini_primary_model || "gemini-3.8-flash");
+        setSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", s.gemini_primary_model || "gemini-3.6-flash");
         setSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", s.gemini_fallback_1 || "gemini-3.5-flash");
         setSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", s.gemini_fallback_2 || "gemini-3.5-flash-lite");
-        setSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", s.gemini_fallback_3 || "gemini-3.7-flash");
+        setSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", s.gemini_fallback_3 || "gemini-flash-lite-latest");
 
         updateTutorialUI(s);
     } catch (e) {
@@ -3559,10 +3591,10 @@ function checkCustomModel(selectId) {
 
 async function saveGeminiModelSettings() {
     haptic("medium");
-    const primary = getSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", "gemini-3.8-flash");
+    const primary = getSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", "gemini-3.6-flash");
     const fb1 = getSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", "gemini-3.5-flash");
     const fb2 = getSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", "gemini-3.5-flash-lite");
-    const fb3 = getSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", "gemini-3.7-flash");
+    const fb3 = getSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", "gemini-flash-lite-latest");
 
     const payload = {
         gemini_primary_model: primary,

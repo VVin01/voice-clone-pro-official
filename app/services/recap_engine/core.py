@@ -701,7 +701,7 @@ def _distributed_freeze_graph(
         out_labels.append(label)
     filters.append(f"{''.join(out_labels)}concat=n={chunk_count}:v=1:a=0[vhyb]")
     visual, zoom = _visual_filters(mirror_video, zoom_factor, layout)
-    filters.append(f"[vhyb]{visual}[vout]")
+    filters.append(f"[vhyb]{visual},tpad=stop_mode=clone:stop_duration=2.0[vout]")
     metrics = {
         "desired_factor": target_duration / source_duration,
         "applied_factor": slow_factor,
@@ -760,11 +760,13 @@ def render_video_part(
         max_freeze_hold=max_freeze_hold,
     )
 
+    # CRITICAL: -t MUST come BEFORE -i so FFmpeg limits the INPUT read duration to
+    # source_duration instead of truncating the stretched OUTPUT duration at source_duration!
     common_input = [
         ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
         "-ss", f"{float(seg['video_start']):.6f}",
-        "-i", str(source),
         "-t", f"{source_duration:.6f}",
+        "-i", str(source),
         "-an",
     ]
 
@@ -791,8 +793,8 @@ def render_video_part(
         visual, zoom = _visual_filters(mirror_video, zoom_factor, layout)
         vf = sync_vf + "," + visual
         if frame_lock:
-            # Clone the last frame briefly so -frames:v can always be satisfied.
-            vf += ",tpad=stop_mode=clone:stop_duration=0.5"
+            # Clone the last frame so -frames:v can always be satisfied even if input ends a few frames early.
+            vf += ",tpad=stop_mode=clone:stop_duration=2.0"
             metrics["frame_count"] = float(frame_count)
         metrics["zoom_factor"] = zoom
         metrics["mirror_video"] = 1.0 if mirror_video else 0.0
@@ -1208,8 +1210,13 @@ def normalize_burmese_homoglyphs(text: Any) -> str:
 
 
 def ensure_system_myanmar_fonts() -> str:
-    """Ensure authentic Myanmar Unicode fonts (Pyidaungsu / Noto Sans Myanmar) are registered
-    with Fontconfig on Linux, and return the best available font family name."""
+    """Ensure authentic Myanmar Unicode fonts (Noto Sans Myanmar) are registered
+    with Fontconfig on Linux, and return the best available font family name.
+
+    NOTE: Noto Sans Myanmar has complete HarfBuzz mym2 GSUB pre-base reordering tables
+    required by libass so pre-base vowels ('ေ') and medials ('ြ') render on the left of
+    consonants instead of backwards.
+    """
     fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
     if sys.platform.startswith("linux"):
         try:
@@ -1220,11 +1227,32 @@ def ensure_system_myanmar_fonts() -> str:
                 target_dir.mkdir(parents=True, exist_ok=True)
 
             needs_cache = False
-            for ttf in fonts_dir.glob("*.ttf"):
-                dest = target_dir / ttf.name
-                if not dest.is_file() or dest.stat().st_size != ttf.stat().st_size:
+            noto_src = fonts_dir / "NotoSansMyanmar.ttf"
+            if noto_src.is_file():
+                dest = target_dir / noto_src.name
+                if not dest.is_file() or dest.stat().st_size != noto_src.stat().st_size:
                     try:
-                        shutil.copy2(ttf, dest)
+                        shutil.copy2(noto_src, dest)
+                        needs_cache = True
+                    except Exception:
+                        pass
+                # Remove legacy Pyidaungsu.ttf from system/user font dir so libass never picks its incomplete GSUB table
+                bad_pyi = target_dir / "Pyidaungsu.ttf"
+                if bad_pyi.is_file():
+                    try:
+                        bad_pyi.unlink()
+                        needs_cache = True
+                    except Exception:
+                        pass
+
+            conf_src = fonts_dir / "99-myanmar.conf"
+            if conf_src.is_file():
+                for conf_dir in (Path("/etc/fonts/conf.d"), Path.home() / ".config" / "fontconfig" / "conf.d"):
+                    try:
+                        if conf_dir == Path("/etc/fonts/conf.d") and not (conf_dir.exists() and os.access(str(conf_dir), os.W_OK)):
+                            continue
+                        conf_dir.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(conf_src, conf_dir / "99-myanmar.conf")
                         needs_cache = True
                     except Exception:
                         pass
@@ -1234,13 +1262,9 @@ def ensure_system_myanmar_fonts() -> str:
         except Exception:
             pass
 
-    # Resolve active font family via fc-match if available
+    # Resolve active font family via fc-match if available (prefer Noto Sans Myanmar first!)
     if shutil.which("fc-match"):
         try:
-            res = subprocess.run(["fc-match", "-f", "%{family}\n", "Pyidaungsu"], capture_output=True, text=True, timeout=5)
-            matched = (res.stdout or "").strip().lower()
-            if "pyidaungsu" in matched:
-                return "Pyidaungsu"
             res2 = subprocess.run(["fc-match", "-f", "%{family}\n", "Noto Sans Myanmar"], capture_output=True, text=True, timeout=5)
             matched2 = (res2.stdout or "").strip().lower()
             if "noto" in matched2 or "myanmar" in matched2:
@@ -1250,7 +1274,7 @@ def ensure_system_myanmar_fonts() -> str:
                 return "Padauk"
         except Exception:
             pass
-    return "Pyidaungsu"
+    return "Noto Sans Myanmar"
 
 
 def _fmt_ass_time(sec: float) -> str:
@@ -1268,7 +1292,7 @@ def write_synced_ass_file(
     ass_path: Path,
     cw: int,
     ch: int,
-    font_name: str = "Pyidaungsu",
+    font_name: str = "Noto Sans Myanmar",
     raw_font_size: int = 16,
     sub_style: str = "yellow",
     sub_lines: int = 1,
@@ -1280,6 +1304,9 @@ def write_synced_ass_file(
     cw = max(320, int(cw))
     ch = max(240, int(ch))
     is_vert = ch > cw
+    # Always map legacy "Pyidaungsu" to "Noto Sans Myanmar" for libass HarfBuzz mym2 shaping
+    if not font_name or font_name.strip().lower() == "pyidaungsu":
+        font_name = "Noto Sans Myanmar"
 
     # Canvas-scaled font size based on height
     scale_factor = (raw_font_size / 288.0)
@@ -1374,34 +1401,50 @@ def canonicalize_burmese_text(text: str) -> str:
     return t
 
 
-BURMESE_PROTECTED_WORDS = [
-    "သူငယ်ချင်း", "အရင်းနှီးဆုံး", "အရင်းနှီး", "ကျွန်တော်", "ကျွန်မ", "သူမ", "သူတို့",
-    "ကောင်မလေး", "ကောင်လေး", "လူငယ်လေး", "အမျိုးသမီး", "အမျိုးသား", "မအိပ်ရသေးဘူး",
-    "မထင်မှတ်ဘဲ", "မထင်မှတ်ထား", "တစ်ယောက်တည်း", "တစ်ယောက်", "အခုချက်ချင်း", "ကျေးဇူးတင်ပါတယ်",
-    "ကျေးဇူးတင်", "အဆင်ပြေ", "ပင်ပန်း", "ဒေါသထွက်", "သတိထား", "ပြန်ရောက်", "ဖြစ်သွားတာလဲ",
-    "အခြေအနေ", "အဆင်ပြေရဲ့လား", "ဘာတွေဖြစ်", "ဘာမှမလိုတော့ဘူး", "ငြိမ်ငြိမ်လေး"
-]
+BURMESE_PROTECTED_WORDS = sorted([
+    "သူငယ်ချင်း", "အရင်းနှီးဆုံး", "အရင်းနှီး", "ကျွန်တော့်ရဲ့", "ကျွန်တော့်ကို", "ကျွန်တော်",
+    "ကျွန်မရဲ့", "ကျွန်မကို", "ကျွန်မ", "သူမ", "သူတို့", "ကောင်မလေး", "ကောင်လေး", "လူငယ်လေး",
+    "အမျိုးသမီး", "အမျိုးသား", "မအိပ်ရသေးဘူး", "မထင်မှတ်ဘဲ", "မထင်မှတ်ထား", "တစ်ယောက်တည်း",
+    "တစ်ယောက်", "အခုချက်ချင်း", "ကျေးဇူးတင်ပါတယ်", "ကျေးဇူးတင်", "အဆင်ပြေရဲ့လား", "အဆင်ပြေ",
+    "ပင်ပန်း", "ဒေါသထွက်", "သတိထား", "ပြန်ရောက်", "ဖြစ်သွားတာလဲ", "အခြေအနေ", "ဘာတွေဖြစ်",
+    "ဘာမှမလိုတော့ဘူး", "ငြိမ်ငြိမ်လေး", "သလောက်", "ဘယ်လောက်", "ဒီလောက်", "အဲ့လောက်", "အဲ့ဒီလောက်",
+    "ကိန်းဂဏန်း", "အံ့အားသင့်", "မန်နေဂျာ", "အလုပ်သမား", "သေမတတ်", "ရေခဲတိုက်", "စည်းကမ်းချက်",
+    "လတ်လတ်ဆတ်ဆတ်", "ပတ်ဝန်းကျင်", "အခွင့်အရေး", "တစ်ခါတစ်ရံ", "ချက်ချင်းပဲ", "သက်သေပြ",
+], key=len, reverse=True)
+
+
+def _is_valid_burmese_token_boundary(text: str, idx: int) -> bool:
+    """Return True only if idx is the end of text, non-Myanmar char/punctuation, or a true syllable break."""
+    if idx >= len(text):
+        return True
+    ch = text[idx]
+    if not ('\u1000' <= ch <= '\u109F'):
+        return True
+    if '\u1040' <= ch <= '\u104B':
+        return True
+    return BURMESE_SYLLABLE_BREAK.match(text, idx) is not None
 
 
 def tokenize_burmese_words(text: str) -> list[str]:
     """Tokenize Burmese text into natural words/particles without breaking syllables or vowel clusters."""
     tokens = []
     i = 0
-    vowels_re = re.compile(r'[\u102B-\u103E\u1039\u103A]')
+    particles = [
+        'ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်',
+        'ကြောင့်', 'အတွက်', 'ပါတော့တယ်', 'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ',
+        'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်', '၊', '။', ' ',
+    ]
     while i < len(text):
         matched = False
         for pw in BURMESE_PROTECTED_WORDS:
-            if text[i:].startswith(pw):
+            if text[i:].startswith(pw) and _is_valid_burmese_token_boundary(text, i + len(pw)):
                 tokens.append(pw)
                 i += len(pw)
                 matched = True
                 break
         if not matched:
-            for p in ['ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်', 'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ', 'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်', '၊', '။', ' ']:
-                if text[i:].startswith(p):
-                    rest = text[i + len(p):]
-                    if len(p) == 1 and p in ['က', 'နဲ့', 'မှာ', 'ကို', 'မှ', 'သို့'] and rest and vowels_re.match(rest[0]):
-                        continue
+            for p in particles:
+                if text[i:].startswith(p) and _is_valid_burmese_token_boundary(text, i + len(p)):
                     tokens.append(p)
                     i += len(p)
                     matched = True
@@ -1734,9 +1777,18 @@ def apply_production_overlays(
         sub_esc = subtitles_path.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
         fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
         fonts_arg = ""
-        if fonts_dir.is_dir():
-            fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
+        ass_fonts_dir = work_dir / "ass_fonts"
+        try:
+            ass_fonts_dir.mkdir(parents=True, exist_ok=True)
+            noto_ttf = fonts_dir / "NotoSansMyanmar.ttf"
+            if noto_ttf.is_file():
+                shutil.copy2(noto_ttf, ass_fonts_dir / "NotoSansMyanmar.ttf")
+            fonts_dir_esc = ass_fonts_dir.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
+        except Exception:
+            if fonts_dir.is_dir():
+                fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
+                fonts_arg = f":fontsdir='{fonts_dir_esc}'"
 
         out = "vsub"
         if subtitles_path.suffix.lower() == ".ass":
@@ -1744,8 +1796,10 @@ def apply_production_overlays(
             # margins, and fonts embedded inside the ASS header.
             graph.append(f"{current}subtitles='{sub_esc}'{fonts_arg}[{out}]")
         else:
-            # Bind authentic Myanmar Unicode standard font (Pyidaungsu) for accurate complex script text shaping
+            # Bind authentic Myanmar Unicode standard font (Noto Sans Myanmar) for accurate complex script text shaping
             sub_font = str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+            if sub_font.strip().lower() == "pyidaungsu":
+                sub_font = "Noto Sans Myanmar"
             sub_lines = int(overlays.get("sub_lines", 1))
             raw_size = int(overlays.get("subtitles_font_size", 16))
             # WrapStyle=2 is NO WRAPPING (strictly keeps 1 line). WrapStyle=0 is smart multi-line wrapping.

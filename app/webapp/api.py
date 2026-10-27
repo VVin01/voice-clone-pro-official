@@ -790,13 +790,16 @@ async def upload_recap_video(
     extract_thumbnail_from_media(str(saved_path), str(thumb_path), timestamp_sec=best_ts)
 
     thumb_url = f"/api/recap/frame?path={file_id}_thumb.jpg" if thumb_path.is_file() else ""
+    display_title = Path(clean_name).stem or "Uploaded Movie Video"
+    UPLOADED_VIDEO_TITLES[str(saved_path)] = display_title
+    UPLOADED_VIDEO_TITLES[saved_path.name] = display_title
 
     return {
         "success": True,
         "file_id": file_id,
         "local_path": str(saved_path),
         "filename": clean_name,
-        "title": Path(clean_name).stem,
+        "title": display_title,
         "width": meta.get("width"),
         "height": meta.get("height"),
         "duration_seconds": int(round(dur_sec)),
@@ -817,13 +820,17 @@ async def get_recap_frame(
     clean_p = Path(path).name
     # Search in temp uploads dir
     cand = settings.storage_root / "temp" / "recap_uploads" / clean_p
-    if cand.is_file():
+    if cand.is_file() and t is None:
         return FileResponse(cand, media_type="image/jpeg")
 
     # If t is given and path points to an uploaded or local video file
     actual_path = settings.storage_root / "temp" / "recap_uploads" / clean_p
     if not actual_path.is_file():
-        actual_path = Path(path)
+        cand_path = Path(path)
+        actual_path = cand_path if cand_path.is_absolute() else (settings.storage_root / cand_path)
+
+    if not actual_path.is_file():
+        raise HTTPException(status_code=404, detail="Frame source file not found")
 
     # Security check: Ensure file is contained within configured storage root
     try:
@@ -831,6 +838,8 @@ async def get_recap_frame(
         res_storage = settings.storage_root.resolve()
         if not str(res_actual).startswith(str(res_storage)):
             raise HTTPException(status_code=403, detail="Access denied")
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -855,9 +864,31 @@ async def get_recap_frame(
 
 # ── 5. Recap Studio Configuration & Background Pipeline ─────────────────────
 RECAP_JOBS_REGISTRY: Dict[str, Dict[str, Any]] = {}
+UPLOADED_VIDEO_TITLES: Dict[str, str] = {}
+
+
+def _clean_recap_display_title(raw_title: Optional[str], fallback_url: Optional[str] = None) -> str:
+    """Sanitize raw local server paths (e.g. /app/storage/temp/recap_uploads/up_xxx.mp4) into clean display titles."""
+    for candidate in (raw_title, fallback_url):
+        val = str(candidate or "").strip()
+        if not val:
+            continue
+        if val in UPLOADED_VIDEO_TITLES:
+            return UPLOADED_VIDEO_TITLES[val]
+        base_name = Path(val).name
+        if base_name in UPLOADED_VIDEO_TITLES:
+            return UPLOADED_VIDEO_TITLES[base_name]
+        if "/storage/temp/recap_uploads/" in val.replace("\\", "/") or re.fullmatch(r"up_[0-9a-f]{8,12}\.\w+", base_name):
+            stem = Path(base_name).stem
+            return f"Uploaded Video ({stem})"
+        if not val.startswith("/app/") and not re.match(r"^[A-Za-z]:\\", val):
+            return val
+    return "Movie Recap Video"
+
 
 class RecapConfigRequest(BaseModel):
     url: str
+    title: Optional[str] = None
     voice_slug: str = "komin"
     story_style: str = "viral"        # viral, dramatic, funny, pov, standard
     ratio: str = "9:16"               # Original, 9:16, 16:9, 1:1
@@ -1310,10 +1341,11 @@ async def create_recap_job(
         deducted_credit = True
 
     job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    clean_display_title = _clean_recap_display_title(req.title, req.url)
     RECAP_JOBS_REGISTRY[job_id] = {
         "id": job_id,
         "user_id": user.id,
-        "title": req.url or "Movie Recap Video",
+        "title": clean_display_title,
         "status": "QUEUED",
         "progress_percent": 5,
         "progress_step": "0/4",
@@ -1337,7 +1369,7 @@ async def create_recap_job(
             job_type=JobType.RECAP.value,
             engine="recap",
             preset_voice=req.voice_slug,
-            input_text=req.url,
+            input_text=clean_display_title,
             seconds_estimated=120,
         )
         db.add(db_job)
@@ -1632,13 +1664,14 @@ async def get_user_history(
                 "download": f"/api/audio/download/{j.id}",
             }
 
+        raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
         out.append({
             "id": j.id,
             "job_type": "RECAP" if is_recap else "VOICE_CLONE",
             "engine": j.engine,
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
             "status": j.status,
-            "input_snippet": (j.input_text[:70] + "...") if j.input_text and len(j.input_text) > 70 else (j.input_text or ""),
+            "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
             "created_at": j.created_at.isoformat() if j.created_at else None,
             "time_ago": time_ago,
             "download_url": download_url,
@@ -1741,6 +1774,7 @@ async def get_admin_global_history(
                 "download": f"/api/audio/download/{job.id}",
             }
 
+        raw_snippet = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
         out.append({
             "id": job.id,
             "user_id": job.user_id,
@@ -1750,7 +1784,7 @@ async def get_admin_global_history(
             "engine": job.engine,
             "preset_voice": job.preset_voice or ("Thiha" if is_recap else "Standard"),
             "status": job.status,
-            "input_snippet": (job.input_text[:70] + "...") if job.input_text and len(job.input_text) > 70 else (job.input_text or ""),
+            "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "time_ago": time_ago,
             "download_url": download_url,
@@ -2376,10 +2410,10 @@ async def get_admin_settings(
         "tutorial_recap_link": getattr(settings, "tutorial_recap_link", "https://t.me/VoiceClonePro/16"),
         "tutorial_recap_enabled": getattr(settings, "tutorial_recap_enabled", True),
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
-        "gemini_primary_model": getattr(settings, "gemini_primary_model", "gemini-3.8-flash"),
+        "gemini_primary_model": getattr(settings, "gemini_primary_model", "gemini-3.6-flash"),
         "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),
         "gemini_fallback_2": getattr(settings, "gemini_fallback_2", "gemini-3.5-flash-lite"),
-        "gemini_fallback_3": getattr(settings, "gemini_fallback_3", "gemini-3.7-flash"),
+        "gemini_fallback_3": getattr(settings, "gemini_fallback_3", "gemini-flash-lite-latest"),
     }
 
 

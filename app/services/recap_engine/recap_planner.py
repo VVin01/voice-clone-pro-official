@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
-PLANNER_MODE = "timestamp_translation_en_to_mm_narrator_v2"
+PLANNER_MODE = "timestamp_translation_en_to_mm_narrator_v3"
 TRANSLATION_DIRECTION = "en_to_mm"
 # Whole-sentence lines like VOXCPM recap (2026-10-12): a line ends at a sentence end (or a clause after 6.5 s,
 # a breath after 10 s, at most 24 s). The old 4-6 s lines cut 20-35% of sentences in two, and Gemini then told a
@@ -39,14 +39,22 @@ WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "auto")
 
 
 GEMINI_MODEL_FALLBACK_CHAIN = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.8-flash",
+]
+
+DEPRECATED_GEMINI_MODELS = {
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
     "gemini-1.5-pro",
-]
+}
 
 
 class GeminiKeyPoolExhaustedError(RuntimeError):
@@ -139,24 +147,35 @@ def _configure_gemini_key_pool(
     except Exception:
         primary = fb1 = fb2 = fb3 = None
 
-    primary = primary or os.getenv("GEMINI_PRIMARY_MODEL") or os.getenv("GEMINI_TEXT_MODEL") or "gemini-3.8-flash"
+    primary = primary or os.getenv("GEMINI_PRIMARY_MODEL") or os.getenv("GEMINI_TEXT_MODEL") or "gemini-3.6-flash"
     fb1 = fb1 or os.getenv("GEMINI_FALLBACK_1") or "gemini-3.5-flash"
     fb2 = fb2 or os.getenv("GEMINI_FALLBACK_2") or "gemini-3.5-flash-lite"
-    fb3 = fb3 or os.getenv("GEMINI_FALLBACK_3") or "gemini-3.7-flash"
+    fb3 = fb3 or os.getenv("GEMINI_FALLBACK_3") or "gemini-flash-lite-latest"
 
-    admin_chain = [primary, fb1, fb2, fb3]
+    # Automatically replace retired 2.5/2.0/1.5 models or slow-hanging default 3.8/3.7 at the head of the chain
+    raw_chain = [primary, fb1, fb2, fb3] + (model_chain or GEMINI_MODEL_FALLBACK_CHAIN)
     models = []
-    for x in admin_chain + (model_chain or GEMINI_MODEL_FALLBACK_CHAIN):
+    deferred_slow = []
+    for x in raw_chain:
         clean = str(x or "").strip()
-        if clean and clean not in models:
+        if not clean or clean in DEPRECATED_GEMINI_MODELS:
+            continue
+        if clean in ("gemini-3.8-flash", "gemini-3.7-flash"):
+            if clean not in deferred_slow:
+                deferred_slow.append(clean)
+            continue
+        if clean not in models:
             models.append(clean)
+    for slow_m in deferred_slow:
+        if slow_m not in models:
+            models.append(slow_m)
 
     if not models:
-        models = [str(getattr(ai, "text_model", "gemini-3.8-flash") or "gemini-3.8-flash")]
+        models = list(GEMINI_MODEL_FALLBACK_CHAIN)
 
     model_index = 0
     key_index = 0
-    timeout_seconds = max(30, min(int(request_timeout_seconds), 600))
+    timeout_seconds = max(25, min(int(request_timeout_seconds), 90))
     http_options = {
         "timeout": timeout_seconds * 1000,
         "retryOptions": {"attempts": 1},
@@ -1280,6 +1299,35 @@ def _validate_translation_items(
     return out
 
 
+def _enforce_style_and_gender_particles(text: str, *, style: str, is_female: bool) -> str:
+    """Deterministically strip mismatched gender/narrator particles from Burmese sentences."""
+    cleaned = _sanitize_translation_text(text)
+    if not cleaned:
+        return cleaned
+    if is_female or style == "pov":
+        # Strip male commentator particles ('ဗျာ', 'ခင်ဗျာ') at sentence/clause endings
+        cleaned = re.sub(r"(ပါတော့တယ်|ပါတယ်|တယ်|တာပဲ|တာပေါ့|သေးတယ်|ခဲ့တယ်|နေတယ်|ရတယ်|ပါပဲ)ခင်ဗျာ(?=[။\s]|$)", r"\1", cleaned)
+        cleaned = re.sub(r"(ပါတော့တယ်|ပါတယ်|တယ်|တာပဲ|တာပေါ့|သေးတယ်|ခဲ့တယ်|နေတယ်|ရတယ်|ပါပဲ)ဗျာ(?=[။\s]|$)", r"\1", cleaned)
+        cleaned = re.sub(r"ခင်ဗျာ(?=[။\s]|$)", "ရှင့်" if (is_female and style != "pov") else "", cleaned)
+        cleaned = re.sub(r"ဗျာ(?=[။\s]|$)", "", cleaned)
+    if style == "pov":
+        pronoun = "ကျွန်မ" if is_female else "ကျွန်တော်"
+        possessive = "ကျွန်မရဲ့" if is_female else "ကျွန်တော့်ရဲ့"
+        obj_pronoun = "ကျွန်မကို" if is_female else "ကျွန်တော့်ကို"
+        # Replace crude first-person 'ငါ' at the start of clauses when clearly the POV narrator
+        cleaned = re.sub(r"(^|[။\s])ငါ့ရဲ့", rf"\1{possessive}", cleaned)
+        cleaned = re.sub(r"(^|[။\s])ငါ့ကို", rf"\1{obj_pronoun}", cleaned)
+        cleaned = re.sub(r"(^|[။\s])ငါကလည်း", rf"\1{pronoun}ကလည်း", cleaned)
+        cleaned = re.sub(r"(^|[။\s])ငါလည်း", rf"\1{pronoun}လည်း", cleaned)
+        cleaned = re.sub(r"(^|[။\s])ငါကတော့", rf"\1{pronoun}ကတော့", cleaned)
+        if is_female:
+            cleaned = re.sub(r"ကျွန်တော့်", "ကျွန်မ", cleaned)
+            cleaned = re.sub(r"ကျွန်တော်", "ကျွန်မ", cleaned)
+        else:
+            cleaned = re.sub(r"ကျွန်မ", "ကျွန်တော်", cleaned)
+    return _clean(cleaned)
+
+
 def translate_batch(
     ai: Any,
     *,
@@ -1289,6 +1337,7 @@ def translate_batch(
     next_context: list[dict[str, Any]],
     log: LogFn,
     narrative_style: str = "narrator",
+    is_female: bool = False,
     _split_depth: int = 0,
 ) -> list[dict[str, Any]]:
     style = str(narrative_style or "viral").lower().strip()
@@ -1298,10 +1347,18 @@ def translate_batch(
         if is_very_first_batch
         else "- DO NOT use opening intro phrases ('ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', 'ပရိသတ်ကြီးတို့ရေ...') anywhere in this batch because the story is already in progress!"
     )
+    pov_pronoun = "ကျွန်မ" if is_female else "ကျွန်တော်"
+    pov_possessive = "ကျွန်မရဲ့" if is_female else "ကျွန်တော့်ရဲ့"
+    gender_rule = (
+        "- VOICE GENDER RULE (FEMALE VOICE): The selected narrator voice is FEMALE. NEVER use male sentence-ending particles like 'ဗျာ' or 'ခင်ဗျာ' anywhere! End sentences naturally with 'တယ်'၊ 'ပါတယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'။"
+        if is_female
+        else "- VOICE GENDER RULE (MALE VOICE): The selected narrator voice is MALE. Avoid overusing 'ဗျာ' on every line; end sentences naturally with 'တယ်'၊ 'ပါတယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'လိုက်ပါတယ်'။"
+    )
     if style == "viral":
         style_prompt = f"""PRESENTATION STYLE: VIRAL MOVIE RECAP STORYTELLER (🔥 ဆွဲဆောင်မှုရှိပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင်)
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the listener clearly understands WHO is doing WHAT, TO WHOM, and WHY (ဇာတ်လမ်း အချိတ်အဆက် မိပြီး အဓိပ္ပာယ်ပြည့်စုံရမည်).
 {intro_rule}
+{gender_rule}
 - NEVER insert random generic filler phrases ('ကြည့်ပါဦးဗျာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲ...', 'မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...') that disconnect consecutive sentences or replace actual plot meaning.
 - Turn short or fragmented source dialogues into clear, connected third-person Burmese recap storytelling using natural transition words ('အဲ့ဒီအခါမှာတော့...', 'ဒါကိုမြင်တော့...', 'ဒါကြောင့် သူက...', 'အဲ့ဒီနောက်မှာတော့...').
 - Tone: Engaging, clear, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်).
@@ -1310,25 +1367,31 @@ def translate_batch(
         style_prompt = f"""PRESENTATION STYLE: HUMOROUS & WITTY MOVIE RECAP (😂 ပေါ့ပါးသွက်လက်ပြီး အချိတ်အဆက်မိသော ဟာသဇာတ်လမ်းပြော စတိုင်)
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the plot is 100% coherent and easy to follow.
 {intro_rule}
+{gender_rule}
 - Keep 100% of the real plot and cause-and-effect intact while narrating characters' actions and reactions in a lively, witty, entertaining spoken Burmese tone.
 - NEVER replace actual story events with disconnected generic jokes or repetitive filler phrases.
-- STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ဗျာ'၊ 'ပါပဲ'၊ 'လိုက်ပါတယ်'။"""
+- STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်ပါတယ်'။"""
     elif style == "pov":
-        style_prompt = f"""PRESENTATION STYLE: CHARACTER IMMERSIVE POV (👁️ ဇာတ်ကောင်ရှုထောင့်မှ အချိတ်အဆက်မိမိ ပြောပြသော စတိုင်)
-- SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment from the main character's perspective ('ကျွန်တော်/ကျွန်မ').
+        style_prompt = f"""PRESENTATION STYLE: FIRST-PERSON PROTAGONIST POV (👁️ အဓိကဇာတ်ကောင် '{pov_pronoun}' ရှုထောင့်မှ ကိုယ်တိုင်ကြုံတွေ့ရသလို အချိတ်အဆက်မိမိ ပြောပြသော စတိုင်)
+- SEAMLESS FIRST-PERSON POV CONTINUITY IS PRIORITY #1: Narrate the entire story consistently from the main character's own first-person perspective using '{pov_pronoun}' ('{pov_possessive}').
+- PRONOUN & SPEAKER CLARITY RULE (အလွန်အရေးကြီး):
+  1. Always refer to yourself (the protagonist narrator) as '{pov_pronoun}' — NEVER use crude 'ငါ' for narration and NEVER switch to third-person narrator commentary ('သူတို့...', 'ကောင်မလေးက...', '...ကြပါတော့တယ်ဗျာ') in later scenes!
+  2. When other characters (antagonists, bosses, coworkers, family) speak or act, ALWAYS frame their words in clear reported/indirect speech or explicitly name the speaker (e.g., 'မန်နေဂျာက {pov_pronoun}ကို ... လို့ မောက်မာစွာ ပြောလာတယ်', 'သူက သူ့အနေနဲ့ ... ဆိုပြီး ခြိမ်းခြောက်လိုက်တယ်') so the listener NEVER confuses another character's 'I/me' with '{pov_pronoun}'!
 {intro_rule}
-- Clearly convey what is happening in each scene and how the protagonist and other characters interact so the storyline flows smoothly without confusing jumps.
-- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'။"""
+- VOICE & PARTICLE RULE: In POV mode you are the main character telling your own story — NEVER use commentator particles like 'ဗျာ' or 'ခင်ဗျာ' or 'ပရိသတ်ကြီးတို့ရေ'. End sentences naturally with 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'၊ 'ရတယ်'။
+- STRICTLY PROHIBITED: Dry, bookish literary writing ('သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်')."""
     elif style == "dramatic":
         style_prompt = f"""PRESENTATION STYLE: SUSPENSE / THRILLER DRAMATIC RECAP (🎭 သည်းထိတ်ရင်ဖို ဒရာမာ ဇာတ်လမ်းပြော စတိုင်)
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment, clearly explaining the cause-and-effect of every tense moment.
 {intro_rule}
+{gender_rule}
 - Convey the true emotional stakes, motives, and actions of the characters in smooth, gripping spoken Burmese without inserting generic filler hooks.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     else:  # standard / narrator
         style_prompt = f"""PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (📖 သဘာဝကျပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the entire video sounds like ONE continuous, coherent story.
 {intro_rule}
+{gender_rule}
 - Clearly state who is speaking or acting, to whom, and why, using natural Burmese narrative connectives ('အဲ့ဒီနောက်...', 'ဒါကိုကြားတော့...', 'ဒါပေမဲ့လည်း...').
 - Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
@@ -1339,10 +1402,11 @@ Convert the CURRENT spoken dialogue/narration items (transcribed from the video 
 
 {style_prompt}
 
-CORE PRINCIPLE — LOGICAL STORY COHERENCE (ဇာတ်လမ်း အချိတ်အဆက် မိစေရန်):
+CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်း အချိတ်အဆက် မိပြီး အချိန်ကိုက်ဖြစ်စေရန်):
 1. Source transcripts from movies/dramas often contain short dialogue lines or idiomatic expressions. NEVER translate them as isolated, disconnected, literal fragments that make no sense on their own!
 2. Always read STORY CONTEXT MEMORY, PREVIOUS CONTEXT, CURRENT ITEMS, and NEXT CONTEXT together to understand the full scene: WHO is the subject, WHO are they talking to, WHAT just happened in the previous line, and WHY are they saying/doing this.
 3. Weave each CURRENT item into a smooth, meaningful Burmese recap sentence that flows naturally from the preceding ID into the next ID.
+4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 14 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!
 
 HARD RULES:
 1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every segment's true meaning must be faithfully narrated inside its own ID.
@@ -1384,6 +1448,10 @@ CRITICAL OUTPUT ID PROTOCOL:
         try:
             payload = _gemini_json(ai, prompt, retries=1, log=log)
             translated = _validate_translation_items(current, payload, log=log)
+            for row in translated:
+                row["translation"] = _enforce_style_and_gender_particles(
+                    row.get("translation", ""), style=style, is_female=is_female
+                )
             _assert_no_adjacent_translation_duplicates(translated, previous_context)
             stray = [f"ID {int(x['id']):05d}: {' '.join(_foreign_letters(x['translation']))}"
                      for x in translated if _foreign_letters(x["translation"])]
@@ -1459,6 +1527,7 @@ CRITICAL OUTPUT ID PROTOCOL:
             next_context=left_next,
             log=log,
             narrative_style=narrative_style,
+            is_female=is_female,
             _split_depth=_split_depth + 1,
         )
         right_prev = (list(previous_context or []) + translated_left)[-context_limit:]
@@ -1470,6 +1539,7 @@ CRITICAL OUTPUT ID PROTOCOL:
             next_context=list(next_context or []),
             log=log,
             narrative_style=narrative_style,
+            is_female=is_female,
             _split_depth=_split_depth + 1,
         )
         combined = translated_left + translated_right
@@ -1489,6 +1559,7 @@ def audit_and_repair_batch(
     next_context: list[dict[str, Any]] | None = None,
     log: LogFn,
     narrative_style: str = "narrator",
+    is_female: bool = False,
 ) -> list[dict[str, Any]]:
     """Mandatory per-ID ownership/completeness audit; only failed rows may be rewritten.
 
@@ -1501,7 +1572,18 @@ def audit_and_repair_batch(
     """
     previous_context = list(previous_context or [])
     next_context = list(next_context or [])
-    target_name = f"Burmese movie recap narration ({narrative_style.upper()} style)"
+    style = str(narrative_style or "narrator").lower().strip()
+    pov_pronoun = "ကျွန်မ" if is_female else "ကျွန်တော်"
+    target_name = f"Burmese movie recap narration ({style.upper()} style)"
+    audit_style_rule = (
+        f"- STRICT POV CONSISTENCY: Every row MUST stay in first-person protagonist POV using '{pov_pronoun}'. NEVER use crude 'ငါ' for the narrator, NEVER let another character's direct quote use 'ငါ' without clear reported-speech framing, and NEVER switch to third-person commentary or use 'ဗျာ'/'ခင်ဗျာ'!"
+        if style == "pov"
+        else (
+            "- VOICE GENDER CONSISTENCY: The narrator voice is FEMALE — NEVER use male particles 'ဗျာ' or 'ခင်ဗျာ'!"
+            if is_female
+            else "- VOICE GENDER CONSISTENCY: Keep natural spoken Burmese sentence endings."
+        )
+    )
 
     def _audit_window(
         current_rows: list[dict[str, Any]],
@@ -1536,7 +1618,8 @@ CRITICAL ID PROTOCOL:
 
 For EVERY CURRENT ID check:
 - faithful scene narration: accurately reflects the events, dialogues, and characters in the segment;
-- style adherence: maintain the requested {narrative_style.upper()} style and captivating conversational energy;
+- style adherence: maintain the requested {style.upper()} style and captivating conversational energy;
+{audit_style_rule}
 - natural spoken colloquial style: strictly avoid formal literary 'သည်'/'သဖြင့်' bookish endings, no English/Latin words;
 - cinematic narrative flow: ensure natural, complete spoken sentences instead of awkward word-by-word literal translations or broken dialogue fragments;
 - strictly standard Myanmar Unicode characters only (no homoglyphs from Ethiopic or Georgian scripts);
@@ -1582,10 +1665,16 @@ Your checks[].id list MUST equal exactly: {exact_ids_json}
                     got_ids.append(uid)
                     status = _clean(check.get("status")).lower()
                     if status == "pass":
+                        if uid in by_id:
+                            by_id[uid]["translation"] = _enforce_style_and_gender_particles(
+                                by_id[uid].get("translation", ""), style=style, is_female=is_female
+                            )
                         continue
                     if status != "repair":
                         raise ValueError(f"invalid audit status for ID {uid}: {status}")
-                    replacement = _clean(check.get("translation"))
+                    replacement = _enforce_style_and_gender_particles(
+                        _clean(check.get("translation")), style=style, is_female=is_female
+                    )
                     if uid not in by_id or not replacement:
                         raise ValueError(f"missing repair translation for ID {uid}")
                     by_id[uid]["translation"] = replacement
@@ -1730,8 +1819,9 @@ class RecapPlanBuilder:
         atomic_max_duration: float = 5.6,
         atomic_target_duration: float = 4.2,
         gemini_request_timeout_seconds: int = 120,
-        gemini_text_model: str = "gemini-3.5-flash",
+        gemini_text_model: str = "gemini-3.6-flash",
         narrative_style: str = "narrator",
+        is_female: bool = False,
     ):
         self.runtime_root = Path(runtime_root).resolve()
         self.gemini_env_path = Path(gemini_env_path).expanduser().resolve() if str(gemini_env_path or "").strip() else None
@@ -1744,6 +1834,7 @@ class RecapPlanBuilder:
         self.progress = progress
         self.should_stop = should_stop
         self.narrative_style = str(narrative_style or "narrator").lower().strip()
+        self.is_female = bool(is_female)
         self.translation_batch_max_items = max(5, int(translation_batch_max_items))
         self.story_context_batch_max_items = max(10, int(story_context_batch_max_items))
         self.context_overlap = max(0, int(context_overlap))
@@ -1752,7 +1843,7 @@ class RecapPlanBuilder:
         self.atomic_max_duration = max(4.0, float(atomic_max_duration))
         self.atomic_target_duration = max(2.5, min(float(atomic_target_duration), self.atomic_max_duration))
         self.gemini_request_timeout_seconds = max(30, min(int(gemini_request_timeout_seconds), 600))
-        self.gemini_text_model = _clean(gemini_text_model) or "gemini-3.5-flash"
+        self.gemini_text_model = _clean(gemini_text_model) or "gemini-3.6-flash"
 
     def _validate_runtime(self) -> None:
         required = [
@@ -1790,7 +1881,12 @@ class RecapPlanBuilder:
         plan_file = job_dir / "smart_sync_plan.json"
         state_file = job_dir / "planner_checkpoint.json"
         fp = _source_fingerprint_for_mode(
-            source, PLANNER_MODE + "|" + TRANSLATION_DIRECTION + f"|whisper:{whisper_model}:{whisper_language}|style:{self.narrative_style}")
+            source,
+            PLANNER_MODE
+            + "|"
+            + TRANSLATION_DIRECTION
+            + f"|whisper:{whisper_model}:{whisper_language}|style:{self.narrative_style}|female:{int(self.is_female)}",
+        )
         segmentation_profile = _job_segmentation_profile(state_file, translations_file)
         sentence_lines = segmentation_profile == SEGMENTATION_PROFILE
 
@@ -2111,6 +2207,7 @@ class RecapPlanBuilder:
                         next_context=nxt,
                         log=self.log,
                         narrative_style=self.narrative_style,
+                        is_female=self.is_female,
                     )
                 except GeminiKeyPoolExhaustedError as exc:
                     saved = len(translated_all)
@@ -2129,6 +2226,7 @@ class RecapPlanBuilder:
                         next_context=nxt,
                         log=self.log,
                         narrative_style=self.narrative_style,
+                        is_female=self.is_female,
                     )
                 translated = _drop_foreign_letters(translated, self.log)
                 for row in translated:

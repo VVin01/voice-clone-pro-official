@@ -46,6 +46,26 @@ SETTING_TYPES: dict[str, type] = {
 }
 
 
+DEPRECATED_GEMINI_SETTING_DEFAULTS: dict[str, str] = {
+    "gemini_primary_model": "gemini-3.6-flash",
+    "gemini_fallback_1": "gemini-3.5-flash",
+    "gemini_fallback_2": "gemini-3.5-flash-lite",
+    "gemini_fallback_3": "gemini-flash-lite-latest",
+}
+
+DEPRECATED_OR_SLOW_GEMINI_MODELS: set[str] = {
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+}
+
+
 async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
     """Load persistent settings from database into in-memory settings configuration."""
     stmt = select(BotSetting)
@@ -55,6 +75,8 @@ async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
     for row in rows:
         key = row.key
         raw_val = row.value
+        if key in DEPRECATED_GEMINI_SETTING_DEFAULTS and str(raw_val or "").strip().lower() in DEPRECATED_OR_SLOW_GEMINI_MODELS:
+            raw_val = DEPRECATED_GEMINI_SETTING_DEFAULTS[key]
         loaded[key] = raw_val
         if key in SETTING_TYPES:
             expected_type = SETTING_TYPES[key]
