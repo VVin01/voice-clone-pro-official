@@ -153,7 +153,7 @@ def run_recap_pipeline(
     plan_path, plan = planner.build(
         source=source,
         job_dir=target_job_dir,
-        source_title=source.stem,
+        source_title=title_text or source.stem,
         reuse=True,
     )
 

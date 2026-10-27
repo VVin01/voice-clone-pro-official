@@ -910,7 +910,9 @@ def _clean_recap_display_title(raw_title: Optional[str], fallback_url: Optional[
             stem = Path(base_name).stem
             return f"Uploaded Video ({stem})"
         if not val.startswith("/app/") and not re.match(r"^[A-Za-z]:\\", val):
-            return val
+            cleaned = re.sub(r'#\S+', '', val).strip()
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip(' -_,|')
+            return cleaned or val
     return "Movie Recap Video"
 
 

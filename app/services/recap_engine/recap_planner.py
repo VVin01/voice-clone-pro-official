@@ -1158,6 +1158,7 @@ def build_story_context(
     ai: Any,
     units: list[dict[str, Any]],
     *,
+    source_title: str = "",
     batch_max_items: int,
     log: LogFn,
     should_stop: Callable[[], bool],
@@ -1191,9 +1192,10 @@ def build_story_context(
             continue
         if should_stop():
             raise InterruptedError("STOP requested during story-context pass")
+        title_block = f"\nVIDEO TITLE / PREMISE (အဓိက ခေါင်းစဉ်နှင့် ဇာတ်လမ်းနောက်ခံ):\n{source_title.strip()}\n" if source_title.strip() else ""
         prompt = f"""
 You are building CONTEXT MEMORY for a later translation task.
-Do not translate the transcript now. Do not write narration. Do not summarize away named facts.
+Do not translate the transcript now. Do not write narration. Do not summarize away named facts.{title_block}
 Read this next chronological source chunk and UPDATE the existing compact context memory.
 The memory exists only to keep names, relationships, terminology, locations, identities,
 and the current story state consistent when later translation requests are sent in separate API calls.
@@ -1331,6 +1333,7 @@ def _enforce_style_and_gender_particles(text: str, *, style: str, is_female: boo
 def translate_batch(
     ai: Any,
     *,
+    source_title: str = "",
     story_context: dict[str, Any],
     previous_context: list[dict[str, Any]],
     current: list[dict[str, Any]],
@@ -1421,8 +1424,9 @@ HARD RULES:
 10. Return JSON only with top-level key "items". Each item must contain integer "id" and non-empty string "translation".
 11. NEVER return placeholders such as "...", "…", dashes, or empty text.
 """
+    title_block = f"\nVIDEO TITLE / PREMISE (အဓိက ခေါင်းစဉ်နှင့် ဇာတ်လမ်းနောက်ခံ):\n{source_title.strip()}\n" if source_title.strip() else ""
     prompt = f"""
-{task_rules}
+{task_rules}{title_block}
 
 STORY CONTEXT MEMORY:
 {json.dumps(story_context, ensure_ascii=False)}
@@ -1521,6 +1525,7 @@ CRITICAL OUTPUT ID PROTOCOL:
         left_next = (right_rows + list(next_context or []))[:lookahead_limit]
         translated_left = translate_batch(
             ai,
+            source_title=source_title,
             story_context=story_context,
             previous_context=list(previous_context or [])[-context_limit:],
             current=left_rows,
@@ -1533,6 +1538,7 @@ CRITICAL OUTPUT ID PROTOCOL:
         right_prev = (list(previous_context or []) + translated_left)[-context_limit:]
         translated_right = translate_batch(
             ai,
+            source_title=source_title,
             story_context=story_context,
             previous_context=right_prev,
             current=right_rows,
@@ -2107,6 +2113,7 @@ class RecapPlanBuilder:
             context_source_fp = fp + "|seg:" + segmentation_profile
             story_context = build_story_context(
                 ai, units,
+                source_title=source_title,
                 batch_max_items=self.story_context_batch_max_items,
                 log=self.log,
                 should_stop=self.should_stop,
@@ -2201,6 +2208,7 @@ class RecapPlanBuilder:
                 try:
                     translated = translate_batch(
                         ai,
+                        source_title=source_title,
                         story_context=story_context,
                         previous_context=prev,
                         current=batch,
@@ -2264,7 +2272,7 @@ class RecapPlanBuilder:
         plan["boundary_profile"] = BOUNDARY_PROFILE
         plan["translation_direction"] = TRANSLATION_DIRECTION
         plan["narrative_style"] = self.narrative_style
-        plan["source_language"] = "en"
+        plan["source_language"] = str(transcript.get("language") or "en")
         plan["target_language"] = "mm"
         plan["translation_batch_count"] = len(batches)
         plan["atomic_unit_count"] = len(translated_all)

@@ -4,6 +4,7 @@ import html
 import json
 import logging
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message

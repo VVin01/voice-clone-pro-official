@@ -1225,7 +1225,9 @@ class MediaDownloader:
             if progress_callback:
                 progress_callback(0, 4, "📥 Downloading source video from URL...")
             recap_max_height = 1080 if is_vip else 720
-            source_video_path, _ = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
+            source_video_path, info = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
+            if not title_text and isinstance(info, dict) and info.get("title"):
+                title_text = str(info["title"]).strip()
 
         # Enforce maximum video duration limit: Free users = 2 mins (120s), VIP = 10 mins (600s)
         try:
@@ -1342,7 +1344,9 @@ class MediaDownloader:
                 raise FileNotFoundError(f"Source video not found: {source_video_path}")
         else:
             recap_max_height = 1080 if is_vip else 720
-            source_video_path, _ = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
+            source_video_path, info = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
+            if not title_text and isinstance(info, dict) and info.get("title"):
+                title_text = str(info["title"]).strip()
 
         if at_seconds is None or float(at_seconds) <= 0:
             at_seconds = find_best_preview_timestamp(source_video_path, target_dir=dest_dir)
