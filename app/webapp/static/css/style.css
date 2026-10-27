@@ -37,7 +37,7 @@
     --shadow-card: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
     --shadow-gold: 0 0 20px rgba(245, 158, 11, 0.25);
     
-    --font-my: 'Pyidaungsu', 'Noto Sans Myanmar', 'Padauk', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-my: 'Plus Jakarta Sans', 'Noto Sans Myanmar', 'Padauk', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-en: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -56,7 +56,7 @@ body.dark-theme {
     color: var(--text-primary);
     font-family: var(--font-my);
     font-size: 15px;
-    line-height: 1.5;
+    line-height: 1.62;
     overflow-x: hidden;
     user-select: none;
     -webkit-user-select: none;

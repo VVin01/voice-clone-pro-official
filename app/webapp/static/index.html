@@ -6,11 +6,11 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261023_studio_luxury_v11">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261028_studio_luxury_v12">
     <!-- Google Fonts for crisp typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Padauk:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Myanmar:wght@400;500;600;700&family=Padauk:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body class="dark-theme">
     <div id="app" class="app-container">
@@ -86,9 +86,12 @@
                     <span class="notice-text" data-i18n="queue_notice_voxcpm">⚡ ပုံမှန်ခန့်မှန်းကြာချိန်: ၅-၁၅ စက္ကန့် • Live Cloud AI စနစ်</span>
                 </div>
 
-                <!-- Engine Selector Card -->
+                <!-- Step 1: Unified Engine & Voice Mode Selector Card -->
                 <div class="card glass engine-card">
-                    <div class="card-label" data-i18n="engine_label">အသုံးပြုမည့် AI Engine ရွေးချယ်ပါ</div>
+                    <div class="step-badge-title mb-2">
+                        <span class="step-num-pill">၁</span>
+                        <span class="step-title" data-i18n="engine_label">အသုံးပြုမည့် AI Engine နှင့် အသံ ရွေးချယ်ပါ</span>
+                    </div>
                     <div class="segmented-control">
                         <button class="seg-btn active" data-engine="voxcpm" id="btn-engine-voxcpm">
                             <span class="seg-title" data-i18n="engine_voxcpm_title">☁️ VoxCPM (Cloud AI)</span>
@@ -103,9 +106,9 @@
 
                 <!-- VoxCPM Mode: Curated Personas vs Custom Clone -->
                 <div id="voxcpm-mode-section">
-                    <div class="card glass">
-                        <div class="card-label" data-i18n="persona_mode_title">အသံရွေးချယ်မှု စတိုင်လ်</div>
-                        <div class="segmented-control sm">
+                    <!-- 12 Gemini Curated Personas & Custom Toggle Card -->
+                    <div class="card glass" id="curated-personas-card-wrap">
+                        <div class="segmented-control sm mb-2">
                             <button class="seg-btn active" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
                                 <span class="seg-title" data-i18n="btn_mode_curated">🌟 Curated Voices (၁၂ မျိုး)</span>
                             </button>
@@ -113,38 +116,37 @@
                                 <span class="seg-title" data-i18n="btn_mode_custom">🎙️ Custom Voice Clone</span>
                             </button>
                         </div>
-                    </div>
 
-                    <!-- 12 Gemini Curated Personas Grid -->
-                    <div class="card glass" id="curated-personas-card">
-                        <div class="card-header-row">
-                            <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ (၁၂ မျိုး)</div>
-                            <span class="count-badge" id="personas-count">12 Personas</span>
+                        <div id="curated-personas-card">
+                            <div class="card-header-row">
+                                <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော Gemini အသံများ (၁၂ မျိုး)</div>
+                                <span class="count-badge" id="personas-count">12 Personas</span>
+                            </div>
+                            <div class="persona-filter-row">
+                                <button type="button" class="filter-chip active" data-filter="all" onclick="filterPersonas('all')">🌟 အားလုံး (၁၂)</button>
+                                <button type="button" class="filter-chip" data-filter="male" onclick="filterPersonas('male')">👨 ယောက်ျားလေး (၆)</button>
+                                <button type="button" class="filter-chip" data-filter="female" onclick="filterPersonas('female')">👩 မိန်းကလေး (၆)</button>
+                            </div>
+                            <div class="personas-grid" id="personas-grid">
+                                <!-- Populated dynamically via JS with all 12 personas -->
+                            </div>
                         </div>
-                        <div class="persona-filter-row">
-                            <button type="button" class="filter-chip active" data-filter="all" onclick="filterPersonas('all')">🌟 အားလုံး (၁၂)</button>
-                            <button type="button" class="filter-chip" data-filter="male" onclick="filterPersonas('male')">👨 ယောက်ျားလေး (၆)</button>
-                            <button type="button" class="filter-chip" data-filter="female" onclick="filterPersonas('female')">👩 မိန်းကလေး (၆)</button>
-                        </div>
-                        <div class="personas-grid" id="personas-grid">
-                            <!-- Populated dynamically via JS with all 12 personas -->
-                        </div>
-                    </div>
 
-                    <!-- Custom Reference Audio Card -->
-                    <div class="card glass ref-audio-card hidden" id="ref-audio-section">
-                        <div class="card-header-row">
-                            <div class="card-label" data-i18n="custom_ref_title">🎙️ Reference Voice (အသံတူ Clone ရန် အသံနမူနာ)</div>
-                            <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့် (Optional)</span>
-                        </div>
-                        <p class="ref-desc" data-i18n="custom_ref_desc">မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။</p>
-                        <div class="ref-upload-row">
-                            <label class="btn-file-upload" for="ref-audio-input">
-                                <span class="upload-icon">📁</span>
-                                <span id="ref-audio-label" data-i18n="ref_file_btn">Reference Audio ဖိုင် ရွေးချယ်မည်</span>
-                            </label>
-                            <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
-                            <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ဖျက်မည်</button>
+                        <!-- Custom Reference Audio Section (inside same unified card) -->
+                        <div class="ref-audio-card hidden" id="ref-audio-section">
+                            <div class="card-header-row">
+                                <div class="card-label" data-i18n="custom_ref_title">🎙️ Reference Voice (အသံတူ Clone ရန် အသံနမူနာ)</div>
+                                <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့် (Optional)</span>
+                            </div>
+                            <p class="ref-desc" data-i18n="custom_ref_desc">မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။</p>
+                            <div class="ref-upload-row">
+                                <label class="btn-file-upload" for="ref-audio-input">
+                                    <span class="upload-icon">📁</span>
+                                    <span id="ref-audio-label" data-i18n="ref_file_btn">Reference Audio ဖိုင် ရွေးချယ်မည်</span>
+                                </label>
+                                <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
+                                <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ဖျက်မည်</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -169,10 +171,13 @@
                     </div>
                 </div>
 
-                <!-- Text Input Card -->
+                <!-- Step 2: Unified Text Input & Speed Controls Card -->
                 <div class="card glass input-card">
                     <div class="card-header-row">
-                        <div class="card-label" data-i18n="text_input_label">အသံသွင်းလိုသော စာသား (Text)</div>
+                        <div class="step-badge-title">
+                            <span class="step-num-pill">၂</span>
+                            <span class="step-title" data-i18n="text_input_label">အသံသွင်းလိုသော စာသား (Text)</span>
+                        </div>
                         <span class="char-counter" id="char-count">0 / 500 chars</span>
                     </div>
                     <textarea id="voice-text-input" data-i18n-ph="text_placeholder" placeholder="မြန်မာစာသားများကို ဤနေရာတွင် ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..." rows="5"></textarea>
@@ -181,11 +186,7 @@
                         <button class="mini-chip" onclick="insertSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')" data-i18n="sample_tech">💡 AI နည်းပညာ</button>
                         <button class="mini-chip text-danger" onclick="clearVoiceText()" data-i18n="btn_clear_text">🗑️ ရှင်းမည်</button>
                     </div>
-                </div>
-
-                <!-- Audio Controls (Speed) -->
-                <div class="card glass controls-card">
-                    <div class="control-row">
+                    <div class="control-row mt-2" style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
                         <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း (Speed):</span>
                         <div class="pill-group" id="speed-selector">
                             <button class="pill-btn" data-speed="slow" data-i18n="speed_slow">0.8x နှေး</button>
@@ -699,26 +700,7 @@
 
                             <!-- 2. Narration Story Style & Pacing -->
                             <div class="card glass mt-3">
-                                <div class="card-label" data-i18n="recap_style_label">ဇာတ်လမ်းပြော စတိုင်လ် (Story Style):</div>
-                                <div class="style-pills-grid" id="story-style-picker">
-                                    <button class="style-select-pill active" data-story="viral">
-                                        <span class="pill-main" data-i18n="style_viral">🔥 Viral Hook (စိတ်လှုပ်ရှားဖွယ်)</span>
-                                    </button>
-                                    <button class="style-select-pill" data-story="dramatic">
-                                        <span class="pill-main" data-i18n="style_dramatic">🎭 သည်းထိတ်ရင်ဖို (Drama)</span>
-                                    </button>
-                                    <button class="style-select-pill" data-story="funny">
-                                        <span class="pill-main" data-i18n="style_funny">😂 ဟာသရယ်မောဖွယ်</span>
-                                    </button>
-                                    <button class="style-select-pill" data-story="pov">
-                                        <span class="pill-main" data-i18n="style_pov">👁️ ဇာတ်ကောင် POV</span>
-                                    </button>
-                                    <button class="style-select-pill" data-story="standard">
-                                        <span class="pill-main" data-i18n="style_standard">📖 ပုံမှန်ဇာတ်ကြောင်း</span>
-                                    </button>
-                                </div>
-
-                                <div class="card-label mt-3" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း (Narration Speed / Pacing):</div>
+                                <div class="card-label" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း (Narration Speed / Pacing):</div>
                                 <div class="pill-group sm flex-wrap" id="recap-speed-picker">
                                     <button class="pill-btn" data-speed="+0%" data-i18n="speed_0">+0% ပုံမှန်</button>
                                     <button class="pill-btn" data-speed="+8%" data-i18n="speed_8">+8% သွက်</button>
@@ -796,25 +778,6 @@
                             <!-- 4. Font Size, Lines & Logo Position Selectors -->
                             <div class="card glass mt-3">
                                 <div class="card-label">စာလုံးနှင့် Logo အသေးစိတ် (Subtitle & Logo Specs):</div>
-                                <div class="sub-specs-row mt-2">
-                                    <div class="spec-col">
-                                        <span class="spec-lbl" data-i18n="sub_font_size_label">စာလုံးအရွယ်အစား:</span>
-                                        <div class="pill-group sm" id="font-size-picker">
-                                            <button class="pill-btn" data-size="13">13pt</button>
-                                            <button class="pill-btn active" data-size="16">16pt</button>
-                                            <button class="pill-btn" data-size="19">19pt</button>
-                                            <button class="pill-btn" data-size="22">22pt</button>
-                                        </div>
-                                    </div>
-                                    <div class="spec-col">
-                                        <span class="spec-lbl" data-i18n="sub_lines_label">စာကြောင်းရေ:</span>
-                                        <div class="pill-group sm" id="sub-lines-picker">
-                                            <button class="pill-btn active" data-lines="1">1 Line</button>
-                                            <button class="pill-btn" data-lines="2">2 Lines</button>
-                                        </div>
-                                    </div>
-                                </div>
-
                                 <div class="spec-col mt-3">
                                     <span class="spec-lbl" data-i18n="recap_logo_pos_label">Logo နေရာ:</span>
                                     <div class="pill-group sm" id="recap-logo-pos-picker">
@@ -912,17 +875,17 @@
                         </div>
                     </div>
                     <div class="dl-formats-grid">
-                        <button class="format-card" onclick="alert(t('toast_copied'))">
+                        <button class="format-card" onclick="showStudioToast(t('toast_copied'), 'info')">
                             <span class="fmt-icon">🎬</span>
                             <span class="fmt-name" data-i18n="fmt_video_title">Full HD Video</span>
                             <span class="fmt-desc" data-i18n="fmt_video_desc">MP4 (H.264 / AAC)</span>
                         </button>
-                        <button class="format-card" onclick="alert(t('toast_copied'))">
+                        <button class="format-card" onclick="showStudioToast(t('toast_copied'), 'info')">
                             <span class="fmt-icon">🎵</span>
                             <span class="fmt-name" data-i18n="fmt_audio_title">High-Quality Audio</span>
                             <span class="fmt-desc" data-i18n="fmt_audio_desc">MP3 (192kbps)</span>
                         </button>
-                        <button class="format-card" onclick="alert(t('toast_copied'))">
+                        <button class="format-card" onclick="showStudioToast(t('toast_copied'), 'info')">
                             <span class="fmt-icon">📝</span>
                             <span class="fmt-name" data-i18n="fmt_sub_title">Subtitle File</span>
                             <span class="fmt-desc" data-i18n="fmt_sub_desc">SRT (Auto-captions)</span>
@@ -1305,8 +1268,6 @@
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
                                     <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
                                     <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
-                                    <option value="gemini-3.7-flash">gemini-3.7-flash</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
                                 <input type="text" id="adm-gemini-primary-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.6-flash">
@@ -1322,7 +1283,6 @@
                                     <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                     <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
                                     <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
                                 <input type="text" id="adm-gemini-fb1-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash">
@@ -1338,7 +1298,6 @@
                                     <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
                                     <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
                                 <input type="text" id="adm-gemini-fb2-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash-lite">
@@ -1354,7 +1313,6 @@
                                     <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
                                     <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                     <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                    <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
                                 </select>
                                 <input type="text" id="adm-gemini-fb3-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-flash-lite-latest">
@@ -1520,7 +1478,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261023_studio_luxury_v11"></script>
-    <script src="/static/js/app.js?v=20261023_studio_luxury_v11"></script>
+    <script src="/static/js/i18n.js?v=20261028_studio_luxury_v12"></script>
+    <script src="/static/js/app.js?v=20261028_studio_luxury_v12"></script>
 </body>
 </html>

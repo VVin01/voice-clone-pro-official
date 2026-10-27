@@ -1126,6 +1126,7 @@ async def _send_recap_telegram_delivery(
             file_size = os.path.getsize(video_path) if os.path.isfile(video_path) else 0
             dur_formatted = format_duration(duration_sec)
             size_formatted = format_filesize(file_size)
+            title = _clean_recap_display_title(title)
 
             caption = (
                 f"🇲🇲 <b>Recap English → Myanmar Video (Smart Sync)</b>\n"
@@ -1341,7 +1342,7 @@ async def _run_recap_background_job(
                 from aiogram.enums import ParseMode
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
-                clean_title = entry.get("title") or "Movie Recap Video"
+                clean_title = _clean_recap_display_title(entry.get("title"), req.url)
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -1696,7 +1697,7 @@ async def send_recap_to_telegram(
         raise HTTPException(status_code=404, detail="ဗီဒီယို ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
 
     entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
-    clean_title = entry.get("title") or _clean_recap_display_title(db_job.input_text if db_job else None)
+    clean_title = _clean_recap_display_title(entry.get("title"), db_job.input_text if db_job else None)
     voice_label = (db_job.preset_voice.capitalize() if (db_job and db_job.preset_voice) else "Smart Sync AI")
 
     await _send_recap_telegram_delivery(

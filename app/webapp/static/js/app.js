@@ -1,3 +1,109 @@
+/* ═══════════════════════════════════════════════════════════
+   STUDIO TOAST & CONFIRM SYSTEM — Premium Non-Blocking UX
+   ═══════════════════════════════════════════════════════════ */
+
+/**
+ * showStudioToast(message, type, duration)
+ * type: 'success' | 'error' | 'warning' | 'info'
+ * Replaces all browser alert() calls
+ */
+function showStudioToast(message, type = 'info', duration = 3500) {
+    // Remove any existing toast
+    const existing = document.getElementById('studio-toast-el');
+    if (existing) existing.remove();
+
+    const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+    const colors = {
+        success: 'rgba(16,185,129,0.18)',
+        error:   'rgba(239,68,68,0.18)',
+        warning: 'rgba(245,158,11,0.18)',
+        info:    'rgba(99,102,241,0.18)'
+    };
+    const borders = {
+        success: '#10b981',
+        error:   '#ef4444',
+        warning: '#f59e0b',
+        info:    '#818cf8'
+    };
+
+    const toast = document.createElement('div');
+    toast.id = 'studio-toast-el';
+    toast.style.cssText = `
+        position: fixed; top: 68px; left: 50%; transform: translateX(-50%);
+        z-index: 99999; display: flex; align-items: center; gap: 10px;
+        background: ${colors[type]}; backdrop-filter: blur(16px);
+        border: 1px solid ${borders[type]}; border-radius: 14px;
+        padding: 12px 18px; max-width: calc(100vw - 32px); width: auto;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        font-family: 'Plus Jakarta Sans', 'Padauk', sans-serif;
+        font-size: 13.5px; color: #f0f0ff; line-height: 1.5;
+        animation: studioToastSlideIn 0.3s ease; pointer-events: auto;
+    `;
+    toast.innerHTML = `
+        <span style="font-size:18px; flex-shrink:0;">${icons[type]}</span>
+        <span style="flex:1; word-break:break-word;">${message}</span>
+        <button onclick="this.parentNode.remove()" style="background:none; border:none; color:#9ca3af; font-size:16px; cursor:pointer; padding:0 0 0 6px; line-height:1;">✕</button>
+    `;
+
+    // Add animation keyframes once
+    if (!document.getElementById('studio-toast-style')) {
+        const style = document.createElement('style');
+        style.id = 'studio-toast-style';
+        style.textContent = `
+            @keyframes studioToastSlideIn {
+                from { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+                to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    document.body.appendChild(toast);
+    if (duration > 0) setTimeout(() => toast && toast.remove(), duration);
+}
+
+/**
+ * showStudioConfirm(message, onConfirm, onCancel)
+ * Replaces browser confirm() calls with a premium modal.
+ */
+function showStudioConfirm(message, onConfirm, onCancel) {
+    const existing = document.getElementById('studio-confirm-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'studio-confirm-modal';
+    modal.style.cssText = `
+        position: fixed; inset: 0; z-index: 99998;
+        background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+        display: flex; align-items: center; justify-content: center;
+        padding: 16px;
+    `;
+    modal.innerHTML = `
+        <div style="background: #1a1a2e; border: 1px solid rgba(245,158,11,0.35); border-radius: 18px;
+                    padding: 24px 20px; max-width: 340px; width: 100%;
+                    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+                    font-family: 'Plus Jakarta Sans','Padauk',sans-serif; color: #e0e0ff;">
+            <div style="font-size:28px; text-align:center; margin-bottom:12px;">⚠️</div>
+            <div style="font-size:14px; line-height:1.6; text-align:center; margin-bottom:20px;">${message}</div>
+            <div style="display:flex; gap:10px;">
+                <button id="studio-confirm-cancel" style="flex:1; padding:11px; border-radius:10px;
+                        border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06);
+                        color:#9ca3af; font-size:13px; cursor:pointer;">မဟုတ်ဘူး / Cancel</button>
+                <button id="studio-confirm-ok" style="flex:1; padding:11px; border-radius:10px;
+                        border:none; background:linear-gradient(135deg,#d97706,#f59e0b);
+                        color:#0a0a0a; font-weight:700; font-size:13px; cursor:pointer;">သဘောတူ / OK</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const remove = () => modal.remove();
+    document.getElementById('studio-confirm-ok').onclick = () => { remove(); if (onConfirm) onConfirm(); };
+    document.getElementById('studio-confirm-cancel').onclick = () => { remove(); if (onCancel) onCancel(); };
+    modal.addEventListener('click', (e) => { if (e.target === modal) { remove(); if (onCancel) onCancel(); } });
+}
+
 /**
  * app.js - Unified Telegram Mini App Client Controller
  * Voice Clone Pro & AI Movie Recap Studio — Studio Ultra Suite
@@ -178,7 +284,7 @@ function openTutorialVideo(type = "auto") {
 
     if (!target || !target.enabled) {
         const label = fallbackType === "recap" ? "Movie Recap" : "Voice Clone";
-        alert(`⚠️ ${label} လမ်းညွှန်ဗီဒီယိုကို မကြာမီ တင်ဆက်ပေးပါမည် (Coming Soon)။`);
+        showStudioToast(`⚠️ ${label} လမ်းညွှန်ဗီဒီယိုကို မကြာမီ တင်ဆက်ပေးပါမည် (Coming Soon)။`, 'warning');
         return;
     }
 
@@ -816,15 +922,15 @@ async function handleVoiceGenerate() {
     const textInput = document.getElementById("voice-text-input");
     const text = textInput ? textInput.value.trim() : "";
     if (!text) {
-        alert(t("toast_empty_text"));
+        showStudioToast(t("toast_empty_text"), 'warning');
         return;
     }
 
     const maxChars = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
     if (text.length > maxChars) {
-        alert(currentLang === "my"
+        showStudioToast(currentLang === "my"
             ? `စာသား စာလုံးရေ (${text.length}) သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (${maxChars} လုံး) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "" : "ကန့်သတ်ချက်မရှိ (စာလုံးရေ ၅၀၀၀ အထိ) အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
-            : `Text length (${text.length}) exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${maxChars} characters.`);
+            : `Text length (${text.length}) exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${maxChars} characters.`, 'warning');
         return;
     }
 
@@ -897,7 +1003,7 @@ async function handleVoiceGenerate() {
         startJobPolling(data.job_id);
 
     } catch (err) {
-        alert(err.message);
+        showStudioToast(err.message, 'info');
         if (progressBox) progressBox.classList.add("hidden");
         if (btnGen) btnGen.disabled = false;
     }
@@ -972,7 +1078,7 @@ function startJobPolling(jobId) {
 
             } else if (data.status === "FAILED") {
                 clearInterval(state.pollTimer);
-                alert("Generation failed: " + (data.error_message || "Unknown error"));
+                showStudioToast("Generation failed: " + (data.error_message || "Unknown error"), 'error');
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
             }
@@ -1130,9 +1236,9 @@ function setupRecapVisualEditor() {
                         btnStartRecap.disabled = true;
                         btnStartRecap.style.opacity = "0.5";
                     }
-                    alert(currentLang === "my"
+                    showStudioToast(currentLang === "my"
                         ? `⚠️ သတိပေးချက်: တင်သွင်းထားသော ဗီဒီယိုဖိုင် ကြာချိန် (${durStr}) သည် ${tierLabel} ကန့်သတ်ချက် (အများဆုံး ${maxM} မိနစ်) ထက် ကျော်လွန်နေပါသည်ခင်ဗျာ။\n\nကျေးဇူးပြု၍ မိနစ်ပိုတိုသော ဗီဒီယိုကို ရွေးချယ်ပါ သို့မဟုတ် ၁၀ မိနစ်အထိ ပြုလုပ်နိုင်သော VIP သို့ အဆင့်မြှင့်တင်ပါရန်။`
-                        : `⚠️ Warning: Video duration (${durStr}) exceeds ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`);
+                        : `⚠️ Warning: Video duration (${durStr}) exceeds ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`, 'warning');
                 } else {
                     durSpan.className = "mini-tag";
                     durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#10b981; font-weight:700; margin-left:4px;">(Ready)</span>`;
@@ -1151,7 +1257,7 @@ function setupRecapVisualEditor() {
 
             haptic("success");
         } catch (err) {
-            alert("Video upload error: " + err.message);
+            showStudioToast("Video upload error: " + err.message, 'error');
             if (progressWrap) progressWrap.classList.add("hidden");
         }
     }
@@ -1266,9 +1372,9 @@ function setupRecapVisualEditor() {
                     btnPlayToggle.classList.remove("active");
                 }
             } else {
-                alert(currentLang === "my"
+                showStudioToast(currentLang === "my"
                     ? "💡 တိုက်ရိုက်ဗီဒီယို (Live Video Scrubbing) ကို Frame အလိုက် ကြည့်ရှုလိုပါက အဆင့် (၁) ရှိ '📁 Video Upload' ခလုတ်ဖြင့် MP4 ဗီဒီယိုကို တိုက်ရိုက်တင်သွင်း၍ အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
-                    : "💡 Live real-time video scrubbing is active when you upload an MP4 video file.");
+                    : "💡 Live real-time video scrubbing is active when you upload an MP4 video file.", 'info');
             }
         });
 
@@ -1850,7 +1956,7 @@ function setupRecapVisualEditor() {
     });
 
     // 7. Narration Story Style Picker (viral, dramatic, funny, pov, standard) — synced across Step 3 & Advanced
-    const storyPills = document.querySelectorAll("#story-style-picker .style-select-pill, #story-style-picker-quick .style-select-pill");
+    const storyPills = document.querySelectorAll("#story-style-picker-quick .style-select-pill");
     storyPills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
@@ -1977,12 +2083,12 @@ function setupRecapVisualEditor() {
     // 11. Font Size Picker (Synchronized across toolbar & advanced settings)
     function syncSubtitleFontSize(sizeVal) {
         state.recapFontSize = parseInt(sizeVal || "16");
-        document.querySelectorAll("#font-size-picker .pill-btn, #font-size-picker-toolbar .pill-btn").forEach(p => {
+        document.querySelectorAll("#font-size-picker-toolbar .pill-btn").forEach(p => {
             p.classList.toggle("active", parseInt(p.getAttribute("data-size")) === state.recapFontSize);
         });
         updateSubtitleVisualPreview();
     }
-    document.querySelectorAll("#font-size-picker .pill-btn, #font-size-picker-toolbar .pill-btn").forEach(pill => {
+    document.querySelectorAll("#font-size-picker-toolbar .pill-btn").forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
             syncSubtitleFontSize(pill.getAttribute("data-size"));
@@ -1992,12 +2098,12 @@ function setupRecapVisualEditor() {
     // 12. Subtitle Lines Picker (Synchronized across toolbar & advanced settings)
     function syncSubtitleLines(linesVal) {
         state.recapLines = parseInt(linesVal || "1");
-        document.querySelectorAll("#sub-lines-picker .pill-btn, #sub-lines-picker-toolbar .pill-btn").forEach(p => {
+        document.querySelectorAll("#sub-lines-picker-toolbar .pill-btn").forEach(p => {
             p.classList.toggle("active", parseInt(p.getAttribute("data-lines")) === state.recapLines);
         });
         updateSubtitleVisualPreview();
     }
-    document.querySelectorAll("#sub-lines-picker .pill-btn, #sub-lines-picker-toolbar .pill-btn").forEach(pill => {
+    document.querySelectorAll("#sub-lines-picker-toolbar .pill-btn").forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
             syncSubtitleLines(pill.getAttribute("data-lines"));
@@ -2026,7 +2132,7 @@ function setupRecapVisualEditor() {
             const urlInput = document.getElementById("recap-url-input");
             let url = urlInput ? urlInput.value.trim() : "";
             if (!url) {
-                alert(t("toast_empty_url"));
+                showStudioToast(t("toast_empty_url"), 'warning');
                 return;
             }
             // Auto extract clean URL from Douyin/TikTok share text
@@ -2080,9 +2186,9 @@ function setupRecapVisualEditor() {
                             btnStartRecap.disabled = true;
                             btnStartRecap.style.opacity = "0.5";
                         }
-                        alert(currentLang === "my"
+                        showStudioToast(currentLang === "my"
                             ? `⚠️ သတိပေးချက်: သင်ထည့်သွင်းထားသော ဗီဒီယို ကြာချိန် (${durStr}) သည် ${tierLabel} ကန့်သတ်ချက် (အများဆုံး ${maxM} မိနစ်) ထက် ကျော်လွန်နေပါသည်ခင်ဗျာ။\n\nကျေးဇူးပြု၍ မိနစ်ပိုတိုသော ဗီဒီယိုကို ရွေးချယ်ပါ သို့မဟုတ် ၁၀ မိနစ်အထိ ပြုလုပ်နိုင်သော VIP သို့ အဆင့်မြှင့်တင်ပါရန်။`
-                            : `⚠️ Warning: Video duration (${durStr}) exceeds your ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`);
+                            : `⚠️ Warning: Video duration (${durStr}) exceeds your ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`, 'warning');
                     } else {
                         durSpan.className = "mini-tag";
                         durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid") || "Ready"})</span>`;
@@ -2128,11 +2234,11 @@ function setupRecapVisualEditor() {
             } catch (err) {
                 const msg = err.message || "";
                 if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
-                    alert(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် လင့်ခ်ဖြင့် တိုက်ရိုက်စစ်ဆေးမရပါခင်ဗျာ။\n\nဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။`);
+                    showStudioToast(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် လင့်ခ်ဖြင့် တိုက်ရိုက်စစ်ဆေးမရပါခင်ဗျာ။\n\nဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။`, 'warning');
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
                 } else {
-                    alert(err.message || "Failed to inspect video link");
+                    showStudioToast(err.message || "Failed to inspect video link", 'error');
                 }
             } finally {
                 btnAnalyze.disabled = false;
@@ -2372,7 +2478,7 @@ async function handleStartRecap() {
         if (urlMatch) url = urlMatch[0];
     }
     if (!url) {
-        alert(t("toast_empty_url"));
+        showStudioToast(t("toast_empty_url"), 'warning');
         return;
     }
 
@@ -2383,9 +2489,9 @@ async function handleStartRecap() {
     const maxRecapSec = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
     if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec) {
         const m = Math.floor(maxRecapSec / 60);
-        alert(currentLang === "my"
+        showStudioToast(currentLang === "my"
             ? `ဗီဒီယို ကြာချိန်သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး ${m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "" : "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
-            : `Video duration exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${m} minutes. Upgrade to VIP for up to 10 minutes.`);
+            : `Video duration exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${m} minutes. Upgrade to VIP for up to 10 minutes.`, 'warning');
         return;
     }
 
@@ -2464,7 +2570,7 @@ async function handleStartRecap() {
         startRecapJobPolling(data.recap_id);
 
     } catch (err) {
-        alert(err.message);
+        showStudioToast(err.message, 'info');
         if (progressBox) progressBox.classList.add("hidden");
         if (btn) btn.disabled = false;
     }
@@ -2570,11 +2676,11 @@ function startRecapJobPolling(jobId) {
 
                 const errMsg = data.error_message || "Processing error";
                 if (errMsg.includes("Douyin") || errMsg.includes("Fresh cookies")) {
-                    alert(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် တိုက်ရိုက်ဒေါင်းလုဒ် မအောင်မြင်ပါခင်ဗျာ။\n\nCredit ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်။ ဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်ပြုလုပ်နိုင်ပါသည်ခင်ဗျာ။`);
+                    showStudioToast(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် တိုက်ရိုက်ဒေါင်းလုဒ် မအောင်မြင်ပါခင်ဗျာ။\n\nCredit ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်။ ဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်ပြုလုပ်နိုင်ပါသည်ခင်ဗျာ။`, 'error');
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
                 } else {
-                    alert(`⚠️ Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်:\n${errMsg}\n\n✅ သင့် Recap Credit ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။`);
+                    showStudioToast(`⚠️ Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်:\n${errMsg}\n\n✅ သင့် Recap Credit ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။`, 'success');
                 }
                 loadUserProfile();
                 loadUserHistory();
@@ -2594,7 +2700,7 @@ function setupDownloader() {
             const urlInput = document.getElementById("dl-url-input");
             const url = urlInput ? urlInput.value.trim() : "";
             if (!url) {
-                alert(t("toast_empty_url"));
+                showStudioToast(t("toast_empty_url"), 'warning');
                 return;
             }
             haptic("medium");
@@ -2630,7 +2736,7 @@ function setupDownloader() {
 
                 resultCard.classList.remove("hidden");
             } catch (err) {
-                alert(err.message);
+                showStudioToast(err.message, 'info');
             } finally {
                 btnDl.disabled = false;
             }
@@ -2722,7 +2828,7 @@ function copyAccount(accNum) {
     const numToCopy = accNum || "09790760003";
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(numToCopy).then(() => {
-            alert(`${numToCopy}\n${t("toast_copied")}`);
+            showStudioToast(`${numToCopy}\n${t("toast_copied")}`, 'success');
         }).catch(() => {
             prompt("Account Number:", numToCopy);
         });
@@ -2735,7 +2841,7 @@ function copyAccount(accNum) {
 async function sendVoiceToTelegram(targetJobId) {
     const jobId = targetJobId || state.activeJobId;
     if (!jobId) {
-        alert(t("toast_empty_text") || "Voice Job ID not found");
+        showStudioToast(t("toast_empty_text") || "Voice Job ID not found", 'warning');
         return;
     }
     haptic("medium");
@@ -2757,9 +2863,9 @@ async function sendVoiceToTelegram(targetJobId) {
             btn.classList.add("sent");
             btn.innerHTML = `<span>${t("btn_telegram_sent")}</span>`;
         }
-        alert(t("toast_telegram_sent"));
+        showStudioToast(t("toast_telegram_sent"), 'success');
     } catch (err) {
-        alert(err.message || "Failed to send to Telegram");
+        showStudioToast(err.message || "Failed to send to Telegram", 'error');
         if (btn && !targetJobId) {
             btn.disabled = false;
             btn.innerHTML = originalContent;
@@ -2771,7 +2877,7 @@ window.sendVoiceToTelegram = sendVoiceToTelegram;
 async function sendRecapToTelegram(targetJobId) {
     const jobId = targetJobId || state.recapJobId;
     if (!jobId) {
-        alert(t("toast_empty_url") || "Recap Job ID not found");
+        showStudioToast(t("toast_empty_url") || "Recap Job ID not found", 'warning');
         return;
     }
     haptic("medium");
@@ -2793,9 +2899,9 @@ async function sendRecapToTelegram(targetJobId) {
             btn.classList.add("sent");
             btn.innerHTML = `<span>${t("btn_telegram_sent")}</span>`;
         }
-        alert(t("toast_telegram_sent"));
+        showStudioToast(t("toast_telegram_sent"), 'success');
     } catch (err) {
-        alert(err.message || "Failed to send to Telegram");
+        showStudioToast(err.message || "Failed to send to Telegram", 'error');
         if (btn && !targetJobId) {
             btn.disabled = false;
             btn.innerHTML = originalContent;
@@ -2830,7 +2936,7 @@ async function submitPaymentSlip() {
     const fileInput = document.getElementById("slip-file-input");
     const file = fileInput && fileInput.files ? fileInput.files[0] : null;
     if (!file) {
-        alert("ကျေးဇူးပြု၍ ငွေလွှဲပြေစာ ပုံကို ရွေးချယ်ပေးပါခင်ဗျာ။");
+        showStudioToast("ကျေးဇူးပြု၍ ငွေလွှဲပြေစာ ပုံကို ရွေးချယ်ပေးပါခင်ဗျာ။", 'info');
         return;
     }
 
@@ -2858,13 +2964,13 @@ async function submitPaymentSlip() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Submission failed");
 
-        alert(t("toast_success_slip"));
+        showStudioToast(t("toast_success_slip"), 'success');
         closePaymentDrawer();
         if (fileInput) fileInput.value = "";
         const previewBox = document.getElementById("slip-preview-box");
         if (previewBox) previewBox.classList.add("hidden");
     } catch (e) {
-        alert(e.message);
+        showStudioToast(e.message, 'error');
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -3084,19 +3190,20 @@ function handleAdminMediaLoaded(mediaEl) {
 
 async function adminApproveSlip(reqId) {
     haptic("medium");
-    if (!confirm("အတည်ပြုပြီး VIP သို့ မြှင့်တင်ပေးမည်လား?")) return;
-    try {
-        const res = await fetch("/api/admin/approve-slip", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ request_id: reqId }),
-        });
-        const data = await res.json();
-        alert(data.message);
-        loadAdminData();
-    } catch (e) {
-        alert(e.message);
-    }
+    showStudioConfirm("အတည်ပြုပြီး VIP သို့ မြှင့်တင်ပေးမည်လား?", async () => {
+        try {
+            const res = await fetch("/api/admin/approve-slip", {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ request_id: reqId }),
+            });
+            const data = await res.json();
+            showStudioToast(data.message, 'info');
+            loadAdminData();
+        } catch (e) {
+            showStudioToast(e.message, 'error');
+        }
+    });
 }
 
 async function adminRejectSlip(reqId) {
@@ -3110,10 +3217,10 @@ async function adminRejectSlip(reqId) {
             body: JSON.stringify({ request_id: reqId, reason: reason }),
         });
         const data = await res.json();
-        alert(data.message);
+        showStudioToast(data.message, 'info');
         loadAdminData();
     } catch (e) {
-        alert(e.message);
+        showStudioToast(e.message, 'error');
     }
 }
 
@@ -3121,7 +3228,7 @@ async function adminGrantVip() {
     const input = document.getElementById("adm-target-user-id");
     const uid = input ? parseInt(input.value) : 0;
     if (!uid) {
-        alert("Telegram ID ထည့်ပါ");
+        showStudioToast("Telegram ID ထည့်ပါ", 'info');
         return;
     }
     haptic("medium");
@@ -3132,10 +3239,10 @@ async function adminGrantVip() {
             body: JSON.stringify({ user_id: uid, account_category: "PURCHASED" }),
         });
         const data = await res.json();
-        alert(data.message);
+        showStudioToast(data.message, 'info');
         loadAdminData();
     } catch (e) {
-        alert(e.message);
+        showStudioToast(e.message, 'error');
     }
 }
 
@@ -3143,7 +3250,7 @@ async function adminAddMinutes() {
     const input = document.getElementById("adm-target-user-id");
     const uid = input ? parseInt(input.value) : 0;
     if (!uid) {
-        alert("Telegram ID ထည့်ပါ");
+        showStudioToast("Telegram ID ထည့်ပါ", 'info');
         return;
     }
     haptic("medium");
@@ -3154,10 +3261,10 @@ async function adminAddMinutes() {
             body: JSON.stringify({ user_id: uid, add_minutes: 60 }),
         });
         const data = await res.json();
-        alert(data.message);
+        showStudioToast(data.message, 'info');
         loadAdminData();
     } catch (e) {
-        alert(e.message);
+        showStudioToast(e.message, 'error');
     }
 }
 
@@ -3165,7 +3272,7 @@ async function adminAddRecapCredits() {
     const input = document.getElementById("adm-target-user-id");
     const uid = input ? parseInt(input.value) : 0;
     if (!uid) {
-        alert("Telegram ID ထည့်ပါ");
+        showStudioToast("Telegram ID ထည့်ပါ", 'info');
         return;
     }
     haptic("medium");
@@ -3176,10 +3283,10 @@ async function adminAddRecapCredits() {
             body: JSON.stringify({ user_id: uid, add_recap_credits: 10 }),
         });
         const data = await res.json();
-        alert(data.message);
+        showStudioToast(data.message, 'info');
         loadAdminData();
     } catch (e) {
-        alert(e.message);
+        showStudioToast(e.message, 'error');
     }
 }
 
@@ -3191,15 +3298,15 @@ async function adminSendBroadcast() {
 
     const msg = textEl ? textEl.value.trim() : "";
     if (!msg) {
-        alert(currentLang === "my" ? "မက်ဆေ့ခ်ျ စာသား ရိုက်ထည့်ပေးပါ" : "Please enter broadcast message text");
+        showStudioToast(currentLang === "my" ? "မက်ဆေ့ခ်ျ စာသား ရိုက်ထည့်ပေးပါ" : "Please enter broadcast message text", 'info');
         return;
     }
     haptic("heavy");
-    if (!confirm(currentLang === "my" 
-        ? "အသုံးပြုသူ အားလုံးထံသို့ ဤ Broadcast မက်ဆေ့ခ်ျ ပို့မှာ သေချာပါသလား?" 
-        : "Are you sure you want to broadcast this message to all users?")) return;
-
-    if (btn) btn.disabled = true;
+    showStudioConfirm(currentLang === "my"
+        ? "အသုံးပြုသူ အားလုံးထံသို့ ဤ Broadcast မက်ဆေ့ခ်ျ ပို့မှာ သေချာပါသလား?"
+        : "Are you sure you want to broadcast this message to all users?",
+        async () => {
+            if (btn) btn.disabled = true;
     if (btnText) btnText.textContent = currentLang === "my" ? "⏳ ပို့ဆောင်နေပါသည်..." : "⏳ Sending broadcast...";
     if (reportBox) {
         reportBox.classList.remove("hidden");
@@ -3264,20 +3371,22 @@ async function adminSendBroadcast() {
             reportBox.innerHTML = reportHtml;
         }
 
-        alert(isMy 
-            ? `📢 Broadcast ပို့ဆောင်မှု ပြီးဆုံးပါပြီ!\n\n• စုစုပေါင်း: ${data.total_users_in_db} ဦး\n• အောင်မြင်: ${data.sent_count} ဦး\n• မရောက်ရှိ: ${data.failed_count} ဦး\n\nအသေးစိတ် အချက်အလက်များကို Admin Panel ရှိ Report တွင် ဖော်ပြထားပါသည်။` 
-            : `📢 Broadcast Completed!\n\n• Total Users: ${data.total_users_in_db}\n• Delivered: ${data.sent_count}\n• Failed: ${data.failed_count}\n\nDetailed breakdown displayed in report box.`);
+        showStudioToast(isMy 
+            ? `📢 Broadcast ပို့ဆောင်မှု ပြီးဆုံးပါပြီ! (အောင်မြင်: ${data.sent_count} ဦး / စုစုပေါင်း: ${data.total_users_in_db} ဦး)` 
+            : `📢 Broadcast Completed! (Delivered: ${data.sent_count} / Total: ${data.total_users_in_db})`, 'success');
 
         if (textEl) textEl.value = "";
     } catch (e) {
         if (reportBox) {
             reportBox.innerHTML = `<div style="color: #ef4444; padding: 10px;">❌ ${e.message}</div>`;
         }
-        alert(e.message);
+        showStudioToast(e.message, 'error');
     } finally {
         if (btn) btn.disabled = false;
         if (btnText) btnText.textContent = currentLang === "my" ? "Broadcast ပို့မည်" : "Send Broadcast";
     }
+        }
+    );
 }
 
 // ── Admin Queue & Engine Monitor Controller ────────────────────────────────
@@ -3501,22 +3610,23 @@ async function loadAdminQueue(isSilent = false) {
 }
 
 async function adminCancelJob(jobId) {
-    if (!confirm("Are you sure you want to cancel this job?")) return;
-    haptic("medium");
-    try {
-        const res = await fetch(`/api/admin/queue/${jobId}/cancel`, {
-            method: "POST",
-            headers: getAuthHeaders(),
-        });
-        const data = await res.json();
-        if (data.success) {
-            loadAdminQueue();
-        } else {
-            alert(data.message || "Failed to cancel job");
+    showStudioConfirm("Are you sure you want to cancel this job?", async () => {
+        haptic("medium");
+        try {
+            const res = await fetch(`/api/admin/queue/${jobId}/cancel`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+            });
+            const data = await res.json();
+            if (data.success) {
+                loadAdminQueue();
+            } else {
+                showStudioToast(data.message || "Failed to cancel job", 'error');
+            }
+        } catch (e) {
+            showStudioToast("Cancel error: " + e.message, 'error');
         }
-    } catch (e) {
-        alert("Cancel error: " + e.message);
-    }
+    });
 }
 
 function admFillUser(userId) {
@@ -3648,11 +3758,11 @@ async function saveGeminiModelSettings() {
             body: JSON.stringify(payload),
         });
         const data = await res.json();
-        alert("✅ Gemini Model Chain အောင်မြင်စွာ ပြောင်းလဲသိမ်းဆည်းပြီးပါပြီ!\n\n" +
-              `Primary: ${primary}\nFallback 1: ${fb1}\nFallback 2: ${fb2}\nFallback 3: ${fb3}`);
+        showStudioToast("✅ Gemini Model Chain အောင်မြင်စွာ ပြောင်းလဲသိမ်းဆည်းပြီးပါပြီ!\n\n" +
+              `Primary: ${primary}\nFallback 1: ${fb1}\nFallback 2: ${fb2}\nFallback 3: ${fb3}`, 'success');
         loadAdminSettings();
     } catch (e) {
-        alert("Failed to save Gemini models: " + e.message);
+        showStudioToast("Failed to save Gemini models: " + e.message, 'error');
     }
 }
 
@@ -3699,10 +3809,10 @@ async function saveAdminSettings() {
             body: JSON.stringify(payload),
         });
         const data = await res.json();
-        alert(data.message || "Settings updated successfully!");
+        showStudioToast(data.message || "Settings updated successfully!", 'success');
         loadAdminSettings();
     } catch (e) {
-        alert("Failed to save settings: " + e.message);
+        showStudioToast("Failed to save settings: " + e.message, 'error');
     }
 }
 
@@ -3970,14 +4080,14 @@ async function adminRetryJob(jobId) {
             loadAdminQueue(true);
             pollAdminJobProgress(jobId);
         } else {
-            alert("Retry failed: " + (data.detail || data.message || "Unknown error"));
+            showStudioToast("Retry failed: " + (data.detail || data.message || "Unknown error"), 'error');
             if (retryBtn) {
                 retryBtn.disabled = false;
                 retryBtn.innerText = "🔄 Retry";
             }
         }
     } catch (e) {
-        alert("Retry error: " + e.message);
+        showStudioToast("Retry error: " + e.message, 'error');
         if (retryBtn) {
             retryBtn.disabled = false;
             retryBtn.innerText = "🔄 Retry";
@@ -4099,33 +4209,32 @@ function pollAdminJobProgress(jobId) {
 }
 
 async function adminDeleteSingleJob(jobId) {
-    if (!confirm(`ဤအလုပ် (Job: ${jobId.slice(0,8)}) နှင့် သက်ဆိုင်ရာ အသံ/ဗီဒီယို ဖိုင်များကို Database နှင့် Disk မှ လုံးဝ ဖျက်ပစ်မည်မှာ သေချာပါသလား?`)) {
-        return;
-    }
-    haptic("heavy");
-    try {
-        const res = await fetch("/api/admin/history/purge", {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                mode: "single",
-                job_id: jobId,
-            }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-            const el = document.getElementById(`adm-job-item-${jobId}`);
-            if (el) el.remove();
-            loadAdminHistory();
-        } else {
-            alert("Delete failed: " + (data.detail || data.message || "Unknown error"));
+    showStudioConfirm(`ဤအလုပ် (Job: ${jobId.slice(0,8)}) နှင့် သက်ဆိုင်ရာ အသံ/ဗီဒီယို ဖိုင်များကို Database နှင့် Disk မှ လုံးဝ ဖျက်ပစ်မည်မှာ သေချာပါသလား?`, async () => {
+        haptic("heavy");
+        try {
+            const res = await fetch("/api/admin/history/purge", {
+                method: "POST",
+                headers: {
+                    ...getAuthHeaders(),
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    mode: "single",
+                    job_id: jobId,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                const el = document.getElementById(`adm-job-item-${jobId}`);
+                if (el) el.remove();
+                loadAdminHistory();
+            } else {
+                showStudioToast("Delete failed: " + (data.detail || data.message || "Unknown error"), 'error');
+            }
+        } catch (e) {
+            showStudioToast("Delete error: " + e.message, 'error');
         }
-    } catch (e) {
-        alert("Delete error: " + e.message);
-    }
+    });
 }
 
 async function adminPurgeHistory(mode) {
@@ -4140,33 +4249,33 @@ async function adminPurgeHistory(mode) {
         confirmMsg = "အလုပ်မှတ်တမ်းများနှင့် ဖိုင်များကို ရှင်းလင်းမည်မှာ သေချာပါသလား?";
     }
 
-    if (!confirm(confirmMsg)) return;
-    haptic("heavy");
-
-    try {
-        const res = await fetch("/api/admin/history/purge", {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                mode: mode,
-                timeframe: adminHistFilter.timeframe,
-                status: adminHistFilter.status,
-                job_type: adminHistFilter.job_type,
-            }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-            alert(`✅ ${data.message || `အောင်မြင်စွာ ရှင်းလင်းပြီးပါပြီ (ဖျက်ပြီးသမျှ: ${data.purged_count})`}`);
-            loadAdminHistory();
-        } else {
-            alert("Purge failed: " + (data.detail || data.message || "Unknown error"));
+    showStudioConfirm(confirmMsg, async () => {
+        haptic("heavy");
+        try {
+            const res = await fetch("/api/admin/history/purge", {
+                method: "POST",
+                headers: {
+                    ...getAuthHeaders(),
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    mode: mode,
+                    timeframe: adminHistFilter.timeframe,
+                    status: adminHistFilter.status,
+                    job_type: adminHistFilter.job_type,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showStudioToast(`✅ ${data.message || `အောင်မြင်စွာ ရှင်းလင်းပြီးပါပြီ (ဖျက်ပြီးသမျှ: ${data.purged_count})`}`, 'success');
+                loadAdminHistory();
+            } else {
+                showStudioToast("Purge failed: " + (data.detail || data.message || "Unknown error"), 'error');
+            }
+        } catch (e) {
+            showStudioToast("Purge error: " + e.message, 'error');
         }
-    } catch (e) {
-        alert("Purge error: " + e.message);
-    }
+    });
 }
 
 async function adminTriggerPurge24h() {
