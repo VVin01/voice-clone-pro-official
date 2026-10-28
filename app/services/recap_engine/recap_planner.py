@@ -17,6 +17,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from app.services.recap_engine.core import normalize_burmese_orthography
+except ImportError:
+    from .core import normalize_burmese_orthography
+
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
 PLANNER_MODE = "timestamp_translation_en_to_mm_narrator_v3"
@@ -419,7 +424,7 @@ def _sanitize_translation_text(value: Any) -> str:
     that exact wrapper appears, keep only the faithful translation inside it.
     """
     text = _clean(value)
-    text = normalize_burmese_homoglyphs(text)
+    text = normalize_burmese_orthography(text)
     match = re.fullmatch(
         r"\[\s*Unused filler adjustment skipped\s*[-–—:]\s*translated faithfully\s*:\s*(.*?)\s*\]",
         text,
@@ -428,7 +433,7 @@ def _sanitize_translation_text(value: Any) -> str:
     if match:
         inner = _clean(match.group(1))
         if inner:
-            return normalize_burmese_homoglyphs(inner)
+            return normalize_burmese_orthography(inner)
     return text
 
 
@@ -1331,6 +1336,7 @@ def _enforce_style_and_gender_particles(text: str, *, style: str, is_female: boo
     cleaned = re.sub(r'(။)+', '။', cleaned)  # double-period
     cleaned = re.sub(r'(၊)+', '၊', cleaned)  # double-comma
     cleaned = cleaned.replace('\u200B', '').replace('\u200C', '').replace('\u200D', '')
+    cleaned = normalize_burmese_orthography(cleaned)
     return _clean(cleaned)
 
 
@@ -1416,7 +1422,21 @@ CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်�
 3. Weave each CURRENT item into a smooth, meaningful Burmese recap sentence that flows naturally from the preceding ID into the next ID.
 4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 14 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!
 5. CAUSE-AND-EFFECT CONTINUITY (အဆက်မပြတ် ကြောင်းကျိုးဆက် စပ်ပြောင်းမှု): Read the PREVIOUS context, determine exactly WHO is currently acting, WHAT they just did in the preceding sentence, and WHY the current action logically follows — then narrate the CURRENT item as the natural next step in the story chain. NEVER begin a new scene idea mid-segment without connecting it to the previous segment's outcome.
-6. MYANMAR SPELLING ACCURACY: Every output Myanmar word must use correct Myanmar Unicode spelling — no swapped letters, no missing vowel signs, no wrong stacking order. If unsure, use a simpler synonym rather than misspelling a complex word.
+6. MYANMAR SPELLING & ORTHOGRAPHY RULES (အလွန်အရေးကြီးသော စာလုံးပေါင်းသတ်ပုံ စည်းမျဉ်းများ):
+   - ALWAYS use correct standard Myanmar Unicode spelling according to the Myanmar Language Commission (မြန်မာစာအဖွဲ့ သတ်ပုံကျမ်းစံနှုန်း):
+   - 'ဖြစ်တယ်' / 'ဖြစ်ပြီး' / 'ဖြစ်လာ' (NEVER 'ဖစ်တယ်' / 'ဖစ်')
+   - 'သေချာ' (NEVER 'သေခြာ')
+   - 'စဉ်းစား' (NEVER 'စဥ်းစား')
+   - 'ရုတ်တရက်' (NEVER 'ရုပ်တရက်')
+   - 'ပြဿနာ' (NEVER 'ပြသာနာ' or 'ပြသနာ')
+   - 'ဂရုစိုက်' (NEVER 'ဂရုဆိုက်')
+   - 'အံ့ဩ' (NEVER 'အံသြ' or 'အံ့သြ')
+   - 'ခဏ' (NEVER 'ခန' like in 'ခဏစောင့်', 'ခဏလေး')
+   - 'မတတ်နိုင်' / 'တတ်နိုင်သမျှ' (NEVER 'တက်နိုင်')
+   - 'ကြိုးစား' (NEVER 'ကျိုးစား' when referring to effort/striving)
+   - 'ကျေးဇူး' (NEVER 'ကြေးဇူး')
+   - 'လွတ်မြောက်' (NEVER 'လွှတ်မြောက်')
+   - Standard Unicode characters ONLY: strictly use 'ဉ်' (U+1009) where required; NEVER use Ethiopic, Georgian, or Zawgyi look-alike glyphs.
 
 HARD RULES:
 1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every segment's true meaning must be faithfully narrated inside its own ID.

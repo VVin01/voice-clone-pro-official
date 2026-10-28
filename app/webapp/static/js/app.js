@@ -1401,26 +1401,23 @@ function setupRecapVisualEditor() {
     // 1. Slider Controls for Original Blur and Subtitle Y (100% synced with backend FFmpeg coordinates)
     function syncBlurBoxVisual() {
         if (!previewBlur) return;
-        const y = sliderBlurY ? parseFloat(sliderBlurY.value) : 81;
-        const h = sliderBlurH ? parseFloat(sliderBlurH.value) : 13;
+        const y = sliderBlurY ? parseFloat(sliderBlurY.value) : 85;
+        const h = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
         if (valBlurY) valBlurY.innerText = `${Math.round(y)}%`;
         if (valBlurH) valBlurH.innerText = `${Math.round(h)}%`;
-        // y = center-Y % from top of frame (matches backend: y_center = y * ch)
-        // bottom-from-bottom = (100 - y) - h/2  → places box center at y% from top
-        const centerFromBottom = 100.0 - y;
-        const bottomPct = Math.max(0, Math.min(100 - h, centerFromBottom - (h / 2.0)));
+        // Anchored at top: y% with translateY(-50%) places blur center exactly at y% (1:1 with FFmpeg y_center)
+        previewBlur.style.top = `${y}%`;
         previewBlur.style.height = `${h}%`;
-        previewBlur.style.bottom = `${bottomPct}%`;
+        previewBlur.style.bottom = "auto";
     }
 
     function syncSubBoxVisual() {
         if (!previewSub) return;
         const y = sliderSubY ? parseFloat(sliderSubY.value) : 85;
         if (valSubY) valSubY.innerText = `${Math.round(y)}%`;
-        // sub_y = fraction from top where subtitle center sits (backend: pixels_from_bottom = ch*(1-sy))
-        // so bottom% = 100 - y, and subtitle renders bottom-up from that point
-        const bottomPct = Math.max(2, Math.min(92, 100.0 - y));
-        previewSub.style.bottom = `${bottomPct}%`;
+        // Anchored at top: y% with translateY(-50%) places subtitle center exactly at y% (1:1 with ASS subtitle baseline offset)
+        previewSub.style.top = `${y}%`;
+        previewSub.style.bottom = "auto";
     }
 
     if (sliderBlurY && previewBlur && valBlurY) {
@@ -1442,13 +1439,17 @@ function setupRecapVisualEditor() {
     }
 
     // ── Interactive Drag & Drop / Manual Move on Canvas ──────────────────
-    function enableVerticalDrag(boxElement, onUpdateY) {
+    function enableVerticalDrag(boxElement, onUpdateY, getInitialY) {
         if (!boxElement || !canvas) return;
 
         let isDragging = false;
+        let startClientY = 0;
+        let startPercent = 85;
 
         function startDrag(clientY) {
             isDragging = true;
+            startClientY = clientY;
+            startPercent = getInitialY ? getInitialY() : 85;
             boxElement.classList.add("is-dragging");
             haptic("light");
         }
@@ -1458,10 +1459,10 @@ function setupRecapVisualEditor() {
             const canvasRect = canvas.getBoundingClientRect();
             if (canvasRect.height <= 0) return;
 
-            // Calculate percentage from canvas top (0% top to 100% bottom)
-            const relativeY = clientY - canvasRect.top;
-            const rawPercent = (relativeY / canvasRect.height) * 100;
-            const clampedY = Math.max(5, Math.min(95, Math.round(rawPercent)));
+            // Calculate percentage delta from initial touch/click to prevent sudden jumping
+            const deltaPx = clientY - startClientY;
+            const deltaPercent = (deltaPx / canvasRect.height) * 100;
+            const clampedY = Math.max(10, Math.min(95, Math.round(startPercent + deltaPercent)));
             onUpdateY(clampedY);
         }
 
@@ -1514,13 +1515,13 @@ function setupRecapVisualEditor() {
     enableVerticalDrag(previewBlur, (y) => {
         if (sliderBlurY) sliderBlurY.value = y;
         syncBlurBoxVisual();
-    });
+    }, () => sliderBlurY ? parseFloat(sliderBlurY.value) : 85);
 
     // Attach dragging to Subtitle Box
     enableVerticalDrag(previewSub, (y) => {
         if (sliderSubY) sliderSubY.value = y;
         syncSubBoxVisual();
-    });
+    }, () => sliderSubY ? parseFloat(sliderSubY.value) : 85);
 
     // ── Resize Handles for Blur Box Height ──
     const blurResizeTop = previewBlur ? previewBlur.querySelector(".box-resize-handle.top") : null;
@@ -1529,26 +1530,25 @@ function setupRecapVisualEditor() {
     function attachBlurResize(handle, isTop) {
         if (!handle) return;
         let startY = 0;
+        let startH = 7;
         let isResizing = false;
 
         function startResize(y) {
             isResizing = true;
             startY = y;
+            startH = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
             haptic("light");
         }
         function moveResize(y) {
             if (!isResizing) return;
-            const delta = (y - startY) * (isTop ? -0.5 : 0.5);
-            startY = y;
-            const curH = sliderBlurH ? parseInt(sliderBlurH.value) : 13;
-            const newH = Math.max(6, Math.min(30, Math.round(curH + delta)));
-            const actualDeltaH = newH - curH;
+            const canvasRect = canvas ? canvas.getBoundingClientRect() : null;
+            const canvasH = (canvasRect && canvasRect.height > 0) ? canvasRect.height : 360;
+            // Dragging top handle up (y < startY) expands height; dragging down shrinks height
+            // Dragging bottom handle down (y > startY) expands height; dragging up shrinks height
+            const deltaPx = isTop ? (startY - y) : (y - startY);
+            const deltaPct = (deltaPx / canvasH) * 100;
+            const newH = Math.max(3, Math.min(22, Math.round(startH + deltaPct)));
             if (sliderBlurH) sliderBlurH.value = newH;
-            if (sliderBlurY && actualDeltaH !== 0) {
-                const curY = parseFloat(sliderBlurY.value) || 81;
-                const newY = Math.max(5, Math.min(95, Math.round(curY + (isTop ? -actualDeltaH / 2 : actualDeltaH / 2))));
-                sliderBlurY.value = newY;
-            }
             syncBlurBoxVisual();
         }
         function endResize() {
@@ -1974,8 +1974,8 @@ function setupRecapVisualEditor() {
     // Reset Layout Helper (Blur Y/H, Sub Y, Crop, Zoom)
     function resetRecapCanvasLayout() {
         haptic("medium");
-        if (sliderBlurY) sliderBlurY.value = "81";
-        if (sliderBlurH) sliderBlurH.value = "13";
+        if (sliderBlurY) sliderBlurY.value = "85";
+        if (sliderBlurH) sliderBlurH.value = "7";
         if (sliderSubY) sliderSubY.value = "85";
         syncBlurBoxVisual();
         syncSubBoxVisual();
@@ -2548,8 +2548,8 @@ async function handleStartRecap() {
             zoom_factor: state.recapZoom || 1.06,
             voice_speed: state.recapSpeed || "+12%",
             blur_subtitles: state.recapBlurSubs !== false,
-            blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 81,
-            blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 13,
+            blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
+            blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 7,
             burn_subtitles: state.recapBurnSubs !== false,
             sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
             sub_style: state.recapSubStyle || "yellow",

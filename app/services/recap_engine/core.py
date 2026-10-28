@@ -1209,6 +1209,50 @@ def normalize_burmese_homoglyphs(text: Any) -> str:
     return s
 
 
+MYANMAR_SPELLING_CORRECTIONS: list[tuple[re.Pattern, str]] = [
+    # Unicode codepoints & stacked/composed letter fixes
+    (re.compile(r"[\u1025\u1008]\u103A"), "\u1009\u103A"),  # ဥ/ဉ + ် -> ဉ်
+    (re.compile(r"\u1009\u103A\u103A+"), "\u1009\u103A"),
+    # Zero vs Wa confusion within Myanmar words:
+    (re.compile(r"(?<=[\u1000-\u1021\u102B-\u103E])\u1040(?=[\u1000-\u1021\u102B-\u103E])"), "\u101D"),
+    # Common Movie Recap spelling fixes
+    (re.compile(r"သေခြာ"), "သေချာ"),
+    (re.compile(r"ဘာဖစ်ဖစ်"), "ဘာဖြစ်ဖြစ်"),
+    (re.compile(r"အဖစ်(?=[^\w\s]|\s|$|မှန်|အပျက်)"), "အဖြစ်"),
+    (re.compile(r"မဖစ်"), "မဖြစ်"),
+    (re.compile(r"ဖစ်(?=[တယ်ပြီးလာသွားနေခဲ့တာစေသလိုလို့ရင်ပေါ်ပျက်ရပ်နိုင်ချင်ရကောင်းစရာပဲပါကြတော့])"), "ဖြစ်"),
+    (re.compile(r"(^|\s)ဖစ်(\s|$)"), r"\1ဖြစ်\2"),
+    (re.compile(r"ပြသာနာ|ပြသနာ"), "ပြဿနာ"),
+    (re.compile(r"ရုပ်တရက်"), "ရုတ်တရက်"),
+    (re.compile(r"ဂရုဆိုက်"), "ဂရုစိုက်"),
+    (re.compile(r"အံသြ|အံ့သြ"), "အံ့ဩ"),
+    (re.compile(r"ခန(?=[စောင့်လေးခနအတွင်းအကြာနေတာတဖြုတ်]|\s|$)"), "ခဏ"),
+    (re.compile(r"မတက်နိုင်"), "မတတ်နိုင်"),
+    (re.compile(r"တက်နိုင်သမျှ"), "တတ်နိုင်သမျှ"),
+    (re.compile(r"တက်နိုင်သလောက်"), "တတ်နိုင်သလောက်"),
+    (re.compile(r"ကြေးဇူး"), "ကျေးဇူး"),
+    (re.compile(r"ကျိုးစား(?=[ပြီးနေခဲ့ပါကြမလားမယ်ချင်])"), "ကြိုးစား"),
+    (re.compile(r"မကြာမှီ"), "မကြာမီ"),
+    (re.compile(r"လွှတ်မြောက်"), "လွတ်မြောက်"),
+    (re.compile(r"တကယ့်တော့"), "တကယ်တော့"),
+    (re.compile(r"အခြေနေ(?=[^\w\s]|\s|$|မှာ|ကို|က|ကြောင့်)"), "အခြေအနေ"),
+    (re.compile(r"အမှန်တစ်ကယ်"), "အမှန်တကယ်"),
+    (re.compile(r"တိတ်တဆိပ်"), "တိတ်တဆိတ်"),
+    (re.compile(r"ကြေနပ်(?=[တယ်ပြီးလာသွားနေခဲ့တာပဲပါစရာ])"), "ကျေနပ်"),
+]
+
+
+def normalize_burmese_orthography(text: Any) -> str:
+    """Normalize Myanmar Unicode spelling according to standard Myanmar Language Commission orthography."""
+    s = str(text or "")
+    if not s:
+        return ""
+    s = normalize_burmese_homoglyphs(s)
+    for pat, rep in MYANMAR_SPELLING_CORRECTIONS:
+        s = pat.sub(rep, s)
+    return s
+
+
 def ensure_system_myanmar_fonts() -> str:
     """Ensure authentic Myanmar Unicode fonts (Noto Sans Myanmar) are registered
     with Fontconfig on Linux, and return the best available font family name.
@@ -1318,22 +1362,24 @@ def write_synced_ass_file(
         font_size = max(26, min(48 if sub_lines == 1 else 62, target_size))
 
     # Canvas-normalized subtitle positioning
+    # sy is the center of the subtitle line as a fraction from top (0.0 to 1.0).
+    # ASS Alignment 2 (bottom-center) positions text baseline at margin_v.
+    # To place the subtitle center exactly at sy*ch, subtract half the rendered text height:
+    text_half_height = (font_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
     if sub_y is not None:
         sy = _clamp01(float(sub_y), 0.85)
-        pixels_from_bottom = ch * (1.0 - sy)
+        pixels_from_bottom = (ch * (1.0 - sy)) - text_half_height
     elif subtitles_margin_v is not None:
         mv_val = float(subtitles_margin_v)
         pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
     elif boxes:
         b0 = boxes[0]
-        by = _clamp01(b0.get("y", 0.81))
-        bh = _clamp01(b0.get("h", 0.13))
-        sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
-        pixels_from_bottom = ch * sub_center
+        by = _clamp01(b0.get("y", 0.85))
+        pixels_from_bottom = (ch * (1.0 - by)) - text_half_height
     else:
-        pixels_from_bottom = max(20, int(round(ch * 0.05)))
+        pixels_from_bottom = max(20, int(round(ch * 0.12)))
 
-    margin_v = max(10, min(ch - 100, int(round(pixels_from_bottom))))
+    margin_v = max(10, min(ch - 80, int(round(pixels_from_bottom))))
 
     st_key = str(sub_style or "yellow").lower()
     st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
@@ -1383,8 +1429,8 @@ def canonicalize_burmese_text(text: str) -> str:
     """Fix common typing inversions, redundant spaces, and normalize Myanmar Unicode."""
     if not text:
         return ""
-    # 0. Normalize foreign homoglyphs (Ethiopic/Georgian)
-    t = normalize_burmese_homoglyphs(text)
+    # 0. Normalize foreign homoglyphs and standard Myanmar orthography / spelling
+    t = normalize_burmese_orthography(text)
     # 1. Visual-order 'ေ' typed BEFORE its consonant (e.g. "ေမ" at a word start -> "မေ").
     #    ONLY when the ေ is not attached to a preceding Myanmar letter/mark — in correct Unicode
     #    "ေ" always follows its consonant, and the next syllable's consonant must never be swapped
@@ -1718,16 +1764,16 @@ def apply_production_overlays(
     for i, b in enumerate(boxes):
         # Coordinates are fractions of the FULL output canvas (cw×ch) — the UI blur box is
         # absolutely positioned against the whole Live Canvas frame, not the inner picture.
-        w = int(round(_clamp01(b.get("w"), 0.1) * cw))
-        h = int(round(_clamp01(b.get("h"), 0.1) * ch))
+        w = int(round(_clamp01(b.get("w"), 0.90) * cw))
+        h = int(round(_clamp01(b.get("h"), 0.07) * ch))
         w = max(8, min(w, cw - 8))
         h = max(8, min(h, ch - 8))
         w = w if w % 2 == 0 else w - 1
         h = h if h % 2 == 0 else h - 1
 
-        # b.get("x") is left fraction (0.05 default); b.get("y") is center Y fraction (0.81 default)
+        # b.get("x") is left fraction (0.05 default); b.get("y") is center Y fraction (0.85 default)
         x_val = _clamp01(b.get("x"), 0.05) * cw
-        y_center = _clamp01(b.get("y"), 0.81) * ch
+        y_center = _clamp01(b.get("y"), 0.85) * ch
         y_top = y_center - (h / 2.0)
 
         x = int(round(max(0, min(cw - w, x_val))))
@@ -1820,20 +1866,19 @@ def apply_production_overlays(
             else:
                 sub_size = max(11, min(26, raw_size))
             # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
+            text_half_h = (sub_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
             if "sub_y" in overlays and overlays["sub_y"] is not None:
                 sy = _clamp01(float(overlays["sub_y"]), 0.85)
-                pixels_from_bottom = ch * (1.0 - sy)
+                pixels_from_bottom = max(10.0, (ch * (1.0 - sy)) - text_half_h)
             elif "subtitles_margin_v" in overlays:
                 mv_val = float(overlays["subtitles_margin_v"])
                 pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
             elif boxes:
                 b0 = boxes[0]
-                by = _clamp01(b0.get("y", 0.81))
-                bh = _clamp01(b0.get("h", 0.13))
-                sub_center = max(0.02, min(0.92, 1.0 - (by + bh * 0.65)))
-                pixels_from_bottom = ch * sub_center
+                by = _clamp01(b0.get("y", 0.85))
+                pixels_from_bottom = max(10.0, (ch * (1.0 - by)) - text_half_h)
             else:
-                pixels_from_bottom = max(14, int(round(ch * 0.045)))
+                pixels_from_bottom = max(14, int(round(ch * 0.12)))
 
             # FFmpeg's subtitles filter (libass on SRT) uses a 288 reference scale for MarginV
             sub_margin = max(4, min(280, int(round((pixels_from_bottom / max(1, ch)) * 288))))
@@ -1932,16 +1977,16 @@ def extract_preview_with_overlays(
 
     for i, b in enumerate(boxes):
         # Precise coordinates mapped directly onto the output canvas frame (WYSIWYG with Live Canvas Preview)
-        w = int(round(_clamp01(b.get("w"), 0.1) * cw))
-        h = int(round(_clamp01(b.get("h"), 0.1) * ch))
+        w = int(round(_clamp01(b.get("w"), 0.90) * cw))
+        h = int(round(_clamp01(b.get("h"), 0.07) * ch))
         w = max(8, min(w, cw - 8))
         h = max(8, min(h, ch - 8))
         w = w if w % 2 == 0 else w - 1
         h = h if h % 2 == 0 else h - 1
 
-        # b.get("x") is left fraction (0.05 default); b.get("y") is center Y fraction (0.81 default)
+        # b.get("x") is left fraction (0.05 default); b.get("y") is center Y fraction (0.85 default)
         x_val = _clamp01(b.get("x"), 0.05) * cw
-        y_center = _clamp01(b.get("y"), 0.81) * ch
+        y_center = _clamp01(b.get("y"), 0.85) * ch
         y_top = y_center - (h / 2.0)
 
         x = int(round(max(0, min(cw - w, x_val))))

@@ -1096,7 +1096,8 @@ textarea#voice-text-input:focus {
     align-items: center;
     justify-content: center;
     border-radius: 4px;
-    transition: bottom 0.1s, height 0.1s;
+    transform: translateY(-50%);
+    transition: top 0.1s, height 0.1s;
     z-index: 3;
 }
 
@@ -1114,7 +1115,8 @@ textarea#voice-text-input:focus {
     left: 4%;
     right: 4%;
     text-align: center;
-    transition: bottom 0.1s;
+    transform: translateY(-50%);
+    transition: top 0.1s;
     z-index: 5;
     pointer-events: auto;
 }
@@ -2077,10 +2079,13 @@ textarea#voice-text-input:focus {
     transform: scaleX(-1);
 }
 
-.video-bg-placeholder.mirrored .video-top-overlay,
+.video-bg-placeholder.mirrored .video-top-overlay {
+    transform: scaleX(-1);
+}
+
 .video-bg-placeholder.mirrored .preview-blur-box,
 .video-bg-placeholder.mirrored .preview-sub-box {
-    transform: scaleX(-1);
+    transform: translateY(-50%) scaleX(-1);
 }
 
 /* Logo Position adjustments in Mockup */

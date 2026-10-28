@@ -1092,8 +1092,8 @@ class RecapConfigRequest(BaseModel):
     zoom_factor: float = 1.06
     voice_speed: str = "+12%"         # +0%, +8%, +12%, +18%, +22%
     blur_subtitles: bool = True
-    blur_y: int = Field(81, ge=0, le=100)
-    blur_h: int = Field(13, ge=1, le=50)
+    blur_y: int = Field(85, ge=0, le=100)
+    blur_h: int = Field(7, ge=1, le=50)
     burn_subtitles: bool = True
     sub_y: int = Field(85, ge=0, le=100)
     sub_style: str = "yellow"         # yellow, white, boxed, neon
