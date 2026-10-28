@@ -41,7 +41,14 @@ async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
         async with httpx.AsyncClient(timeout=90.0) as client:
             with open(file_path, "rb") as f:
                 files = {"file": (file_path.name, f, "audio/wav")}
-                headers = {"X-Worker-Token": settings.bot_token}
+                worker_token = getattr(settings, "worker_token", "") or settings.bot_token
+                if not getattr(settings, "worker_token", ""):
+                    logger.warning(
+                        "WORKER_TOKEN is not set; falling back to the Telegram "
+                        "bot token for worker uploads. Set a separate "
+                        "WORKER_TOKEN and rotate it."
+                    )
+                headers = {"X-Worker-Token": worker_token}
                 url = f"{cloud_url}/api/internal/worker/upload-result/{job_id}"
                 resp = await client.post(url, files=files, headers=headers)
                 if resp.is_success:
