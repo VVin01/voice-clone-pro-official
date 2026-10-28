@@ -56,20 +56,15 @@ async def get_current_user(
         telegram_user_data = parse_and_verify_init_data(x_telegram_init_data)
 
     if not telegram_user_data:
-        # Non-Telegram or unauthenticated web preview session (strictly Guest privileges)
-        guest_id = 999999999
-        user = await db.get(User, guest_id)
-        if not user:
-            user = User(
-                id=guest_id,
-                first_name="Guest",
-                account_category=AccountCategory.FREE.value,
-                language_code="my",
-            )
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-        return user
+        # Security fix (audit 2026-10-28): no Guest fallback. Previously a
+        # missing or invalid initData auto-created a Guest user, which let
+        # any browser call authenticated endpoints. Authenticated endpoints
+        # now return 401 instead. The only unauthenticated exception is the
+        # read-only curated-persona list, which uses get_optional_user()
+        # below and creates no user.
+        raise HTTPException(
+            status_code=401, detail="Telegram authentication required"
+        )
 
     user_id = int(telegram_user_data["id"])
     user = await db.get(User, user_id)
@@ -92,6 +87,24 @@ async def get_current_user(
     return user
 
 
+async def get_optional_user(
+    x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
+    db: AsyncSession = Depends(get_db_session),
+) -> User | None:
+    """Optional identity for read-only preview endpoints only.
+
+    Returns the authenticated user, or None when initData is missing or
+    invalid. Unlike get_current_user(), it never creates a user and never
+    grants access: callers must treat None as "preview only" (language
+    defaults, public lists) and must not use it for writes, generation,
+    history, downloads, or admin actions.
+    """
+    try:
+        return await get_current_user(x_telegram_init_data, db)
+    except HTTPException:
+        return None
+
+
 def require_admin(
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
     user: User = Depends(get_current_user),
@@ -105,6 +118,53 @@ def require_admin(
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin authorization required")
     return user
+
+
+async def _require_job_owner(
+    db: AsyncSession, job_id: str, user: User
+) -> Job:
+    """Return a job only when the requester owns it or is an admin.
+
+    Returns 404 (not 403) for missing jobs and for jobs owned by someone
+    else, matching get_job_status() and avoiding ownership probing.
+    """
+    job = await db.get(Job, str(job_id))
+    if not job or (job.user_id != user.id and not settings.is_admin(user.id)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+def _recap_registry_owner_ok(job_id: str, user: User) -> bool:
+    """True when the in-memory recap registry entry belongs to the user.
+
+    Returns True when there is no registry entry, so callers fall back to
+    the DB job check. Callers must still 404 when neither source has a job.
+    """
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if entry is None:
+        return True
+    return entry.get("user_id") == user.id or settings.is_admin(user.id)
+
+
+def _voice_job_error_status(reason: str) -> int:
+    return {
+        "MODEL_NOT_AUTHORIZED": 404,
+        "CONCURRENT_JOB_LIMIT_EXCEEDED": 429,
+        "DAILY_JOB_LIMIT_EXCEEDED": 429,
+        "INSUFFICIENT_BALANCE": 403,
+    }.get(reason, 400)
+
+
+def _voice_job_error_detail(reason: str) -> str:
+    return {
+        "MODEL_NOT_AUTHORIZED": "အသံမော်ဒယ် မတွေ့ရှိပါ",
+        "CONCURRENT_JOB_LIMIT_EXCEEDED": "တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။",
+        "DAILY_JOB_LIMIT_EXCEEDED": "ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ။",
+        "INSUFFICIENT_BALANCE": "လက်ကျန်မိနစ် မလုံလောက်ပါ။",
+        "TEXT_EXCEEDS_CHARACTER_LIMIT": "စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်။",
+        "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT": "စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်။",
+        "AUDIO_FILE_NOT_FOUND": "အသံဖိုင် မတွေ့ရှိပါ။",
+    }.get(reason, "အလုပ်ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်ပါသည်။")
 
 
 # ── 1. User & Wallet Profile ───────────────────────────────────────────────
@@ -296,9 +356,9 @@ async def update_user_language(
 
 # ── 2. Voice Models & Curated Personas ─────────────────────────────────────
 @api_router.get("/voices/curated")
-async def get_curated_personas(user: User = Depends(get_current_user)):
+async def get_curated_personas(user: User | None = Depends(get_optional_user)):
     """Return the 6 Gemini-crafted curated Burmese voice personas."""
-    lang = user.language_code or "my"
+    lang = user.language_code if user else "my"
     return list_curated_voices(lang=lang)
 
 
@@ -413,22 +473,32 @@ async def create_voice_job(
     elif req.gender_preset in ("m2f", "f2f"):
         resolved_edge_voice = "my-MM-NilarNeural"
 
-    job = Job(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        chat_id=user.id,
+    # Security fix (audit 2026-10-28): validate through the shared queue
+    # validator (balance, FREE daily limit, concurrency, model
+    # authorization) before enqueueing, instead of inserting a Job
+    # directly with only a character-limit check.
+    from app.services.queue import create_voice_clone_job
+
+    job, _reason = await create_voice_clone_job(
+        db,
+        user.id,
+        text=clean_text,
         model_id=model.id,
-        input_text=clean_text,
-        speed_preset=req.speed,
         gender_preset=req.gender_preset,
+        speed_preset=req.speed,
         edge_voice=resolved_edge_voice,
         engine=actual_engine,
         preset_voice=req.preset_voice,
-        status=JobStatus.QUEUED.value,
     )
-    db.add(job)
+    if not job:
+        raise HTTPException(
+            status_code=_voice_job_error_status(_reason),
+            detail=_voice_job_error_detail(_reason),
+        )
     await db.commit()
     await db.refresh(job)
+    if job.model_id and job.model_id != model.id:
+        model = await db.get(VoiceModel, job.model_id) or model
 
     return {
         "success": True,
@@ -531,23 +601,38 @@ async def create_voice_job_with_audio(
     elif gender_preset in ("m2f", "f2f"):
         resolved_edge_voice = "my-MM-NilarNeural"
 
-    job = Job(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        chat_id=user.id,
+    # Security fix (audit 2026-10-28): same shared queue validation as
+    # /voices/generate (balance, daily limit, concurrency, model
+    # authorization) before enqueueing.
+    from app.services.queue import create_voice_clone_job
+
+    job, _reason = await create_voice_clone_job(
+        db,
+        user.id,
+        text=clean_text,
         model_id=model.id,
-        input_text=clean_text,
-        source_audio_path=ref_audio_path,
-        speed_preset=speed,
         gender_preset=gender_preset,
+        speed_preset=speed,
         edge_voice=resolved_edge_voice,
         engine=actual_engine,
         preset_voice=preset_voice,
-        status=JobStatus.QUEUED.value,
+        source_audio_path=ref_audio_path,
     )
-    db.add(job)
+    if not job:
+        # Do not leave the uploaded reference audio behind on failure.
+        if ref_audio_path:
+            try:
+                Path(ref_audio_path).unlink()
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=_voice_job_error_status(_reason),
+            detail=_voice_job_error_detail(_reason),
+        )
     await db.commit()
     await db.refresh(job)
+    if job.model_id and job.model_id != model.id:
+        model = await db.get(VoiceModel, job.model_id) or model
 
     return {
         "success": True,
@@ -593,12 +678,11 @@ async def get_job_status(
 async def download_job_audio(
     job_id: str,
     request: Request,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Stream or download the completed generated voice clone audio file."""
-    job = await db.get(Job, str(job_id))
-    if not job:
-        raise HTTPException(status_code=404, detail="Audio job not found")
+    job = await _require_job_owner(db, job_id, user)
 
     target_path = None
     if job.result_path and Path(job.result_path).is_file():
@@ -650,7 +734,17 @@ async def upload_worker_job_result(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Internal sync endpoint for Laptop Worker to upload converted audio results to Render Cloud."""
-    expected_token = settings.bot_token
+    # Security fix (audit 2026-10-28): use a separate worker
+    # token. Fall back to the bot token only with a warning so
+    # existing deployments do not break immediately.
+    worker_token = getattr(settings, "worker_token", "") or settings.bot_token
+    if not getattr(settings, "worker_token", ""):
+        logger.warning(
+            "WORKER_TOKEN is not set; falling back to the Telegram "
+            "bot token for worker uploads. Set a separate "
+            "WORKER_TOKEN and rotate it."
+        )
+    expected_token = worker_token
     if not auth_token or auth_token != expected_token:
         raise HTTPException(status_code=403, detail="Unauthorized worker upload")
 
@@ -661,11 +755,35 @@ async def upload_worker_job_result(
     outputs_dir = settings.storage_root / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
-    dest_filename = f"{job_id}_{file.filename}"
+    # Security fix (audit 2026-10-28): sanitize the uploaded filename
+    # (basename + uuid + whitelisted audio extension) and enforce a size
+    # limit while copying, so a crafted filename cannot traverse out of
+    # outputs/ and an unbounded upload cannot fill the disk.
+    _allowed_audio_exts = {".wav", ".mp3", ".ogg", ".m4a"}
+    _raw_ext = Path(file.filename or "").suffix.lower()
+    _safe_ext = _raw_ext if _raw_ext in _allowed_audio_exts else ".wav"
+    dest_filename = f"{job_id}_{uuid.uuid4().hex[:8]}{_safe_ext}"
     dest_path = outputs_dir / dest_filename
-
-    with open(dest_path, "wb") as f_out:
-        shutil.copyfileobj(file.file, f_out)
+    _max_worker_upload_bytes = 100 * 1024 * 1024
+    _written = 0
+    try:
+        with open(dest_path, "wb") as f_out:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                _written += len(chunk)
+                if _written > _max_worker_upload_bytes:
+                    raise HTTPException(
+                        status_code=413, detail="Uploaded file exceeds the 100 MB limit"
+                    )
+                f_out.write(chunk)
+    except Exception:
+        try:
+            dest_path.unlink()
+        except OSError:
+            pass
+        raise
 
     job.result_path = str(dest_path)
     job.status = JobStatus.SUCCESS.value
@@ -1602,6 +1720,8 @@ async def get_recap_status(
     """Poll recap job status, progress percentage, and deliverables."""
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if entry:
+        if not _recap_registry_owner_ok(job_id, user):
+            raise HTTPException(status_code=404, detail="Recap job not found")
         return {
             "id": job_id,
             "status": entry.get("status", "PENDING"),
@@ -1612,9 +1732,7 @@ async def get_recap_status(
             "download_urls": entry.get("download_urls", {}),
         }
 
-    job = await db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Recap job not found")
+    job = await _require_job_owner(db, job_id, user)
 
     is_success = (job.status == JobStatus.SUCCESS.value)
     is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
@@ -1640,8 +1758,17 @@ async def download_recap_file(
     job_id: str,
     file_type: str,
     request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Download or stream generated recap MP4 video, WAV/MP3 audio, SRT subtitles, or TXT script."""
+    # Ownership first, before any file is resolved from disk: a registry
+    # entry or a DB job must belong to the requester (or the requester
+    # must be an admin). Files on disk with no job record are not served.
+    if not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap file not found")
+    if job_id not in RECAP_JOBS_REGISTRY:
+        await _require_job_owner(db, job_id, user)
     db_result_path = None
     if file_type == "video":
         try:
@@ -1688,6 +1815,11 @@ async def send_recap_to_telegram(
 ):
     """Deliver generated recap video and assets directly to user's Telegram chat on demand."""
     db_job = await db.get(Job, job_id)
+    if not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    if job_id not in RECAP_JOBS_REGISTRY:
+        if not db_job or (db_job.user_id != user.id and not settings.is_admin(user.id)):
+            raise HTTPException(status_code=404, detail="Recap job not found")
     db_res_path = db_job.result_path if db_job else None
 
     video_path = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
@@ -1723,9 +1855,9 @@ async def send_voice_to_telegram(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Deliver synthesized voice audio directly to user's Telegram chat on demand."""
-    db_job = await db.get(Job, job_id)
+    db_job = await _require_job_owner(db, job_id, user)
     audio_path = None
-    if db_job and db_job.result_path and Path(db_job.result_path).is_file():
+    if db_job.result_path and Path(db_job.result_path).is_file():
         audio_path = Path(db_job.result_path)
     else:
         outputs_dir = settings.storage_root / "outputs"
