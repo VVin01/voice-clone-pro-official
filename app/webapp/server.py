@@ -29,6 +29,16 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Myanmar font setup error: %s", font_err)
 
+    # Warn at startup if the membership gate is not configured.
+    try:
+        from app.services.gate import warn_if_gate_not_configured
+
+        warn_if_gate_not_configured()
+    except Exception as gate_err:
+        import logging
+
+        logging.getLogger(__name__).warning("Gate configuration check error: %s", gate_err)
+
     # Initialize database tables and metadata
     try:
         await init_db()
@@ -161,13 +171,21 @@ webapp_app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware for Telegram Webview compatibility
+# CORS Middleware for Telegram Webview compatibility.
+# Only Telegram WebApp origins are allowed. Never restore allow_origins=["*"]
+# together with allow_credentials=True: that combination let any website
+# call the Mini App API with the browser's credentials.
+TELEGRAM_WEBAPP_ORIGINS = [
+    "https://web.telegram.org",
+    "https://telegram.org",
+    "https://t.me",
+]
 webapp_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=TELEGRAM_WEBAPP_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Telegram-Init-Data"],
 )
 
 # Mount REST API
