@@ -13,13 +13,50 @@ logger = logging.getLogger(__name__)
 MEMBER_STATUSES = {"creator", "administrator", "member", "restricted"}
 
 
+def warn_if_gate_not_configured() -> None:
+    """Log a startup warning when gate IDs are missing.
+
+    Call this at application startup. In production mode a missing gate ID
+    is a misconfiguration, not a silent bypass: check_telegram_membership()
+    now fails closed, so an unconfigured gate blocks everyone.
+    """
+    missing = [
+        name
+        for name, value in (
+            ("REQUIRED_CHANNEL_ID", settings.required_channel_id),
+            ("REQUIRED_GROUP_ID", settings.required_group_id),
+        )
+        if not value
+    ]
+    if not missing:
+        return
+    if str(settings.app_env).lower() not in ("development", "dev", "test", ""):
+        logger.warning(
+            "PRODUCTION gate misconfiguration: %s not set; membership checks "
+            "will fail closed until the gate IDs are configured.",
+            ", ".join(missing),
+        )
+    else:
+        logger.warning(
+            "Membership gate IDs not configured (%s); membership checks "
+            "will fail closed.",
+            ", ".join(missing),
+        )
+
+
 async def check_telegram_membership(bot: Bot | None, chat_id: str | int, user_id: int) -> bool:
     """Query Telegram API to check if user is in channel/group.
 
-    If bot is None or chat_id is empty, returns True (bypass in dev/testing).
+    Fail closed: if bot is None or chat_id is empty, returns False.
+    A missing gate configuration must never silently pass a user.
     """
     if bot is None or not chat_id:
-        return True
+        logger.warning(
+            "Membership check failed closed: bot or gate chat_id is missing "
+            "for user %s",
+            user_id,
+        )
+        return False
     try:
         member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         return member.status in MEMBER_STATUSES
