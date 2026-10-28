@@ -82,21 +82,23 @@ async def test_membership_gate_and_welcome_bonus_awarding(db_session):
     assert user.welcome_bonus_awarded is False
     assert user.channel_verified is False
 
-    # Simulate bot checking membership (bot=None bypasses external network call for verification)
+    # Security fix (audit 2026-10-28): the membership gate fails closed.
+    # With bot=None (or missing gate IDs) verification must NOT pass and
+    # no welcome bonus may be awarded; the old bypass is removed.
     verified, reason = await verify_user_membership(db_session, user, bot=None)
-    assert verified is True
-    assert user.channel_verified is True
-    assert user.group_verified is True
-    assert user.welcome_bonus_awarded is True
+    assert verified is False
+    assert user.channel_verified is False
+    assert user.group_verified is False
+    assert user.welcome_bonus_awarded is False
 
     bal = await get_minute_balance(db_session, user.id)
-    assert bal.welcome_seconds == 300
+    assert bal.welcome_seconds == 0
 
-    # Repeat verification: bonus must NOT be awarded twice
+    # Repeat verification: still not verified, still no bonus.
     verified2, _ = await verify_user_membership(db_session, user, bot=None)
-    assert verified2 is True
+    assert verified2 is False
     bal2 = await get_minute_balance(db_session, user.id)
-    assert bal2.welcome_seconds == 300
+    assert bal2.welcome_seconds == 0
 
 
 @pytest.mark.asyncio
