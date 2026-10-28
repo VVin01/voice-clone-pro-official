@@ -36,6 +36,10 @@ class Settings(BaseSettings):
 
     # Telegram Bot
     bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    # Internal worker token, separate from the Telegram bot token.
+    # Env-only and rotatable. When empty, callers fall back to the bot
+    # token with a warning so existing deployments do not break at once.
+    worker_token: str = Field(default="", alias="WORKER_TOKEN")
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
     # Membership Gate (Channel and Group)
