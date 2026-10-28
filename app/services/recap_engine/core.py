@@ -1398,6 +1398,17 @@ def canonicalize_burmese_text(text: str) -> str:
     t = re.sub(r'\s+([\u102B-\u103E\u104A\u104B])', r'\1', t)
     # 5. Clean up multiple spaces
     t = re.sub(r'[ \t]+', ' ', t).strip()
+    # 6. Fix common Myanmar spelling/Unicode stacking errors
+    # ြ (U+103C) must come before ျ (U+103B) if both present after same base
+    t = re.sub(r'(\u103B)(\u103C)', r'\2\1', t)
+    # Remove stray zero-width joiners/non-joiners that garble rendering
+    t = t.replace('\u200B', '').replace('\u200C', '').replace('\u200D', '')
+    # Normalize double-Myanmar period (။။) → single (။)
+    t = re.sub(r'(။)+', '။', t)
+    # Normalize multiple Myanmar comma (၊၊) → single (၊)
+    t = re.sub(r'(၊)+', '၊', t)
+    # Remove trailing Myanmar period at very end if followed by nothing (already ended)
+    t = t.rstrip()
     return t
 
 

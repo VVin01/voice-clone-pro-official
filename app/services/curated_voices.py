@@ -205,17 +205,19 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "badge_my": "Epic Cinema 👑",
         "badge_en": "Epic Cinema 👑",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "-6Hz",
-        "rate_offset": 9,
-        "formant_ratio": 0.925,
+        "pitch": "-3Hz",
+        "rate_offset": 8,
+        "formant_ratio": 1.0,
         "sample_text": "မင်္ဂလာပါ။ ရင်ခုန်စိတ်လှုပ်ရှားဖွယ် အက်ရှင်ဇာတ်ကားကြီးများ၏ အကောင်းဆုံး ဇာတ်ဝင်ခန်းများကို ခံစားကြည့်ရှုလိုက်ပါ။",
         "af_filter": (
-            "asetrate=40793,aresample=44100,atempo=1.0811,"
-            "highpass=f=60,afftdn=nr=10:nf=-50:tn=1,"
-            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-            "bass=g=3.5:f=105,"
-            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
-            "lowpass=f=9200,loudnorm=I=-15:TP=-1.0:LRA=7"
+            "highpass=f=60,afftdn=nr=8:nf=-48:tn=1,"
+            "bass=g=4:f=100:width_type=q:w=0.8,"
+            "equalizer=f=200:width_type=q:w=2:g=1.5,"
+            "equalizer=f=3000:width_type=q:w=1.5:g=0.8,"
+            "equalizer=f=7500:width_type=q:w=2:g=-2.5,"
+            "lowpass=f=10000,"
+            "acompressor=threshold=-20dB:ratio=2.5:attack=8:release=80:makeup=1.5,"
+            "loudnorm=I=-14:TP=-1.5:LRA=8"
         ),
         "control_instruction": (
             "A deep, bass-rich, resonant, dramatic blockbuster movie trailer narrator. "

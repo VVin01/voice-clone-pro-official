@@ -1405,7 +1405,10 @@ function setupRecapVisualEditor() {
         const h = sliderBlurH ? parseFloat(sliderBlurH.value) : 13;
         if (valBlurY) valBlurY.innerText = `${Math.round(y)}%`;
         if (valBlurH) valBlurH.innerText = `${Math.round(h)}%`;
-        const bottomPct = Math.max(0, Math.min(100 - h, 100 - y - (h / 2)));
+        // y = center-Y % from top of frame (matches backend: y_center = y * ch)
+        // bottom-from-bottom = (100 - y) - h/2  → places box center at y% from top
+        const centerFromBottom = 100.0 - y;
+        const bottomPct = Math.max(0, Math.min(100 - h, centerFromBottom - (h / 2.0)));
         previewBlur.style.height = `${h}%`;
         previewBlur.style.bottom = `${bottomPct}%`;
     }
@@ -1414,7 +1417,9 @@ function setupRecapVisualEditor() {
         if (!previewSub) return;
         const y = sliderSubY ? parseFloat(sliderSubY.value) : 85;
         if (valSubY) valSubY.innerText = `${Math.round(y)}%`;
-        const bottomPct = Math.max(0, Math.min(95, 100 - y));
+        // sub_y = fraction from top where subtitle center sits (backend: pixels_from_bottom = ch*(1-sy))
+        // so bottom% = 100 - y, and subtitle renders bottom-up from that point
+        const bottomPct = Math.max(2, Math.min(92, 100.0 - y));
         previewSub.style.bottom = `${bottomPct}%`;
     }
 

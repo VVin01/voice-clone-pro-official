@@ -1327,6 +1327,10 @@ def _enforce_style_and_gender_particles(text: str, *, style: str, is_female: boo
             cleaned = re.sub(r"ကျွန်တော်", "ကျွန်မ", cleaned)
         else:
             cleaned = re.sub(r"ကျွန်မ", "ကျွန်တော်", cleaned)
+    # Normalize common Myanmar writing errors in TTS text
+    cleaned = re.sub(r'(။)+', '။', cleaned)  # double-period
+    cleaned = re.sub(r'(၊)+', '၊', cleaned)  # double-comma
+    cleaned = cleaned.replace('\u200B', '').replace('\u200C', '').replace('\u200D', '')
     return _clean(cleaned)
 
 
@@ -1380,6 +1384,7 @@ def translate_batch(
 - PRONOUN & SPEAKER CLARITY RULE (အလွန်အရေးကြီး):
   1. Always refer to yourself (the protagonist narrator) as '{pov_pronoun}' — NEVER use crude 'ငါ' for narration and NEVER switch to third-person narrator commentary ('သူတို့...', 'ကောင်မလေးက...', '...ကြပါတော့တယ်ဗျာ') in later scenes!
   2. When other characters (antagonists, bosses, coworkers, family) speak or act, ALWAYS frame their words in clear reported/indirect speech or explicitly name the speaker (e.g., 'မန်နေဂျာက {pov_pronoun}ကို ... လို့ မောက်မာစွာ ပြောလာတယ်', 'သူက သူ့အနေနဲ့ ... ဆိုပြီး ခြိမ်းခြောက်လိုက်တယ်') so the listener NEVER confuses another character's 'I/me' with '{pov_pronoun}'!
+  3. NATURAL SPOKEN RHYTHM: In POV mode, vary sentence length naturally. Mix short punchy sentences ("ကျွန်တော် ကြောက်သွားတယ်") with slightly longer connecting ones ("ဒါပေမဲ့ ကျွန်တော် ပြန်မပြောဘဲ လှည့်ထွက်ခဲ့တယ်"). Avoid repetitive sentence structures starting every line the same way.
 {intro_rule}
 - VOICE & PARTICLE RULE: In POV mode you are the main character telling your own story — NEVER use commentator particles like 'ဗျာ' or 'ခင်ဗျာ' or 'ပရိသတ်ကြီးတို့ရေ'. End sentences naturally with 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'၊ 'ရတယ်'။
 - STRICTLY PROHIBITED: Dry, bookish literary writing ('သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်')."""
@@ -1410,6 +1415,8 @@ CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်�
 2. Always read STORY CONTEXT MEMORY, PREVIOUS CONTEXT, CURRENT ITEMS, and NEXT CONTEXT together to understand the full scene: WHO is the subject, WHO are they talking to, WHAT just happened in the previous line, and WHY are they saying/doing this.
 3. Weave each CURRENT item into a smooth, meaningful Burmese recap sentence that flows naturally from the preceding ID into the next ID.
 4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 14 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!
+5. CAUSE-AND-EFFECT CONTINUITY (အဆက်မပြတ် ကြောင်းကျိုးဆက် စပ်ပြောင်းမှု): Read the PREVIOUS context, determine exactly WHO is currently acting, WHAT they just did in the preceding sentence, and WHY the current action logically follows — then narrate the CURRENT item as the natural next step in the story chain. NEVER begin a new scene idea mid-segment without connecting it to the previous segment's outcome.
+6. MYANMAR SPELLING ACCURACY: Every output Myanmar word must use correct Myanmar Unicode spelling — no swapped letters, no missing vowel signs, no wrong stacking order. If unsure, use a simpler synonym rather than misspelling a complex word.
 
 HARD RULES:
 1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every segment's true meaning must be faithfully narrated inside its own ID.
