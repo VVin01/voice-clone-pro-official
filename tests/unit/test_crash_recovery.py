@@ -321,8 +321,13 @@ async def test_stale_recovery_telegram_notification(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_worker_delivery_failure_safe_failure_and_refund(db_session: AsyncSession, tmp_path: Path):
-    """If Telegram audio delivery crashes/fails, job must NOT be marked SUCCESS and balance must be refunded."""
+async def test_worker_delivery_failure_job_still_succeeds_result_persisted(db_session: AsyncSession, tmp_path: Path):
+    """Telegram delivery is best-effort in the current design: the result
+    is persisted to storage (and cloud-synced for Mini App download)
+    BEFORE delivery, so a send_audio failure must NOT fail the job or
+    refund the debit. (Previously delivery failure failed the job; that
+    behaviour changed when persisted/Mini App delivery became primary.)
+    """
     from app.models.schema import VoiceModel
     from app.services.queue import create_voice_clone_job
     from app.worker import process_single_job
@@ -355,6 +360,8 @@ async def test_worker_delivery_failure_safe_failure_and_refund(db_session: Async
         model_id=model.id,
         chat_id=9009,
     )
+    # Exercise the direct-delivery branch of the worker.
+    job.auto_deliver = True
     await db_session.commit()
 
     mock_bot = AsyncMock()
@@ -371,27 +378,32 @@ async def test_worker_delivery_failure_safe_failure_and_refund(db_session: Async
         out_wav.write_bytes(b"fake_norm_wav")
         return out_wav
 
-    async def mock_applio(model_pth, index_path, input_wav, output_wav, pitch=0, **kwargs):
+    def mock_voxcpm(text, output_wav, **kwargs):  # patched via side_effect: MagicMock calls it WITHOUT self (worker passes all-keyword args)
+        output_wav = Path(output_wav)
         output_wav.parent.mkdir(parents=True, exist_ok=True)
-        output_wav.write_bytes(b"fake_converted_wav")
+        output_wav.write_bytes(b"fake_voxcpm_wav")
         return output_wav
 
     with (
         patch("app.worker.generate_edge_tts", side_effect=mock_tts),
         patch("app.worker.normalize_audio_to_wav", side_effect=mock_norm),
-        patch("app.worker.run_applio_conversion", side_effect=mock_applio),
+        patch("app.services.voxcpm_engine.VoxCPMEngine.synthesize", side_effect=mock_voxcpm),
         patch("app.worker.get_wav_duration_seconds", return_value=15),
     ):
         processed = await process_single_job(session=db_session, job=job, bot=mock_bot)
-        assert processed is False
+        assert processed is True
 
-    # Verify job status is FAILED, not SUCCESS!
+    # Delivery failed, but the job still SUCCEEDS: the result file is the
+    # persisted deliverable (storage outputs + Mini App download).
     await db_session.refresh(job)
-    assert job.status == JobStatus.FAILED.value
-    assert "Telegram connection dropped" in (job.error_message or "")
+    assert job.status == JobStatus.SUCCESS.value
+    assert job.result_path is not None
+    assert job.result_path.endswith(".wav")
 
-    # Verify balance was restored to 300s (no minutes lost on failed delivery)
+    # Balance stays debited (15s consumed from monthly free first); a
+    # best-effort delivery failure does NOT trigger a refund.
     bal_after = await get_minute_balance(db_session, user.id)
     assert bal_after.welcome_seconds == 300
+    assert bal_after.monthly_free_seconds == 165
 
 

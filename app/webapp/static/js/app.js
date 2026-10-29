@@ -115,11 +115,10 @@ const state = {
     user: null,
     models: [],
     curatedVoices: [],
-    selectedEngine: "voxcpm",       // "voxcpm" | "applio"
+    selectedEngine: "voxcpm",       // VoxCPM2 only
     voxcpmSubMode: "curated",       // "curated" | "custom"
     selectedPersona: "komin",
     selectedModelSlug: "voxcpm-cloud-ai",
-    selectedApplioSlug: null,
     selectedReferenceFile: null,
     speed: "normal",
     activeJobId: null,
@@ -181,6 +180,51 @@ function getAuthHeaders(includeContentType = true) {
     return headers;
 }
 window.getAuthHeaders = getAuthHeaders;
+
+// -- 401 "Open via Telegram" modal (security audit round 2) --
+// Previously a 401 from /api/user/me was silently ignored and other
+// calls surfaced a raw error or left the UI blank. Now the first 401
+// shows a friendly modal instead of breaking the app.
+let openViaTelegramShown = false;
+function showOpenViaTelegramModal() {
+    if (openViaTelegramShown) return;
+    openViaTelegramShown = true;
+    const modal = document.getElementById("open-via-telegram-modal");
+    if (!modal) return;
+    const titleEl = modal.querySelector('[data-i18n="open_via_telegram_title"]');
+    const descEl = modal.querySelector('[data-i18n="open_via_telegram_desc"]');
+    const btnEl = modal.querySelector('[data-i18n="open_via_telegram_btn"]');
+    if (titleEl) titleEl.textContent = t("open_via_telegram_title");
+    if (descEl) descEl.textContent = t("open_via_telegram_desc");
+    if (btnEl) btnEl.textContent = t("open_via_telegram_btn");
+    modal.classList.remove("hidden");
+}
+window.showOpenViaTelegramModal = showOpenViaTelegramModal;
+function closeOpenViaTelegramModal() {
+    const modal = document.getElementById("open-via-telegram-modal");
+    if (modal) modal.classList.add("hidden");
+}
+window.closeOpenViaTelegramModal = closeOpenViaTelegramModal;
+function isAuthFailure(res) {
+    if (res && res.status === 401) { showOpenViaTelegramModal(); return true; }
+    return false;
+}
+window.isAuthFailure = isAuthFailure;
+
+// Authenticated image loading: /api/recap/frame and /api/receipts/*
+// now require the Telegram header, which a plain <img src> cannot send.
+// External thumbnails (YouTube etc.) are returned untouched.
+async function fetchAuthImageUrl(url) {
+    if (!url || !url.startsWith("/api/")) return url;
+    try {
+        const res = await fetch(url, { headers: getAuthHeaders(false) });
+        if (isAuthFailure(res)) return null;
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+    } catch (e) { return null; }
+}
+window.fetchAuthImageUrl = fetchAuthImageUrl;
 
 // ── Tutorial Video Link Controller (Voice Clone & Movie Recap) ───────────────
 let tutorialConfig = {
@@ -284,7 +328,7 @@ function openTutorialVideo(type = "auto") {
 
     if (!target || !target.enabled) {
         const label = fallbackType === "recap" ? "Movie Recap" : "Voice Clone";
-        showStudioToast(`⚠️ ${label} လမ်းညွှန်ဗီဒီယိုကို မကြာမီ တင်ဆက်ပေးပါမည် (Coming Soon)။`, 'warning');
+        showStudioToast(tf("tutorial_coming_soon", {label}), 'warning');
         return;
     }
 
@@ -431,6 +475,7 @@ function setupTabs() {
 async function loadUserProfile() {
     try {
         const res = await fetch("/api/user/me", { headers: getAuthHeaders() });
+        if (isAuthFailure(res)) return;
         if (!res.ok) return;
         const data = await res.json();
         state.user = data;
@@ -495,6 +540,9 @@ async function loadUserProfile() {
             }
         }
 
+        updateGateBanner(data);
+        updateVoicePreflight();
+
         // Enable Admin Tab if user is administrator
         if (data.is_admin) {
             if (adminNavBtn) adminNavBtn.classList.remove("hidden");
@@ -518,6 +566,8 @@ async function loadUserProfile() {
         console.warn("User profile fetch error:", err);
     }
 }
+
+
 
 // ── API: Curated Voices (12 Gemini Personas) ───────────────────────────────
 state.personaFilter = "all";
@@ -590,75 +640,11 @@ async function loadCuratedVoices() {
     }
 }
 
-// ── API: Applio Models Loader ──────────────────────────────────────────────
-async function loadApplioModels() {
-    const container = document.getElementById("models-list");
-    if (!container) return;
-
-    try {
-        const res = await fetch("/api/voices/models", { headers: getAuthHeaders() });
-        if (!res.ok) return;
-        const models = await res.json();
-        state.models = models;
-
-        const applioModels = models.filter(m => !m.is_voxcpm);
-        container.innerHTML = "";
-
-        if (applioModels.length === 0) {
-            container.innerHTML = `<p class="text-muted" style="grid-column: 1 / -1; padding: 12px; text-align: center;">No Applio models found in database.</p>`;
-            return;
-        }
-
-        // Preserve and assign default Applio model selection without corrupting VoxCPM
-        if (!state.selectedApplioSlug && applioModels.length > 0) {
-            state.selectedApplioSlug = applioModels[0].slug;
-        }
-        if (state.selectedEngine === "applio") {
-            state.selectedModelSlug = state.selectedApplioSlug || applioModels[0].slug;
-        }
-
-        const avatarMap = {
-            "kartoon": "🎭",
-            "myanmar-voice-1": "🎙️",
-            "the-light": "💡",
-            "ant-movie": "🎬",
-        };
-
-        applioModels.forEach(m => {
-            const card = document.createElement("div");
-            const isSelected = (m.slug === (state.selectedApplioSlug || applioModels[0].slug));
-            card.className = `applio-model-card ${isSelected ? "active" : ""}`;
-            card.setAttribute("data-slug", m.slug);
-
-            const avatar = avatarMap[m.slug] || "🎙️";
-            card.innerHTML = `
-                <span class="applio-model-avatar">${avatar}</span>
-                <div class="applio-model-details">
-                    <span class="applio-model-name">${m.name}</span>
-                    <span class="applio-model-tag">RVC v2 • Local GPU</span>
-                </div>
-                <button type="button" class="voice-preview-btn mini" onclick="event.stopPropagation(); playVoicePreview('${m.slug}', this)">
-                    <span class="preview-btn-icon">▶️</span>
-                    <span class="preview-btn-label">${t("preview_voice") || "နမူနာ"}</span>
-                </button>
-            `;
-
-            card.addEventListener("click", () => {
-                haptic("selection");
-                document.querySelectorAll(".applio-model-card").forEach(c => c.classList.remove("active"));
-                card.classList.add("active");
-                state.selectedApplioSlug = m.slug;
-                if (state.selectedEngine === "applio") {
-                    state.selectedModelSlug = m.slug;
-                }
-            });
-
-            container.appendChild(card);
-        });
-
-    } catch (err) {
-        console.warn("Could not load Applio models:", err);
-    }
+// ── API: Legacy Models Loader (removed) ──
+async function loadLegacyModels() {
+    // Voice v2: legacy engine removed — VoxCPM2 only. Kept as a no-op stub
+    // so existing init calls do not break.
+    return;
 }
 
 // ── Voice Preview Audio Player Controller ──────────────────────────────────
@@ -760,17 +746,17 @@ function toggleResultAudioPlay() {
     if (player.paused) {
         player.play().then(() => {
             if (icon) icon.innerText = "⏸️";
-            if (text) text.innerText = currentLang === "my" ? "ခေတ္တရပ်မည် (Pause Audio)" : "Pause Audio";
+            if (text) text.innerText = t("pause_audio");
         }).catch(err => {
             console.warn("Audio play error:", err);
             // If autoplay is blocked or user needs to click again
             if (icon) icon.innerText = "▶️";
-            if (text) text.innerText = currentLang === "my" ? "အသံဖွင့်နားထောင်မည် (Play Audio)" : "Play Audio";
+            if (text) text.innerText = t("play_audio");
         });
     } else {
         player.pause();
         if (icon) icon.innerText = "▶️";
-        if (text) text.innerText = currentLang === "my" ? "အသံဖွင့်နားထောင်မည် (Play Audio)" : "Play Audio";
+        if (text) text.innerText = t("play_audio");
     }
 }
 window.toggleResultAudioPlay = toggleResultAudioPlay;
@@ -782,19 +768,19 @@ function setupAudioPlayerEvents() {
         const icon = document.getElementById("play-toggle-icon");
         const text = document.getElementById("play-toggle-text");
         if (icon) icon.innerText = "⏸️";
-        if (text) text.innerText = currentLang === "my" ? "ခေတ္တရပ်မည် (Pause Audio)" : "Pause Audio";
+        if (text) text.innerText = t("pause_audio");
     });
     player.addEventListener("pause", () => {
         const icon = document.getElementById("play-toggle-icon");
         const text = document.getElementById("play-toggle-text");
         if (icon) icon.innerText = "▶️";
-        if (text) text.innerText = currentLang === "my" ? "အသံဖွင့်နားထောင်မည် (Play Audio)" : "Play Audio";
+        if (text) text.innerText = t("play_audio");
     });
     player.addEventListener("ended", () => {
         const icon = document.getElementById("play-toggle-icon");
         const text = document.getElementById("play-toggle-text");
         if (icon) icon.innerText = "🔄";
-        if (text) text.innerText = currentLang === "my" ? "ပြန်လည်နားထောင်မည် (Replay)" : "Replay Audio";
+        if (text) text.innerText = t("replay_audio");
     });
 }
 
@@ -809,44 +795,26 @@ function setupVoiceStudio() {
             const max = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
             charCount.innerText = `${len} / ${max} chars`;
             charCount.style.color = len > max ? "#ef4444" : "var(--text-muted)";
+            updateVoicePreflight();
         });
     }
 
-    // Engine Selector Buttons (VoxCPM vs Applio)
+    // Engine Selector Button (VoxCPM2 only)
     const btnVox = document.getElementById("btn-engine-voxcpm");
-    const btnApplio = document.getElementById("btn-engine-applio");
     const voxModeSection = document.getElementById("voxcpm-mode-section");
-    const applioSection = document.getElementById("applio-models-section");
     const voiceQueueNotice = document.getElementById("voice-queue-notice");
 
-    if (btnVox && btnApplio) {
+    if (btnVox) {
         btnVox.addEventListener("click", () => {
             haptic("selection");
             btnVox.classList.add("active");
-            btnApplio.classList.remove("active");
             state.selectedEngine = "voxcpm";
             state.selectedModelSlug = "voxcpm-cloud-ai";
             if (voxModeSection) voxModeSection.classList.remove("hidden");
-            if (applioSection) applioSection.classList.add("hidden");
             if (voiceQueueNotice) {
                 voiceQueueNotice.className = "queue-notice-banner";
                 voiceQueueNotice.querySelector(".notice-text").innerText = t("queue_notice_voxcpm");
             }
-        });
-
-        btnApplio.addEventListener("click", () => {
-            haptic("selection");
-            btnApplio.classList.add("active");
-            btnVox.classList.remove("active");
-            state.selectedEngine = "applio";
-            state.selectedModelSlug = state.selectedApplioSlug || "kartoon";
-            if (voxModeSection) voxModeSection.classList.add("hidden");
-            if (applioSection) applioSection.classList.remove("hidden");
-            if (voiceQueueNotice) {
-                voiceQueueNotice.className = "queue-notice-banner applio-notice";
-                voiceQueueNotice.querySelector(".notice-text").innerText = t("queue_notice_applio");
-            }
-            loadApplioModels();
         });
     }
 
@@ -917,6 +885,78 @@ function clearVoiceText() {
     }
 }
 
+
+// ── UI/UX (2026-10-29): gate banner + generate preflight ──────────────────
+// Gate banner uses only fields /api/user/me already returns (gate branch);
+// it never changes job logic. GATE_NOT_CONFIGURED is a server-config error,
+// not a "you have not joined" message, so it is shown differently.
+function updateGateBanner(data) {
+    const banner = document.getElementById("gate-banner");
+    if (!banner || !data) return;
+    const title = document.getElementById("gate-banner-title");
+    const desc = document.getElementById("gate-banner-desc");
+    const status = document.getElementById("gate-banner-status");
+    const chLink = document.getElementById("gate-link-channel");
+    const grLink = document.getElementById("gate-link-group");
+    const isMy = (currentLang === "my");
+    if (data.is_admin || data.membership_verified) { banner.classList.add("hidden"); return; }
+    if (data.gate_configured === false) {
+        if (title) title.innerText = t("gate_not_configured_title");
+        if (desc) desc.innerText = t("gate_not_configured_desc");
+        if (status) status.innerText = "GATE_NOT_CONFIGURED";
+        banner.classList.remove("hidden");
+        return;
+    }
+    if (title) title.innerText = t("gate_banner_title");
+    if (desc) desc.innerText = t("gate_banner_desc");
+    if (chLink && data.channel_invite_link) chLink.href = data.channel_invite_link;
+    if (grLink && data.group_invite_link) grLink.href = data.group_invite_link;
+    if (status) status.innerText = "";
+    banner.classList.remove("hidden");
+}
+
+async function verifyMembershipFromBanner() {
+    const status = document.getElementById("gate-banner-status");
+    const btn = document.getElementById("gate-btn-verify");
+    const isMy = (currentLang === "my");
+    if (btn) btn.disabled = true;
+    if (status) status.innerText = t("gate_checking");
+    try {
+        const res = await fetch("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() });
+        const data = await res.json();
+        if (data.verified) {
+            showStudioToast(t("gate_verified_toast"), "success");
+            loadUserProfile();
+        } else {
+            if (status) status.innerText = t("gate_not_member");
+            showStudioToast(t("gate_not_found_toast"), "warning");
+        }
+    } catch (e) {
+        if (status) status.innerText = t("gate_check_failed");
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+window.verifyMembership = verifyMembershipFromBanner; // compat: old voice2 verify name
+
+// Preflight: show cost/limit BEFORE the user taps Generate, so there is no surprise.
+// Uses only /api/user/me fields (balance_minutes, character_limit, is_vip).
+function updateVoicePreflight() {
+    const box = document.getElementById("voice-preflight");
+    const input = document.getElementById("voice-text-input");
+    if (!box || !input) return;
+    const u = state.user || {};
+    const len = input.value.length;
+    const max = u.character_limit || (u.is_vip ? 5000 : 1000);
+    const bal = u.is_admin ? "∞" : `${u.balance_minutes ?? 0}`;
+    let line = tf("preflight_line", { len, max, bal });
+    if (len > max) line += t("preflight_over_limit");
+    else if (!u.is_admin && (u.balance_minutes ?? 0) <= 0) line += t("preflight_balance_empty");
+    box.innerText = line;
+    box.classList.toggle("preflight-warn", len > max || (!u.is_admin && (u.balance_minutes ?? 0) <= 0));
+}
+
 // ── Submit Voice Job & Live Polling ─────────────────────────────────────────
 async function handleVoiceGenerate() {
     const textInput = document.getElementById("voice-text-input");
@@ -928,9 +968,12 @@ async function handleVoiceGenerate() {
 
     const maxChars = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
     if (text.length > maxChars) {
-        showStudioToast(currentLang === "my"
-            ? `စာသား စာလုံးရေ (${text.length}) သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (${maxChars} လုံး) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "" : "ကန့်သတ်ချက်မရှိ (စာလုံးရေ ၅၀၀၀ အထိ) အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
-            : `Text length (${text.length}) exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${maxChars} characters.`, 'warning');
+        showStudioToast(tf("text_too_long", {
+            len: text.length,
+            tier: state.user?.is_vip ? "VIP" : (currentLang === "my" ? "အခမဲ့ (Free)" : "Free"),
+            max: maxChars,
+            vip_note: state.user?.is_vip ? "" : (currentLang === "my" ? " ကန့်သတ်ချက်မရှိ (စာလုံးရေ ၅၀၀၀ အထိ) အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" : " Upgrade to VIP for up to 5000 characters with no limit."),
+        }), 'warning');
         return;
     }
 
@@ -948,13 +991,11 @@ async function handleVoiceGenerate() {
 
     try {
         let res;
-        const isVox = (state.selectedEngine === "voxcpm");
+        const isVox = true; // Voice v2: VoxCPM2 only
         const presetVoice = (isVox && state.voxcpmSubMode === "curated")
             ? state.selectedPersona
             : null;
-        const targetModelSlug = isVox
-            ? "voxcpm-cloud-ai"
-            : (state.selectedApplioSlug || state.selectedModelSlug || "kartoon");
+        const targetModelSlug = "voxcpm-cloud-ai";
 
         if (state.selectedReferenceFile) {
             const formData = new FormData();
@@ -1030,18 +1071,19 @@ function startJobPolling(jobId) {
             const btnGen = document.getElementById("btn-generate-voice");
 
             if (data.is_waiting_laptop_worker) {
-                if (statusMsg) statusMsg.innerText = t("applio_status_waiting");
-                if (etaText) etaText.innerText = "Laptop Worker ဖွင့်ထားပါက အလိုအလျောက် ပြီးစီးပါမည်";
+                if (statusMsg) statusMsg.innerText = t("voxcpm_status_waiting");
+                if (etaText) etaText.innerText = t("worker_auto_complete");
                 if (progressFill) progressFill.style.width = "35%";
             } else if (data.status === "QUEUED") {
                 if (progressFill) progressFill.style.width = "45%";
-                if (statusMsg) statusMsg.innerText = "⏳ Cloud Queue စောင့်ဆိုင်းနေပါသည်...";
+                if (statusMsg) statusMsg.innerText = t("cloud_queue_waiting");
             } else if (data.status === "RUNNING") {
                 if (progressFill) progressFill.style.width = "80%";
                 if (statusMsg) statusMsg.innerText = "⚡ အသံထွက်ပေါ်အောင် ပေါင်းစပ်နေပါသည်...";
             } else if (data.status === "SUCCESS") {
                 clearInterval(state.pollTimer);
                 haptic("heavy");
+                if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
@@ -1205,7 +1247,12 @@ function setupRecapVisualEditor() {
                 state.recapSourceHeight = data.height;
             }
             if (data.thumbnail) {
-                state.recapThumbnailUrl = data.thumbnail;
+                // /api/recap/frame needs the auth header: fetch it as a
+                // blob instead of assigning the raw URL to an <img>.
+                const authThumb = data.thumbnail.startsWith("/api/recap/frame")
+                    ? (await fetchAuthImageUrl(data.thumbnail))
+                    : data.thumbnail;
+                state.recapThumbnailUrl = authThumb || data.thumbnail;
                 const probeImg = new Image();
                 probeImg.onload = () => {
                     if (probeImg.naturalWidth && probeImg.naturalHeight && (!state.recapSourceWidth || !state.recapSourceHeight)) {
@@ -1214,7 +1261,7 @@ function setupRecapVisualEditor() {
                         updateCanvasMockupVisuals();
                     }
                 };
-                probeImg.src = data.thumbnail;
+                probeImg.src = state.recapThumbnailUrl;
                 updateCanvasMockupVisuals();
             }
 
@@ -2613,6 +2660,7 @@ function startRecapJobPolling(jobId) {
             }
 
             if (data.status === "SUCCESS") {
+                if (data.fallback_used) { try { showStudioToast(tf("recap_fallback_note", { count: (data.fallback_segments || []).length || 1 }), 'info'); } catch (e) {} }
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
                 try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
@@ -2996,7 +3044,7 @@ async function loadAdminData() {
             if (elUsers) elUsers.innerText = stats.total_users;
             if (elVip) elVip.innerText = stats.vip_users;
             if (elSlips) elSlips.innerText = stats.pending_slips;
-            if (elQueue) elQueue.innerText = stats.queued_jobs !== undefined ? stats.queued_jobs : stats.queued_applio_jobs;
+            if (elQueue) elQueue.innerText = stats.queued_jobs !== undefined ? stats.queued_jobs : 0;
         }
 
         // Load live processing queue & dynamic settings
@@ -3031,6 +3079,11 @@ async function loadAdminData() {
                     `;
                     slipsContainer.appendChild(item);
                 });
+                // Receipts now require auth: hydrate thumbnails via fetch.
+                slipsContainer.querySelectorAll(".slip-thumb").forEach(async (imgEl) => {
+                    const authUrl = await fetchAuthImageUrl(imgEl.getAttribute("src"));
+                    if (authUrl) imgEl.src = authUrl;
+                });
             }
         }
         // Load 24h global history
@@ -3040,11 +3093,12 @@ async function loadAdminData() {
     }
 }
 
-function openSlipModal(url) {
+async function openSlipModal(url) {
     const modal = document.getElementById("slip-modal");
     const img = document.getElementById("modal-slip-img");
     if (modal && img) {
-        img.src = url;
+        const authUrl = await fetchAuthImageUrl(url);
+        img.src = authUrl || url;
         modal.classList.remove("hidden");
     }
 }
@@ -3521,7 +3575,7 @@ async function loadAdminQueue(isSilent = false) {
         const renderJobCard = (j) => {
             const statusLower = (j.status || "queued").toLowerCase();
             const engineLower = (j.engine || "voxcpm").toLowerCase();
-            const engineLabel = engineLower === "applio" ? "🎙️ APPLIO GPU" : (engineLower === "recap" ? "🎬 RECAP" : "☁️ VOXCPM AI");
+            const engineLabel = engineLower === "recap" ? "🎬 RECAP" : "☁️ VOXCPM AI";
             
             let statusBadgeText = j.status;
             let durationTxt = `⏳ ${j.created_ago}`;
@@ -4138,7 +4192,7 @@ function pollAdminJobProgress(jobId) {
                 if (statusBox) {
                     let label = data.progress_label || (data.status === "QUEUED" ? "တန်းစီဇယားထဲတွင် စောင့်ဆိုင်းနေပါသည်..." : "လုပ်ဆောင်နေဆဲ...");
                     if (data.is_waiting_laptop_worker) {
-                        label = "Laptop Worker (Applio GPU) ကို စောင့်ဆိုင်းနေပါသည် (run_laptop_worker.bat ဖွင့်ပေးရန် လိုအပ်သည်)";
+                        label = "VoxCPM2 Cloud တွင် စောင့်ဆိုင်းနေပါသည်...";
                     }
                     const step = data.progress_step ? `[${data.progress_step}] ` : '';
                     const pct = data.progress_percent || (data.status === "RUNNING" ? 50 : 10);
@@ -4376,6 +4430,7 @@ async function checkStartupDeepLinks() {
             if (res.ok) {
                 const data = await res.json();
                 if (data.status === "SUCCESS") {
+                    if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
                     state.activeJobId = jobId;
                     const resultBox = document.getElementById("voice-result-box");
                     const audioPlayer = document.getElementById("result-audio-player");
@@ -4670,7 +4725,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     loadUserProfile();
     loadCuratedVoices();
-    loadApplioModels();
+    loadLegacyModels();
     loadUserHistory();
     checkStartupDeepLinks();
 });

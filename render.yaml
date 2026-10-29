@@ -1,13 +1,59 @@
+# Render Blueprint - NOTE: this file is NOT the live service definition.
+# The live service voice-clone-studio (web_service, Oregon, standard plan,
+# https://voice-clone-studio-c1er.onrender.com) was created separately and
+# does not match the old worker blueprint below. Do NOT re-apply this
+# file blindly: it would create a new service instead of updating the
+# live one. This file is kept in sync with the live service's shape so a
+# rebuild from blueprint produces the same kind of service. The envVars
+# below are a checklist of keys that must exist on the LIVE service in
+# the Dashboard (values are never stored here; use sync: false).
 services:
-  - type: worker
-    name: voice-clone-pro-official-bot
+  - type: web_service
+    name: voice-clone-studio
     env: docker
     plan: standard
+    region: oregon
     autoDeploy: true
+    healthCheckPath: /health
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ADMIN_IDS
         sync: false
+      - key: WORKER_TOKEN
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: REQUIRED_CHANNEL_ID
+        sync: false
+      - key: REQUIRED_GROUP_ID
+        sync: false
+      - key: CHANNEL_INVITE_LINK
+        sync: false
+      - key: GROUP_INVITE_LINK
+        sync: false
+      - key: VOXCPM_SPACE_URL
+        sync: false
+      - key: VOXCPM_SPACES
+        sync: false
+      - key: VOXCPM_TIMEOUT
+        sync: false
+      - key: HF_TOKENS
+        sync: false
+      - key: GROQ_API_KEYS
+        sync: false
+      - key: GROQ_WHISPER_MODEL
+        sync: false
+      - key: PAYMENT_KPAY_NUMBER
+        sync: false
+      - key: PAYMENT_KPAY_NAME
+        sync: false
+      - key: PAYMENT_WAVE_NUMBER
+        sync: false
+      - key: PAYMENT_WAVE_NAME
+        sync: false
       - key: DATABASE_URL
-        value: sqlite+aiosqlite:///./data/voice_clone_official.db
+        # WARNING: confirm before use - see .env.example. A local SQLite
+        # file here is lost on redeploy without a persistent disk.
+        # If the live service uses Render Postgres, use that URL instead.
+        value: sqlite+aiosqlite:///./data/voice_clone_v2.db

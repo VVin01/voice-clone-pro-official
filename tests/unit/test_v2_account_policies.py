@@ -181,6 +181,8 @@ async def test_model_tier_permissions(db_session, tmp_path):
     free_user, _ = await get_or_create_user(db_session, telegram_id=555004)
     purch_user, _ = await get_or_create_user(db_session, telegram_id=555005)
     await credit_purchased_minutes(db_session, user_id=purch_user.id, minutes=10)
+    # Hermetic: do not depend on the process ADMIN_IDS env being set.
+    settings.admin_ids_raw = "555009"
     admin_id = list(settings.admin_ids)[0]
     admin_user, _ = await get_or_create_user(db_session, telegram_id=admin_id)
 

@@ -281,7 +281,7 @@ async def handle_clone_gender_selected(callback: CallbackQuery, state: FSMContex
     await state.update_data(gender_preset=gender_code)
     await state.set_state(CloneFSM.waiting_for_model)
 
-    # Prompt Applio model selection
+    # Prompt voice model selection (VoxCPM2 only for new jobs)
     async with AsyncSessionLocal() as session:
         models = await get_available_models_for_user(session, callback.from_user.id)
 
@@ -357,18 +357,10 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
         await state.update_data(model_id=model_id)
         await state.set_state(CloneFSM.waiting_for_voxcpm_reference)
 
-        ref_prompt = (
-            "🎙️ <b>VoxCPM 2 Cloud AI — Reference Voice</b>\n\n"
-            "အကောင်းဆုံးအသံ Clone ရရှိရန် <b>Reference Audio</b> (ကိုးကားသံ) တစ်ခု ပေးပို့ပေးပါ။\n\n"
-            "📌 <b>လိုအပ်ချက်:</b>\n"
-            "• WAV / MP3 / OGG ဖိုင် (၃-၃၀ စက္ကန့်)\n"
-            "• ကြည်လင်သန့်ရှင်းသော မိမိအသံ ဖြစ်ရမည်\n"
-            "• Background noise နည်းသလောက် ကောင်းသည်\n\n"
-            "⬇️ Reference Audio မလိုပဲ Default Burmese AI Voice သုံးမည်ဆိုလျှင်:\n"
-        )
+        ref_prompt = t("clone_ref_prompt", lang)
         skip_btn = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text="⏭️ Skip — Default AI Voice သုံးမည်",
+                text=t("clone_skip_default", lang),
                 callback_data="voxcpm_ref:skip"
             )],
             [InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:voice_clone")],
@@ -380,7 +372,18 @@ async def handle_clone_model_selected(callback: CallbackQuery, state: FSMContext
             pass
         return
 
-    # ── Standard Applio flow: submit job immediately ──────────────────────────
+    # ── Voice v2: legacy trained-model flow is disabled. ─────────────────────
+    await safe_edit_message(
+        callback,
+        t("legacy_model_disabled", lang),
+        reply_markup=back_to_menu_kb(lang),
+        parse_mode="HTML",
+    )
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+    return
     input_text = data.get("input_text", "")
     source_audio_path = data.get("source_audio_path")
     gender_preset = data.get("gender_preset", "m2m")
@@ -502,7 +505,7 @@ async def handle_voxcpm_reference_skip(callback: CallbackQuery, state: FSMContex
     await state.clear()
 
     try:
-        await callback.answer("⏭️ Default AI Voice ကို အသုံးပြုမည်...")
+        await callback.answer(t("clone_toast_default_voice", lang))
     except Exception:
         pass
 
@@ -629,7 +632,13 @@ async def _submit_voxcpm_job(
 async def handle_send_audio_callback(callback: CallbackQuery):
     job_id = callback.data.replace("send_audio_", "").strip()
     try:
-        await callback.answer("⏳ အသံဖိုင် ပေးပို့နေပါသည်...")
+        async with AsyncSessionLocal() as _s:
+            _u, _ = await get_or_create_user(_s, callback.from_user.id)
+            lang = _u.language_code
+    except Exception:
+        lang = "my"
+    try:
+        await callback.answer(t("clone_toast_sending_audio", lang))
     except Exception:
         pass
 
@@ -640,7 +649,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
             if not job or job.status != JobStatus.SUCCESS.value:
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
-                    text="⚠️ အသံဖိုင် မတွေ့ရှိပါ သို့မဟုတ် လုပ်ဆောင်ဆဲဖြစ်ပါသည်ခင်ဗျာ။",
+                    text=t("clone_audio_not_found", lang),
                 )
                 return
 
@@ -656,7 +665,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 await callback.bot.send_audio(
                     chat_id=target_chat_id,
                     audio=FSInputFile(str(res_path)),
-                    caption=f"🎧 <b>AI Voice Clone:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                    caption=t("clone_caption_voice", lang, job_id=job_id[:8]),
                     parse_mode="HTML",
                 )
             else:
@@ -676,24 +685,21 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                     await callback.bot.send_audio(
                         chat_id=target_chat_id,
                         audio=BufferedInputFile(downloaded_audio, filename=f"voice_clone_{job_id[:8]}.wav"),
-                        caption=f"🎧 <b>AI Voice Clone:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                        caption=t("clone_caption_voice", lang, job_id=job_id[:8]),
                         parse_mode="HTML",
                     )
                 else:
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text="🎧 Mini App တွင် ဖွင့်နားထောင်မည်",
+                                text=t("clone_btn_miniapp_listen", lang),
                                 web_app=WebAppInfo(url=f"{app_url}?job_id={job_id}")
                             )
                         ]
                     ])
                     await callback.bot.send_message(
                         chat_id=target_chat_id,
-                        text=(
-                            f"🎧 <b>အသံဖိုင် အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
-                            f"📥 <a href=\"{dl_url}\">တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
-                        ),
+                        text=t("clone_ready_audio_text", lang, job_id=job_id[:8], dl_url=dl_url),
                         reply_markup=kb,
                         parse_mode="HTML",
                     )
@@ -702,7 +708,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
         try:
             await callback.bot.send_message(
                 chat_id=callback.from_user.id,
-                text=f"⚠️ အသံဖိုင် ပေးပို့ရာတွင် အဆင်မပြေဖြစ်သွားပါသည်: {e}",
+                text=t("clone_audio_send_failed", lang, error=str(e)),
             )
         except Exception:
             pass
@@ -712,7 +718,13 @@ async def handle_send_audio_callback(callback: CallbackQuery):
 async def handle_send_recap_callback(callback: CallbackQuery):
     job_id = callback.data.replace("send_recap_", "").strip()
     try:
-        await callback.answer("⏳ Recap ဗီဒီယို ပေးပို့နေပါသည်...")
+        async with AsyncSessionLocal() as _s:
+            _u, _ = await get_or_create_user(_s, callback.from_user.id)
+            lang = _u.language_code
+    except Exception:
+        lang = "my"
+    try:
+        await callback.answer(t("clone_toast_sending_recap", lang))
     except Exception:
         pass
 
@@ -733,7 +745,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     await callback.bot.send_video(
                         chat_id=target_chat_id,
                         video=FSInputFile(str(video_path), filename=f"recap_{job_id[:8]}.mp4"),
-                        caption=f"🎬 <b>Pro Movie Recap:</b> <code>#{job_id[:8]}</code>\n✨ <i>Voice Clone Pro Studio</i>",
+                        caption=t("clone_caption_recap", lang, job_id=job_id[:8]),
                         parse_mode="HTML",
                     )
                 else:
@@ -742,18 +754,14 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text="📥 ဗီဒီယို တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန်",
+                                text=t("clone_btn_direct_download", lang),
                                 url=dl_url
                             )
                         ]
                     ])
                     await callback.bot.send_message(
                         chat_id=target_chat_id,
-                        text=(
-                            f"🎬 <b>Movie Recap Video အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
-                            f"📁 ဖိုင်ဆိုဒ်မှာ Telegram ကန့်သတ်ချက် (50MB) ထက် ကြီးမားသဖြင့် အောက်ပါလင့်ခ်မှ တိုက်ရိုက် ဒေါင်းလုဒ် ရယူနိုင်ပါသည်ခင်ဗျာ:\n\n"
-                            f"📥 <a href=\"{dl_url}\">ဗီဒီယို ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
-                        ),
+                        text=t("clone_recap_large_text", lang, job_id=job_id[:8], dl_url=dl_url),
                         reply_markup=kb,
                         parse_mode="HTML",
                     )
@@ -762,7 +770,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                         await callback.bot.send_document(
                             chat_id=target_chat_id,
                             document=FSInputFile(str(srt_path), filename=f"subtitles_{job_id[:8]}.srt"),
-                            caption="📝 <b>Myanmar Subtitles (SRT)</b>",
+                            caption=t("clone_caption_subtitles", lang),
                             parse_mode="HTML",
                         )
                     except Exception:
@@ -773,17 +781,14 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🎬 Mini App တွင် ကြည့်ရှုမည်",
+                            text=t("clone_btn_miniapp_watch", lang),
                             web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
                         )
                     ]
                 ])
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
-                    text=(
-                        f"🎬 <b>Movie Recap Video အဆင်သင့်ဖြစ်ပါပြီ:</b> <code>#{job_id[:8]}</code>\n\n"
-                        f"📥 <a href=\"{dl_url}\">တိုက်ရိုက်ဒေါင်းလုဒ် ရယူရန် ဤနေရာကို နှိပ်ပါ</a>"
-                    ),
+                    text=t("clone_recap_ready_text", lang, job_id=job_id[:8], dl_url=dl_url),
                     reply_markup=kb,
                     parse_mode="HTML",
                 )
@@ -792,7 +797,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
         try:
             await callback.bot.send_message(
                 chat_id=callback.from_user.id,
-                text=f"⚠️ Recap ဗီဒီယို ပေးပို့ရာတွင် အဆင်မပြေဖြစ်သွားပါသည်: {e}",
+    text=t("clone_recap_send_failed", lang, error=str(e)),
             )
         except Exception:
             pass

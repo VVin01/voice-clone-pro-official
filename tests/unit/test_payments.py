@@ -31,7 +31,7 @@ async def test_pricing_plans_and_payment_lifecycle(db_session):
     )
     assert payment.status == PaymentStatus.PENDING.value
     assert payment.minutes == 10
-    assert payment.amount_mmk == 5000
+    assert payment.amount_mmk == 8000  # final pre-live MIN_10 price (was a stale 5000 assertion)
     assert payment.id.startswith("PAY-")
 
     # 3. Admin approves payment request

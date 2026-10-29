@@ -28,7 +28,7 @@ def test_render_stepper_progress_burmese():
     assert "⏳ <b>[3/4] AI အသံတုပြောင်းလဲခြင်း:</b> <i>စောင့်ဆိုင်းနေသည်</i>" in text_s1
     assert "⏳ <b>[4/4] စစ်ဆေးခြင်းနှင့် ပေးပို့ခြင်း:</b> <i>စောင့်ဆိုင်းနေသည်</i>" in text_s1
 
-    # Step 3 active (during Applio conversion with custom spinner)
+    # Step 3 active (during VoxCPM2 synthesis with custom spinner)
     text_s3 = render_stepper_progress(step=3, model_name="တွတ်ပီ", elapsed_seconds=85, spinner="⠹", lang="my")
     assert "ကြာချိန်: <b>01:25</b>" in text_s3
     assert "✅ <b>[1/4] စစ်ဆေးခြင်းနှင့် Queue စာရင်း:</b> <i>ပြီးစီးပါပြီ</i>" in text_s3
@@ -174,17 +174,16 @@ async def test_worker_execution_with_progress_tracker_success(db_session, tmp_pa
         out_wav.write_bytes(b"fake_wav")
         return out_wav
 
-    async def mock_applio(model_pth, index_path, input_wav, output_wav, pitch=0, **kwargs):
-        # Emulate conversion time
-        await asyncio.sleep(0.05)
+    def mock_voxcpm(text, output_wav, **kwargs):  # patched via side_effect: MagicMock calls it WITHOUT self (worker passes all-keyword args)
+        output_wav = Path(output_wav)
         output_wav.parent.mkdir(parents=True, exist_ok=True)
-        output_wav.write_bytes(b"fake_converted")
+        output_wav.write_bytes(b"fake_voxcpm_wav")
         return output_wav
 
     with (
         patch("app.worker.generate_edge_tts", side_effect=mock_tts),
         patch("app.worker.normalize_audio_to_wav", side_effect=mock_norm),
-        patch("app.worker.run_applio_conversion", side_effect=mock_applio),
+        patch("app.services.voxcpm_engine.VoxCPMEngine.synthesize", side_effect=mock_voxcpm),
         patch("app.worker.get_wav_duration_seconds", return_value=18),
     ):
         success = await process_single_job(session=db_session, job=job, bot=mock_bot)
@@ -192,16 +191,24 @@ async def test_worker_execution_with_progress_tracker_success(db_session, tmp_pa
 
     assert job.status == JobStatus.SUCCESS.value
     assert job.seconds_consumed == 18
-    assert job.result_path == "tg_test_file_id_7001"
+    # Current worker stores the permanent result file path (Mini App
+    # download channel), not the Telegram file_id.
+    assert job.result_path is not None
+    assert job.result_path.endswith(".wav")
 
     # Verify safe_edit_status was called across stages including completion
     assert mock_bot.edit_message_text.call_count >= 4
-    mock_bot.send_audio.assert_called_once()
+    # Default flow notifies the user with a completion message.
+    mock_bot.send_message.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_worker_execution_with_progress_tracker_failure_stops_ticker(db_session, tmp_path):
-    """Verify when Applio conversion fails, ticker is cancelled and job is marked FAILED."""
+async def test_worker_execution_primary_failure_falls_back_and_succeeds(db_session, tmp_path):
+    """Primary VoxCPM2 failure no longer fails the job outright: the
+    worker's resilient curated-persona (Edge) fallback produces the
+    audio, the job SUCCEEDS, and the fallback is recorded on the job
+    (engine == "edge_fallback"). The both-engines-fail -> FAILED case
+    is covered by test_admin_worker_failure_no_refund_event."""
     user, _ = await get_or_create_user(db_session, telegram_id=7002)
     bal = await get_minute_balance(db_session, user.id)
     bal.welcome_seconds = 300
@@ -242,23 +249,28 @@ async def test_worker_execution_with_progress_tracker_failure_stops_ticker(db_se
         out_wav.write_bytes(b"fake_wav")
         return out_wav
 
-    async def mock_applio_fail(*args, **kwargs):
-        raise RuntimeError("Applio inference GPU/CPU out of memory")
+    def mock_voxcpm_fail(*args, **kwargs):
+        raise RuntimeError("VoxCPM2 inference GPU/CPU out of memory")
+
+    def mock_persona_ok(text, persona_id, output_wav, **kwargs):
+        out = Path(output_wav)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"fake_fallback_wav")
+        return out
 
     with (
         patch("app.worker.generate_edge_tts", side_effect=mock_tts),
         patch("app.worker.normalize_audio_to_wav", side_effect=mock_norm),
-        patch("app.worker.run_applio_conversion", side_effect=mock_applio_fail),
+        patch("app.services.voxcpm_engine.VoxCPMEngine.synthesize", side_effect=mock_voxcpm_fail),
+        patch("app.services.curated_voices.synthesize_curated_persona", side_effect=mock_persona_ok),
+        patch("app.worker.get_wav_duration_seconds", return_value=10),
     ):
         success = await process_single_job(session=db_session, job=job, bot=mock_bot)
-        assert success is False
+        assert success is True
 
-    assert job.status == JobStatus.FAILED.value
-    assert "Applio inference GPU/CPU out of memory" in job.error_message
-
-    # Verify failure notice was edited into message
-    last_edit = mock_bot.edit_message_text.call_args[1]["text"]
-    assert "Applio inference GPU/CPU out of memory" in last_edit
+    assert job.status == JobStatus.SUCCESS.value
+    # Fallback use is recorded on the job (transparency fix 2026-10-29).
+    assert job.engine == "edge_fallback"
 
 
 @pytest.mark.asyncio

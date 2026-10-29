@@ -76,7 +76,7 @@ async def test_admin_settings_sub_menus(db_session):
     cb.answer = AsyncMock()
 
     # 1. Allowance sub-menu
-    await handle_admin_settings_allowance(cb)
+    await handle_admin_settings_allowance(cb, session=db_session)
     allowance_kb = cb.message.edit_text.call_args[1].get("reply_markup")
     allowance_cbs = [btn.callback_data for row in allowance_kb.inline_keyboard for btn in row]
     assert "admin:set:free_monthly_allowance_seconds:60" in allowance_cbs
@@ -85,7 +85,7 @@ async def test_admin_settings_sub_menus(db_session):
     assert "admin:settings_input:free_monthly_allowance_seconds" in allowance_cbs
 
     # 2. Free chars sub-menu
-    await handle_admin_settings_free_chars(cb)
+    await handle_admin_settings_free_chars(cb, session=db_session)
     fc_kb = cb.message.edit_text.call_args[1].get("reply_markup")
     fc_cbs = [btn.callback_data for row in fc_kb.inline_keyboard for btn in row]
     assert "admin:set:character_limit_free:250" in fc_cbs
@@ -93,14 +93,14 @@ async def test_admin_settings_sub_menus(db_session):
     assert "admin:set:character_limit_free:1000" in fc_cbs
 
     # 3. Purchased chars sub-menu
-    await handle_admin_settings_purchased_chars(cb)
+    await handle_admin_settings_purchased_chars(cb, session=db_session)
     pc_kb = cb.message.edit_text.call_args[1].get("reply_markup")
     pc_cbs = [btn.callback_data for row in pc_kb.inline_keyboard for btn in row]
     assert "admin:set:character_limit_purchased:2000" in pc_cbs
     assert "admin:set:character_limit_purchased:5000" in pc_cbs
 
     # 4. Daily limit sub-menu
-    await handle_admin_settings_daily_limit(cb)
+    await handle_admin_settings_daily_limit(cb, session=db_session)
     dl_kb = cb.message.edit_text.call_args[1].get("reply_markup")
     dl_cbs = [btn.callback_data for row in dl_kb.inline_keyboard for btn in row]
     assert "admin:set:free_daily_job_limit:3" in dl_cbs
@@ -108,7 +108,7 @@ async def test_admin_settings_sub_menus(db_session):
     assert "admin:set:free_daily_job_limit:0" in dl_cbs
 
     # 5. Gates sub-menu
-    await handle_admin_settings_gates(cb)
+    await handle_admin_settings_gates(cb, session=db_session)
     gates_kb = cb.message.edit_text.call_args[1].get("reply_markup")
     gates_cbs = [btn.callback_data for row in gates_kb.inline_keyboard for btn in row]
     assert "admin:settings_input:required_channel_id" in gates_cbs
@@ -223,7 +223,8 @@ async def test_admin_settings_custom_input_fsm(db_session):
     fsm_state.get_data = AsyncMock(return_value={"setting_key": "character_limit_free"})
     fsm_state.clear = AsyncMock()
 
-    await handle_admin_settings_input_start(cb, state=fsm_state)
+    orig_free_chars = settings.character_limit_free
+    await handle_admin_settings_input_start(cb, state=fsm_state, session=db_session)
     fsm_state.set_state.assert_called_once_with(AdminSettingsFSM.waiting_for_value)
     fsm_state.update_data.assert_called_once_with(setting_key="character_limit_free")
 
@@ -243,5 +244,5 @@ async def test_admin_settings_custom_input_fsm(db_session):
     assert settings.character_limit_free == 650
     fsm_state.clear.assert_called_once()
 
-    # Reset back to 500
-    settings.character_limit_free = 500
+    # Restore the original value (current default is 1000, not 500)
+    settings.character_limit_free = orig_free_chars

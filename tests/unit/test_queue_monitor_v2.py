@@ -75,7 +75,7 @@ async def test_admin_queue_overview_and_recent_activity(db_session):
         user_id=u1.id,
         model_id=vm1.id,
         status=JobStatus.FAILED.value,
-        error_message="Applio inference process timed out after 180s",
+        error_message="VoxCPM2 inference process timed out after 180s",
         input_text="ကျရှုံးသွားသော စာသားဖြစ်ပါသည်",
         created_at=datetime.datetime(2026, 10, 15, 10, 10, tzinfo=datetime.timezone.utc),
     )
@@ -188,7 +188,7 @@ async def test_admin_job_detail_burmese_diagnostics_and_retry(db_session):
         user_id=target_user.id,
         model_id=vm.id,
         status=JobStatus.FAILED.value,
-        error_message="Applio inference process timed out after 180s (GPU memory spike)",
+        error_message="VoxCPM2 inference process timed out after 180s (GPU memory spike)",
         input_text="မင်္ဂလာပါ လူကြီးမင်းတို့ခင်ဗျာ",
         created_at=datetime.datetime(2026, 10, 15, 10, 30, tzinfo=datetime.timezone.utc),
     )

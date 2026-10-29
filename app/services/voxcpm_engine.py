@@ -29,11 +29,53 @@ from typing import Optional, Any, Callable, List, Tuple
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOXCPM_SPACES = [
-    "openbmb/VoxCPM-Demo",
+    # GPU spaces first (fix 2026-10-29): the official demo below is
+    # CPU-basic and almost always timed out, burning the whole attempt
+    # budget before a GPU space was ever reached.
     "yeyee2609/voxcpm2",
-    "yeyee2609/voxcpm",
     "soemintheinsmt6/myanmar-voxcpm2",
+    "yeyee2609/voxcpm",
+    # CPU demo kept only as the last resort.
+    "openbmb/VoxCPM-Demo",
 ]
+
+# Per-space capability map (fix 2026-10-29): a request that carries a
+# reference clip is a CLONE request and may only be routed to a space
+# whose API accepts reference audio + reference text. Prompt-only
+# spaces may still serve plain TTS (voice design) requests.
+#   - yeyee2609/*        : /generate_clone (ref audio + ref text) + style TTS
+#   - soemintheinsmt6/*  : prompt /tts only — NO reference-clone endpoint
+#   - openbmb demo       : /generate accepts a reference wav
+_CLONE_INCAPABLE_SPACE_MARKERS = ("soemintheinsmt6",)
+
+
+def space_supports_clone(space_name: str) -> bool:
+    """True if the space can take a reference-audio clone request."""
+    name = str(space_name or "").lower()
+    return not any(marker in name for marker in _CLONE_INCAPABLE_SPACE_MARKERS)
+
+
+# yeyee2609 style prompts (fix 2026-10-29): previously every male
+# persona resolved to the single "Knowledge Zone" preset and every
+# female persona to the single "Channel 99" preset, so all voices came
+# out identical whenever the preset path was used. Each persona now has
+# its OWN style prompt, derived from that persona's existing
+# control_instruction in app/services/curated_voices.py. These are
+# prompts only — no new recorded voices are invented.
+PRESET_MAP_YEYEE = {
+    "komin": "A warm, deep, authoritative Burmese male movie recap storyteller, velvety cadence, emotionally resonant",
+    "kothura": "A professional, formal, crisp Burmese male documentary narrator and news anchor, articulate diction",
+    "koaung": "An enthusiastic, upbeat, vibrant young Burmese male creator for TikTok and Shorts, conversational rhythm",
+    "kozayar": "A deep, bass-rich, resonant Burmese male blockbuster movie trailer narrator with cinematic gravitas",
+    "kophone": "An articulate, engaging Burmese male tech and education explainer, clean friendly informative pacing",
+    "komyat": "A warm, clear, natural Burmese male human storyteller, conversational narration, natural breathing",
+    "mahnin": "A gentle, sweet, emotionally tender Burmese female audiobook narrator, soft melodious tone",
+    "manadi": "A dramatic, suspenseful, emotionally intense Burmese female movie recap narrator, dynamic vocal contrast",
+    "mamay": "A bright, articulate, friendly Burmese female commercial and guide voice, polite and trustworthy",
+    "mayoon": "An ultra-soft, serene, tranquil Burmese female voice for meditation, ASMR and bedtime stories",
+    "machaw": "A friendly, clear, natural Burmese female human creator and guide, warm articulate delivery",
+    "mathiri": "An elegant, chic, sophisticated Burmese female luxury lifestyle influencer, silky smooth texture",
+}
 DEFAULT_VOXCPM_SPACE = (
     os.getenv("VOXCPM_SPACE_URL", "").strip()
     or os.getenv("VOXCPM_API_URL", "").strip()
@@ -195,6 +237,7 @@ class VoxCPMEngine:
         progress_cb: Optional[Callable[[str], None]] = None,
         retries: int = 2,
         allow_fallback: bool = True,
+        fallback_cb: Optional[Callable[[str], None]] = None,
         **kwargs: Any,
     ) -> Path:
         """
@@ -207,6 +250,11 @@ class VoxCPMEngine:
         """
         out_path = Path(output_wav).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Transparency state (fix 2026-10-29): callers read these after
+        # synthesize() returns to learn whether Edge fallback was used.
+        self.last_fallback_used = False
+        self.last_fallback_reason: Optional[str] = None
 
         clean_text = str(text or "").strip()
         if not clean_text:
@@ -284,6 +332,15 @@ class VoxCPMEngine:
 
         tokens_pool = sorted(raw_tokens, key=_token_sort_key)
         candidate_spaces = self.spaces.copy()
+        if ref_file is not None:
+            # Clone request: only clone-capable spaces may serve it. A
+            # prompt-only space would ignore the reference clip and
+            # return a random voice that does not match the preview.
+            capable = [sp for sp in candidate_spaces if space_supports_clone(sp)]
+            skipped = [sp for sp in candidate_spaces if sp not in capable]
+            for sp in skipped:
+                self._log(f"ℹ️ Space '{sp}' has no reference-clone endpoint; skipping it for this clone request")
+            candidate_spaces = capable
         pairs: List[Tuple[str, Optional[str]]] = []
         for sp in candidate_spaces:
             for tok in tokens_pool:
@@ -303,7 +360,20 @@ class VoxCPMEngine:
         last_err: Exception | None = None
         max_attempts = len(pairs)
 
+        # Failover budget (fix 2026-10-29): each attempt keeps the
+        # configured per-attempt timeout (VOXCPM_TIMEOUT / settings,
+        # default 60s; recap passes 75s), but the WHOLE synthesis is
+        # capped by a total budget (default 240s, VOXCPM_TOTAL_TIMEOUT)
+        # so a dead first space cannot burn every token x space x 60s
+        # before a healthy GPU space is tried.
+        _budget_env = os.getenv("VOXCPM_TOTAL_TIMEOUT", "").strip()
+        total_budget = float(kwargs.get("total_timeout") or (_budget_env if _budget_env else 240))
+        synth_deadline = time.time() + total_budget
+
         for attempt, (space_name, active_token) in enumerate(pairs, 1):
+            if time.time() > synth_deadline:
+                self._log(f"⏱️ VoxCPM total failover budget ({total_budget:.0f}s) exhausted; stopping further space attempts")
+                break
             tok_masked = mask_hf_token(active_token)
             try:
                 self._log(
@@ -323,9 +393,8 @@ class VoxCPMEngine:
                     effective_control = ""
 
                 if "soemintheinsmt6" in space_name:
-                    if ref_file and not is_persona_ref:
-                        self._log(f"ℹ️ Space '{space_name}' specializes in voice design without custom reference file; skipping to next space...")
-                        continue
+                    # Prompt-only space: clone requests were filtered
+                    # out above, so only plain TTS reaches this branch.
                     job = client.submit(
                         text=clean_text,
                         voice_description=control_instruction or DEFAULT_BURMESE_CONTROL,
@@ -343,33 +412,12 @@ class VoxCPMEngine:
                             api_name="/generate_clone",
                         )
                     else:
-                        PRESET_MAP_YEYEE = {
-                            "mahnin": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
-                            "manadi": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
-                            "machaw": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
-                            "mayoon": "👧 Channel 99 (True Crime မိန်းကလေးအသံ)",
-                            "mamay": "👩 သတင်းကြေညာသူ (Professional)",
-                            "mathiri": "👩 သတင်းကြေညာသူ (Professional)",
-                            "komin": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
-                            "kothura": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
-                            "koaung": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
-                            "kophone": "👨 Knowledge Zone (ဗဟုသုတ ယောက်ျားလေးအသံ)",
-                            "kozayar": "👻 သရဲဇာတ်လမ်း (အသံသြသြ)",
-                            "komyat": "👻 သရဲဇာတ်လမ်း (အသံသြသြ)",
-                        }
-                        chosen_preset = PRESET_MAP_YEYEE.get(preset_voice) if preset_voice else None
-                        if chosen_preset:
-                            job = client.submit(
-                                voice_name=chosen_preset,
-                                target_text=clean_text,
-                                api_name="/generate_preset",
-                            )
-                        else:
-                            job = client.submit(
-                                style=effective_control,
-                                target_text=clean_text,
-                                api_name="/generate_style",
-                            )
+                        chosen_style = PRESET_MAP_YEYEE.get(preset_voice) if preset_voice else None
+                        job = client.submit(
+                            style=chosen_style or effective_control,
+                            target_text=clean_text,
+                            api_name="/generate_style",
+                        )
                 elif "chenchenaoyang" in space_name:
                     job = client.submit(
                         text=clean_text,
@@ -399,11 +447,22 @@ class VoxCPMEngine:
 
                 # Poll status with queue tracking
                 poll_start = time.time()
-                timeout_sec = int(kwargs.get("timeout") or os.getenv("VOXCPM_TIMEOUT", "60"))
+                _env_timeout = os.getenv("VOXCPM_TIMEOUT", "").strip()
+                if _env_timeout:
+                    timeout_sec = int(_env_timeout)
+                else:
+                    try:
+                        from app.config import settings as _settings
+                        timeout_sec = int(getattr(_settings, "voxcpm_timeout", 60) or 60)
+                    except Exception:
+                        timeout_sec = 60
+                timeout_sec = int(kwargs.get("timeout") or timeout_sec)
                 while not job.done():
                     # Fail over if queue exceeds timeout
                     if time.time() - poll_start > timeout_sec:
                         raise TimeoutError(f"VoxCPM 2 Space '{space_name}' queue timed out after {timeout_sec}s")
+                    if time.time() > synth_deadline:
+                        raise TimeoutError(f"VoxCPM 2 total failover budget ({total_budget:.0f}s) exhausted on space '{space_name}'")
 
                     try:
                         st = job.status()
@@ -421,7 +480,8 @@ class VoxCPMEngine:
                                     pass
                     except Exception:
                         pass
-                    time.sleep(2)
+                    remaining_attempt = timeout_sec - (time.time() - poll_start)
+                    time.sleep(max(0.05, min(2.0, remaining_attempt)))
 
                 raw_result = job.result()
                 result_path_str = _resolve_result_path(raw_result)
@@ -493,12 +553,18 @@ class VoxCPMEngine:
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {e_pair}")
                 time.sleep(0.5)
 
-        # Seamless Fallback to High-Fidelity Burmese Studio Persona Engine
+        # Fallback to the Edge-TTS studio persona engine — ONLY after
+        # every suitable space has been tried (fix 2026-10-29).
         if not allow_fallback:
             raise RuntimeError(
                 f"VoxCPM 2 speech synthesis failed after retrying all tokens and spaces: {last_err}"
             )
-        self._log(f"⚠️ VoxCPM 2 Spaces busy or queue full ({last_err}). Invoking High-Fidelity Burmese Neural Engine fallback...")
+        self.last_fallback_reason = str(last_err)
+        logger.warning(
+            "EDGE_FALLBACK_USED: all suitable VoxCPM spaces failed (%s); using Edge TTS persona fallback — voice will differ from the VoxCPM preview",
+            last_err,
+        )
+        self._log(f"⚠️ EDGE_FALLBACK_USED: VoxCPM 2 spaces unavailable ({last_err}). Invoking Edge TTS persona fallback...")
         if progress_cb:
             try:
                 progress_cb("🔄 VoxCPM Queue အချိန်ကုန်နေသဖြင့် အရန် Studio Neural Audio ဖြင့် ဖန်တီးပေးနေပါသည်...")
@@ -514,6 +580,12 @@ class VoxCPMEngine:
 
             synthesize_curated_persona(clean_text, pid, out_path, speed=speed, log_fn=self.log_fn)
             if out_path.is_file() and out_path.stat().st_size > 1000:
+                self.last_fallback_used = True
+                if fallback_cb:
+                    try:
+                        fallback_cb(str(last_err))
+                    except Exception:
+                        pass
                 self._log(f"✅ Fallback Studio Audio successfully delivered: {out_path.name} ({out_path.stat().st_size} bytes)")
                 return out_path
         except Exception as e_fb:
@@ -524,4 +596,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens", "space_supports_clone", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES"]

@@ -118,7 +118,7 @@ async def handle_cvr_request_start(
     if not quota["can_request"]:
         try:
             await callback.answer(
-                "❌ You have reached your custom voice limit!" if lang == "en" else "❌ သတ်မှတ်ထားသော ကန့်သတ်ချက် ပြည့်သွားပါပြီ။",
+                t("cvr_limit_reached", lang),
                 show_alert=True,
             )
         except Exception:
@@ -145,9 +145,7 @@ async def handle_cvr_request_start(
 async def handle_cvr_name_input(message: Message, state: FSMContext):
     model_name = message.text.strip()
     if not model_name or len(model_name) > 100:
-        await message.answer(
-            "⚠️ Voice model name must be between 1 and 100 characters. Please try again."
-        )
+        await message.answer(t("cvr_name_length", lang))
         return
 
     data = await state.get_data()
@@ -188,11 +186,7 @@ async def handle_cvr_sample_input(message: Message, state: FSMContext):
         fname = (doc.file_name or "").lower()
         is_audio = mime.startswith("audio/") or any(fname.endswith(ext) for ext in [".wav", ".mp3", ".ogg", ".m4a", ".flac"])
         if not is_audio:
-            await message.answer(
-                "⚠️ Please send an audio file (.wav, .mp3, .ogg, .m4a) or voice message!"
-                if lang == "en"
-                else "⚠️ ကျေးဇူးပြု၍ အသံဖိုင် သို့မဟုတ် Voice message ပေးပို့ပေးပါ!"
-            )
+            await message.answer(t("cvr_audio_required", lang))
             return
         sample_file_id = doc.file_id
         sample_file_name = doc.file_name or "audio_file"
@@ -214,7 +208,7 @@ async def handle_cvr_sample_input(message: Message, state: FSMContext):
 
     if not success or not req:
         await state.clear()
-        err_msg = "❌ Failed to create request. Limit reached or not purchased." if lang == "en" else "❌ တောင်းဆိုမှု မအောင်မြင်ပါ။ ကန့်သတ်ချက် ပြည့်သွားပါပြီ။"
+        err_msg = t("cvr_create_failed", lang)
         await message.answer(err_msg, reply_markup=back_to_menu_kb(lang))
         return
 
@@ -257,11 +251,11 @@ async def handle_cvr_sample_input(message: Message, state: FSMContext):
         try:
             await message.bot.send_message(admin_id, admin_text, reply_markup=admin_kb, parse_mode="HTML")
             if message.voice:
-                await message.bot.send_voice(admin_id, sample_file_id, caption=f"Audio sample for #{req.id}")
+                await message.bot.send_voice(admin_id, sample_file_id, caption=t("cvr_admin_sample_caption", "en", request_id=req.id))
             elif message.audio:
-                await message.bot.send_audio(admin_id, sample_file_id, caption=f"Audio sample for #{req.id}")
+                await message.bot.send_audio(admin_id, sample_file_id, caption=t("cvr_admin_sample_caption", "en", request_id=req.id))
             elif message.document:
-                await message.bot.send_document(admin_id, sample_file_id, caption=f"Audio sample for #{req.id}")
+                await message.bot.send_document(admin_id, sample_file_id, caption=t("cvr_admin_sample_caption", "en", request_id=req.id))
         except Exception as e:
             logger.warning("Failed to alert admin %s of custom voice request %s: %s", admin_id, req.id, e)
 

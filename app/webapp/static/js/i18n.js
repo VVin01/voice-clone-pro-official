@@ -33,8 +33,6 @@ const translations = {
         engine_label: "အသုံးပြုမည့် AI Engine ရွေးချယ်ပါ",
         engine_voxcpm_title: "☁️ VoxCPM (Cloud AI)",
         engine_voxcpm_desc: "Zero-shot သဘာဝအသံ • Cloud တွင် တိုက်ရိုက်လုပ်ဆောင်သည်",
-        engine_applio_title: "💻 Applio RVC (Local GPU)",
-        engine_applio_desc: "Laptop Worker တွင် Train ထားသော မော်ဒယ်များ",
 
         persona_mode_title: "အသံရွေးချယ်မှု စတိုင်လ်",
         btn_mode_curated: "🌟 Curated Voices (၁၂ မျိုး)",
@@ -47,12 +45,9 @@ const translations = {
         ref_file_btn: "📁 Reference Audio ဖိုင် ရွေးချယ်မည်",
         btn_clear_file: "✕ ဖျက်မည်",
 
-        model_picker_label: "ရွေးချယ်ထားသော Applio အသံမော်ဒယ်",
-        applio_status_active: "🟢 Laptop Worker အဆင်သင့်ဖြစ်ပါသည်",
-        applio_status_waiting: "🟡 Laptop Worker စောင့်ဆိုင်းနေပါသည် (Queue)",
+        voxcpm_status_waiting: "🟡 VoxCPM2 Queue စောင့်ဆိုင်းနေပါသည်",
 
         queue_notice_voxcpm: "⚡ ပုံမှန်ခန့်မှန်းကြာချိန်: ၅-၁၅ စက္ကန့် • Live Cloud AI စနစ်",
-        queue_notice_applio: "⚡ Local GPU မော်ဒယ်များ: Laptop Worker ဖွင့်ထားချိန်တွင် ချက်ချင်း ဆောင်ရွက်ပေးပါသည်",
 
         text_input_label: "အသံသွင်းလိုသော စာသား (Text)",
         text_placeholder: "မြန်မာစာသားများကို ဤနေရာတွင် ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ...",
@@ -201,18 +196,18 @@ const translations = {
 
         plan_voice_name: "🎙️ Voice Clone Studio Pro",
         plan_voice_alloc: "မိနစ် ၂၅၀ (၄ နာရီကျော်) စတူဒီယို အသံသွင်းခွင့်",
-        plan_voice_price: "45,000",
+        plan_voice_price: "75,000",
         plan_voice_badge: "Voice Creators 🔥",
         plan_voice_f1: "✓ VoxCPM Cloud AI မြန်မာအသံ ၁၂ မျိုး (၆ ကျား / ၆ မ) အပြည့်အစုံ",
         plan_voice_f2: "✓ Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)",
-        plan_voice_f3: "✓ Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်",
+        plan_voice_f3: "✓ VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်",
         plan_voice_f4: "✓ High-Speed Priority Cloud Processing Queue",
         plan_voice_f5: "✓ အရည်အသွေးမြင့် 24kHz PCM Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်",
         plan_voice_f6: "✓ တစ်ကြိမ်လျှင် စာလုံးရေ ၅၀၀၀ အထိ အကန့်အသတ်မရှိ ထုတ်လုပ်နိုင်ခွင့်",
 
         plan_recap_name: "🎬 Movie Recap Studio Pro",
         plan_recap_alloc: "ဗီဒီယို ၂၅ ကား Recap ဖန်တီးခွင့် (၁ ပုဒ် အများဆုံး ၁၀ မိနစ်)",
-        plan_recap_price: "75,000",
+        plan_recap_price: "90,000",
         plan_recap_badge: "Cinema Suite 🎬",
         plan_recap_f1: "✓ Full HD 1080p Movie Recap ဗီဒီယို (၂၅) ကား (အများဆုံး ၁၀ မိနစ်/ကား)",
         plan_recap_f2: "✓ 🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
@@ -222,14 +217,45 @@ const translations = {
 
         plan_master_name: "👑 All-in-One Master Suite",
         plan_master_alloc: "မိနစ် ၅၀၀ + Recap ဗီဒီယို ၆၀ ကား (အများဆုံး ၁၀ မိနစ်/ကား)",
-        plan_master_price: "125,000",
+        plan_master_price: "180,000",
         plan_master_badge: "Agency Master Suite 👑",
         plan_master_f1: "✓ Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော်)",
         plan_master_f2: "✓ Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)",
-        plan_master_f3: "✓ 👑 မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း (Personal GPU Train)",
+        plan_master_f3: "✓ 👑 VoxCPM2 Reference Audio အသံတူပွားမှု (Custom Clone) အပြည့်အစုံ",
         plan_master_f4: "✓ 🛡️ Anti-Copyright Smart Suite & Commercial Monetization Safe",
         plan_master_f5: "✓ Dedicated High-Speed Node Priority & 24/7 VIP Direct Support",
 
+        // Three plan categories (2026-10-29): Voice-only / Recap-only / Combined
+        plan_cat_voice: "🎙️ Voice-only — အသံသီးသန့်",
+        plan_cat_recap: "🎬 Recap-only — Recap သီးသန့်",
+        plan_cat_combined: "🎙️🎬 Combined Voice+Recap — နှစ်မျိုးလုံး",
+        plan_packs_badge: "Voice Packs 💎",
+        plan_packs_name: "🎙️ Voice Minute Packs",
+        plan_packs_alloc: "မိနစ် ၁၀ / ၃၀ / ၆၀ — လိုသလောက်ဝယ်၊ သက်တမ်းမကုန်",
+        plan_packs_price: "8,000",
+        plan_packs_from: "မှစ၍",
+        plan_packs_f1: "✓ မိနစ် ၁၀ — ၈,၀၀၀ ကျပ် (၈၀၀/မိနစ်)",
+        plan_packs_f2: "✓ မိနစ် ၃၀ — ၂၀,၀၀၀ ကျပ် (၆၆၇/မိနစ်)",
+        plan_packs_f3: "✓ မိနစ် ၆၀ — ၃၈,၀၀၀ ကျပ် (၆၃၃/မိနစ်)",
+        plan_packs_btn10: "💎 ၁၀ မိနစ် ဝယ်ယူမည် — ၈,၀၀၀",
+        plan_packs_btn30: "⭐ ၃၀ မိနစ် ဝယ်ယူမည် — ၂၀,၀၀၀",
+        plan_packs_btn60: "🔥 ၆၀ မိနစ် ဝယ်ယူမည် — ၃၈,၀၀၀",
+        plan_recap_starter_badge: "Recap Starter 🎬",
+        plan_recap_starter_name: "🎬 Movie Recap Starter",
+        plan_recap_starter_alloc: "ဗီဒီယို ၅ ကား Recap ဖန်တီးခွင့် (၁ ပုဒ် အများဆုံး ၁၀ မိနစ်)",
+        plan_recap_starter_price: "20,000",
+        plan_recap_starter_f1: "✓ Full HD 1080p Movie Recap ဗီဒီယို (၅) ကား (အများဆုံး ၁၀ မိနစ်/ကား)",
+        plan_recap_starter_f2: "✓ 🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
+        plan_recap_starter_f3: "✓ Watermark လုံးဝမပါ (Clean 1080p)",
+        btn_buy_recap_starter: "🎬 Recap Starter ဝယ်ယူမည်",
+        plan_combined_starter_badge: "Combined Starter ✨",
+        plan_combined_starter_name: "🎙️🎬 Voice + Recap Starter",
+        plan_combined_starter_alloc: "မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား (အများဆုံး ၁၀ မိနစ်/ကား)",
+        plan_combined_starter_price: "30,000",
+        plan_combined_starter_f1: "✓ Voice မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား — နှစ်မျိုးလုံးကို တစ်ပြိုင်တည်း စမ်းသုံးနိုင်သည်",
+        plan_combined_starter_f2: "✓ VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်",
+        plan_combined_starter_f3: "✓ 🛡️ Anti-Copyright Smart Shield & Watermark လုံးဝမပါ",
+        btn_buy_combined_starter: "✨ Combined Starter ဝယ်ယူမည်",
         // Recap Duration Limit UI
         recap_limit_notice: "🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP: ၁၀ မိနစ်အထိ (No Watermark)",
         recap_duration_warning: "⚠️ ကြာချိန်ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည် (VIP ရယူပါ)",
@@ -299,6 +325,8 @@ const translations = {
         preview_playing: "ဖွင့်နေသည်...",
         alert_voice_ready: "🎉 သင့် AI Voice ဖန်တီးမှု အောင်မြင်စွာ ပြီးစီးပါပြီ!",
         alert_recap_ready: "🎉 Pro Movie Recap ဖန်တီးမှု အောင်မြင်စွာ ပြီးစီးပါပြီ!",
+        recap_fallback_note: "⚠️ စာကြောင်း {count} ကြောင်းကို VoxCPM အစား အရန် Neural Audio (Edge TTS) ဖြင့် ထုတ်ပေးထားပါသည်။",
+        voice_fallback_notice: "⚠️ VoxCPM အစား အရန် Neural Audio (Edge TTS) ဖြင့် ထုတ်ပေးထားပါသည်။",
 
         // 24-Hour History UI
         history_recap_title: "🕒 ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ",
@@ -319,8 +347,36 @@ const translations = {
         btn_telegram_sent: "✅ Telegram သို့ ပို့ပြီးပါပြီ",
         toast_telegram_sent: "Telegram သို့ အောင်မြင်စွာ ပေးပို့ပြီးပါပြီခင်ဗျာ!",
         toast_sending_telegram: "Telegram သို့ ပေးပို့နေပါသည်...",
-    },
+        pause_audio: "ခေတ္တရပ်မည် (Pause Audio)",
+        play_audio: "အသံဖွင့်နားထောင်မည် (Play Audio)",
+        replay_audio: "ပြန်လည်နားထောင်မည် (Replay)",
+        worker_auto_complete: "Laptop Worker ဖွင့်ထားပါက အလိုအလျောက် ပြီးစီးပါမည်",
+        cloud_queue_waiting: "⏳ Cloud Queue စောင့်ဆိုင်းနေပါသည်...",
+        tutorial_coming_soon: "⚠️ {label} လမ်းညွှန်ဗီဒီယိုကို မကြာမီ တင်ဆက်ပေးပါမည်။",
+        text_too_long: "စာသား စာလုံးရေ ({len}) သည် {tier} အသုံးပြုသူ ကန့်သတ်ချက် ({max} လုံး) ထက် ကျော်လွန်နေပါသည်။{vip_note}",
+        gate_banner_title: "🔒 Channel နှင့် Group ကို အရင် Join ပါ",
+        gate_banner_desc: "Join ပြီးမှ Verify နှိပ်ပါ — ပြီးမှ Voice / Recap ထုတ်နိုင်မယ်။",
+        gate_not_configured_title: "⚠️ Gate မပြင်ဆင်ရသေးပါ — Admin ကို ဆက်သွယ်ပါ",
+        gate_not_configured_desc: "Channel / Group ID တွေ server မှာ မရှိသေးလို့ အတည်ပြုလို့ မရသေးပါ။",
+        gate_checking: "စစ်နေပါသည်…",
+        gate_not_member: "မဝင်ရသေးပါ — Channel နှင့် Group နှစ်ခုလုံး Join ထားမှ ရမယ်။",
+        gate_verified_toast: "✅ အတည်ပြုပြီးပါပြီ — အခု ထုတ်နိုင်ပါပြီ",
+        gate_not_found_toast: "Channel / Group မဝင်ရသေးပါ",
+        gate_check_failed: "စစ်ဆေးမှု မအောင်မြင်ပါ — ပြန်ကြိုးစားပါ။",
+        gate_join_channel: "Channel Join",
+        gate_join_group: "Group Join",
+        gate_verify_btn: "✓ Verify လုပ်မယ်",
+        plan_how_title: "💎 Plan ဘယ်လို အလုပ်လုပ်လဲ",
+        plan_how_text1: "၁) Plan ရွေးပါ → ၂) KBZPay / WavePay နဲ့ ငွေလွှဲပြီး Slip တင်ပါ → ၃) Admin အတည်ပြုပြီးမှ မိနစ် / Recap Credit ဝင်မယ်။ အခမဲ့ (Free) အဆင့်ကနေ ဝယ်ယူပြီးတာနဲ့ Purchased (VIP) ဖြစ်သွားမယ် — တစ်ကြိမ်စာလုံးရေ ၁၀၀၀ ကနေ ၅၀၀၀ အထိ တက်မယ်၊ Recap ၂ မိနစ်ကနေ ၁၀ မိနစ်အထိ တက်မယ်၊ Watermark ပျောက်မယ်။",
+        plan_how_text2: "စျေးနှုန်းအပြည့်အစုံကို VIP tab မှာ ကြည့်နိုင်ပါတယ် — နောက်ဆုံး စျေးနှုန်းကို အတည်ပြုပြီးမှ UI နဲ့ backend မှာ တစ်ပြိုင်တည်း ပြောင်းပါမယ်။",
+        preflight_line: "✍️ {len} / {max} လုံး • 🎙️ လက်ကျန် {bal} မိနစ်",
+        preflight_over_limit: " • ⚠️ ကန့်သတ်ချက် ကျော်နေတယ်",
+        preflight_balance_empty: " • ⚠️ လက်ကျန် ကုန်နေတယ် — VIP tab မှာ ဝယ်ပါ",
+        open_via_telegram_title: "📱 Telegram ထဲမှ ဖွင့်ပါ",
+        open_via_telegram_desc: "ဤ App ကို Telegram Bot ထဲမှ Mini App အဖြစ် ဖွင့်မှ သာ အသုံးပြုနိုင်ပါသည်။ Browser ထဲမှ တိုက်ရိုက်ဖွင့်လျှင် အကောင့် အတည်ပြုခြင်း မအောင်မြင်ပါ။",
+        open_via_telegram_btn: "နားလည်ပါပြီ",
 
+    },
     en: {
         // App Top Bar & Brand
         brand_title: "VOICE CLONE",
@@ -350,8 +406,6 @@ const translations = {
         engine_label: "Select AI Synthesis Engine",
         engine_voxcpm_title: "☁️ VoxCPM (Cloud AI)",
         engine_voxcpm_desc: "Zero-shot natural speech • Real-time cloud",
-        engine_applio_title: "💻 Applio RVC (Local GPU)",
-        engine_applio_desc: "Local trained models on laptop worker",
 
         persona_mode_title: "Voice Selection Mode",
         btn_mode_curated: "🌟 Curated Personas (12)",
@@ -364,12 +418,9 @@ const translations = {
         ref_file_btn: "📁 Choose Reference Audio File",
         btn_clear_file: "✕ Clear",
 
-        model_picker_label: "Selected Applio Voice Model",
-        applio_status_active: "🟢 Laptop Worker Online",
-        applio_status_waiting: "🟡 Waiting for Laptop Worker (Queued)",
+        voxcpm_status_waiting: "🟡 Waiting for VoxCPM2 Queue",
 
         queue_notice_voxcpm: "⚡ Estimated Duration: 5-15s • Real-time Cloud AI Node",
-        queue_notice_applio: "⚡ Local GPU Models: Processed instantly when Laptop Worker is active",
 
         text_input_label: "Input Script Text",
         text_placeholder: "Type or paste Myanmar text here...",
@@ -518,18 +569,18 @@ const translations = {
 
         plan_voice_name: "🎙️ Voice Clone Studio Pro",
         plan_voice_alloc: "250 Usable Minutes (4+ Hours Audio)",
-        plan_voice_price: "45,000",
+        plan_voice_price: "75,000",
         plan_voice_badge: "Voice Creators 🔥",
         plan_voice_f1: "✓ 12 VoxCPM Cloud AI Personas (6M / 6F)",
         plan_voice_f2: "✓ Up to 5,000 characters per generation (Custom Clone Upload Included)",
-        plan_voice_f3: "✓ Applio RVC Local GPU Trained Models",
+        plan_voice_f3: "✓ VoxCPM2 Reference Audio Cloning (3-30s sample)",
         plan_voice_f4: "✓ High-Speed Priority Cloud Processing Queue",
         plan_voice_f5: "✓ High-Fidelity 24kHz PCM Lossless WAV Direct Download",
         plan_voice_f6: "✓ Unlimited Daily Generations with 5,000 Char Quota",
 
         plan_recap_name: "🎬 Movie Recap Studio Pro",
         plan_recap_alloc: "25 Movie Recap Credits (Max 10 mins/video)",
-        plan_recap_price: "75,000",
+        plan_recap_price: "90,000",
         plan_recap_badge: "Cinema Suite 🎬",
         plan_recap_f1: "✓ 25 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
         plan_recap_f2: "✓ 🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
@@ -539,14 +590,45 @@ const translations = {
 
         plan_master_name: "👑 All-in-One Master Suite",
         plan_master_alloc: "500 Mins + 60 Recap Credits (Max 10 mins/video)",
-        plan_master_price: "125,000",
+        plan_master_price: "180,000",
         plan_master_badge: "Agency Master Suite 👑",
         plan_master_f1: "✓ Full Voice Clone Studio Pro (500 Mins - 8+ Hours)",
         plan_master_f2: "✓ Full Movie Recap Studio Pro (60 Videos - Max 10 mins/video)",
-        plan_master_f3: "✓ 👑 1 Free Custom Trained Voice Model Slot (Dedicated GPU Training)",
+        plan_master_f3: "✓ 👑 Full VoxCPM2 Reference Audio Custom Cloning",
         plan_master_f4: "✓ 🛡️ 100% Commercial Copyright Safe & Monetization Ready",
         plan_master_f5: "✓ Dedicated High-Speed Cloud Node Priority & 24/7 VIP Direct Support",
 
+        // Three plan categories (2026-10-29): Voice-only / Recap-only / Combined
+        plan_cat_voice: "🎙️ Voice-only",
+        plan_cat_recap: "🎬 Recap-only",
+        plan_cat_combined: "🎙️🎬 Combined Voice+Recap",
+        plan_packs_badge: "Voice Packs 💎",
+        plan_packs_name: "🎙️ Voice Minute Packs",
+        plan_packs_alloc: "10 / 30 / 60 minutes — buy what you need, never expires",
+        plan_packs_price: "8,000",
+        plan_packs_from: "from",
+        plan_packs_f1: "✓ 10 minutes — 8,000 MMK (800/min)",
+        plan_packs_f2: "✓ 30 minutes — 20,000 MMK (667/min)",
+        plan_packs_f3: "✓ 60 minutes — 38,000 MMK (633/min)",
+        plan_packs_btn10: "💎 Buy 10 Minutes — 8,000",
+        plan_packs_btn30: "⭐ Buy 30 Minutes — 20,000",
+        plan_packs_btn60: "🔥 Buy 60 Minutes — 38,000",
+        plan_recap_starter_badge: "Recap Starter 🎬",
+        plan_recap_starter_name: "🎬 Movie Recap Starter",
+        plan_recap_starter_alloc: "5 Movie Recap Generations (Max 10 mins/video)",
+        plan_recap_starter_price: "20,000",
+        plan_recap_starter_f1: "✓ 5 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
+        plan_recap_starter_f2: "✓ 🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
+        plan_recap_starter_f3: "✓ Zero Watermark (Clean 1080p)",
+        btn_buy_recap_starter: "🎬 Buy Recap Starter",
+        plan_combined_starter_badge: "Combined Starter ✨",
+        plan_combined_starter_name: "🎙️🎬 Voice + Recap Starter",
+        plan_combined_starter_alloc: "30 Mins + 5 Recap Videos (Max 10 mins/video)",
+        plan_combined_starter_price: "30,000",
+        plan_combined_starter_f1: "✓ 30 Voice Minutes + 5 Recap Videos — try both products in one plan",
+        plan_combined_starter_f2: "✓ VoxCPM2 Reference Audio Cloning (3-30s sample)",
+        plan_combined_starter_f3: "✓ 🛡️ Anti-Copyright Smart Shield & Zero Watermark",
+        btn_buy_combined_starter: "✨ Buy Combined Starter",
         // Recap Duration Limit UI
         recap_limit_notice: "🎬 Free Creator: Max 2 Mins (Watermark Included) • VIP: Up to 10 Mins (No Watermark)",
         recap_duration_warning: "⚠️ Video duration exceeds tier limit (Upgrade to VIP)",
@@ -616,6 +698,8 @@ const translations = {
         preview_playing: "Playing...",
         alert_voice_ready: "🎉 Your AI Voice Generation is Ready!",
         alert_recap_ready: "🎉 Pro Movie Recap Generation is Ready!",
+        recap_fallback_note: "⚠️ {count} narration line(s) were generated with the backup Neural Audio (Edge TTS) instead of VoxCPM.",
+        voice_fallback_notice: "⚠️ This audio was generated with the backup Neural Audio (Edge TTS) instead of VoxCPM.",
 
         // 24-Hour History UI
         history_recap_title: "🕒 24-Hour Recap Productions",
@@ -636,6 +720,34 @@ const translations = {
         btn_telegram_sent: "✅ Sent to Telegram",
         toast_telegram_sent: "Delivered to Telegram successfully!",
         toast_sending_telegram: "Delivering to Telegram...",
+        pause_audio: "Pause Audio",
+        play_audio: "Play Audio",
+        replay_audio: "Replay Audio",
+        worker_auto_complete: "It will complete automatically if the Laptop Worker is running",
+        cloud_queue_waiting: "⏳ Waiting in Cloud Queue...",
+        tutorial_coming_soon: "⚠️ {label} tutorial video is coming soon.",
+        text_too_long: "Text length ({len}) exceeds your {tier} limit of {max} characters.{vip_note}",
+        gate_banner_title: "🔒 Join the Channel and Group first",
+        gate_banner_desc: "Join both, then tap Verify — only then can you generate Voice / Recap.",
+        gate_not_configured_title: "⚠️ Membership gate is not configured — please contact the admin",
+        gate_not_configured_desc: "Channel / Group IDs are not set on the server yet, so verification is unavailable.",
+        gate_checking: "Checking…",
+        gate_not_member: "Not a member yet — please join both the Channel and the Group.",
+        gate_verified_toast: "✅ Verified — you can generate now",
+        gate_not_found_toast: "Channel / Group membership not found",
+        gate_check_failed: "Verification failed — please try again.",
+        gate_join_channel: "Channel Join",
+        gate_join_group: "Group Join",
+        gate_verify_btn: "✓ Verify",
+        plan_how_title: "💎 How plans work",
+        plan_how_text1: "1) Choose a plan → 2) Transfer with KBZPay / WavePay and submit your slip → 3) Minutes / Recap Credits arrive only after admin approval. Once you buy, you move from Free to Purchased (VIP) — per-job characters rise from 1000 to 5000, Recap from 2 minutes to 10 minutes, and the watermark is removed.",
+        plan_how_text2: "See the VIP tab for full final prices.",
+        preflight_line: "✍️ {len} / {max} chars • 🎙️ Balance {bal} min",
+        preflight_over_limit: " • ⚠️ Over your character limit",
+        preflight_balance_empty: " • ⚠️ Balance is empty — buy in the VIP tab",
+        open_via_telegram_title: "📱 Open via Telegram",
+        open_via_telegram_desc: "This app only works when opened as a Mini App inside the Telegram bot. Opening it directly in a browser cannot verify your account.",
+        open_via_telegram_btn: "Got it",
     }
 };
 
@@ -644,6 +756,17 @@ let currentLang = localStorage.getItem("studio_lang") || "my";
 function t(key) {
     const dict = translations[currentLang] || translations.my;
     return dict[key] || translations.en[key] || key;
+}
+
+// tf(key, params): t() with {placeholder} interpolation for dynamic messages.
+function tf(key, params) {
+    let msg = t(key);
+    if (params) {
+        for (const [k, v] of Object.entries(params)) {
+            msg = msg.split("{" + k + "}").join(String(v));
+        }
+    }
+    return msg;
 }
 
 function setLanguage(lang) {

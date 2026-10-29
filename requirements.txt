@@ -7,35 +7,40 @@ aiogram==3.31.0
 # Database & Async Engine
 sqlalchemy==2.0.52
 aiosqlite==0.22.1
-asyncpg>=0.29.0
-psycopg2-binary>=2.9.9
+asyncpg>=0.29.0,<0.31.0
+psycopg2-binary>=2.9.9,<2.10.0
 greenlet==3.5.5
 
 # Configuration & Data Validation
 pydantic==2.13.5
 pydantic-settings==2.15.0
-python-dotenv>=1.0.1
+python-dotenv>=1.0.1,<2.0.0
 
 # TTS Generation
 edge-tts==7.3.1
-gradio_client>=2.7.0
+gradio_client>=2.7.0,<6.0.0
 
 # Mini App Web Service & API
-fastapi>=0.110.0
-uvicorn[standard]>=0.28.0
-python-multipart>=0.0.9
-aiofiles>=24.0.0
+fastapi>=0.110.0,<0.130.0
+uvicorn[standard]>=0.28.0,<0.35.0
+python-multipart>=0.0.9,<1.0.0
+aiofiles>=24.0.0,<25.0.0
 
 # Downloader, Transcription & Media Processing
-yt-dlp>=2024.8.0
-nodejs-wheel-binaries>=22.20.0
-requests>=2.31.0
-Pillow>=10.0.0
-google-genai>=0.1.0
-faster-whisper>=1.0.0
-numpy>=1.24.0
-av>=11.0.0
+yt-dlp>=2024.8.0,<2027.0.0
+nodejs-wheel-binaries>=22.20.0,<23.0.0
+requests>=2.31.0,<3.0.0
+Pillow>=10.0.0,<12.0.0
+google-genai>=0.1.0,<2.0.0
+faster-whisper>=1.0.0,<2.0.0
+numpy>=1.24.0,<3.0.0
+av>=11.0.0,<16.0.0
 
 # Test Suite
 pytest==9.1.1
 pytest-asyncio==1.4.0
+
+# NOTE: Upper bounds above are compatible-range guards, not a lockfile.
+# They prevent a future major-version break on a fresh install. A full
+# lockfile (for example via pip-tools) is still a morning item, because
+# exact pinned versions were not verified against a clean install here.

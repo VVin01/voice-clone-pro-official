@@ -69,7 +69,13 @@ def _transcribe_with_groq_srt(
             except Exception as comp_err:
                 logger.warning(f"Audio pre-compression skipped: {comp_err}")
 
-        groq_model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+        groq_model = os.getenv("GROQ_WHISPER_MODEL", "").strip()
+        if not groq_model:
+            try:
+                from app.config import settings as _settings
+                groq_model = getattr(_settings, "groq_whisper_model", "") or "whisper-large-v3-turbo"
+            except Exception:
+                groq_model = "whisper-large-v3-turbo"
 
         for idx, key in enumerate(api_keys, 1):
             key_masked = f"{key[:7]}...{key[-4:]}" if len(key) > 12 else "key"

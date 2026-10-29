@@ -12,10 +12,42 @@ from app.services.ledger import credit_purchased_minutes, get_or_create_user
 
 logger = logging.getLogger(__name__)
 
+# Single source of truth for ALL paid plans, in three separate categories.
+# Voice-only: minute packs + Voice Pro. Recap-only: Recap Starter + Recap
+# Pro. Combined Voice+Recap: Combined Starter + Master. Free tier is
+# separate from all three paid categories and is NOT in this catalogue.
+# Per-unit prices fall as tiers rise within each category:
+#   voice: 800 -> 667 -> 633 -> 300 MMK/min
+#   recap: 4,000 -> 3,600 MMK/credit
+#   combined: Starter is 30,000 vs 40,000 bought separately (25% off);
+#   Master is 180,000 vs 366,000 at bundle rates (voice 500x300 +
+#   recap 60x3,600), so the bundle discount deepens with size.
+# API /vip/plans, Mini App buttons and the bot buy menu all read this
+# catalogue (directly or through the helpers below) — do not change a
+# price in only one place.
+PLAN_CATALOGUE = [
+    {"code": "MIN_10", "category": "voice", "minutes": 10, "recap_credits": 0, "price_mmk": 8000},
+    {"code": "MIN_30", "category": "voice", "minutes": 30, "recap_credits": 0, "price_mmk": 20000},
+    {"code": "MIN_60", "category": "voice", "minutes": 60, "recap_credits": 0, "price_mmk": 38000},
+    {"code": "voice_studio_pro", "category": "voice", "minutes": 250, "recap_credits": 0, "price_mmk": 75000},
+    {"code": "recap_starter", "category": "recap", "minutes": 0, "recap_credits": 5, "price_mmk": 20000},
+    {"code": "recap_studio_pro", "category": "recap", "minutes": 0, "recap_credits": 25, "price_mmk": 90000},
+    {"code": "combined_starter", "category": "combined", "minutes": 30, "recap_credits": 5, "price_mmk": 30000},
+    {"code": "all_in_one_master", "category": "combined", "minutes": 500, "recap_credits": 60, "price_mmk": 180000},
+]
+
+
+def get_plan_by_code(code: str) -> dict | None:
+    """Return the catalogue entry for a plan code, or None if unknown."""
+    for entry in PLAN_CATALOGUE:
+        if entry["code"] == code:
+            return entry
+    return None
+
+
 DEFAULT_PRICING_PLANS = [
-    {"code": "MIN_10", "minutes": 10, "price_mmk": 8000, "sort_order": 1},
-    {"code": "MIN_30", "minutes": 30, "price_mmk": 20000, "sort_order": 2},
-    {"code": "MIN_60", "minutes": 60, "price_mmk": 38000, "sort_order": 3},
+    {"code": p["code"], "minutes": p["minutes"], "price_mmk": p["price_mmk"], "sort_order": i + 1}
+    for i, p in enumerate([e for e in PLAN_CATALOGUE if e["code"].startswith("MIN_")])
 ]
 
 
@@ -49,12 +81,23 @@ async def create_payment_request(
     receipt_file_id: str | None = None,
 ) -> PaymentRequest:
     """Create a new pending payment request."""
-    # Resolve package details
+    # Resolve package details: DB minute packs first, then the plan
+    # catalogue (bundles/recap/combined codes are not DB PricingPlan rows,
+    # but they are sellable through the bot buy menu and Mini App).
     stmt = select(PricingPlan).where(PricingPlan.code == package_code)
     res = await session.execute(stmt)
     plan = res.scalar_one_or_none()
     if not plan:
-        raise ValueError(f"Pricing plan code '{package_code}' not found")
+        cat = get_plan_by_code(package_code)
+        if not cat:
+            raise ValueError(f"Pricing plan code '{package_code}' not found")
+        plan = PricingPlan(
+            code=cat["code"],
+            minutes=cat["minutes"],
+            price_mmk=cat["price_mmk"],
+            sort_order=0,
+            is_active=True,
+        )
 
     pay_id = f"PAY-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     payment = PaymentRequest(
@@ -104,6 +147,15 @@ async def approve_payment_request(
         payment_id=payment.id,
         note=f"Approved by admin {admin_id}: {payment.minutes} minutes ({payment.package_code})",
     )
+
+    # Credit recap credits for recap/combined plans (bot approval path).
+    # The Mini App approval path in app/webapp/api.py uses the same
+    # catalogue, so both paths credit the same amount for the same code.
+    cat = get_plan_by_code(payment.package_code)
+    if cat and cat["recap_credits"]:
+        target = await session.get(User, payment.user_id)
+        if target is not None:
+            target.recap_credits = (getattr(target, "recap_credits", 0) or 0) + cat["recap_credits"]
 
     # Record audit log
     session.add(AuditLog(
@@ -159,10 +211,10 @@ async def get_payment_account_info(session: AsyncSession) -> dict[str, str]:
     rows = (await session.execute(select(BotSetting).where(BotSetting.key.like("payment_%")))).scalars().all()
     d = {r.key: r.value for r in rows}
     return {
-        "kpay_number": d.get("payment_kpay_number", "09790760003"),
-        "kpay_name": d.get("payment_kpay_name", "Win Kyaw Oo"),
-        "wave_number": d.get("payment_wave_number", "09790760003"),
-        "wave_name": d.get("payment_wave_name", "Win Kyaw Oo"),
+        "kpay_number": d.get("payment_kpay_number", ""),
+        "kpay_name": d.get("payment_kpay_name", ""),
+        "wave_number": d.get("payment_wave_number", ""),
+        "wave_name": d.get("payment_wave_name", ""),
     }
 
 

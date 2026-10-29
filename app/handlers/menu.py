@@ -70,7 +70,7 @@ async def render_main_menu(
     elif category_raw == "PURCHASED":
         category_badge = "⭐ VIP PURCHASED"
     else:
-        category_badge = "🎁 FREE MEMBER" if active_lang == "en" else "🎁 FREE အဖွဲ့ဝင်"
+        category_badge = t("hist_tier_free", active_lang)
 
     info_text = t(
         "menu_account_info",
@@ -254,7 +254,7 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
     user_display = f"{u_name} ({u_handle})" if u_name else u_handle
 
     cat_raw = getattr(user.account_category, "value", str(user.account_category)).upper()
-    tier_badge = "⭐ VIP PURCHASED" if cat_raw == "PURCHASED" else ("🎁 FREE MEMBER" if lang == "en" else "🎁 FREE အဖွဲ့ဝင်")
+    tier_badge = "⭐ VIP PURCHASED" if cat_raw == "PURCHASED" else t("hist_tier_free", lang)
 
     total_usable_min = balance.total_usable_minutes
     total_usable_sec = balance.total_usable_seconds
@@ -286,8 +286,8 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
                 dur_sec = j.seconds_consumed if j.seconds_consumed > 0 else j.seconds_estimated
                 dur_min = dur_sec / 60.0
                 preview = html.escape((j.input_text or "").replace("\n", " ").strip()[:32])
-                dur_label = f"{dur_sec}s (-{dur_min:.1f}m)" if lang == "en" else f"{dur_sec}s (-{dur_min:.1f} မိနစ်)"
-                job_title = "Voice Generation" if lang == "en" else "အသံထုတ်လုပ်မှု"
+                dur_label = t("hist_duration", lang, dur_sec=dur_sec, dur_min=dur_min)
+                job_title = t("hist_job_title", lang)
                 line = (
                     f"• 🎙 <b>{job_title} ({m_name})</b> · <code>{dur_label}</code> {st_icon}\n"
                     f"  🕒 <code>{time_str}</code> | 💬 <i>\"{preview}\"</i>\n"
@@ -302,22 +302,16 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
                 min_val = sec / 60.0
 
                 src = ev.source.upper()
-                if src == "MONTHLY_FREE":
-                    src_title = "Monthly Free Allowance" if lang == "en" else "လစဉ် အခမဲ့မိနစ်"
-                elif src == "WELCOME":
-                    src_title = "Welcome Bonus" if lang == "en" else "Welcome Bonus ဆုလက်ဆောင်"
-                elif src == "REFERRAL":
-                    src_title = "Referral Reward" if lang == "en" else "သူငယ်ချင်းဖိတ်ခေါ်မှု ဆုကြေး"
-                elif src == "PURCHASE":
-                    src_title = "Minute Purchase" if lang == "en" else "မိနစ်ဝယ်ယူမှု အတည်ပြုခြင်း"
-                elif src == "CONSUME":
-                    src_title = "Voice Clone Usage" if lang == "en" else "အသံထုတ်လုပ်မှု သုံးစွဲချက်"
-                elif src == "ADJUST":
-                    src_title = "Admin Adjustment" if lang == "en" else "Admin အထူးချိန်ညှိမှု"
-                else:
-                    src_title = src
-
-                amt_label = f"{sign}{sec}s ({sign}{min_val:.1f}m)" if lang == "en" else f"{sign}{sec}s ({sign}{min_val:.1f} မိနစ်)"
+                _src_keys = {
+                    "MONTHLY_FREE": "hist_source_monthly",
+                    "WELCOME": "hist_source_welcome",
+                    "REFERRAL": "hist_source_referral",
+                    "PURCHASE": "hist_source_purchase_overview",
+                    "CONSUME": "hist_source_consume_overview",
+                    "ADJUST": "hist_source_admin",
+                }
+                src_title = t(_src_keys[src], lang) if src in _src_keys else src
+                amt_label = t("hist_amount", lang, sign=sign, sec=sec, min_val=min_val)
                 note_snippet = f" | 📝 <i>{html.escape(ev.note[:30])}</i>" if ev.note else ""
                 line = (
                     f"• {icon} <b>{src_title}</b> · <code>{amt_label}</code>\n"
@@ -327,28 +321,18 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
 
     activity_content = "".join(activity_lines)
 
-    if lang == "my":
-        summary_text = (
-            f"👤 <b>အကောင့်:</b> {user_display} ({tier_badge})\n"
-            f"⏱ <b>လက်ရှိလက်ကျန်:</b> <b>{total_usable_min:.1f}</b> မိနစ် ({total_usable_sec:,} စက္ကန့်)\n"
-            f"💎 <b>ဝယ်ယူထားသော လက်ကျန်:</b> <b>{purchased_min:.1f}</b> မိနစ်\n"
-            f"🎁 <b>အခမဲ့/ဆုလက်ဆောင် လက်ကျန်:</b> <b>{free_min:.1f}</b> မိနစ်\n"
-            f"📊 <b>သုံးစွဲပြီး မိနစ်စုစုပေါင်း:</b> <b>{consumed_min:.1f}</b> မိနစ်\n\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"🕒 <b>လတ်တလော မှတ်တမ်းများ (Recent Activity):</b>\n\n"
-            f"{activity_content}"
-        )
-    else:
-        summary_text = (
-            f"👤 <b>Account:</b> {user_display} ({tier_badge})\n"
-            f"⏱ <b>Usable Balance:</b> <b>{total_usable_min:.1f}</b> mins ({total_usable_sec:,} seconds)\n"
-            f"💎 <b>Purchased Balance:</b> <b>{purchased_min:.1f}</b> mins\n"
-            f"🎁 <b>Free / Bonus Balance:</b> <b>{free_min:.1f}</b> mins\n"
-            f"📊 <b>Total Consumed:</b> <b>{consumed_min:.1f}</b> mins\n\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"🕒 <b>Recent Activity Stream:</b>\n\n"
-            f"{activity_content}"
-        )
+    summary_text = t(
+        "hist_overview_summary",
+        lang,
+        user_display=user_display,
+        tier_badge=tier_badge,
+        total_min=total_usable_min,
+        total_sec=total_usable_sec,
+        purchased_min=purchased_min,
+        free_min=free_min,
+        consumed_min=consumed_min,
+        activity_content=activity_content,
+    )
 
     text = f"{t('history_overview_title', lang)}\n\n{summary_text}"
     kb = user_history_kb(job_count=len(all_jobs), ledger_count=len(all_events), lang=lang)
@@ -370,29 +354,28 @@ async def render_history_jobs_content(session: AsyncSession, user_id: int) -> tu
             m_name = html.escape(m.name if m else (j.edge_voice or "Voice Model"))
             st_upper = str(j.status).upper()
             if st_upper == "SUCCESS":
-                st_icon = "✅ အောင်မြင်" if lang == "my" else "✅ Success"
+                st_icon = t("hist_status_success", lang)
             elif st_upper == "FAILED":
-                st_icon = "❌ မအောင်မြင်" if lang == "my" else "❌ Failed"
+                st_icon = t("hist_status_failed", lang)
             else:
-                st_icon = "⚙️ လုပ်ဆောင်ဆဲ" if lang == "my" else "⚙️ Running"
+                st_icon = t("hist_status_running", lang)
 
             dur_sec = j.seconds_consumed if j.seconds_consumed > 0 else j.seconds_estimated
             dur_min = dur_sec / 60.0
             ts = j.created_at.strftime("%Y-%m-%d %H:%M UTC") if j.created_at else ""
             preview = html.escape((j.input_text or "").replace("\n", " ").strip()[:40])
 
-            if lang == "my":
-                item_text = (
-                    f"• <code>#{j.id[:8]}</code> · <b>{m_name}</b> ({st_icon})\n"
-                    f"  ⏱ သုံးစွဲချိန်: <b>{dur_sec}s</b> (~{dur_min:.1f} မိနစ်) | 🕒 <code>{ts}</code>\n"
-                    f"  💬 <i>\"{preview}\"</i>\n"
-                )
-            else:
-                item_text = (
-                    f"• <code>#{j.id[:8]}</code> · <b>{m_name}</b> ({st_icon})\n"
-                    f"  ⏱ Duration: <b>{dur_sec}s</b> (~{dur_min:.1f} mins) | 🕒 <code>{ts}</code>\n"
-                    f"  💬 <i>\"{preview}\"</i>\n"
-                )
+            item_text = t(
+                "hist_job_item",
+                lang,
+                job_id=j.id[:8],
+                model_name=m_name,
+                st_icon=st_icon,
+                dur_sec=dur_sec,
+                dur_min=dur_min,
+                ts=ts,
+                preview=preview,
+            )
             lines.append(item_text)
 
     text = "\n".join(lines)
@@ -411,16 +394,15 @@ async def render_history_ledger_content(session: AsyncSession, user_id: int) -> 
     consumed_min = balance.consumed_seconds / 60.0
 
     lines = [t("history_ledger_title", lang)]
-    if lang == "my":
-        lines.append(
-            f"⏱ <b>လက်ရှိ သုံးစွဲနိုင်သော လက်ကျန်:</b> <b>{total_usable_min:.1f}</b> မိနစ် ({total_usable_sec:,} စက္ကန့်)\n"
-            f"📊 <b>သုံးစွဲပြီး မိနစ်စုစုပေါင်း:</b> <b>{consumed_min:.1f}</b> မိနစ်\n"
+    lines.append(
+        t(
+            "hist_ledger_header",
+            lang,
+            total_min=total_usable_min,
+            total_sec=total_usable_sec,
+            consumed_min=consumed_min,
         )
-    else:
-        lines.append(
-            f"⏱ <b>Current Usable Balance:</b> <b>{total_usable_min:.1f}</b> mins ({total_usable_sec:,}s)\n"
-            f"📊 <b>Total Consumed:</b> <b>{consumed_min:.1f}</b> mins\n"
-        )
+    )
 
     if not events:
         lines.append(f"\n{t('history_empty', lang)}")
@@ -434,34 +416,27 @@ async def render_history_ledger_content(session: AsyncSession, user_id: int) -> 
             ts = ev.created_at.strftime("%Y-%m-%d %H:%M UTC") if ev.created_at else ""
 
             src = ev.source.upper()
-            if src == "MONTHLY_FREE":
-                src_title = "Monthly Free Allowance" if lang == "en" else "လစဉ် အခမဲ့မိနစ် ရရှိမှု"
-            elif src == "WELCOME":
-                src_title = "Welcome Bonus" if lang == "en" else "Welcome Bonus ဆုလက်ဆောင်"
-            elif src == "REFERRAL":
-                src_title = "Referral Reward" if lang == "en" else "သူငယ်ချင်းဖိတ်ခေါ်မှု ဆုကြေး"
-            elif src == "PURCHASE":
-                src_title = "Minute Package Purchase" if lang == "en" else "မိနစ်ပက်ကေ့ဂျ် ဝယ်ယူမှု"
-            elif src == "CONSUME":
-                src_title = "Voice Clone Audio Deduction" if lang == "en" else "အသံထုတ်လုပ်မှု မိနစ်နုတ်ယူချက်"
-            elif src == "ADJUST":
-                src_title = "Admin Adjustment" if lang == "en" else "Admin အထူးချိန်ညှိမှု"
-            else:
-                src_title = src
-
-            amt_label = f"{sign}{sec}s ({sign}{min_val:.1f}m)" if lang == "en" else f"{sign}{sec}s ({sign}{min_val:.1f} မိနစ်)"
+            _src_keys = {
+                "MONTHLY_FREE": "hist_source_monthly_ledger",
+                "WELCOME": "hist_source_welcome",
+                "REFERRAL": "hist_source_referral",
+                "PURCHASE": "hist_source_purchase_ledger",
+                "CONSUME": "hist_source_consume_ledger",
+                "ADJUST": "hist_source_admin",
+            }
+            src_title = t(_src_keys[src], lang) if src in _src_keys else src
+            amt_label = t("hist_amount", lang, sign=sign, sec=sec, min_val=min_val)
             note_str = html.escape(ev.note or "None")
 
-            if lang == "my":
-                ev_text = (
-                    f"• {icon} <b>{src_title}</b>: <code>{amt_label}</code>\n"
-                    f"  🕒 ရက်စွဲ: <code>{ts}</code> | 📝 မှတ်ချက်: <i>{note_str}</i>\n"
-                )
-            else:
-                ev_text = (
-                    f"• {icon} <b>{src_title}</b>: <code>{amt_label}</code>\n"
-                    f"  🕒 Date: <code>{ts}</code> | 📝 Note: <i>{note_str}</i>\n"
-                )
+            ev_text = t(
+                "hist_ledger_item",
+                lang,
+                icon=icon,
+                src_title=src_title,
+                amt_label=amt_label,
+                ts=ts,
+                note_str=note_str,
+            )
             lines.append(ev_text)
 
     text = "\n".join(lines)

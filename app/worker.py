@@ -20,7 +20,6 @@ from app.services.audio import (
     get_output_filename,
     get_wav_duration_seconds,
     normalize_audio_to_wav,
-    run_applio_conversion,
 )
 from app.services.i18n import t
 from app.services.ledger import consume_seconds
@@ -41,7 +40,14 @@ async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
         async with httpx.AsyncClient(timeout=90.0) as client:
             with open(file_path, "rb") as f:
                 files = {"file": (file_path.name, f, "audio/wav")}
-                headers = {"X-Worker-Token": settings.bot_token}
+                worker_token = getattr(settings, "worker_token", "") or settings.bot_token
+                if not getattr(settings, "worker_token", ""):
+                    logger.warning(
+                        "WORKER_TOKEN is not set; falling back to the Telegram "
+                        "bot token for worker uploads. Set a separate "
+                        "WORKER_TOKEN and rotate it."
+                    )
+                headers = {"X-Worker-Token": worker_token}
                 url = f"{cloud_url}/api/internal/worker/upload-result/{job_id}"
                 resp = await client.post(url, files=files, headers=headers)
                 if resp.is_success:
@@ -118,26 +124,11 @@ async def process_single_job(
                 getattr(model, "pth_path", "") == "voxcpm"
                 or "voxcpm" in getattr(model, "slug", "").lower()
             )
-
-        def _resolve_model_path(pth_str: str | None) -> Path | None:
-            if not pth_str:
-                return None
-            p = Path(pth_str)
-            if p.is_file():
-                return p
-            cand = Path(settings.root) / p
-            if cand.is_file():
-                return cand
-            for found in Path(settings.storage_root).rglob(p.name):
-                if found.is_file():
-                    return found
-            return None
-
-        resolved_model_pth = _resolve_model_path(getattr(model, "pth_path", None)) if not is_voxcpm else None
-        resolved_index_path = _resolve_model_path(getattr(model, "index_path", None)) if not is_voxcpm else None
-
-        if not is_voxcpm and not resolved_model_pth:
-            raise RuntimeError("Model file (.pth) is missing or not authorized on this server")
+        if not is_voxcpm:
+            raise RuntimeError(
+                "Legacy trained voice model is no longer supported. "
+                "Please re-clone the voice with a short reference audio using VoxCPM2."
+            )
 
         display_name = model.name or "Standard"
         if getattr(job, "preset_voice", None):
@@ -179,7 +170,7 @@ async def process_single_job(
                 )
                 await normalize_audio_to_wav(base_tts_path, norm_wav_path)
 
-        # Stage 3: Run Applio or VoxCPM Voice Conversion with Live Ticker & Real-time ETA
+        # Stage 3: Run VoxCPM2 Voice Conversion with Live Ticker & Real-time ETA
         out_name = f"voxcpm_{job.preset_voice}" if getattr(job, "preset_voice", None) else model.name
         out_filename = get_output_filename(out_name)
         converted_wav_path = temp_dir / out_filename
@@ -270,28 +261,19 @@ async def process_single_job(
                     )
                     logger.info("Resilient fallback audio generated successfully for job %s: %s", job.id, converted_wav_path)
             else:
-                pitch = GENDER_PITCH_MAP.get(job.gender_preset or "m2m", 0)
-                norm_duration = get_wav_duration_seconds(norm_wav_path)
-                computed_timeout = max(
-                    getattr(settings, "applio_inference_timeout_seconds", 900),
-                    int(norm_duration * 6) + 180,
-                )
-                logger.info(
-                    "Starting Applio conversion for job %s (audio_len=%ss, timeout=%ss)",
-                    job.id,
-                    norm_duration,
-                    computed_timeout,
-                )
-                await run_applio_conversion(
-                    model_pth=resolved_model_pth,
-                    index_path=resolved_index_path,
-                    input_wav=norm_wav_path,
-                    output_wav=converted_wav_path,
-                    pitch=pitch,
-                    timeout_seconds=computed_timeout,
+                raise RuntimeError(
+                    "Legacy trained voice model is no longer supported. "
+                    "Please re-clone the voice with a short reference audio using VoxCPM2."
                 )
         finally:
             await tracker.stop_ticker()
+
+        # Transparency (fix 2026-10-29): the engine also falls back to
+        # Edge TTS internally without raising, so read its flag — the
+        # delivery note below must fire for that common path too, not
+        # only when the engine raised into the except block above.
+        if getattr(engine_inst, "last_fallback_used", False):
+            used_fallback = True
 
         # Stage 4: Preparing Output and Deducting Balance
         await tracker.update_step(4)
@@ -335,11 +317,15 @@ async def process_single_job(
             )
 
         job.seconds_consumed = duration_seconds
+        if used_fallback:
+            # Persist the fallback flag on the job result so the Mini App
+            # job status/history can show the fallback notice as well.
+            job.engine = "edge_fallback"
 
         # Send completion audio or notification alert to user via Telegram Bot
         if bot and target_chat_id:
             caption_model_name = display_name or getattr(model, "name", "Standard")
-            fallback_note = "\n\n⚠️ <i>(မှတ်ချက်: Hugging Face ZeroGPU Free Quota ပြည့်သွားသဖြင့် အရန် Neural Audio ဖြင့် ထုတ်ယူပေးထားပါသည်)</i>" if used_fallback else ""
+            fallback_note = t("worker_fallback_note", lang) if used_fallback else ""
             if getattr(job, "auto_deliver", False):
                 try:
                     audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
@@ -369,23 +355,21 @@ async def process_single_job(
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text="🎧 Mini App တွင် နားထောင်မည်",
+                                text=t("clone_btn_miniapp_listen", lang),
                                 web_app=WebAppInfo(url=f"{app_url}?tab=tab-voice")
                             ),
                             InlineKeyboardButton(
-                                text="📱 Audio ဖိုင် ပို့ပေးပါ",
+                                text=t("clone_btn_send_audio", lang),
                                 callback_data=f"send_audio_{job.id}"
                             )
                         ]
                     ])
-                    notify_text = (
-                        f"🎉 <b>အသံထုတ်ယူမှု အောင်မြင်စွာ ပြီးစီးပါပြီ!</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎙️ <b>အသံမော်ဒယ်:</b> <b>{html.escape(str(caption_model_name))}</b>\n"
-                        f"⏱️ <b>အသံကြာချိန်:</b> <b>{duration_seconds:.1f} စက္ကန့်</b>\n"
-                        f"🆔 <b>Task:</b> <code>#{job.id[:8]}</code>\n\n"
-                        f"✨ သင့်အသံဖိုင် အဆင်သင့်ဖြစ်နေပါပြီခင်ဗျာ။ Mini App ထဲတွင် ချက်ချင်းဖွင့်နားထောင်နိုင်သလို "
-                        f"Telegram သို့ တိုက်ရိုက်ရယူလိုပါက အောက်ပါခလုတ်ကို နှိပ်နိုင်ပါသည်!"
+                    notify_text = t(
+                        "worker_notify_audio_text",
+                        lang,
+                        model_name=html.escape(str(caption_model_name)),
+                        duration=duration_seconds,
+                        job_id=job.id[:8],
                     ) + fallback_note
                     await bot.send_message(
                         chat_id=target_chat_id,

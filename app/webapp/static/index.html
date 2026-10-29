@@ -57,6 +57,22 @@
             </div>
         </header>
 
+        <!-- Gate banner: shown only when the server says the user is not yet verified.
+             Uses /api/user/me gate fields + POST /api/user/verify-membership (gate branch). -->
+        <div id="gate-banner" class="gate-banner hidden" role="alert">
+            <div class="gate-banner-text">
+                <strong id="gate-banner-title" data-i18n="gate_banner_title">🔒 Channel နှင့် Group ကို အရင် Join ပါ</strong>
+                <span id="gate-banner-desc" data-i18n="gate_banner_desc">Join ပြီးမှ Verify နှိပ်ပါ — ပြီးမှ Voice / Recap ထုတ်နိုင်မယ်။</span>
+            </div>
+            <div class="gate-banner-actions">
+                <a id="gate-link-channel" class="btn mini-btn" data-i18n="gate_join_channel" href="#" target="_blank" rel="noopener">Channel Join</a>
+                <a id="gate-link-group" class="btn mini-btn" data-i18n="gate_join_group" href="#" target="_blank" rel="noopener">Group Join</a>
+                <button id="gate-btn-verify" class="btn gold-gradient-btn" type="button" data-i18n="gate_verify_btn" onclick="verifyMembershipFromBanner()">✓ Verify လုပ်မယ်</button>
+            </div>
+            <p id="gate-banner-status" class="gate-banner-status"></p>
+        </div>
+
+
         <!-- ════ MAIN CONTENT VIEWPORT ════ -->
         <main class="content-viewport">
             
@@ -81,6 +97,12 @@
                 </div>
 
                 <!-- Estimated Duration Notice -->
+                
+                <ol class="ux-steps" aria-label="Voice clone steps">
+                    <li class="ux-step"><span class="ux-step-num">1</span><span data-i18n="engine_label">အသံ ရွေးပါ</span></li>
+                    <li class="ux-step"><span class="ux-step-num">2</span><span data-i18n="text_input_label">စာသား ရိုက်ပါ</span></li>
+                    <li class="ux-step"><span class="ux-step-num">3</span><span data-i18n="btn_generate">အသံ ထုတ်ပါ</span></li>
+                </ol>
                 <div class="queue-notice-banner" id="voice-queue-notice">
                     <span class="notice-icon">⚡</span>
                     <span class="notice-text" data-i18n="queue_notice_voxcpm">⚡ ပုံမှန်ခန့်မှန်းကြာချိန်: ၅-၁၅ စက္ကန့် • Live Cloud AI စနစ်</span>
@@ -96,10 +118,6 @@
                         <button class="seg-btn active" data-engine="voxcpm" id="btn-engine-voxcpm">
                             <span class="seg-title" data-i18n="engine_voxcpm_title">☁️ VoxCPM (Cloud AI)</span>
                             <span class="seg-desc" data-i18n="engine_voxcpm_desc">Zero-shot သဘာဝအသံ • Cloud တွင် တိုက်ရိုက်လုပ်ဆောင်သည်</span>
-                        </button>
-                        <button class="seg-btn" data-engine="applio" id="btn-engine-applio">
-                            <span class="seg-title" data-i18n="engine_applio_title">💻 Applio RVC (Local GPU)</span>
-                            <span class="seg-desc" data-i18n="engine_applio_desc">Laptop Worker တွင် Train ထားသော မော်ဒယ်များ</span>
                         </button>
                     </div>
                 </div>
@@ -149,36 +167,14 @@
                             </div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Applio Models Card (Visible when Applio Engine is chosen) -->
-                <div class="card glass model-picker-card hidden" id="applio-models-section">
-                    <div class="card-header-row">
-                        <div class="card-label" data-i18n="model_picker_label">ရွေးချယ်ထားသော Applio အသံမော်ဒယ်</div>
-                        <div class="worker-status-badge" id="applio-worker-pill">
-                            <span class="status-dot online"></span>
-                            <span class="status-txt" data-i18n="applio_status_active">🟢 Laptop Worker အဆင်သင့်ဖြစ်ပါသည်</span>
-                        </div>
-                    </div>
-                    
-                    <div class="models-grid" id="models-list">
-                        <!-- Populated dynamically via loadApplioModels() -->
-                    </div>
-
-                    <div class="queue-notice-banner applio-notice mt-2">
-                        <span class="notice-icon">ℹ️</span>
-                        <span class="notice-text" data-i18n="queue_notice_applio">⚡ Local GPU မော်ဒယ်များ: Laptop Worker ဖွင့်ထားချိန်တွင် ချက်ချင်း ဆောင်ရွက်ပေးပါသည်</span>
-                    </div>
-                </div>
-
-                <!-- Step 2: Unified Text Input & Speed Controls Card -->
+                </div><!-- Step 2: Unified Text Input & Speed Controls Card -->
                 <div class="card glass input-card">
                     <div class="card-header-row">
                         <div class="step-badge-title">
                             <span class="step-num-pill">၂</span>
                             <span class="step-title" data-i18n="text_input_label">အသံသွင်းလိုသော စာသား (Text)</span>
                         </div>
-                        <span class="char-counter" id="char-count">0 / 500 chars</span>
+                        <span class="char-counter" id="char-count">0 / 1000 chars</span>
                     </div>
                     <textarea id="voice-text-input" data-i18n-ph="text_placeholder" placeholder="မြန်မာစာသားများကို ဤနေရာတွင် ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..." rows="5"></textarea>
                     <div class="sample-chips">
@@ -197,6 +193,7 @@
                 </div>
 
                 <!-- Action Button -->
+                                <div id="voice-preflight" class="voice-preflight" aria-live="polite"></div>
                 <button class="btn gold-gradient-btn" id="btn-generate-voice">
                     <span class="btn-icon">🚀</span>
                     <span class="btn-text" data-i18n="btn_generate">အသံ စတင်ထုတ်ယူမည်</span>
@@ -594,13 +591,13 @@
                                         <option value="kothura">🎙️ Ko Thura (ကိုသူရ — News & Docu)</option>
                                         <option value="kozayar">🎬 Ko Zayar (ကိုဇေယျာ — Cinema Movie Trailer)</option>
                                         <option value="koaung">⚡ Ko Aung (အောင်အောင် — Viral Shorts)</option>
-                                        <option value="komyat">👁️ Ko Myat (ကိုမြတ် — Spooky Mystery / Horror)</option>
+                                        <option value="komyat">🎙️ Ko Myat (ကိုမြတ် — Human Storyteller)</option>
                                         <option value="kophone">💡 Ko Phone (ကိုဖုန်း — Tech & Explainer)</option>
                                         <option value="mahnin">👩‍🦰 Ma Hnin (မနှင်း — Classic Audiobook)</option>
                                         <option value="manadi">🎭 Ma Nadi (မနဒီ — Thriller Drama)</option>
                                         <option value="mamay">🌟 Ma May (မမေ — Friendly Guide)</option>
                                         <option value="mayoon">🧘 Ma Yoon (မယွန်း — Calm ASMR & Meditation)</option>
-                                        <option value="machaw">🎮 Ma Chaw (မချော — Anime & Gaming)</option>
+                                        <option value="machaw">🌟 Ma Chaw (မချော — Human Creator & Guide)</option>
                                         <option value="mathiri">💎 Ma Thiri (မသီရိ — Luxury Lifestyle)</option>
                                     </select>
                                     <button type="button" class="preview-recap-voice-btn" id="btn-preview-recap-voice" onclick="previewSelectedRecapVoice()">
@@ -925,8 +922,42 @@
                     </div>
                 </div>
 
-                <!-- 3 Specialized Creator Pricing Packages -->
+
+                <div class="card glass plan-how-card">
+                    <div class="card-label" data-i18n="plan_how_title">💎 Plan ဘယ်လို အလုပ်လုပ်လဲ</div>
+                    <p class="plan-how-text" data-i18n="plan_how_text1">၁) Plan ရွေးပါ → ၂) KBZPay / WavePay နဲ့ ငွေလွှဲပြီး Slip တင်ပါ → ၃) Admin အတည်ပြုပြီးမှ မိနစ် / Recap Credit ဝင်မယ်။ အခမဲ့ (Free) အဆင့်ကနေ ဝယ်ယူပြီးတာနဲ့ Purchased (VIP) ဖြစ်သွားမယ် — တစ်ကြိမ်စာလုံးရေ ၁၀၀၀ ကနေ ၅၀၀၀ အထိ တက်မယ်၊ Recap ၂ မိနစ်ကနေ ၁၀ မိနစ်အထိ တက်မယ်၊ Watermark ပျောက်မယ်။</p>
+                    <p class="plan-how-text" data-i18n="plan_how_text2">စျေးနှုန်းအပြည့်အစုံကို VIP tab မှာ ကြည့်နိုင်ပါတယ် — နောက်ဆုံး စျေးနှုန်းကို အတည်ပြုပြီးမှ UI နဲ့ backend မှာ တစ်ပြိုင်တည်း ပြောင်းပါမယ်။</p>
+                </div>
+
+                <!-- Three separate plan categories: Voice-only, Recap-only, Combined -->
+                <h3 class="plan-category-heading" data-i18n="plan_cat_voice">🎙️ Voice-only — အသံသီးသန့်</h3>
                 <div class="pricing-grid">
+
+                    <!-- Voice minute packs (also sold in the bot buy menu) -->
+                    <div class="card glass pricing-card" id="card-plan-voice-packs">
+                        <div class="plan-badge-top" data-i18n="plan_packs_badge">Voice Packs 💎</div>
+                        <div class="plan-name" data-i18n="plan_packs_name">🎙️ Voice Minute Packs</div>
+                        <div class="plan-allocation" data-i18n="plan_packs_alloc">မိနစ် ၁၀ / ၃၀ / ၆၀ — လိုသလောက်ဝယ်၊ သက်တမ်းမကုန်</div>
+                        <div class="plan-price">
+                            <span class="price-val" data-i18n="plan_packs_price">8,000</span>
+                            <span class="currency">MMK</span>
+                            <span data-i18n="plan_packs_from">မှစ၍</span>
+                        </div>
+                        <ul class="plan-features">
+                            <li data-i18n="plan_packs_f1">✓ မိနစ် ၁၀ — ၈,၀၀၀ ကျပ် (၈၀၀/မိနစ်)</li>
+                            <li data-i18n="plan_packs_f2">✓ မိနစ် ၃၀ — ၂၀,၀၀၀ ကျပ် (၆၆၇/မိနစ်)</li>
+                            <li data-i18n="plan_packs_f3">✓ မိနစ် ၆၀ — ၃၈,၀၀၀ ကျပ် (၆၃၃/မိနစ်)</li>
+                        </ul>
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('MIN_10', 8000, '🎙️ Voice Pack 10 Minutes')" data-i18n="plan_packs_btn10">
+                            💎 ၁၀ မိနစ် ဝယ်ယူမည် — ၈,၀၀၀
+                        </button>
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('MIN_30', 20000, '🎙️ Voice Pack 30 Minutes')" data-i18n="plan_packs_btn30">
+                            ⭐ ၃၀ မိနစ် ဝယ်ယူမည် — ၂၀,၀၀၀
+                        </button>
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('MIN_60', 38000, '🎙️ Voice Pack 60 Minutes')" data-i18n="plan_packs_btn60">
+                            🔥 ၆၀ မိနစ် ဝယ်ယူမည် — ၃၈,၀၀၀
+                        </button>
+                    </div>
                     
                     <!-- PLAN 1: Voice Clone Studio Pro -->
                     <div class="card glass pricing-card" id="card-plan-voice">
@@ -934,19 +965,43 @@
                         <div class="plan-name" data-i18n="plan_voice_name">🎙️ Voice Clone Studio Pro</div>
                         <div class="plan-allocation" data-i18n="plan_voice_alloc">မိနစ် ၂၅၀ (၄ နာရီကျော်) စတူဒီယို အသံသွင်းခွင့်</div>
                         <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_voice_price">45,000</span>
+                            <span class="price-val" data-i18n="plan_voice_price">75,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <ul class="plan-features">
                             <li data-i18n="plan_voice_f1">✓ VoxCPM Cloud AI မြန်မာအသံ ၁၂ မျိုး (၆ ကျား / ၆ မ) အပြည့်အစုံ</li>
                             <li data-i18n="plan_voice_f2">✓ Custom Voice Clone (အသံဖိုင် Upload တင်၍ တူအောင်ပွားခွင့်)</li>
-                            <li data-i18n="plan_voice_f3">✓ Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့်</li>
+                            <li data-i18n="plan_voice_f3">✓ VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်</li>
                             <li data-i18n="plan_voice_f4">✓ High-Speed Priority Cloud Processing Queue</li>
                             <li data-i18n="plan_voice_f5">✓ အရည်အသွေးမြင့် 24kHz PCM Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်</li>
                             <li data-i18n="plan_voice_f6">✓ တစ်ကြိမ်လျှင် စာလုံးရေ ၅၀၀၀ အထိ အကန့်အသတ်မရှိ ထုတ်လုပ်နိုင်ခွင့်</li>
                         </ul>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('voice_studio_pro', 45000, '🎙️ Voice Clone Studio Pro')" data-i18n="btn_buy_voice">
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Clone Studio Pro')" data-i18n="btn_buy_voice">
                             💎 Voice Plan ဝယ်ယူမည်
+                        </button>
+                    </div>
+
+                </div>
+
+                <h3 class="plan-category-heading" data-i18n="plan_cat_recap">🎬 Recap-only — Recap သီးသန့်</h3>
+                <div class="pricing-grid">
+
+                    <!-- PLAN 2a: Movie Recap Starter (new entry pack) -->
+                    <div class="card glass pricing-card" id="card-plan-recap-starter">
+                        <div class="plan-badge-top" data-i18n="plan_recap_starter_badge">Recap Starter 🎬</div>
+                        <div class="plan-name" data-i18n="plan_recap_starter_name">🎬 Movie Recap Starter</div>
+                        <div class="plan-allocation" data-i18n="plan_recap_starter_alloc">ဗီဒီယို ၅ ကား Recap ဖန်တီးခွင့် (၁ ပုဒ် အများဆုံး ၁၀ မိနစ်)</div>
+                        <div class="plan-price">
+                            <span class="price-val" data-i18n="plan_recap_starter_price">20,000</span>
+                            <span class="currency">MMK</span>
+                        </div>
+                        <ul class="plan-features">
+                            <li data-i18n="plan_recap_starter_f1">✓ Full HD 1080p Movie Recap ဗီဒီယို (၅) ကား (အများဆုံး ၁၀ မိနစ်/ကား)</li>
+                            <li data-i18n="plan_recap_starter_f2">✓ 🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)</li>
+                            <li data-i18n="plan_recap_starter_f3">✓ Watermark လုံးဝမပါ (Clean 1080p)</li>
+                        </ul>
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_starter', 20000, '🎬 Movie Recap Starter')" data-i18n="btn_buy_recap_starter">
+                            🎬 Recap Starter ဝယ်ယူမည်
                         </button>
                     </div>
 
@@ -956,7 +1011,7 @@
                         <div class="plan-name" data-i18n="plan_recap_name">🎬 Movie Recap Studio Pro</div>
                         <div class="plan-allocation" data-i18n="plan_recap_alloc">ဗီဒီယို ၂၅ ကား Recap ဖန်တီးခွင့် (၁ ပုဒ် အများဆုံး ၁၀ မိနစ်)</div>
                         <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_recap_price">75,000</span>
+                            <span class="price-val" data-i18n="plan_recap_price">90,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <ul class="plan-features">
@@ -966,8 +1021,32 @@
                             <li data-i18n="plan_recap_f4">✓ Watermark လုံးဝမပါ (Clean 1080p) & Channel Logo သီးသန့်ထည့်ခွင့်</li>
                             <li data-i18n="plan_recap_f5">✓ Multi-Threaded High-Speed Video Rendering Node</li>
                         </ul>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 75000, '🎬 Movie Recap Studio Pro')" data-i18n="btn_buy_recap">
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 90000, '🎬 Movie Recap Studio Pro')" data-i18n="btn_buy_recap">
                             🎬 Recap Plan ဝယ်ယူမည်
+                        </button>
+                    </div>
+
+                </div>
+
+                <h3 class="plan-category-heading" data-i18n="plan_cat_combined">🎙️🎬 Combined Voice+Recap — နှစ်မျိုးလုံး</h3>
+                <div class="pricing-grid">
+
+                    <!-- PLAN 3a: Voice + Recap Starter (new entry bundle) -->
+                    <div class="card glass pricing-card" id="card-plan-combined-starter">
+                        <div class="plan-badge-top" data-i18n="plan_combined_starter_badge">Combined Starter ✨</div>
+                        <div class="plan-name" data-i18n="plan_combined_starter_name">🎙️🎬 Voice + Recap Starter</div>
+                        <div class="plan-allocation" data-i18n="plan_combined_starter_alloc">မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား (အများဆုံး ၁၀ မိနစ်/ကား)</div>
+                        <div class="plan-price">
+                            <span class="price-val" data-i18n="plan_combined_starter_price">30,000</span>
+                            <span class="currency">MMK</span>
+                        </div>
+                        <ul class="plan-features">
+                            <li data-i18n="plan_combined_starter_f1">✓ Voice မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား — နှစ်မျိုးလုံးကို တစ်ပြိုင်တည်း စမ်းသုံးနိုင်သည်</li>
+                            <li data-i18n="plan_combined_starter_f2">✓ VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်</li>
+                            <li data-i18n="plan_combined_starter_f3">✓ 🛡️ Anti-Copyright Smart Shield & Watermark လုံးဝမပါ</li>
+                        </ul>
+                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('combined_starter', 30000, '🎙️🎬 Voice + Recap Starter')" data-i18n="btn_buy_combined_starter">
+                            ✨ Combined Starter ဝယ်ယူမည်
                         </button>
                     </div>
 
@@ -979,17 +1058,17 @@
                         <div class="plan-name master-title" data-i18n="plan_master_name">👑 All-in-One Master Suite</div>
                         <div class="plan-allocation text-gold" data-i18n="plan_master_alloc">မိနစ် ၅၀၀ + Recap ဗီဒီယို ၆၀ ကား (အများဆုံး ၁၀ မိနစ်/ကား)</div>
                         <div class="plan-price master-price">
-                            <span class="price-val" data-i18n="plan_master_price">125,000</span>
+                            <span class="price-val" data-i18n="plan_master_price">180,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <ul class="plan-features">
                             <li data-i18n="plan_master_f1">✓ Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော်)</li>
                             <li data-i18n="plan_master_f2">✓ Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)</li>
-                            <li data-i18n="plan_master_f3">✓ 👑 မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း (Personal GPU Train)</li>
+                            <li data-i18n="plan_master_f3">✓ 👑 VoxCPM2 Reference Audio အသံတူပွားမှု (Custom Clone) အပြည့်အစုံ</li>
                             <li data-i18n="plan_master_f4">✓ 🛡️ Anti-Copyright Smart Suite & Commercial Monetization Safe</li>
                             <li data-i18n="plan_master_f5">✓ Dedicated High-Speed Node Priority & 24/7 VIP Direct Support</li>
                         </ul>
-                        <button class="btn gold-gradient-btn mt-3" onclick="openPaymentDrawer('all_in_one_master', 125000, '👑 All-in-One Master Suite')" data-i18n="btn_buy_master">
+                        <button class="btn gold-gradient-btn mt-3" onclick="openPaymentDrawer('all_in_one_master', 180000, '👑 All-in-One Master Suite')" data-i18n="btn_buy_master">
                             👑 Master Suite ဝယ်ယူမည်
                         </button>
                     </div>
@@ -1112,7 +1191,6 @@
 
                         <div class="engine-filter-group mt-1" id="queue-engine-filters">
                             <button type="button" class="engine-pill active" data-engine="all" onclick="setQueueEngineFilter('all')">All Engines</button>
-                            <button type="button" class="engine-pill" data-engine="applio" onclick="setQueueEngineFilter('applio')">🎙️ Applio GPU</button>
                             <button type="button" class="engine-pill" data-engine="voxcpm" onclick="setQueueEngineFilter('voxcpm')">☁️ VoxCPM AI</button>
                             <button type="button" class="engine-pill" data-engine="recap" onclick="setQueueEngineFilter('recap')">🎬 Movie Recap</button>
                         </div>
@@ -1446,6 +1524,16 @@
         <div class="modal-content" onclick="event.stopPropagation()">
             <button class="modal-close" onclick="closeSlipModal()">✕</button>
             <img id="modal-slip-img" src="" alt="Payment Slip Full View">
+        </div>
+    </div>
+
+    <!-- OPEN VIA TELEGRAM MODAL (401) -->
+    <div id="open-via-telegram-modal" class="image-modal hidden" onclick="closeOpenViaTelegramModal()">
+        <div class="modal-content" onclick="event.stopPropagation()" style="text-align:center; padding:28px 22px;">
+            <div style="font-size:44px;">📱</div>
+            <h3 data-i18n="open_via_telegram_title">Telegram ထဲမှ ဖွင်္ပါ</h3>
+            <p data-i18n="open_via_telegram_desc" style="opacity:.85; line-height:1.7;"></p>
+            <button class="btn" onclick="closeOpenViaTelegramModal()" data-i18n="open_via_telegram_btn"></button>
         </div>
     </div>
 

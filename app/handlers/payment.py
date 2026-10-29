@@ -36,20 +36,21 @@ async def handle_buy_minutes_menu(callback: CallbackQuery):
         plans = await get_active_pricing_plans(session)
         await session.commit()
 
+    # Three separate paid categories, in order: Voice-only (minute packs
+    # from the DB seed), Recap-only, Combined Voice+Recap (from the plan
+    # catalogue). Free tier stays separate and is not listed here.
+    from app.services.payments import PLAN_CATALOGUE
+
     badge_map = {10: "💎", 30: "⭐", 60: "🔥"}
     buttons = []
     for p in plans:
         badge = badge_map.get(p.minutes, "💳")
         tag = ""
         if p.minutes == 30:
-            tag = " — လူကြိုက်အများဆုံး" if lang == "my" else " — Popular"
+            tag = t("pay_tag_popular", lang)
         elif p.minutes >= 60:
-            tag = " — အတန်ဆုံး" if lang == "my" else " — Best Value"
-
-        if lang == "my":
-            btn_text = f"{badge} {p.minutes} မိနစ် — {p.price_mmk:,} ကျပ်{tag}"
-        else:
-            btn_text = f"{badge} {p.minutes} Mins — {p.price_mmk:,} MMK{tag}"
+            tag = t("pay_tag_best_value", lang)
+        btn_text = t("pay_package_btn", lang, badge=badge, minutes=p.minutes, price=f"{p.price_mmk:,}", tag=tag)
 
         buttons.append([
             InlineKeyboardButton(
@@ -57,30 +58,25 @@ async def handle_buy_minutes_menu(callback: CallbackQuery):
                 callback_data=f"buy_pkg:{p.code}",
             )
         ])
+    for entry in PLAN_CATALOGUE:
+        if entry["category"] == "recap":
+            buttons.append([
+                InlineKeyboardButton(
+                    text=t("pay_package_recap_btn", lang, credits=entry["recap_credits"], price=f"{entry['price_mmk']:,}"),
+                    callback_data=f"buy_pkg:{entry['code']}",
+                )
+            ])
+    for entry in PLAN_CATALOGUE:
+        if entry["category"] == "combined":
+            buttons.append([
+                InlineKeyboardButton(
+                    text=t("pay_package_combined_btn", lang, minutes=entry["minutes"], credits=entry["recap_credits"], price=f"{entry['price_mmk']:,}"),
+                    callback_data=f"buy_pkg:{entry['code']}",
+                )
+            ])
     buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:home")])
 
-    if lang == "my":
-        text = (
-            "💳 <b>မိနစ်များ ဝယ်ယူရန် (Buy Minutes)</b>\n\n"
-            "ဝယ်ယူလိုသော မိနစ်ပက်ကေ့ဂျ်ကို အောက်တွင် ရွေးချယ်ပါ:\n\n"
-            "✨ <b>VIP & Purchased အကျိုးခံစားခွင့်များ:</b>\n"
-            "• ⏱️ ဝယ်ယူထားသော မိနစ်များသည် သက်တမ်းကုန်ဆုံးခြင်း မရှိပါ\n"
-            "• 💎 <b>PURCHASED</b> အဆင့် သတ်မှတ်ချက် အလိုအလျောက် ရရှိမည်\n"
-            "• 🚀 တစ်ကြိမ်လျှင် စာလုံးရေ အများဆုံး ထုတ်လုပ်နိုင်ခွင့်\n"
-            "• ⚡ Voice Studio Priority Queue ဖြင့် လျင်မြန်စွာ ပြောင်းလဲပေးခြင်း\n\n"
-            "<i>အောက်ပါ ခလုတ်များမှ မိမိနှစ်သက်ရာ ပက်ကေ့ဂျ်ကို နှိပ်ပါ:</i>"
-        )
-    else:
-        text = (
-            "💳 <b>Buy Minutes Packages</b>\n\n"
-            "Select a minute package below:\n\n"
-            "✨ <b>Purchased Tier Privileges:</b>\n"
-            "• ⏱️ Purchased minutes never expire\n"
-            "• 💎 Instant <b>PURCHASED</b> account status upgrade\n"
-            "• 🚀 Higher character limits per generation job\n"
-            "• ⚡ Priority queue processing in Voice Studio\n\n"
-            "<i>Choose your preferred package to proceed:</i>"
-        )
+    text = t("pay_store_text", lang)
 
     await safe_edit_message(callback, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
     try:
@@ -101,11 +97,19 @@ async def handle_payment_copy_account(callback: CallbackQuery, session: AsyncSes
     if service == "kpay":
         acc_num = acc_info["kpay_number"]
         acc_name = acc_info["kpay_name"]
-        msg = f"📋 KBZPay: {acc_num} ({acc_name}) Copied!"
+        service_name = "KBZPay"
     else:
         acc_num = acc_info["wave_number"]
         acc_name = acc_info["wave_name"]
-        msg = f"📋 WavePay: {acc_num} ({acc_name}) Copied!"
+        service_name = "WavePay"
+    # Language for a toast: use the requester's stored language when available.
+    try:
+        async with AsyncSessionLocal() as _s:
+            _u, _ = await get_or_create_user(_s, callback.from_user.id)
+            _lang = _u.language_code
+    except Exception:
+        _lang = "my"
+    msg = t("pay_copy_copied", _lang, service=service_name, acc_num=acc_num, acc_name=acc_name)
 
     # Sleek floating toast banner notification at the top/center of screen
     try:
@@ -124,40 +128,33 @@ async def handle_package_selected(callback: CallbackQuery, state: FSMContext):
         plan_stmt = select(PricingPlan).where(PricingPlan.code == pkg_code)
         plan = (await session.execute(plan_stmt)).scalar_one_or_none()
 
-    pkg_minutes = plan.minutes if plan else 10
-    pkg_price = plan.price_mmk if plan else 2000
+    # DB minute packs first; bundle/recap/combined codes come from the
+    # plan catalogue (they are not DB PricingPlan rows).
+    pkg_minutes, pkg_price, pkg_recap = 10, 2000, 0
+    if plan:
+        pkg_minutes, pkg_price = plan.minutes, plan.price_mmk
+    else:
+        from app.services.payments import get_plan_by_code
+
+        cat = get_plan_by_code(pkg_code)
+        if cat:
+            pkg_minutes, pkg_price, pkg_recap = cat["minutes"], cat["price_mmk"], cat["recap_credits"]
 
     await state.set_state(PaymentFSM.waiting_for_receipt)
     await state.update_data(package_code=pkg_code, lang=lang, minutes=pkg_minutes, price=pkg_price)
 
-    if lang == "my":
-        text = (
-            "🧾 <b>ငွေပေးချေမှု အချက်အလက် (Invoice)</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 <b>ရွေးချယ်ထားသော ပက်ကေ့ဂျ်:</b> <code>{pkg_code}</code>\n"
-            f"⏱️ <b>ရရှိမည့် မိနစ်:</b> <b>{pkg_minutes} မိနစ်</b>\n"
-            f"💰 <b>ကျသင့်ငွေ ပမာဏ:</b> <b>{pkg_price:,} ကျပ်</b>\n\n"
-            "🏦 <b>လွှဲပေးချေနိုင်သော အကောင့်များ:</b>\n"
-            f"• <b>KBZPay:</b> <code>{acc_info['kpay_number']}</code> ({acc_info['kpay_name']})\n"
-            f"• <b>WavePay:</b> <code>{acc_info['wave_number']}</code> ({acc_info['wave_name']})\n\n"
-            "ℹ️ <i>အကောင့်နံပါတ်ကို နှိပ်၍ အလွယ်တကူ Copy ကူးယူနိုင်ပါသည်။</i>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "📸 <b>ငွေလွှဲပြီးပါက ငွေလွှဲပြေစာ (Screenshot) ကို ဤနေရာသို့ ပေးပို့ပေးပါ။</b>"
-        )
-    else:
-        text = (
-            "🧾 <b>Payment Invoice & Instructions</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 <b>Selected Package:</b> <code>{pkg_code}</code>\n"
-            f"⏱️ <b>Credited Minutes:</b> <b>{pkg_minutes} minutes</b>\n"
-            f"💰 <b>Total Payable:</b> <b>{pkg_price:,} MMK</b>\n\n"
-            "🏦 <b>Official Payment Accounts:</b>\n"
-            f"• <b>KBZPay:</b> <code>{acc_info['kpay_number']}</code> ({acc_info['kpay_name']})\n"
-            f"• <b>WavePay:</b> <code>{acc_info['wave_number']}</code> ({acc_info['wave_name']})\n\n"
-            "ℹ️ <i>Tap on the account numbers above to copy.</i>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "📸 <b>Please send your transfer screenshot or receipt file below.</b>"
-        )
+    text = t(
+        "pay_invoice_text",
+        lang,
+        pkg_code=pkg_code,
+        pkg_minutes=pkg_minutes,
+        pkg_recap_credits=pkg_recap,
+        pkg_price=f"{pkg_price:,}",
+        kpay_number=acc_info['kpay_number'],
+        kpay_name=acc_info['kpay_name'],
+        wave_number=acc_info['wave_number'],
+        wave_name=acc_info['wave_name'],
+    )
 
     buttons = [
         [
@@ -197,28 +194,14 @@ async def handle_receipt_received(message: Message, state: FSMContext):
         await session.commit()
 
     # Confirm to user with modern status card
-    if lang == "my":
-        confirm_text = (
-            "✅ <b>ငွေပေးချေမှု တောင်းဆိုချက် ပေးပို့ပြီးပါပြီ!</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔖 <b>တောင်းဆိုမှုနံပါတ်:</b> <code>#{payment.id}</code>\n"
-            f"📦 <b>ပက်ကေ့ဂျ်:</b> <b>{payment.package_code}</b> ({payment.minutes} မိနစ်)\n"
-            f"💰 <b>ပမာဏ:</b> <b>{payment.amount_mmk:,} ကျပ်</b>\n"
-            "📊 <b>အခြေအနေ:</b> 🟡 <b>စစ်ဆေးနေဆဲ (Under Review)</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "⏳ Admin မှ စစ်ဆေးအတည်ပြုပြီးပါက သင့်အကောင့်ထဲသို့ မိနစ်များ အလိုအလျောက် ချက်ချင်း ထည့်သွင်းပေးပါမည်။"
-        )
-    else:
-        confirm_text = (
-            "✅ <b>Payment Request Submitted!</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔖 <b>Request ID:</b> <code>#{payment.id}</code>\n"
-            f"📦 <b>Package:</b> <b>{payment.package_code}</b> ({payment.minutes} mins)\n"
-            f"💰 <b>Amount:</b> <b>{payment.amount_mmk:,} MMK</b>\n"
-            "📊 <b>Status:</b> 🟡 <b>Under Review</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "⏳ Admin will verify and approve shortly. Your purchased minutes will be credited automatically!"
-        )
+    confirm_text = t(
+        "pay_receipt_submitted",
+        lang,
+        payment_id=payment.id,
+        package_code=payment.package_code,
+        minutes=payment.minutes,
+        amount=f"{payment.amount_mmk:,}",
+    )
 
     await message.answer(
         confirm_text,

@@ -203,8 +203,16 @@ async def test_non_admin_voice_clone_start_handler_blocked(db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_submits_text_longer_than_purchased_limit_allowed(db_session, tmp_path):
-    """Admin submitting text longer than PURCHASED limit (e.g. 2500 > 2000 chars) is ALLOWED."""
+async def test_admin_submits_text_longer_than_purchased_limit_allowed(db_session, tmp_path, monkeypatch):
+    """Admin submitting text longer than PURCHASED limit is ALLOWED.
+
+    The current defaults set character_limit_purchased == the 5000-char
+    infrastructure safety limit, so no real text can sit between them.
+    The behaviour under test is the ADMIN EXEMPTION (admins are checked
+    only against the infrastructure limit), so this test pins the
+    purchased limit to 2000 for its own scenario via monkeypatch.
+    """
+    monkeypatch.setattr(settings, "character_limit_purchased", 2000)
     admin_user, _ = await get_or_create_user(db_session, telegram_id=ADMIN_TELEGRAM_ID)
     long_text = "မြန်မာစာ" * 320  # 320 * 8 = 2560 characters, well above the 2000-char purchased limit
     assert len(long_text) > settings.character_limit_purchased
@@ -255,12 +263,12 @@ async def test_admin_submits_text_longer_than_purchased_limit_allowed(db_session
 
 @pytest.mark.asyncio
 async def test_ordinary_purchased_user_blocked_above_purchased_limit(db_session, tmp_path):
-    """Ordinary PURCHASED user submitting text longer than 2000 chars is BLOCKED."""
+    """Ordinary PURCHASED user submitting text longer than 5000 chars is BLOCKED."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID)
     user.account_category = AccountCategory.PURCHASED.value
     await db_session.flush()
 
-    long_text = "A" * 2500  # 2500 characters > 2000 chars
+    long_text = "A" * 6000  # 6000 characters > current 5000-char purchased limit
     assert len(long_text) > settings.character_limit_purchased
 
     # 1. Handler validation
@@ -306,12 +314,12 @@ async def test_ordinary_purchased_user_blocked_above_purchased_limit(db_session,
 
 @pytest.mark.asyncio
 async def test_ordinary_free_user_blocked_above_free_limit(db_session, tmp_path):
-    """Ordinary FREE user submitting text longer than 120 chars is BLOCKED."""
+    """Ordinary FREE user submitting text longer than 1000 chars is BLOCKED."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID + 5)
     user.account_category = AccountCategory.FREE.value
     await db_session.flush()
 
-    medium_text = "B" * 600  # 600 characters > 500 free limit
+    medium_text = "B" * 1200  # 1200 characters > current 1000-char free limit
     assert len(medium_text) > settings.character_limit_free
 
     # 1. Handler validation
@@ -439,15 +447,16 @@ async def test_admin_worker_execution_no_ledger_debit_with_audit_log(db_session,
         out_wav.write_bytes(b"fake_norm_wav")
         return out_wav
 
-    async def mock_applio(model_pth, index_path, input_wav, output_wav, pitch=0, **kwargs):
+    def mock_voxcpm(text, output_wav, **kwargs):  # patched via side_effect: MagicMock calls it WITHOUT self (worker passes all-keyword args)
+        output_wav = Path(output_wav)
         output_wav.parent.mkdir(parents=True, exist_ok=True)
-        output_wav.write_bytes(b"fake_converted_wav")
+        output_wav.write_bytes(b"fake_voxcpm_wav")
         return output_wav
 
     with (
         patch("app.worker.generate_edge_tts", side_effect=mock_tts),
         patch("app.worker.normalize_audio_to_wav", side_effect=mock_norm),
-        patch("app.worker.run_applio_conversion", side_effect=mock_applio),
+        patch("app.services.voxcpm_engine.VoxCPMEngine.synthesize", side_effect=mock_voxcpm),
         patch("app.worker.get_wav_duration_seconds", return_value=25),
     ):
         success = await process_single_job(session=db_session, job=job)
@@ -514,7 +523,19 @@ async def test_admin_worker_failure_no_refund_event(db_session, tmp_path):
         model_id=model.id,
     )
 
-    with patch("app.worker.generate_edge_tts", side_effect=RuntimeError("TTS engine crashed")):
+    # A VoxCPM job never calls generate_edge_tts (that was the legacy
+    # pipeline). Fail BOTH the VoxCPM2 engine and the curated-persona
+    # fallback so the job genuinely fails end-to-end.
+    def mock_voxcpm_fail(text, output_wav, **kwargs):
+        raise RuntimeError("TTS engine crashed")
+
+    def mock_persona_fail(text, persona_id, output_wav, **kwargs):
+        raise RuntimeError("TTS engine crashed")
+
+    with (
+        patch("app.services.voxcpm_engine.VoxCPMEngine.synthesize", side_effect=mock_voxcpm_fail),
+        patch("app.services.curated_voices.synthesize_curated_persona", side_effect=mock_persona_fail),
+    ):
         success = await process_single_job(session=db_session, job=job)
         assert success is False
 
@@ -601,15 +622,16 @@ async def test_normal_user_regression(db_session, tmp_path):
         out_wav.write_bytes(b"fake_norm_wav")
         return out_wav
 
-    async def mock_applio(model_pth, index_path, input_wav, output_wav, pitch=0, **kwargs):
+    def mock_voxcpm(text, output_wav, **kwargs):  # patched via side_effect: MagicMock calls it WITHOUT self (worker passes all-keyword args)
+        output_wav = Path(output_wav)
         output_wav.parent.mkdir(parents=True, exist_ok=True)
-        output_wav.write_bytes(b"fake_converted_wav")
+        output_wav.write_bytes(b"fake_voxcpm_wav")
         return output_wav
 
     with (
         patch("app.worker.generate_edge_tts", side_effect=mock_tts),
         patch("app.worker.normalize_audio_to_wav", side_effect=mock_norm),
-        patch("app.worker.run_applio_conversion", side_effect=mock_applio),
+        patch("app.services.voxcpm_engine.VoxCPMEngine.synthesize", side_effect=mock_voxcpm),
         patch("app.worker.get_wav_duration_seconds", return_value=12),
     ):
         success = await process_single_job(session=db_session, job=job)

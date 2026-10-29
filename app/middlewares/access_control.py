@@ -65,9 +65,9 @@ class AccessControlMiddleware(BaseMiddleware):
             # Fail closed gracefully for non-admins
             try:
                 if isinstance(event, Message):
-                    await event.answer("⚠️ Service temporarily unavailable. Please try again later.")
+                    await event.answer(t("service_unavailable", "en"))
                 elif isinstance(event, CallbackQuery):
-                    await event.answer("⚠️ Service temporarily unavailable. Please try again later.", show_alert=True)
+                    await event.answer(t("service_unavailable", "en"), show_alert=True)
             except Exception as notify_err:
                 logger.debug(
                     "AccessControl: Failed to send DB error notice to user %s: %s",

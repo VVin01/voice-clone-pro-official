@@ -72,7 +72,10 @@ async def test_startup_ordering_commands_before_polling():
     async def mock_setup_commands(bot):
         call_order.append("setup_bot_commands")
 
-    async def mock_start_polling(bot):
+    async def mock_start_polling(*args, **kwargs):
+        # aiogram's start_polling is now invoked with keyword arguments
+        # (drop_pending_updates=True); accept and ignore them — this test
+        # only asserts the call ORDER (commands before polling).
         call_order.append("start_polling")
 
     with patch("main.init_db", AsyncMock()), \

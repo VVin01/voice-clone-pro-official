@@ -325,7 +325,10 @@ async def test_admin_broadcast_flow_compose_preview_and_cancel(db_session):
     await handle_admin_broadcast_message_input(msg_empty, state, session=db_session)
 
     msg_empty.answer.assert_called_once()
-    assert "cannot be empty" in msg_empty.answer.call_args[0][0]
+    # Current handler rejects empty/too-short text (<4 chars) with a
+    # hard-coded Burmese warning (admin i18n batch-2 leftover; the
+    # localized admin_broadcast_empty_text key is not wired here yet).
+    assert "တိုလွန်းပါသည်" in msg_empty.answer.call_args[0][0]
     assert state.current_state == AdminBroadcastFSM.waiting_for_message
 
     # Step 3: Admin sends broadcast text containing HTML special characters

@@ -1594,7 +1594,7 @@ async def handle_admin_job_detail(callback: CallbackQuery, session: AsyncSession
     if job.status == JobStatus.FAILED.value:
         if category == "SYSTEM_FAILURE":
             diag_title = "ဆာဗာ / AI စနစ်ပိုင်းဆိုင်ရာ ယာယီချို့ယွင်းချက် (System Error)"
-            diag_desc = "Applio, Edge-TTS သို့မဟုတ် Server restart/timeout ကြောင့် ဖြစ်ပွားခဲ့ခြင်းဖြစ်ပါသည်။ အသုံးပြုသူထံမှ မိနစ်နုတ်ယူခြင်း မရှိခဲ့ပါ။"
+            diag_desc = "VoxCPM2, Edge-TTS သို့မဟုတ် Server restart/timeout ကြောင့် ဖြစ်ပွားခဲ့ခြင်းဖြစ်ပါသည်။ အသုံးပြုသူထံမှ မိနစ်နုတ်ယူခြင်း မရှိခဲ့ပါ။"
             retry_badge = "🟢 <b>Retry ပြန်လည်လုပ်ဆောင်နိုင်ပါသည် (Eligible for Retry)</b>\n<i>Admin အနေဖြင့် အောက်ပါခလုတ်ကို နှိပ်၍ Queue ထဲသို့ အသစ်ပြန်ထည့်ပေးနိုင်ပါသည်။</i>"
         elif category == "POLICY_USER_ERROR":
             diag_title = "မူဝါဒ သို့မဟုတ် အသုံးပြုသူဆိုင်ရာ ကန့်သတ်ချက် (Policy / User Error)"
@@ -2788,8 +2788,7 @@ async def handle_admin_settings(callback: CallbackQuery, session: AsyncSession |
         f"• Default TTS Voice: <code>{settings.default_tts_voice}</code>\n"
         f"• Channel Gate ID: <code>{settings.required_channel_id or 'Not Set'}</code>\n"
         f"• Group Gate ID: <code>{settings.required_group_id or 'Not Set'}</code>\n"
-        f"• Applio Workdir: <code>{settings.applio_workdir}</code>\n"
-        f"• Applio Python: <code>{settings.applio_python or 'Auto (<workdir>/env/python.exe)'}</code>\n\n"
+        f"• VoxCPM2 Spaces: <code>{settings.voxcpm_spaces or settings.voxcpm_space_url or 'default'}</code>\n\n"
         "🆓 <b>Free Tier Policy:</b>\n"
         f"• Monthly Allowance: <b>{settings.free_monthly_allowance_seconds // 60}m</b> ({settings.free_monthly_allowance_seconds}s per UTC calendar month)\n"
         f"• Free Char Limit: <b>{settings.character_limit_free} characters</b>\n"
