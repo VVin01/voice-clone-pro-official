@@ -42,6 +42,9 @@ class NoUsableSpeechError(RuntimeError):
 
 class WhisperTimestampService:
     """
+    STT order: Groq Whisper first (key rotation, GROQ_WHISPER_MODEL),
+    then local Whisper for word timestamps. If neither works, transcribe()
+    raises a clear error — never a silent wrong transcript.
     Local Whisper timestamp engine.
 
     Preferred backend: faster-whisper (fast, low VRAM, accurate segment/word timestamps)

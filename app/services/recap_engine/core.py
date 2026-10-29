@@ -2266,6 +2266,47 @@ class EdgeSmartSync:
         except Exception as exc:
             self.log(f"⚠️ Sync check skipped: {exc}")
 
+    def _vox_synthesize_with_retry(
+        self,
+        vox_engine: Any,
+        *,
+        speak: str,
+        dst: Path,
+        ctrl_prompt: str,
+        persona_ref_wav: Any,
+        persona_ref_text: str,
+        preset_v: Any,
+        speed_float: float,
+        attempts: int = 2,
+    ) -> tuple[Any, Exception | None]:
+        """Per-segment VoxCPM attempt with retries (fix 2026-10-29).
+
+        The engine itself fails over across spaces/tokens; this adds one
+        segment-level retry on top. Returns (produced_path, None) on
+        success or (None, last_error) when the segment — and ONLY this
+        segment — should fall back to the Studio Persona engine.
+        """
+        last_err: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                produced = vox_engine.synthesize(
+                    text=speak,
+                    output_wav=dst,
+                    control_instruction=ctrl_prompt,
+                    reference_wav=persona_ref_wav,
+                    prompt_text=persona_ref_text,
+                    preset_voice=preset_v,
+                    speed=speed_float,
+                    timeout=75,
+                    retries=2,
+                    allow_fallback=False,
+                )
+                return produced, None
+            except Exception as exc:
+                last_err = exc
+                self.log(f"⚠️ VoxCPM 2 segment attempt {attempt + 1}/{attempts} failed ({exc})")
+        return None, last_err
+
     def run(self) -> dict[str, Any]:
         source = self.source_path
         plan_file = self.plan_path
@@ -2422,6 +2463,7 @@ class EdgeSmartSync:
             cursor = 0.0
             tts_total = 0.0
             restart_uniform = False
+            fallback_segments: list[int] = []
 
             for idx, seg in enumerate(segments, 1):
                 if self.should_stop():
@@ -2439,34 +2481,39 @@ class EdgeSmartSync:
                     produced = None
                     preset_v = _global_preset_v  # always defined for both VoxCPM and fallback paths
 
-                    # 1. Try VoxCPM 2 if selected
+                    # 1. Try VoxCPM 2 if selected — per-segment retry with
+                    # space failover inside the engine (fix 2026-10-29).
+                    # A single failing line must NOT switch the whole recap
+                    # to Edge TTS: only THIS segment falls back, and only
+                    # after its retries are exhausted. Other segments keep
+                    # using VoxCPM.
+                    seg_provider = "edge_tts"
                     if use_voxcpm and vox_engine:
                         self.progress(idx - 1, len(segments), f"VoxCPM 2 {idx}/{len(segments)}")
                         self.log(f"🎙️ [{idx}/{len(segments)}] {base} generate via VoxCPM 2 Cloud AI")
-                        try:
-                            ctrl_prompt = (
-                                self.overlays.get("voxcpm_control")
-                                or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
+                        ctrl_prompt = (
+                            self.overlays.get("voxcpm_control")
+                            or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
+                        )
+                        produced, vox_err = self._vox_synthesize_with_retry(
+                            vox_engine,
+                            speak=speak,
+                            dst=dst,
+                            ctrl_prompt=ctrl_prompt,
+                            persona_ref_wav=persona_ref_wav,
+                            persona_ref_text=persona_ref_text,
+                            preset_v=preset_v,
+                            speed_float=voxcpm_speed_float,
+                        )
+                        if vox_err is not None:
+                            self.log(
+                                f"⚠️ EDGE_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona (Edge TTS) "
+                                f"after retries ({vox_err}); other lines keep VoxCPM 2"
                             )
-                            produced = vox_engine.synthesize(
-                                text=speak,
-                                output_wav=dst,
-                                control_instruction=ctrl_prompt,
-                                reference_wav=persona_ref_wav,
-                                prompt_text=persona_ref_text,
-                                preset_voice=preset_v,
-                                speed=voxcpm_speed_float,
-                                timeout=75,
-                                retries=2,
-                                allow_fallback=False,
-                            )
-                        except Exception as vox_exc:
-                            self.log(f"⚠️ VoxCPM 2 failed on line {idx} ({vox_exc}) — switching to consistent Studio Persona engine for entire recap")
-                            produced = None
-                            use_voxcpm = False  # Keep whole recap uniform! Never hop between voices!
-                            if idx > 1:
-                                restart_uniform = True
-                                break
+                            fallback_segments.append(idx)
+                            seg_provider = "edge_fallback"
+                        else:
+                            seg_provider = "voxcpm"
 
                     # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
                     if not produced or not Path(produced).is_file():
@@ -2514,6 +2561,8 @@ class EdgeSmartSync:
                         raise RuntimeError(f"Generated audio duration invalid: {dst}")
                     checkpoint["audio"][base] = {
                         "fingerprint": fp,
+                        "provider": seg_provider if use_voxcpm else "edge_tts",
+                        "fallback": bool(use_voxcpm and seg_provider == "edge_fallback"),
                         "file": str(dst),
                         "duration": round(duration, 3),
                         "video_start": seg["video_start"],
@@ -2549,8 +2598,14 @@ class EdgeSmartSync:
 
             if not restart_uniform:
                 break
-            self.log("🔁 VoxCPM 2 became unavailable mid-video — regenerating ALL lines with the same "
-                     "Studio Persona engine so the whole recap keeps ONE uniform voice")
+        checkpoint["fallback_used"] = bool(fallback_segments)
+        checkpoint["fallback_segments"] = list(fallback_segments)
+        checkpoint["tts_provider"] = (
+            "voxcpm" if use_voxcpm and not fallback_segments
+            else "voxcpm+edge_fallback" if use_voxcpm
+            else "edge_tts"
+        )
+        atomic_write_json(paths.checkpoint, checkpoint)
 
         if short_pauses:
             self.log(f"✂️ Short pauses: Edge TTS silence trimmed · voice {tts_total / 60:.1f} → {cursor / 60:.1f} min "
@@ -2560,7 +2615,7 @@ class EdgeSmartSync:
         final_audio_duration = probe_duration(self.ffprobe, paths.voice)
         self.log(f"✅ {paths.voice.name} = {final_audio_duration:.2f}s")
 
-        # Voice Clone Pro (Applio RVC) voice conversion
+        # Voice v2: legacy trained-model conversion removed; base audio is kept.
         if str(self.voice).startswith(("clone_", "clone:")) or self.overlays.get("clone_model"):
             clone_tag = str(self.overlays.get("clone_model") or self.voice)
             cloned_audio_path = paths.root / "recap_voice_cloned.wav"
@@ -2569,8 +2624,7 @@ class EdgeSmartSync:
                     from recap_engine.voice_clone_bridge import convert_voice_rvc
                 except ImportError:
                     from voice_clone_bridge import convert_voice_rvc
-                self.log(f"🎭 Voice Clone Pro (Applio RVC) — Converting audio with model '{clone_tag}'...")
-                self.progress(len(segments), len(segments), f"🎭 RVC Voice Cloning: {clone_tag}")
+                self.log(f"Legacy trained voice '{clone_tag}' is no longer supported; keeping base TTS audio.")
                 cloned_res = convert_voice_rvc(
                     input_wav=paths.voice,
                     output_wav=cloned_audio_path,
@@ -2597,7 +2651,9 @@ class EdgeSmartSync:
         ]
         out_plan = dict(plan)
         out_plan["segments"] = [dict(seg) for seg in plan.get("segments", [])]
-        out_plan["tts_provider"] = "edge_tts"
+        out_plan["tts_provider"] = checkpoint.get("tts_provider", "edge_tts")
+        out_plan["fallback_used"] = bool(fallback_segments)
+        out_plan["fallback_segments"] = list(fallback_segments)
         out_plan["tts_voice"] = self.voice
         out_plan["actual_audio_duration"] = round(final_audio_duration, 3)
         out_plan["tts_timing_segments"] = timing

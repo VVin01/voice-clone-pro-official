@@ -2,7 +2,7 @@
 api.py - Complete REST API Router for Unified Telegram Mini App (Studio Pro).
 Supports:
   - User profile & minute balance
-  - Curated VoxCPM voices & Applio RVC models
+  - Curated VoxCPM2 voices
   - Voice generation with reference audio upload & curated personas
   - Audio streaming & downloading
   - Media downloader extraction & conversion (YouTube/TikTok)
@@ -37,6 +37,7 @@ from app.config import settings
 from app.db.session import get_db_session
 from app.models.enums import AccountCategory, JobStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
 from app.models.schema import User, Job, VoiceModel, MinuteBalance, PaymentRequest, AuditLog, utc_now
+from app.services.i18n import t
 from app.services.models import get_authorized_model
 from app.services.curated_voices import list_curated_voices, get_curated_voice
 from app.webapp.auth import parse_and_verify_init_data
@@ -56,20 +57,15 @@ async def get_current_user(
         telegram_user_data = parse_and_verify_init_data(x_telegram_init_data)
 
     if not telegram_user_data:
-        # Non-Telegram or unauthenticated web preview session (strictly Guest privileges)
-        guest_id = 999999999
-        user = await db.get(User, guest_id)
-        if not user:
-            user = User(
-                id=guest_id,
-                first_name="Guest",
-                account_category=AccountCategory.FREE.value,
-                language_code="my",
-            )
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-        return user
+        # Security fix (audit 2026-10-28): no Guest fallback. Previously a
+        # missing or invalid initData auto-created a Guest user, which let
+        # any browser call authenticated endpoints. Authenticated endpoints
+        # now return 401 instead. The only unauthenticated exception is the
+        # read-only curated-persona list, which uses get_optional_user()
+        # below and creates no user.
+        raise HTTPException(
+            status_code=401, detail="Telegram authentication required"
+        )
 
     user_id = int(telegram_user_data["id"])
     user = await db.get(User, user_id)
@@ -92,6 +88,24 @@ async def get_current_user(
     return user
 
 
+async def get_optional_user(
+    x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
+    db: AsyncSession = Depends(get_db_session),
+) -> User | None:
+    """Optional identity for read-only preview endpoints only.
+
+    Returns the authenticated user, or None when initData is missing or
+    invalid. Unlike get_current_user(), it never creates a user and never
+    grants access: callers must treat None as "preview only" (language
+    defaults, public lists) and must not use it for writes, generation,
+    history, downloads, or admin actions.
+    """
+    try:
+        return await get_current_user(x_telegram_init_data, db)
+    except HTTPException:
+        return None
+
+
 def require_admin(
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
     user: User = Depends(get_current_user),
@@ -105,6 +119,218 @@ def require_admin(
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin authorization required")
     return user
+
+
+async def require_gate_verified(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> User:
+    """Gate Mini App WRITE endpoints on live channel/group membership.
+
+    Root-cause fix (2026-10-29): before this branch, NO Mini App endpoint
+    checked membership at all. get_current_user() only authenticated the
+    Telegram identity (and on live main even auto-created a Guest user),
+    so anyone who opened the Mini App -- or called the API directly --
+    could generate, extract, recap and submit slips without ever joining
+    the channel/group, even though bot /start enforces the gate. Bot
+    /start alone cannot protect an HTTP API.
+
+    Design (fail-closed, no cached-flag shortcut):
+    - Admins bypass, mirroring AccessControlMiddleware and gate.py.
+    - Otherwise a LIVE Telegram get_chat_member check runs on every gated
+      write. Cached channel_verified/group_verified flags are deliberately
+      NOT trusted here: on live main the old fail-open check set those
+      flags to True for everyone when gate IDs were missing, so trusting
+      them would keep the bypass alive for legacy users. The live check
+      also catches users who joined, verified, then left.
+    - Gate not configured (either ID empty) or bot token missing -> 403
+      GATE_NOT_CONFIGURED, not a "you have not joined" message, so the
+      operator can tell misconfiguration apart from a real non-member.
+    - Non-member -> 403 MEMBERSHIP_REQUIRED. The Mini App should then
+      show the channel/group invite links (returned by /api/user/me)
+      and a re-verify button calling POST /api/user/verify-membership.
+    - Reads are NOT gated here: /api/user/me, job status, history and
+      downloads of the user's own jobs stay available so a blocked user
+      can still see why they are blocked and what they already own.
+      The internal worker upload endpoint is also untouched (it uses
+      WORKER_TOKEN, not a Telegram user).
+    - On any verification outcome the flags are committed, so a later
+      bot /start sees the same state. Bonus/referral side effects live
+      in verify_user_membership() and run at most once by its own
+      idempotency (welcome bonus only when configured > 0, never for
+      admins).
+    """
+    from app.services.gate import is_gate_configured, verify_user_membership
+
+    if settings.is_admin(user.id):
+        return user
+    if not is_gate_configured():
+        raise HTTPException(
+            status_code=403,
+            detail="GATE_NOT_CONFIGURED: Channel/Group gate IDs are not configured on the server. Please contact the admin.",
+        )
+    if not settings.bot_token:
+        raise HTTPException(
+            status_code=403,
+            detail="GATE_NOT_CONFIGURED: Telegram bot token is not configured on the server. Please contact the admin.",
+        )
+    from aiogram import Bot
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        is_verified, _reason = await verify_user_membership(db, user, bot)
+    finally:
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+    # Persist the verified flags (and any idempotent bonus/referral
+    # outcome) even on failure, so partial state is not lost.
+    try:
+        await db.commit()
+    except Exception:
+        pass
+    if not is_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="MEMBERSHIP_REQUIRED: Please join the official Channel and Group first, then verify again.",
+        )
+    return user
+
+
+async def _require_job_owner(
+    db: AsyncSession, job_id: str, user: User
+) -> Job:
+    """Return a job only when the requester owns it or is an admin.
+
+    Returns 404 (not 403) for missing jobs and for jobs owned by someone
+    else, matching get_job_status() and avoiding ownership probing.
+    """
+    job = await db.get(Job, str(job_id))
+    if not job or (job.user_id != user.id and not settings.is_admin(user.id)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+def _recap_registry_owner_ok(job_id: str, user: User) -> bool:
+    """True when the in-memory recap registry entry belongs to the user.
+
+    Returns True when there is no registry entry, so callers fall back to
+    the DB job check. Callers must still 404 when neither source has a job.
+    """
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if entry is None:
+        return True
+    return entry.get("user_id") == user.id or settings.is_admin(user.id)
+
+
+# ── Security audit round 2: upload / recap helpers ─────────────────────────
+MAX_RECAP_UPLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB, same as polish reference cap
+MAX_SLIP_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB, same as polish reference cap
+_UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks: never buffer a whole upload
+
+
+async def _save_upload_streaming(upload_file, dest_path, max_bytes: int) -> int:
+    """Stream *upload_file* to *dest_path* in 1 MB chunks.
+
+    Aborts with 413 and deletes the partial file as soon as the limit is
+    exceeded, so an oversized upload cannot exhaust server memory (OOM/DoS).
+    """
+    total = 0
+    try:
+        with open(dest_path, "wb") as out:
+            while True:
+                chunk = await upload_file.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(status_code=413, detail="File size exceeds the allowed limit")
+                out.write(chunk)
+    except HTTPException:
+        try:
+            dest_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    except Exception as exc:
+        try:
+            dest_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {exc}")
+    return total
+
+
+async def _recap_active_job_count(db, user_id: int) -> int:
+    """Unique active recap jobs for a user (registry ∪ DB, not summed).
+
+    Registry entries and DB rows describe the same job, so counting both
+    naively would double-count and break limits above 1.
+    """
+    ids = set()
+    for job_id, entry in RECAP_JOBS_REGISTRY.items():
+        if entry.get("user_id") == user_id and entry.get("status") in ("QUEUED", "RUNNING"):
+            ids.add(job_id)
+    try:
+        res = await db.execute(
+            select(Job.id).where(
+                Job.user_id == user_id,
+                Job.job_type == JobType.RECAP.value,
+                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+            )
+        )
+        ids.update(str(row[0]) for row in res.all())
+    except Exception:
+        pass
+    return len(ids)
+
+
+async def _refund_recap_credit(user_id: int) -> bool:
+    """Refund one recap credit in its own session/commit.
+
+    Separate from the job-status update so a status-write failure cannot
+    silently swallow the refund, and idempotent at the call site: callers
+    only invoke it once per failed job (see _run_recap_background_job,
+    which marks the registry entry as refunded after a successful commit).
+    Returns True when a credit was actually added.
+    """
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            if not user or settings.is_admin(user.id):
+                return False
+            user.recap_credits = (getattr(user, "recap_credits", 0) or 0) + 1
+            await session.commit()
+            return True
+    except Exception as exc:
+        logger.warning(f"Recap credit refund failed for user {user_id}: {exc}")
+        return False
+
+
+def _voice_job_error_status(reason: str) -> int:
+    return {
+        "MODEL_NOT_AUTHORIZED": 404,
+    "LEGACY_MODEL_ENGINE_REMOVED": 400,
+        "CONCURRENT_JOB_LIMIT_EXCEEDED": 429,
+        "DAILY_JOB_LIMIT_EXCEEDED": 429,
+        "INSUFFICIENT_BALANCE": 403,
+    }.get(reason, 400)
+
+
+def _voice_job_error_detail(reason: str) -> str:
+    return {
+        "MODEL_NOT_AUTHORIZED": "အသံမော်ဒယ် မတွေ့ရှိပါ",
+    "LEGACY_MODEL_ENGINE_REMOVED": "ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။",
+        "CONCURRENT_JOB_LIMIT_EXCEEDED": "တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။",
+        "DAILY_JOB_LIMIT_EXCEEDED": "ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ။",
+        "INSUFFICIENT_BALANCE": "လက်ကျန်မိနစ် မလုံလောက်ပါ။",
+        "TEXT_EXCEEDS_CHARACTER_LIMIT": "စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်။",
+        "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT": "စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်။",
+        "AUDIO_FILE_NOT_FOUND": "အသံဖိုင် မတွေ့ရှိပါ။",
+    }.get(reason, "အလုပ်ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်ပါသည်။")
 
 
 # ── 1. User & Wallet Profile ───────────────────────────────────────────────
@@ -217,6 +443,64 @@ async def get_user_profile(
         "tutorial_recap_title": tut_recap_title,
         "tutorial_recap_link": tut_recap_link,
         "tutorial_recap_enabled": str(tut_recap_enabled).lower() != "false",
+        # Gate status for the Mini App join-and-verify UX (2026-10-29).
+        # This is the CACHED flag state only; a live check happens on
+        # gated writes and via POST /api/user/verify-membership. Admins
+        # are always treated as membership-verified (see gate.py).
+        "membership_verified": bool(is_admin or (user.channel_verified and user.group_verified)),
+        "channel_verified": bool(user.channel_verified),
+        "group_verified": bool(user.group_verified),
+        "gate_configured": bool(settings.required_channel_id and settings.required_group_id),
+        "channel_invite_link": settings.channel_invite_link,
+        "group_invite_link": settings.group_invite_link,
+    }
+
+
+@api_router.post("/user/verify-membership")
+async def verify_membership_endpoint(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Live re-check of channel/group membership for the Mini App.
+
+    Mirrors bot /start -> gate:verify: the user joins via the invite
+    links from /api/user/me, then calls this endpoint. Unlike the gated
+    write endpoints it never raises 403 for a non-member; it returns
+    the verified state so the frontend can keep showing the join UI.
+    Admins always verify (admin bypass in gate.py).
+    """
+    from app.services.gate import is_gate_configured, verify_user_membership
+
+    if not is_gate_configured() or not settings.bot_token:
+        return {
+            "verified": False,
+            "channel_verified": bool(user.channel_verified),
+            "group_verified": bool(user.group_verified),
+            "gate_configured": False,
+            "channel_invite_link": settings.channel_invite_link,
+            "group_invite_link": settings.group_invite_link,
+        }
+    from aiogram import Bot
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        is_verified, _reason = await verify_user_membership(db, user, bot)
+    finally:
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+    try:
+        await db.commit()
+    except Exception:
+        pass
+    return {
+        "verified": bool(is_verified),
+        "channel_verified": bool(user.channel_verified),
+        "group_verified": bool(user.group_verified),
+        "gate_configured": True,
+        "channel_invite_link": settings.channel_invite_link,
+        "group_invite_link": settings.group_invite_link,
     }
 
 
@@ -296,9 +580,9 @@ async def update_user_language(
 
 # ── 2. Voice Models & Curated Personas ─────────────────────────────────────
 @api_router.get("/voices/curated")
-async def get_curated_personas(user: User = Depends(get_current_user)):
+async def get_curated_personas(user: User | None = Depends(get_optional_user)):
     """Return the 6 Gemini-crafted curated Burmese voice personas."""
-    lang = user.language_code or "my"
+    lang = user.language_code if user else "my"
     return list_curated_voices(lang=lang)
 
 
@@ -348,6 +632,7 @@ async def create_voice_job(
     req: VoiceGenerateRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Submit a voice clone generation job from Mini App."""
     clean_text = req.text.strip()
@@ -370,7 +655,9 @@ async def create_voice_job(
         or req.preset_voice is not None
         or "voxcpm" in (req.model_slug or "").lower()
     )
-    actual_engine = "voxcpm" if is_vox else "applio"
+    if not is_vox:
+        raise HTTPException(status_code=400, detail="ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။")
+    actual_engine = "voxcpm"
 
     if actual_engine == "voxcpm":
         stmt_vox = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
@@ -413,22 +700,32 @@ async def create_voice_job(
     elif req.gender_preset in ("m2f", "f2f"):
         resolved_edge_voice = "my-MM-NilarNeural"
 
-    job = Job(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        chat_id=user.id,
+    # Security fix (audit 2026-10-28): validate through the shared queue
+    # validator (balance, FREE daily limit, concurrency, model
+    # authorization) before enqueueing, instead of inserting a Job
+    # directly with only a character-limit check.
+    from app.services.queue import create_voice_clone_job
+
+    job, _reason = await create_voice_clone_job(
+        db,
+        user.id,
+        text=clean_text,
         model_id=model.id,
-        input_text=clean_text,
-        speed_preset=req.speed,
         gender_preset=req.gender_preset,
+        speed_preset=req.speed,
         edge_voice=resolved_edge_voice,
         engine=actual_engine,
         preset_voice=req.preset_voice,
-        status=JobStatus.QUEUED.value,
     )
-    db.add(job)
+    if not job:
+        raise HTTPException(
+            status_code=_voice_job_error_status(_reason),
+            detail=_voice_job_error_detail(_reason),
+        )
     await db.commit()
     await db.refresh(job)
+    if job.model_id and job.model_id != model.id:
+        model = await db.get(VoiceModel, job.model_id) or model
 
     return {
         "success": True,
@@ -453,6 +750,7 @@ async def create_voice_job_with_audio(
     reference_audio: Optional[UploadFile] = File(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Submit a voice clone generation job with uploaded Reference Audio from Mini App."""
     clean_text = text.strip()
@@ -475,7 +773,9 @@ async def create_voice_job_with_audio(
         or preset_voice is not None
         or "voxcpm" in (model_slug or "").lower()
     )
-    actual_engine = "voxcpm" if is_vox else "applio"
+    if not is_vox:
+        raise HTTPException(status_code=400, detail="ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။")
+    actual_engine = "voxcpm"
 
     if actual_engine == "voxcpm":
         stmt_vox = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
@@ -516,6 +816,11 @@ async def create_voice_job_with_audio(
         clean_ext = ext if ext.lower() in (".wav", ".mp3", ".ogg", ".m4a") else ".wav"
         save_file = ref_dir / f"webapp_ref_{uuid.uuid4().hex[:12]}{clean_ext}"
         content = await reference_audio.read()
+        if len(content) > 50 * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါသည်",
+            )
         if len(content) > 100:
             with open(save_file, "wb") as f:
                 f.write(content)
@@ -531,23 +836,38 @@ async def create_voice_job_with_audio(
     elif gender_preset in ("m2f", "f2f"):
         resolved_edge_voice = "my-MM-NilarNeural"
 
-    job = Job(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        chat_id=user.id,
+    # Security fix (audit 2026-10-28): same shared queue validation as
+    # /voices/generate (balance, daily limit, concurrency, model
+    # authorization) before enqueueing.
+    from app.services.queue import create_voice_clone_job
+
+    job, _reason = await create_voice_clone_job(
+        db,
+        user.id,
+        text=clean_text,
         model_id=model.id,
-        input_text=clean_text,
-        source_audio_path=ref_audio_path,
-        speed_preset=speed,
         gender_preset=gender_preset,
+        speed_preset=speed,
         edge_voice=resolved_edge_voice,
         engine=actual_engine,
         preset_voice=preset_voice,
-        status=JobStatus.QUEUED.value,
+        source_audio_path=ref_audio_path,
     )
-    db.add(job)
+    if not job:
+        # Do not leave the uploaded reference audio behind on failure.
+        if ref_audio_path:
+            try:
+                Path(ref_audio_path).unlink()
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=_voice_job_error_status(_reason),
+            detail=_voice_job_error_detail(_reason),
+        )
     await db.commit()
     await db.refresh(job)
+    if job.model_id and job.model_id != model.id:
+        model = await db.get(VoiceModel, job.model_id) or model
 
     return {
         "success": True,
@@ -573,12 +893,13 @@ async def get_job_status(
     if not job or (job.user_id != user.id and not settings.is_admin(user.id)):
         raise HTTPException(status_code=404, detail="Job not found")
 
-    is_waiting_laptop = (job.engine == "applio" and job.status == JobStatus.QUEUED.value)
+    is_waiting_laptop = False  # Voice v2: no laptop engine; all jobs run on VoxCPM2 cloud.
 
     return {
         "id": job.id,
         "status": job.status,
         "engine": job.engine,
+        "fallback_used": job.engine == "edge_fallback",
         "is_waiting_laptop_worker": is_waiting_laptop,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
@@ -593,12 +914,11 @@ async def get_job_status(
 async def download_job_audio(
     job_id: str,
     request: Request,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Stream or download the completed generated voice clone audio file."""
-    job = await db.get(Job, str(job_id))
-    if not job:
-        raise HTTPException(status_code=404, detail="Audio job not found")
+    job = await _require_job_owner(db, job_id, user)
 
     target_path = None
     if job.result_path and Path(job.result_path).is_file():
@@ -650,7 +970,17 @@ async def upload_worker_job_result(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Internal sync endpoint for Laptop Worker to upload converted audio results to Render Cloud."""
-    expected_token = settings.bot_token
+    # Security fix (audit 2026-10-28): use a separate worker
+    # token. Fall back to the bot token only with a warning so
+    # existing deployments do not break immediately.
+    worker_token = getattr(settings, "worker_token", "") or settings.bot_token
+    if not getattr(settings, "worker_token", ""):
+        logger.warning(
+            "WORKER_TOKEN is not set; falling back to the Telegram "
+            "bot token for worker uploads. Set a separate "
+            "WORKER_TOKEN and rotate it."
+        )
+    expected_token = worker_token
     if not auth_token or auth_token != expected_token:
         raise HTTPException(status_code=403, detail="Unauthorized worker upload")
 
@@ -661,11 +991,35 @@ async def upload_worker_job_result(
     outputs_dir = settings.storage_root / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
-    dest_filename = f"{job_id}_{file.filename}"
+    # Security fix (audit 2026-10-28): sanitize the uploaded filename
+    # (basename + uuid + whitelisted audio extension) and enforce a size
+    # limit while copying, so a crafted filename cannot traverse out of
+    # outputs/ and an unbounded upload cannot fill the disk.
+    _allowed_audio_exts = {".wav", ".mp3", ".ogg", ".m4a"}
+    _raw_ext = Path(file.filename or "").suffix.lower()
+    _safe_ext = _raw_ext if _raw_ext in _allowed_audio_exts else ".wav"
+    dest_filename = f"{job_id}_{uuid.uuid4().hex[:8]}{_safe_ext}"
     dest_path = outputs_dir / dest_filename
-
-    with open(dest_path, "wb") as f_out:
-        shutil.copyfileobj(file.file, f_out)
+    _max_worker_upload_bytes = 100 * 1024 * 1024
+    _written = 0
+    try:
+        with open(dest_path, "wb") as f_out:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                _written += len(chunk)
+                if _written > _max_worker_upload_bytes:
+                    raise HTTPException(
+                        status_code=413, detail="Uploaded file exceeds the 100 MB limit"
+                    )
+                f_out.write(chunk)
+    except Exception:
+        try:
+            dest_path.unlink()
+        except OSError:
+            pass
+        raise
 
     job.result_path = str(dest_path)
     job.status = JobStatus.SUCCESS.value
@@ -682,14 +1036,31 @@ async def upload_worker_job_result(
 @api_router.get("/voices/sample/{slug}")
 @api_router.get("/voices/preview/{slug}")
 async def get_voice_sample_audio(slug: str, db: AsyncSession = Depends(get_db_session)):
-    """Serve sample audio preview for curated voice personas and Applio models."""
+    """Serve sample audio preview for curated VoxCPM2 voice personas."""
     clean_id = slug.strip().lower()
 
+    # Curated personas that were remapped to a human voice (see
+    # app/services/curated_voices.py) preview the human voice's sample,
+    # so the preview always matches what generation actually uses.
+    try:
+        from app.services.curated_voices import get_curated_voice
+
+        _persona = get_curated_voice(clean_id)
+        if _persona and _persona.get("reference_id"):
+            clean_id = str(_persona["reference_id"])
+    except Exception:
+        pass
+
+    # Legacy system-model sample slugs: the three character samples are
+    # no longer served as voices — they now resolve to the default human
+    # sample (komin), the same fallback used below. myanmar-voice-1 is a
+    # human voice and keeps its own sample. The old mp3 files remain on
+    # disk but are no longer reachable through this endpoint or the picker.
     alias_map = {
-        "system-models-system-kartoon_150e_1950s-pth": "kartoon",
-        "system-models-system-ant_150e_11700s-pth": "ant-movie",
+        "system-models-system-kartoon_150e_1950s-pth": "komin",
+        "system-models-system-ant_150e_11700s-pth": "komin",
         "system-models-system-myanmar_voice_1_100e_6600s-pth": "myanmar-voice-1",
-        "system-models-system-the_light_150e_450s-pth": "the-light",
+        "system-models-system-the_light_150e_450s-pth": "komin",
     }
     target_id = alias_map.get(clean_id, clean_id)
 
@@ -730,6 +1101,7 @@ class ExtractMediaRequest(BaseModel):
 async def extract_media_info(
     req: ExtractMediaRequest,
     user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Extract YouTube/TikTok/Douyin/Facebook video metadata via yt-dlp."""
     from app.services.downloader import extract_first_url, unshorten_url, detect_platform
@@ -738,7 +1110,19 @@ async def extract_media_info(
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
 
-    canonical_url = unshorten_url(url)
+    try:
+        canonical_url = unshorten_url(url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="This URL is not allowed")
+    # SSRF: unshorten_url now validates every redirect hop, and this
+    # re-validates the final URL (DNS resolve + private-range block)
+    # before yt-dlp is allowed to fetch it.
+    try:
+        from app.services.url_safety import validate_public_url
+
+        canonical_url = validate_public_url(canonical_url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="This URL is not allowed")
 
     try:
         from app.services.downloader import MediaDownloader
@@ -783,6 +1167,7 @@ async def extract_media_info(
 async def upload_recap_video(
     video_file: UploadFile = File(...),
     user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Directly upload a video file (MP4/MKV/MOV/WEBM) for Movie Recap."""
     if not video_file.filename:
@@ -799,13 +1184,10 @@ async def upload_recap_video(
     file_id = f"up_{uuid.uuid4().hex[:10]}"
     saved_path = temp_dir / f"{file_id}{ext}"
 
-    try:
-        content = await video_file.read()
-        with open(saved_path, "wb") as f:
-            f.write(content)
-    except Exception as e:
-        logger.error(f"Failed to save uploaded recap video: {e}")
-        raise HTTPException(status_code=500, detail=f"ဗီဒီယိုဖိုင် သိမ်းဆည်းခြင်း မအောင်မြင်ပါ: {e}")
+    # Streamed, 1 GB cap (polish reference cap): never buffer the whole
+    # video in memory. _save_upload_streaming raises 413 and deletes the
+    # partial file when the cap is exceeded.
+    await _save_upload_streaming(video_file, saved_path, MAX_RECAP_UPLOAD_BYTES)
 
     # Inspect media duration & metadata
     from app.services.downloader import probe_local_media, extract_thumbnail_from_media, format_duration, find_best_preview_timestamp
@@ -843,6 +1225,7 @@ async def upload_recap_video(
 async def get_recap_frame(
     path: str = Query(...),
     t: Optional[float] = Query(None),
+    user: User = Depends(get_current_user),
 ):
     """Serve or dynamically generate video frame snapshot at timestamp t with caching and security containment."""
     clean_p = Path(path).name
@@ -1104,6 +1487,35 @@ class RecapConfigRequest(BaseModel):
     duration_seconds: Optional[int] = None
 
 
+def _recap_fallback_info(job_dir) -> tuple[bool, list]:
+    """Read fallback transparency fields written by the recap engine.
+
+    The engine records ``fallback_used`` / ``fallback_segments`` in the
+    final smart-sync plan JSON when one or more narration lines had to
+    use Edge TTS after VoxCPM retries were exhausted (fix 2026-10-29).
+    """
+    try:
+        import json as _json
+        root = Path(job_dir)
+        if not root.is_dir():
+            return False, []
+        best: list = []
+        used = False
+        for plan_file in root.rglob("smart_sync_plan*.json"):
+            try:
+                data = _json.loads(plan_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            segs = data.get("fallback_segments") or []
+            if data.get("fallback_used"):
+                used = True
+                if len(segs) > len(best):
+                    best = list(segs)
+        return used, best
+    except Exception:
+        return False, []
+
+
 async def _send_recap_telegram_delivery(
     chat_id: int,
     video_path: str,
@@ -1118,6 +1530,17 @@ async def _send_recap_telegram_delivery(
     """Deliver completed recap video and media files directly to user's Telegram."""
     if not settings.bot_token or not chat_id:
         return
+    # chat_id is the user's Telegram id for direct deliveries; resolve their
+    # stored language so delivery buttons/captions are not Myanmar-only.
+    lang = "my"
+    try:
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as _s:
+            _u = await _s.get(User, chat_id)
+            if _u and _u.language_code:
+                lang = _u.language_code
+    except Exception:
+        lang = "my"
     try:
         from aiogram import Bot
         from aiogram.types import FSInputFile
@@ -1130,14 +1553,22 @@ async def _send_recap_telegram_delivery(
             size_formatted = format_filesize(file_size)
             title = _clean_recap_display_title(title)
 
-            caption = (
-                f"🇲🇲 <b>Recap English → Myanmar Video (Smart Sync)</b>\n"
-                f"🎬 <b>{html.escape(title[:60])}</b>\n"
-                f"🎭 <b>စတိုင်:</b> {style}\n"
-                f"🎙️ <b>အသံ:</b> {voice_name}\n"
-                f"⏱️ <b>ကြာချိန်:</b> <code>{dur_formatted}</code> · 📁 <b>ဖိုင်ဆိုဒ်:</b> <code>{size_formatted}</code>\n\n"
-                f"💡 <i>Mini App မှ ဒေါင်းလုဒ်ရယူနိုင်သလို Telegram သို့လည်း တိုက်ရိုက် ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
+            caption = t(
+                "recap_delivery_caption",
+                lang,
+                title=html.escape(title[:60]),
+                style=style,
+                voice_name=voice_name,
+                dur_formatted=dur_formatted,
+                size_formatted=size_formatted,
             )
+            # Fallback transparency (fix 2026-10-29): tell the user when
+            # some narration lines used the backup Edge voice.
+            _fb_used, _fb_segs = _recap_fallback_info(Path(video_path).parent)
+            if not _fb_used:
+                _fb_used, _fb_segs = _recap_fallback_info(Path(video_path).parent.parent)
+            if _fb_used:
+                caption += t("recap_fallback_note", lang, count=len(_fb_segs) or 1)
 
             if file_size <= 50 * 1024 * 1024:
                 vf = FSInputFile(video_path, filename=Path(video_path).name)
@@ -1152,25 +1583,26 @@ async def _send_recap_telegram_delivery(
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🎬 Mini App တွင် ကြည့်ရှုမည်",
+                            text=t("clone_btn_miniapp_watch", lang),
                             web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap")
                         ),
                         InlineKeyboardButton(
-                            text="📥 ဗီဒီယို တိုက်ရိုက်ဒေါင်းလုဒ်",
+                            text=t("clone_btn_direct_download", lang),
                             url=dl_url
                         )
                     ]
                 ])
-                over_caption = (
-                    f"🎬 <b>Pro Movie Recap:</b> <code>#{jid[:8]}</code>\n"
-                    f"📁 <b>ဖိုင်ဆိုဒ်:</b> <code>{size_formatted}</code> (Telegram ကန့်သတ်ချက် 50MB ထက် ကြီးပါသည်)\n\n"
-                    f"💡 <i>ဖိုင်ဆိုဒ်ကြီးမားသဖြင့် Telegram မှ တိုက်ရိုက်မပေးပို့နိုင်ပါ။ အောက်ပါလင့်ခ်မှ အမြန်ဆုံး ဒေါင်းလုဒ် ရယူနိုင်ပါသည်ခင်ဗျာ။</i>"
+                over_caption = t(
+                    "recap_over_caption",
+                    lang,
+                    jid=jid[:8],
+                    size_formatted=size_formatted,
                 )
                 await bot.send_message(chat_id=chat_id, text=over_caption, reply_markup=kb, parse_mode="HTML")
 
             if srt_path and os.path.isfile(srt_path):
                 sf = FSInputFile(srt_path, filename=f"subtitles_{Path(srt_path).name}")
-                await bot.send_document(chat_id=chat_id, document=sf, caption="📝 <b>Myanmar Subtitles (SRT)</b>", parse_mode="HTML")
+                await bot.send_document(chat_id=chat_id, document=sf, caption=t("clone_caption_subtitles", lang), parse_mode="HTML")
 
         finally:
             await bot.session.close()
@@ -1258,6 +1690,13 @@ async def _run_recap_background_job(
         else:
             clean_source_url = extract_first_url(req.url) or req.url.strip()
             canonical_source_url = unshorten_url(clean_source_url)
+            # Re-validate at execution time (DNS may have changed since
+            # submission): a blocked target fails the job, which triggers
+            # the credit refund below instead of fetching an internal URL.
+            if canonical_source_url.startswith(("http://", "https://")):
+                from app.services.url_safety import validate_public_url
+
+                validate_public_url(canonical_source_url)
 
         # Free tier watermark branding vs VIP clean output
         watermark_text = None
@@ -1307,6 +1746,10 @@ async def _run_recap_background_job(
         srt_path = recap_res.get("subtitles_srt")
         script_path = _build_clean_recap_script_file(job_dir, job_id, req.story_style, srt_path)
 
+        _fb_used, _fb_segs = _recap_fallback_info(job_dir)
+        entry["fallback_used"] = _fb_used
+        entry["fallback_segments"] = _fb_segs
+
         entry["status"] = "SUCCESS"
         entry["progress_percent"] = 100
         entry["progress_label"] = "🎉 Recap Video Generation Completed!"
@@ -1338,6 +1781,15 @@ async def _run_recap_background_job(
         # Deliverables are stored and ready in Mini App
         # Send Telegram notification alert to user even if they closed the Mini App
         if settings.bot_token and chat_id:
+            _recap_notify_lang = "my"
+            try:
+                from app.db.session import AsyncSessionLocal as _AL
+                async with _AL() as _s:
+                    _u = await _s.get(User, user_id)
+                    if _u and _u.language_code:
+                        _recap_notify_lang = _u.language_code
+            except Exception:
+                _recap_notify_lang = "my"
             try:
                 from aiogram import Bot
                 from aiogram.client.default import DefaultBotProperties
@@ -1348,25 +1800,28 @@ async def _run_recap_background_job(
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🎬 Mini App တွင် ကြည့်ရှုမည်",
+                            text=t("clone_btn_miniapp_watch", _recap_notify_lang),
                             web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
                         ),
                         InlineKeyboardButton(
-                            text="📱 Video ဖိုင် ပို့ပေးပါ",
+                            text=t("clone_btn_send_video", _recap_notify_lang),
                             callback_data=f"send_recap_{job_id}"
                         )
                     ]
                 ])
-                notify_text = (
-                    f"🎉 <b>Pro Movie Recap ဖန်တီးမှု ပြီးစီးပါပြီ!</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🎬 <b>ခေါင်းစဉ်:</b> <b>{html.escape(str(clean_title[:60]))}</b>\n"
-                    f"🎙️ <b>အသံ:</b> {html.escape(str(req.voice_slug.capitalize()))}\n"
-                    f"⏱️ <b>Format:</b> Full HD 1080p • မြန်မာပြန် + စာတန်းထိုး\n"
-                    f"🆔 <b>Task:</b> <code>#{job_id[:8]}</code>\n\n"
-                    f"✨ သင့် Recap ဗီဒီယို အဆင်သင့်ဖြစ်ပါပြီခင်ဗျာ။ Mini App ကို ပိတ်ထားခဲ့လျှင်ပင် "
-                    f"Mini App တွင် ဖွင့်ကြည့်နိုင်သလို Telegram သို့ တိုက်ရိုက်ရယူနိုင်ပါသည်!"
+                notify_text = t(
+                    "recap_notify_text",
+                    _recap_notify_lang,
+                    clean_title=html.escape(str(clean_title[:60])),
+                    voice_slug=html.escape(str(req.voice_slug.capitalize())),
+                    job_id=job_id[:8],
                 )
+                if entry.get("fallback_used"):
+                    notify_text += t(
+                        "recap_fallback_note",
+                        _recap_notify_lang,
+                        count=len(entry.get("fallback_segments") or []) or 1,
+                    )
                 bot_inst = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
                     await bot_inst.send_message(
@@ -1381,6 +1836,28 @@ async def _run_recap_background_job(
 
         logger.info(f"Recap job {job_id} successfully finished. Notification sent to Telegram.")
 
+    except asyncio.CancelledError:
+        # Cancellation is BaseException, not Exception: without this the
+        # job would vanish with no status and no refund.
+        entry["status"] = "FAILED"
+        entry["error_message"] = "Cancelled"
+        try:
+            from app.db.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    update(Job).where(Job.id == job_id).values(
+                        status=JobStatus.CANCELLED.value,
+                        error_message="Cancelled",
+                        finished_at=func.now(),
+                    )
+                )
+                await session.commit()
+        except Exception:
+            pass
+        if credit_deducted and not entry.get("credit_refunded"):
+            if await _refund_recap_credit(user_id):
+                entry["credit_refunded"] = True
+        raise
     except Exception as e:
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
         entry["status"] = "FAILED"
@@ -1395,13 +1872,15 @@ async def _run_recap_background_job(
                         finished_at=func.now(),
                     )
                 )
-                if credit_deducted:
-                    u = await session.get(User, user_id)
-                    if u and not settings.is_admin(u.id):
-                        u.recap_credits = (getattr(u, "recap_credits", 0) or 0) + 1
                 await session.commit()
         except Exception as ref_err:
-            logger.warning(f"Credit refund failed: {ref_err}")
+            logger.warning(f"Recap job status update failed: {ref_err}")
+        # Refund in its own commit, after the status update, so a
+        # status-write failure cannot swallow the refund. The registry
+        # flag makes a second failure handler for the same job a no-op.
+        if credit_deducted and not entry.get("credit_refunded"):
+            if await _refund_recap_credit(user_id):
+                entry["credit_refunded"] = True
 
         if settings.bot_token and chat_id:
             try:
@@ -1493,8 +1972,35 @@ async def create_recap_job(
     req: RecapConfigRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Submit 1-Click Pro Recap Job with complete ratio, audio, subtitle, and anti-copyright settings."""
+    # SSRF + local-file containment, before any probe, deduction, or queueing.
+    _req_url = (req.url or "").strip()
+    if _req_url.startswith(("http://", "https://")):
+        try:
+            from app.services.downloader import extract_first_url as _extract_first, unshorten_url as _unshorten
+            from app.services.url_safety import validate_public_url as _validate_url
+
+            _canon = _unshorten(_extract_first(_req_url) or _req_url)
+            _validate_url(_canon)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="This video URL is not allowed")
+    elif _req_url and not _req_url.startswith(("http://", "https://")):
+        # Local source: only files the user uploaded into storage are
+        # allowed, never arbitrary server paths.
+        try:
+            _resolved = Path(_req_url.strip("'\"")).resolve()
+            _storage = settings.storage_root.resolve()
+            if not str(_resolved).startswith(str(_storage)):
+                raise HTTPException(status_code=400, detail="Local video path is not allowed")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Local video path is not allowed")
+
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
     credits = getattr(user, "recap_credits", 0)
 
@@ -1533,6 +2039,16 @@ async def create_recap_job(
             detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ "
                    + ("ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
         )
+
+    # Concurrency: at most settings.max_concurrent_jobs_per_user (default
+    # 1, same as voice clones) active recap jobs per user; admins exempt.
+    # Checked before any credit is deducted, so a rejected job costs nothing.
+    if not settings.is_admin(user.id):
+        if await _recap_active_job_count(db, user.id) >= max(1, settings.max_concurrent_jobs_per_user):
+            raise HTTPException(
+                status_code=429,
+                detail="A recap job is already running for your account. Please wait for it to finish before starting another.",
+            )
 
     # Deduct credit if non-admin
     deducted_credit = False
@@ -1580,7 +2096,13 @@ async def create_recap_job(
         logger.warning(f"Could not persist recap Job record in DB: {err_db}")
 
     # Start background task with VIP tier flag for watermark control and credit tracking
-    asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id, is_vip=is_vip, credit_deducted=deducted_credit))
+    try:
+        asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id, is_vip=is_vip, credit_deducted=deducted_credit))
+    except Exception:
+        # The job never ran, so a deducted credit must not be lost.
+        if deducted_credit:
+            await _refund_recap_credit(user.id)
+        raise
 
     return {
         "success": True,
@@ -1602,6 +2124,8 @@ async def get_recap_status(
     """Poll recap job status, progress percentage, and deliverables."""
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if entry:
+        if not _recap_registry_owner_ok(job_id, user):
+            raise HTTPException(status_code=404, detail="Recap job not found")
         return {
             "id": job_id,
             "status": entry.get("status", "PENDING"),
@@ -1609,18 +2133,21 @@ async def get_recap_status(
             "progress_step": entry.get("progress_step", ""),
             "progress_label": entry.get("progress_label", ""),
             "error_message": entry.get("error_message"),
+            "fallback_used": bool(entry.get("fallback_used")),
+            "fallback_segments": entry.get("fallback_segments", []),
             "download_urls": entry.get("download_urls", {}),
         }
 
-    job = await db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Recap job not found")
+    job = await _require_job_owner(db, job_id, user)
 
     is_success = (job.status == JobStatus.SUCCESS.value)
     is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
+    _fb_used, _fb_segs = _recap_fallback_info(settings.storage_root / "recap_output" / job_id)
     return {
         "id": job_id,
         "status": job.status,
+        "fallback_used": _fb_used,
+        "fallback_segments": _fb_segs,
         "progress_percent": 100 if is_success else (15 if is_active else 0),
         "progress_step": "4/4" if is_success else ("1/4" if is_active else ""),
         "progress_label": "Completed" if is_success else ("Processing in background..." if is_active else (job.error_message or "Failed")),
@@ -1640,8 +2167,17 @@ async def download_recap_file(
     job_id: str,
     file_type: str,
     request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Download or stream generated recap MP4 video, WAV/MP3 audio, SRT subtitles, or TXT script."""
+    # Ownership first, before any file is resolved from disk: a registry
+    # entry or a DB job must belong to the requester (or the requester
+    # must be an admin). Files on disk with no job record are not served.
+    if not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap file not found")
+    if job_id not in RECAP_JOBS_REGISTRY:
+        await _require_job_owner(db, job_id, user)
     db_result_path = None
     if file_type == "video":
         try:
@@ -1685,9 +2221,15 @@ async def send_recap_to_telegram(
     job_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Deliver generated recap video and assets directly to user's Telegram chat on demand."""
     db_job = await db.get(Job, job_id)
+    if not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    if job_id not in RECAP_JOBS_REGISTRY:
+        if not db_job or (db_job.user_id != user.id and not settings.is_admin(user.id)):
+            raise HTTPException(status_code=404, detail="Recap job not found")
     db_res_path = db_job.result_path if db_job else None
 
     video_path = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
@@ -1721,11 +2263,12 @@ async def send_voice_to_telegram(
     job_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Deliver synthesized voice audio directly to user's Telegram chat on demand."""
-    db_job = await db.get(Job, job_id)
+    db_job = await _require_job_owner(db, job_id, user)
     audio_path = None
-    if db_job and db_job.result_path and Path(db_job.result_path).is_file():
+    if db_job.result_path and Path(db_job.result_path).is_file():
         audio_path = Path(db_job.result_path)
     else:
         outputs_dir = settings.storage_root / "outputs"
@@ -1844,6 +2387,7 @@ async def get_user_history(
             "id": j.id,
             "job_type": "RECAP" if is_recap else "VOICE_CLONE",
             "engine": j.engine,
+            "fallback_used": (not is_recap) and j.engine == "edge_fallback",
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
             "status": j.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
@@ -2090,16 +2634,60 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
     return {
         "plans": [
             {
+                "id": "MIN_10",
+                "name": "🎙️ Voice Pack — 10 Minutes" if is_my else "🎙️ Voice Pack — 10 Minutes",
+                "category": "voice",
+                "allocation": "10 Voice Minutes" if is_my else "10 Voice Minutes",
+                "minutes": 10,
+                "recap_credits": 0,
+                "price": "8,000",
+                "currency": "MMK",
+                "features": [
+                    "Voice မိနစ် ၁၀" if is_my else "10 Voice Minutes",
+                ],
+                "badge": "Voice Pack 💎",
+            },
+            {
+                "id": "MIN_30",
+                "name": "🎙️ Voice Pack — 30 Minutes" if is_my else "🎙️ Voice Pack — 30 Minutes",
+                "category": "voice",
+                "allocation": "30 Voice Minutes" if is_my else "30 Voice Minutes",
+                "minutes": 30,
+                "recap_credits": 0,
+                "price": "20,000",
+                "currency": "MMK",
+                "features": [
+                    "Voice မိနစ် ၃၀" if is_my else "30 Voice Minutes",
+                ],
+                "badge": "Voice Pack ⭐",
+            },
+            {
+                "id": "MIN_60",
+                "name": "🎙️ Voice Pack — 60 Minutes" if is_my else "🎙️ Voice Pack — 60 Minutes",
+                "category": "voice",
+                "allocation": "60 Voice Minutes" if is_my else "60 Voice Minutes",
+                "minutes": 60,
+                "recap_credits": 0,
+                "price": "38,000",
+                "currency": "MMK",
+                "features": [
+                    "Voice မိနစ် ၆၀" if is_my else "60 Voice Minutes",
+                ],
+                "badge": "Voice Pack 🔥",
+            },
+            {
                 "id": "voice_studio_pro",
                 "name": "🎙️ Voice Clone Studio Pro" if is_my else "🎙️ Voice Clone Studio Pro",
                 "category": "voice",
                 "allocation": "250 Usable Minutes (4 Hours+)" if is_my else "250 Usable Minutes (4 Hours+)",
-                "price": "45,000",
+                "minutes": 250,
+                "recap_credits": 0,
+                "price": "75,000",
                 "currency": "MMK",
                 "features": [
                     "VoxCPM Cloud AI မြန်မာအသံ ၁၂ မျိုး (၆ ကျား / ၆ မ) အပြည့်အဝ အသုံးပြုခွင့်" if is_my else "12 VoxCPM Cloud AI Personas (6M / 6F)",
                     "Custom Voice Clone (မိမိနှစ်သက်ရာ အသံဖိုင် တင်၍ အသံတူပွားယူခွင့်)" if is_my else "Custom Voice Clone (Audio Sample Upload)",
-                    "Applio RVC Local GPU မော်ဒယ်များ အသုံးပြုခွင့် (သဘာဝကျကျ အသံထွက်)" if is_my else "Applio RVC Local GPU Trained Models",
+                    "VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်" if is_my else "VoxCPM2 Reference Audio Cloning (3-30s sample)",
                     "High-Speed Priority Cloud Processing Queue (စောင့်ဆိုင်းစရာမလို)" if is_my else "High-Speed Priority Cloud Processing Queue",
                     "အရည်အသွေးမြင့် 24kHz PCM Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct 24kHz PCM Lossless WAV Audio Downloads",
                     "တစ်ကြိမ်လျှင် စာလုံးရေ ၅၀၀၀ အထိ အကန့်အသတ်မရှိ ထုတ်လုပ်နိုင်ခွင့်" if is_my else "5,000 Chars per Generation with Unlimited Daily Quota",
@@ -2107,11 +2695,29 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "badge": "Voice Creators 🔥",
             },
             {
+                "id": "recap_starter",
+                "name": "🎬 Movie Recap Starter" if is_my else "🎬 Movie Recap Starter",
+                "category": "recap",
+                "allocation": "5 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "5 Movie Recap Credits (Max 10 mins/video)",
+                "minutes": 0,
+                "recap_credits": 5,
+                "price": "20,000",
+                "currency": "MMK",
+                "features": [
+                    "Full HD 1080p Movie Recap ဗီဒီယို (၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "5 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
+                    "🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)" if is_my else "100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
+                    "Watermark လုံးဝမပါ (Clean 1080p)" if is_my else "Zero Watermark (Clean 1080p)",
+                ],
+                "badge": "Recap Starter 🎬",
+            },
+            {
                 "id": "recap_studio_pro",
                 "name": "🎬 Movie Recap Studio Pro" if is_my else "🎬 Movie Recap Studio Pro",
                 "category": "recap",
                 "allocation": "25 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "25 Movie Recap Credits (Max 10 mins/video)",
-                "price": "75,000",
+                "minutes": 0,
+                "recap_credits": 25,
+                "price": "90,000",
                 "currency": "MMK",
                 "features": [
                     "Full HD 1080p Movie Recap ဗီဒီယို (၂၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
@@ -2123,33 +2729,56 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "badge": "Cinema Suite 🎬",
             },
             {
+                "id": "combined_starter",
+                "name": "🎙️🎬 Voice + Recap Starter" if is_my else "🎙️🎬 Voice + Recap Starter",
+                "category": "combined",
+                "allocation": "30 Mins + 5 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "30 Mins + 5 Recap Credits (Max 10 mins/video)",
+                "minutes": 30,
+                "recap_credits": 5,
+                "price": "30,000",
+                "currency": "MMK",
+                "features": [
+                    "Voice မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား — နှစ်မျိုးလုံးကို တစ်ပြိုင်တည်း စမ်းသုံးနိုင်သည်" if is_my else "30 Voice Minutes + 5 Recap Videos — try both products in one plan",
+                    "VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်" if is_my else "VoxCPM2 Reference Audio Cloning (3-30s sample)",
+                    "🛡️ 100% Anti-Copyright Smart Shield & Watermark လုံးဝမပါ" if is_my else "100% Anti-Copyright Smart Shield & Zero Watermark",
+                ],
+                "badge": "Combined Starter ✨",
+            },
+            {
                 "id": "all_in_one_master",
                 "name": "👑 All-in-One Master Suite" if is_my else "👑 All-in-One Master Suite",
-                "category": "bundle",
+                "category": "combined",
                 "allocation": "500 Mins + 60 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "500 Mins + 60 Recap Credits (Max 10 mins/video)",
-                "price": "125,000",
+                "minutes": 500,
+                "recap_credits": 60,
+                "price": "180,000",
                 "currency": "MMK",
                 "features": [
                     "Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော် အသံသွင်းခွင့်)" if is_my else "Full Voice Clone Studio Pro (500 Mins - 8+ Hours)",
                     "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Movie Recap Studio Pro (60 Full HD Videos - Max 10 mins/video)",
-                    "👑 မိမိကိုယ်ပိုင် Clone Voice Model (၁) ခု အခမဲ့ Train ပေးခြင်း (Personal GPU Train)" if is_my else "1 Free Custom Trained Voice Model Slot (Dedicated GPU Training)",
+                    "👑 VoxCPM2 Reference Audio အသံတူပွားမှု (Custom Clone) အပြည့်အစုံ" if is_my else "Full VoxCPM2 Reference Audio Custom Cloning",
                     "🛡️ 100% Commercial Copyright Safe & Monetization Ready" if is_my else "100% Commercial Copyright Safe & Monetization Ready",
                     "Dedicated High-Speed Node Priority & 24/7 VIP Direct 1-on-1 Support" if is_my else "Dedicated High-Speed Cloud Node & 24/7 VIP Direct 1-on-1 Support",
                 ],
                 "badge": "Agency Master Suite 👑" if is_my else "Agency Master Suite 👑",
             },
         ],
+        "categories": [
+            {"id": "voice", "codes": ["MIN_10", "MIN_30", "MIN_60", "voice_studio_pro"]},
+            {"id": "recap", "codes": ["recap_starter", "recap_studio_pro"]},
+            {"id": "combined", "codes": ["combined_starter", "all_in_one_master"]},
+        ],
         "payment_accounts": [
             {
                 "provider": "KBZPay",
-                "number": getattr(settings, "payment_kpay_number", "09790760003") or "09790760003",
-                "name": getattr(settings, "payment_kpay_name", "Win Kyaw Oo") or "Win Kyaw Oo",
+                "number": getattr(settings, "payment_kpay_number", ""),
+                "name": getattr(settings, "payment_kpay_name", ""),
                 "color": "#0047BA",
             },
             {
                 "provider": "WavePay",
-                "number": getattr(settings, "payment_wave_number", "09790760003") or "09790760003",
-                "name": getattr(settings, "payment_wave_name", "Win Kyaw Oo") or "Win Kyaw Oo",
+                "number": getattr(settings, "payment_wave_number", ""),
+                "name": getattr(settings, "payment_wave_name", ""),
                 "color": "#FEE600",
             },
         ],
@@ -2164,25 +2793,31 @@ async def submit_payment_slip(
     slip_file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Submit a payment transfer receipt screenshot for VIP upgrade."""
     receipts_dir = settings.storage_root / "receipts"
     receipts_dir.mkdir(parents=True, exist_ok=True)
 
-    ext = Path(slip_file.filename).suffix or ".jpg"
+    ext = Path(slip_file.filename or "").suffix.lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(status_code=400, detail="ပြေစာပုံသည် JPG, PNG သို့မဟုတ် WEBP ဖြစ်ရပါမည်")
     clean_name = f"slip_{user.id}_{uuid.uuid4().hex[:8]}{ext}"
     dest_path = receipts_dir / clean_name
 
-    content = await slip_file.read()
-    with open(dest_path, "wb") as f:
-        f.write(content)
+    # Streamed, 10 MB cap (polish reference cap): never buffer the whole
+    # slip in memory. _save_upload_streaming raises 413 and deletes the
+    # partial file when the cap is exceeded.
+    await _save_upload_streaming(slip_file, dest_path, MAX_SLIP_UPLOAD_BYTES)
 
-    if "recap" in package_code:
-        minutes = 0
-    elif "all_in_one" in package_code or "master" in package_code:
-        minutes = 500
-    else:
-        minutes = 250
+    # Plan catalogue is the single source of truth for what a code buys.
+    # Unknown codes are rejected instead of silently defaulting to 250 min.
+    from app.services.payments import get_plan_by_code
+
+    _plan = get_plan_by_code(package_code)
+    if _plan is None:
+        raise HTTPException(status_code=400, detail="Unknown plan code")
+    minutes = _plan["minutes"]
 
     pay_req = PaymentRequest(
         id=str(uuid.uuid4()),
@@ -2245,11 +2880,33 @@ async def submit_payment_slip(
 @api_router.get("/receipts/{filename}")
 async def get_receipt_image(
     filename: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
-    """Serve uploaded payment receipt image."""
+    """Serve an uploaded payment receipt image to its owner or an admin only.
+
+    Previously this endpoint had no authentication at all, so anyone who
+    could guess/brute-force a slip filename could view payment slips
+    (names, amounts, account details -- PII). Missing, not-owned, and
+    non-existent files all return the same 404 so ownership cannot be
+    probed, and the filename is reduced to a basename and contained
+    inside the receipts directory.
+    """
     clean_fn = Path(filename).name
-    p = settings.storage_root / "receipts" / clean_fn
-    if not p.is_file():
+    receipts_dir = (settings.storage_root / "receipts").resolve()
+    p = (receipts_dir / clean_fn).resolve() if clean_fn else receipts_dir
+    if not str(p).startswith(str(receipts_dir)) or not p.is_file():
+        raise HTTPException(status_code=404, detail="Receipt image not found")
+    if settings.is_admin(user.id):
+        return FileResponse(str(p))
+    slip_url = f"/api/receipts/{clean_fn}"
+    res = await db.execute(
+        select(PaymentRequest).where(
+            PaymentRequest.slip_url == slip_url,
+            PaymentRequest.user_id == user.id,
+        )
+    )
+    if res.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Receipt image not found")
     return FileResponse(str(p))
 
@@ -2343,8 +3000,6 @@ async def get_admin_overview(
     running_total_res = await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.RUNNING.value))
     running_jobs = running_total_res.scalar() or 0
 
-    queued_applio_res = await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value, Job.engine == "applio"))
-    queued_applio = queued_applio_res.scalar() or 0
 
     worker_info = await _get_laptop_worker_status(db)
 
@@ -2354,7 +3009,6 @@ async def get_admin_overview(
         "pending_slips": pending_slips,
         "queued_jobs": queued_jobs,
         "running_jobs": running_jobs,
-        "queued_applio_jobs": queued_applio,
         "cloud_worker_status": "ONLINE (Render Cloud)",
         "laptop_worker": worker_info,
         "laptop_worker_status": f"{worker_info['status_text']} [Engine: {worker_info['engine']}]",
@@ -2372,7 +3026,7 @@ async def get_admin_queue(
     """
     Real-time Job Queue & Execution Monitor for Admin Console.
     Supports filtering by status (all, queued, running, success, failed, cancelled)
-    and by engine (all, applio, voxcpm, recap).
+    and by engine (all, voxcpm, recap; legacy rows may still carry the old engine value).
     """
     cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
@@ -2576,10 +3230,10 @@ async def get_admin_settings(
     from app.services.dynamic_settings import load_dynamic_settings
     await load_dynamic_settings(db)
     return {
-        "payment_kpay_number": getattr(settings, "payment_kpay_number", "09790760003"),
-        "payment_kpay_name": getattr(settings, "payment_kpay_name", "Win Kyaw Oo"),
-        "payment_wave_number": getattr(settings, "payment_wave_number", "09790760003"),
-        "payment_wave_name": getattr(settings, "payment_wave_name", "Win Kyaw Oo"),
+        "payment_kpay_number": getattr(settings, "payment_kpay_number", ""),
+        "payment_kpay_name": getattr(settings, "payment_kpay_name", ""),
+        "payment_wave_number": getattr(settings, "payment_wave_number", ""),
+        "payment_wave_name": getattr(settings, "payment_wave_name", ""),
         "tutorial_video_link": getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
         "tutorial_video_enabled": getattr(settings, "tutorial_video_enabled", True),
         "tutorial_voice_title": getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
@@ -2667,12 +3321,12 @@ async def approve_payment_slip(
     target_user = await db.get(User, p_req.user_id)
     if target_user:
         target_user.account_category = AccountCategory.PURCHASED.value
-        if "recap" in p_req.package_code:
-            recap_added = 25
-            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 25
-        elif "all_in_one" in p_req.package_code or "master" in p_req.package_code:
-            recap_added = 60
-            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + 60
+        from app.services.payments import get_plan_by_code as _get_plan
+
+        _plan = _get_plan(p_req.package_code)
+        recap_added = _plan["recap_credits"] if _plan else 0
+        if recap_added:
+            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + recap_added
 
     # Credit minutes
     if p_req.minutes > 0:

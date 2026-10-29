@@ -37,17 +37,17 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
     )
 
     is_my = (lang == "my")
-    launch_text = "🚀 Studio Ultra Suite (Mini App) ဖွင့်မည် ✨" if is_my else "🚀 Launch Studio Ultra Suite ✨"
+    launch_text = t("menu_launch_text", lang)
     recap_text = "🎬 Movie Recap Maker" if is_my else "🎬 Movie Recap Maker"
     dl_text = "📥 Media Downloader" if is_my else "📥 Media Downloader"
-    tutorial_text = "📚 အသုံးပြုနည်း လမ်းညွှန်ဗီဒီယို ကြည့်မည်" if is_my else "📚 Watch Tutorial Video"
+    tutorial_text = t("menu_tutorial_text", lang)
     tutorial_url = (
         getattr(settings, "tutorial_video_link", "").strip()
         or os.getenv("TUTORIAL_VIDEO_LINK", "").strip()
         or "https://t.me/VoiceClonePro/16"
     )
-    switch_lang_text = "🌐 Change Language (မြန်မာ / English)" if is_my else "🌐 Switch Language (English / မြန်မာ)"
-    verify_gate_text = "🛡️ အဖွဲ့ဝင်စစ်ဆေးမည်" if is_my else "🛡️ Verify Membership"
+    switch_lang_text = t("menu_switch_lang", lang)
+    verify_gate_text = t("menu_verify_gate", lang)
 
     buttons = [
         [InlineKeyboardButton(text=launch_text, web_app=WebAppInfo(url=web_app_url))],
@@ -64,7 +64,7 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
         ],
     ]
     if is_admin:
-        admin_text = "📢 Broadcast ပို့မည် (Admin)" if is_my else "📢 Send Broadcast (Admin)"
+        admin_text = t("menu_admin_broadcast", lang)
         buttons.append([InlineKeyboardButton(text=admin_text, callback_data="admin:broadcast_prompt")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -119,11 +119,11 @@ def admin_dashboard_kb(lang: str = "my", pending_payments: int = 0, pending_cvr:
                 InlineKeyboardButton(text=t("admin_btn_queue_monitor", lang), callback_data="admin:queue"),
             ],
             [
-                InlineKeyboardButton(text=f"👑 Custom Voice{cvr_badge}", callback_data="admin:cvr"),
+                InlineKeyboardButton(text=f"{t('admin_btn_custom_voice', lang)}{cvr_badge}", callback_data="admin:cvr"),
                 InlineKeyboardButton(text=t("admin_btn_bot_settings", lang), callback_data="admin:settings"),
             ],
             [
-                InlineKeyboardButton(text="📜 Audit Logs", callback_data="admin:audit"),
+                InlineKeyboardButton(text=t("admin_btn_audit_logs", lang), callback_data="admin:audit"),
                 InlineKeyboardButton(text=t("admin_btn_tutorial_mgr", lang), callback_data="admin:tutorial"),
             ],
             [
@@ -342,8 +342,8 @@ def admin_adjust_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
 def admin_adjust_preview_kb(token: str, lang: str = "my") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Confirm & Apply", callback_data=f"admin:adjust_confirm:{token}")],
-            [InlineKeyboardButton(text="❌ Cancel", callback_data="admin:adjust_cancel")],
+            [InlineKeyboardButton(text=t("admin_btn_confirm_apply", lang), callback_data=f"admin:adjust_confirm:{token}")],
+            [InlineKeyboardButton(text=t("admin_btn_cancel", lang), callback_data="admin:adjust_cancel")],
         ]
     )
 
@@ -365,7 +365,7 @@ def admin_queue_kb(
             InlineKeyboardButton(text=t("admin_btn_queue_failed", lang, count=failed_count), callback_data="admin:queue_failures"),
         ],
         [
-            InlineKeyboardButton(text="🔄 " + ("Refresh Queue" if lang == "en" else "အသစ်ပြန်ဖွင့်ရန်"), callback_data="admin:queue"),
+            InlineKeyboardButton(text=t("kb_refresh_queue", lang), callback_data="admin:queue"),
         ],
         [
             InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard"),
@@ -386,7 +386,7 @@ def admin_queue_list_kb(jobs: list | None = None, category: str = "running", lan
 
     refresh_cb = f"admin:queue_view:{category}" if category in ("running", "queued", "success") else "admin:queue"
     rows.append([
-        InlineKeyboardButton(text="🔄 " + ("Refresh" if lang == "en" else "အသစ်ဖွင့်ရန်"), callback_data=refresh_cb),
+        InlineKeyboardButton(text=t("kb_refresh", lang), callback_data=refresh_cb),
         InlineKeyboardButton(text=t("admin_btn_back_to_queue", lang), callback_data="admin:queue"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -400,7 +400,7 @@ def admin_queue_failures_kb(jobs: list | None = None, lang: str = "my") -> Inlin
             btn_label = f"❌ #{j_short} · User {j.user_id}"
             buttons.append([InlineKeyboardButton(text=btn_label, callback_data=f"admin:job_detail:{j.id}")])
     buttons.append([
-        InlineKeyboardButton(text="🔄 " + ("Refresh" if lang == "en" else "အသစ်ဖွင့်ရန်"), callback_data="admin:queue_failures"),
+        InlineKeyboardButton(text=t("kb_refresh", lang), callback_data="admin:queue_failures"),
         InlineKeyboardButton(text=t("admin_btn_back_to_queue", lang), callback_data="admin:queue"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -411,15 +411,15 @@ def admin_job_detail_kb(job_id: str, is_retryable: bool = False, lang: str = "my
     if is_retryable:
         buttons.append([InlineKeyboardButton(text=t("admin_btn_retry_job", lang), callback_data=f"admin:job_retry_prompt:{job_id}")])
     buttons.append([
-        InlineKeyboardButton(text="🔄 Refresh", callback_data=f"admin:job_detail:{job_id}"),
+        InlineKeyboardButton(text=t("kb_refresh", lang), callback_data=f"admin:job_detail:{job_id}"),
         InlineKeyboardButton(text=t("admin_btn_back_to_queue", lang), callback_data="admin:queue"),
     ])
     st_upper = str(status).upper()
     if st_upper == "FAILED":
-        back_text = "🔙 " + ("Failed Jobs" if lang == "en" else "မအောင်မြင်သောစာရင်းသို့")
+        back_text = t("kb_back_failed", lang)
         buttons.append([InlineKeyboardButton(text=back_text, callback_data="admin:queue_failures")])
     elif st_upper in ("RUNNING", "QUEUED", "SUCCESS"):
-        back_text = f"🔙 {st_upper.capitalize()} Jobs"
+        back_text = t("kb_back_jobs_status", lang, status=st_upper.capitalize())
         buttons.append([InlineKeyboardButton(text=back_text, callback_data=f"admin:queue_view:{st_upper.lower()}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -428,16 +428,13 @@ def admin_job_retry_confirm_kb(job_id: str, lang: str = "my") -> InlineKeyboardM
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=t("admin_btn_confirm_retry", lang), callback_data=f"admin:job_retry_confirm:{job_id}")],
-            [InlineKeyboardButton(text="❌ Cancel", callback_data=f"admin:job_detail:{job_id}")],
+            [InlineKeyboardButton(text=t("admin_btn_cancel", lang), callback_data=f"admin:job_detail:{job_id}")],
         ]
     )
 
 
 def admin_settings_interactive_kb(lang: str = "my", maintenance_mode: bool = False) -> InlineKeyboardMarkup:
-    if lang == "my":
-        maint_text = "🔴 ပြုပြင်ဆဲ" if maintenance_mode else "🟢 ပုံမှန်ဖွင့်"
-    else:
-        maint_text = "🔴 Maintenance" if maintenance_mode else "🟢 Online"
+    maint_text = t("kb_maintenance_on", lang) if maintenance_mode else t("kb_maintenance_off", lang)
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -553,10 +550,10 @@ def user_history_kb(
             ],
             [
                 InlineKeyboardButton(text=t("history_btn_clear", lang), callback_data="history:clear_prompt"),
-                InlineKeyboardButton(text="🔄 " + ("Refresh" if lang == "en" else "အသစ်ဖွင့်ရန်"), callback_data="menu:history"),
+                InlineKeyboardButton(text=t("kb_refresh", lang), callback_data="menu:history"),
             ],
             [
-                InlineKeyboardButton(text="🔙 " + ("Help & Settings" if lang == "en" else "အကူအညီ & ဆက်တင်"), callback_data="menu:help_settings"),
+                InlineKeyboardButton(text=t("kb_back_help", lang), callback_data="menu:help_settings"),
                 InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home"),
             ],
         ]
@@ -568,9 +565,9 @@ def user_history_sub_kb(
     lang: str = "my",
 ) -> InlineKeyboardMarkup:
     other_btn = (
-        InlineKeyboardButton(text="💳 " + ("Minute Ledger" if lang == "en" else "မိနစ်အဝင်/အထွက်"), callback_data="history:ledger")
+        InlineKeyboardButton(text=t("kb_ledger", lang), callback_data="history:ledger")
         if current_view == "jobs"
-        else InlineKeyboardButton(text="🎙 " + ("Voice Jobs" if lang == "en" else "အသံထုတ်လုပ်မှုများ"), callback_data="history:jobs")
+        else InlineKeyboardButton(text=t("kb_voice_jobs", lang), callback_data="history:jobs")
     )
     refresh_cb = f"history:{current_view}"
     return InlineKeyboardMarkup(
@@ -580,8 +577,8 @@ def user_history_sub_kb(
                 InlineKeyboardButton(text=t("history_btn_clear", lang), callback_data="history:clear_prompt"),
             ],
             [
-                InlineKeyboardButton(text="🔄 " + ("Refresh" if lang == "en" else "အသစ်ဖွင့်ရန်"), callback_data=refresh_cb),
-                InlineKeyboardButton(text="🔙 " + ("History Overview" if lang == "en" else "မှတ်တမ်းပင်မသို့"), callback_data="menu:history"),
+                InlineKeyboardButton(text=t("kb_refresh", lang), callback_data=refresh_cb),
+                InlineKeyboardButton(text=t("kb_back_history", lang), callback_data="menu:history"),
             ],
             [
                 InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home"),
@@ -604,7 +601,7 @@ def custom_voice_hub_kb(can_request: bool, lang: str = "my") -> InlineKeyboardMa
     if can_request:
         buttons.append([InlineKeyboardButton(text=t("custom_voice_btn_request_new", lang), callback_data="cvr:request_start")])
     buttons.append([
-        InlineKeyboardButton(text="🔄 " + ("Refresh" if lang == "en" else "အသစ်ပြန်ဖွင့်ရန်"), callback_data="menu:custom_voice"),
+        InlineKeyboardButton(text=t("kb_refresh_queue", lang), callback_data="menu:custom_voice"),
         InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -740,8 +737,6 @@ def voice_samples_catalog_kb(
 
 def admin_model_sample_cancel_kb(model_id: int, lang: str = "my") -> InlineKeyboardMarkup:
     cancel_text = t("btn_cancel", lang)
-    if not cancel_text or cancel_text == "btn_cancel":
-        cancel_text = "❌ ပယ်ဖျက်မည်" if lang == "my" else "❌ Cancel"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=cancel_text, callback_data=f"admin:model:{model_id}")]

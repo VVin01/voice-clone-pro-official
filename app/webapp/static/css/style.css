@@ -317,10 +317,6 @@ body.dark-theme {
     margin-bottom: 14px;
 }
 
-.queue-notice-banner.applio-notice {
-    background: rgba(59, 130, 246, 0.08);
-    border-color: rgba(59, 130, 246, 0.25);
-}
 
 .notice-icon {
     font-size: 14px;
@@ -332,9 +328,6 @@ body.dark-theme {
     color: #fde68a;
 }
 
-.applio-notice .notice-text {
-    color: #bfdbfe;
-}
 
 /* ════ GLASS CARDS ════ */
 .card.glass {
@@ -631,7 +624,7 @@ body.dark-theme {
     display: none;
 }
 
-/* ════ APPLIO MODELS SECTION ════ */
+/* ════ VOICE MODEL CARDS (VoxCPM2) ════ */
 .worker-status-badge {
     display: flex;
     align-items: center;
@@ -664,44 +657,11 @@ body.dark-theme {
     margin-top: 10px;
 }
 
-.applio-model-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--card-border);
-    border-radius: var(--radius-md);
-    padding: 12px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    transition: all 0.2s;
-}
 
-.applio-model-card.active {
-    background: rgba(59, 130, 246, 0.12);
-    border-color: var(--accent-blue);
-    box-shadow: 0 0 14px rgba(59, 130, 246, 0.3);
-}
 
-.applio-model-avatar {
-    font-size: 24px;
-}
 
-.applio-model-details {
-    display: flex;
-    flex-direction: column;
-}
 
-.applio-model-name {
-    font-size: 14px;
-    font-weight: 700;
-    color: #fff;
-}
 
-.applio-model-tag {
-    font-size: 10.5px;
-    color: #93c5fd;
-    font-family: var(--font-en);
-}
 
 /* ════ TEXT INPUT & CONTROLS ════ */
 textarea#voice-text-input {
@@ -3109,11 +3069,6 @@ textarea#voice-text-input:focus {
     text-transform: uppercase;
 }
 
-.badge-engine.applio {
-    background: rgba(6, 182, 212, 0.15);
-    color: #38bdf8;
-    border: 1px solid rgba(6, 182, 212, 0.3);
-}
 
 .badge-engine.voxcpm {
     background: rgba(168, 85, 247, 0.15);
@@ -3649,7 +3604,7 @@ textarea#voice-text-input:focus {
         font-size: 11.5px;
     }
 
-    /* 4-Column Grids for Voice Personas and Applio Models */
+    /* 4-Column Grids for Voice Personas */
     .personas-grid {
         grid-template-columns: repeat(4, 1fr);
         gap: 14px;
@@ -4929,3 +4884,179 @@ textarea#voice-text-input:focus {
     -webkit-font-smoothing: antialiased;
 }
 
+
+/* ==========================================================================
+   PREMIUM POLISH LAYER — polish-premium-2026-10-28
+   Appended, not rewritten: the luxury theme above stays intact.
+   This layer only tidies spacing, typography, contrast, focus,
+   small-screen layout, and loading / empty / error states.
+   It does not change any API endpoint, i18n key, or feature flow.
+   ========================================================================== */
+
+/* Accessible contrast: the old --text-muted (#64748b) was too dim on
+   the dark background. Lighter secondary text, same variable name,
+   so every existing rule that uses it improves at once. */
+:root {
+    --text-muted: #94a3b8;
+    --space-xs: 6px;
+    --space-sm: 10px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --focus-ring: 0 0 0 3px rgba(251, 191, 36, 0.45);
+}
+
+/* Myanmar + English readability: slightly taller line height and
+   consistent letter spacing for long Burmese paragraphs. */
+body.dark-theme {
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+p, .notice-text, .tutorial-banner-text, .seg-desc {
+    line-height: 1.7;
+    overflow-wrap: break-word;
+}
+
+/* Consistent card rhythm: even padding, no crowded edges. */
+.card.glass {
+    padding: var(--space-md);
+}
+
+.pane-header {
+    margin-bottom: var(--space-md);
+}
+
+/* Buttons: minimum touch target, visible focus, calm disabled state.
+   Inline JS styles on toasts/modals take precedence over CSS, so
+   those components are polished in app.js structure, not here. */
+button {
+    min-height: 44px;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* Inputs: consistent padding and focus ring, without changing sizes
+   that the layout depends on. */
+input, textarea, select {
+    font-family: inherit;
+}
+
+/* Loading / empty / error states: centred, calm, readable.
+   Existing empty messages use .text-muted inside tab panes; give
+   them breathing room instead of a bare line of text. */
+.tab-pane .text-muted {
+    text-align: center;
+    padding: var(--space-lg) var(--space-md);
+    line-height: 1.7;
+}
+
+.queue-item-error {
+    border-color: rgba(239, 68, 68, 0.45);
+}
+
+/* Existing modal shells: consistent radius and shadow. */
+.modal-content,
+.image-modal .modal-content {
+    border-radius: 20px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+/* Small screens: keep the top bar and cards from crowding. */
+@media (max-width: 480px) {
+    .app-container {
+        padding-bottom: 100px;
+    }
+    .top-nav {
+        padding: 10px 12px;
+        flex-wrap: wrap;
+    }
+    .card.glass {
+        padding: 14px;
+    }
+    .brand-title-wrap h1 {
+        font-size: 14px;
+    }
+}
+
+/* Respect users who prefer less motion. */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ── UI/UX premium layer (2026-10-29, ui-ux-pricing branch) ──────────────
+   Design system, gate banner, generate preflight. No endpoint, job-logic
+   or i18n-key changes; new text is bilingual in HTML/JS so the i18n
+   branch can move it to keys later without a behaviour change. */
+:root {
+    --ux-radius: 16px;
+    --ux-gold: #f5b942;
+    --ux-danger: #ef4444;
+    --ux-ok: #22c55e;
+}
+body, .app-container {
+    font-family: "Noto Sans Myanmar", "Padauk", "Plus Jakarta Sans", system-ui, sans-serif;
+}
+.tab-pane p, .card-label, .plan-how-text, .gate-banner-text span {
+    line-height: 1.75;
+}
+/* Touch targets: every main action is at least 44px high. */
+.btn, .nav-item, .seg-btn, .pill-btn, .mini-btn, .source-tab-btn {
+    min-height: 44px;
+}
+.btn:focus-visible, .nav-item:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 3px solid rgba(245, 185, 66, 0.85);
+    outline-offset: 2px;
+}
+/* Step indicator: 1 choose voice -> 2 type text -> 3 generate. */
+.ux-steps {
+    display: flex; gap: 8px; list-style: none; margin: 0 0 12px; padding: 0;
+}
+.ux-step {
+    flex: 1; display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-radius: var(--ux-radius);
+    background: rgba(255, 255, 255, 0.06); font-size: 13px; line-height: 1.5;
+}
+.ux-step-num {
+    flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--ux-gold); color: #1a1206; font-weight: 700;
+}
+/* Gate banner: calm, not alarming, until the user joins + verifies. */
+.gate-banner {
+    margin: 12px; padding: 14px; border-radius: var(--ux-radius);
+    border: 1px solid rgba(245, 185, 66, 0.55); background: rgba(245, 185, 66, 0.10);
+}
+.gate-banner-text { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.gate-banner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.gate-banner-status { margin: 8px 0 0; font-size: 13px; color: var(--ux-danger); }
+/* Generate preflight: balance/limit BEFORE generating. */
+.voice-preflight {
+    margin: 10px 0; padding: 10px 12px; border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06); font-size: 13px; line-height: 1.6;
+}
+.voice-preflight.preflight-warn { border: 1px solid rgba(239, 68, 68, 0.55); color: #fca5a5; }
+/* VIP "how plans work" card. */
+.plan-how-card { margin-bottom: 14px; }
+.plan-how-text { font-size: 14px; margin: 6px 0; }
+/* Generate button: the one primary action, unmissable. */
+#btn-generate-voice { width: 100%; font-size: 16px; padding: 14px; }
+@media (max-width: 480px) {
+    .ux-steps { flex-direction: column; }
+    .gate-banner-actions .btn { flex: 1 1 100%; text-align: center; }
+}

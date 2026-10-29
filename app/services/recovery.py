@@ -33,7 +33,7 @@ async def recover_stale_running_jobs(
     2. Recovery is atomic: uses `UPDATE jobs SET status = 'FAILED' ... WHERE status = 'RUNNING'`
        checking `rowcount == 1`. Competing workers starting simultaneously will never recover
        the same job twice.
-    3. Never retries automatically: to prevent duplicate Applio inference or duplicate
+    3. Never retries automatically: to prevent duplicate VoxCPM2 synthesis or duplicate
        Telegram output delivery.
     4. Idempotently refunds debited minutes: checks if the job was charged in the ledger
        and credits back the exact balance buckets.

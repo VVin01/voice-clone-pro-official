@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db.session import init_db
 from app.webapp.api import api_router
+from app.webapp.rate_limit import RateLimitMiddleware
 
 
 @asynccontextmanager
@@ -28,6 +29,16 @@ async def lifespan(app: FastAPI):
     except Exception as font_err:
         import logging
         logging.getLogger(__name__).warning("Myanmar font setup error: %s", font_err)
+
+    # Warn at startup if the membership gate is not configured.
+    try:
+        from app.services.gate import warn_if_gate_not_configured
+
+        warn_if_gate_not_configured()
+    except Exception as gate_err:
+        import logging
+
+        logging.getLogger(__name__).warning("Gate configuration check error: %s", gate_err)
 
     # Initialize database tables and metadata
     try:
@@ -161,14 +172,26 @@ webapp_app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware for Telegram Webview compatibility
+# CORS Middleware for Telegram Webview compatibility.
+# Only Telegram WebApp origins are allowed. Never restore allow_origins=["*"]
+# together with allow_credentials=True: that combination let any website
+# call the Mini App API with the browser's credentials.
+TELEGRAM_WEBAPP_ORIGINS = [
+    "https://web.telegram.org",
+    "https://telegram.org",
+    "https://t.me",
+]
 webapp_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=TELEGRAM_WEBAPP_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Telegram-Init-Data"],
 )
+
+# Rate limiting + upload-size gating for selected POST endpoints only.
+# GET/status polling is deliberately not limited (see rate_limit.py).
+webapp_app.add_middleware(RateLimitMiddleware)
 
 # Mount REST API
 webapp_app.include_router(api_router)
@@ -187,6 +210,7 @@ webapp_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static
 async def add_no_cache_headers(request: Request, call_next):
     """Ensure Telegram Webview and browsers never serve stale cached SPA assets."""
     response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
     if request.url.path == "/" or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
