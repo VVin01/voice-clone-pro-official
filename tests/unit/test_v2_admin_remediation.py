@@ -76,6 +76,10 @@ async def test_free_user_welcome_bonus_default_zero(db_session):
     assert bal.total_usable_seconds == 180  # Exactly 3.0 minutes, NOT 8.0 minutes!
 
     # Gate verification also must not award welcome bonus when welcome_bonus_seconds == 0
+    # Fail-closed gate (security branch): gate IDs must be set in the test,
+    # otherwise verification correctly returns False for a missing config.
+    settings.required_channel_id = "-100111222"
+    settings.required_group_id = "-100333444"
     bot_mock = AsyncMock()
     channel_member = MagicMock()
     channel_member.status = "member"
@@ -195,7 +199,7 @@ async def test_admin_tutorial_crud_and_user_menu_sync(db_session):
     # 1. Initially enabled with default link
     await handle_admin_tutorial(cb, session=db_session)
     admin_text = cb.message.edit_text.call_args[0][0]
-    assert "Tutorial Manager" in admin_text
+    assert "Tutorial Video Manager" in admin_text
     assert "Enabled" in admin_text
 
     # User menu sees the video link
@@ -214,8 +218,13 @@ async def test_admin_tutorial_crud_and_user_menu_sync(db_session):
     assert any(btn.url == settings.tutorial_video_link for row in user_kb.inline_keyboard for btn in row)
 
     # 2. Toggle disabled
-    with patch("app.handlers.admin.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_admin_tutorial_toggle(cb)
+    # Current design has THREE tutorial flags: the user-facing help page
+    # follows the MASTER tutorial_video_enabled flag (the voice/recap
+    # toggles drive their own Mini App sections). The master flag is
+    # written through the dynamic-settings service.
+    from app.services.dynamic_settings import set_dynamic_setting
+    await set_dynamic_setting(db_session, "tutorial_video_enabled", False, admin_id=888111)
+    await db_session.commit()
 
     # Now user menu shows unavailable
     await handle_menu_tutorial(user_cb, session=db_session)
@@ -226,8 +235,8 @@ async def test_admin_tutorial_crud_and_user_menu_sync(db_session):
     assert not any(btn.url for row in user_kb2.inline_keyboard for btn in row)
 
     # 3. Toggle back to enabled
-    with patch("app.handlers.admin.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_admin_tutorial_toggle(cb)
+    await set_dynamic_setting(db_session, "tutorial_video_enabled", True, admin_id=888111)
+    await db_session.commit()
 
     # 4. Remove URL
     with patch("app.handlers.admin.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
@@ -270,13 +279,13 @@ async def test_admin_job_retry_eligibility_classification(db_session):
     u_blocked.status = UserStatus.BLOCKED.value
     await db_session.flush()
 
-    j_sys_blocked = Job(id="job-sys-blocked", user_id=u_blocked.id, status=JobStatus.FAILED.value, error_message="Applio worker crash")
+    j_sys_blocked = Job(id="job-sys-blocked", user_id=u_blocked.id, status=JobStatus.FAILED.value, error_message="VoxCPM2 worker crash")
     can_retry, cat, reason = evaluate_job_retry_eligibility(j_sys_blocked, u_blocked)
     assert can_retry is False
     assert cat == "USER_INACTIVE"
 
     # 5. Retryable transient system error on active user
-    j_transient = Job(id="job-transient-1", user_id=u.id, status=JobStatus.FAILED.value, error_message="Applio inference failed (exit 1): DLL load error")
+    j_transient = Job(id="job-transient-1", user_id=u.id, status=JobStatus.FAILED.value, error_message="VoxCPM2 inference failed (exit 1): DLL load error")
     can_retry, cat, reason = evaluate_job_retry_eligibility(j_transient, u)
     assert can_retry is True
     assert cat == "SYSTEM_FAILURE"
@@ -296,7 +305,7 @@ async def test_admin_job_retry_execution(db_session):
         id="job-retryable-99",
         user_id=target_user.id,
         status=JobStatus.FAILED.value,
-        error_message="Applio worker timeout after 180s",
+        error_message="VoxCPM2 worker timeout after 180s",
     )
     db_session.add(failed_job)
     await db_session.flush()

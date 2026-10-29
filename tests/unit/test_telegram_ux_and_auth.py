@@ -16,40 +16,35 @@ from app.ui.keyboards import main_menu_kb
 
 @pytest.mark.asyncio
 async def test_four_item_user_menu_and_admin_button():
-    # Ordinary user keyboard: exactly 5 items, no admin dashboard
+    # Current main menu (Mini App-first design): three WebApp launch
+    # buttons (callback_data None), a tutorial URL button, language
+    # switch and membership verify callbacks. No admin broadcast button
+    # for ordinary users.
     kb_user_my = main_menu_kb(is_admin=False, lang="my")
     user_buttons = [btn.callback_data for row in kb_user_my.inline_keyboard for btn in row]
-    assert user_buttons == [
-        "menu:voice_clone",
-        "menu:buy_minutes",
-        "menu:refer_earn",
-        "menu:custom_voice",
-        "menu:help_settings",
-    ]
-    assert "admin:dashboard" not in user_buttons
-    assert len(user_buttons) == 5
-    assert "အသံ" in kb_user_my.inline_keyboard[0][0].text or "Voice" in kb_user_my.inline_keyboard[0][0].text
+    assert user_buttons == [None, None, None, None, "menu:change_lang", "gate:verify"]
+    assert "admin:broadcast_prompt" not in user_buttons
+    assert len(user_buttons) == 6
+    flat_my = [btn for row in kb_user_my.inline_keyboard for btn in row]
+    assert flat_my[0].web_app is not None  # Launch Studio WebApp button
+    assert flat_my[3].url  # Tutorial URL button
 
     kb_user_en = main_menu_kb(is_admin=False, lang="en")
-    assert "Voice" in kb_user_en.inline_keyboard[0][0].text
-    assert "Buy Minutes" in kb_user_en.inline_keyboard[1][0].text
-    assert "Refer & Earn" in kb_user_en.inline_keyboard[1][1].text
-    assert "Custom Voice" in kb_user_en.inline_keyboard[2][0].text
-    assert "Help & Settings" in kb_user_en.inline_keyboard[2][1].text
+    flat_en = [btn for row in kb_user_en.inline_keyboard for btn in row]
+    assert "Launch Studio" in flat_en[0].text
+    assert "Recap" in flat_en[1].text
+    assert "Downloader" in flat_en[2].text
+    assert "Tutorial" in flat_en[3].text
+    assert "Language" in flat_en[4].text
+    assert "Verify Membership" in flat_en[5].text
 
-    # Admin keyboard: 5 user items + 1 admin dashboard
+    # Admin keyboard: same user items + 1 broadcast button
     kb_admin = main_menu_kb(is_admin=True, lang="en")
     admin_buttons = [btn.callback_data for row in kb_admin.inline_keyboard for btn in row]
-    assert admin_buttons == [
-        "menu:voice_clone",
-        "menu:buy_minutes",
-        "menu:refer_earn",
-        "menu:custom_voice",
-        "menu:help_settings",
-        "admin:dashboard",
-    ]
-    assert len(admin_buttons) == 6
-    assert "Admin Dashboard" in kb_admin.inline_keyboard[3][0].text
+    assert admin_buttons == [None, None, None, None, "menu:change_lang", "gate:verify", "admin:broadcast_prompt"]
+    assert len(admin_buttons) == 7
+    flat_admin = [btn for row in kb_admin.inline_keyboard for btn in row]
+    assert "Broadcast" in flat_admin[6].text
 
 
 @pytest.mark.asyncio
@@ -82,39 +77,36 @@ async def test_membership_gate_and_welcome_bonus_awarding(db_session):
     assert user.welcome_bonus_awarded is False
     assert user.channel_verified is False
 
-    # Simulate bot checking membership (bot=None bypasses external network call for verification)
+    # Security fix (audit 2026-10-28): the membership gate fails closed.
+    # With bot=None (or missing gate IDs) verification must NOT pass and
+    # no welcome bonus may be awarded; the old bypass is removed.
     verified, reason = await verify_user_membership(db_session, user, bot=None)
-    assert verified is True
-    assert user.channel_verified is True
-    assert user.group_verified is True
-    assert user.welcome_bonus_awarded is True
+    assert verified is False
+    assert user.channel_verified is False
+    assert user.group_verified is False
+    assert user.welcome_bonus_awarded is False
 
     bal = await get_minute_balance(db_session, user.id)
-    assert bal.welcome_seconds == 300
+    assert bal.welcome_seconds == 0
 
-    # Repeat verification: bonus must NOT be awarded twice
+    # Repeat verification: still not verified, still no bonus.
     verified2, _ = await verify_user_membership(db_session, user, bot=None)
-    assert verified2 is True
+    assert verified2 is False
     bal2 = await get_minute_balance(db_session, user.id)
-    assert bal2.welcome_seconds == 300
+    assert bal2.welcome_seconds == 0
 
 
 @pytest.mark.asyncio
 async def test_render_main_menu_display(db_session):
     user, _ = await get_or_create_user(db_session, telegram_id=88001, language_code="en")
     text, kb = await render_main_menu(user.id, lang="en", session=db_session)
-    assert "Main Menu" in text
-    assert "Total Balance" in text
+    # Current menu text is an account/balance card (no "Main Menu" heading).
     assert "Account:" in text
     assert "FREE" in text
+    assert "Voice Balance" in text
+    assert "Recap Balance" in text
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert callbacks == [
-        "menu:voice_clone",
-        "menu:buy_minutes",
-        "menu:refer_earn",
-        "menu:custom_voice",
-        "menu:help_settings",
-    ]
+    assert callbacks == [None, None, None, None, "menu:change_lang", "gate:verify"]
 
 
 @pytest.mark.asyncio
@@ -208,7 +200,11 @@ async def test_start_command_flow_new_vs_existing(db_session):
     msg_new.answer.assert_called_once()
     assert "language" in msg_new.answer.call_args[0][0].lower() or "ဘာသာစကား" in msg_new.answer.call_args[0][0]
 
-    # 2. Existing verified user: receives main menu directly with 4-button design
+    # 2. Existing user with cached verified flags: /start does NOT trust
+    # the cached flags — it re-verifies membership live (gate fix). With
+    # bot=None the check fails closed, so the user receives the
+    # membership gate screen (channel/group URL buttons + verify button),
+    # not the main menu.
     user, _ = await get_or_create_user(db_session, telegram_id=77003)
     user.language_code = "en"
     user.channel_verified = True
@@ -224,12 +220,9 @@ async def test_start_command_flow_new_vs_existing(db_session):
         await handle_start(msg_exist, cmd)
 
     msg_exist.answer.assert_called_once()
+    gate_text = msg_exist.answer.call_args[0][0]
+    from app.services.i18n import t
+    assert t("membership_gate_title", "en") in gate_text
     reply_markup = msg_exist.answer.call_args[1]["reply_markup"]
     callbacks = [btn.callback_data for row in reply_markup.inline_keyboard for btn in row]
-    assert callbacks == [
-        "menu:voice_clone",
-        "menu:buy_minutes",
-        "menu:refer_earn",
-        "menu:custom_voice",
-        "menu:help_settings",
-    ]
+    assert callbacks == [None, None, "gate:verify"]

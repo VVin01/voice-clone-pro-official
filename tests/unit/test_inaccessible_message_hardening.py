@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Chat, ErrorEvent, InaccessibleMessage, Message, Update
 from aiogram.types import User as TgUser
@@ -122,7 +123,14 @@ async def test_handle_menu_refer_earn_with_inaccessible_message(db_session):
     cb.answer = AsyncMock()
 
     # Call handle_menu_refer_earn - must not throw AttributeError!
-    await handle_menu_refer_earn(cb)
+    # Hermetic: route the handler's session factory to the test DB
+    # (same patching pattern used elsewhere in this repo).
+    @asynccontextmanager
+    async def mock_session_ctx():
+        yield db_session
+
+    with patch("app.handlers.menu.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
+        await handle_menu_refer_earn(cb)
 
     cb.bot.send_message.assert_awaited_once()
     sent_text = cb.bot.send_message.call_args[1]["text"]
@@ -147,7 +155,12 @@ async def test_handle_menu_home_with_inaccessible_message(db_session):
     cb.bot.send_message = AsyncMock(return_value=MagicMock(spec=Message, message_id=102))
     cb.answer = AsyncMock()
 
-    await handle_menu_home(cb)
+    @asynccontextmanager
+    async def mock_session_ctx():
+        yield db_session
+
+    with patch("app.handlers.menu.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
+        await handle_menu_home(cb)
 
     cb.bot.send_message.assert_awaited_once()
     cb.answer.assert_awaited_once()
