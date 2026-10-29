@@ -1,1 +1,105 @@
-IyBQbGFucywgcHJpY2VzIGFuZCBsaW1pdHMg4oCUIEZJTkFMIGZvciB0aGUgMjAyNi0xMS0wMSBwcmVtaXVtIHJlbGVhc2UKClN0YXR1czogKipGSU5BTCwgZGVjaWRlZC4gTm90IGxpdmUgeWV0Kiog4oCUIHRoaXMgdHJlZSBpcyBub3QgbWVyZ2VkIG9yCmRlcGxveWVkLiBUaGVzZSBwcmljZXMgYXJlIGltcGxlbWVudGVkIGNvbnNpc3RlbnRseSBpbiBhbGwgcGxhY2VzCmZyb20gb25lIGNhdGFsb2d1ZSAoYFBMQU5fQ0FUQUxPR1VFYCBpbiBgYXBwL3NlcnZpY2VzL3BheW1lbnRzLnB5YCk6CkRCIHNlZWQgbWludXRlIHBhY2tzLCBBUEkgYC92aXAvcGxhbnNgIChhbGwgOCBjb2RlcyB3aXRoIGNhdGVnb3JpZXMpLApNaW5pIEFwcCBwcmljZXMgaW4gYGFwcC93ZWJhcHAvc3RhdGljL2pzL2kxOG4uanNgICsgYGluZGV4Lmh0bWxgCihjYXRlZ29yeSBzZWN0aW9ucyBhbmQgYnV5IGJ1dHRvbnMpLCBhbmQgdGhlIGJvdCBidXkgbWVudSAodGhyZWUKc2VjdGlvbnMpLgoKVGhlIGNvZGUgZW5mb3JjZXMgdHdvIGFjY291bnQgc3RhdGVzIOKAlCBGcmVlIHZzIFBVUkNIQVNFRCAoVklQKSDigJQKcGx1cyBtaW51dGUgcGFja3MgYW5kIGJ1bmRsZXMgdGhhdCBhbiBhZG1pbiBhcHByb3ZlcyBtYW51YWxseSBhZnRlcgphIHNsaXAgdXBsb2FkLiBUaGlzIGRvY3VtZW50IGRvZXMgTk9UIGludmVudCBhIHN1YnNjcmlwdGlvbiBzeXN0ZW0uCgojIyBGaW5hbCBwcmljZSB0YWJsZSAoTU1LKSDigJQgdGhyZWUgc2VwYXJhdGUgcGFpZCBjYXRlZ29yaWVzCgpGcmVlIHRpZXIgc3RheXMgc2VwYXJhdGUgZnJvbSBhbGwgdGhyZWUgcGFpZCBjYXRlZ29yaWVzLiBUaGUgc2luZ2xlCnNvdXJjZSBvZiB0cnV0aCBpcyBgUExBTl9DQVRBTE9HVUVgIGluIGBhcHAvc2VydmljZXMvcGF5bWVudHMucHlgOwpBUEkgYC92aXAvcGxhbnNgLCBNaW5pIEFwcCBidXR0b25zLCBib3QgYnV5IG1lbnUgYW5kIHRoaXMgZG9jdW1lbnQKbXVzdCBhbGwgbWF0Y2ggaXQuCgojIyMgKGEpIFZvaWNlLW9ubHkKCnwgUGxhbiB8IFByaWNlIChNTUspIHwgV2hhdCB5b3UgZ2V0IHwgUGVyLXVuaXQgfCBXaHkgKG9uZSBsaW5lKSB8CnwtLS18LS0tfC0tLXwtLS18LS0tfAp8IFZvaWNlIFBhY2sgTUlOXzEwIHwgOCwwMDAgfCAxMCB2b2ljZSBtaW51dGVzIHwgODAwL21pbiB8IEtlcHQgb2xkIGVudHJ5IHByaWNlOiBmYW1pbGlhciwgbG93IGJhcnJpZXIuIHwKfCBWb2ljZSBQYWNrIE1JTl8zMCB8IDIwLDAwMCB8IDMwIHZvaWNlIG1pbnV0ZXMgfCA2NjcvbWluIHwgVmFsdWUgaW1wcm92ZXMgd2l0aCBzaXplLiB8CnwgVm9pY2UgUGFjayBNSU5fNjAgfCAzOCwwMDAgfCA2MCB2b2ljZSBtaW51dGVzIHwgNjMzL21pbiB8IEJlc3QgcGFjayB2YWx1ZSBiZWZvcmUgYnVuZGxlcy4gfAp8IFZvaWNlIFBybyB8IDc1LDAwMCB8IDI1MCB2b2ljZSBtaW51dGVzIHwgMzAwL21pbiB8IEJ1bGsgZGlzY291bnQgcmVtYWlucywgbm8gbG9uZ2VyIHVuZGVyY3V0cyBwYWNrIHZhbHVlLiB8CgojIyMgKGIpIFJlY2FwLW9ubHkKCnwgUGxhbiB8IFByaWNlIChNTUspIHwgV2hhdCB5b3UgZ2V0IHwgUGVyLXVuaXQgfCBXaHkgKG9uZSBsaW5lKSB8CnwtLS18LS0tfC0tLXwtLS18LS0tfAp8IFJlY2FwIFN0YXJ0ZXIgKE5FVykgfCAyMCwwMDAgfCA1IHJlY2FwIGNyZWRpdHMsIHVwIHRvIDEwIG1pbiBlYWNoIHwgNCwwMDAvY3JlZGl0IHwgTmV3IGxvdyBlbnRyeTogcHJldmlvdXNseSByZWNhcCBzdGFydGVkIGF0IDkwLDAwMCwgb3V0IG9mIHJlYWNoIGZvciBtYW55IE15YW5tYXIgdXNlcnM7IHBlci1jcmVkaXQgaXMgaGlnaGVyIHRoYW4gUHJvLCBzbyB0aGUgdGllciBsYWRkZXIgc3RpbGwgZmFsbHMgd2l0aCBzaXplLiB8CnwgUmVjYXAgUHJvIHwgOTAsMDAwIHwgMjUgcmVjYXAgY3JlZGl0cywgdXAgdG8gMTAgbWluIGVhY2ggfCAzLDYwMC9jcmVkaXQgfCBBIDEwLW1pbiBIRCByZWNhcCBpcyBhIHByZW1pdW0gcHJvZHVjdCwgbm90IGEgY2hlYXAgYWRkLW9uLiB8CgojIyMgKGMpIENvbWJpbmVkIFZvaWNlK1JlY2FwCgp8IFBsYW4gfCBQcmljZSAoTU1LKSB8IFdoYXQgeW91IGdldCB8IFBlci11bml0IHwgV2h5IChvbmUgbGluZSkgfAp8LS0tfC0tLXwtLS18LS0tfC0tLXwKfCBDb21iaW5lZCBTdGFydGVyIChORVcpIHwgMzAsMDAwIHwgMzAgdm9pY2UgbWluICsgNSByZWNhcCBjcmVkaXRzIHwgMjUlIGJlbG93IHNlcGFyYXRlICg0MCwwMDApIHwgTmV3IGxvdyBjb21iaW5lZCBlbnRyeTogcHJldmlvdXNseSBjb21iaW5lZCBzdGFydGVkIGF0IDE4MCwwMDA7IHRoaXMgbGV0cyBhIHVzZXIgdHJ5IGJvdGggcHJvZHVjdHMgaW4gb25lIHBsYW4gd2l0aG91dCB0aGUgTWFzdGVyIHByaWNlLiB8CnwgTWFzdGVyIHwgMTgwLDAwMCB8IDUwMCB2b2ljZSBtaW4gKyA2MCByZWNhcCBjcmVkaXRzIHwgZmFyIGJlbG93IHNlcGFyYXRlIGF0IGJ1bmRsZSByYXRlcyAoMzY2LDAwMCkgfCBTdGlsbCB0aGUgYWdlbmN5IGJ1bmRsZTsgZGlzY291bnQgZGVlcGVucyB3aXRoIHNpemUuIHwKCiMjIyBGcmVlIChzZXBhcmF0ZSkKCnwgUGxhbiB8IFByaWNlIChNTUspIHwgV2hhdCB5b3UgZ2V0IHwgUGVyLXVuaXQgfCBXaHkgKG9uZSBsaW5lKSB8CnwtLS18LS0tfC0tLXwtLS18LS0tfAp8IEZyZWUgfCAwIHwgMyBtaW4vbW9udGgsIDUgam9icy9kYXksIDEwMDAgY2hhcnMvZ2VuLCByZWNhcCAyIG1pbiB3YXRlcm1hcmtlZCB8IOKAlCB8IExvdyBiYXJyaWVyIHRvIHRyeSB0aGUgcHJvZHVjdC4gfAoKIyMjIEN1cmF0ZWQgdm9pY2VzIOKAlCBodW1hbi1vbmx5LCBjb3VudCBzdGF5cyAxMgoKQWxsIDEyIGN1cmF0ZWQgVm94Q1BNMiBwZXJzb25hcyBhcmUgaHVtYW4gdm9pY2VzLiBUd28gc2xvdHMgd2VyZQpwcmV2aW91c2x5IHByZXNlbnRlZCBhcyBub24taHVtYW4gY2hhcmFjdGVycyBhbmQgd2VyZSBDT05WRVJURUQKKHNhbWUgc2xvdCBpZCBhbmQgbmFtZSwgdW5kZXJseWluZyB2b2ljZSByZW1hcHBlZCB0byBhbiBleGlzdGluZwpodW1hbiBwZXJzb25hIOKAlCBubyBuZXcgYXVkaW8gZmlsZSwgbm8gbW9kZWwgaWQgaW52ZW50ZWQsIG5vdGhpbmcKcmUtcmVjb3JkZWQgb3IgcmUtdHJhaW5lZCk6CgotIGBrb215YXRgIChLbyBNeWF0KTogd2FzIGdob3N0LXN0b3J5IGNoYXJhY3RlciDihpIgbm93IGh1bWFuIHZvaWNlCiAgb2YgYGtvbWluYCAobWFsZSBodW1hbiBzdG9yeXRlbGxlcikuIFJlZmVyZW5jZSBhdWRpbyArIHRyYW5zY3JpcHQsCiAgY29udHJvbCBpbnN0cnVjdGlvbiwgcGl0Y2gvZm9ybWFudCBhbmQgZGlzcGxheSBhbGwgaHVtYW4uCi0gYG1hY2hhd2AgKE1hIENoYXcpOiB3YXMgYW5pbWUvY2FydG9vbiBjaGFyYWN0ZXIg4oaSIG5vdyBodW1hbiB2b2ljZQogIG9mIGBtYW1heWAgKGZlbWFsZSBodW1hbiBmcmllbmRseSBndWlkZSkuIFNhbWUgcmVtYXAgbWVjaGFuaXNtLgoKVGhlIG90aGVyIDEwIHBlcnNvbmFzIHdlcmUgYWxyZWFkeSBuYXR1cmFsIGh1bWFuIHZvaWNlcyBhbmQgYXJlCnVuY2hhbmdlZC4gTGVnYWN5IGNoYXJhY3RlciBzYW1wbGUgc2x1Z3MgKGthcnRvb24sIGFudC1tb3ZpZSwKdGhlLWxpZ2h0KSBubyBsb25nZXIgc2VydmUgY2hhcmFjdGVyIHNhbXBsZXMgdGhyb3VnaApgL3ZvaWNlcy9zYW1wbGVgIOKAlCB0aGV5IHJlc29sdmUgdG8gdGhlIGRlZmF1bHQgaHVtYW4gc2FtcGxlLgoKTGltaXRzICh1bmNoYW5nZWQpOiBGcmVlL1BVUkNIQVNFRCBjaGFycyAxMDAwLzUwMDAgcGVyIGdlbmVyYXRpb24sCmRhaWx5IGpvYnMgNS91bmxpbWl0ZWQsIGNvbmN1cnJlbmN5IDEgam9iL3VzZXIsIHJhdGUgbGltaXRzIGdlbmVyYXRlCjMwL21pbiwgcmVjYXAgMTAvbWluLCBleHRyYWN0IDMwL21pbiwgc2xpcCAyMC9taW47IHVwbG9hZCBjYXBzIHNsaXAKaW1hZ2Utb25seSAxMCBNQiwgcmVmZXJlbmNlIGF1ZGlvIDUwIE1CLCByZWNhcCB2aWRlbyAxIEdCLgoKIyMgQ29tcGV0aXRvciBjb21wYXJpc29uIOKAlCB2ZXJpZmllZCB2cyBub3QtZm91bmQKCi0gVGVhbSBBbHBoYSBBSSwgVHJhbnNjcmlwdCBBSSwgTWVsIFZvaWNlIENsb25lOiAqKm5vIHZlcmlmaWVkCiAgTXlhbm1hciBwcmljZSBmb3VuZCBpbiBwdWJsaWMgc2VhcmNoIG9uIDIwMjYtMTAtMjkuKiogVGhlIG5hbWVzCiAgcmV0dXJuIHVucmVsYXRlZCBvciBkaWZmZXJlbnRseS1uYW1lZCBwcm9kdWN0cyAoYSBVUyBBSSByZWNlcHRpb25pc3QKICBzZXJ2aWNlLCBnZW5lcmljIHRyYW5zY3JpcHRpb24gdG9vbHMsIGFuZCBhIHZvaWNlIHdvcmtzcGFjZSB3aXRoIG5vCiAgcHJpY2VzIHNob3duKS4gTm8gcHJpY2UgaXMgY2xhaW1lZCBmb3IgdGhlbSBoZXJlLCBhbmQgbm8gcHJpY2UgaW4KICB0aGlzIHRhYmxlIGlzIGJhc2VkIG9uIGFuIGludmVudGVkIGNvbXBldGl0b3IgcHJpY2UuCi0gVmVyaWZpZWQgZ2xvYmFsIHByb3hpZXMgKHB1YmxpYyBwYWdlcywgMjAyNi0xMC0yOSk6IGEgdmlkZW8tZHViYmluZwogIHZvaWNlLWNsb25lIHNlcnZpY2UgYXQgJDkvbW9udGggZm9yIDYwIG1pbnV0ZXMgYW5kICQzOS9tb250aCBmb3IKICAxNjAgbWludXRlczsgYSBVUyBBSSByZWNlcHRpb25pc3Qgd2l0aCB2b2ljZSBjbG9uaW5nIGF0CiAgJDM5Ljk5L21vbnRoIGZvciAzMDAgY2FsbCBtaW51dGVzOyBBc3NlbWJseUFJIEJ1cm1lc2UgU1RUIGF0CiAgJDAuMTXigJMkMC4yMS9ob3VyLiBUaGVzZSBzaG93IHRoZSBvbGQgVm9pY2UgUHJvIHJhdGUgKDE4MCBNTUsvbWluKQogIHdhcyBmYXIgYmVsb3cgZ2xvYmFsIHBlci1taW51dGUgdmFsdWUsIHdoaWNoIGlzIHdoeSBidW5kbGVzIHdlcmUKICByYWlzZWQgd2hpbGUgdGhlIGZhbWlsaWFyIDgsMDAwIE1NSyBlbnRyeSBwYWNrIHdhcyBrZXB0LgotIFZlcmlmaWVkIE15YW5tYXIgY29udGV4dDogS0JaUGF5L1dhdmVQYXkgYXJlIHRoZSBkb21pbmFudCBtb2JpbGUKICB3YWxsZXRzOyBjYXJkcyBhcmUgbm90IHdpZGVzcHJlYWQgZm9yIG9yZGluYXJ5IHVzZXJzLiBBbGwgcHJpY2VzCiAgYXJlIHJvdW5kLCBwYXlhYmxlIGluIG9uZSB3YWxsZXQgdHJhbnNmZXIuCi0gR3JvcSBXaGlzcGVyIGZyZWUtdGllciBmaWd1cmVzIHNlZW4gaW4gc2Vjb25kYXJ5IHN1bW1hcmllcyBhcmUKICBOT1QgcXVvdGVkIGFzIGEgZ3VhcmFudGVlOyBjb25maXJtIGN1cnJlbnQgbGltaXRzIG9uIHRoZSBHcm9xCiAgY29uc29sZSBiZWZvcmUgcHJvbWlzaW5nIHZvbHVtZS4KCiMjIFBheW1lbnQg4oCUIHJlbGVhc2UgYmxvY2tlciwgdW5jaGFuZ2VkIGJ5IHByaWNlcwoKUGF5bWVudCBhY2NvdW50IGRldGFpbHMgbGl2ZSBPTkxZIGluIGVudiAoYFBBWU1FTlRfS1BBWV9OVU1CRVJgLApgUEFZTUVOVF9LUEFZX05BTUVgLCBgUEFZTUVOVF9XQVZFX05VTUJFUmAsIGBQQVlNRU5UX1dBVkVfTkFNRWApIG9yCmluIGFkbWluIGR5bmFtaWMgc2V0dGluZ3MuIFRoZSBgL3ZpcC9wbGFuc2AgZW5kcG9pbnQgbm8gbG9uZ2VyIGZhbGxzCmJhY2sgdG8gaGFyZC1jb2RlZCBhY2NvdW50IGRldGFpbHMgd2hlbiBlbnYgaXMgZW1wdHkg4oCUIGl0IHJldHVybnMKZW1wdHkgdmFsdWVzIGluc3RlYWQuICoqQmVmb3JlIGFueSBkZXBsb3ksIHBheW1lbnQgZW52L2FkbWluIHNldHRpbmdzCm11c3QgYmUgZmlsbGVkLCBvciB0aGUgcGF5bWVudCBkaXNwbGF5IHdpbGwgYmUgYmxhbmsuKiogTmV2ZXIgcHV0CmFjY291bnQgZGV0YWlscyBpbiB0aGlzIGRvY3VtZW50LCBpbiBjaGF0LCBvciBpbiBjb2RlIGRlZmF1bHRzLgo=
+# Plans, prices and limits — FINAL for the 2026-11-01 premium release
+
+Status: **FINAL, decided. Not live yet** — this tree is not merged or
+deployed. These prices are implemented consistently in all places
+from one catalogue (`PLAN_CATALOGUE` in `app/services/payments.py`):
+DB seed minute packs, API `/vip/plans` (all 8 codes with categories),
+Mini App prices in `app/webapp/static/js/i18n.js` + `index.html`
+(category sections and buy buttons), and the bot buy menu (three
+sections).
+
+The code enforces two account states — Free vs PURCHASED (VIP) —
+plus minute packs and bundles that an admin approves manually after
+a slip upload. This document does NOT invent a subscription system.
+
+## Final price table (MMK) — three separate paid categories
+
+Free tier stays separate from all three paid categories. The single
+source of truth is `PLAN_CATALOGUE` in `app/services/payments.py`;
+API `/vip/plans`, Mini App buttons, bot buy menu and this document
+must all match it.
+
+### (a) Voice-only
+
+| Plan | Price (MMK) | What you get | Per-unit | Why (one line) |
+|---|---|---|---|---|
+| Voice Pack MIN_10 | 8,000 | 10 voice minutes | 800/min | Kept old entry price: familiar, low barrier. |
+| Voice Pack MIN_30 | 20,000 | 30 voice minutes | 667/min | Value improves with size. |
+| Voice Pack MIN_60 | 38,000 | 60 voice minutes | 633/min | Best pack value before bundles. |
+| Voice Pro | 75,000 | 250 voice minutes | 300/min | Bulk discount remains, no longer undercuts pack value. |
+
+### (b) Recap-only
+
+| Plan | Price (MMK) | What you get | Per-unit | Why (one line) |
+|---|---|---|---|---|
+| Recap Starter (NEW) | 20,000 | 5 recap credits, up to 10 min each | 4,000/credit | New low entry: previously recap started at 90,000, out of reach for many Myanmar users; per-credit is higher than Pro, so the tier ladder still falls with size. |
+| Recap Pro | 90,000 | 25 recap credits, up to 10 min each | 3,600/credit | A 10-min HD recap is a premium product, not a cheap add-on. |
+
+### (c) Combined Voice+Recap
+
+| Plan | Price (MMK) | What you get | Per-unit | Why (one line) |
+|---|---|---|---|---|
+| Combined Starter (NEW) | 30,000 | 30 voice min + 5 recap credits | 25% below separate (40,000) | New low combined entry: previously combined started at 180,000; this lets a user try both products in one plan without the Master price. |
+| Master | 180,000 | 500 voice min + 60 recap credits | far below separate at bundle rates (366,000) | Still the agency bundle; discount deepens with size. |
+
+### Free (separate)
+
+| Plan | Price (MMK) | What you get | Per-unit | Why (one line) |
+|---|---|---|---|---|
+| Free | 0 | 3 min/month, 5 jobs/day, 1000 chars/gen, recap 2 min watermarked | — | Low barrier to try the product. |
+
+### Curated voices — human-only, count stays 12
+
+All 12 curated VoxCPM2 personas are human voices. Two slots were
+previously presented as non-human characters and were CONVERTED
+(same slot id and name, underlying voice remapped to an existing
+human persona — no new audio file, no model id invented, nothing
+re-recorded or re-trained):
+
+- `komyat` (Ko Myat): was ghost-story character → now human voice
+  of `komin` (male human storyteller). Reference audio + transcript,
+  control instruction, pitch/formant and display all human.
+- `machaw` (Ma Chaw): was anime/cartoon character → now human voice
+  of `mamay` (female human friendly guide). Same remap mechanism.
+
+The other 10 personas were already natural human voices and are
+unchanged. Legacy character sample slugs (kartoon, ant-movie,
+the-light) no longer serve character samples through
+`/voices/sample` — they resolve to the default human sample.
+
+Limits (unchanged): Free/PURCHASED chars 1000/5000 per generation,
+daily jobs 5/unlimited, concurrency 1 job/user, rate limits generate
+30/min, recap 10/min, extract 30/min, slip 20/min; upload caps slip
+image-only 10 MB, reference audio 50 MB, recap video 1 GB.
+
+## Competitor comparison — verified vs not-found
+
+- Team Alpha AI, Transcript AI, Mel Voice Clone: **no verified
+  Myanmar price found in public search on 2026-10-29.** The names
+  return unrelated or differently-named products (a US AI receptionist
+  service, generic transcription tools, and a voice workspace with no
+  prices shown). No price is claimed for them here, and no price in
+  this table is based on an invented competitor price.
+- Verified global proxies (public pages, 2026-10-29): a video-dubbing
+  voice-clone service at $9/month for 60 minutes and $39/month for
+  160 minutes; a US AI receptionist with voice cloning at
+  $39.99/month for 300 call minutes; AssemblyAI Burmese STT at
+  $0.15–$0.21/hour. These show the old Voice Pro rate (180 MMK/min)
+  was far below global per-minute value, which is why bundles were
+  raised while the familiar 8,000 MMK entry pack was kept.
+- Verified Myanmar context: KBZPay/WavePay are the dominant mobile
+  wallets; cards are not widespread for ordinary users. All prices
+  are round, payable in one wallet transfer.
+- Groq Whisper free-tier figures seen in secondary summaries are
+  NOT quoted as a guarantee; confirm current limits on the Groq
+  console before promising volume.
+
+## Payment — release blocker, unchanged by prices
+
+Payment account details live ONLY in env (`PAYMENT_KPAY_NUMBER`,
+`PAYMENT_KPAY_NAME`, `PAYMENT_WAVE_NUMBER`, `PAYMENT_WAVE_NAME`) or
+in admin dynamic settings. The `/vip/plans` endpoint no longer falls
+back to hard-coded account details when env is empty — it returns
+empty values instead. **Before any deploy, payment env/admin settings
+must be filled, or the payment display will be blank.** Never put
+account details in this document, in chat, or in code defaults.

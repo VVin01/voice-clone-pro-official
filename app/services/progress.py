@@ -63,7 +63,7 @@ def render_stepper_progress(
         4: "▰▰▰▰▰▰▰▰ 100%",
     }
     bar_str = progress_bars.get(step, "▰▰▰▰▰▰▱▱ 75%")
-    bar_lbl = f"📊 တိုးတက်မှု: <code>{bar_str}</code>" if lang == "my" else f"📊 Progress: <code>{bar_str}</code>"
+    bar_lbl = t("progress_bar_label", lang, bar_str=bar_str)
 
     lines = [title, "━━━━━━━━━━━━━━━━━━━━", model_lbl, time_lbl, bar_lbl, ""]
     for i, (name, done_txt, active_txt, wait_txt) in enumerate(steps_def, 1):

@@ -13,13 +13,60 @@ logger = logging.getLogger(__name__)
 MEMBER_STATUSES = {"creator", "administrator", "member", "restricted"}
 
 
+def warn_if_gate_not_configured() -> None:
+    """Log a startup warning when gate IDs are missing.
+
+    Call this at application startup. In production mode a missing gate ID
+    is a misconfiguration, not a silent bypass: check_telegram_membership()
+    now fails closed, so an unconfigured gate blocks everyone.
+    """
+    missing = [
+        name
+        for name, value in (
+            ("REQUIRED_CHANNEL_ID", settings.required_channel_id),
+            ("REQUIRED_GROUP_ID", settings.required_group_id),
+        )
+        if not value
+    ]
+    if not missing:
+        return
+    if str(settings.app_env).lower() not in ("development", "dev", "test", ""):
+        logger.warning(
+            "PRODUCTION gate misconfiguration: %s not set; membership checks "
+            "will fail closed until the gate IDs are configured.",
+            ", ".join(missing),
+        )
+    else:
+        logger.warning(
+            "Membership gate IDs not configured (%s); membership checks "
+            "will fail closed.",
+            ", ".join(missing),
+        )
+
+
+def is_gate_configured() -> bool:
+    """True only when BOTH gate IDs are set.
+
+    Used by the Mini App so it can return a distinct GATE_NOT_CONFIGURED
+    error instead of a misleading "you have not joined" message when the
+    operator has not set REQUIRED_CHANNEL_ID / REQUIRED_GROUP_ID yet.
+    """
+    return bool(settings.required_channel_id) and bool(settings.required_group_id)
+
+
 async def check_telegram_membership(bot: Bot | None, chat_id: str | int, user_id: int) -> bool:
     """Query Telegram API to check if user is in channel/group.
 
-    If bot is None or chat_id is empty, returns True (bypass in dev/testing).
+    Fail closed: if bot is None or chat_id is empty, returns False.
+    A missing gate configuration must never silently pass a user.
     """
     if bot is None or not chat_id:
-        return True
+        logger.warning(
+            "Membership check failed closed: bot or gate chat_id is missing "
+            "for user %s",
+            user_id,
+        )
+        return False
     try:
         member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         return member.status in MEMBER_STATUSES
@@ -42,6 +89,18 @@ async def verify_user_membership(
 
     Returns (is_verified, reason).
     """
+    # Admin bypass (mirrors AccessControlMiddleware, which already lets
+    # admins through with zero DB lookup). Without this, an admin who has
+    # not joined the channel/group would be locked out of /start and of
+    # every gated Mini App write. No welcome bonus or referral reward is
+    # granted here: admins are already excluded from the welcome bonus
+    # below, and referral confirmation stays a bot-side flow.
+    if settings.is_admin(user.id):
+        user.channel_verified = True
+        user.group_verified = True
+        await session.flush()
+        return True, "admin_bypass"
+
     ch_ok = await check_telegram_membership(bot, settings.required_channel_id, user.id)
     gp_ok = await check_telegram_membership(bot, settings.required_group_id, user.id)
 

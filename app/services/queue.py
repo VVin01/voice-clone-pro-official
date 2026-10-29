@@ -47,25 +47,24 @@ async def create_voice_clone_job(
 
     user, _ = await get_or_create_user(session, user_id)
 
-    # 1. Validate model authorization & engine resolution
-    is_vox = (engine == "voxcpm" or preset_voice is not None)
+    # 1. Validate model authorization & engine resolution.
+    # VoxCPM2 is the only voice-clone engine. Any engine name other than
+    # "voxcpm" is a legacy-engine request and is rejected here; bot/API
+    # layers already give a user-facing legacy-removed message, and
+    # default voxcpm callers are mapped to VoxCPM2 below.
+    if engine not in ("voxcpm", "", None):
+        return None, "LEGACY_MODEL_ENGINE_REMOVED"
     model = None
     if model_id is not None:
         model = await get_authorized_model(session, user_id, model_id)
-
-    if is_vox:
-        if not model or model.pth_path != "voxcpm":
-            stmt_v = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
-            res_v = await session.execute(stmt_v)
-            vox_m = res_v.scalar_one_or_none()
-            if vox_m:
-                model = vox_m
-                model_id = vox_m.id
-    else:
-        if not model:
-            return None, "MODEL_NOT_AUTHORIZED"
-
-    actual_engine = "voxcpm" if (is_vox or (model and (model.pth_path == "voxcpm" or "voxcpm" in model.slug.lower()))) else "applio"
+    if not model or model.pth_path != "voxcpm":
+        stmt_v = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
+        res_v = await session.execute(stmt_v)
+        vox_m = res_v.scalar_one_or_none()
+        if vox_m:
+            model = vox_m
+            model_id = vox_m.id
+    actual_engine = "voxcpm"
 
     # 2. Check concurrency and daily job limits (admins exempt)
     is_admin = settings.is_admin(user_id)
