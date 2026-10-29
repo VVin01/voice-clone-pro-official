@@ -154,68 +154,10 @@ async def init_db() -> None:
                 vox_m.allowed_for_purchased = True
                 await session.commit()
 
-            # Ensure Default Applio Local GPU Models are registered in DB
-            default_applio_models = [
-                {
-                    "name": "🎭 ကာတွန်းအသံ (Kartoon AI)",
-                    "slug": "kartoon",
-                    "pth_path": "storage/models/system/ကာတွန်းအသံ/kartoon_150e_1950s.pth",
-                    "index_path": "storage/models/system/ကာတွန်းအသံ/kartoon.index",
-                    "gender": "male",
-                    "allowed_free": True,
-                    "allowed_purchased": True,
-                },
-                {
-                    "name": "🎙️ မြန်မာအသံ ၁ (Myanmar Voice 1)",
-                    "slug": "myanmar-voice-1",
-                    "pth_path": "storage/models/system/မြန်မာအသံ/myanmar_voice_1_100e_6600s.pth",
-                    "index_path": "storage/models/system/မြန်မာအသံ/myanmar_voice_1.index",
-                    "gender": "male",
-                    "allowed_free": True,
-                    "allowed_purchased": True,
-                },
-                {
-                    "name": "✨ The Light (သဘာဝစကားပြောသံ)",
-                    "slug": "the-light",
-                    "pth_path": "storage/models/system/The_Light/the_light_150e_450s.pth",
-                    "index_path": "storage/models/system/The_Light/the_light.index",
-                    "gender": "female",
-                    "allowed_free": False,
-                    "allowed_purchased": True,
-                },
-                {
-                    "name": "🎬 အာန့် (Ant Movie Recap)",
-                    "slug": "ant-movie",
-                    "pth_path": "storage/models/system/အာန့်/ant_150e_11700s.pth",
-                    "index_path": "storage/models/system/အာန့်/ant.index",
-                    "gender": "male",
-                    "allowed_free": False,
-                    "allowed_purchased": True,
-                },
-            ]
-
-            for ap_m in default_applio_models:
-                stmt_ap = select(VoiceModel).where(VoiceModel.slug == ap_m["slug"])
-                res_ap = await session.execute(stmt_ap)
-                existing_ap = res_ap.scalar_one_or_none()
-                if existing_ap is None:
-                    session.add(VoiceModel(
-                        name=ap_m["name"],
-                        slug=ap_m["slug"],
-                        type=VoiceModelType.SYSTEM.value,
-                        status=VoiceModelStatus.ACTIVE.value,
-                        allowed_for_free=ap_m["allowed_free"],
-                        allowed_for_purchased=ap_m["allowed_purchased"],
-                        gender=ap_m["gender"],
-                        pth_path=ap_m["pth_path"],
-                        index_path=ap_m["index_path"],
-                        model_dir="system",
-                    ))
-                    await session.commit()
-                elif existing_ap.status != VoiceModelStatus.ACTIVE.value:
-                    existing_ap.status = VoiceModelStatus.ACTIVE.value
-                    await session.commit()
-
+            # Voice v2: no legacy trained-model system models are seeded. Legacy .pth rows
+            # already in the database are left untouched, but new jobs for them are
+            # rejected/mapped by queue.py and the worker. VoxCPM2 + reference audio
+            # is the replacement path for those voices.
         except Exception as e_vox_init:
             import logging
             logging.getLogger(__name__).warning("Could not auto-register VoxCPM model: %s", e_vox_init)

@@ -36,6 +36,10 @@ class Settings(BaseSettings):
 
     # Telegram Bot
     bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    # Internal worker token, separate from the Telegram bot token.
+    # Env-only and rotatable. When empty, callers fall back to the bot
+    # token with a warning so existing deployments do not break at once.
+    worker_token: str = Field(default="", alias="WORKER_TOKEN")
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
     # Membership Gate (Channel and Group)
@@ -76,20 +80,10 @@ class Settings(BaseSettings):
     max_concurrent_jobs_per_user: int = Field(default=1, alias="MAX_CONCURRENT_JOBS_PER_USER")
     maintenance_mode: bool = Field(default=False, alias="MAINTENANCE_MODE")
 
-    # Infrastructure Safety Limit (independent of user account tiers, protects Edge TTS & Applio memory)
+    # Infrastructure Safety Limit (independent of user account tiers, protects Edge TTS & VoxCPM memory)
     infrastructure_safety_character_limit: int = Field(
         default=5000,
         alias="INFRASTRUCTURE_SAFETY_CHARACTER_LIMIT",
-    )
-
-    # Applio Runtime Configuration
-    applio_workdir: str = Field(default=r"C:\Applio", alias="APPLIO_WORKDIR")
-    applio_python: str = Field(default="", alias="APPLIO_PYTHON")
-    applio_runner: str = Field(default="", alias="APPLIO_RUNNER")
-    applio_command: str = Field(default="", alias="APPLIO_COMMAND")
-    applio_inference_timeout_seconds: int = Field(
-        default=900,
-        alias="APPLIO_INFERENCE_TIMEOUT_SECONDS",
     )
 
     # Stale Job Crash Recovery (seconds)
@@ -128,11 +122,15 @@ class Settings(BaseSettings):
     # VoxCPM 2 Neural TTS & Voice Cloning
     voxcpm_space_url: str = Field(default="", alias="VOXCPM_SPACE_URL")
     voxcpm_spaces: str = Field(default="", alias="VOXCPM_SPACES")
+    voxcpm_timeout: int = Field(default=60, alias="VOXCPM_TIMEOUT")
+    groq_whisper_model: str = Field(default="whisper-large-v3-turbo", alias="GROQ_WHISPER_MODEL")
     hf_token: str = Field(default="", alias="HF_TOKEN")
     hf_tokens: str = Field(default="", alias="HF_TOKENS")
 
     # Recap Studio Policies
-    recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # Max 10 minutes per recap credit
+    # NOTE: RECAP_MAX_DURATION_SECONDS is defined once above (User Account Policies,
+    # default 600). A duplicate definition previously lived here and was removed
+    # in polish-premium-2026-10-28; do not re-add it, Pydantic silently kept the last one.
 
     # Gemini AI Dynamic Model Chain (Active 3.x models; 2.5/2.0/1.5 are retired on Google API)
     gemini_primary_model: str = Field(default="gemini-3.6-flash", alias="GEMINI_PRIMARY_MODEL")
@@ -141,10 +139,10 @@ class Settings(BaseSettings):
     gemini_fallback_3: str = Field(default="gemini-flash-lite-latest", alias="GEMINI_FALLBACK_3")
 
     # Payment accounts
-    payment_kpay_number: str = "09790760003"
-    payment_kpay_name: str = "Win Kyaw Oo"
-    payment_wave_number: str = "09790760003"
-    payment_wave_name: str = "Win Kyaw Oo"
+    payment_kpay_number: str = ""
+    payment_kpay_name: str = ""
+    payment_wave_number: str = ""
+    payment_wave_name: str = ""
 
     # Worker Heartbeat (Local Laptop GPU)
     worker_laptop_heartbeat: str = ""
