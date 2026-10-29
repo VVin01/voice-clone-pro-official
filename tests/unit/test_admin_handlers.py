@@ -17,7 +17,7 @@ from app.services.ledger import get_or_create_user
 
 
 @pytest.mark.asyncio
-async def test_admin_settings_handler_authorized():
+async def test_admin_settings_handler_authorized(db_session):
     settings.admin_ids_raw = "888111"
     cb = MagicMock(spec=CallbackQuery)
     cb.from_user = TgUser(id=888111, is_bot=False, first_name="BossAdmin")
@@ -25,7 +25,7 @@ async def test_admin_settings_handler_authorized():
     cb.message.edit_text = AsyncMock()
     cb.answer = AsyncMock()
 
-    await handle_admin_settings(cb)
+    await handle_admin_settings(cb, session=db_session)
 
     cb.message.edit_text.assert_called_once()
     call_args = cb.message.edit_text.call_args[0][0]
@@ -36,7 +36,7 @@ async def test_admin_settings_handler_authorized():
 
 
 @pytest.mark.asyncio
-async def test_admin_tutorial_handler_authorized():
+async def test_admin_tutorial_handler_authorized(db_session):
     settings.admin_ids_raw = "888111"
     cb = MagicMock(spec=CallbackQuery)
     cb.from_user = TgUser(id=888111, is_bot=False, first_name="BossAdmin")
@@ -44,12 +44,12 @@ async def test_admin_tutorial_handler_authorized():
     cb.message.edit_text = AsyncMock()
     cb.answer = AsyncMock()
 
-    await handle_admin_tutorial(cb)
+    await handle_admin_tutorial(cb, session=db_session)
 
     cb.message.edit_text.assert_called_once()
     call_args = cb.message.edit_text.call_args[0][0]
-    assert "Tutorial Manager" in call_args
-    assert "Current Video Link:" in call_args
+    assert "Tutorial Video Manager" in call_args
+    assert "Link:" in call_args
     cb.answer.assert_called_once()
 
 
@@ -279,7 +279,7 @@ async def test_admin_dashboard_metrics_and_html_escaping(db_session):
     await db_session.flush()
 
     # Add jobs (1 success, 1 failed with unsafe characters in error_message)
-    unsafe_err = "Applio crashed: <InvalidIndex & BufferOverflow>"
+    unsafe_err = "VoxCPM2 crashed: <InvalidIndex & BufferOverflow>"
     j1 = Job(id="job-ok-1", user_id=1001, status=JobStatus.SUCCESS.value)
     j2 = Job(id="job-fail-1", user_id=1002, status=JobStatus.FAILED.value, error_message=unsafe_err)
     db_session.add_all([j1, j2])

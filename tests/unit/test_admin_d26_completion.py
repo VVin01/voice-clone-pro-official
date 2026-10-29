@@ -401,7 +401,7 @@ async def test_admin_queue_failures_inspection(db_session):
     await db_session.flush()
 
     # Insert 2 failed jobs
-    unsafe_err = "Applio crash: <script>alert(1)</script> & out of memory"
+    unsafe_err = "VoxCPM2 crash: <script>alert(1)</script> & out of memory"
     j1 = Job(
         id=901,
         user_id=77001,

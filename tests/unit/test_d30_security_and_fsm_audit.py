@@ -467,15 +467,18 @@ async def test_admin_voice_generation_full_lifecycle(db_session):
     with patch("app.handlers.clone.AsyncSessionLocal", sm):
         await handle_clone_model_selected(cb_model, state)
 
-    # State must be cleared upon successful job creation
-    assert state.current_state is None
+    # Voice v2 (documented): selecting a legacy trained (.pth) model no
+    # longer creates a job. The user is shown the legacy-disabled message
+    # pointing to VoxCPM2 reference-audio cloning, and the wizard state
+    # is left untouched at waiting_for_model.
+    assert state.current_state == CloneFSM.waiting_for_model
+    shown_text = cb_model.message.edit_text.call_args[0][0]
+    from app.services.i18n import t as _t
+    assert shown_text in {_t("legacy_model_disabled", "my"), _t("legacy_model_disabled", "en")}
 
-    # Prove Job was created in DB with status QUEUED
+    # Prove NO job was created from the legacy model
     jobs = (await db_session.execute(select(Job).where(Job.user_id == admin_id))).scalars().all()
-    assert len(jobs) == 1
-    assert jobs[0].status == JobStatus.QUEUED.value
-    assert jobs[0].input_text == "Antigravity voice cloning for admin"
-    assert jobs[0].status_message_id == 7788
+    assert len(jobs) == 0
 
 
 @pytest.mark.asyncio
@@ -956,18 +959,17 @@ async def test_real_dispatcher_admin_voice_generation_end_to_end(db_session, mon
         await dp.feed_update(bot, make_callback_update(admin_id, "clone_gender:m2m", 205))
     assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_model
 
-    # Step 6: Admin selects model -> Job creation
+    # Step 6: Admin selects model -> legacy .pth flow is disabled (voice v2)
     with patch("app.handlers.clone.AsyncSessionLocal", sm):
         await dp.feed_update(bot, make_callback_update(admin_id, f"clone_model:{model.id}", 206))
 
-    # State cleared upon completion
-    assert await dp.storage.get_state(storage_key) is None
+    # State is NOT cleared and NO job is created: the legacy trained-model
+    # path is closed in favour of VoxCPM2 reference-audio cloning, and the
+    # user is shown the legacy-disabled message instead.
+    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_model
 
-    # Prove Job was created in DB with status QUEUED and correct payload
     jobs = (await db_session.execute(select(Job).where(Job.user_id == admin_id))).scalars().all()
-    assert len(jobs) == 1
-    assert jobs[0].status == JobStatus.QUEUED.value
-    assert jobs[0].input_text == "Hello from real dispatcher admin voice clone"
+    assert len(jobs) == 0
 
 
 @pytest.mark.asyncio

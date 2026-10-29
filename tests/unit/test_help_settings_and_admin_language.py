@@ -208,7 +208,17 @@ async def test_payment_invoice_has_no_copy_buttons(db_session):
     mock_state.set_state = AsyncMock()
     mock_state.update_data = AsyncMock()
 
-    await handle_package_selected(cb, state=mock_state)
+    # Hermetic: the handler opens its own session via the payment
+    # module's factory — route it to the test DB (repo pattern).
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch as _patch
+
+    @asynccontextmanager
+    async def mock_session_ctx():
+        yield db_session
+
+    with _patch("app.handlers.payment.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
+        await handle_package_selected(cb, state=mock_state)
 
     cb.message.edit_text.assert_called_once()
     kb = cb.message.edit_text.call_args[1].get("reply_markup")
@@ -238,11 +248,11 @@ async def test_help_settings_dynamically_reflects_admin_changes(db_session):
         user.language_code = "my"
         await db_session.flush()
 
-        # 1. Baseline rendering in Burmese (defaults: 180s = 3m, 500 chars, 2000 chars, 5 daily)
+        # 1. Baseline rendering in Burmese (current defaults: 180s = 3m, 1000 free chars, 5000 purchased chars, 5 daily)
         text_my, _ = await render_help_settings_content(db_session, user.id)
         assert "၃ မိနစ် (၁၈၀ စက္ကန့်)" in text_my or "3 မိနစ် (180 စက္ကန့်)" in text_my
-        assert "၅၀၀" in text_my or "500" in text_my
-        assert "၂,၀၀၀" in text_my or "2,000" in text_my
+        assert "၁,၀၀၀" in text_my or "1,000" in text_my
+        assert "၅,၀၀၀" in text_my or "5,000" in text_my
         assert "၅" in text_my or "5" in text_my
 
         # 2. Admin modifies settings dynamically
