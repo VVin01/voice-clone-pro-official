@@ -414,7 +414,7 @@ class Job(Base):
         String(30), nullable=False, default=JobType.VOICE_CLONE.value
     )
     input_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    engine: Mapped[str] = mapped_column(String(20), nullable=False, default="voxcpm")  # voxcpm | applio
+    engine: Mapped[str] = mapped_column(String(20), nullable=False, default="voxcpm")  # voxcpm only in Voice v2; legacy rows may still carry an old value
     preset_voice: Mapped[str | None] = mapped_column(String(50), nullable=True)        # komin, kothura, etc.
     edge_voice: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

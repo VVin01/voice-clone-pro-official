@@ -178,42 +178,31 @@ def unshorten_url(url: str) -> str:
         if vid_match:
             return f"https://www.douyin.com/video/{vid_match.group(1)}"
 
-        # Follow Douyin short link (v.douyin.com) with mobile User-Agent
+        # Follow Douyin short link (v.douyin.com), validating every
+        # redirect hop as a public URL (SSRF prevention). A blocked hop
+        # propagates so callers reject the URL instead of fetching it.
         try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
-                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
-                )
-            }
-            resp = requests.get(clean_url, headers=headers, allow_redirects=True, timeout=10)
-            final_url = resp.url
+            from app.services.url_safety import SSRFBlockedError, follow_redirects_safely
+
+            final_url = follow_redirects_safely(clean_url)
             vid_match2 = re.search(r'/(?:video|note|share/video)/(\d+)', final_url)
             if vid_match2:
                 return f"https://www.douyin.com/video/{vid_match2.group(1)}"
             return final_url
+        except SSRFBlockedError:
+            raise
         except Exception as e:
             logger.warning(f"Douyin link expansion error for {clean_url}: {e}")
             return clean_url
 
     try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )
-        }
-        # Follow redirects with HEAD request first
-        session = requests.Session()
-        resp = session.head(clean_url, allow_redirects=True, headers=headers, timeout=10)
-        final_url = resp.url
-        if final_url and final_url != clean_url:
-            return final_url
-            
-        # Fallback to GET with stream=True (does not download body)
-        resp = session.get(clean_url, allow_redirects=True, headers=headers, stream=True, timeout=10)
-        return resp.url
+        from app.services.url_safety import SSRFBlockedError, follow_redirects_safely
+
+        # Redirects are followed hop-by-hop with each target validated
+        # as public (SSRF prevention); no body is downloaded.
+        return follow_redirects_safely(clean_url)
+    except SSRFBlockedError:
+        raise
     except Exception:
         # If redirect resolution fails, return original URL (yt-dlp will try to resolve it anyway)
         return clean_url

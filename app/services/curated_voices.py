@@ -3,6 +3,22 @@ curated_voices.py - Studio-Mastered Curated Voice Personas for Burmese TTS & Voi
 Provides 12 meticulously tuned Burmese voice personas (6 Male, 6 Female)
 with authentic native Burmese pronunciation, tailored vocal pitch, pacing,
 and broadcast-grade acoustic studio mastering (FFmpeg EQ, dynamics & limiting).
+
+Human-only rule (2026-10-29): every curated slot must be a natural human
+voice. Two slots were previously presented as non-human characters and
+were CONVERTED (not deleted) — same slot id and name, underlying voice
+remapped to an existing human persona:
+  - komyat (was: ghost-story character) -> human voice of komin
+    (male human storyteller, same Edge base ThihaNeural).
+  - machaw (was: anime/cartoon character) -> human voice of mamay
+    (female human friendly guide, same Edge base NilarNeural).
+The remap is done with "reference_id": VoxCPM2 reference audio and
+reference transcript come from the human persona, the control
+instruction and pitch/formant are neutral human values, and the
+display name/description/badge/avatar are human. No new audio file
+or model id was created, and nothing was re-recorded or re-trained —
+this is a remap of existing human voices onto the same slots.
+The total count stays 12.
 """
 
 from __future__ import annotations
@@ -228,18 +244,23 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "komyat": {
         "id": "komyat",
         "gender": "male",
-        "name_my": "ကိုမြတ် (သရဲတစ္ဆေ & လျှို့ဝှက်ဆန်းကြယ်)",
-        "name_en": "Ko Myat (Spooky Mystery & Ghost Stories)",
-        "desc_my": "ကြက်သီးထဖွယ် ညသန်းခေါင်ယံ သရဲဇာတ်လမ်းပြောသံ",
-        "desc_en": "Chilling, mysterious, atmospheric storyteller for ghost stories and dark thrillers",
-        "avatar": "👻",
-        "badge_my": "သရဲတစ္ဆေ 🕯️",
-        "badge_en": "Spooky Dark 🕯️",
+        "name_my": "ကိုမြတ် (လူသားဇာတ်လမ်းပြောသူ)",
+        "name_en": "Ko Myat (Human Storyteller)",
+        "desc_my": "နွေးထွေးပြီး ရှင်းလင်းသော လူသားဇာတ်လမ်းပြောသံ — ဇာတ်လမ်းနှင့် စာအုပ်များအတွက်",
+        "desc_en": "Warm, clear, natural human storyteller for stories and audiobooks",
+        "avatar": "🎙️",
+        "badge_my": "ဇာတ်လမ်းပြောသူ 🎙️",
+        "badge_en": "Storyteller 🎙️",
         "edge_voice": "my-MM-ThihaNeural",
-        "pitch": "-4Hz",
-        "rate_offset": 8,
-        "formant_ratio": 0.94,
-        "sample_text": "သန်းခေါင်ယံ အမှောင်ထုထဲက ကြက်သီးထဖွယ် သရဲဇာတ်လမ်းများကို ကျွန်တော် ကိုမြတ်က ပြောပြပေးသွားပါ့မယ်။",
+        "pitch": "+0Hz",
+        "rate_offset": 10,
+        "formant_ratio": 1.00,
+        # Human-voice remap (2026-10-29): this slot was a ghost-story
+        # character; its VoxCPM2 reference audio + transcript now come
+        # from komin, an existing male human storyteller. Slot id and
+        # name are kept; no new audio was recorded.
+        "reference_id": "komin",
+        "sample_text": "မင်္ဂလာပါခင်ဗျာ။ ကျွန်တော် ကိုမြတ်ပါ။ စိတ်ဝင်စားဖွယ် ဇာတ်လမ်းများကို ရှင်းလင်းနွေးထွေးစွာ ပြောပြပေးသွားပါ့မယ်။",
         "af_filter": (
             "asetrate=41454,aresample=44100,atempo=1.0638,"
             "highpass=f=65,afftdn=nr=10:nf=-50:tn=1,"
@@ -249,8 +270,8 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
-            "A mysterious, chilling, suspenseful, dark Burmese male ghost story narrator. "
-            "Atmospheric, brooding, captivating cadence with organic breath and natural dynamics."
+            "A warm, clear, natural Burmese male human storyteller. "
+            "Conversational narration with natural breathing and human cadence, no character effects."
         ),
         "cfg_value": 2.0,
     },
@@ -315,18 +336,23 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "machaw": {
         "id": "machaw",
         "gender": "female",
-        "name_my": "မချော (Anime Dub & Gaming Streamer)",
-        "name_en": "Ma Chaw (Anime Dub & Gaming Streamer)",
-        "desc_my": "ချစ်စရာကောင်းပြီး တက်ကြွလန်းဆန်းသော အန်နီမေးနှင့် ဂိမ်းအသံ",
-        "desc_en": "Youthful, high-energy, expressive anime character and gaming streamer voice",
-        "avatar": "🎮",
-        "badge_my": "Anime & Gaming 🎀",
-        "badge_en": "Anime & Gaming 🎀",
+        "name_my": "မချော (လူသား Creator & Guide)",
+        "name_en": "Ma Chaw (Human Creator & Guide)",
+        "desc_my": "ဖော်ရွေပြီး ရှင်းလင်းသော လူသား Creator အသံ — ဗီဒီယိုနှင့် လမ်းညွှန်များအတွက်",
+        "desc_en": "Friendly, clear, natural human creator voice for videos and guides",
+        "avatar": "🌟",
+        "badge_my": "Creator & Guide 🌟",
+        "badge_en": "Creator & Guide 🌟",
         "edge_voice": "my-MM-NilarNeural",
-        "pitch": "+6Hz",
-        "rate_offset": 16,
-        "formant_ratio": 1.075,
-        "sample_text": "ဟိုင်း အားလုံးပဲ မင်္ဂလာပါရှင်! ဂိမ်းဆော့ရင်း အန်နီမေး ကြည့်ရင်း ပျော်ရွှင်စရာ အချိန်တွေကို မချောနဲ့အတူ ဖြတ်သန်းကြစို့နော်!",
+        "pitch": "+2Hz",
+        "rate_offset": 12,
+        "formant_ratio": 1.02,
+        # Human-voice remap (2026-10-29): this slot was an anime/cartoon
+        # character; its VoxCPM2 reference audio + transcript now come
+        # from mamay, an existing female human friendly guide. Slot id
+        # and name are kept; no new audio was recorded.
+        "reference_id": "mamay",
+        "sample_text": "မင်္ဂလာပါရှင်။ ကျွန်မ မချောပါ။ ဗီဒီယိုများနှင့် လမ်းညွှန်များကို ဖော်ရွေရှင်းလင်းစွာ ပြောပြပေးသွားပါ့မယ်။",
         "af_filter": (
             "asetrate=47408,aresample=44100,atempo=0.9302,"
             "highpass=f=85,afftdn=nr=10:nf=-50:tn=1,"
@@ -336,8 +362,8 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
             "lowpass=f=9500,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
-            "A high-energy, youthful, playful, vibrant Burmese female anime dubbing artist and gaming creator. "
-            "Expressive, colorful intonation with bright personality and crisp acoustic presence."
+            "A friendly, clear, natural Burmese female human creator and guide. "
+            "Warm, articulate delivery with natural human intonation, no character effects."
         ),
         "cfg_value": 2.0,
     },
@@ -374,10 +400,20 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
 
 
 def get_persona_reference(voice_id: str) -> tuple[Optional[str], str]:
-    """Return (sample_audio_path, sample_transcript) for the given curated persona."""
+    """Return (sample_audio_path, sample_transcript) for the given curated persona.
+
+    If the persona was remapped to a human voice (``reference_id``), the
+    reference audio AND transcript come from that human persona, so the
+    transcript always matches the reference clip used for cloning.
+    """
     info = get_curated_voice(voice_id)
     if not info:
         return None, ""
+    ref_id = info.get("reference_id")
+    if ref_id:
+        ref_info = get_curated_voice(ref_id)
+        if ref_info:
+            info = ref_info
     pid = info["id"]
     sample_text = str(info.get("sample_text") or "").strip()
     samples_dir = Path(__file__).resolve().parent.parent / "webapp" / "static" / "audio" / "samples"
