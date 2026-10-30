@@ -512,7 +512,28 @@ class VoxCPMEngine:
                             "acompressor=threshold=-18dB:ratio=2.2:attack=20:release=120:makeup=1.2,"
                             "alimiter=limit=0.92"
                         )
-                        for af_candidate in (af_master_primary, af_master_fallback):
+                        af_candidates = [af_master_primary, af_master_fallback]
+                        # Studio-spec persona mastering (2026-10-30): a
+                        # non-flagship curated persona gets the full
+                        # komin/mahnin pipeline chain (formant + deesser
+                        # + body/presence EQ + loudnorm) instead of the
+                        # generic chain, so job audio matches the
+                        # regenerated previews. Flagships return None
+                        # here and keep the generic chain, exactly as
+                        # before. The 44100 Hz resample stays first.
+                        if preset_voice:
+                            try:
+                                from app.services.curated_voices import persona_mastering_filter
+
+                                _persona_chain = persona_mastering_filter(preset_voice)
+                            except Exception:
+                                _persona_chain = None
+                            if _persona_chain:
+                                af_candidates.insert(
+                                    0,
+                                    f"aresample=44100,{atempo_prefix}{_persona_chain}",
+                                )
+                        for af_candidate in af_candidates:
                             try:
                                 cmd = [
                                     ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
@@ -545,7 +566,12 @@ class VoxCPMEngine:
             except Exception as e_pair:
                 last_err = e_pair
                 err_lower = str(e_pair).lower()
-                if active_token and ("zerogpu" in err_lower or "quota" in err_lower or "runs limit" in err_lower):
+                # Quota-class failures for THIS token's account: ZeroGPU
+                # quota text, or an HF 402 Payment Required response
+                # (fix 2026-10-29: 402s carry none of the quota words, so
+                # they previously recorded no cooldown and the exhausted
+                # account kept being picked early on later calls).
+                if active_token and ("zerogpu" in err_lower or "quota" in err_lower or "runs limit" in err_lower or "402" in err_lower or "payment required" in err_lower):
                     # Only mark token globally on cooldown if it wasn't just a 180s-decorator rejection
                     if "180s requested" not in err_lower:
                         self._token_cooldowns[active_token] = time.time() + 1800

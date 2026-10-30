@@ -29,7 +29,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1379,6 +1379,14 @@ def resolve_recap_deliverable_path(
 
     job_dir = settings.storage_root / "recap_output" / job_id
 
+    _part_match = re.fullmatch(r"part([1-9][0-9]?)", file_type or "")
+    if _part_match:
+        # Splitter deliverable (registry part{n}_path was checked above).
+        part_file = job_dir / "parts" / f"recap_part_{int(_part_match.group(1)):02d}.mp4"
+        if part_file.is_file() and part_file.stat().st_size > 1000:
+            return str(part_file)
+        return None
+
     if file_type == "video":
         if result_path and Path(result_path).is_file():
             return str(result_path)
@@ -1460,6 +1468,16 @@ def resolve_recap_deliverable_path(
     return None
 
 
+# Source-language codes offered for recap STT (Whisper language codes).
+# "auto" keeps the historical detect-for-me behaviour.
+RECAP_SOURCE_LANGUAGE_CODES = frozenset({
+    "auto", "en", "zh", "ko", "th", "ja", "hi", "my",
+    "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr",
+})
+RECAP_RENDER_QUALITIES = frozenset({"standard", "high", "max"})
+RECAP_TTS_ENGINES = frozenset({"voxcpm", "gemini"})
+
+
 class RecapConfigRequest(BaseModel):
     url: str
     title: Optional[str] = None
@@ -1485,6 +1503,80 @@ class RecapConfigRequest(BaseModel):
     include_logo: bool = True
     logo_pos: str = "top-right"       # top-right, top-left, bottom-right, bottom-left, top-center
     duration_seconds: Optional[int] = None
+    # Two-phase flow (desktop Recapter "Edit Text" parity): when true, the
+    # job stops after transcription + translation with status SCRIPT_READY
+    # so the user can review/edit the Burmese narration before rendering.
+    script_review: bool = False
+    # Production-grade programme (2026-10-29), all optional, defaults keep
+    # the previous behaviour exactly:
+    # - source_language: STT language hint ("auto" = detect, else a
+    #   Whisper language code such as "en", "zh", "ko", "th", "ja").
+    source_language: str = "auto"
+    # - render_quality: encoder preset for the render (see core
+    #   RENDER_QUALITIES): "standard" is the historical default encode.
+    render_quality: str = "standard"
+    # - tts_engine: narration engine. "voxcpm" (default) keeps the
+    #   persona pipeline; "gemini" uses Gemini TTS with per-segment
+    #   fallback to the persona engine (fallback stays visible).
+    tts_engine: str = "voxcpm"
+    gemini_voice: Optional[str] = None
+    # - split_video: after a successful render, also cut the finished
+    #   video into labelled parts (smart cut at narration pauses).
+    #   Included in the same single recap credit — never charged extra.
+    split_video: bool = False
+    split_minutes: int = Field(3, ge=1, le=10)
+
+    @field_validator("source_language")
+    @classmethod
+    def _check_source_language(cls, v: str) -> str:
+        code = str(v or "auto").strip().lower()
+        if code in ("", "detect", "automatic"):
+            return "auto"
+        if code not in RECAP_SOURCE_LANGUAGE_CODES:
+            raise ValueError(
+                f"Unsupported source_language '{v}'. Use 'auto' or one of: "
+                + ", ".join(sorted(RECAP_SOURCE_LANGUAGE_CODES - {"auto"}))
+            )
+        return code
+
+    @field_validator("render_quality")
+    @classmethod
+    def _check_render_quality(cls, v: str) -> str:
+        q = str(v or "standard").strip().lower()
+        if q not in RECAP_RENDER_QUALITIES:
+            raise ValueError(f"Unsupported render_quality '{v}'. Use: standard, high, max")
+        return q
+
+    @field_validator("tts_engine")
+    @classmethod
+    def _check_tts_engine(cls, v: str) -> str:
+        e = str(v or "voxcpm").strip().lower()
+        if e not in RECAP_TTS_ENGINES:
+            raise ValueError(f"Unsupported tts_engine '{v}'. Use: voxcpm, gemini")
+        return e
+
+    @field_validator("gemini_voice")
+    @classmethod
+    def _check_gemini_voice(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        name = str(v).strip().removeprefix("gemini:")
+        from app.services.recap_engine.gemini_tts_engine import GEMINI_VOICE_NAMES
+
+        if name not in GEMINI_VOICE_NAMES:
+            raise ValueError(
+                f"Unsupported gemini_voice '{v}'. Use one of: " + ", ".join(GEMINI_VOICE_NAMES)
+            )
+        return name
+
+
+class RecapScriptEditItem(BaseModel):
+    index: int                        # 1-based segment number from GET script
+    narration: str
+
+
+class RecapScriptUpdateRequest(BaseModel):
+    segments: list[RecapScriptEditItem] = []
 
 
 def _recap_fallback_info(job_dir) -> tuple[bool, list]:
@@ -1610,6 +1702,24 @@ async def _send_recap_telegram_delivery(
         logger.warning(f"Failed to send recap video to Telegram chat {chat_id}: {e}")
 
 
+def _recap_workspace_dir(job_id: str) -> Path:
+    """Engine workspace of a recap job (plan + checkpoints live here)."""
+    return settings.storage_root / "recap_output" / job_id / "workspace"
+
+
+def _load_recap_script_plan(job_id: str):
+    """(plan_path, plan dict) for a job whose script phase has finished."""
+    import json as _json
+
+    plan_path = _recap_workspace_dir(job_id) / "smart_sync_plan.json"
+    if not plan_path.is_file():
+        raise HTTPException(status_code=404, detail="Recap script not found")
+    try:
+        return plan_path, _json.loads(plan_path.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Recap script is unreadable")
+
+
 async def _run_recap_background_job(
     job_id: str,
     req: RecapConfigRequest,
@@ -1617,6 +1727,8 @@ async def _run_recap_background_job(
     chat_id: int,
     is_vip: bool = False,
     credit_deducted: bool = False,
+    phase: str = "full",
+    resume_source: Optional[str] = None,
 ):
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if not entry:
@@ -1674,6 +1786,16 @@ async def _run_recap_background_job(
             selected_voice = "my-MM-ThihaNeural"
             tts_engine = "edge_tts"
 
+        # Gemini TTS option (production-grade programme): the persona
+        # voice above stays as the per-segment FALLBACK voice, so a
+        # Gemini outage degrades to the persona engine line-by-line and
+        # is reported via the same fallback transparency fields.
+        gemini_voice = req.gemini_voice
+        if req.tts_engine == "gemini":
+            tts_engine = "gemini"
+            if not gemini_voice:
+                gemini_voice = "Kore" if is_female else "Charon"
+
         logo_pos_map = {
             "top-right": [0.82, 0.04],
             "top-left": [0.04, 0.04],
@@ -1685,7 +1807,12 @@ async def _run_recap_background_job(
 
         loop = asyncio.get_running_loop()
         from app.services.downloader import extract_first_url, unshorten_url, is_local_media
-        if is_local_media(req.url):
+        if phase == "render" and resume_source:
+            # Phase 2 of the script-review flow: the source is already on
+            # disk inside this job's own directory — no re-download, no
+            # URL re-validation (it never leaves the server).
+            canonical_source_url = str(resume_source)
+        elif is_local_media(req.url):
             canonical_source_url = str(req.url).strip('\'"')
         else:
             clean_source_url = extract_first_url(req.url) or req.url.strip()
@@ -1705,6 +1832,64 @@ async def _run_recap_background_job(
 
         max_dur_limit = 600 if is_vip else getattr(settings, "recap_free_max_duration_seconds", 120)
 
+        if phase == "script":
+            # ── Script-review phase 1: download + plan ONLY (no TTS/render).
+            # The job then waits in SCRIPT_READY until the user has reviewed
+            # / edited the narration and POSTs /recap/{id}/render.
+            entry["progress_label"] = "🎙️ [1/4] Transcription + translation (script review)..."
+            if is_local_media(canonical_source_url):
+                script_source = str(Path(canonical_source_url).resolve())
+                if not Path(script_source).is_file():
+                    raise FileNotFoundError(f"Source video not found: {script_source}")
+            else:
+                script_source, _dl_info = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        downloader.download_video,
+                        canonical_source_url,
+                        target_dir=str(job_dir),
+                        max_height=1080 if is_vip else 720,
+                    ),
+                )
+
+            from app.services.downloader import probe_local_media
+
+            _meta = probe_local_media(script_source)
+            _dur = float(_meta.get("duration", 0.0) or 0.0)
+            if _dur > max_dur_limit:
+                _m, _s = int(_dur // 60), int(_dur % 60)
+                raise ValueError(
+                    f"ဗီဒီယို ကြာချိန် ({_m:02d}:{_s:02d}) သည် {'VIP' if is_vip else 'အခမဲ့ (Free)'} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {int(max_dur_limit // 60)} မိနစ်) ထက် ကျော်လွန်နေပါသည်။"
+                )
+
+            from app.services.recap_engine.recap_pipeline import build_recap_script_plan
+
+            plan_res = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    build_recap_script_plan,
+                    script_source,
+                    job_dir=str(job_dir / "workspace"),
+                    narrative_style=req.story_style,
+                    is_female=is_female,
+                    source_title=entry.get("title") or Path(script_source).stem,
+                    progress_fn=progress_cb,
+                    source_language=req.source_language,
+                ),
+            )
+
+            entry["source_path"] = str(script_source)
+            entry["req_snapshot"] = req.model_dump()
+            entry["is_vip"] = bool(is_vip)
+            entry["credit_deducted"] = bool(credit_deducted)
+            entry["segments_count"] = int(plan_res.get("segments") or 0)
+            entry["status"] = "SCRIPT_READY"
+            entry["progress_percent"] = 100
+            entry["progress_step"] = "2/4"
+            entry["progress_label"] = "📝 Script ready — review & edit before rendering"
+            logger.info(f"Recap job {job_id}: script ready ({entry['segments_count']} segments), awaiting user review.")
+            return
+
         recap_fn = functools.partial(
             downloader.generate_recap_video,
             url_or_path=canonical_source_url,
@@ -1716,6 +1901,9 @@ async def _run_recap_background_job(
             voxcpm_control=voxcpm_control,
             voxcpm_ref_audio=voxcpm_ref_audio,
             is_female=is_female,
+            source_language=req.source_language,
+            render_quality=req.render_quality,
+            gemini_voice=gemini_voice,
             output_ratio=req.ratio,
             frame_fill=req.ratio_fill,
             crop_top=float(req.crop_top) / 100.0,
@@ -1763,6 +1951,51 @@ async def _run_recap_background_job(
             "srt": f"/api/recap/download/{job_id}/srt" if srt_path else None,
             "script": f"/api/recap/download/{job_id}/script" if script_path else None,
         }
+
+        # Optional Video Splitter post-process (Recapter parity): cut the
+        # FINISHED recap into labelled parts at narration pauses. It is
+        # part of the same single credit — never charged again. A split
+        # failure must not fail the job: the full video above stays the
+        # deliverable and the error is surfaced on the status response.
+        entry["parts"] = []
+        if req.split_video and video_path and Path(video_path).is_file():
+            try:
+                from app.services.recap_engine.recap_pipeline import find_binary
+                from app.services.recap_engine.video_splitter import split_rendered_video
+
+                entry["progress_label"] = "✂️ Cutting into parts (smart cut at narration pauses)..."
+                split_res = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        split_rendered_video,
+                        video_path,
+                        job_dir / "parts",
+                        part_minutes=float(req.split_minutes),
+                        smart_cut=True,
+                        render_quality=req.render_quality,
+                        ffmpeg=find_binary("ffmpeg"),
+                        ffprobe=find_binary("ffprobe"),
+                        log=lambda m: logger.info(f"Recap job {job_id}: {m}"),
+                    ),
+                )
+                real_parts = [p for p in split_res if p.get("path")]
+                if len(real_parts) >= 2:
+                    part_urls = []
+                    for p in real_parts:
+                        entry[f"part{p['n']}_path"] = p["path"]
+                        part_urls.append({
+                            "n": p["n"],
+                            "label": p.get("label") or "",
+                            "url": f"/api/recap/download/{job_id}/part{p['n']}",
+                        })
+                    entry["parts"] = part_urls
+                    entry["download_urls"]["parts"] = part_urls
+                    logger.info(f"Recap job {job_id}: split into {len(real_parts)} parts")
+                else:
+                    entry["split_note"] = "Video too short to split — delivered as one full video."
+            except Exception as split_err:
+                logger.warning(f"Recap job {job_id}: video split failed (full video kept): {split_err}")
+                entry["split_error"] = str(split_err)[:300]
 
         # Update Job in database
         try:
@@ -1974,7 +2207,7 @@ async def create_recap_job(
     db: AsyncSession = Depends(get_db_session),
     _gate: User = Depends(require_gate_verified),
 ):
-    """Submit 1-Click Pro Recap Job with complete ratio, audio, subtitle, and anti-copyright settings."""
+    """Submit 1-Click Pro Recap Job with complete ratio, audio, subtitle, and transformation settings."""
     # SSRF + local-file containment, before any probe, deduction, or queueing.
     _req_url = (req.url or "").strip()
     if _req_url.startswith(("http://", "https://")):
@@ -2074,6 +2307,12 @@ async def create_recap_job(
         "script_path": None,
         "download_urls": {},
         "error_message": None,
+        "script_review": bool(req.script_review),
+        "segments_count": None,
+        "split_video": bool(req.split_video),
+        "parts": [],
+        "split_error": None,
+        "split_note": None,
     }
 
     # Record Recap Job in database table for 24h history and tracking
@@ -2097,7 +2336,11 @@ async def create_recap_job(
 
     # Start background task with VIP tier flag for watermark control and credit tracking
     try:
-        asyncio.create_task(_run_recap_background_job(job_id, req, user.id, user.id, is_vip=is_vip, credit_deducted=deducted_credit))
+        asyncio.create_task(_run_recap_background_job(
+            job_id, req, user.id, user.id,
+            is_vip=is_vip, credit_deducted=deducted_credit,
+            phase="script" if req.script_review else "full",
+        ))
     except Exception:
         # The job never ran, so a deducted credit must not be lost.
         if deducted_credit:
@@ -2136,6 +2379,11 @@ async def get_recap_status(
             "fallback_used": bool(entry.get("fallback_used")),
             "fallback_segments": entry.get("fallback_segments", []),
             "download_urls": entry.get("download_urls", {}),
+            "script_review": bool(entry.get("script_review")),
+            "segments_count": entry.get("segments_count"),
+            "parts": entry.get("parts", []),
+            "split_error": entry.get("split_error"),
+            "split_note": entry.get("split_note"),
         }
 
     job = await _require_job_owner(db, job_id, user)
@@ -2143,6 +2391,22 @@ async def get_recap_status(
     is_success = (job.status == JobStatus.SUCCESS.value)
     is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
     _fb_used, _fb_segs = _recap_fallback_info(settings.storage_root / "recap_output" / job_id)
+    # Split parts survive in the job dir even after the registry entry is
+    # gone (24h cleanup window), so rebuild their URLs from disk.
+    _db_parts: list = []
+    if is_success:
+        _parts_dir = settings.storage_root / "recap_output" / job_id / "parts"
+        if _parts_dir.is_dir():
+            for _pf in sorted(_parts_dir.glob("recap_part_*.mp4")):
+                try:
+                    _pn = int(_pf.stem.rsplit("_", 1)[1])
+                except (IndexError, ValueError):
+                    continue
+                _db_parts.append({
+                    "n": _pn,
+                    "label": "",
+                    "url": f"/api/recap/download/{job_id}/part{_pn}",
+                })
     return {
         "id": job_id,
         "status": job.status,
@@ -2152,13 +2416,128 @@ async def get_recap_status(
         "progress_step": "4/4" if is_success else ("1/4" if is_active else ""),
         "progress_label": "Completed" if is_success else ("Processing in background..." if is_active else (job.error_message or "Failed")),
         "error_message": job.error_message,
+        "parts": _db_parts,
         "download_urls": {
             "video": f"/api/recap/download/{job_id}/video" if is_success else None,
             "audio": f"/api/recap/download/{job_id}/audio" if is_success else None,
             "srt": f"/api/recap/download/{job_id}/srt" if is_success else None,
             "script": f"/api/recap/download/{job_id}/script" if is_success else None,
+            "parts": _db_parts,
         },
     }
+
+
+@api_router.get("/recap/{job_id}/script")
+async def get_recap_script(
+    job_id: str,
+    user: User = Depends(get_current_user),
+):
+    """Script-review phase: the generated Burmese narration, line by line,
+    next to its source line (desktop Recapter 'Edit Text' parity)."""
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if not entry or not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    if entry.get("status") != "SCRIPT_READY":
+        raise HTTPException(status_code=409, detail="Recap script is not ready for review")
+
+    from app.services.recap_engine.script_editing import list_script_segments
+
+    _plan_path, plan = _load_recap_script_plan(job_id)
+    try:
+        segments = list_script_segments(plan)
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Recap script has no usable segments")
+    return {"job_id": job_id, "status": "SCRIPT_READY", "segments": segments}
+
+
+@api_router.put("/recap/{job_id}/script")
+async def update_recap_script(
+    job_id: str,
+    req: RecapScriptUpdateRequest,
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Save user edits into the plan (+ translation checkpoint). Only the
+    edited lines are re-voiced when rendering starts; validation problems
+    (English words, foreign letters, notes, mixed digits) come back as
+    warnings, mirroring the desktop editor."""
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if not entry or not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    if entry.get("status") != "SCRIPT_READY":
+        raise HTTPException(status_code=409, detail="Recap script is not editable now")
+    if not req.segments:
+        return {"success": True, "updated": 0, "warnings": {}}
+
+    import json as _json
+
+    from app.services.recap_engine.script_editing import apply_script_edits, atomic_write_json
+
+    plan_path, plan = _load_recap_script_plan(job_id)
+    translations = None
+    translations_path = _recap_workspace_dir(job_id) / "timestamp_translations.json"
+    if translations_path.is_file():
+        try:
+            translations = _json.loads(translations_path.read_text(encoding="utf-8"))
+        except Exception:
+            translations = None
+
+    try:
+        result = apply_script_edits(
+            plan,
+            translations,
+            [{"index": item.index, "narration": item.narration} for item in req.segments],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if result["updated"]:
+        atomic_write_json(plan_path, plan)
+        if translations is not None:
+            try:
+                atomic_write_json(translations_path, translations)
+            except Exception as exc:
+                logger.warning(f"Recap job {job_id}: plan saved, translation checkpoint not updated: {exc}")
+    return {
+        "success": True,
+        "updated": result["updated"],
+        "warnings": {str(k): v for k, v in result["warnings"].items()},
+    }
+
+
+@api_router.post("/recap/{job_id}/render")
+async def render_recap_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Script-review phase 2: start rendering with the (possibly edited)
+    script. No second credit is charged — the credit was taken when the
+    job was created; a render failure refunds it via the job runner."""
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if not entry or not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    if entry.get("status") != "SCRIPT_READY":
+        raise HTTPException(status_code=409, detail="Recap job is not waiting for render")
+
+    snapshot = entry.get("req_snapshot")
+    source_path = entry.get("source_path")
+    if not snapshot or not source_path or not Path(source_path).is_file():
+        raise HTTPException(status_code=409, detail="Recap job cannot be resumed (source missing)")
+
+    req = RecapConfigRequest(**snapshot)
+    entry["status"] = "RUNNING"
+    entry["progress_percent"] = 15
+    entry["progress_step"] = "3/4"
+    entry["progress_label"] = "🗣️ Rendering with your reviewed script..."
+    asyncio.create_task(_run_recap_background_job(
+        job_id, req, user.id, user.id,
+        is_vip=bool(entry.get("is_vip")),
+        credit_deducted=bool(entry.get("credit_deducted")),
+        phase="render",
+        resume_source=str(source_path),
+    ))
+    return {"success": True, "status": "RUNNING"}
 
 
 @api_router.get("/recap/stream/{job_id}/{file_type}")
@@ -2203,7 +2582,11 @@ async def download_recap_file(
         "srt": ("text/plain; charset=utf-8", f"subtitles_{job_id[:8]}.srt"),
         "script": ("text/plain; charset=utf-8", f"script_{job_id[:8]}.txt"),
     }
-    media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
+    _part_dl = re.fullmatch(r"part([1-9][0-9]?)", file_type or "")
+    if _part_dl:
+        media_type, filename = "video/mp4", f"recap_part_{int(_part_dl.group(1)):02d}_{job_id[:8]}.mp4"
+    else:
+        media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
 
     is_stream = "/stream/" in request.url.path or file_type in ["video", "audio"]
     disposition = "inline" if is_stream else "attachment"
@@ -2705,7 +3088,7 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "currency": "MMK",
                 "features": [
                     "Full HD 1080p Movie Recap ဗီဒီယို (၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "5 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
-                    "🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)" if is_my else "100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
+                    "🎬 Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)",
                     "Watermark လုံးဝမပါ (Clean 1080p)" if is_my else "Zero Watermark (Clean 1080p)",
                 ],
                 "badge": "Recap Starter 🎬",
@@ -2721,7 +3104,7 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "currency": "MMK",
                 "features": [
                     "Full HD 1080p Movie Recap ဗီဒီယို (၂၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
-                    "🛡️ 100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)" if is_my else "100% Anti-Copyright Smart Shield (Smart Blur, Auto-Mirror & Zoom)",
+                    "🎬 Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)",
                     "ဇာတ်လမ်းစတိုင် ၅ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်) & ရွှေရောင်စာတန်းထိုး ၄ မျိုး" if is_my else "5 Narration Styles (Viral Hook, Dramatic, POV) & 4 Subtitle Presets",
                     "Watermark လုံးဝမပါ (Clean 1080p) & Channel Logo သီးသန့်ထည့်ခွင့်" if is_my else "Zero Watermark (Clean 1080p) & Custom Channel Logo Branding",
                     "Multi-Threaded High-Speed Video Rendering Node" if is_my else "Multi-Threaded High-Speed Video Rendering Node",
@@ -2740,7 +3123,7 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "features": [
                     "Voice မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား — နှစ်မျိုးလုံးကို တစ်ပြိုင်တည်း စမ်းသုံးနိုင်သည်" if is_my else "30 Voice Minutes + 5 Recap Videos — try both products in one plan",
                     "VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်" if is_my else "VoxCPM2 Reference Audio Cloning (3-30s sample)",
-                    "🛡️ 100% Anti-Copyright Smart Shield & Watermark လုံးဝမပါ" if is_my else "100% Anti-Copyright Smart Shield & Zero Watermark",
+                    "🎬 Smart Video Transform & Watermark လုံးဝမပါ" if is_my else "Smart Video Transform & Zero Watermark",
                 ],
                 "badge": "Combined Starter ✨",
             },
@@ -2757,7 +3140,7 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                     "Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော် အသံသွင်းခွင့်)" if is_my else "Full Voice Clone Studio Pro (500 Mins - 8+ Hours)",
                     "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Movie Recap Studio Pro (60 Full HD Videos - Max 10 mins/video)",
                     "👑 VoxCPM2 Reference Audio အသံတူပွားမှု (Custom Clone) အပြည့်အစုံ" if is_my else "Full VoxCPM2 Reference Audio Custom Cloning",
-                    "🛡️ 100% Commercial Copyright Safe & Monetization Ready" if is_my else "100% Commercial Copyright Safe & Monetization Ready",
+                    "🎬 Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)" if is_my else "Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)",
                     "Dedicated High-Speed Node Priority & 24/7 VIP Direct 1-on-1 Support" if is_my else "Dedicated High-Speed Cloud Node & 24/7 VIP Direct 1-on-1 Support",
                 ],
                 "badge": "Agency Master Suite 👑" if is_my else "Agency Master Suite 👑",

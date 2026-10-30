@@ -18,7 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from recap_planner import RecapPlanBuilder
-from core import EdgeSmartSync, probe_duration, extract_preview_with_overlays
+from core import EdgeSmartSync, probe_duration, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ def run_recap_pipeline(
     narrative_style: str = "narrator",
     voice_speed: str = "+12%",
     tts_engine: str = "edge_tts",
+    source_language: str = "auto",
+    render_quality: str = "standard",
+    gemini_voice: Optional[str] = None,
     voxcpm_control: Optional[str] = None,
     voxcpm_ref_audio: Optional[str] = None,
     is_female: bool = False,
@@ -71,6 +74,7 @@ def run_recap_pipeline(
     sub_lines: int = 1,
     sub_font_size: int = 16,
     sub_style: str = "yellow",
+    sub_font: str = "default",
     title_text: Optional[str] = None,
     logo_path: Optional[str] = None,
     logo_position: Optional[list[float]] = None,
@@ -86,7 +90,7 @@ def run_recap_pipeline(
     4. Gemini English -> Myanmar translation + audit
     5. Microsoft Edge TTS Myanmar narration (Thiha or Nilar)
     6. Smart Sync re-timing (30 fps frame-lock, max 1.25x speed, distributed freeze)
-    7. Anti-Copyright transformations (Mirror horizontal, Zoom crop, Ratio)
+    7. Video transformations (Mirror horizontal, Zoom crop, Ratio)
     8. Original subtitle & watermark blur boxes
     9. Custom branding (Title badge, Logo) & Synced Myanmar subtitles burn
     10. Final Muxing to MP4
@@ -129,7 +133,8 @@ def run_recap_pipeline(
     target_job_dir.mkdir(parents=True, exist_ok=True)
     _log(f"🎬 Starting Recap English → Myanmar: {source.name}")
     _log(f"📁 Job Workspace: {target_job_dir}")
-    _log(f"🎙️ TTS Engine: {tts_engine.upper() if str(tts_engine).lower() == 'voxcpm' else 'Edge TTS'} | Voice: {voice}")
+    _engine_label = {"voxcpm": "VOXCPM", "gemini": "GEMINI TTS"}.get(str(tts_engine).lower(), "Edge TTS")
+    _log(f"🎙️ TTS Engine: {_engine_label} | Voice: {voice}")
 
     gemini_env = Path(env_path) if env_path else root_dir / ".env"
 
@@ -148,6 +153,7 @@ def run_recap_pipeline(
         gemini_request_timeout_seconds=45,
         narrative_style=narrative_style,
         is_female=bool(is_female),
+        source_language=source_language,
     )
 
     plan_path, plan = planner.build(
@@ -169,6 +175,27 @@ def run_recap_pipeline(
     if blur_watermark:
         # Standard top-right watermark
         blur_boxes.append({"x": 0.74, "y": 0.03, "w": 0.24, "h": 0.12})
+    if burn_subtitles:
+        # Auto-cover the SOURCE video's own burned-in subtitle band. The preset box
+        # above only covers the Myanmar subtitle position (y≈0.85); source dialogue
+        # subs usually sit higher (≈0.70) and would otherwise survive — mirrored into
+        # unreadable mirror-writing by the default mirror pass.
+        try:
+            for band in detect_source_subtitle_bands(ffmpeg_bin, ffprobe_bin, source, target_job_dir, log=_log):
+                top = band["y"] - band["h"] / 2.0
+                bot = band["y"] + band["h"] / 2.0
+                covered = False
+                for eb in blur_boxes:
+                    e_top = eb["y"] - eb["h"] / 2.0
+                    e_bot = eb["y"] + eb["h"] / 2.0
+                    overlap = max(0.0, min(bot, e_bot) - max(top, e_top))
+                    if overlap >= 0.5 * band["h"]:
+                        covered = True
+                        break
+                if not covered:
+                    blur_boxes.append(band)
+        except Exception as det_err:
+            _log(f"⚠️ Source subtitle band auto-blur skipped: {det_err}")
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
         overlays["blur_strength"] = 18
@@ -186,11 +213,17 @@ def run_recap_pipeline(
 
     if extra_text and str(extra_text).strip():
         overlays["extra_text"] = str(extra_text).strip()
-        # Anti-Crop Strategy: Position at lower-third center [0.50, 0.68] right above subtitles
-        # This prevents users from cropping top or bottom without destroying subtitles and video composition!
-        overlays["extra_text_position"] = [0.50, 0.68]
-        overlays["extra_text_font_size"] = 30
-        overlays["extra_text_opacity"] = 0.88
+        # Free-tier brand watermark v3 (2026-10-30): the only production
+        # caller passes extra_text for free-tier branding (webapp/api.py,
+        # non-VIP jobs). core.apply_production_overlays renders
+        # overlays["watermark"] as a full-frame diagonal tiled pattern of
+        # the bot username "@voiceclonepro_bot" (crop-resistant — the v1
+        # corner-only mark could simply be cropped away, and the v2
+        # corner lockup looked cheap; both were rejected by the owner),
+        # instead of the old centered title panel at [0.50, 0.68] / 0.88
+        # opacity. See watermark-v3-2026-10-30.md.
+        overlays["watermark"] = True
+        overlays["watermark_pattern_opacity"] = 0.19
 
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
@@ -198,7 +231,16 @@ def run_recap_pipeline(
     overlays["sub_lines"] = int(sub_lines)
     overlays["subtitles_font_size"] = int(sub_font_size)
     overlays["sub_style"] = str(sub_style or "yellow")
+    _font_key, _font_family = resolve_subtitle_font(sub_font)
+    overlays["sub_font"] = _font_key
+    overlays["subtitles_font"] = _font_family
     overlays["tts_engine"] = str(tts_engine or "edge_tts")
+    # Production-grade options, consumed by EdgeSmartSync (core.py):
+    # render_quality picks the encoder preset; gemini_voice names the
+    # Gemini TTS voice when tts_engine == "gemini".
+    overlays["render_quality"] = str(render_quality or "standard").lower()
+    if gemini_voice:
+        overlays["gemini_voice"] = str(gemini_voice)
     if voxcpm_control:
         overlays["voxcpm_control"] = str(voxcpm_control)
     if voxcpm_ref_audio:
@@ -209,7 +251,7 @@ def run_recap_pipeline(
         overlays["bgm_volume"] = float(bgm_volume or 0.18)
 
     # Step 2: RENDER (Edge TTS or VoxCPM 2 + Smart Sync Video)
-    tts_lbl = "VoxCPM 2 Cloud Voice" if str(tts_engine).lower() == "voxcpm" else "Microsoft Edge TTS"
+    tts_lbl = {"voxcpm": "VoxCPM 2 Cloud Voice", "gemini": "Gemini TTS"}.get(str(tts_engine).lower(), "Microsoft Edge TTS")
     _progress(3, 4, f"🗣️ [3/4] {tts_lbl} & Smart Sync Render...")
     runner = EdgeSmartSync(
         job_dir=target_job_dir,
@@ -256,6 +298,81 @@ def run_recap_pipeline(
     }
 
 
+def build_recap_script_plan(
+    source_video_path: str | Path,
+    job_dir: Optional[str | Path] = None,
+    narrative_style: str = "narrator",
+    is_female: bool = False,
+    source_title: Optional[str] = None,
+    source_language: str = "auto",
+    log_fn: Optional[Callable[[str], None]] = None,
+    progress_fn: Optional[Callable[[int, int, str], None]] = None,
+    env_path: Optional[str | Path] = None,
+) -> Dict[str, Any]:
+    """Phase 1 of the two-phase recap (script review flow, 2026-10-29).
+
+    Runs ONLY the planner — Whisper transcription, Gemini story context and
+    translation — and stops with ``smart_sync_plan.json`` (+ checkpoints)
+    written into *job_dir*, so the user can review/edit the Burmese
+    narration before any TTS or rendering happens (the desktop Recapter
+    tool's "Edit Text" step).
+
+    A later :func:`run_recap_pipeline` call with the same *job_dir* reuses
+    this plan verbatim through the planner's reuse path — including any
+    user edits saved into the plan file — so phase 2 never re-transcribes
+    or re-translates.
+    """
+    source = Path(source_video_path).resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Source video not found: {source}")
+
+    def _log(msg: str) -> None:
+        logger.info(str(msg))
+        if log_fn:
+            try:
+                log_fn(str(msg))
+            except Exception:
+                pass
+
+    ffprobe_bin = find_binary("ffprobe")
+    root_dir = HERE.parent
+    if not job_dir:
+        import hashlib
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in source.stem)[:40] or "recap_job"
+        sig = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:8]
+        target_job_dir = root_dir / "downloads" / f"recap_{safe_name}_{sig}"
+    else:
+        target_job_dir = Path(job_dir).resolve()
+    target_job_dir.mkdir(parents=True, exist_ok=True)
+
+    gemini_env = Path(env_path) if env_path else root_dir / ".env"
+    planner = RecapPlanBuilder(
+        runtime_root=HERE,
+        gemini_env_path=gemini_env if gemini_env.is_file() else None,
+        ffprobe_path=ffprobe_bin,
+        log=_log,
+        progress=progress_fn or (lambda cur, tot, lbl: None),
+        should_stop=lambda: False,
+        gemini_text_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash"),
+        gemini_request_timeout_seconds=45,
+        narrative_style=narrative_style,
+        is_female=bool(is_female),
+        source_language=source_language,
+    )
+    plan_path, plan = planner.build(
+        source=source,
+        job_dir=target_job_dir,
+        source_title=source_title or source.stem,
+        reuse=True,
+    )
+    return {
+        "plan_path": str(plan_path),
+        "job_dir": str(target_job_dir),
+        "segments": len(plan.get("segments", [])),
+        "plan": plan,
+    }
+
+
 def generate_recap_preview(
     source_video_path: str | Path,
     output_image_path: Optional[str | Path] = None,
@@ -269,6 +386,7 @@ def generate_recap_preview(
     sub_lines: int = 1,
     sub_font_size: int = 16,
     sub_style: str = "yellow",
+    sub_font: str = "default",
     sample_text: str = "",
     output_ratio: str = "Original",
     frame_fill: str = "blur",
@@ -313,6 +431,9 @@ def generate_recap_preview(
     overlays["sub_lines"] = int(sub_lines)
     overlays["subtitles_font_size"] = int(sub_font_size)
     overlays["sub_style"] = str(sub_style or "yellow")
+    _p_font_key, _p_font_family = resolve_subtitle_font(sub_font)
+    overlays["sub_font"] = _p_font_key
+    overlays["subtitles_font"] = _p_font_family
 
     if logo_enabled and logo_path:
         overlays["logo_enabled"] = True

@@ -1156,6 +1156,9 @@ class MediaDownloader:
         narrative_style: str = "narrator",
         voice_speed: str = "+0%",
         tts_engine: str = "edge_tts",
+        source_language: str = "auto",
+        render_quality: str = "standard",
+        gemini_voice: Optional[str] = None,
         voxcpm_control: Optional[str] = None,
         voxcpm_ref_audio: Optional[str] = None,
         is_female: bool = False,
@@ -1195,7 +1198,7 @@ class MediaDownloader:
         Executes the full Recap English -> Myanmar workflow:
         If given a URL, downloads the source video first.
         Then runs Whisper -> Gemini Translation -> Edge TTS Myanmar -> Smart Sync -> Final Video.
-        Applies Anti-Copyright enhancements: Flip/Mirror, Zoom, Blur Subtitles/Watermark, Burn Synced Myanmar Subs.
+        Applies video transformations: Flip/Mirror, Zoom, Blur Subtitles/Watermark, Burn Synced Myanmar Subs.
         """
         if run_recap_pipeline is None:
             raise ImportError("recap_engine is not available.")
@@ -1244,7 +1247,7 @@ class MediaDownloader:
         except Exception as probe_err:
             logger.debug(f"Duration limit check skipped on probe error: {probe_err}")
 
-        # 2. Run the full recap engine pipeline with Anti-Copyright & Branding
+        # 2. Run the full recap engine pipeline with transformations and branding
         recap_res = run_recap_pipeline(
             source_video_path=source_video_path,
             job_dir=os.path.join(dest_dir, "workspace"),
@@ -1252,6 +1255,9 @@ class MediaDownloader:
             narrative_style=narrative_style,
             voice_speed=voice_speed,
             tts_engine=tts_engine,
+            source_language=source_language,
+            render_quality=render_quality,
+            gemini_voice=gemini_voice,
             voxcpm_control=voxcpm_control,
             voxcpm_ref_audio=voxcpm_ref_audio,
             is_female=is_female,
