@@ -430,6 +430,7 @@ function toggleLanguage() {
     setLanguage(nextLang);
     loadCuratedVoices();
     loadUserProfile();
+    updateRecapSplitCostHint();
 }
 
 // ── Navigation (Tabs) ───────────────────────────────────────────────────────
@@ -480,6 +481,7 @@ async function loadUserProfile() {
         if (!res.ok) return;
         const data = await res.json();
         state.user = data;
+        updateRecapSplitCostHint();
 
         if (data) {
             updateTutorialUI(data);
@@ -1165,6 +1167,52 @@ function notifyRecapSplitAutoEnabled() {
         : "✂️ This video is longer than 10 minutes, so it will be processed in parts — split output was enabled automatically, and you will receive every part.", 'info');
 }
 
+// Segmented (over-cap) recaps are charged 1 credit PER PART. This
+// mirrors the server's planning (_recap_estimate_part_count in api.py
+// → plan_parts over the same target): parts of min(split, cap−30s),
+// with a tiny tail joining the previous part instead of becoming its
+// own. Real cuts move only later (narration pauses), so the actual
+// count can be lower than this estimate, never higher.
+function estimateRecapSegmentParts(durationSec, splitMinutes) {
+    if (!durationSec || durationSec <= 0) return 1;
+    const target = Math.min((splitMinutes || 3) * 60, recapNormalMaxSeconds() - 30);
+    if (target <= 0) return 1;
+    const minTail = Math.min(20, target / 4);
+    let parts = 0, start = 0;
+    while (start + target < durationSec - 0.05) {
+        const cut = start + target;
+        if (durationSec - cut < minTail) break;
+        parts++;
+        start = cut;
+    }
+    return parts + 1;
+}
+
+function updateRecapSplitCostHint() {
+    const hint = document.getElementById("recap-split-cost-hint");
+    if (!hint) return;
+    const toggle = document.getElementById("recap-split-toggle");
+    const dur = state.recapSourceDuration || 0;
+    // The per-part estimate applies only to the segmented path: split
+    // on, source over the per-job cap, VIP, non-admin (admins are
+    // exempt and never charged). Splitting a ≤cap video afterwards
+    // stays inside its single credit, so no estimate is shown there.
+    const show = !!(toggle && toggle.checked && dur > recapNormalMaxSeconds()
+        && state.user?.is_vip && !state.user?.is_admin);
+    if (!show) {
+        hint.classList.add("hidden");
+        hint.textContent = "";
+        return;
+    }
+    const est = estimateRecapSegmentParts(dur, state.recapSplitMinutes || 3);
+    let text = tf("recap_split_cost_estimate", { parts: est, credits: est });
+    const lowBalance = (state.user?.recap_credits ?? 0) < est;
+    if (lowBalance) text += " " + t("recap_split_cost_low_balance");
+    hint.textContent = text;
+    hint.style.color = lowBalance ? "#f87171" : "";
+    hint.classList.remove("hidden");
+}
+
 // ── TAB 2: Recap Studio Configuration & Visual Mockup ──────────────────────
 function setupRecapVisualEditor() {
     const sliderBlurY = document.getElementById("slider-blur-y");
@@ -1227,6 +1275,7 @@ function setupRecapVisualEditor() {
             canvasVideo.onloadedmetadata = () => {
                 const dur = canvasVideo.duration || 60;
                 state.recapSourceDuration = dur;
+                updateRecapSplitCostHint();
                 if (canvasVideo.videoWidth && canvasVideo.videoHeight) {
                     state.recapSourceWidth = canvasVideo.videoWidth;
                     state.recapSourceHeight = canvasVideo.videoHeight;
@@ -1273,6 +1322,7 @@ function setupRecapVisualEditor() {
             state.uploadedVideoPath = data.local_path;
             state.recapVideoTitle = data.title || file.name;
             state.recapSourceDuration = data.duration_seconds;
+            updateRecapSplitCostHint();
             if (data.width && data.height) {
                 state.recapSourceWidth = data.width;
                 state.recapSourceHeight = data.height;
@@ -2084,6 +2134,7 @@ function setupRecapVisualEditor() {
             splitMinBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapSplitMinutes = parseInt(btn.getAttribute("data-split-min") || "3", 10) || 3;
+            updateRecapSplitCostHint();
         });
     });
     const splitToggle = document.getElementById("recap-split-toggle");
@@ -2091,6 +2142,7 @@ function setupRecapVisualEditor() {
         splitToggle.addEventListener("change", () => {
             const wrap = document.getElementById("recap-split-minutes-wrap");
             if (wrap) wrap.classList.toggle("hidden", !splitToggle.checked);
+            updateRecapSplitCostHint();
         });
     }
 
@@ -2371,6 +2423,7 @@ function setupRecapVisualEditor() {
                 state.recapVideoTitle = data.title || "Movie Recap Video";
 
                 state.recapSourceDuration = data.duration_seconds || 0;
+                updateRecapSplitCostHint();
                 const maxAllowed = recapNormalMaxSeconds();
                 let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
                 let splitAutoEnabled = false;
@@ -2930,6 +2983,12 @@ function startRecapJobPolling(jobId) {
                         let note = "";
                         if (data.split_error) note = (t("recap_split_failed") || "Part ခွဲတာ မအောင်မြင်ပါ — အပြည့်အစုံ ဗီဒီယို အပေါ်မှာ ရပါတယ်။");
                         else if (data.split_note) note = data.split_note;
+                        // Segmented jobs: show the exact parts count and
+                        // the credits the job actually used (1 per part).
+                        if (!data.split_error && data.parts_count > 1 && data.credits_charged) {
+                            const costLine = tf("recap_segmented_cost", { parts: data.parts_count, credits: data.credits_charged });
+                            note = note ? (note + " " + costLine) : costLine;
+                        }
                         noteEl.textContent = note;
                         noteEl.classList.toggle("hidden", !note);
                     }
@@ -4403,6 +4462,7 @@ async function loadUserHistory() {
                             <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
                         </div>
                         <div class="history-item-body">🔗 ${escapeHtml(j.input_snippet || "Movie Recap")}</div>
+                        ${(j.parts_count && j.parts_count > 1) ? `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>` : ''}
                         <div class="history-item-footer">
                             <span>⏱️ ${j.time_ago}</span>
                             <div class="history-btn-row">

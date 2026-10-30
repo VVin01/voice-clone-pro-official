@@ -286,15 +286,17 @@ async def _recap_active_job_count(db, user_id: int) -> int:
     return len(ids)
 
 
-async def _refund_recap_credit(user_id: int) -> bool:
-    """Refund one recap credit in its own session/commit.
+async def _refund_recap_credits(user_id: int, count: int) -> bool:
+    """Refund `count` recap credits in its own session/commit.
 
     Separate from the job-status update so a status-write failure cannot
     silently swallow the refund, and idempotent at the call site: callers
     only invoke it once per failed job (see _run_recap_background_job,
     which marks the registry entry as refunded after a successful commit).
-    Returns True when a credit was actually added.
+    Returns True when credits were actually added.
     """
+    if count <= 0:
+        return False
     try:
         from app.db.session import AsyncSessionLocal
 
@@ -302,12 +304,106 @@ async def _refund_recap_credit(user_id: int) -> bool:
             user = await session.get(User, user_id)
             if not user or settings.is_admin(user.id):
                 return False
-            user.recap_credits = (getattr(user, "recap_credits", 0) or 0) + 1
+            user.recap_credits = (getattr(user, "recap_credits", 0) or 0) + count
             await session.commit()
             return True
     except Exception as exc:
         logger.warning(f"Recap credit refund failed for user {user_id}: {exc}")
         return False
+
+
+async def _refund_recap_credit(user_id: int) -> bool:
+    """Refund one recap credit (see _refund_recap_credits)."""
+    return await _refund_recap_credits(user_id, 1)
+
+
+async def _charge_recap_credits(user_id: int, count: int) -> bool:
+    """Deduct `count` recap credits in its own session/commit.
+
+    All-or-nothing: when the balance cannot cover the full amount,
+    NOTHING is deducted and False is returned. Admins are never charged
+    (returns True without touching the balance). Used for the segmented
+    recap per-part charge; the normal 1-credit submit deduction stays
+    inline in create_recap_job.
+    """
+    if count <= 0:
+        return True
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            if not user:
+                return False
+            if settings.is_admin(user.id):
+                return True
+            balance = getattr(user, "recap_credits", 0) or 0
+            if balance < count:
+                return False
+            user.recap_credits = balance - count
+            await session.commit()
+            return True
+    except Exception as exc:
+        logger.warning(f"Recap credit charge failed for user {user_id}: {exc}")
+        return False
+
+
+class _RecapInsufficientCreditsError(Exception):
+    """A segmented recap job whose exact per-part charge the user's
+    balance cannot cover. Raised in the worker BEFORE any part renders;
+    nothing beyond the submit-time credit has been taken, and the
+    normal failure path refunds that, leaving the user exactly whole.
+    """
+
+    def __init__(self, total_parts: int):
+        self.total_parts = int(total_parts)
+        super().__init__(
+            f"💳 Recap Credit မလုံလောက်ပါ — ဒီဗီဒီယိုရှည်ကို အပိုင်း {self.total_parts} ပိုင်း "
+            f"ခွဲထုတ်ရမှာဖြစ်ပြီး အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {self.total_parts} Credits "
+            "လိုအပ်ပါတယ်။ Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
+        )
+
+
+async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: int) -> int:
+    """Bring a segmented recap job's charge to 1 credit PER PART.
+
+    Owner decision 2026-10-30: a >10-minute recap split into parts
+    costs 1 credit per part, not 1 credit for the whole job. The first
+    credit was already taken at submit (the normal recap charge); once
+    the worker knows the exact part count N this charges the remaining
+    N − already_charged in ONE ledger action, before any part renders.
+    Raises _RecapInsufficientCreditsError — charging nothing extra —
+    when the balance cannot cover the difference. Returns the job's
+    total charged credits.
+    """
+    already = int(entry.get("credits_charged") or 0)
+    extra = int(total_parts) - already
+    if extra > 0 and not await _charge_recap_credits(user_id, extra):
+        raise _RecapInsufficientCreditsError(total_parts)
+    entry["credits_charged"] = int(total_parts)
+    entry["credit_deducted"] = True
+    entry["parts_count"] = int(total_parts)
+    return int(total_parts)
+
+
+async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
+    """Refund whatever a recap job was actually charged — 1 credit for
+    a normal job, N credits for a segmented one — exactly once per job
+    (the registry flag makes repeat failure handlers no-ops). Mirrors
+    the normal failed-recap semantics: a failed job's full charge is
+    returned, so the user is left exactly whole."""
+    if entry.get("credit_refunded"):
+        return False
+    amount = int(entry.get("credits_charged") or 0)
+    if amount <= 0 and entry.get("credit_deducted"):
+        amount = 1
+    if amount <= 0:
+        return False
+    if await _refund_recap_credits(user_id, amount):
+        entry["credit_refunded"] = True
+        entry["credits_refunded"] = amount
+        return True
+    return False
 
 
 def _voice_job_error_status(reason: str) -> int:
@@ -1746,8 +1842,11 @@ class RecapConfigRequest(BaseModel):
     tts_engine: str = "voxcpm"
     gemini_voice: Optional[str] = None
     # - split_video: after a successful render, also cut the finished
-    #   video into labelled parts (smart cut at narration pauses).
-    #   Included in the same single recap credit — never charged extra.
+    #   video into labelled parts (smart cut at narration pauses) —
+    #   that post-split stays included in the job's credit. For an
+    #   over-cap source, split_video instead routes the job through
+    #   segmented processing, which is charged 1 credit PER PART
+    #   (owner decision 2026-10-30; see _top_up_recap_segment_charge).
     split_video: bool = False
     split_minutes: int = Field(3, ge=1, le=10)
 
@@ -1854,6 +1953,46 @@ def _recap_max_duration_allowed(is_vip: bool, is_admin: bool = False) -> int:
     if is_vip:
         return int(getattr(settings, "recap_max_duration_seconds", 600) or 600)
     return int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120)
+
+
+def _recap_segment_target_seconds(split_minutes: float, cap_seconds: float) -> float:
+    """Part-length target (seconds) the worker hands the segmenter:
+    the user's chosen split size, clamped 30 s below the cap so the
+    smart cut's +20 s narration-pause slack still respects the cap.
+    This is the exact expression the worker uses (keep them in sync)."""
+    return min(float(split_minutes) * 60.0, float(cap_seconds) - 30.0)
+
+
+def _recap_estimate_part_count(
+    duration_seconds: float,
+    split_minutes: float,
+    cap_seconds: float,
+) -> int:
+    """Estimated part count for an over-cap source, computed BEFORE
+    Start: shown in the Mini App split UI and used for the submit-time
+    balance pre-check. It mirrors the segmenter's own planning exactly
+    — plan_parts over the same target. Without narration levels the
+    cuts land exactly on target; real cuts only move LATER (to a
+    narration pause, never earlier), so the actual part count can be
+    lower than this estimate, never higher.
+    """
+    if not duration_seconds or duration_seconds <= 0:
+        return 1
+    target = _recap_segment_target_seconds(split_minutes, cap_seconds)
+    if target <= 0:
+        return 1
+    from app.services.recap_engine.video_splitter import plan_parts
+
+    return max(1, len(plan_parts(float(duration_seconds), target, smart=False, levels=None)))
+
+
+def _recap_segment_balance_ok(*, is_admin: bool, balance: int, estimated_parts: int) -> bool:
+    """Submit-time pre-check for the segmented path: the user's balance
+    must cover the estimated per-part total (1 credit per part).
+    Admins are exempt — they are never charged."""
+    if is_admin:
+        return True
+    return int(balance or 0) >= max(1, int(estimated_parts or 1))
 
 
 def _recap_submit_duration_decision(
@@ -2133,6 +2272,15 @@ async def _run_recap_background_job(
     if not entry:
         return
 
+    # Credit accounting for this job (older registry entries — e.g.
+    # admin re-queues — may predate these keys): the amount actually
+    # charged so far, which the failure paths refund in full.
+    entry.setdefault("credit_deducted", bool(credit_deducted))
+    entry.setdefault(
+        "credits_charged",
+        int(entry.get("credits_charged") or (1 if credit_deducted else 0)),
+    )
+
     entry["status"] = "RUNNING"
     entry["progress_percent"] = 15
     entry["progress_step"] = "1/4"
@@ -2344,9 +2492,10 @@ async def _run_recap_background_job(
                         job_dir / "source_segments",
                         # Target below the cap: plan_parts may extend a
                         # cut by up to 20 s to reach a narration pause.
-                        part_seconds=min(
-                            float(req.split_minutes) * 60.0,
-                            max_dur_limit - 30.0,
+                        # (Shared helper: the submit-time estimate and
+                        # this call must use the exact same target.)
+                        part_seconds=_recap_segment_target_seconds(
+                            req.split_minutes, max_dur_limit
                         ),
                         ffmpeg=find_binary("ffmpeg"),
                         ffprobe=find_binary("ffprobe"),
@@ -2354,6 +2503,21 @@ async def _run_recap_background_job(
                     ),
                 )
                 segmented_mode = len(segment_files) >= 2
+                if segmented_mode:
+                    # Per-part charging (owner decision 2026-10-30):
+                    # the job costs 1 credit PER PART. The exact total
+                    # is charged NOW — one top-up ledger action over
+                    # the submit-time single credit — BEFORE any part
+                    # renders. If the balance cannot cover it, the job
+                    # fails here and the failure path refunds the
+                    # submit credit, leaving the user exactly whole.
+                    total_parts = len(segment_files)
+                    await _top_up_recap_segment_charge(user_id, entry, total_parts)
+                    credit_deducted = True
+                    entry["progress_label"] = (
+                        f"💳 အပိုင်း {total_parts} ပိုင်း × 1 Credit = {total_parts} Credits "
+                        "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်..."
+                    )
             canonical_source_url = local_source
 
         def _make_recap_fn(source, target_dir):
@@ -2473,7 +2637,8 @@ async def _run_recap_background_job(
             entry["download_urls"]["parts"] = part_urls
             entry["split_note"] = (
                 f"မူရင်းဗီဒီယို ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်း {len(part_urls)} ပိုင်း "
-                "ခွဲပြီး လုပ်ပေးထားပါတယ် — အပိုင်းအားလုံး ဒေါင်းလုဒ်ရယူနိုင်ပါတယ်။"
+                "ခွဲပြီး လုပ်ပေးထားပါတယ် — အပိုင်းအားလုံး ဒေါင်းလုဒ်ရယူနိုင်ပါတယ်။ "
+                f"(အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {int(entry.get('credits_charged') or len(part_urls))} Credits သုံးခဲ့ပါတယ်။)"
             )
 
         # Optional Video Splitter post-process (Recapter parity): cut the
@@ -2614,8 +2779,7 @@ async def _run_recap_background_job(
         except Exception:
             pass
         if credit_deducted and not entry.get("credit_refunded"):
-            if await _refund_recap_credit(user_id):
-                entry["credit_refunded"] = True
+            await _refund_recap_job_charge(user_id, entry)
         raise
     except Exception as e:
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
@@ -2637,9 +2801,10 @@ async def _run_recap_background_job(
         # Refund in its own commit, after the status update, so a
         # status-write failure cannot swallow the refund. The registry
         # flag makes a second failure handler for the same job a no-op.
+        # The amount is whatever this job was actually charged: 1
+        # credit for a normal job, N for a segmented one.
         if credit_deducted and not entry.get("credit_refunded"):
-            if await _refund_recap_credit(user_id):
-                entry["credit_refunded"] = True
+            await _refund_recap_job_charge(user_id, entry)
 
         if settings.bot_token and chat_id:
             try:
@@ -2649,7 +2814,7 @@ async def _run_recap_background_job(
                 bot_err = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
                     err_short = html.escape(str(e)[:180])
-                    refund_note = "✅ သင့် Recap Credit (1c) ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။" if credit_deducted else ""
+                    refund_note = f"✅ သင့် Recap Credit ({int(entry.get('credits_refunded') or 1)}c) ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။" if credit_deducted else ""
                     await bot_err.send_message(
                         chat_id=chat_id,
                         text=(
@@ -2793,14 +2958,17 @@ async def create_recap_job(
         except Exception as probe_err:
             logger.warning(f"Could not pre-probe video duration for {req.url}: {probe_err}")
 
+    submit_decision = "ok"
+    estimated_parts = None
     if checked_duration and checked_duration > max_duration_allowed:
-        decision = _recap_submit_duration_decision(
+        submit_decision = _recap_submit_duration_decision(
             is_vip=is_vip,
             is_admin=is_admin_user,
             split_video=bool(req.split_video),
             script_review=bool(req.script_review),
             duration_seconds=float(checked_duration),
         )
+        decision = submit_decision
         if decision != "segment":
             dur_mins = int(checked_duration) // 60
             dur_secs = int(checked_duration) % 60
@@ -2815,6 +2983,32 @@ async def create_recap_job(
             raise HTTPException(
                 status_code=400,
                 detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ " + hint,
+            )
+        # Segmented path (owner decision 2026-10-30): 1 credit PER
+        # PART. Estimate the part count from the duration and the
+        # chosen split size (the same target the segmenter will use)
+        # and pre-check the balance now, so a user who clearly cannot
+        # cover the total is blocked here — before any deduction or
+        # queueing — instead of failing later inside the worker. The
+        # exact charge happens in the worker once the real part count
+        # is known; it can only be lower than this estimate.
+        estimated_parts = _recap_estimate_part_count(
+            float(checked_duration),
+            float(req.split_minutes),
+            float(max_duration_allowed),
+        )
+        if not _recap_segment_balance_ok(
+            is_admin=is_admin_user,
+            balance=credits,
+            estimated_parts=estimated_parts,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"💳 ဒီဗီဒီယိုရှည်ကို အပိုင်း {estimated_parts} ပိုင်း ခွဲထုတ်ရမှာဖြစ်ပြီး "
+                    f"အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {estimated_parts} Credits လိုအပ်ပါတယ်။ "
+                    f"လက်ကျန် Credit ({credits}c) မလုံလောက်ပါ — Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
+                ),
             )
 
     # Concurrency: at most settings.max_concurrent_jobs_per_user (default
@@ -2857,6 +3051,13 @@ async def create_recap_job(
         "parts": [],
         "split_error": None,
         "split_note": None,
+        # Per-part credit accounting (segmented path): credits_charged
+        # starts at the submit-time single credit and is topped up to
+        # the exact part count in the worker before any part renders.
+        "credit_deducted": deducted_credit,
+        "credits_charged": 1 if deducted_credit else 0,
+        "credits_estimated": estimated_parts,
+        "parts_count": None,
     }
 
     # Record Recap Job in database table for 24h history and tracking
@@ -2898,6 +3099,8 @@ async def create_recap_job(
         "story_style": req.story_style,
         "ratio": req.ratio,
         "remaining_credits": getattr(user, "recap_credits", 0),
+        "estimated_parts": estimated_parts,
+        "credits_charged": 1 if deducted_credit else 0,
         "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
     }
 
@@ -2928,6 +3131,10 @@ async def get_recap_status(
             "parts": entry.get("parts", []),
             "split_error": entry.get("split_error"),
             "split_note": entry.get("split_note"),
+            "segmented": bool(entry.get("segmented")),
+            "parts_count": entry.get("parts_count") or (len(entry.get("parts") or []) or None),
+            "credits_charged": entry.get("credits_charged"),
+            "credits_estimated": entry.get("credits_estimated"),
         }
 
     job = await _require_job_owner(db, job_id, user)
@@ -2961,6 +3168,9 @@ async def get_recap_status(
         "progress_label": "Completed" if is_success else ("Processing in background..." if is_active else (job.error_message or "Failed")),
         "error_message": job.error_message,
         "parts": _db_parts,
+        "segmented": len(_db_parts) >= 2,
+        "parts_count": len(_db_parts) or None,
+        "credits_charged": None,
         "download_urls": {
             "video": f"/api/recap/download/{job_id}/video" if is_success else None,
             "audio": f"/api/recap/download/{job_id}/audio" if is_success else None,
@@ -3311,9 +3521,13 @@ async def get_user_history(
                 }
 
         raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
+        _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None
+        _hist_parts = ((_hist_entry or {}).get("parts") or []) if is_recap else []
         out.append({
             "id": j.id,
             "job_type": "RECAP" if is_recap else "VOICE_CLONE",
+            "parts_count": (len(_hist_parts) or None) if is_recap else None,
+            "credits_charged": (_hist_entry or {}).get("credits_charged") if is_recap else None,
             "engine": j.engine,
             "fallback_used": (not is_recap) and j.engine == "edge_fallback",
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
