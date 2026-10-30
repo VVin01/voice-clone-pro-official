@@ -1347,6 +1347,50 @@ function updateRecapSplitCostHint() {
     hint.classList.remove("hidden");
 }
 
+// ── Recap Live Preview visibility state machine ─────────────────────────
+// Preview-dependent UI (the canvas mockup, the drag hint and the canvas
+// toolbar group inside the settings accordion) stays hidden until a
+// source is actually READY. Before that, the Step-2 card shows a tidy
+// empty state — or a loading state while a link is being extracted or a
+// file is uploading — so no orphan blur/subtitle controls float over an
+// empty canvas. Visibility only: no payloads or defaults change here.
+function setRecapPreviewState(mode) {
+    state.recapPreviewState = mode;
+    const ready = mode === "ready";
+    const emptyBox = document.getElementById("recap-preview-empty");
+    const emptyInner = document.getElementById("recap-preview-empty-inner");
+    const loadingInner = document.getElementById("recap-preview-loading-inner");
+    const mockupWrap = document.getElementById("recap-mockup-wrap");
+    const hint = document.getElementById("preview-hint-tag");
+    const controlsGroup = document.getElementById("recap-preview-controls-group");
+    if (emptyBox) emptyBox.classList.toggle("hidden", ready);
+    if (emptyInner) emptyInner.classList.toggle("hidden", mode === "loading");
+    if (loadingInner) loadingInner.classList.toggle("hidden", mode !== "loading");
+    if (mockupWrap) {
+        mockupWrap.classList.toggle("hidden", !ready);
+        if (ready) {
+            mockupWrap.classList.remove("preview-reveal");
+            void mockupWrap.offsetWidth; // restart the reveal animation
+            mockupWrap.classList.add("preview-reveal");
+        }
+    }
+    if (hint) hint.classList.toggle("hidden", !ready);
+    if (controlsGroup) controlsGroup.classList.toggle("hidden", !ready);
+}
+window.setRecapPreviewState = setRecapPreviewState;
+
+// True when some usable source preview exists (link thumbnail, an
+// uploaded file, or a live local <video> preview in the canvas).
+function recapHasSource() {
+    const cv = document.getElementById("canvas-video-player");
+    return Boolean(
+        state.recapThumbnailUrl ||
+        state.uploadedVideoPath ||
+        (cv && cv.src && !cv.classList.contains("hidden"))
+    );
+}
+window.recapHasSource = recapHasSource;
+
 // ── TAB 2: Recap Studio Configuration & Visual Mockup ──────────────────────
 function setupRecapVisualEditor() {
     const sliderBlurY = document.getElementById("slider-blur-y");
@@ -1363,6 +1407,9 @@ function setupRecapVisualEditor() {
     const canvas = document.getElementById("video-bg-canvas");
     const mockupFrame = document.getElementById("recap-mockup-frame");
     const canvasVideo = document.getElementById("canvas-video-player");
+
+    // Preview starts in the tidy empty state; controls reveal on ready.
+    setRecapPreviewState("empty");
 
     // ── 0. Dual Mode Video Source Switcher (URL vs Direct File Upload) ──
     const btnModeUrl = document.getElementById("btn-source-mode-url");
@@ -1392,6 +1439,7 @@ function setupRecapVisualEditor() {
     async function handleVideoFileSelect(file) {
         if (!file) return;
         haptic("medium");
+        setRecapPreviewState("loading");
 
         // Instant client-side video preview via Object URL
         const objectUrl = URL.createObjectURL(file);
@@ -1524,6 +1572,7 @@ function setupRecapVisualEditor() {
 
             if (progressBar) progressBar.style.width = "100%";
             if (progressLabel) progressLabel.innerText = "✅ Video Ready for 1080p Recap!";
+            setRecapPreviewState("ready");
             setTimeout(() => {
                 if (progressWrap) progressWrap.classList.add("hidden");
             }, 1500);
@@ -1532,6 +1581,18 @@ function setupRecapVisualEditor() {
         } catch (err) {
             showStudioToast("Video upload error: " + err.message, 'error');
             if (progressWrap) progressWrap.classList.add("hidden");
+            // Upload failed: drop the local preview and fall back to the
+            // empty state (unless an earlier uploaded source is usable).
+            if (!state.uploadedVideoPath) {
+                if (canvasVideo) {
+                    try { canvasVideo.pause(); } catch (e) { /* noop */ }
+                    canvasVideo.removeAttribute("src");
+                    canvasVideo.load();
+                    canvasVideo.classList.add("hidden");
+                }
+                if (recapInfoBox) recapInfoBox.classList.add("hidden");
+            }
+            setRecapPreviewState(recapHasSource() ? "ready" : "empty");
         }
     }
 
@@ -2535,6 +2596,7 @@ function setupRecapVisualEditor() {
             btnAnalyze.disabled = true;
             const originalText = btnAnalyze.innerText;
             btnAnalyze.innerText = "⏳...";
+            setRecapPreviewState("loading");
 
             try {
                 const res = await fetch("/api/downloader/extract", {
@@ -2633,7 +2695,9 @@ function setupRecapVisualEditor() {
                 if (seekBadge) {
                     seekBadge.innerText = `⏱️ 00:05s / ${data.estimated_duration || "00:00"}s`;
                 }
+                setRecapPreviewState("ready");
             } catch (err) {
+                setRecapPreviewState(recapHasSource() ? "ready" : "empty");
                 const msg = err.message || "";
                 if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
                     showStudioToast(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် လင့်ခ်ဖြင့် တိုက်ရိုက်စစ်ဆေးမရပါခင်ဗျာ။\n\nဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။`, 'warning');
@@ -2659,6 +2723,7 @@ function setupRecapVisualEditor() {
                 state.recapThumbnailUrl = null;
                 updateCanvasMockupVisuals();
                 if (recapInfoBox) recapInfoBox.classList.add("hidden");
+                setRecapPreviewState(recapHasSource() ? "ready" : "empty");
                 return;
             }
 

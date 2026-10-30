@@ -299,11 +299,26 @@
                                 <span class="step-num-pill">2</span>
                                 <span data-i18n="preview_label">Live Canvas & စာတန်းဖုံး အနေအထားချိန်ရန် (Preview)</span>
                             </div>
-                            <span class="hint-tag" data-i18n="preview_hint">↕️ ဖိဆွဲ၍ (Drag) နေရာညှိနိုင်ပါသည်</span>
+                            <span class="hint-tag hidden" id="preview-hint-tag" data-i18n="preview_hint">↕️ ဖိဆွဲ၍ (Drag) နေရာညှိနိုင်ပါသည်</span>
+                        </div>
+
+                        <!-- Empty / loading state: shown until a source is ready.
+                             The canvas mockup + its toolbar stay hidden before
+                             that so the card never shows orphan controls. -->
+                        <div class="preview-empty-state mt-2" id="recap-preview-empty">
+                            <div class="preview-empty-inner" id="recap-preview-empty-inner">
+                                <span class="preview-empty-icon">🎬</span>
+                                <span class="preview-empty-title" data-i18n="recap_preview_empty_title">အရင် ဗီဒီယို ထည့်ပေးပါ</span>
+                                <span class="preview-empty-desc" data-i18n="recap_preview_empty_desc">အဆင့် ၁ မှာ Video Link ထည့်ပါ (သို့) ဖိုင် တင်ပါ — ဗီဒီယို အဆင်သင့် ဖြစ်တာနဲ့ စာတန်း နဲ့ Blur နေရာ ချိန်ညှိဖို့ ဒီနေရာမှာ ပေါ်လာပါမယ်။</span>
+                            </div>
+                            <div class="preview-empty-inner hidden" id="recap-preview-loading-inner">
+                                <span class="preview-empty-icon spinner">⏳</span>
+                                <span class="preview-empty-title" data-i18n="recap_preview_loading">ဗီဒီယို စစ်ဆေးနေသည်…</span>
+                            </div>
                         </div>
 
                         <!-- Dynamic Aspect Ratio Video Canvas -->
-                        <div class="mockup-screen-container mt-2">
+                        <div class="mockup-screen-container mt-2 hidden" id="recap-mockup-wrap">
                             <div class="mockup-screen ratio-9-16" id="recap-mockup-frame">
                                 <div class="video-bg-placeholder mirrored" id="video-bg-canvas">
                                     <!-- Blurred source backdrop for the letterbox area in
@@ -448,7 +463,7 @@
                         </button>
 
                         <div class="advanced-accordion-body hidden" id="recap-advanced-body">
-                    <div class="card glass settings-group mt-3">
+                    <div class="card glass settings-group mt-3 hidden" id="recap-preview-controls-group">
                                 <div class="canvas-compact-toolbar mt-2" id="canvas-compact-toolbar">
                                     <!-- Segmented Navigation Pills -->
                                     <div class="toolbar-tabs-nav">
