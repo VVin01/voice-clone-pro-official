@@ -93,6 +93,7 @@ const state = {
     recapLogo: true,
     recapLogoPos: "top-right",
     recapSubStyle: "yellow",
+    recapSubFont: "default",
     recapFontSize: 16,
     recapLines: 1,
     recapSplitMinutes: 3,
@@ -2185,6 +2186,13 @@ function setupRecapVisualEditor() {
         const px = fontScaleMap[size] || 13;
         previewText.style.fontSize = `${px}px`;
 
+        const fontMap = {
+            "default": "'Noto Sans Myanmar', sans-serif",
+            "serif": "'Noto Serif Myanmar', serif",
+            "padauk": "'Padauk', sans-serif"
+        };
+        previewText.style.fontFamily = fontMap[state.recapSubFont || "default"] || fontMap["default"];
+
         if (lines === 1) {
             previewBox.classList.remove("two-lines");
             previewBox.classList.add("one-line");
@@ -2227,6 +2235,18 @@ function setupRecapVisualEditor() {
         pill.addEventListener("click", () => {
             haptic("selection");
             syncSubtitleLines(pill.getAttribute("data-lines"));
+        });
+    });
+
+    // 12b. Subtitle Font Picker (default / serif / padauk)
+    const subFontBtns = document.querySelectorAll("#recap-sub-font-picker .pill-btn");
+    subFontBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            subFontBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapSubFont = btn.getAttribute("data-font") || "default";
+            updateSubtitleVisualPreview();
         });
     });
 
@@ -2679,6 +2699,7 @@ async function handleStartRecap() {
             sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
             sub_style: state.recapSubStyle || "yellow",
             sub_font_size: state.recapFontSize || 16,
+            sub_font: state.recapSubFont || "default",
             sub_lines: state.recapLines || 1,
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",

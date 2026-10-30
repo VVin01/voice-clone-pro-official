@@ -1500,6 +1500,7 @@ class RecapConfigRequest(BaseModel):
     sub_style: str = "yellow"         # yellow, white, boxed, neon
     sub_font_size: int = Field(16, ge=12, le=30)
     sub_lines: int = Field(1, ge=1, le=2)
+    sub_font: str = "default"         # default, serif, padauk
     include_logo: bool = True
     logo_pos: str = "top-right"       # top-right, top-left, bottom-right, bottom-left, top-center
     duration_seconds: Optional[int] = None
@@ -1525,6 +1526,13 @@ class RecapConfigRequest(BaseModel):
     #   Included in the same single recap credit — never charged extra.
     split_video: bool = False
     split_minutes: int = Field(3, ge=1, le=10)
+
+    @field_validator("sub_font")
+    @classmethod
+    def _check_sub_font(cls, v: str) -> str:
+        from app.services.recap_engine.core import resolve_subtitle_font
+        key, _ = resolve_subtitle_font(v)
+        return key
 
     @field_validator("source_language")
     @classmethod
@@ -1919,6 +1927,7 @@ async def _run_recap_background_job(
             sub_lines=req.sub_lines,
             sub_font_size=req.sub_font_size,
             sub_style=req.sub_style,
+            sub_font=req.sub_font,
             logo_position=logo_pos_coords if req.include_logo else None,
             extra_text=watermark_text,
             is_vip=is_vip,
