@@ -1348,8 +1348,9 @@ function updateRecapSplitCostHint() {
 }
 
 // ── Recap Live Preview visibility state machine ─────────────────────────
-// Preview-dependent UI (the canvas mockup, the drag hint and the canvas
-// toolbar group inside the settings accordion) stays hidden until a
+// Preview-dependent UI (the canvas mockup, the drag hint, the canvas
+// toolbar group inside the settings accordion and the Ratio/Fill, Speed
+// and Transform cards) stays hidden until a
 // source is actually READY. Before that, the Step-2 card shows a tidy
 // empty state — or a loading state while a link is being extracted or a
 // file is uploading — so no orphan blur/subtitle controls float over an
@@ -1363,6 +1364,9 @@ function setRecapPreviewState(mode) {
     const mockupWrap = document.getElementById("recap-mockup-wrap");
     const hint = document.getElementById("preview-hint-tag");
     const controlsGroup = document.getElementById("recap-preview-controls-group");
+    const ratioGroup = document.getElementById("recap-preview-ratio-group");
+    const speedGroup = document.getElementById("recap-preview-speed-group");
+    const transformGroup = document.getElementById("recap-preview-transform-group");
     if (emptyBox) emptyBox.classList.toggle("hidden", ready);
     if (emptyInner) emptyInner.classList.toggle("hidden", mode === "loading");
     if (loadingInner) loadingInner.classList.toggle("hidden", mode !== "loading");
@@ -1376,6 +1380,9 @@ function setRecapPreviewState(mode) {
     }
     if (hint) hint.classList.toggle("hidden", !ready);
     if (controlsGroup) controlsGroup.classList.toggle("hidden", !ready);
+    if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
+    if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
+    if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
 }
 window.setRecapPreviewState = setRecapPreviewState;
 

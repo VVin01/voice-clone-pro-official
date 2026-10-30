@@ -110,6 +110,50 @@ def test_empty_state_css_and_reveal_animation_exist():
     assert "@keyframes previewRevealIn" in css
 
 
+def test_ratio_speed_transform_cards_start_hidden():
+    html = _html()
+    # Owner addendum (2026-10-31): the Ratio/Fill, Narration Speed and
+    # Transform cards join the preview-dependent set — they ship hidden
+    # exactly like the canvas toolbar group.
+    for card_id in ("recap-preview-ratio-group", "recap-preview-speed-group",
+                    "recap-preview-transform-group"):
+        assert f'id="{card_id}"' in html
+        tag = html.split(f'id="{card_id}"')[0].rsplit("<div", 1)[1]
+        assert "hidden" in tag, card_id
+    # Each picker lives inside its own gated card (fill sits with ratio).
+    ratio_card = html.split('id="recap-preview-ratio-group"')[1] \
+        .split('id="recap-preview-speed-group"')[0]
+    assert 'id="recap-ratio-picker"' in ratio_card
+    assert 'id="recap-fill-picker"' in ratio_card
+    speed_card = html.split('id="recap-preview-speed-group"')[1] \
+        .split('id="recap-preview-transform-group"')[0]
+    assert 'id="recap-speed-picker"' in speed_card
+    transform_card = html.split('id="recap-preview-transform-group"')[1][:6000]
+    assert 'id="btn-toggle-mirror"' in transform_card
+    assert 'id="recap-crop-presets"' in transform_card
+
+
+def test_state_machine_toggles_ratio_speed_transform_cards():
+    js = _js()
+    for el in ("recap-preview-ratio-group", "recap-preview-speed-group",
+               "recap-preview-transform-group"):
+        assert f'getElementById("{el}")' in js
+    assert 'ratioGroup.classList.toggle("hidden", !ready)' in js
+    assert 'speedGroup.classList.toggle("hidden", !ready)' in js
+    assert 'transformGroup.classList.toggle("hidden", !ready)' in js
+
+
+def test_hidden_cards_keep_their_default_values():
+    html = _html()
+    # Hiding is visibility-only: the shipped defaults the payload reads
+    # (active pills / toggles) must be exactly as before.
+    assert '<button class="ratio-btn active" data-ratio="9:16">' in html
+    assert '<button class="pill-btn active" data-fill="blur"' in html
+    assert '<button class="pill-btn active" data-speed="+12%"' in html
+    assert '<button class="pill-btn active" data-zoom="1.06"' in html
+    assert 'class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true"' in html
+
+
 def test_preview_state_i18n_keys_exist_in_both_languages():
     i18n = _i18n()
     for key in ("recap_preview_empty_title:", "recap_preview_empty_desc:",
