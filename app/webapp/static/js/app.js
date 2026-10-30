@@ -168,6 +168,49 @@ function isAuthFailure(res) {
 }
 window.isAuthFailure = isAuthFailure;
 
+// -- 403 membership gate: turn a dead-end API error into the join reminder --
+// Gated writes return 403 MEMBERSHIP_REQUIRED (or GATE_NOT_CONFIGURED).
+// Before this, app.js had NO handling for them: generate/recap surfaced
+// the raw English server detail as an error toast with no way forward.
+// Now any such 403 refreshes the gate banner (the server committed fresh
+// live-check flags together with the 403, so the per-chat chips are
+// accurate), scrolls it into view and points the user at the join +
+// re-check actions. The response itself is returned untouched.
+let gateNoticeAt = 0;
+async function showGateReminder() {
+    const now = Date.now();
+    if (now - gateNoticeAt < 1500) return; // one nudge per burst of calls
+    gateNoticeAt = now;
+    try { await loadUserProfile(); } catch (e) { /* banner refresh is best-effort */ }
+    const banner = document.getElementById("gate-banner");
+    if (banner) {
+        banner.classList.remove("hidden");
+        try { banner.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+    }
+    showStudioToast(t("gate_required_toast"), "warning");
+}
+window.showGateReminder = showGateReminder;
+(function installGateFetchInterceptor() {
+    if (window.__gateFetchInstalled) return;
+    window.__gateFetchInstalled = true;
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+        const res = await origFetch(...args);
+        try {
+            const url = typeof args[0] === "string" ? args[0] : ((args[0] && args[0].url) || "");
+            if (res.status === 403 && url.includes("/api/") && !url.includes("/api/user/verify-membership")) {
+                res.clone().json().then((data) => {
+                    const detail = (data && data.detail) || "";
+                    if (detail.includes("MEMBERSHIP_REQUIRED") || detail.includes("GATE_NOT_CONFIGURED")) {
+                        showGateReminder();
+                    }
+                }).catch(() => {});
+            }
+        } catch (e) { /* the reminder must never break the app */ }
+        return res;
+    };
+})();
+
 // Authenticated image loading: /api/recap/frame and /api/receipts/*
 // now require the Telegram header, which a plain <img src> cannot send.
 // External thumbnails (YouTube etc.) are returned untouched.
@@ -826,6 +869,25 @@ function clearVoiceText() {
 }
 
 
+// Per-chat status chips inside the gate banner: "📢 Channel · ✓ Joined"
+// vs "👥 Group · Not joined yet", so the user can see exactly which one
+// they still miss instead of guessing (join-reminder UX, 2026-10-30).
+function renderGateChips(channelOk, groupOk) {
+    const ch = document.getElementById("gate-chip-channel");
+    const gr = document.getElementById("gate-chip-group");
+    if (ch) {
+        ch.innerText = "📢 Channel · " + (channelOk ? t("gate_chip_joined") : t("gate_chip_missing"));
+        ch.classList.toggle("joined", !!channelOk);
+        ch.classList.toggle("missing", !channelOk);
+    }
+    if (gr) {
+        gr.innerText = "👥 Group · " + (groupOk ? t("gate_chip_joined") : t("gate_chip_missing"));
+        gr.classList.toggle("joined", !!groupOk);
+        gr.classList.toggle("missing", !groupOk);
+    }
+}
+window.renderGateChips = renderGateChips;
+
 // ── UI/UX (2026-10-29): gate banner + generate preflight ──────────────────
 // Gate banner uses only fields /api/user/me already returns (gate branch);
 // it never changes job logic. GATE_NOT_CONFIGURED is a server-config error,
@@ -851,6 +913,7 @@ function updateGateBanner(data) {
     if (desc) desc.innerText = t("gate_banner_desc");
     if (chLink && data.channel_invite_link) chLink.href = data.channel_invite_link;
     if (grLink && data.group_invite_link) grLink.href = data.group_invite_link;
+    renderGateChips(data.channel_verified, data.group_verified);
     if (status) status.innerText = "";
     banner.classList.remove("hidden");
 }
@@ -864,6 +927,9 @@ async function verifyMembershipFromBanner() {
     try {
         const res = await fetch("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() });
         const data = await res.json();
+        // The endpoint returns fresh LIVE per-chat flags: repaint the
+        // chips either way so a still-missing chat is obvious at a glance.
+        renderGateChips(data.channel_verified, data.group_verified);
         if (data.verified) {
             showStudioToast(t("gate_verified_toast"), "success");
             loadUserProfile();

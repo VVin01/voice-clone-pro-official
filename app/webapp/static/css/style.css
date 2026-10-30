@@ -205,6 +205,10 @@ a { color: var(--gold-2); }
 .gate-banner-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .gate-banner-status { font-size: 13px; color: var(--gold-2); min-height: 0; }
 .gate-banner-status:empty { display: none; }
+.gate-banner-chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.gate-chip { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--gold-border); color: var(--text-2); background: rgba(255, 255, 255, 0.5); }
+.gate-chip.joined { color: #137333; border-color: rgba(19, 115, 51, 0.45); }
+.gate-chip.missing { color: #b3261e; border-color: rgba(179, 38, 30, 0.35); }
 
 /* ── Bottom navigation ──────────────────────────────────────────────── */
 .bottom-nav {

@@ -13,6 +13,7 @@ from app.services.custom_voice import (
     create_custom_voice_request,
     get_user_custom_voice_quota,
 )
+from app.services.gate import build_gate_reminder_text, is_gate_configured, verify_user_membership
 from app.services.i18n import t
 from app.services.ledger import get_or_create_user
 from app.ui.helpers import safe_edit_message
@@ -21,6 +22,7 @@ from app.ui.keyboards import (
     custom_voice_cancel_kb,
     custom_voice_hub_kb,
     custom_voice_vip_promo_kb,
+    membership_gate_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,12 +47,38 @@ async def handle_custom_voice_menu(
     if session is not None:
         user, _ = await get_or_create_user(session, user_id)
         lang = user.language_code
+        gate_ok, _ = await verify_user_membership(session, user, callback.bot)
+        gate_ch, gate_gp = user.channel_verified, user.group_verified
         quota = await get_user_custom_voice_quota(session, user_id)
     else:
         async with AsyncSessionLocal() as s:
             user, _ = await get_or_create_user(s, user_id)
             lang = user.language_code
+            gate_ok, _ = await verify_user_membership(s, user, callback.bot)
+            gate_ch, gate_gp = user.channel_verified, user.group_verified
+            await s.commit()
             quota = await get_user_custom_voice_quota(s, user_id)
+
+    # Membership gate at this entry point too: non-members get the shared
+    # join reminder (per-chat status + join buttons + live re-check),
+    # never the custom-voice flow. Live check, fail closed — mirrors
+    # /start. Only when the gate is configured (see clone.py note).
+    if not gate_ok and is_gate_configured():
+        await safe_edit_message(
+            callback,
+            build_gate_reminder_text(lang, gate_ch, gate_gp),
+            reply_markup=membership_gate_kb(
+                channel_link=settings.channel_invite_link,
+                group_link=settings.group_invite_link,
+                lang=lang,
+            ),
+            parse_mode="HTML",
+        )
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
 
     # Free users see VIP promotion card
     if not (quota["is_purchased"] or quota["is_admin"]):

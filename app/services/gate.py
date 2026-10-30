@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.schema import User
+from app.services.i18n import t
 from app.services.ledger import award_welcome_bonus, confirm_referral_and_reward
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,51 @@ def is_gate_configured() -> bool:
     operator has not set REQUIRED_CHANNEL_ID / REQUIRED_GROUP_ID yet.
     """
     return bool(settings.required_channel_id) and bool(settings.required_group_id)
+
+
+def gate_missing_chats(channel_ok: bool, group_ok: bool) -> list[str]:
+    """Which gate chats are still missing: [] / ["channel"] / ["group"] / both."""
+    missing: list[str] = []
+    if not channel_ok:
+        missing.append("channel")
+    if not group_ok:
+        missing.append("group")
+    return missing
+
+
+def build_gate_reminder_text(lang: str, channel_ok: bool, group_ok: bool) -> str:
+    """The single shared join-reminder message (bot surface).
+
+    Friendly premium copy plus a per-chat status line so the user can
+    see exactly which of the two chats they still miss, e.g.
+    "📢 Channel — ✓ Joined" / "👥 Group — Not joined yet". Paired with
+    membership_gate_kb() (both join URL buttons + the gate:verify
+    re-check button) at every bot block point: /start, language pick,
+    voice-clone entry and custom-voice entry.
+    """
+
+    def _mark(ok: bool) -> str:
+        return t("gate_status_joined", lang) if ok else t("gate_status_missing", lang)
+
+    return "\n".join(
+        [
+            t("membership_gate_title", lang),
+            "",
+            t("membership_gate_desc", lang),
+            "",
+            t("membership_gate_status_channel", lang, status=_mark(channel_ok)),
+            t("membership_gate_status_group", lang, status=_mark(group_ok)),
+        ]
+    )
+
+
+def gate_still_missing_text(lang: str, channel_ok: bool, group_ok: bool) -> str:
+    """Short alert naming the chat(s) still missing after a failed re-check."""
+    names = [
+        t("gate_name_channel", lang) if chat == "channel" else t("gate_name_group", lang)
+        for chat in gate_missing_chats(channel_ok, group_ok)
+    ]
+    return t("membership_still_missing", lang, missing=" + ".join(names))
 
 
 async def check_telegram_membership(bot: Bot | None, chat_id: str | int, user_id: int) -> bool:

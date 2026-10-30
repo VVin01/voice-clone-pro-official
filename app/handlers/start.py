@@ -11,7 +11,11 @@ from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.handlers.menu import render_main_menu
 from app.services.broadcast import mark_user_blocked
-from app.services.gate import verify_user_membership
+from app.services.gate import (
+    build_gate_reminder_text,
+    gate_still_missing_text,
+    verify_user_membership,
+)
 from app.services.i18n import t
 from app.services.ledger import get_or_create_user
 from app.ui.helpers import safe_edit_message
@@ -64,7 +68,7 @@ async def handle_start(message: Message, command: CommandObject):
 
         if not is_verified:
             await session.commit()
-            text = f"{t('membership_gate_title', lang)}\n\n{t('membership_gate_desc', lang)}"
+            text = build_gate_reminder_text(lang, user.channel_verified, user.group_verified)
             kb = membership_gate_kb(
                 channel_link=settings.channel_invite_link,
                 group_link=settings.group_invite_link,
@@ -104,7 +108,7 @@ async def handle_set_language(callback: CallbackQuery):
 
         if not is_verified:
             await session.commit()
-            text = f"{t('membership_gate_title', lang_code)}\n\n{t('membership_gate_desc', lang_code)}"
+            text = build_gate_reminder_text(lang_code, user.channel_verified, user.group_verified)
             kb = membership_gate_kb(
                 channel_link=settings.channel_invite_link,
                 group_link=settings.group_invite_link,
@@ -137,8 +141,21 @@ async def handle_gate_verify(callback: CallbackQuery):
 
         if not is_verified:
             await session.commit()
+            # Refresh the reminder in place with the LIVE per-chat status
+            # (which chat is still missing) and name it in the alert too,
+            # instead of leaving the stale generic gate message behind.
+            reminder = build_gate_reminder_text(lang, user.channel_verified, user.group_verified)
+            kb = membership_gate_kb(
+                channel_link=settings.channel_invite_link,
+                group_link=settings.group_invite_link,
+                lang=lang,
+            )
+            await safe_edit_message(callback, reminder, reply_markup=kb, parse_mode="HTML")
             try:
-                await callback.answer(t("membership_not_verified", lang), show_alert=True)
+                await callback.answer(
+                    gate_still_missing_text(lang, user.channel_verified, user.group_verified),
+                    show_alert=True,
+                )
             except Exception:
                 pass
             return
