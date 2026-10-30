@@ -183,6 +183,9 @@ async function showGateReminder() {
     if (now - gateNoticeAt < 1500) return; // one nudge per burst of calls
     gateNoticeAt = now;
     try { await loadUserProfile(); } catch (e) { /* banner refresh is best-effort */ }
+    // A gated write just 403'd: re-run the LIVE entry check too — if the
+    // user left a chat, the whole app re-locks, not just a banner nudge.
+    if (window.runEntryGateCheck) runEntryGateCheck("gate-403");
     const banner = document.getElementById("gate-banner");
     if (banner) {
         banner.classList.remove("hidden");
@@ -481,6 +484,8 @@ async function loadUserProfile() {
         if (!res.ok) return;
         const data = await res.json();
         state.user = data;
+        // Admins are never entry-gate locked (see entry-gate section).
+        if (data.is_admin) unlockEntryGate();
         updateRecapSplitCostHint();
 
         if (data) {
@@ -875,19 +880,19 @@ function clearVoiceText() {
 // Per-chat status chips inside the gate banner: "📢 Channel · ✓ Joined"
 // vs "👥 Group · Not joined yet", so the user can see exactly which one
 // they still miss instead of guessing (join-reminder UX, 2026-10-30).
+function paintGateChip(el, label, ok) {
+    if (!el) return;
+    el.innerText = label + " · " + (ok ? t("gate_chip_joined") : t("gate_chip_missing"));
+    el.classList.toggle("joined", !!ok);
+    el.classList.toggle("missing", !ok);
+}
+
 function renderGateChips(channelOk, groupOk) {
-    const ch = document.getElementById("gate-chip-channel");
-    const gr = document.getElementById("gate-chip-group");
-    if (ch) {
-        ch.innerText = "📢 Channel · " + (channelOk ? t("gate_chip_joined") : t("gate_chip_missing"));
-        ch.classList.toggle("joined", !!channelOk);
-        ch.classList.toggle("missing", !channelOk);
-    }
-    if (gr) {
-        gr.innerText = "👥 Group · " + (groupOk ? t("gate_chip_joined") : t("gate_chip_missing"));
-        gr.classList.toggle("joined", !!groupOk);
-        gr.classList.toggle("missing", !groupOk);
-    }
+    // Same chips, two surfaces: the top banner and the entry-gate lock.
+    paintGateChip(document.getElementById("gate-chip-channel"), "📢 Channel", channelOk);
+    paintGateChip(document.getElementById("gate-chip-group"), "👥 Group", groupOk);
+    paintGateChip(document.getElementById("gate-lock-chip-channel"), "📢 Channel", channelOk);
+    paintGateChip(document.getElementById("gate-lock-chip-group"), "👥 Group", groupOk);
 }
 window.renderGateChips = renderGateChips;
 
@@ -948,6 +953,135 @@ async function verifyMembershipFromBanner() {
 }
 
 window.verifyMembership = verifyMembershipFromBanner; // compat: old voice2 verify name
+
+// ── Mini App ENTRY GATE LOCK (entry-gate, 2026-10-30) ────────────────────
+// The banner above only warns; this lock ENFORCES at entry. The page
+// loads already locked (body.gate-locked + #gate-lock visible) and the
+// app unlocks only when a LIVE POST /api/user/verify-membership check
+// returns verified=true — never from the cached /api/user/me flags.
+// The check re-runs when the app regains visibility/focus (returning
+// from Telegram after joining — or after leaving) and every 60s while
+// open, so join-then-leave re-locks an already-open app. Admins are
+// never locked: the verify endpoint treats them as verified, and a
+// /api/user/me admin flag force-unlocks as a belt-and-braces guard.
+// GATE_NOT_CONFIGURED stays a distinct lock (contact admin), it never
+// silently unlocks. A failed check (network/401) also stays locked —
+// fail-closed, mirroring the server's gated writes.
+const entryGate = { locked: true, checking: false, lastCheckAt: 0, mode: "member" };
+
+function lockEntryGate() {
+    const overlay = document.getElementById("gate-lock");
+    if (overlay) overlay.classList.remove("hidden");
+    document.body.classList.add("gate-locked");
+    entryGate.locked = true;
+}
+
+function unlockEntryGate() {
+    const overlay = document.getElementById("gate-lock");
+    if (overlay) overlay.classList.add("hidden");
+    document.body.classList.remove("gate-locked");
+    entryGate.locked = false;
+}
+window.unlockEntryGate = unlockEntryGate;
+
+function setEntryGateMode(mode, data) {
+    entryGate.mode = mode;
+    const title = document.getElementById("gate-lock-title");
+    const desc = document.getElementById("gate-lock-desc");
+    const chips = document.querySelector(".gate-lock-chips");
+    const chLink = document.getElementById("gate-lock-link-channel");
+    const grLink = document.getElementById("gate-lock-link-group");
+    if (mode === "not-configured") {
+        if (title) { title.setAttribute("data-i18n", "gate_not_configured_title"); title.innerText = t("gate_not_configured_title"); }
+        if (desc) { desc.setAttribute("data-i18n", "gate_not_configured_desc"); desc.innerText = t("gate_not_configured_desc"); }
+        if (chips) chips.classList.add("hidden");
+        if (chLink) chLink.classList.add("hidden");
+        if (grLink) grLink.classList.add("hidden");
+        return;
+    }
+    if (title) { title.setAttribute("data-i18n", "gate_lock_title"); title.innerText = t("gate_lock_title"); }
+    if (desc) { desc.setAttribute("data-i18n", "gate_lock_desc"); desc.innerText = t("gate_lock_desc"); }
+    if (chips) chips.classList.remove("hidden");
+    if (chLink) { chLink.classList.remove("hidden"); if (data && data.channel_invite_link) chLink.href = data.channel_invite_link; }
+    if (grLink) { grLink.classList.remove("hidden"); if (data && data.group_invite_link) grLink.href = data.group_invite_link; }
+}
+
+function applyEntryGateVerdict(data, reason) {
+    if (!data) return;
+    const status = document.getElementById("gate-lock-status");
+    // Admins never stay locked (verify already returns verified for them;
+    // the /me flag is the second guard if it landed first).
+    if (data.verified === true || (state.user && state.user.is_admin)) {
+        const wasLocked = entryGate.locked;
+        unlockEntryGate();
+        if (wasLocked && reason === "manual") showStudioToast(t("gate_verified_toast"), "success");
+        if (wasLocked && reason !== "startup") { try { loadUserProfile(); } catch (e) {} }
+        return;
+    }
+    if (data.gate_configured === false) {
+        setEntryGateMode("not-configured", data);
+        if (status) status.innerText = "GATE_NOT_CONFIGURED";
+        lockEntryGate();
+        return;
+    }
+    setEntryGateMode("member", data);
+    renderGateChips(data.channel_verified, data.group_verified);
+    lockEntryGate();
+    if (reason === "manual") {
+        if (status) status.innerText = t("gate_not_member");
+        showStudioToast(t("gate_not_found_toast"), "warning");
+    } else if (status && entryGate.mode === "member") {
+        status.innerText = "";
+    }
+}
+
+async function runEntryGateCheck(reason) {
+    const force = reason === "startup" || reason === "manual" || reason === "gate-403";
+    if (entryGate.checking) return;
+    if (!force && Date.now() - entryGate.lastCheckAt < 5000) return;
+    entryGate.checking = true;
+    const checkingEl = document.getElementById("gate-lock-checking");
+    const btn = document.getElementById("gate-lock-btn-verify");
+    if (entryGate.locked && checkingEl) checkingEl.innerText = t("gate_checking");
+    if (reason === "manual" && btn) btn.disabled = true;
+    try {
+        const res = await fetch("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() });
+        if (isAuthFailure(res)) {
+            // 401: the "open via Telegram" modal explains; stay locked.
+            const status = document.getElementById("gate-lock-status");
+            if (status) status.innerText = t("gate_check_failed");
+            return;
+        }
+        const data = await res.json();
+        applyEntryGateVerdict(data, reason);
+    } catch (e) {
+        // No live verdict -> no unlock (fail-closed).
+        const status = document.getElementById("gate-lock-status");
+        if (entryGate.locked && status) status.innerText = t("gate_check_failed");
+    } finally {
+        entryGate.checking = false;
+        entryGate.lastCheckAt = Date.now();
+        if (checkingEl) checkingEl.innerText = "";
+        if (btn) btn.disabled = false;
+    }
+}
+window.runEntryGateCheck = runEntryGateCheck;
+
+async function verifyEntryGate() {
+    await runEntryGateCheck("manual");
+}
+window.verifyEntryGate = verifyEntryGate;
+
+function initEntryGate() {
+    lockEntryGate();
+    runEntryGateCheck("startup");
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) runEntryGateCheck("visibility");
+    });
+    window.addEventListener("focus", () => runEntryGateCheck("focus"));
+    setInterval(() => { if (!document.hidden) runEntryGateCheck("interval"); }, 60000);
+}
+window.initEntryGate = initEntryGate;
 
 // Preflight: show cost/limit BEFORE the user taps Generate, so there is no surprise.
 // Uses only /api/user/me fields (balance_minutes, character_limit, is_vip).
@@ -5234,6 +5368,7 @@ function setupAlertCarousel() {
 // ── App Startup ────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
+    initEntryGate();
     setLanguage(currentLang);
     setupTabs();
     setupVoiceStudio();
