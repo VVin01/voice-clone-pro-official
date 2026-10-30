@@ -2187,7 +2187,7 @@ function setupRecapVisualEditor() {
         previewText.style.fontSize = `${px}px`;
 
         const fontMap = {
-            "default": "'Noto Sans Myanmar', sans-serif",
+            "default": "'Padauk', sans-serif",
             "serif": "'Noto Serif Myanmar', serif",
             "padauk": "'Padauk', sans-serif"
         };

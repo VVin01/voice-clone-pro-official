@@ -39,21 +39,28 @@ def test_registry_options_and_files_exist():
 
 
 def test_resolve_keys_families_and_legacy():
-    assert resolve_subtitle_font("default") == ("default", "Noto Sans Myanmar")
+    # "default" is the no-explicit-choice selector: since 2026-10-30 it
+    # resolves to Padauk (DEFAULT_SUBTITLE_FONT), the production default.
+    assert resolve_subtitle_font("default") == ("padauk", "Padauk")
     assert resolve_subtitle_font("serif") == ("serif", "Noto Serif Myanmar")
     assert resolve_subtitle_font("padauk") == ("padauk", "Padauk")
-    # Family names round-trip (callers may pass either form).
+    # Family names round-trip (callers may pass either form) — an explicit
+    # family name still reaches its own family, incl. Noto Sans Myanmar.
     assert resolve_subtitle_font("Noto Serif Myanmar") == ("serif", "Noto Serif Myanmar")
     assert resolve_subtitle_font("Padauk") == ("padauk", "Padauk")
-    # Legacy / unknown / empty all fall back to the default family.
+    assert resolve_subtitle_font("Noto Sans Myanmar") == ("default", "Noto Sans Myanmar")
+    # Legacy / unknown / empty all fall back to the default (Padauk).
     for legacy in ("Pyidaungsu", "pyidaungsu", "", None, "no-such-font"):
-        assert resolve_subtitle_font(legacy) == ("default", "Noto Sans Myanmar"), legacy
+        assert resolve_subtitle_font(legacy) == ("padauk", "Padauk"), legacy
 
 
 def test_ass_header_uses_chosen_family(tmp_path):
-    for key, family in (("default", "Noto Sans Myanmar"),
+    # "default" selector -> Padauk (production default since 2026-10-30);
+    # the explicit family name "Noto Sans Myanmar" still yields Noto Sans.
+    for key, family in (("default", "Padauk"),
                         ("serif", "Noto Serif Myanmar"),
-                        ("padauk", "Padauk")):
+                        ("padauk", "Padauk"),
+                        ("Noto Sans Myanmar", "Noto Sans Myanmar")):
         out = write_synced_ass_file(CUES, tmp_path / f"{key}.ass", 1280, 720, font_name=key)
         line = _style_line(out.read_text(encoding="utf-8"))
         assert f",{family}," in line, (key, line)

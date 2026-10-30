@@ -1325,13 +1325,17 @@ SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = {
 # bundled in app/assets/fonts/ under the SIL Open Font License 1.1 (see the
 # LICENSE-*.txt files beside them), so subtitle burn-in resolves fonts from
 # the repo on any host (incl. Render) — never from a system-font assumption.
-# "default" is the historical look: the Noto Sans Myanmar variable font that
-# has always shipped with the app, so default output is byte-for-byte the
-# same family as before this option existed.
+# "default" is a SELECTOR, not a family: it means "no explicit choice" and
+# resolves to DEFAULT_SUBTITLE_FONT below. The "default" registry entry is
+# kept for back-compat — the Noto Sans Myanmar family stays reachable by
+# passing its family name explicitly — but it is no longer what an
+# un-chosen job burns (owner decision 2026-10-30: Padauk is the default;
+# at production size its stacks stay separate and read clearly, where the
+# Noto Sans variable font's stacks merged under the heavy outline).
 SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
     "default": {
-        "name": "Noto Sans (Default)",
-        "label": "မူရင်း Noto Sans (Default)",
+        "name": "Noto Sans",
+        "label": "Noto Sans",
         "short": "Noto Sans",
         "family": "Noto Sans Myanmar",
         "files": ["NotoSansMyanmar.ttf"],
@@ -1355,7 +1359,11 @@ SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
     },
 }
 
-DEFAULT_SUBTITLE_FONT = "default"
+# The production default: what burns when the user has NOT explicitly
+# chosen a font (empty value, the "default" selector, or anything unknown).
+# Padauk since 2026-10-30 (owner decision) — clearest Myanmar stacks at
+# production subtitle size in the forensic font comparison.
+DEFAULT_SUBTITLE_FONT = "padauk"
 
 
 def bundled_fonts_dir() -> Path:
@@ -1377,14 +1385,20 @@ def resolve_subtitle_font(value: str | None) -> tuple[str, str]:
     """Resolve a subtitle-font selector to (option_key, family_name).
 
     Accepts an option key ("serif"), a family name ("Noto Serif Myanmar"),
-    or a legacy value. Legacy "Pyidaungsu" (and anything unknown) maps to
-    the default: Pyidaungsu's GSUB shaping is incomplete for libass (see
-    ensure_system_myanmar_fonts) and it is not bundled.
+    or a legacy value. The "default" selector means "no explicit choice"
+    and resolves to DEFAULT_SUBTITLE_FONT (Padauk) — same for empty and
+    unknown values. Legacy "Pyidaungsu" maps to the default too:
+    Pyidaungsu's GSUB shaping is incomplete for libass (see
+    ensure_system_myanmar_fonts) and it is not bundled. A family name
+    passed explicitly ("Noto Sans Myanmar") still round-trips to its own
+    family — only the un-chosen path changed.
     """
     v = str(value or "").strip()
     if not v:
         return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
     low = v.lower()
+    if low == "default":
+        return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
     if low in SUBTITLE_FONT_OPTIONS:
         return low, SUBTITLE_FONT_OPTIONS[low]["family"]
     for key, opt in SUBTITLE_FONT_OPTIONS.items():
