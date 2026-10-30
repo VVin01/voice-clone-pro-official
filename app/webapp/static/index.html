@@ -943,22 +943,23 @@
                         </div>
                     </div>
                     <div class="dl-formats-grid">
-                        <button class="format-card" onclick="showStudioToast(t('toast_copied'), 'info')">
+                        <button class="format-card" id="btn-dl-fmt-video" type="button">
                             <span class="fmt-icon">🎬</span>
                             <span class="fmt-name" data-i18n="fmt_video_title">Full HD Video</span>
                             <span class="fmt-desc" data-i18n="fmt_video_desc">MP4 (H.264 / AAC)</span>
                         </button>
-                        <button class="format-card" onclick="showStudioToast(t('toast_copied'), 'info')">
+                        <button class="format-card" id="btn-dl-fmt-mp3" type="button">
                             <span class="fmt-icon">🎵</span>
                             <span class="fmt-name" data-i18n="fmt_audio_title">High-Quality Audio</span>
                             <span class="fmt-desc" data-i18n="fmt_audio_desc">MP3 (192kbps)</span>
                         </button>
-                        <button class="format-card" onclick="showStudioToast(t('toast_copied'), 'info')">
+                        <button class="format-card" id="btn-dl-fmt-srt" type="button">
                             <span class="fmt-icon">📝</span>
                             <span class="fmt-name" data-i18n="fmt_sub_title">Subtitle File</span>
-                            <span class="fmt-desc" data-i18n="fmt_sub_desc">SRT (Auto-captions)</span>
+                            <span class="fmt-desc" id="dl-fmt-srt-desc" data-i18n="fmt_sub_desc">SRT (Auto-captions)</span>
                         </button>
                     </div>
+                    <div id="dl-delivery-actions"></div>
                     <button class="btn primary-btn mt-3" id="btn-dl-use-in-recap">
                         <span>🎬 Movie Recap Studio တွင် အသုံးပြုမည်</span>
                     </button>

@@ -202,6 +202,13 @@ const translations = {
         fmt_audio_desc: "MP3 (192kbps)",
         fmt_sub_title: "Subtitle File",
         fmt_sub_desc: "SRT (Auto-captions)",
+        dl_no_subtitles: "ဒီ Video မှာ စာတန်းထိုး မရှိပါ",
+        dl_preparing: "ပြင်ဆင်နေပါတယ်…",
+        dl_ready: "အဆင်သင့်ဖြစ်ပါပြီ — အောက်က ခလုတ်နဲ့ ရယူပါ",
+        dl_fetch_first: "အရင် လင့်ခ် ထည့်ပြီး ရှာပေးပါခင်ဗျာ",
+        dl_too_large_telegram: "ဖိုင် ကြီးလွန်းလို့ Telegram နဲ့ ပို့မရပါ — Download ခလုတ်နဲ့ ရယူပါ",
+        btn_dl_download: "⬇️ Download",
+        btn_dl_send_telegram: "📩 Telegram သို့ ပို့မည်",
 
         // Tab 4: VIP Plans
         vip_title: "💎 Creator VIP Plans & Wallet",
@@ -588,6 +595,13 @@ const translations = {
         fmt_audio_desc: "MP3 (192kbps)",
         fmt_sub_title: "Subtitle File",
         fmt_sub_desc: "SRT (Auto-captions)",
+        dl_no_subtitles: "No subtitles available for this video",
+        dl_preparing: "Preparing…",
+        dl_ready: "Ready — use the buttons below to get your file",
+        dl_fetch_first: "Paste a link and search first",
+        dl_too_large_telegram: "Too large for Telegram — use the Download button",
+        btn_dl_download: "⬇️ Download",
+        btn_dl_send_telegram: "📩 Send to Telegram",
 
         // Tab 4: VIP Plans
         vip_title: "💎 Creator VIP Plans & Wallet",
