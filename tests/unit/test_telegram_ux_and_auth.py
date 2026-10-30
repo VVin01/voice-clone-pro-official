@@ -17,14 +17,14 @@ from app.ui.keyboards import main_menu_kb
 @pytest.mark.asyncio
 async def test_four_item_user_menu_and_admin_button():
     # Current main menu (Mini App-first design): three WebApp launch
-    # buttons (callback_data None), a tutorial URL button, language
-    # switch and membership verify callbacks. No admin broadcast button
-    # for ordinary users.
+    # buttons (callback_data None), a tutorial URL button, the
+    # Refer & Earn callback, language switch and membership verify
+    # callbacks. No admin broadcast button for ordinary users.
     kb_user_my = main_menu_kb(is_admin=False, lang="my")
     user_buttons = [btn.callback_data for row in kb_user_my.inline_keyboard for btn in row]
-    assert user_buttons == [None, None, None, None, "menu:change_lang", "gate:verify"]
+    assert user_buttons == [None, None, None, None, "menu:refer_earn", "menu:change_lang", "gate:verify"]
     assert "admin:broadcast_prompt" not in user_buttons
-    assert len(user_buttons) == 6
+    assert len(user_buttons) == 7
     flat_my = [btn for row in kb_user_my.inline_keyboard for btn in row]
     assert flat_my[0].web_app is not None  # Launch Studio WebApp button
     assert flat_my[3].url  # Tutorial URL button
@@ -35,16 +35,17 @@ async def test_four_item_user_menu_and_admin_button():
     assert "Recap" in flat_en[1].text
     assert "Downloader" in flat_en[2].text
     assert "Tutorial" in flat_en[3].text
-    assert "Language" in flat_en[4].text
-    assert "Verify Membership" in flat_en[5].text
+    assert "Refer & Earn" in flat_en[4].text
+    assert "Language" in flat_en[5].text
+    assert "Verify Membership" in flat_en[6].text
 
     # Admin keyboard: same user items + 1 broadcast button
     kb_admin = main_menu_kb(is_admin=True, lang="en")
     admin_buttons = [btn.callback_data for row in kb_admin.inline_keyboard for btn in row]
-    assert admin_buttons == [None, None, None, None, "menu:change_lang", "gate:verify", "admin:broadcast"]
-    assert len(admin_buttons) == 7
+    assert admin_buttons == [None, None, None, None, "menu:refer_earn", "menu:change_lang", "gate:verify", "admin:broadcast"]
+    assert len(admin_buttons) == 8
     flat_admin = [btn for row in kb_admin.inline_keyboard for btn in row]
-    assert "Broadcast" in flat_admin[6].text
+    assert "Broadcast" in flat_admin[7].text
 
 
 @pytest.mark.asyncio
@@ -106,7 +107,7 @@ async def test_render_main_menu_display(db_session):
     assert "Voice Balance" in text
     assert "Recap Balance" in text
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert callbacks == [None, None, None, None, "menu:change_lang", "gate:verify"]
+    assert callbacks == [None, None, None, None, "menu:refer_earn", "menu:change_lang", "gate:verify"]
 
 
 @pytest.mark.asyncio
