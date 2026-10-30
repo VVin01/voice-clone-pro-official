@@ -3063,6 +3063,145 @@ async function renderRecapScript(jobId) {
 }
 
 // ── Downloader Tab ─────────────────────────────────────────────────────────
+let dlCurrent = null; // { url, has_subtitles } from the last extract
+
+function dlSetSrtCardState(hasSubtitles) {
+    const card = document.getElementById("btn-dl-fmt-srt");
+    const desc = document.getElementById("dl-fmt-srt-desc");
+    if (!card || !desc) return;
+    if (hasSubtitles === false) {
+        card.classList.add("format-card-unavailable");
+        desc.innerText = t("dl_no_subtitles");
+    } else {
+        card.classList.remove("format-card-unavailable");
+        desc.innerText = t("fmt_sub_desc");
+    }
+}
+
+async function dlDownloadFile(downloadUrl, filename, btn) {
+    const original = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = `<span>${t("dl_preparing")}</span>`; }
+    try {
+        const res = await fetch(downloadUrl, { headers: getAuthHeaders() });
+        if (!res.ok) throw new Error("Download failed");
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objUrl;
+        a.download = filename || "download";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+        haptic("success");
+    } catch (err) {
+        showStudioToast(err.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+}
+
+async function dlSendTelegram(downloadId, btn) {
+    const original = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = `<span>${t("dl_preparing")}</span>`; }
+    try {
+        const res = await fetch(`/api/downloader/${downloadId}/send-telegram`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            if (data.detail === "file_too_large_telegram") throw new Error(t("dl_too_large_telegram"));
+            throw new Error(data.detail || "Failed to send to Telegram");
+        }
+        haptic("success");
+        showStudioToast(t("toast_telegram_sent"), 'success');
+    } catch (err) {
+        showStudioToast(err.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+}
+
+function dlRenderDeliveryRow(data) {
+    const box = document.getElementById("dl-delivery-actions");
+    if (!box) return;
+    const rowId = `dl-delivery-${data.format}`;
+    const old = document.getElementById(rowId);
+    if (old) old.remove();
+    const sizeMb = data.size_bytes ? (data.size_bytes / (1024 * 1024)).toFixed(1) : "?";
+    const icon = data.format === "video" ? "🎬" : (data.format === "mp3" ? "🎵" : "📝");
+    const row = document.createElement("div");
+    row.className = "dl-delivery-row";
+    row.id = rowId;
+    const label = document.createElement("span");
+    label.className = "dl-delivery-label";
+    label.innerText = `${icon} ${data.filename} · ${sizeMb} MB`;
+    const btnDlFile = document.createElement("button");
+    btnDlFile.type = "button";
+    btnDlFile.className = "btn mini-btn secondary-btn";
+    btnDlFile.innerText = t("btn_dl_download");
+    btnDlFile.addEventListener("click", () => dlDownloadFile(data.download_url, data.filename, btnDlFile));
+    row.appendChild(label);
+    row.appendChild(btnDlFile);
+    if (data.telegram_sendable) {
+        const btnTg = document.createElement("button");
+        btnTg.type = "button";
+        btnTg.className = "btn mini-btn secondary-btn";
+        btnTg.innerText = t("btn_dl_send_telegram");
+        btnTg.addEventListener("click", () => dlSendTelegram(data.download_id, btnTg));
+        row.appendChild(btnTg);
+    } else {
+        const note = document.createElement("span");
+        note.className = "dl-delivery-note";
+        note.innerText = t("dl_too_large_telegram");
+        row.appendChild(note);
+    }
+    box.appendChild(row);
+}
+
+async function dlFetchFormat(fmt, cardBtn) {
+    if (!dlCurrent || !dlCurrent.url) {
+        showStudioToast(t("dl_fetch_first"), 'warning');
+        return;
+    }
+    if (fmt === "srt" && dlCurrent.has_subtitles === false) {
+        showStudioToast(t("dl_no_subtitles"), 'warning');
+        return;
+    }
+    haptic("medium");
+    const descEl = cardBtn ? cardBtn.querySelector(".fmt-desc") : null;
+    const originalDesc = descEl ? descEl.innerText : "";
+    if (cardBtn) cardBtn.disabled = true;
+    if (descEl) descEl.innerText = t("dl_preparing");
+    try {
+        const res = await fetch("/api/downloader/fetch", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ url: dlCurrent.url, format: fmt }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            if (data.detail === "no_subtitles_available") {
+                dlCurrent.has_subtitles = false;
+                dlSetSrtCardState(false);
+                throw new Error(t("dl_no_subtitles"));
+            }
+            throw new Error(data.detail || "Download failed");
+        }
+        dlRenderDeliveryRow(data);
+        haptic("success");
+        showStudioToast(t("dl_ready"), 'success');
+    } catch (err) {
+        showStudioToast(err.message, 'error');
+    } finally {
+        if (cardBtn) cardBtn.disabled = false;
+        if (descEl && !(fmt === "srt" && dlCurrent && dlCurrent.has_subtitles === false)) {
+            descEl.innerText = originalDesc;
+        }
+    }
+}
+
 function setupDownloader() {
     const btnDl = document.getElementById("btn-extract-dl");
     const resultCard = document.getElementById("dl-result-card");
@@ -3105,12 +3244,23 @@ function setupDownloader() {
                     }
                 }
 
+                dlCurrent = { url: data.url || url, has_subtitles: data.has_subtitles };
+                dlSetSrtCardState(data.has_subtitles);
+                const dlActions = document.getElementById("dl-delivery-actions");
+                if (dlActions) dlActions.innerHTML = "";
+
                 resultCard.classList.remove("hidden");
             } catch (err) {
                 showStudioToast(err.message, 'info');
             } finally {
                 btnDl.disabled = false;
             }
+        });
+
+        const fmtButtons = { video: "btn-dl-fmt-video", mp3: "btn-dl-fmt-mp3", srt: "btn-dl-fmt-srt" };
+        Object.entries(fmtButtons).forEach(([fmt, id]) => {
+            const card = document.getElementById(id);
+            if (card) card.addEventListener("click", () => dlFetchFormat(fmt, card));
         });
 
         const btnUseInRecap = document.getElementById("btn-dl-use-in-recap");

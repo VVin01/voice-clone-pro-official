@@ -891,6 +891,17 @@ select.studio-input { min-height: 50px; }
 .format-card .fmt-icon { font-size: 22px; }
 .format-card .fmt-name { font-size: 13px; font-weight: 700; line-height: 1.45; }
 .format-card .fmt-desc { font-size: 11px; color: var(--text-3); line-height: 1.45; }
+.format-card:disabled { opacity: .65; }
+.format-card-unavailable { opacity: .5; }
+.format-card-unavailable .fmt-desc { color: var(--danger, #f87171); }
+.dl-delivery-row {
+    display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+    margin-top: var(--s2); padding: var(--s2) var(--s3);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.dl-delivery-label { flex: 1 1 auto; min-width: 0; font-size: 12.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-delivery-note { font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
 #btn-dl-use-in-recap { width: 100%; }
 
 /* ════ VIP / PLANS ════ */

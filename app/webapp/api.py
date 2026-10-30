@@ -1148,7 +1148,10 @@ async def extract_media_info(
         }
     except Exception as e:
         logger.warning(f"yt-dlp extract error for {canonical_url}: {e}")
-        # Graceful fallback response
+        # Graceful fallback response. NOTE: metadata could not be
+        # verified, so has_subtitles must NOT claim True here — the SRT
+        # card renders its honest per-item state from this flag, and the
+        # fetch endpoint re-checks for real before producing any SRT.
         platform = detect_platform(canonical_url)
         return {
             "success": True,
@@ -1158,9 +1161,230 @@ async def extract_media_info(
             "uploader": "Online Creator",
             "thumbnail": "",
             "estimated_duration": "03:30",
-            "has_subtitles": True,
+            "has_subtitles": False,
             "formats_available": ["MP4 (Video)", "MP3 (Audio 192k)", "SRT (Subtitles)"],
         }
+
+
+# ── 4.1. Downloader format delivery (Video / MP3 / SRT cards) ──────────
+# The Downloader tab's format cards used to be toast-only placeholders.
+# A card tap now runs a real fetch: the existing MediaDownloader pulls
+# the file into the persistent downloads store (storage/downloads/<id>)
+# with a meta.json carrying the owner; delivery reuses the established
+# patterns — ownership-checked FileResponse download (404 for anyone
+# else, same as _require_job_owner) and on-demand Telegram sending
+# (same shape as the voice/recap send-telegram endpoints). Downloads
+# stay free: no credit/minute is charged, exactly as extract is today.
+_DL_ID_RE = re.compile(r"^[a-f0-9]{12}$")
+_DL_FORMATS = ("video", "mp3", "srt")
+_DL_KEEP_PER_USER = 10
+_DL_TELEGRAM_LIMIT = 50 * 1024 * 1024  # Telegram Bot API send cap
+
+
+def _dl_root() -> Path:
+    return settings.storage_root / "downloads"
+
+
+def _dl_dir(download_id: str) -> Path:
+    return _dl_root() / download_id
+
+
+def _dl_read_meta(download_id: str) -> Optional[Dict[str, Any]]:
+    if not download_id or not _DL_ID_RE.match(download_id):
+        return None
+    try:
+        meta = json.loads((_dl_dir(download_id) / "meta.json").read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def _dl_require_owner(download_id: str, user: User) -> Dict[str, Any]:
+    """Return the download meta only for its owner (or an admin).
+
+    404 for unknown ids and for other users' downloads, matching the
+    job-download ownership semantics (no existence probing).
+    """
+    meta = _dl_read_meta(download_id)
+    if not meta or (meta.get("user_id") != user.id and not settings.is_admin(user.id)):
+        raise HTTPException(status_code=404, detail="Download not found")
+    return meta
+
+
+def _dl_display_name(meta: Dict[str, Any]) -> str:
+    fmt = meta.get("format")
+    dl_id = str(meta.get("download_id") or "")[:8]
+    return {"video": f"video_{dl_id}.mp4", "mp3": f"audio_{dl_id}.mp3",
+            "srt": f"subtitles_{dl_id}.srt"}.get(fmt, f"file_{dl_id}")
+
+
+def _dl_prune_user_downloads(user_id: int) -> None:
+    """Keep only the newest _DL_KEEP_PER_USER download dirs per user."""
+    try:
+        entries = []
+        for d in _dl_root().iterdir():
+            if not d.is_dir():
+                continue
+            meta = _dl_read_meta(d.name)
+            if meta and meta.get("user_id") == user_id:
+                entries.append((str(meta.get("created_at") or ""), d))
+        entries.sort(key=lambda e: e[0])
+        for _, d in entries[: max(0, len(entries) - _DL_KEEP_PER_USER)]:
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
+
+class DlFetchRequest(BaseModel):
+    url: str
+    format: str
+
+
+@api_router.post("/downloader/fetch")
+async def fetch_downloader_format(
+    req: DlFetchRequest,
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Fetch one Downloader format (video/mp3/srt) for a pasted link.
+
+    Runs the existing MediaDownloader server-side and stores the result
+    for delivery. SRT is produced ONLY from subtitles the source
+    actually exposes (native or auto captions via yt-dlp) — the AI
+    transcription fallback is deliberately off here, and a source with
+    no obtainable subtitles gets an honest 422 the UI renders per-item.
+    """
+    fmt = (req.format or "").strip().lower()
+    if fmt not in _DL_FORMATS:
+        raise HTTPException(status_code=400, detail="Unknown format")
+
+    from app.services.downloader import MediaDownloader, extract_first_url, unshorten_url
+
+    raw_url = req.url.strip()
+    url = extract_first_url(raw_url) or raw_url
+    if not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+    try:
+        canonical_url = unshorten_url(url)
+        from app.services.url_safety import validate_public_url
+
+        canonical_url = validate_public_url(canonical_url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="This URL is not allowed")
+
+    download_id = uuid.uuid4().hex[:12]
+    dest = _dl_dir(download_id)
+    dest.mkdir(parents=True, exist_ok=True)
+    downloader = MediaDownloader()
+    try:
+        if fmt == "video":
+            file_path, info = await asyncio.to_thread(
+                downloader.download_video, canonical_url, str(dest)
+            )
+        elif fmt == "mp3":
+            # yt-dlp's FFmpegExtractAudio postprocessor: ffmpeg-side
+            # audio extraction to 192k MP3, same as the recap pipeline.
+            file_path, info = await asyncio.to_thread(
+                downloader.download_audio, canonical_url, str(dest)
+            )
+        else:  # srt — native/auto captions only, NO AI fallback
+            srt_files, info = await asyncio.to_thread(
+                downloader.download_subtitles, canonical_url, str(dest), "en", False
+            )
+            if not srt_files:
+                shutil.rmtree(dest, ignore_errors=True)
+                raise HTTPException(status_code=422, detail="no_subtitles_available")
+            file_path = srt_files[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(dest, ignore_errors=True)
+        logger.warning(f"downloader fetch ({fmt}) failed for {canonical_url}: {e}")
+        raise HTTPException(status_code=400, detail=str(e)[:300] or "Download failed")
+
+    if not file_path or not Path(file_path).is_file():
+        shutil.rmtree(dest, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="Download failed")
+
+    meta = {
+        "download_id": download_id,
+        "user_id": user.id,
+        "url": canonical_url,
+        "platform": info.get("platform") if isinstance(info, dict) else None,
+        "title": (info.get("title") if isinstance(info, dict) else None) or "Video Content",
+        "format": fmt,
+        "filename": Path(file_path).name,
+        "size_bytes": Path(file_path).stat().st_size,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (dest / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    _dl_prune_user_downloads(user.id)
+
+    return {
+        "success": True,
+        "download_id": download_id,
+        "format": fmt,
+        "title": meta["title"],
+        "filename": _dl_display_name(meta),
+        "size_bytes": meta["size_bytes"],
+        "download_url": f"/api/downloader/file/{download_id}",
+        "telegram_sendable": meta["size_bytes"] <= _DL_TELEGRAM_LIMIT,
+    }
+
+
+@api_router.get("/downloader/file/{download_id}")
+async def download_downloader_file(
+    download_id: str,
+    user: User = Depends(get_current_user),
+):
+    """Ownership-checked download of a fetched Downloader file."""
+    meta = _dl_require_owner(download_id, user)
+    file_path = _dl_dir(download_id) / str(meta.get("filename") or "")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not ready or no longer available")
+    mime = {"video": "video/mp4", "mp3": "audio/mpeg",
+            "srt": "text/plain; charset=utf-8"}.get(meta.get("format"), "application/octet-stream")
+    return FileResponse(
+        path=str(file_path),
+        media_type=mime,
+        filename=_dl_display_name(meta),
+        content_disposition_type="attachment",
+    )
+
+
+@api_router.post("/downloader/{download_id}/send-telegram")
+async def send_downloader_to_telegram(
+    download_id: str,
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Send a fetched Downloader file to the owner's Telegram chat."""
+    meta = _dl_require_owner(download_id, user)
+    file_path = _dl_dir(download_id) / str(meta.get("filename") or "")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
+    if file_path.stat().st_size > _DL_TELEGRAM_LIMIT:
+        raise HTTPException(status_code=413, detail="file_too_large_telegram")
+
+    from aiogram import Bot
+    from aiogram.types import FSInputFile
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        caption = f"📥 <b>{html.escape(str(meta.get('title') or 'Video Content'))}</b>"
+        upload = FSInputFile(str(file_path), filename=_dl_display_name(meta))
+        if meta.get("format") == "video":
+            await bot.send_video(chat_id=user.id, video=upload, caption=caption, parse_mode="HTML")
+        elif meta.get("format") == "mp3":
+            await bot.send_audio(chat_id=user.id, audio=upload, caption=caption, parse_mode="HTML")
+        else:
+            await bot.send_document(chat_id=user.id, document=upload, caption=caption, parse_mode="HTML")
+        return {"success": True, "message": "Telegram သို့ ဖိုင် ပို့ပြီးပါပြီခင်ဗျာ!"}
+    except Exception as e:
+        logger.warning(f"Failed to send downloader file {download_id} to {user.id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်: {e}")
+    finally:
+        await bot.session.close()
 
 
 @api_router.post("/recap/upload_video")
