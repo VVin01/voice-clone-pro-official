@@ -61,9 +61,17 @@ def restore_settings():
     # points consult is_gate_configured()).
     orig_required_channel_id = settings.required_channel_id
     orig_required_group_id = settings.required_group_id
+    orig_char_limit = settings.character_limit_free
+    orig_purchased_limit = settings.character_limit_purchased
+    settings.required_channel_id = ""
+    settings.required_group_id = ""
+    settings.character_limit_free = 1000
+    settings.character_limit_purchased = 5000
     yield
     settings.admin_ids_raw = orig_admin_ids
     settings.bot_token = orig_bot_token
     settings.welcome_bonus_seconds = orig_welcome_bonus_seconds
     settings.required_channel_id = orig_required_channel_id
     settings.required_group_id = orig_required_group_id
+    settings.character_limit_free = orig_char_limit
+    settings.character_limit_purchased = orig_purchased_limit

@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     required_group_id: str = Field(default="", alias="REQUIRED_GROUP_ID")
     channel_invite_link: str = Field(default="https://t.me/voiceclonepro", alias="CHANNEL_INVITE_LINK")
     group_invite_link: str = Field(default="https://t.me/voiceclonepro_chat", alias="GROUP_INVITE_LINK")
+    # Bot-side periodic re-check of already-verified members (closes the
+    # join-then-leave hole). A verified user's live membership is
+    # re-probed at most once per TTL; on a Telegram API error the user
+    # keeps access and the probe is retried after the shorter backoff.
+    membership_recheck_ttl_seconds: int = Field(default=10800, alias="MEMBERSHIP_RECHECK_TTL_SECONDS")  # 3 hours
+    membership_recheck_error_retry_seconds: int = Field(
+        default=600, alias="MEMBERSHIP_RECHECK_ERROR_RETRY_SECONDS"
+    )  # 10 minutes
 
     # Database: ISOLATED local SQLite by default, strictly separate from legacy/production
     database_url: str = Field(
