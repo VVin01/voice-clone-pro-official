@@ -30,13 +30,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import get_db_session
-from app.models.enums import AccountCategory, JobStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
-from app.models.schema import User, Job, VoiceModel, MinuteBalance, PaymentRequest, AuditLog, utc_now
+from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
+from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, PaymentRequest, AuditLog, utc_now
 from app.services.i18n import t
 from app.services.models import get_authorized_model
 from app.services.curated_voices import list_curated_voices, get_curated_voice
@@ -164,6 +164,15 @@ async def require_gate_verified(
 
     if settings.is_admin(user.id):
         return user
+    # Production ban enforcement (2026-10-31): the bot has always blocked
+    # status=BLOCKED users via AccessControlMiddleware, but the Mini App
+    # API never checked the flag, so a banned user could keep generating
+    # here. Mirror the bot: a BLOCKED user is suspended everywhere.
+    if (user.status or "") == UserStatus.BLOCKED.value:
+        raise HTTPException(
+            status_code=403,
+            detail="USER_BANNED: This account has been suspended by the admin. Please contact support.",
+        )
     if not is_gate_configured():
         raise HTTPException(
             status_code=403,
@@ -543,6 +552,7 @@ async def get_user_profile(
         # This is the CACHED flag state only; a live check happens on
         # gated writes and via POST /api/user/verify-membership. Admins
         # are always treated as membership-verified (see gate.py).
+        "is_banned": bool((user.status or "") == UserStatus.BLOCKED.value and not is_admin),
         "membership_verified": bool(is_admin or (user.channel_verified and user.group_verified)),
         "channel_verified": bool(user.channel_verified),
         "group_verified": bool(user.group_verified),
@@ -4145,6 +4155,74 @@ async def get_admin_overview(
 
     worker_info = await _get_laptop_worker_status(db)
 
+    # ── Production ops visibility (2026-10-31) ──────────────────────
+    cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+    failed_24h = (await db.execute(
+        select(func.count(Job.id)).where(Job.status == JobStatus.FAILED.value, Job.created_at >= cutoff_24h)
+    )).scalar() or 0
+    jobs_by_status = {}
+    for st in JobStatus:
+        jobs_by_status[st.value] = (await db.execute(
+            select(func.count(Job.id)).where(Job.status == st.value)
+        )).scalar() or 0
+    banned_users = (await db.execute(
+        select(func.count(User.id)).where(User.status == UserStatus.BLOCKED.value)
+    )).scalar() or 0
+    new_users_24h = (await db.execute(
+        select(func.count(User.id)).where(User.created_at >= cutoff_24h)
+    )).scalar() or 0
+
+    db_size_bytes = None
+    try:
+        dialect = db.bind.dialect.name if db.bind is not None else ""
+        if dialect == "postgresql":
+            db_size_bytes = (await db.execute(text("SELECT pg_database_size(current_database())"))).scalar()
+        elif dialect == "sqlite":
+            import os as _os
+            url = str(db.bind.url)
+            path = url.split("///", 1)[-1]
+            if path and _os.path.exists(path):
+                db_size_bytes = _os.path.getsize(path)
+    except Exception:
+        db_size_bytes = None
+
+    storage_bytes = None
+    try:
+        import os as _os
+        total = 0
+        seen_any = False
+        for base in ("/app/storage", "storage"):
+            if _os.path.isdir(base):
+                seen_any = True
+                for root, _dirs, files in _os.walk(base):
+                    for f in files:
+                        try:
+                            total += _os.path.getsize(_os.path.join(root, f))
+                        except OSError:
+                            pass
+                break
+        storage_bytes = total if seen_any else None
+    except Exception:
+        storage_bytes = None
+
+    recent_actions = []
+    try:
+        rows = (await db.execute(
+            select(AuditLog).order_by(AuditLog.created_at.desc()).limit(8)
+        )).scalars().all()
+        recent_actions = [
+            {
+                "action": r.action,
+                "admin_id": r.admin_id,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    except Exception:
+        recent_actions = []
+
     return {
         "total_users": total_users,
         "vip_users": vip_users,
@@ -4154,7 +4232,135 @@ async def get_admin_overview(
         "cloud_worker_status": "ONLINE (Render Cloud)",
         "laptop_worker": worker_info,
         "laptop_worker_status": f"{worker_info['status_text']} [Engine: {worker_info['engine']}]",
+        "failed_jobs_24h": failed_24h,
+        "jobs_by_status": jobs_by_status,
+        "banned_users": banned_users,
+        "new_users_24h": new_users_24h,
+        "db_size_bytes": db_size_bytes,
+        "storage_bytes": storage_bytes,
+        "recent_admin_actions": recent_actions,
     }
+
+
+@api_router.get("/admin/audit-log")
+async def get_admin_audit_log(
+    limit: int = 20,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Recent admin actions (AuditLog) for the ops panel."""
+    limit = max(1, min(int(limit or 20), 100))
+    rows = (await db.execute(
+        select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "action": r.action,
+            "admin_id": r.admin_id,
+            "target_type": r.target_type,
+            "target_id": r.target_id,
+            "details": r.details_json,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@api_router.get("/admin/users/search")
+async def search_admin_users(
+    q: str = "",
+    limit: int = 20,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Search users by Telegram ID, @username or first name (admin only)."""
+    query = (q or "").strip().lstrip("@")
+    if len(query) < 2:
+        raise HTTPException(status_code=400, detail="Search query too short (min 2 characters)")
+    limit = max(1, min(int(limit or 20), 50))
+    conds = [
+        User.username.ilike(f"%{query}%"),
+        User.first_name.ilike(f"%{query}%"),
+    ]
+    if query.isdigit():
+        conds.append(User.id == int(query))
+    rows = (await db.execute(
+        select(User).where(or_(*conds)).order_by(User.created_at.desc()).limit(limit)
+    )).scalars().all()
+    out = []
+    for u in rows:
+        bal = await db.get(MinuteBalance, u.id)
+        out.append({
+            "id": u.id,
+            "username": u.username,
+            "first_name": u.first_name,
+            "account_category": u.account_category,
+            "status": u.status,
+            "is_banned": (u.status or "") == UserStatus.BLOCKED.value,
+            "recap_credits": getattr(u, "recap_credits", 0) or 0,
+            "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        })
+    return {"users": out, "count": len(out)}
+
+
+class BanUserRequest(BaseModel):
+    reason: str = ""
+
+
+@api_router.post("/admin/users/{user_id}/ban")
+async def ban_admin_user(
+    user_id: int,
+    req: BanUserRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Suspend a user everywhere (bot middleware + Mini App gate)."""
+    reason = (req.reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="A ban reason is required (min 3 characters)")
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot ban yourself")
+    if settings.is_admin(user_id):
+        raise HTTPException(status_code=400, detail="You cannot ban an admin")
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    already = (target.status or "") == UserStatus.BLOCKED.value
+    target.status = UserStatus.BLOCKED.value
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="user.ban",
+        target_type="user",
+        target_id=str(user_id),
+        details_json=json.dumps({"reason": reason, "via": "miniapp", "already_banned": already}),
+    ))
+    await db.commit()
+    return {"success": True, "message": f"User {user_id} banned", "already_banned": already}
+
+
+@api_router.post("/admin/users/{user_id}/unban")
+async def unban_admin_user(
+    user_id: int,
+    req: BanUserRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Lift a suspension."""
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    target.status = UserStatus.ACTIVE.value
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="user.unban",
+        target_type="user",
+        target_id=str(user_id),
+        details_json=json.dumps({"reason": (req.reason or "").strip(), "via": "miniapp"}),
+    ))
+    await db.commit()
+    return {"success": True, "message": f"User {user_id} unbanned"}
 
 
 @api_router.get("/admin/queue")
@@ -4279,6 +4485,15 @@ async def retry_queued_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    # Guard (2026-10-31): previously ANY job could be "retried" — including
+    # SUCCESS or RUNNING ones, which would double-execute and double-deliver.
+    # Only terminally unsuccessful jobs are retryable.
+    if job.status not in (JobStatus.FAILED.value, JobStatus.CANCELLED.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only FAILED or CANCELLED jobs can be retried (this job is {job.status})",
+        )
+
     job.status = JobStatus.QUEUED.value
     job.started_at = None
     job.finished_at = None
@@ -4326,21 +4541,73 @@ async def cancel_queued_job(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Cancel a currently queued or running job."""
+    """Cancel a currently queued or running job, refunding its charge.
+
+    Refund semantics mirror the failure paths exactly (2026-10-31):
+    voice jobs get their deducted seconds back through the idempotent
+    ledger refund; recap jobs get their exact charged credits back
+    (1 for a normal job, N for a segmented one) via the registry-based
+    helper the worker failure path uses. Admin-owned jobs were never
+    charged, so their refunds are no-ops.
+    """
     job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only QUEUED or RUNNING jobs can be cancelled (this job is {job.status})",
+        )
+
+    is_recap = (job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap")
+    refund_info = {"refunded": False}
 
     job.status = JobStatus.CANCELLED.value
     job.finished_at = utc_now()
     job.error_message = "Cancelled by Administrator via Admin Console"
-
-    if job_id in RECAP_JOBS_REGISTRY:
-        RECAP_JOBS_REGISTRY[job_id]["status"] = "FAILED"
-        RECAP_JOBS_REGISTRY[job_id]["error_message"] = "Cancelled by Administrator"
-
     await db.commit()
-    return {"success": True, "message": f"Job {job_id[:8]} marked as CANCELLED."}
+
+    try:
+        if is_recap:
+            entry = RECAP_JOBS_REGISTRY.get(job_id)
+            if entry is not None:
+                if job_id in RECAP_JOBS_REGISTRY:
+                    RECAP_JOBS_REGISTRY[job_id]["status"] = "FAILED"
+                    RECAP_JOBS_REGISTRY[job_id]["error_message"] = "Cancelled by Administrator"
+                if await _refund_recap_job_charge(job.user_id, entry):
+                    refund_info = {"refunded": True, "recap_credits": int(entry.get("credits_refunded") or 0)}
+            else:
+                # Registry lost (server restart): the submit-time base
+                # credit is the only charge we can prove; refund exactly
+                # that. A second cancel is impossible (status is now
+                # CANCELLED), so this cannot double-refund.
+                if not settings.is_admin(job.user_id) and await _refund_recap_credits(job.user_id, 1):
+                    refund_info = {"refunded": True, "recap_credits": 1, "note": "base credit only (registry unavailable)"}
+        else:
+            from app.services.ledger import refund_job_seconds
+            before = (await db.execute(
+                select(MinuteLedgerEvent).where(
+                    MinuteLedgerEvent.user_id == job.user_id,
+                    MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
+                )
+            )).first()
+            await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: job cancelled by admin")
+            await db.commit()
+            if not before:
+                refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
+    except Exception as exc:
+        logger.warning(f"Cancel refund failed for job {job_id}: {exc}")
+        refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
+
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="job.cancel",
+        target_type="job",
+        target_id=str(job_id),
+        details_json=json.dumps({"refund": refund_info, "job_type": "recap" if is_recap else "voice"}),
+    ))
+    await db.commit()
+    return {"success": True, "message": f"Job {job_id[:8]} marked as CANCELLED.", "refund": refund_info}
 
 
 class AdminSettingsPayload(BaseModel):
@@ -4564,7 +4831,9 @@ class AdjustUserRequest(BaseModel):
     user_id: int
     account_category: Optional[str] = None
     add_minutes: int = 0
+    add_seconds: int = 0
     add_recap_credits: int = 0
+    reason: str = ""
 
 
 @api_router.post("/admin/adjust-user")
@@ -4573,27 +4842,65 @@ async def adjust_user_status(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Admin manually modifies user tier, adds minutes, or adds recap credits."""
+    """Admin manually modifies user tier and balances — audited.
+
+    Production hardening (2026-10-31): every adjustment now REQUIRES a
+    reason and goes through the same audited ledger path the bot admin
+    uses (admin_adjust_balance — MinuteLedgerEvent + AuditLog +
+    negative-balance protection), instead of silently mutating fields.
+    Negative minute/second deltas are supported (clawbacks).
+    """
     target_user = await db.get(User, req.user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if req.account_category in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value):
+    category_change = (
+        req.account_category in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value)
+        and req.account_category != target_user.account_category
+    )
+    seconds_delta = int(req.add_minutes or 0) * 60 + int(req.add_seconds or 0)
+    credits_delta = int(req.add_recap_credits or 0)
+    if not category_change and seconds_delta == 0 and credits_delta == 0:
+        raise HTTPException(status_code=400, detail="Nothing to adjust")
+    reason = (req.reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="A reason is required for balance/tier adjustments (min 3 characters)")
+
+    if seconds_delta != 0:
+        from app.services.ledger import admin_adjust_balance
+        from app.models.enums import LedgerDirection, LedgerSource
+        try:
+            await admin_adjust_balance(
+                session=db,
+                user_id=target_user.id,
+                admin_id=admin.id,
+                seconds=abs(seconds_delta),
+                source=LedgerSource.PURCHASE,
+                direction=LedgerDirection.CREDIT if seconds_delta > 0 else LedgerDirection.DEBIT,
+                reason=reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    if category_change:
         target_user.account_category = req.account_category
 
-    if req.add_recap_credits != 0:
-        target_user.recap_credits = max(0, (getattr(target_user, "recap_credits", 0) or 0) + req.add_recap_credits)
+    if credits_delta != 0:
+        target_user.recap_credits = max(0, (getattr(target_user, "recap_credits", 0) or 0) + credits_delta)
 
-    if req.add_minutes > 0:
-        from app.services.ledger import credit_purchased_minutes
-        await credit_purchased_minutes(
-            session=db,
-            user_id=target_user.id,
-            minutes=req.add_minutes,
-            payment_request_id=f"ADMIN_GRANT_{int(time.time())}",
-            admin_id=admin.id,
-        )
-
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="user.adjust",
+        target_type="user",
+        target_id=str(target_user.id),
+        details_json=json.dumps({
+            "reason": reason,
+            "via": "miniapp",
+            "seconds_delta": seconds_delta,
+            "recap_credits_delta": credits_delta,
+            "account_category": req.account_category if category_change else None,
+        }),
+    ))
     await db.commit()
     return {"success": True, "message": f"User {req.user_id} updated successfully"}
 

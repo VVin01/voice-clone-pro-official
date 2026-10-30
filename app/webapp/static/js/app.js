@@ -549,6 +549,7 @@ async function loadUserProfile() {
         }
 
         updateGateBanner(data);
+        if (data.is_banned) { setEntryGateMode("banned", data); lockEntryGate(); }
         updateVoicePreflight();
 
         // Enable Admin Tab if user is administrator
@@ -991,14 +992,28 @@ function setEntryGateMode(mode, data) {
     const chips = document.querySelector(".gate-lock-chips");
     const chLink = document.getElementById("gate-lock-link-channel");
     const grLink = document.getElementById("gate-lock-link-group");
+    const verifyBtn = document.getElementById("gate-lock-btn-verify");
     if (mode === "not-configured") {
         if (title) { title.setAttribute("data-i18n", "gate_not_configured_title"); title.innerText = t("gate_not_configured_title"); }
         if (desc) { desc.setAttribute("data-i18n", "gate_not_configured_desc"); desc.innerText = t("gate_not_configured_desc"); }
         if (chips) chips.classList.add("hidden");
         if (chLink) chLink.classList.add("hidden");
         if (grLink) grLink.classList.add("hidden");
+        if (verifyBtn) verifyBtn.classList.remove("hidden");
         return;
     }
+    if (mode === "banned") {
+        // Production ban (2026-10-31): a suspended account gets its own
+        // lock — no join buttons, no verify button; support is the way out.
+        if (title) { title.setAttribute("data-i18n", "gate_banned_title"); title.innerText = t("gate_banned_title"); }
+        if (desc) { desc.setAttribute("data-i18n", "gate_banned_desc"); desc.innerText = t("gate_banned_desc"); }
+        if (chips) chips.classList.add("hidden");
+        if (chLink) chLink.classList.add("hidden");
+        if (grLink) grLink.classList.add("hidden");
+        if (verifyBtn) verifyBtn.classList.add("hidden");
+        return;
+    }
+    if (verifyBtn) verifyBtn.classList.remove("hidden");
     if (title) { title.setAttribute("data-i18n", "gate_lock_title"); title.innerText = t("gate_lock_title"); }
     if (desc) { desc.setAttribute("data-i18n", "gate_lock_desc"); desc.innerText = t("gate_lock_desc"); }
     if (chips) chips.classList.remove("hidden");
@@ -1009,6 +1024,14 @@ function setEntryGateMode(mode, data) {
 function applyEntryGateVerdict(data, reason) {
     if (!data) return;
     const status = document.getElementById("gate-lock-status");
+    // Banned users never unlock, even when their membership verifies —
+    // the suspension outranks the join gate (writes also 403 server-side).
+    if (state.user && state.user.is_banned && !(state.user && state.user.is_admin)) {
+        setEntryGateMode("banned", data);
+        if (status) status.innerText = "";
+        lockEntryGate();
+        return;
+    }
     // Admins never stay locked (verify already returns verified for them;
     // the /me flag is the second guard if it landed first).
     if (data.verified === true || (state.user && state.user.is_admin)) {
@@ -3790,6 +3813,31 @@ async function loadAdminData() {
             if (elVip) elVip.innerText = stats.vip_users;
             if (elSlips) elSlips.innerText = stats.pending_slips;
             if (elQueue) elQueue.innerText = stats.queued_jobs !== undefined ? stats.queued_jobs : 0;
+            // Production ops health (2026-10-31)
+            const elF24 = document.getElementById("adm-failed-24h");
+            const elBan = document.getElementById("adm-banned-users");
+            const elNew = document.getElementById("adm-new-24h");
+            const elSize = document.getElementById("adm-storage-size");
+            if (elF24) elF24.innerText = stats.failed_jobs_24h ?? 0;
+            if (elBan) elBan.innerText = stats.banned_users ?? 0;
+            if (elNew) elNew.innerText = stats.new_users_24h ?? 0;
+            if (elSize) {
+                const fmt = (n) => n == null ? "—" : (n >= 1073741824 ? (n / 1073741824).toFixed(2) + " GB" : n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB");
+                elSize.innerText = fmt(stats.db_size_bytes) + " / " + fmt(stats.storage_bytes);
+            }
+            const actionsBox = document.getElementById("admin-recent-actions");
+            if (actionsBox) {
+                const acts = stats.recent_admin_actions || [];
+                if (!acts.length) {
+                    actionsBox.innerHTML = `<p class="text-muted">—</p>`;
+                } else {
+                    actionsBox.innerHTML = acts.map(a => `
+                        <div class="slip-item-row" style="padding:4px 0;">
+                            <span>• <b>${a.action}</b> → ${a.target_type} ${a.target_id}</span>
+                            <span class="text-muted" style="margin-left:auto; font-size:11px;">${(a.created_at || "").replace("T", " ").slice(0, 16)}</span>
+                        </div>`).join("");
+                }
+            }
         }
 
         // Load live processing queue & dynamic settings
@@ -4021,12 +4069,112 @@ async function adminRejectSlip(reqId) {
             body: JSON.stringify({ request_id: reqId, reason: reason }),
         });
         const data = await res.json();
-        showStudioToast(data.message, 'info');
+        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
         loadAdminData();
     } catch (e) {
         showStudioToast(e.message, 'error');
     }
 }
+
+function _adminReason() {
+    const el = document.getElementById("adm-adjust-reason");
+    return el ? el.value.trim() : "";
+}
+
+function _adminRequireReason() {
+    const reason = _adminReason();
+    if (reason.length < 3) {
+        showStudioToast(t("admin_reason_required"), "warning");
+        const el = document.getElementById("adm-adjust-reason");
+        if (el) el.focus();
+        return null;
+    }
+    return reason;
+}
+
+async function adminSearchUsers() {
+    const qEl = document.getElementById("adm-user-search-q");
+    const box = document.getElementById("admin-user-search-results");
+    const q = qEl ? qEl.value.trim() : "";
+    if (q.length < 2) { showStudioToast(t("admin_search_short"), "warning"); return; }
+    if (box) box.innerHTML = `<p class="text-muted">${t("gate_checking")}</p>`;
+    try {
+        const res = await fetch(`/api/admin/users/search?q=${encodeURIComponent(q)}`, { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Search failed");
+        if (!box) return;
+        if (!data.users.length) { box.innerHTML = `<p class="text-muted">${t("admin_search_none")}</p>`; return; }
+        box.innerHTML = "";
+        data.users.forEach(u => {
+            const row = document.createElement("div");
+            row.className = "slip-item-card";
+            const mins = Math.floor((u.balance_seconds || 0) / 60);
+            row.innerHTML = `
+                <div class="slip-item-row">
+                    <div class="slip-info">
+                        <div class="slip-user">${u.first_name || "User"} ${u.username ? "(@" + u.username + ")" : ""} ${u.is_banned ? "🚫" : ""}</div>
+                        <div class="slip-amount">ID: ${u.id} • ${u.account_category} • ⏱ ${mins}m • 🎬 ${u.recap_credits} credits • ${u.status}</div>
+                    </div>
+                </div>
+                <div class="slip-actions">
+                    <button class="btn-approve" onclick="adminPickUser(${u.id})">${t("btn_select_user")}</button>
+                    ${u.is_banned
+                        ? `<button class="btn-approve" onclick="adminUnbanUser(${u.id})">${t("btn_unban_user")}</button>`
+                        : `<button class="btn-reject" onclick="adminBanUser(${u.id})">${t("btn_ban_user")}</button>`}
+                </div>`;
+            box.appendChild(row);
+        });
+    } catch (e) {
+        if (box) box.innerHTML = `<p class="text-muted">${e.message}</p>`;
+    }
+}
+window.adminSearchUsers = adminSearchUsers;
+
+function adminPickUser(uid) {
+    const input = document.getElementById("adm-target-user-id");
+    if (input) { input.value = uid; input.scrollIntoView({ behavior: "smooth", block: "center" }); }
+}
+window.adminPickUser = adminPickUser;
+
+async function _adminBanCall(uid, ban) {
+    const reason = ban ? _adminRequireReason() : _adminReason();
+    if (ban && reason === null) return;
+    haptic("medium");
+    try {
+        const res = await fetch(`/api/admin/users/${uid}/${ban ? "ban" : "unban"}`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ reason: reason || "" }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        showStudioToast(data.message, "success");
+        loadAdminData();
+    } catch (e) {
+        showStudioToast(e.message, "error");
+    }
+}
+
+async function adminBanUser(uid) { await _adminBanCall(uid, true); }
+window.adminBanUser = adminBanUser;
+async function adminUnbanUser(uid) { await _adminBanCall(uid, false); }
+window.adminUnbanUser = adminUnbanUser;
+
+async function adminBanTarget() {
+    const input = document.getElementById("adm-target-user-id");
+    const uid = input ? parseInt(input.value) : 0;
+    if (!uid) { showStudioToast("Telegram ID ထည့်ပါ", "info"); return; }
+    await _adminBanCall(uid, true);
+}
+window.adminBanTarget = adminBanTarget;
+
+async function adminUnbanTarget() {
+    const input = document.getElementById("adm-target-user-id");
+    const uid = input ? parseInt(input.value) : 0;
+    if (!uid) { showStudioToast("Telegram ID ထည့်ပါ", "info"); return; }
+    await _adminBanCall(uid, false);
+}
+window.adminUnbanTarget = adminUnbanTarget;
 
 async function adminGrantVip() {
     const input = document.getElementById("adm-target-user-id");
@@ -4035,15 +4183,17 @@ async function adminGrantVip() {
         showStudioToast("Telegram ID ထည့်ပါ", 'info');
         return;
     }
+    const reason = _adminRequireReason();
+    if (reason === null) return;
     haptic("medium");
     try {
         const res = await fetch("/api/admin/adjust-user", {
             method: "POST",
             headers: getAuthHeaders(),
-            body: JSON.stringify({ user_id: uid, account_category: "PURCHASED" }),
+            body: JSON.stringify({ user_id: uid, account_category: "PURCHASED", reason }),
         });
         const data = await res.json();
-        showStudioToast(data.message, 'info');
+        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
         loadAdminData();
     } catch (e) {
         showStudioToast(e.message, 'error');
@@ -4057,15 +4207,17 @@ async function adminAddMinutes() {
         showStudioToast("Telegram ID ထည့်ပါ", 'info');
         return;
     }
+    const reason = _adminRequireReason();
+    if (reason === null) return;
     haptic("medium");
     try {
         const res = await fetch("/api/admin/adjust-user", {
             method: "POST",
             headers: getAuthHeaders(),
-            body: JSON.stringify({ user_id: uid, add_minutes: 60 }),
+            body: JSON.stringify({ user_id: uid, add_minutes: 60, reason }),
         });
         const data = await res.json();
-        showStudioToast(data.message, 'info');
+        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
         loadAdminData();
     } catch (e) {
         showStudioToast(e.message, 'error');
@@ -4079,15 +4231,17 @@ async function adminAddRecapCredits() {
         showStudioToast("Telegram ID ထည့်ပါ", 'info');
         return;
     }
+    const reason = _adminRequireReason();
+    if (reason === null) return;
     haptic("medium");
     try {
         const res = await fetch("/api/admin/adjust-user", {
             method: "POST",
             headers: getAuthHeaders(),
-            body: JSON.stringify({ user_id: uid, add_recap_credits: 10 }),
+            body: JSON.stringify({ user_id: uid, add_recap_credits: 10, reason }),
         });
         const data = await res.json();
-        showStudioToast(data.message, 'info');
+        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
         loadAdminData();
     } catch (e) {
         showStudioToast(e.message, 'error');
@@ -4403,9 +4557,12 @@ async function adminCancelJob(jobId) {
             });
             const data = await res.json();
             if (data.success) {
+                if (data.refund && data.refund.refunded) {
+                    showStudioToast("✅ Job cancelled — charge refunded to the user", "success");
+                }
                 loadAdminQueue();
             } else {
-                showStudioToast(data.message || "Failed to cancel job", 'error');
+                showStudioToast(data.message || data.detail || "Failed to cancel job", 'error');
             }
         } catch (e) {
             showStudioToast("Cancel error: " + e.message, 'error');

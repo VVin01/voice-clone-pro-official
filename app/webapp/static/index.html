@@ -1210,6 +1210,33 @@
                     </div>
                 </div>
 
+                <!-- Production Ops Health (2026-10-31) -->
+                <div class="card glass mt-3" id="admin-ops-card">
+                    <div class="card-label" data-i18n="admin_ops_header">🩺 စနစ် အခြေအနေ (Ops)</div>
+                    <div class="admin-stats-grid mt-2">
+                        <div class="card glass stat-mini-card">
+                            <span class="stat-lbl" data-i18n="admin_stat_failed24">၂၄ နာရီအတွင်း ပျက်တဲ့ အလုပ်</span>
+                            <span class="stat-num text-danger" id="adm-failed-24h">0</span>
+                        </div>
+                        <div class="card glass stat-mini-card">
+                            <span class="stat-lbl" data-i18n="admin_stat_banned">ပိတ်ထားသော အကောင့်</span>
+                            <span class="stat-num" id="adm-banned-users">0</span>
+                        </div>
+                        <div class="card glass stat-mini-card">
+                            <span class="stat-lbl" data-i18n="admin_stat_new24">၂၄ နာရီအတွင်း အသစ်</span>
+                            <span class="stat-num" id="adm-new-24h">0</span>
+                        </div>
+                        <div class="card glass stat-mini-card">
+                            <span class="stat-lbl" data-i18n="admin_stat_storage">DB / Storage</span>
+                            <span class="stat-num" id="adm-storage-size" style="font-size:15px;">—</span>
+                        </div>
+                    </div>
+                    <div class="card-label mt-3" style="font-size:13px;" data-i18n="admin_recent_actions">🕘 Admin လုပ်ဆောင်ချက် နောက်ဆုံးများ</div>
+                    <div id="admin-recent-actions" class="mt-2">
+                        <p class="text-muted">—</p>
+                    </div>
+                </div>
+
                 <!-- ⚡ Live Processing Queue & Jobs Inspector ⚡ -->
                 <div class="card glass mt-3" id="admin-queue-card">
                     <div class="card-header-row">
@@ -1263,11 +1290,21 @@
                 <div class="card glass mt-3">
                     <div class="card-label" data-i18n="admin_user_manage_header">👤 အသုံးပြုသူ ရှာဖွေ ပြင်ဆင်ခြင်း</div>
                     <div class="admin-user-inputs mt-2">
-                        <input type="number" id="adm-target-user-id" data-i18n-ph="admin_user_id_ph" placeholder="Telegram ID (ဥပမာ: 1957002115)" class="studio-input">
+                        <div class="admin-action-row">
+                            <input type="text" id="adm-user-search-q" data-i18n-ph="admin_user_search_ph" placeholder="ID / @username / နာမည် ရိုက်ရှာပါ" class="studio-input" style="flex:1;">
+                            <button class="btn mini-btn secondary-btn" onclick="adminSearchUsers()" data-i18n="btn_search_users">🔎 ရှာမည်</button>
+                        </div>
+                        <div id="admin-user-search-results" class="mt-2"></div>
+                        <input type="number" id="adm-target-user-id" data-i18n-ph="admin_user_id_ph" placeholder="Telegram ID (ဥပမာ: 1957002115)" class="studio-input mt-2">
+                        <input type="text" id="adm-adjust-reason" data-i18n-ph="admin_adjust_reason_ph" placeholder="အကြောင်းပြချက် (ပြင်ဆင်/Ban လုပ်ရင် မဖြစ်မနေ လိုပါတယ်)" class="studio-input mt-2">
                         <div class="admin-action-row mt-2">
                             <button class="btn mini-btn gold-btn" onclick="adminGrantVip()" data-i18n="btn_grant_vip">👑 VIP သို့ တင်မည်</button>
                             <button class="btn mini-btn secondary-btn" onclick="adminAddMinutes()" data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</button>
                             <button class="btn mini-btn cyan-btn" onclick="adminAddRecapCredits()" data-i18n="btn_add_recap_credit">🎬 +10 Recap Credit</button>
+                        </div>
+                        <div class="admin-action-row mt-2">
+                            <button class="btn mini-btn" style="background:#dc2626;color:#fff;" onclick="adminBanTarget()" data-i18n="btn_ban_user">🚫 Ban လုပ်မည်</button>
+                            <button class="btn mini-btn secondary-btn" onclick="adminUnbanTarget()" data-i18n="btn_unban_user">✅ Ban ပြန်ဖြုတ်မည်</button>
                         </div>
                     </div>
                 </div>
