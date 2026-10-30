@@ -1,0 +1,61 @@
+# Continuous integration: run the pytest suite on every push and PR.
+#
+# Python version and install steps mirror the repo's own config:
+#   - requirements.txt header: "Python Target: 3.10.x"
+#   - Dockerfile: FROM python:3.10-slim, apt ffmpeg + fontconfig,
+#     `pip install -r requirements.txt` (pytest/pytest-asyncio are pinned
+#     in requirements.txt under "Test Suite").
+#   - README: tests are run with `pytest`.
+# ffmpeg is installed so the media tests (recap render / splitter /
+# watermark / subtitle shaping / persona mastering) actually run instead
+# of being skipped by their `shutil.which("ffmpeg")` guards. Subtitle
+# fonts are bundled in app/assets/fonts, so no system font packages are
+# required by the suite.
+#
+# No secrets are used: the suite runs against in-memory SQLite and fakes
+# for Telegram / Gemini / TTS. There is no .env in CI, so settings fall
+# back to their safe defaults.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (Python 3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install system packages (ffmpeg, fontconfig)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fontconfig
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run test suite
+        run: python -m pytest -q -rs
