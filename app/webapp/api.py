@@ -1671,21 +1671,20 @@ async def _send_recap_telegram_delivery(
                 v_parent = Path(video_path).parent.name
                 v_grand = Path(video_path).parent.parent.name
                 jid = v_parent if v_parent.startswith("rc_") else (v_grand if v_grand.startswith("rc_") else Path(video_path).stem)
-                dl_url = f"{app_url}/api/recap/download/{jid}/video"
+                # No raw download URL button: /api/recap/download requires
+                # Telegram init-data auth, so the old url= button only
+                # returned 401 in a browser. The Mini App button carries
+                # the job id and downloads with proper auth.
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
                             text=t("clone_btn_miniapp_watch", lang),
-                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap")
-                        ),
-                        InlineKeyboardButton(
-                            text=t("clone_btn_direct_download", lang),
-                            url=dl_url
+                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={jid}")
                         )
                     ]
                 ])
                 over_caption = t(
-                    "recap_over_caption",
+                    "recap_over_app_caption",
                     lang,
                     jid=jid[:8],
                     size_formatted=size_formatted,

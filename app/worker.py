@@ -379,6 +379,13 @@ async def process_single_job(
                     )
                 except Exception as notify_err:
                     logger.warning("Could not send completion alert to user %s: %s", target_chat_id, notify_err)
+                # Also flip the job's progress/status card to its completed
+                # state. Without this, bot-submitted jobs kept showing the
+                # step-4 "in progress" stepper forever, so the chat looked
+                # unfinished even though the job had succeeded (the direct
+                # delivery branch above already did this edit).
+                if target_msg_id:
+                    await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
 
         job.status = JobStatus.SUCCESS.value
         job.finished_at = utc_now()
