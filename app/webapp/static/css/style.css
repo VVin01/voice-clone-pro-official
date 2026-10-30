@@ -210,6 +210,38 @@ a { color: var(--gold-2); }
 .gate-chip.joined { color: #137333; border-color: rgba(19, 115, 51, 0.45); }
 .gate-chip.missing { color: #b3261e; border-color: rgba(179, 38, 30, 0.35); }
 
+/* ── Mini App entry gate lock (entry-gate, 2026-10-30) ────────────────
+   Full-screen lock over a blurred app: body starts .gate-locked, so the
+   app is covered from first paint until a LIVE verify-membership check
+   unlocks it. z-index 890: above the bottom nav (200), below the
+   image-modal layer (900) so the 401 "open via Telegram" modal can
+   still surface above the lock. */
+body.gate-locked { overflow: hidden; }
+body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-select: none; }
+.gate-lock {
+    position: fixed; inset: 0; z-index: 890;
+    background: rgba(23, 43, 66, 0.45);
+    backdrop-filter: blur(18px) saturate(1.25); -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    display: flex; align-items: center; justify-content: center;
+    padding: var(--s4); animation: fadeIn 0.18s ease;
+    overflow-y: auto;
+}
+.gate-lock-card {
+    width: 100%; max-width: 400px; text-align: center;
+    background: var(--glass-strong);
+    border: 1px solid var(--glass-line); border-radius: var(--r-xl);
+    padding: var(--s6) var(--s5);
+    box-shadow: var(--glass-hi), var(--shadow-pop);
+    display: flex; flex-direction: column; align-items: center; gap: var(--s2);
+}
+.gate-lock-card h3 { font-size: 17px; font-weight: 800; margin: var(--s2) 0 var(--s1); line-height: 1.5; }
+.gate-lock-card .modal-desc { margin-bottom: var(--s2); }
+.gate-lock-chips { justify-content: center; }
+.gate-lock-actions { display: flex; flex-wrap: wrap; gap: var(--s2); justify-content: center; width: 100%; }
+.gate-lock-actions .gold-gradient-btn { width: 100%; }
+.gate-lock-checking { font-size: 13px; color: var(--gold-2); }
+.gate-lock-checking:empty { display: none; }
+
 /* ── Bottom navigation ──────────────────────────────────────────────── */
 .bottom-nav {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 0;

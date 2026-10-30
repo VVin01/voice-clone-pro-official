@@ -8,7 +8,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/static/css/style.css?v=20261030_release_v2">
 </head>
-<body class="dark-theme">
+<body class="dark-theme gate-locked">
     <div id="app" class="app-container">
         
         <!-- ════ TOP LUXURY STUDIO APP BAR ════ -->
@@ -1634,6 +1634,30 @@
             </div>
             <div id="admin-media-body" class="admin-media-body"></div>
             <div id="admin-media-deliverables" class="admin-media-deliverables"></div>
+        </div>
+    </div>
+
+    <!-- ════ MINI APP ENTRY GATE LOCK (entry-gate, 2026-10-30) ════
+         Full-screen lock shown from first paint (body starts .gate-locked).
+         The app behind it stays unusable until a LIVE check via
+         POST /api/user/verify-membership returns verified=true; a member
+         who later leaves either chat is locked again on the next check. -->
+    <div id="gate-lock" class="gate-lock" role="alertdialog" aria-modal="true">
+        <div class="gate-lock-card">
+            <div class="modal-emoji">🔐</div>
+            <h3 id="gate-lock-title" data-i18n="gate_lock_title">🔐 Channel နဲ့ Group Join ပြီးမှ သုံးနိုင်ပါမယ်</h3>
+            <p id="gate-lock-desc" class="modal-desc" data-i18n="gate_lock_desc">Voice Clone Pro ကို အသုံးပြုဖို့ Channel နဲ့ Group နှစ်ခုလုံးကို Join ထားဖို့ လိုပါတယ်။ Join ပြီးရင် «ပြန်စစ်မည်» ကို နှိပ်လိုက်ရုံနဲ့ ချက်ချင်း ဖွင့်ပေးပါမယ်။</p>
+            <div class="gate-banner-chips gate-lock-chips">
+                <span id="gate-lock-chip-channel" class="gate-chip">📢 Channel</span>
+                <span id="gate-lock-chip-group" class="gate-chip">👥 Group</span>
+            </div>
+            <div class="gate-lock-actions">
+                <a id="gate-lock-link-channel" class="btn mini-btn" data-i18n="gate_join_channel" href="#" target="_blank" rel="noopener">📢 Channel Join</a>
+                <a id="gate-lock-link-group" class="btn mini-btn" data-i18n="gate_join_group" href="#" target="_blank" rel="noopener">👥 Group Join</a>
+                <button id="gate-lock-btn-verify" class="btn gold-gradient-btn" type="button" data-i18n="gate_verify_btn" onclick="verifyEntryGate()">✅ Join ပြီးပြီ — ပြန်စစ်မည်</button>
+            </div>
+            <p id="gate-lock-status" class="gate-banner-status"></p>
+            <p id="gate-lock-checking" class="gate-lock-checking" data-i18n="gate_checking">စစ်ဆေးနေသည်…</p>
         </div>
     </div>
 
