@@ -59,6 +59,9 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
             InlineKeyboardButton(text=tutorial_text, url=tutorial_url),
         ],
         [
+            InlineKeyboardButton(text=t("btn_menu_refer_earn", lang), callback_data="menu:refer_earn"),
+        ],
+        [
             InlineKeyboardButton(text=switch_lang_text, callback_data="menu:change_lang"),
             InlineKeyboardButton(text=verify_gate_text, callback_data="gate:verify"),
         ],
