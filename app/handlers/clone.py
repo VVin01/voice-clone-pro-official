@@ -686,6 +686,16 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 )
                 return
 
+            # Ownership: the completion button is only sent to the job's
+            # owner, and the audio must never be delivered to anyone else
+            # who obtains or guesses a job id.
+            if job.user_id != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=t("clone_audio_not_found", lang),
+                )
+                return
+
             res_path = Path(job.result_path) if job.result_path else None
             if not res_path or not res_path.is_file():
                 # Search by job_id in outputs
@@ -702,40 +712,29 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                     parse_mode="HTML",
                 )
             else:
+                # The result file is no longer on this server's disk (the
+                # service has no persistent disk, so a redeploy/restart
+                # wipes generated outputs). The old fallback fetched
+                # /api/audio/download without Telegram auth — that endpoint
+                # requires init-data auth, so it could never succeed — and
+                # then showed the same URL as a "direct download" link,
+                # which only returned 401 in a browser. Be honest instead
+                # and route the user into the Mini App.
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
-                dl_url = f"{app_url}/api/audio/download/{job_id}"
-                downloaded_audio = None
-                try:
-                    import httpx
-                    async with httpx.AsyncClient(timeout=30.0) as client:
-                        r = await client.get(dl_url)
-                        if r.status_code == 200 and len(r.content) > 1000:
-                            downloaded_audio = r.content
-                except Exception:
-                    pass
-
-                if downloaded_audio:
-                    await callback.bot.send_audio(
-                        chat_id=target_chat_id,
-                        audio=BufferedInputFile(downloaded_audio, filename=f"voice_clone_{job_id[:8]}.wav"),
-                        caption=t("clone_caption_voice", lang, job_id=job_id[:8]),
-                        parse_mode="HTML",
-                    )
-                else:
-                    kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text=t("clone_btn_miniapp_listen", lang),
-                                web_app=WebAppInfo(url=f"{app_url}?job_id={job_id}")
-                            )
-                        ]
-                    ])
-                    await callback.bot.send_message(
-                        chat_id=target_chat_id,
-                        text=t("clone_ready_audio_text", lang, job_id=job_id[:8], dl_url=dl_url),
-                        reply_markup=kb,
-                        parse_mode="HTML",
-                    )
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=t("clone_btn_miniapp_listen", lang),
+                            web_app=WebAppInfo(url=f"{app_url}?job_id={job_id}")
+                        )
+                    ]
+                ])
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=t("clone_audio_file_missing_text", lang, job_id=job_id[:8]),
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
     except Exception as e:
         logger.error(f"Error handling send_audio callback for job {job_id}: {e}", exc_info=True)
         try:
@@ -766,6 +765,13 @@ async def handle_send_recap_callback(callback: CallbackQuery):
         from app.webapp.api import resolve_recap_deliverable_path
         async with AsyncSessionLocal() as session:
             job = await session.get(Job, job_id)
+            # Ownership: never deliver another user's recap video.
+            if job and job.user_id != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=t("clone_audio_not_found", lang),
+                )
+                return
             db_res_path = job.result_path if job else None
             resolved_vid = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
             resolved_srt = resolve_recap_deliverable_path(job_id, "srt")
@@ -782,19 +788,24 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                         parse_mode="HTML",
                     )
                 else:
+                    # >50MB cannot be sent through the Bot API. The old
+                    # "direct download" URL button pointed at
+                    # /api/recap/download, which requires Telegram
+                    # init-data auth and only returned 401 in a browser.
+                    # Route through the Mini App instead, which downloads
+                    # with proper auth.
                     app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
-                    dl_url = f"{app_url}/api/recap/download/{job_id}/video"
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text=t("clone_btn_direct_download", lang),
-                                url=dl_url
+                                text=t("clone_btn_miniapp_watch", lang),
+                                web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
                             )
                         ]
                     ])
                     await callback.bot.send_message(
                         chat_id=target_chat_id,
-                        text=t("clone_recap_large_text", lang, job_id=job_id[:8], dl_url=dl_url),
+                        text=t("clone_recap_large_app_text", lang, job_id=job_id[:8]),
                         reply_markup=kb,
                         parse_mode="HTML",
                     )
@@ -809,8 +820,12 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     except Exception:
                         pass
             else:
+                # File no longer on this server's disk (no persistent
+                # disk: redeploys/restarts wipe generated outputs). The
+                # old message embedded the raw /api/recap/download URL,
+                # which requires Telegram init-data auth and only
+                # returned 401 in a browser — say so honestly instead.
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
-                dl_url = f"{app_url}/api/recap/download/{job_id}/video"
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -821,7 +836,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                 ])
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
-                    text=t("clone_recap_ready_text", lang, job_id=job_id[:8], dl_url=dl_url),
+                    text=t("clone_recap_file_missing_text", lang, job_id=job_id[:8]),
                     reply_markup=kb,
                     parse_mode="HTML",
                 )

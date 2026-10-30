@@ -41,7 +41,7 @@ async def test_four_item_user_menu_and_admin_button():
     # Admin keyboard: same user items + 1 broadcast button
     kb_admin = main_menu_kb(is_admin=True, lang="en")
     admin_buttons = [btn.callback_data for row in kb_admin.inline_keyboard for btn in row]
-    assert admin_buttons == [None, None, None, None, "menu:change_lang", "gate:verify", "admin:broadcast_prompt"]
+    assert admin_buttons == [None, None, None, None, "menu:change_lang", "gate:verify", "admin:broadcast"]
     assert len(admin_buttons) == 7
     flat_admin = [btn for row in kb_admin.inline_keyboard for btn in row]
     assert "Broadcast" in flat_admin[6].text

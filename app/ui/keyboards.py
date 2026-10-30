@@ -65,7 +65,7 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
     ]
     if is_admin:
         admin_text = t("menu_admin_broadcast", lang)
-        buttons.append([InlineKeyboardButton(text=admin_text, callback_data="admin:broadcast_prompt")])
+        buttons.append([InlineKeyboardButton(text=admin_text, callback_data="admin:broadcast")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
