@@ -32,10 +32,15 @@ def test_recap_config_request_sub_font_default():
 
 
 def test_recap_config_request_sub_font_choices():
-    """All registered fonts in SUBTITLE_FONT_OPTIONS are accepted."""
+    """All registered fonts in SUBTITLE_FONT_OPTIONS are accepted.
+
+    The "default" key is the no-choice selector: the validator resolves it
+    to the production default font key ('padauk' since 2026-10-30); every
+    other key passes through unchanged.
+    """
     for key in SUBTITLE_FONT_OPTIONS:
         req = RecapConfigRequest(url="https://example.com/video.mp4", sub_font=key)
-        assert req.sub_font == key
+        assert req.sub_font == ("padauk" if key == "default" else key)
 
 
 def test_recap_config_request_sub_font_aliases_and_fallback():
@@ -46,9 +51,9 @@ def test_recap_config_request_sub_font_aliases_and_fallback():
     req2 = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="Padauk")
     assert req2.sub_font == "padauk"
 
-    # Unknown font safely falls back to 'default'
+    # Unknown font safely falls back to the production default ('padauk')
     req3 = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="ComicSansUnknown")
-    assert req3.sub_font == "default"
+    assert req3.sub_font == "padauk"
 
 
 # ── 2. Downloader & Pipeline Signature Verification ───────────────────────
