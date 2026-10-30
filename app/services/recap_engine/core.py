@@ -742,6 +742,7 @@ def render_video_part(
     max_freeze_hold: float = 0.75,
     frame_count: int | None = None,
     layout: dict[str, Any] | None = None,
+    render_quality: str = "standard",
 ) -> dict[str, float]:
     """frame_count (when given) locks the part to exactly that many 30 fps frames.
     layout (frame_layout) is the output ratio / fill; None = the original 16:9 fill.
@@ -786,7 +787,7 @@ def render_video_part(
             "-filter_complex", graph,
             "-map", out_label,
             *frame_lock,
-            *_encoder_args(encoder),
+            *encoder_args_for_quality(encoder, render_quality),
             "-movflags", "+faststart", str(output),
         ]
     else:
@@ -802,7 +803,7 @@ def render_video_part(
             *common_input,
             "-vf", vf,
             *frame_lock,
-            *_encoder_args(encoder),
+            *encoder_args_for_quality(encoder, render_quality),
             "-movflags", "+faststart", str(output),
         ]
 
@@ -1062,11 +1063,140 @@ def _render_extra_text_png(
             border_color=(255, 215, 0, 200)
         )
 
+# Free-tier watermark v3 (2026-10-30): v1 was a corner-only lockup —
+# rejected (cheap-looking, croppable). v2 added a full-frame DIAGONAL
+# TILED pattern of the brand name PLUS that corner lockup — the owner
+# still rejected the lockup: it read as a cheap sticker and collided with
+# a pattern tile in the top-right corner. v3 therefore carries the
+# identity in the pattern ALONE, and the pattern text is the bot's
+# username "@voiceclonepro_bot": the text repeats across the whole
+# picture (centre and edges alike), so no crop can remove it, while the
+# low opacity keeps the video watchable and the subtitles perfectly
+# readable. Text is drawn with the bundled Noto Sans Myanmar file (Latin
+# glyphs) — never an emoji or a system font, so the ✨-tofu failure of
+# the old panel can never recur.
+BRAND_PATTERN_TEXT = "@voiceclonepro_bot"
+BRAND_PATTERN_ANGLE = 24.0  # PIL rotate(): CCW — text lines rise to the right
+BRAND_PATTERN_OPACITY = 0.19  # tuned on frames; watchable but unmistakable
+
+
+def _brand_text_sprite(font_file: Path, font_size: int, alpha: int) -> Any:
+    """One '@voiceclonepro_bot' wordmark as a transparent sprite.
+
+    Generous letter tracking (drawn glyph-by-glyph), rendered at 3x and
+    downscaled for smooth edges. A soft dark twin sits under the white
+    text so the mark stays visible on bright scenes too.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    ss = 3
+    font = ImageFont.truetype(str(font_file), max(12, font_size) * ss)
+    tracking = int(round(font_size * 0.30)) * ss
+    probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    advances = [probe.textlength(ch, font=font) for ch in BRAND_PATTERN_TEXT]
+    asc, desc = font.getmetrics()
+    top = probe.textbbox((0, 0), BRAND_PATTERN_TEXT, font=font)[1]
+    width = int(sum(advances) + tracking * (len(BRAND_PATTERN_TEXT) - 1)) + 2 * ss
+    height = asc + desc + 2 * ss
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    shadow_alpha = max(0, min(255, int(alpha * 0.55)))
+    for dx, dy, fill in ((ss, ss, (0, 0, 0, shadow_alpha)), (0, 0, (255, 255, 255, alpha))):
+        x = float(ss + dx)
+        for ch, adv in zip(BRAND_PATTERN_TEXT, advances):
+            d.text((x, ss + dy - top), ch, font=font, fill=fill)
+            x += adv + tracking
+    return img.resize((max(1, width // ss), max(1, height // ss)), Image.LANCZOS)
+
+
+def render_brand_pattern_png(
+    output: Path,
+    *,
+    frame_width: int,
+    frame_height: int,
+    opacity: float = BRAND_PATTERN_OPACITY,
+) -> Path:
+    """Render the full-frame diagonal tiled brand pattern as a PNG.
+
+    The returned PNG is exactly frame_width x frame_height, transparent
+    except for the repeated wordmark. The grid is drawn on an oversized
+    layer, rotated, then centre-cropped, so tiles cover the corners and
+    edges as densely as the centre — cropping any part of the frame still
+    leaves the mark in shot.
+    """
+    import math
+
+    from PIL import Image
+
+    fw = max(64, int(frame_width))
+    fh = max(64, int(frame_height))
+    opacity = max(0.08, min(0.35, float(opacity)))
+    alpha = int(round(255 * opacity))
+    font_file = bundled_fonts_dir() / "NotoSansMyanmar.ttf"
+    font_size = max(15, int(round(min(fw, fh) * 0.046)))
+    sprite = _brand_text_sprite(font_file, font_size, alpha)
+
+    step_x = int(sprite.width * 1.15)
+    step_y = int(sprite.height * 2.2)
+    diag = int(math.ceil(math.hypot(fw, fh))) + step_x
+    layer = Image.new("RGBA", (diag, diag), (0, 0, 0, 0))
+    row = 0
+    y = -sprite.height
+    while y < diag + sprite.height:
+        xoff = (step_x // 2) if row % 2 else 0
+        x = -sprite.width + xoff
+        while x < diag + sprite.width:
+            layer.alpha_composite(sprite, (x, y))
+            x += step_x
+        y += step_y
+        row += 1
+    layer = layer.rotate(BRAND_PATTERN_ANGLE, resample=Image.BICUBIC)
+    left = (diag - fw) // 2
+    top = (diag - fh) // 2
+    img = layer.crop((left, top, left + fw, top + fh))
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    img.save(output)
+    return output
+
+
+# Render quality presets (production-grade programme, 2026-10-29).
+# "standard" is EXACTLY the historical encode (libx264 veryfast CRF 22 /
+# NVENC p4 CQ 20) so the default behaviour is unchanged; "high" and
+# "max" trade render time for lower CRF/CQ and slower presets. Quality
+# changes ENCODER SETTINGS ONLY — output resolution is governed by the
+# ratio canvas and the tier source cap (720p free / 1080p VIP download).
+RENDER_QUALITIES: dict[str, dict[str, list[str]]] = {
+    "standard": {
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "20", "-b:v", "0"],
+        "libx264": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-threads", "0"],
+    },
+    "high": {
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p6", "-rc", "vbr", "-cq", "16", "-b:v", "0"],
+        "libx264": ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-threads", "0"],
+    },
+    "max": {
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p7", "-rc", "vbr", "-cq", "12", "-b:v", "0", "-tune", "hq"],
+        "libx264": ["-c:v", "libx264", "-preset", "slow", "-crf", "15", "-threads", "0"],
+    },
+}
+
+
+def normalize_render_quality(value: Any) -> str:
+    """Unknown/empty quality values fall back to "standard" (the
+    historical default) rather than failing a render."""
+    q = str(value or "standard").strip().lower()
+    return q if q in RENDER_QUALITIES else "standard"
+
+
+def encoder_args_for_quality(encoder: str, quality: Any = "standard") -> list[str]:
+    table = RENDER_QUALITIES[normalize_render_quality(quality)]
+    return list(table.get(encoder) or table["libx264"])
+
+
 def _encoder_args(encoder: str) -> list[str]:
-    if encoder == "h264_nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "20", "-b:v", "0"]
-    # Accelerated CPU encoding preset with multi-threading for fast render times on cloud instances
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-threads", "0"]
+    # Historical default encode == the "standard" quality preset.
+    return encoder_args_for_quality(encoder, "standard")
 
 
 BURMESE_SYLLABLE_BREAK = re.compile(
@@ -1151,7 +1281,135 @@ SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = {
         "outline": 2.2,
         "shadow": 1.2,
     },
+    # Added by the production-grade programme (2026-10-29). Both burn-in
+    # paths (ASS writer + SRT force_style) read this dict, so new presets
+    # apply everywhere subtitles are burned; size/position keep flowing
+    # through the existing sub_font_size / sub_y controls.
+    "band": {
+        "name": "Band",
+        "label": "နောက်ခံ Band (Band)",
+        "short": "Band",
+        "primary": "&H00FFFFFF",
+        "outline_col": "&H00000000",
+        "back_col": "&H99000000",  # Stronger translucent black band than "boxed"
+        "border_style": 3,
+        "outline": 1.0,
+        "shadow": 0.0,
+    },
+    "heavy": {
+        "name": "Heavy Outline",
+        "label": "အနားထူ (Heavy Outline)",
+        "short": "အနားထူ",
+        "primary": "&H00FFFFFF",
+        "outline_col": "&H00000000",
+        "back_col": "&H80000000",
+        "border_style": 1,
+        "outline": 4.2,
+        "shadow": 2.0,
+    },
+    "soft": {
+        "name": "Soft",
+        "label": "နူးညံ့ (Soft)",
+        "short": "နူးညံ့",
+        "primary": "&H00FFFFFF",
+        "outline_col": "&H00222222",
+        "back_col": "&HA0000000",
+        "border_style": 1,
+        "outline": 1.2,
+        "shadow": 0.8,
+    },
 }
+
+
+# Subtitle font options (recap-quality pass, 2026-10-30). Every file is
+# bundled in app/assets/fonts/ under the SIL Open Font License 1.1 (see the
+# LICENSE-*.txt files beside them), so subtitle burn-in resolves fonts from
+# the repo on any host (incl. Render) — never from a system-font assumption.
+# "default" is the historical look: the Noto Sans Myanmar variable font that
+# has always shipped with the app, so default output is byte-for-byte the
+# same family as before this option existed.
+SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
+    "default": {
+        "name": "Noto Sans (Default)",
+        "label": "မူရင်း Noto Sans (Default)",
+        "short": "Noto Sans",
+        "family": "Noto Sans Myanmar",
+        "files": ["NotoSansMyanmar.ttf"],
+        "license": "OFL-1.1 (LICENSE-NotoSansMyanmar-OFL.txt)",
+    },
+    "serif": {
+        "name": "Noto Serif Myanmar",
+        "label": "စာလုံးလှ Serif (Noto Serif)",
+        "short": "Serif",
+        "family": "Noto Serif Myanmar",
+        "files": ["NotoSerifMyanmar-Regular.ttf", "NotoSerifMyanmar-Bold.ttf"],
+        "license": "OFL-1.1 (LICENSE-NotoSerifMyanmar-OFL.txt)",
+    },
+    "padauk": {
+        "name": "Padauk",
+        "label": "ပတေက် (Padauk)",
+        "short": "Padauk",
+        "family": "Padauk",
+        "files": ["Padauk-Regular.ttf", "Padauk-Bold.ttf"],
+        "license": "OFL-1.1 (LICENSE-Padauk-OFL.txt)",
+    },
+}
+
+DEFAULT_SUBTITLE_FONT = "default"
+
+
+def bundled_fonts_dir() -> Path:
+    """Directory holding the repo-bundled subtitle fonts."""
+    return Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+
+
+def bundled_font_files() -> list[str]:
+    """Every bundled subtitle font file name (all SUBTITLE_FONT_OPTIONS)."""
+    names: list[str] = []
+    for opt in SUBTITLE_FONT_OPTIONS.values():
+        for fn in opt["files"]:
+            if fn not in names:
+                names.append(fn)
+    return names
+
+
+def resolve_subtitle_font(value: str | None) -> tuple[str, str]:
+    """Resolve a subtitle-font selector to (option_key, family_name).
+
+    Accepts an option key ("serif"), a family name ("Noto Serif Myanmar"),
+    or a legacy value. Legacy "Pyidaungsu" (and anything unknown) maps to
+    the default: Pyidaungsu's GSUB shaping is incomplete for libass (see
+    ensure_system_myanmar_fonts) and it is not bundled.
+    """
+    v = str(value or "").strip()
+    if not v:
+        return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
+    low = v.lower()
+    if low in SUBTITLE_FONT_OPTIONS:
+        return low, SUBTITLE_FONT_OPTIONS[low]["family"]
+    for key, opt in SUBTITLE_FONT_OPTIONS.items():
+        if low == str(opt["family"]).lower():
+            return key, opt["family"]
+    return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
+
+
+def stage_bundled_fonts(dest_dir: Path) -> Path | None:
+    """Copy every bundled subtitle font into dest_dir for libass fontsdir.
+
+    Returns dest_dir when at least one font was staged, else None.
+    """
+    src_dir = bundled_fonts_dir()
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        staged = False
+        for fn in bundled_font_files():
+            src_f = src_dir / fn
+            if src_f.is_file():
+                shutil.copy2(src_f, dest_dir / fn)
+                staged = True
+        return dest_dir if staged else None
+    except Exception:
+        return None
 
 
 def split_into_burmese_syllables(text: str) -> list[str]:
@@ -1226,7 +1484,10 @@ MYANMAR_SPELLING_CORRECTIONS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"ရုပ်တရက်"), "ရုတ်တရက်"),
     (re.compile(r"ဂရုဆိုက်"), "ဂရုစိုက်"),
     (re.compile(r"အံသြ|အံ့သြ"), "အံ့ဩ"),
-    (re.compile(r"ခန(?=[စောင့်လေးခနအတွင်းအကြာနေတာတဖြုတ်]|\s|$)"), "ခဏ"),
+    # NOTE: continuations must be explicit words — a character class built from the
+    # letters of those words also matches 'း'/'ု', which corrupted the classifier
+    # noun 'ခန်း' (room) into 'ခဏ်း' and 'အခန်း' into 'အခဏ်း'.
+    (re.compile(r"ခန(?=စောင့်|လေး|ခန|အတွင်း|အကြာ|နေတာ|တဖြုတ်|\s|$)"), "ခဏ"),
     (re.compile(r"မတက်နိုင်"), "မတတ်နိုင်"),
     (re.compile(r"တက်နိုင်သမျှ"), "တတ်နိုင်သမျှ"),
     (re.compile(r"တက်နိုင်သလောက်"), "တတ်နိုင်သလောက်"),
@@ -1242,6 +1503,23 @@ MYANMAR_SPELLING_CORRECTIONS: list[tuple[re.Pattern, str]] = [
 ]
 
 
+# Curated word-level spelling fixes for generated recap narration (data-driven so
+# the table can grow). These are model-output errors the regex table above does not
+# cover: loanword transliterations and common misspellings found in live recap
+# scripts (owner report 2026-10-29, job rc_1793279760). Plain substring
+# replacements — every key must be unambiguous (never a substring of a correct
+# word) so correct text passes through unchanged.
+MYANMAR_SPELLING_FIXES: dict[str, str] = {
+    "ဒီအန်အေ": "ဒီအဲန်အေ",  # DNA — the letter N is 'အဲန်', not 'အန်'
+    "သံသဝင်": "သံသယဝင်",  # သံသယ (doubt) keeps its ယ
+    "လူပုံအလယ်": "လူပုံလယ်",  # the idiom is လူပုံလယ်, not အလယ်
+    "အကြပ်အတည်း": "အကျပ်အတည်း",  # ကျပ်, not ကြပ်
+    "အအပြဲ": "အပြင်းအထန်",  # garbled doubled-အ token in model output
+    "ဘွားအေ": "အဘွား",  # grandmother — standard written form
+    "လက်ဝတ်ရစား": "လက်ဝတ်ရတနာ",  # jewelry — modern standard term
+}
+
+
 def normalize_burmese_orthography(text: Any) -> str:
     """Normalize Myanmar Unicode spelling according to standard Myanmar Language Commission orthography."""
     s = str(text or "")
@@ -1250,6 +1528,9 @@ def normalize_burmese_orthography(text: Any) -> str:
     s = normalize_burmese_homoglyphs(s)
     for pat, rep in MYANMAR_SPELLING_CORRECTIONS:
         s = pat.sub(rep, s)
+    for wrong, right in MYANMAR_SPELLING_FIXES.items():
+        if wrong in s:
+            s = s.replace(wrong, right)
     return s
 
 
@@ -1271,23 +1552,27 @@ def ensure_system_myanmar_fonts() -> str:
                 target_dir.mkdir(parents=True, exist_ok=True)
 
             needs_cache = False
-            noto_src = fonts_dir / "NotoSansMyanmar.ttf"
-            if noto_src.is_file():
-                dest = target_dir / noto_src.name
-                if not dest.is_file() or dest.stat().st_size != noto_src.stat().st_size:
+            # Register every bundled subtitle font (all SUBTITLE_FONT_OPTIONS)
+            # so SRT force_style burns can also resolve the chosen family.
+            for font_fn in bundled_font_files():
+                font_src = fonts_dir / font_fn
+                if not font_src.is_file():
+                    continue
+                dest = target_dir / font_src.name
+                if not dest.is_file() or dest.stat().st_size != font_src.stat().st_size:
                     try:
-                        shutil.copy2(noto_src, dest)
+                        shutil.copy2(font_src, dest)
                         needs_cache = True
                     except Exception:
                         pass
-                # Remove legacy Pyidaungsu.ttf from system/user font dir so libass never picks its incomplete GSUB table
-                bad_pyi = target_dir / "Pyidaungsu.ttf"
-                if bad_pyi.is_file():
-                    try:
-                        bad_pyi.unlink()
-                        needs_cache = True
-                    except Exception:
-                        pass
+            # Remove legacy Pyidaungsu.ttf from system/user font dir so libass never picks its incomplete GSUB table
+            bad_pyi = target_dir / "Pyidaungsu.ttf"
+            if bad_pyi.is_file():
+                try:
+                    bad_pyi.unlink()
+                    needs_cache = True
+                except Exception:
+                    pass
 
             conf_src = fonts_dir / "99-myanmar.conf"
             if conf_src.is_file():
@@ -1348,9 +1633,9 @@ def write_synced_ass_file(
     cw = max(320, int(cw))
     ch = max(240, int(ch))
     is_vert = ch > cw
-    # Always map legacy "Pyidaungsu" to "Noto Sans Myanmar" for libass HarfBuzz mym2 shaping
-    if not font_name or font_name.strip().lower() == "pyidaungsu":
-        font_name = "Noto Sans Myanmar"
+    # Resolve option keys ("serif") and legacy values ("Pyidaungsu") to a
+    # bundled family name for libass HarfBuzz mym2 shaping.
+    _, font_name = resolve_subtitle_font(font_name)
 
     # Canvas-scaled font size based on height
     scale_factor = (raw_font_size / 288.0)
@@ -1423,6 +1708,102 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     ass_path.write_text(header + "\n".join(dialogues) + "\n", encoding="utf-8")
     return ass_path
+
+
+def detect_source_subtitle_bands(
+    ffmpeg: str,
+    ffprobe: str,
+    source: Path,
+    work_dir: Path,
+    *,
+    samples: int = 12,
+    log: LogFn = _noop,
+) -> list[dict[str, float]]:
+    """Detect the vertical band(s) where the SOURCE video's own burned-in subtitles sit.
+
+    Recap sources (short dramas) almost always carry hard-coded dialogue subtitles at a
+    fixed height. The preset blur box only covers the Myanmar subtitle position (y≈0.85),
+    so when the source's own band sits higher (commonly y≈0.70) those subtitles survive
+    into the output — and because the picture is mirrored by default they come out as
+    unreadable mirror-writing right above the Myanmar line.
+
+    Method: sample frames across the video, score every image row by "bright glyph pixels
+    with a dark outline nearby" (the classic hard-sub look), aggregate across frames.
+    A genuine subtitle band is text-dense in most frames; scene brightness is not.
+    Returns blur-box dicts in the overlays format ({x, y=center, w, h} canvas fractions).
+    Any failure returns [] — detection must never block a render.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+
+        duration = probe_duration(ffprobe, source)
+        if duration <= 1.0:
+            return []
+        frame_dir = work_dir / "subband_frames"
+        frame_dir.mkdir(parents=True, exist_ok=True)
+        agg = None
+        pers = None
+        used = 0
+        for i in range(max(4, samples)):
+            t = duration * (i + 0.5) / max(4, samples)
+            fp = frame_dir / f"band_{i:02d}.png"
+            p = subprocess.run(
+                [ffmpeg, "-v", "error", "-ss", f"{t:.2f}", "-i", str(source),
+                 "-frames:v", "1", "-vf", "scale=270:-2", str(fp), "-y"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if p.returncode != 0 or not fp.is_file():
+                continue
+            g = np.asarray(Image.open(fp).convert("L")).astype(int)
+            h_px, w_px = g.shape
+            bright = g > 175
+            dark = g < 110
+            near_dark = np.zeros_like(bright)
+            for dx in (2, 3, 4):
+                near_dark[:, dx:] |= dark[:, :-dx]
+                near_dark[:, :-dx] |= dark[:, dx:]
+            row_score = (bright & near_dark).sum(axis=1) / float(w_px)
+            agg = row_score if agg is None else agg + row_score
+            hit = (row_score > 0.02).astype(float)
+            pers = hit if pers is None else pers + hit
+            used += 1
+        if not used or agg is None or pers is None:
+            return []
+        agg /= used
+        pers /= used
+        h_px = agg.shape[0]
+        y_lo = int(0.40 * h_px)
+        cand = [y for y in range(y_lo, h_px) if pers[y] >= 0.35 and agg[y] >= 0.012]
+        if not cand:
+            return []
+        groups: list[list[int]] = []
+        for y in cand:
+            if groups and y - groups[-1][-1] <= max(3, int(0.013 * h_px)):
+                groups[-1].append(y)
+            else:
+                groups.append([y])
+        boxes: list[dict[str, float]] = []
+        for grp in groups:
+            if max(float(agg[y]) for y in grp) < 0.03:
+                continue  # weak smear, not a subtitle band
+            top = grp[0] / h_px
+            bot = (grp[-1] + 1) / h_px
+            core_h = bot - top
+            # Pad: dialogue subs often have a second line ABOVE the persistent one,
+            # and the renderer's zoom shifts the band slightly — cover both.
+            top = max(0.0, top - 1.4 * core_h)
+            bot = min(1.0, bot + 0.6 * core_h)
+            if bot - top > 0.16:  # safety cap: never blur a huge slab on a guess
+                mid = (top + bot) / 2.0
+                top, bot = mid - 0.08, mid + 0.08
+            boxes.append({"x": 0.0, "y": round((top + bot) / 2.0, 4), "w": 1.0, "h": round(bot - top, 4)})
+        if boxes:
+            log("🔍 Source subtitle band(s) detected: " + ", ".join(f"y={b['y']:.2f} h={b['h']:.2f}" for b in boxes))
+        return boxes
+    except Exception as exc:
+        log(f"⚠️ Source subtitle band detection skipped: {exc}")
+        return []
 
 
 def canonicalize_burmese_text(text: str) -> str:
@@ -1697,6 +2078,7 @@ def apply_production_overlays(
     log: LogFn = _noop,
     frame_size: tuple[int, int] = (1920, 1080),
     layout: dict[str, Any] | None = None,
+    render_quality: str = "standard",
 ) -> Path:
     overlays = dict(overlays or {})
     cw, ch = int(frame_size[0]), int(frame_size[1])
@@ -1723,7 +2105,8 @@ def apply_production_overlays(
     extra_text = str(overlays.get("extra_text") or "").strip()
     subtitles_file = str(overlays.get("subtitles_file") or "").strip()
     subtitles_path = Path(subtitles_file) if subtitles_file else None
-    if not boxes and not title_text and not extra_text and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()):
+    watermark_mode = bool(overlays.get("watermark"))
+    if not boxes and not title_text and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()):
         return input_video
 
     cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_video)]
@@ -1756,6 +2139,27 @@ def apply_production_overlays(
         )
         extra_idx = input_index
         cmd += ["-i", str(extra_file)]
+        input_index += 1
+    # Free-tier brand watermark v3 (2026-10-30): when the pipeline flags
+    # overlays["watermark"], the extra-text panel below is REPLACED by a
+    # single mark — the full-frame diagonal tiled pattern of the bot
+    # username (crop-resistant; see render_brand_pattern_png). The v2
+    # corner lockup is gone entirely (owner: it looked cheap and collided
+    # with a pattern tile). The pattern is registered as an input here but
+    # composited LAST in the graph (after subtitles), and this whole pass
+    # runs after the mirror/zoom/ratio part renders, so the mark is never
+    # mirrored.
+    pattern_idx: int | None = None
+    if watermark_mode:
+        pattern_opacity = float(overlays.get("watermark_pattern_opacity", BRAND_PATTERN_OPACITY))
+        pattern_file = render_brand_pattern_png(
+            work_dir / "brand_pattern.png",
+            frame_width=pw,
+            frame_height=ph,
+            opacity=pattern_opacity,
+        )
+        pattern_idx = input_index
+        cmd += ["-i", str(pattern_file)]
         input_index += 1
 
     graph: list[str] = []
@@ -1817,7 +2221,7 @@ def apply_production_overlays(
         graph.append(f"{current}[lg]overlay=x='{ox}+({pw}*{lx:.6f})':y='{oy}+({ph}*{ly:.6f})':eof_action=repeat[{out}]")
         current = f"[{out}]"
 
-    if extra_idx is not None and extra_file is not None:
+    if extra_idx is not None and extra_file is not None and not watermark_mode:
         pos = overlays.get("extra_text_position") or [0.50, 0.68]
         ex = _clamp01(pos[0] if len(pos) > 0 else 0.50, 0.50)
         ey = _clamp01(pos[1] if len(pos) > 1 else 0.68, 0.68)
@@ -1836,11 +2240,10 @@ def apply_production_overlays(
         fonts_arg = ""
         ass_fonts_dir = work_dir / "ass_fonts"
         try:
-            ass_fonts_dir.mkdir(parents=True, exist_ok=True)
-            noto_ttf = fonts_dir / "NotoSansMyanmar.ttf"
-            if noto_ttf.is_file():
-                shutil.copy2(noto_ttf, ass_fonts_dir / "NotoSansMyanmar.ttf")
-            fonts_dir_esc = ass_fonts_dir.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
+            staged_dir = stage_bundled_fonts(ass_fonts_dir)
+            if staged_dir is None:
+                raise RuntimeError("no bundled fonts staged")
+            fonts_dir_esc = staged_dir.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
             fonts_arg = f":fontsdir='{fonts_dir_esc}'"
         except Exception:
             if fonts_dir.is_dir():
@@ -1853,10 +2256,10 @@ def apply_production_overlays(
             # margins, and fonts embedded inside the ASS header.
             graph.append(f"{current}subtitles='{sub_esc}'{fonts_arg}[{out}]")
         else:
-            # Bind authentic Myanmar Unicode standard font (Noto Sans Myanmar) for accurate complex script text shaping
-            sub_font = str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
-            if sub_font.strip().lower() == "pyidaungsu":
-                sub_font = "Noto Sans Myanmar"
+            # Bind the chosen bundled Myanmar font family for accurate complex script text shaping
+            _, sub_font = resolve_subtitle_font(
+                str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+            )
             sub_lines = int(overlays.get("sub_lines", 1))
             raw_size = int(overlays.get("subtitles_font_size", 16))
             # WrapStyle=2 is NO WRAPPING (strictly keeps 1 line). WrapStyle=0 is smart multi-line wrapping.
@@ -1896,8 +2299,16 @@ def apply_production_overlays(
             )
         current = f"[{out}]"
 
+    if pattern_idx is not None:
+        # Diagonal tiled pattern over the WHOLE picture area — centre and
+        # edges alike, so no crop can remove it. It is composited over the
+        # burned subtitles at ~0.19 opacity: visible as a brand texture,
+        # never enough to hurt subtitle readability.
+        graph.append(f"{current}[{pattern_idx}:v]overlay=x='{ox}':y='{oy}':eof_action=repeat[vpat]")
+        current = "[vpat]"
+
     graph.append(f"{current}format=yuv420p[vout]")
-    cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + _encoder_args(encoder) + ["-movflags", "+faststart", str(output_video)]
+    cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(encoder, render_quality) + ["-movflags", "+faststart", str(output_video)]
     p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0 and encoder == "h264_nvenc":
         log("⚠️ Overlay NVENC failed — libx264 fallback")
@@ -1905,7 +2316,7 @@ def apply_production_overlays(
         # Rebuild tail safely rather than trying to mutate codec options in-place.
         map_pos = cmd2.index("-map")
         prefix = cmd2[:map_pos] + ["-map", "[vout]", "-map_metadata", "-1", "-an"]
-        cmd2 = prefix + _encoder_args("libx264") + ["-movflags", "+faststart", str(output_video)]
+        cmd2 = prefix + encoder_args_for_quality("libx264", render_quality) + ["-movflags", "+faststart", str(output_video)]
         p = subprocess.run(cmd2, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
         raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
@@ -2077,9 +2488,9 @@ def extract_preview_with_overlays(
             sample = sample.replace("\n", " ").strip()
 
         ass_temp = temp_dir / "preview_sample.ass"
-        sub_font = str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
-        if sub_font.strip().lower() == "pyidaungsu":
-            sub_font = "Noto Sans Myanmar"
+        _, sub_font = resolve_subtitle_font(
+            str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+        )
         write_synced_ass_file(
             cues=[(0.0, 10.0, sample)],
             ass_path=ass_temp,
@@ -2094,18 +2505,10 @@ def extract_preview_with_overlays(
             boxes=boxes,
         )
         sub_esc = ass_temp.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
-        fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+        fonts_dir = bundled_fonts_dir()
         safe_fonts_dir = temp_dir / "fonts"
-        safe_fonts_dir.mkdir(parents=True, exist_ok=True)
-        for safe_font_file in ("NotoSansMyanmar.ttf", "PadaukBook.ttf"):
-            src_f = fonts_dir / safe_font_file
-            dst_f = safe_fonts_dir / safe_font_file
-            if src_f.is_file() and not dst_f.exists():
-                try:
-                    shutil.copy2(src_f, dst_f)
-                except Exception:
-                    pass
-        active_fonts_dir = safe_fonts_dir if any(safe_fonts_dir.iterdir()) else fonts_dir
+        staged = stage_bundled_fonts(safe_fonts_dir)
+        active_fonts_dir = staged if staged is not None else fonts_dir
         fonts_arg = ""
         if active_fonts_dir.is_dir():
             fonts_dir_esc = active_fonts_dir.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
@@ -2227,6 +2630,12 @@ class EdgeSmartSync:
         # Short pauses: see trim_edge_silence. Trims excessive TTS dead air while keeping natural breath.
         self.short_pauses = True
         self.overlays = dict(overlays or {})
+        # Render quality preset (overlays key set by recap_pipeline);
+        # "standard" == the historical encode, so old callers are
+        # unaffected. Included in the video-part checkpoint fingerprint
+        # below so changing quality re-renders instead of reusing parts
+        # encoded at another quality.
+        self.render_quality = normalize_render_quality(self.overlays.get("render_quality"))
         self.log = log
         self.progress = progress or (lambda a, b, c: None)
         self.should_stop = should_stop or (lambda: False)
@@ -2386,6 +2795,53 @@ class EdgeSmartSync:
                 self.log(f"⚠️ VoxCPM 2 init error ({vox_init_err}) — will use Edge TTS")
                 use_voxcpm = False
 
+        # Gemini TTS option (production-grade programme): an additional
+        # engine, NOT a replacement. The persona path below stays as the
+        # per-segment fallback, reported via the same fallback_used /
+        # fallback_segments transparency fields as VoxCPM fallbacks.
+        use_gemini = str(self.overlays.get("tts_engine") or "").lower() == "gemini"
+        gem_engine = None
+        gemini_voice_name = ""
+        if use_gemini:
+            try:
+                try:
+                    from app.services.recap_engine.gemini_tts_engine import (
+                        GeminiTTSEngine,
+                        collect_gemini_keys,
+                        default_voice_for_gender,
+                    )
+                except ImportError:
+                    try:
+                        from recap_engine.gemini_tts_engine import (  # type: ignore
+                            GeminiTTSEngine,
+                            collect_gemini_keys,
+                            default_voice_for_gender,
+                        )
+                    except ImportError:
+                        from gemini_tts_engine import (  # type: ignore
+                            GeminiTTSEngine,
+                            collect_gemini_keys,
+                            default_voice_for_gender,
+                        )
+                gemini_voice_name = str(self.overlays.get("gemini_voice") or "").strip() or default_voice_for_gender(
+                    bool(self.overlays.get("is_female"))
+                )
+                _gem_keys = collect_gemini_keys()
+                if _gem_keys:
+                    gem_engine = GeminiTTSEngine(
+                        ffmpeg=self.ffmpeg,
+                        work_dir=paths.work / "gemini_tts",
+                        rate=effective_rate,
+                        keys=_gem_keys,
+                        log=self.log,
+                    )
+                    self.log(f"✨ Gemini TTS engine ready (voice={gemini_voice_name}); persona engine stays as per-segment fallback")
+                else:
+                    self.log("⚠️ Gemini TTS selected but no Gemini keys are configured — every line will use the persona engine (reported as fallback)")
+            except Exception as gem_init_err:
+                self.log(f"⚠️ Gemini TTS init error ({gem_init_err}) — every line will use the persona engine (reported as fallback)")
+                gem_engine = None
+
         base_edge_voice = self.voice
         if str(self.voice).startswith(("clone_", "clone:")):
             try:
@@ -2451,12 +2907,21 @@ class EdgeSmartSync:
         cursor = 0.0
         tts_total = 0.0
         for _tts_pass in range(2):
-            engine_provider = "voxcpm" if use_voxcpm else "edge_tts"
-            fingerprint_voice = (
-                f"{engine_provider}|{base_edge_voice}|persona={_global_preset_v}|"
-                f"ref={Path(persona_ref_wav).name if persona_ref_wav else '-'}|"
-                f"rate={effective_rate}|pitch={effective_pitch}"
-            )
+            engine_provider = "gemini" if use_gemini else ("voxcpm" if use_voxcpm else "edge_tts")
+            if use_gemini:
+                # Gemini lines must never reuse persona/VoxCPM cache
+                # entries (or vice versa): the fingerprint names the
+                # engine AND the Gemini voice.
+                fingerprint_voice = (
+                    f"gemini|{gemini_voice_name}|persona={_global_preset_v}|"
+                    f"rate={effective_rate}"
+                )
+            else:
+                fingerprint_voice = (
+                    f"{engine_provider}|{base_edge_voice}|persona={_global_preset_v}|"
+                    f"ref={Path(persona_ref_wav).name if persona_ref_wav else '-'}|"
+                    f"rate={effective_rate}|pitch={effective_pitch}"
+                )
             checkpoint["tts_provider"] = engine_provider
             timing = []
             audio_parts = []
@@ -2481,14 +2946,46 @@ class EdgeSmartSync:
                     produced = None
                     preset_v = _global_preset_v  # always defined for both VoxCPM and fallback paths
 
+                    # 0. Gemini TTS if selected (production-grade option).
+                    # Success: the WAV is copied onto dst here so the
+                    # common tail below treats it like any other produced
+                    # file (and never deletes the engine's own cache).
+                    # Failure: ONLY this segment falls back to the persona
+                    # path below and is recorded in fallback_segments —
+                    # the same transparency rule as VoxCPM fallbacks.
+                    seg_provider = "edge_tts"
+                    if use_gemini:
+                        if gem_engine is not None:
+                            self.progress(idx - 1, len(segments), f"Gemini TTS {idx}/{len(segments)}")
+                            self.log(f"✨ [{idx}/{len(segments)}] {base} generate via Gemini TTS ({gemini_voice_name})")
+                            try:
+                                _gem_wav = gem_engine.generate_channel99_voice(speak, gemini_voice_name)
+                                shutil.copy2(_gem_wav, dst)
+                                produced = dst
+                                seg_provider = "gemini"
+                            except Exception as gem_err:
+                                self.log(
+                                    f"⚠️ GEMINI_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona "
+                                    f"({gem_err}); other lines keep Gemini TTS where possible"
+                                )
+                                fallback_segments.append(idx)
+                                seg_provider = "edge_fallback"
+                        else:
+                            fallback_segments.append(idx)
+                            seg_provider = "edge_fallback"
+
                     # 1. Try VoxCPM 2 if selected — per-segment retry with
                     # space failover inside the engine (fix 2026-10-29).
                     # A single failing line must NOT switch the whole recap
                     # to Edge TTS: only THIS segment falls back, and only
                     # after its retries are exhausted. Other segments keep
                     # using VoxCPM.
-                    seg_provider = "edge_tts"
-                    if use_voxcpm and vox_engine:
+                    # Skipped entirely when Gemini TTS is the selected
+                    # engine: use_voxcpm is also true for persona voices
+                    # (voice starts with "voxcpm"), and without this gate
+                    # VoxCPM would overwrite the Gemini segment produced
+                    # above and misreport the provider.
+                    if use_voxcpm and vox_engine and not use_gemini:
                         self.progress(idx - 1, len(segments), f"VoxCPM 2 {idx}/{len(segments)}")
                         self.log(f"🎙️ [{idx}/{len(segments)}] {base} generate via VoxCPM 2 Cloud AI")
                         ctrl_prompt = (
@@ -2561,8 +3058,8 @@ class EdgeSmartSync:
                         raise RuntimeError(f"Generated audio duration invalid: {dst}")
                     checkpoint["audio"][base] = {
                         "fingerprint": fp,
-                        "provider": seg_provider if use_voxcpm else "edge_tts",
-                        "fallback": bool(use_voxcpm and seg_provider == "edge_fallback"),
+                        "provider": seg_provider if (use_voxcpm or use_gemini) else "edge_tts",
+                        "fallback": bool((use_voxcpm or use_gemini) and seg_provider == "edge_fallback"),
                         "file": str(dst),
                         "duration": round(duration, 3),
                         "video_start": seg["video_start"],
@@ -2601,7 +3098,9 @@ class EdgeSmartSync:
         checkpoint["fallback_used"] = bool(fallback_segments)
         checkpoint["fallback_segments"] = list(fallback_segments)
         checkpoint["tts_provider"] = (
-            "voxcpm" if use_voxcpm and not fallback_segments
+            "gemini" if use_gemini and not fallback_segments
+            else "gemini+persona_fallback" if use_gemini
+            else "voxcpm" if use_voxcpm and not fallback_segments
             else "voxcpm+edge_fallback" if use_voxcpm
             else "edge_tts"
         )
@@ -2762,6 +3261,7 @@ class EdgeSmartSync:
                 "max_speed": self.max_video_speed, "max_slow": self.max_video_slow,
                 "smooth_freeze": self.smooth_freeze_fallback, "max_freeze_hold": self.max_freeze_hold,
                 "mirror": self.mirror_video, "zoom": self.zoom_factor, "encoder": encoder,
+                "quality": self.render_quality,
                 "frame": [layout["ratio"], layout["fill"], layout["cw"], layout["ch"]],
             }, sort_keys=True).encode()
             vfp = hashlib.sha256(vfp_raw).hexdigest()
@@ -2779,6 +3279,7 @@ class EdgeSmartSync:
                         self.max_video_speed, self.max_video_slow,
                         self.smooth_freeze_fallback, self.max_freeze_hold,
                         frame_count=frame_count, layout=layout,
+                        render_quality=self.render_quality,
                     )
                 except Exception:
                     # Only on the first non-reused part, allow global NVENC -> CPU fallback.
@@ -2795,6 +3296,7 @@ class EdgeSmartSync:
                             self.max_video_speed, self.max_video_slow,
                             self.smooth_freeze_fallback, self.max_freeze_hold,
                             frame_count=frame_count, layout=layout,
+                            render_quality=self.render_quality,
                         )
                         # Recompute fingerprint with CPU encoder.
                         vfp_raw = json.dumps({
@@ -2806,6 +3308,7 @@ class EdgeSmartSync:
                             "max_speed": self.max_video_speed, "max_slow": self.max_video_slow,
                             "smooth_freeze": self.smooth_freeze_fallback, "max_freeze_hold": self.max_freeze_hold,
                             "mirror": self.mirror_video, "zoom": self.zoom_factor, "encoder": encoder,
+                            "quality": self.render_quality,
                             "frame": [layout["ratio"], layout["fill"], layout["cw"], layout["ch"]],
                         }, sort_keys=True).encode()
                         vfp = hashlib.sha256(vfp_raw).hexdigest()
@@ -2844,7 +3347,7 @@ class EdgeSmartSync:
             video_for_mux = apply_production_overlays(
                 self.ffmpeg, paths.synced_video_noaudio, paths.decorated_video_noaudio,
                 self.overlays, encoder, paths.work, self.log, frame_size=(layout["cw"], layout["ch"]),
-                layout=layout,
+                layout=layout, render_quality=self.render_quality,
             )
         self.log("🎧 Final audio mux (with limiter & mastering chain)...")
         volume_percent = int(getattr(self, "voice_volume_percent", 100) or 100)

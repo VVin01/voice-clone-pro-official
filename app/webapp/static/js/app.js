@@ -13,50 +13,15 @@ function showStudioToast(message, type = 'info', duration = 3500) {
     if (existing) existing.remove();
 
     const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
-    const colors = {
-        success: 'rgba(16,185,129,0.18)',
-        error:   'rgba(239,68,68,0.18)',
-        warning: 'rgba(245,158,11,0.18)',
-        info:    'rgba(99,102,241,0.18)'
-    };
-    const borders = {
-        success: '#10b981',
-        error:   '#ef4444',
-        warning: '#f59e0b',
-        info:    '#818cf8'
-    };
 
     const toast = document.createElement('div');
     toast.id = 'studio-toast-el';
-    toast.style.cssText = `
-        position: fixed; top: 68px; left: 50%; transform: translateX(-50%);
-        z-index: 99999; display: flex; align-items: center; gap: 10px;
-        background: ${colors[type]}; backdrop-filter: blur(16px);
-        border: 1px solid ${borders[type]}; border-radius: 14px;
-        padding: 12px 18px; max-width: calc(100vw - 32px); width: auto;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        font-family: 'Plus Jakarta Sans', 'Padauk', sans-serif;
-        font-size: 13.5px; color: #f0f0ff; line-height: 1.5;
-        animation: studioToastSlideIn 0.3s ease; pointer-events: auto;
-    `;
+    toast.className = `studio-toast ${type}`;
     toast.innerHTML = `
-        <span style="font-size:18px; flex-shrink:0;">${icons[type]}</span>
-        <span style="flex:1; word-break:break-word;">${message}</span>
-        <button onclick="this.parentNode.remove()" style="background:none; border:none; color:#9ca3af; font-size:16px; cursor:pointer; padding:0 0 0 6px; line-height:1;">✕</button>
+        <span class="toast-icon">${icons[type] || icons.info}</span>
+        <span class="toast-msg">${message}</span>
+        <button class="toast-close" onclick="this.parentNode.remove()" aria-label="Close">✕</button>
     `;
-
-    // Add animation keyframes once
-    if (!document.getElementById('studio-toast-style')) {
-        const style = document.createElement('style');
-        style.id = 'studio-toast-style';
-        style.textContent = `
-            @keyframes studioToastSlideIn {
-                from { opacity: 0; transform: translateX(-50%) translateY(-12px); }
-                to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-            }
-        `;
-        document.head.appendChild(style);
-    }
 
     document.body.appendChild(toast);
     if (duration > 0) setTimeout(() => toast && toast.remove(), duration);
@@ -72,26 +37,14 @@ function showStudioConfirm(message, onConfirm, onCancel) {
 
     const modal = document.createElement('div');
     modal.id = 'studio-confirm-modal';
-    modal.style.cssText = `
-        position: fixed; inset: 0; z-index: 99998;
-        background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
-        display: flex; align-items: center; justify-content: center;
-        padding: 16px;
-    `;
+    modal.className = 'studio-confirm-overlay';
     modal.innerHTML = `
-        <div style="background: #1a1a2e; border: 1px solid rgba(245,158,11,0.35); border-radius: 18px;
-                    padding: 24px 20px; max-width: 340px; width: 100%;
-                    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-                    font-family: 'Plus Jakarta Sans','Padauk',sans-serif; color: #e0e0ff;">
-            <div style="font-size:28px; text-align:center; margin-bottom:12px;">⚠️</div>
-            <div style="font-size:14px; line-height:1.6; text-align:center; margin-bottom:20px;">${message}</div>
-            <div style="display:flex; gap:10px;">
-                <button id="studio-confirm-cancel" style="flex:1; padding:11px; border-radius:10px;
-                        border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06);
-                        color:#9ca3af; font-size:13px; cursor:pointer;">မဟုတ်ဘူး / Cancel</button>
-                <button id="studio-confirm-ok" style="flex:1; padding:11px; border-radius:10px;
-                        border:none; background:linear-gradient(135deg,#d97706,#f59e0b);
-                        color:#0a0a0a; font-weight:700; font-size:13px; cursor:pointer;">သဘောတူ / OK</button>
+        <div class="studio-confirm-card">
+            <div class="studio-confirm-icon">⚠️</div>
+            <div class="studio-confirm-msg">${message}</div>
+            <div class="studio-confirm-actions">
+                <button id="studio-confirm-cancel" class="btn secondary-btn">မဟုတ်ဘူး / Cancel</button>
+                <button id="studio-confirm-ok" class="btn gold-gradient-btn">သဘောတူ / OK</button>
             </div>
         </div>
     `;
@@ -115,7 +68,6 @@ const state = {
     user: null,
     models: [],
     curatedVoices: [],
-    selectedEngine: "voxcpm",       // VoxCPM2 only
     voxcpmSubMode: "curated",       // "curated" | "custom"
     selectedPersona: "komin",
     selectedModelSlug: "voxcpm-cloud-ai",
@@ -143,6 +95,11 @@ const state = {
     recapSubStyle: "yellow",
     recapFontSize: 16,
     recapLines: 1,
+    recapSplitMinutes: 3,
+    recapSourceLanguage: "auto",
+    recapRenderQuality: "standard",
+    recapTtsEngine: "voxcpm",
+    recapGeminiVoice: "",
     recapVoice: "komin",
     recapJobId: null,
     recapPollTimer: null,
@@ -155,8 +112,8 @@ function initTelegram() {
         state.tg.ready();
         state.tg.expand();
         try {
-            state.tg.setHeaderColor("#07090e");
-            state.tg.setBackgroundColor("#07090e");
+            state.tg.setHeaderColor("#dcebf7");
+            state.tg.setBackgroundColor("#dcebf7");
         } catch (e) {}
     }
 }
@@ -569,7 +526,7 @@ async function loadUserProfile() {
 
 
 
-// ── API: Curated Voices (12 Gemini Personas) ───────────────────────────────
+// ── API: Curated Voices (12 VoxCPM Personas) ───────────────────────────────
 state.personaFilter = "all";
 
 function filterPersonas(filter) {
@@ -799,24 +756,7 @@ function setupVoiceStudio() {
         });
     }
 
-    // Engine Selector Button (VoxCPM2 only)
-    const btnVox = document.getElementById("btn-engine-voxcpm");
-    const voxModeSection = document.getElementById("voxcpm-mode-section");
-    const voiceQueueNotice = document.getElementById("voice-queue-notice");
-
-    if (btnVox) {
-        btnVox.addEventListener("click", () => {
-            haptic("selection");
-            btnVox.classList.add("active");
-            state.selectedEngine = "voxcpm";
-            state.selectedModelSlug = "voxcpm-cloud-ai";
-            if (voxModeSection) voxModeSection.classList.remove("hidden");
-            if (voiceQueueNotice) {
-                voiceQueueNotice.className = "queue-notice-banner";
-                voiceQueueNotice.querySelector(".notice-text").innerText = t("queue_notice_voxcpm");
-            }
-        });
-    }
+    // No engine picker: VoxCPM2 is the only engine (Applio removed in Voice v2).
 
     // Reference Audio File Input Setup
     const refFileInput = document.getElementById("ref-audio-input");
@@ -1003,7 +943,7 @@ async function handleVoiceGenerate() {
             formData.append("model_slug", targetModelSlug);
             formData.append("speed", state.speed);
             formData.append("gender_preset", "m2m");
-            formData.append("engine", state.selectedEngine);
+            formData.append("engine", "voxcpm"); // VoxCPM2 only — backend default
             if (presetVoice) formData.append("preset_voice", presetVoice);
             formData.append("reference_audio", state.selectedReferenceFile);
 
@@ -1025,7 +965,7 @@ async function handleVoiceGenerate() {
                     model_slug: targetModelSlug,
                     speed: state.speed,
                     gender_preset: "m2m",
-                    engine: state.selectedEngine,
+                    engine: "voxcpm", // VoxCPM2 only — backend default
                     preset_voice: presetVoice,
                 }),
             });
@@ -1660,6 +1600,9 @@ function setupRecapVisualEditor() {
     });
 
     // ── Helper: Real-time Live Canvas Mockup Visual Updater ──
+    // Exposed on window: toggleAdvancedRecapStudio() (top-level) calls it
+    // when the settings accordion opens; without this it throws ReferenceError.
+    window.updateCanvasMockupVisuals = updateCanvasMockupVisuals;
     function updateCanvasMockupVisuals() {
         if (!canvas) return;
 
@@ -1966,7 +1909,7 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // 4. Anti-Copyright Protection: Mirror Toggle
+    // 4. Video Transformation: Mirror Toggle
     const btnMirror = document.getElementById("btn-toggle-mirror");
     if (btnMirror) {
         btnMirror.addEventListener("click", () => {
@@ -1984,7 +1927,7 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // 5. Anti-Copyright Protection: Micro-Zoom (1.00, 1.06, 1.10)
+    // 5. Video Transformation: Micro-Zoom (1.00, 1.06, 1.10)
     const zoomBtns = document.querySelectorAll("#recap-zoom-picker .pill-btn");
     zoomBtns.forEach(btn => {
         btn.addEventListener("click", () => {
@@ -2006,6 +1949,65 @@ function setupRecapVisualEditor() {
             state.recapSpeed = btn.getAttribute("data-speed") || "+12%";
         });
     });
+
+    // 6b. Video Splitter: part length pills + toggle shows/hides them
+    const splitMinBtns = document.querySelectorAll("#recap-split-minutes-picker .pill-btn");
+    splitMinBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            splitMinBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapSplitMinutes = parseInt(btn.getAttribute("data-split-min") || "3", 10) || 3;
+        });
+    });
+    const splitToggle = document.getElementById("recap-split-toggle");
+    if (splitToggle) {
+        splitToggle.addEventListener("change", () => {
+            const wrap = document.getElementById("recap-split-minutes-wrap");
+            if (wrap) wrap.classList.toggle("hidden", !splitToggle.checked);
+        });
+    }
+
+    // 6c. Source language pills (auto = detect; else a Whisper code)
+    const langBtns = document.querySelectorAll("#recap-lang-picker .pill-btn");
+    langBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            langBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapSourceLanguage = btn.getAttribute("data-lang") || "auto";
+        });
+    });
+
+    // 6d. Render quality pills (standard = the historical default encode)
+    const qualityBtns = document.querySelectorAll("#recap-quality-picker .pill-btn");
+    qualityBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            qualityBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapRenderQuality = btn.getAttribute("data-quality") || "standard";
+        });
+    });
+
+    // 6e. Narration engine pills (VoxCPM persona / Gemini TTS) + Gemini voice select
+    const engineBtns = document.querySelectorAll("#recap-engine-picker .pill-btn");
+    engineBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            engineBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
+            const gv = document.getElementById("recap-gemini-voice-wrap");
+            if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
+        });
+    });
+    const geminiVoiceSel = document.getElementById("recap-gemini-voice-select");
+    if (geminiVoiceSel) {
+        geminiVoiceSel.addEventListener("change", () => {
+            state.recapGeminiVoice = geminiVoiceSel.value || "";
+        });
+    }
 
     // 7. Narration Story Style Picker (viral, dramatic, funny, pov, standard) — synced across Step 3 & Advanced
     const storyPills = document.querySelectorAll("#story-style-picker-quick .style-select-pill");
@@ -2122,13 +2124,13 @@ function setupRecapVisualEditor() {
             previewBox.classList.add("one-line");
             previewText.innerHTML = '"အခုတော့ အစီအစဉ် စတင်ပါပြီ..."';
             previewText.style.whiteSpace = "nowrap";
-            previewText.style.lineHeight = "1.2";
+            previewText.style.lineHeight = "1.8";
         } else {
             previewBox.classList.remove("one-line");
             previewBox.classList.add("two-lines");
             previewText.innerHTML = '"အခုတော့ ကျွန်တော်တို့ရဲ့<br>အစီအစဉ် စတင်ပါပြီ..."';
             previewText.style.whiteSpace = "normal";
-            previewText.style.lineHeight = "1.3";
+            previewText.style.lineHeight = "1.8";
         }
     }
 
@@ -2511,6 +2513,16 @@ window.toggleAllRecapVoices = function() {
     }
 };
 
+window.toggleSectionAccordion = function(btn) {
+    const wrap = btn.closest(".advanced-studio-accordion");
+    if (!wrap) return;
+    const body = wrap.querySelector(".advanced-accordion-body");
+    const chevron = btn.querySelector(".accordion-chevron");
+    if (!body) return;
+    const isHidden = body.classList.toggle("hidden");
+    if (chevron) chevron.innerText = isHidden ? "▼" : "▲";
+};
+
 window.toggleAdvancedRecapStudio = function() {
     const body = document.getElementById("recap-advanced-body");
     const chevron = document.getElementById("accordion-chevron");
@@ -2605,6 +2617,13 @@ async function handleStartRecap() {
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",
             duration_seconds: state.recapSourceDuration || null,
+            script_review: !!((document.getElementById("recap-script-review-toggle") || {}).checked),
+            source_language: state.recapSourceLanguage || "auto",
+            render_quality: state.recapRenderQuality || "standard",
+            tts_engine: state.recapTtsEngine || "voxcpm",
+            gemini_voice: (state.recapTtsEngine === "gemini" && state.recapGeminiVoice) ? state.recapGeminiVoice : null,
+            split_video: !!((document.getElementById("recap-split-toggle") || {}).checked),
+            split_minutes: state.recapSplitMinutes || 3,
         };
 
         const res = await fetch("/api/recap/generate", {
@@ -2659,7 +2678,14 @@ function startRecapJobPolling(jobId) {
                 stepText.innerText = `Step ${data.progress_step} • ${t("queue_notice_recap")}`;
             }
 
-            if (data.status === "SUCCESS") {
+            if (data.status === "SCRIPT_READY") {
+                clearInterval(state.recapPollTimer);
+                state.recapPollTimer = null;
+                if (btn) btn.disabled = false;
+                if (progressBox) progressBox.classList.add("hidden");
+                showStudioToast(t("toast_script_ready"), 'info');
+                openRecapScriptEditor(jobId);
+            } else if (data.status === "SUCCESS") {
                 if (data.fallback_used) { try { showStudioToast(tf("recap_fallback_note", { count: (data.fallback_segments || []).length || 1 }), 'info'); } catch (e) {} }
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
@@ -2708,6 +2734,37 @@ function startRecapJobPolling(jobId) {
                     btnScript.setAttribute("data-dl-url", data.download_urls.script);
                 }
 
+                // Split parts (optional Video Splitter deliverables)
+                const partsWrap = document.getElementById("recap-parts-wrap");
+                const partsList = document.getElementById("recap-parts-list");
+                if (partsWrap && partsList) {
+                    const parts = (Array.isArray(data.parts) && data.parts.length)
+                        ? data.parts
+                        : (Array.isArray(data.download_urls?.parts) ? data.download_urls.parts : []);
+                    partsList.innerHTML = "";
+                    if (parts.length) {
+                        partsWrap.classList.remove("hidden");
+                        parts.forEach(p => {
+                            const a = document.createElement("a");
+                            a.href = p.url;
+                            a.className = "btn mini-btn secondary-btn";
+                            a.setAttribute("download", "");
+                            a.textContent = "🎬 " + (p.label || ("Part " + p.n));
+                            partsList.appendChild(a);
+                        });
+                    } else {
+                        partsWrap.classList.add("hidden");
+                    }
+                    const noteEl = document.getElementById("recap-split-note");
+                    if (noteEl) {
+                        let note = "";
+                        if (data.split_error) note = (t("recap_split_failed") || "Part ခွဲတာ မအောင်မြင်ပါ — အပြည့်အစုံ ဗီဒီယို အပေါ်မှာ ရပါတယ်။");
+                        else if (data.split_note) note = data.split_note;
+                        noteEl.textContent = note;
+                        noteEl.classList.toggle("hidden", !note);
+                    }
+                }
+
                 haptic("success");
                 loadUserProfile();
                 loadUserHistory();
@@ -2742,6 +2799,97 @@ function startRecapJobPolling(jobId) {
             console.warn("Recap polling error:", err);
         }
     }, 2000);
+}
+
+// ── Recap Script Review / Edit (two-phase flow) ─────────────────────────
+async function openRecapScriptEditor(jobId) {
+    const box = document.getElementById("recap-script-box");
+    const list = document.getElementById("recap-script-list");
+    if (!box || !list) return;
+    box.classList.remove("hidden");
+    box.scrollIntoView({ behavior: "smooth" });
+    list.innerHTML = "";
+    try {
+        const res = await fetch(`/api/recap/${jobId}/script`, { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Script load failed");
+        (data.segments || []).forEach((seg) => {
+            const wrap = document.createElement("div");
+            wrap.className = "script-seg";
+            const meta = document.createElement("div");
+            meta.className = "script-seg-meta";
+            meta.innerText = `#${seg.index} • ${(seg.timestamp || "").toString()} • ${Number(seg.start || 0).toFixed(1)}s – ${Number(seg.end || 0).toFixed(1)}s`;
+            wrap.appendChild(meta);
+            if (seg.source_text) {
+                const src = document.createElement("div");
+                src.className = "script-seg-source";
+                src.innerText = `${t("recap_script_source")}: ${seg.source_text}`;
+                wrap.appendChild(src);
+            }
+            const ta = document.createElement("textarea");
+            ta.className = "script-seg-text";
+            ta.value = seg.narration || "";
+            ta.dataset.index = seg.index;
+            ta.dataset.original = seg.narration || "";
+            wrap.appendChild(ta);
+            list.appendChild(wrap);
+        });
+        const btnSave = document.getElementById("btn-script-save");
+        if (btnSave) btnSave.onclick = () => saveRecapScript(jobId);
+        const btnRender = document.getElementById("btn-script-render");
+        if (btnRender) btnRender.onclick = () => renderRecapScript(jobId);
+    } catch (err) {
+        showStudioToast(err.message, 'error');
+    }
+}
+
+async function saveRecapScript(jobId) {
+    const list = document.getElementById("recap-script-list");
+    if (!list) return true;
+    const edits = [];
+    list.querySelectorAll(".script-seg-text").forEach((ta) => {
+        if (ta.value !== ta.dataset.original) {
+            edits.push({ index: parseInt(ta.dataset.index, 10), narration: ta.value });
+        }
+    });
+    if (!edits.length) return true;
+    try {
+        const res = await fetch(`/api/recap/${jobId}/script`, {
+            method: "PUT",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ segments: edits }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Script save failed");
+        list.querySelectorAll(".script-seg-text").forEach((ta) => { ta.dataset.original = ta.value; });
+        showStudioToast(t("toast_script_saved"), 'success');
+        if (data.warnings && Object.keys(data.warnings).length) {
+            showStudioToast(t("toast_script_warnings"), 'warning');
+        }
+        return true;
+    } catch (err) {
+        showStudioToast(err.message, 'error');
+        return false;
+    }
+}
+
+async function renderRecapScript(jobId) {
+    const saved = await saveRecapScript(jobId);
+    if (!saved) return;
+    try {
+        const res = await fetch(`/api/recap/${jobId}/render`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Render start failed");
+        const box = document.getElementById("recap-script-box");
+        if (box) box.classList.add("hidden");
+        showStudioToast(t("recap_processing_msg") || "Processing...", 'info');
+        startRecapJobPolling(jobId);
+    } catch (err) {
+        showStudioToast(err.message, 'error');
+    }
 }
 
 // ── Downloader Tab ─────────────────────────────────────────────────────────
@@ -2823,6 +2971,18 @@ function setupDownloader() {
             });
         }
     }
+}
+
+// ── Plan Category Tabs (one category at a time — no long scroll) ──────────
+function switchPlanCategory(cat) {
+    haptic("selection");
+    document.querySelectorAll(".plan-tab-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.getAttribute("data-plan-cat") === cat);
+    });
+    ["voice", "recap", "combined"].forEach(name => {
+        const panel = document.getElementById(`plan-panel-${name}`);
+        if (panel) panel.classList.toggle("hidden", name !== cat);
+    });
 }
 
 // ── Payment Drawer & Slip Submission ───────────────────────────────────────
@@ -3485,21 +3645,7 @@ async function loadAdminQueue(isSilent = false) {
 
         const data = await res.json();
 
-        // 1. Update Worker Heartbeat Pill
-        const workerDot = document.getElementById("adm-worker-dot");
-        const workerText = document.getElementById("adm-worker-status-text");
-
-        if (data.worker) {
-            const w = data.worker;
-            if (workerDot) {
-                workerDot.className = "pulsing-dot " + (w.status_code ? w.status_code.toLowerCase() : "offline");
-            }
-            if (workerText) {
-                workerText.innerText = `Local Worker: ${w.status_text} (Engine: ${w.engine})`;
-            }
-        }
-
-        // 2. Update Counts
+        // 1. Update Counts
         const c = data.counts || { total_listed: 0, queued: 0, running: 0, success: 0, failed: 0 };
         const elTotal = document.getElementById("cnt-total");
         const elQueued = document.getElementById("cnt-queued");
@@ -3516,12 +3662,8 @@ async function loadAdminQueue(isSilent = false) {
         const elTopQueue = document.getElementById("adm-queued-jobs");
         if (elTopQueue) elTopQueue.innerText = c.queued;
 
-        // 3. Render High-Visibility Active Queue Status Banner
+        // 2. Render High-Visibility Active Queue Status Banner (cloud pipeline)
         if (bannerEl) {
-            const hostName = data.worker?.host || "Awin";
-            const engineMode = (data.worker?.engine || "ALL").toUpperCase();
-            const isOnline = data.worker?.status_code === "ONLINE";
-
             if (c.queued === 0 && c.running === 0) {
                 bannerEl.innerHTML = `
                     <div class="active-queue-status-banner idle">
@@ -3530,9 +3672,7 @@ async function loadAdminQueue(isSilent = false) {
                             <div class="status-banner-title">${t("admin_queue_idle_title")}</div>
                             <div class="status-banner-desc">${t("admin_queue_idle_desc")}</div>
                             <div class="status-banner-meta">
-                                <span class="meta-pill">💻 Worker Host: <strong>${escapeHtml(hostName)}</strong></span>
-                                <span class="meta-pill">⚙️ Engine: <strong>${escapeHtml(engineMode)}</strong></span>
-                                <span class="meta-pill">📡 Status: <strong class="${isOnline ? 'text-green' : 'text-danger'}">${isOnline ? 'ONLINE (STANDBY)' : 'OFFLINE'}</strong></span>
+                                <span class="meta-pill">☁️ Engine: <strong>Cloud AI</strong></span>
                                 <span class="meta-pill">⏳ Active Queue: <strong>0 Pending</strong></span>
                             </div>
                         </div>
@@ -3544,7 +3684,7 @@ async function loadAdminQueue(isSilent = false) {
                         <div class="status-banner-icon pulsing">⚡</div>
                         <div class="status-banner-info">
                             <div class="status-banner-title">${t("admin_queue_running_title")}</div>
-                            <div class="status-banner-desc">Local Worker (${escapeHtml(hostName)}) is actively processing <strong>${c.running}</strong> job(s) right now.</div>
+                            <div class="status-banner-desc">Cloud engine is actively processing <strong>${c.running}</strong> job(s) right now.</div>
                             <div class="status-banner-meta">
                                 <span class="meta-pill">⚡ Running: <strong>${c.running}</strong></span>
                                 <span class="meta-pill">⏳ Waiting: <strong>${c.queued}</strong></span>
@@ -3558,14 +3698,14 @@ async function loadAdminQueue(isSilent = false) {
                         <div class="status-banner-icon">⏳</div>
                         <div class="status-banner-info">
                             <div class="status-banner-title">${t("admin_queue_queued_title")}</div>
-                            <div class="status-banner-desc">${c.queued} job(s) waiting in queue. Worker is polling and claiming atomically.</div>
+                            <div class="status-banner-desc">${c.queued} job(s) waiting in queue. The cloud engine picks them up automatically.</div>
                         </div>
                     </div>
                 `;
             }
         }
 
-        // 4. Render Jobs with Clear Visual Grouping
+        // 3. Render Jobs with Clear Visual Grouping
         const jobs = data.jobs || [];
         if (jobs.length === 0) {
             container.innerHTML = `<p class="text-muted" style="padding: 12px 0;">${t("admin_queue_empty")}</p>`;
@@ -3910,7 +4050,7 @@ async function loadUserHistory() {
                 voiceContainer.innerHTML = voiceJobs.map(j => `
                     <div class="history-item">
                         <div class="history-item-header">
-                            <span class="history-item-badge badge-voice">🎙️ ${escapeHtml(j.engine.toUpperCase())} • ${escapeHtml(j.preset_voice)}</span>
+                            <span class="history-item-badge badge-voice">🎙️ ${escapeHtml(j.preset_voice)}</span>
                             <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
                         </div>
                         <div class="history-item-body">"${escapeHtml(j.input_snippet || "Voice Synthesis")}"</div>

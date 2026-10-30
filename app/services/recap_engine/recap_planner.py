@@ -43,6 +43,24 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "auto")
 
 
+def normalize_source_language(value: Any) -> str:
+    """Normalise a user-picked source language to a Whisper code.
+
+    Returns "" for auto-detect ("", "auto", "detect", "none", None) so
+    callers can fall back to the WHISPER_LANGUAGE env default. Raises
+    ValueError on anything that is not a plausible 2-3 letter code —
+    failing fast here beats a silent auto-detect surprise mid-job.
+    """
+    code = str(value or "").strip().lower()
+    if code in ("", "auto", "detect", "automatic", "none"):
+        return ""
+    if not re.fullmatch(r"[a-z]{2,3}", code):
+        raise ValueError(
+            f"Unsupported source language '{value}': use 'auto' or a Whisper language code (e.g. en, zh, ko, th, ja)"
+        )
+    return code
+
+
 GEMINI_MODEL_FALLBACK_CHAIN = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -1374,6 +1392,9 @@ def translate_batch(
 {gender_rule}
 - NEVER insert random generic filler phrases ('ကြည့်ပါဦးဗျာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲ...', 'မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...') that disconnect consecutive sentences or replace actual plot meaning.
 - Turn short or fragmented source dialogues into clear, connected third-person Burmese recap storytelling using natural transition words ('အဲ့ဒီအခါမှာတော့...', 'ဒါကိုမြင်တော့...', 'ဒါကြောင့် သူက...', 'အဲ့ဒီနောက်မှာတော့...').
+- OPENING HOOK (ID 1 ONLY): The very first line must open a curiosity loop — tease the single most shocking/reversal moment of the story in ONE short punchy clause (e.g. the betrayal, the twist, the impossible choice) WITHOUT explaining how it ends, then flow straight into ID 1's actual scene. Never spoil the ending and never invent a moment that is not in the story.
+- SCENE-BOUNDARY PULL: At a genuine scene change or reveal, you MAY end the segment on the real plot's own unanswered question (what the character is about to do/discover) so viewers keep watching — the pull must come from the actual events, never from generic teaser filler (see the prohibition above).
+- VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
 - Tone: Engaging, clear, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်).
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     elif style == "funny":
@@ -1382,6 +1403,8 @@ def translate_batch(
 {intro_rule}
 {gender_rule}
 - Keep 100% of the real plot and cause-and-effect intact while narrating characters' actions and reactions in a lively, witty, entertaining spoken Burmese tone.
+- HUMOR SOURCE RULE: The comedy must come from the story itself — a character's over-the-top reaction, an absurd situation, an ironic contrast — sharpened with a light comparison or a playful aside. Maximum ONE light beat per segment; the plot sentence always comes first.
+- TASTE RULE (အလွန်အရေးကြီး): When the scene is genuinely tragic (death, serious injury, grief, abuse), drop the comedy completely for that segment and narrate it straight and respectfully — never joke over a character's real suffering.
 - NEVER replace actual story events with disconnected generic jokes or repetitive filler phrases.
 - STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်ပါတယ်'။"""
     elif style == "pov":
@@ -1392,6 +1415,7 @@ def translate_batch(
   2. When other characters (antagonists, bosses, coworkers, family) speak or act, ALWAYS frame their words in clear reported/indirect speech or explicitly name the speaker (e.g., 'မန်နေဂျာက {pov_pronoun}ကို ... လို့ မောက်မာစွာ ပြောလာတယ်', 'သူက သူ့အနေနဲ့ ... ဆိုပြီး ခြိမ်းခြောက်လိုက်တယ်') so the listener NEVER confuses another character's 'I/me' with '{pov_pronoun}'!
   3. NATURAL SPOKEN RHYTHM: In POV mode, vary sentence length naturally. Mix short punchy sentences ("ကျွန်တော် ကြောက်သွားတယ်") with slightly longer connecting ones ("ဒါပေမဲ့ ကျွန်တော် ပြန်မပြောဘဲ လှည့်ထွက်ခဲ့တယ်"). Avoid repetitive sentence structures starting every line the same way.
 {intro_rule}
+- LIMITED-KNOWLEDGE RULE: You may only narrate what the protagonist personally sees, hears, or feels in that moment. NEVER state another character's hidden motive or off-screen action as fact — frame it as the protagonist's own guess or later realization ('အဲ့တုန်းက {pov_pronoun} မသိခဲ့တာက...', 'နောက်မှ {pov_pronoun} သိလိုက်ရတာက...').
 - VOICE & PARTICLE RULE: In POV mode you are the main character telling your own story — NEVER use commentator particles like 'ဗျာ' or 'ခင်ဗျာ' or 'ပရိသတ်ကြီးတို့ရေ'. End sentences naturally with 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'၊ 'ရတယ်'။
 - STRICTLY PROHIBITED: Dry, bookish literary writing ('သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်')."""
     elif style == "dramatic":
@@ -1400,6 +1424,8 @@ def translate_batch(
 {intro_rule}
 {gender_rule}
 - Convey the true emotional stakes, motives, and actions of the characters in smooth, gripping spoken Burmese without inserting generic filler hooks.
+- PACING & RHYTHM RULE: Match sentence length to tension — at peak danger or shock, switch to SHORT, punchy, rapid sentences (one action per sentence) so the voice sounds breathless; in the calm aftermath, let sentences run slightly longer and slower. Build dread by stating small concrete details (a sound, a look, a silence) instead of announcing 'ကြောက်စရာကြီး' in the abstract.
+- WITHHOLD, DON'T EXPLAIN: When the source scene hides a motive or identity, narrate only what is visible and let the question hang — never explain the twist before the story itself reveals it.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     else:  # standard / narrator
         style_prompt = f"""PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (📖 သဘာဝကျပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
@@ -1407,6 +1433,7 @@ def translate_batch(
 {intro_rule}
 {gender_rule}
 - Clearly state who is speaking or acting, to whom, and why, using natural Burmese narrative connectives ('အဲ့ဒီနောက်...', 'ဒါကိုကြားတော့...', 'ဒါပေမဲ့လည်း...').
+- VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
 - Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
 
@@ -1436,6 +1463,11 @@ CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်�
    - 'ကြိုးစား' (NEVER 'ကျိုးစား' when referring to effort/striving)
    - 'ကျေးဇူး' (NEVER 'ကြေးဇူး')
    - 'လွတ်မြောက်' (NEVER 'လွှတ်မြောက်')
+   - 'ဒီအဲန်အေ' for DNA (NEVER 'ဒီအန်အေ' — the letter N is 'အဲန်')
+   - 'သံသယဝင်' / 'သံသယဖြစ်' (NEVER 'သံသဝင်')
+   - 'လူပုံလယ်' (NEVER 'လူပုံအလယ်')
+   - 'အကျပ်အတည်း' (NEVER 'အကြပ်အတည်း')
+   - 'အဘွား' for grandmother (NEVER 'ဘွားအေ')
    - Standard Unicode characters ONLY: strictly use 'ဉ်' (U+1009) where required; NEVER use Ethiopic, Georgian, or Zawgyi look-alike glyphs.
 
 HARD RULES:
@@ -1855,6 +1887,7 @@ class RecapPlanBuilder:
         gemini_text_model: str = "gemini-3.6-flash",
         narrative_style: str = "narrator",
         is_female: bool = False,
+        source_language: str = "",
     ):
         self.runtime_root = Path(runtime_root).resolve()
         self.gemini_env_path = Path(gemini_env_path).expanduser().resolve() if str(gemini_env_path or "").strip() else None
@@ -1868,6 +1901,8 @@ class RecapPlanBuilder:
         self.should_stop = should_stop
         self.narrative_style = str(narrative_style or "narrator").lower().strip()
         self.is_female = bool(is_female)
+        # User-picked STT language ("" = auto-detect via WHISPER_LANGUAGE).
+        self.source_language = normalize_source_language(source_language)
         self.translation_batch_max_items = max(5, int(translation_batch_max_items))
         self.story_context_batch_max_items = max(10, int(story_context_batch_max_items))
         self.context_overlap = max(0, int(context_overlap))
@@ -1904,7 +1939,8 @@ class RecapPlanBuilder:
         self._validate_runtime()
         source = source.resolve()
         job_dir.mkdir(parents=True, exist_ok=True)
-        whisper_model, whisper_language = WHISPER_MODEL, WHISPER_LANGUAGE
+        whisper_model = WHISPER_MODEL
+        whisper_language = self.source_language or WHISPER_LANGUAGE
         transcript_file = job_dir / "whisper_transcript.json"
         transcript_text_file = job_dir / "whisper_transcript.txt"
         atomic_file = job_dir / "atomic_units.json"
