@@ -321,6 +321,8 @@
   "admin_btn_cancel": "❌ Cancel",
   "admin_btn_confirm_apply": "✅ Confirm & Apply",
   "recap_delivery_caption": "🇲🇲 <b>Recap English → Myanmar Video (Smart Sync)</b>\n🎬 <b>{title}</b>\n🎭 <b>Style:</b> {style}\n🎙️ <b>Voice:</b> {voice_name}\n⏱️ <b>Duration:</b> <code>{dur_formatted}</code> · 📁 <b>File size:</b> <code>{size_formatted}</code>\n\n💡 <i>You can download it from the Mini App, and it has also been sent directly to Telegram.</i>",
+  "recap_part_caption": "🎬 <b>{label}</b>\n📁 <b>File size:</b> <code>{size_formatted}</code>",
+  "recap_part_too_large": "⚠️ <b>{label}</b> is too large to send directly on Telegram (<code>{size_formatted}</code>). You can download it from the parts list in the Mini App.",
   "recap_over_caption": "🎬 <b>Pro Movie Recap:</b> <code>#{jid}</code>\n📁 <b>File size:</b> <code>{size_formatted}</code> (larger than Telegram's 50MB limit)\n\n💡 <i>The file is too large to send directly via Telegram, so please download it quickly from the link below.</i>",
   "recap_over_app_caption": "🎬 <b>Pro Movie Recap:</b> <code>#{jid}</code>\n📁 <b>File size:</b> <code>{size_formatted}</code> (larger than Telegram's 50MB limit)\n\n💡 <i>The file is too large to send directly via Telegram. Please open it in the Mini App below to watch or download it.</i>",
   "recap_notify_text": "🎉 <b>Pro Movie Recap creation completed!</b>\n━━━━━━━━━━━━━━━━━━━━\n🎬 <b>Title:</b> <b>{clean_title}</b>\n🎙️ <b>Voice:</b> {voice_slug}\n⏱️ <b>Format:</b> Full HD 1080p • Myanmar dub + subtitles\n🆔 <b>Task:</b> <code>#{job_id}</code>\n\n✨ Your Recap video is ready. Even if you closed the Mini App, you can watch it in the Mini App or get it directly via Telegram!",

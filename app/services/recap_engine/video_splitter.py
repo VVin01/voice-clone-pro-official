@@ -360,3 +360,59 @@ def split_rendered_video(
         state.pop(name, None)
     state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     return done
+
+
+def split_source_into_segments(
+    source: str | Path,
+    out_dir: str | Path,
+    *,
+    part_seconds: float,
+    ffmpeg: str = "ffmpeg",
+    ffprobe: str = "ffprobe",
+    log: LogFn = _noop,
+) -> list[dict[str, Any]]:
+    """Cut a SOURCE video into clean processing segments (no labels).
+
+    Used by the >10-minute split path: the per-job duration cap stays in
+    force, so an over-cap source is cut at narration pauses into
+    segments of at most ``part_seconds`` (the caller passes a target
+    below the cap, leaving room for the smart-cut slack) and each
+    segment is then run through the recap pipeline on its own. The
+    outputs are intermediates — the pipeline's per-segment renders
+    become the job's deliverable parts.
+
+    Returns [{n, path, start, end, cut}] with real paths (unlike
+    split_rendered_video there is no single-part None case: a source
+    that fits in one segment yields the source itself as segment 1).
+    """
+    from app.services.recap_engine.core import probe_duration
+
+    source = Path(source).resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Segment source not found: {source}")
+    out_dir = Path(out_dir)
+    duration = probe_duration(ffprobe, source)
+    part_seconds = max(30.0, float(part_seconds))
+    if duration <= part_seconds:
+        return [{"n": 1, "path": str(source), "start": 0.0,
+                 "end": round(duration, 3), "cut": "end"}]
+
+    has_audio = _has_audio(ffprobe, source)
+    levels = audio_levels(ffmpeg, source) if has_audio else None
+    plan = plan_parts(duration, part_seconds, smart=True, levels=levels)
+    encoders = ffmpeg_encoders(ffmpeg)
+    encoder = "h264_nvenc" if "h264_nvenc" in encoders else "libx264"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log(f"✂️ Source split: {source.name} → {len(plan)} segment(s) of "
+        f"≤{part_seconds:.0f}s (smart cuts at narration pauses)")
+    done: list[dict[str, Any]] = []
+    for p in plan:
+        out = out_dir / f"source_seg_{p['n']:02d}.mp4"
+        render_part(ffmpeg, source, p["start"], p["end"], out,
+                    encoder=encoder, has_audio=has_audio,
+                    render_quality="standard", label_png=None)
+        done.append({"n": p["n"], "path": str(out), "start": p["start"],
+                     "end": p["end"], "cut": p["cut"]})
+        log(f"   Segment {p['n']}/{len(plan)}: {_clock(p['start'])} → "
+            f"{_clock(p['end'])} ({p['end'] - p['start']:.1f} s, {p['cut']})")
+    return done

@@ -1143,6 +1143,28 @@ function startJobPolling(jobId) {
     }, 2000);
 }
 
+// ── Recap duration caps ────────────────────────────────────────────────
+// The per-job cap mirrors the server and is NEVER raised: free 2 min,
+// VIP 10 min (admins exempt). A VIP source over the cap goes through
+// the split path instead: the server cuts the source into ≤10-min
+// parts and processes each part (see _recap_submit_duration_decision
+// in api.py). The client only steers: auto-enable split, keep Start on.
+function recapNormalMaxSeconds() {
+    return state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
+}
+function enableRecapSplitForLongVideo() {
+    const toggle = document.getElementById("recap-split-toggle");
+    if (toggle && !toggle.checked) {
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+}
+function notifyRecapSplitAutoEnabled() {
+    showStudioToast(currentLang === "my"
+        ? "✂️ ဗီဒီယိုက ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်းခွဲပြီး လုပ်ပေးပါမယ် — 'အပိုင်းခွဲ ထုတ်မယ်' ကို အလိုအလျောက် ဖွင့်ပေးထားပါတယ်။ ပြီးသွားရင် အပိုင်းအားလုံး ရပါမယ်။"
+        : "✂️ This video is longer than 10 minutes, so it will be processed in parts — split output was enabled automatically, and you will receive every part.", 'info');
+}
+
 // ── TAB 2: Recap Studio Configuration & Visual Mockup ──────────────────────
 function setupRecapVisualEditor() {
     const sliderBlurY = document.getElementById("slider-blur-y");
@@ -1193,7 +1215,9 @@ function setupRecapVisualEditor() {
         const objectUrl = URL.createObjectURL(file);
         const innerMovie = document.getElementById("mockup-inner-movie");
         if (innerMovie) innerMovie.style.backgroundImage = "none";
-        if (canvas) canvas.style.backgroundImage = "none";
+        // "" (not "none") so the canvas keeps its CSS gradient surface
+        // until the blurred backdrop / thumbnail takes over.
+        if (canvas) canvas.style.backgroundImage = "";
         if (canvasVideo) {
             canvasVideo.src = objectUrl;
             canvasVideo.classList.remove("hidden");
@@ -1272,8 +1296,18 @@ function setupRecapVisualEditor() {
                 updateCanvasMockupVisuals();
             }
 
-            const maxAllowed = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
-            const isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+            const maxAllowed = recapNormalMaxSeconds();
+            let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+            let splitAutoEnabled = false;
+            if (isOverLimit && state.user?.is_admin) {
+                isOverLimit = false; // admins are exempt from the cap
+            } else if (isOverLimit && state.user?.is_vip) {
+                // Split path: the server segments the source into
+                // <=10-min parts and processes each part.
+                enableRecapSplitForLongVideo();
+                splitAutoEnabled = true;
+                isOverLimit = false;
+            }
             const btnStartRecap = document.getElementById("btn-start-recap");
             const durSpan = document.getElementById("recap-info-dur");
 
@@ -1300,6 +1334,7 @@ function setupRecapVisualEditor() {
                         btnStartRecap.disabled = false;
                         btnStartRecap.style.opacity = "";
                     }
+                    if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
                 }
             }
 
@@ -1771,6 +1806,8 @@ function setupRecapVisualEditor() {
             if (fillMode === "crop" || (!hasCrop && ratioDiff < 0.01)) {
                 innerMovie.style.width = "100%";
                 innerMovie.style.height = "100%";
+                innerMovie.style.top = "0%";
+                innerMovie.style.left = "0%";
                 innerMovie.style.boxShadow = "none";
                 if (rCropped >= rCanvas) {
                     cropCoverH = 100.0 * zoom;
@@ -1780,16 +1817,23 @@ function setupRecapVisualEditor() {
                     cropCoverH = 100.0 * zoom * (rCanvas / rCropped);
                 }
             } else if (rCropped >= rCanvas) {
-                // Cropped picture is wider than canvas (letterbox bars on top & bottom)
-                const effectiveHeight = (rCanvas / rCropped) * 100.0;
+                // Cropped picture is wider than canvas (letterbox bars on top & bottom).
+                // The strip MUST be vertically centered: .mockup-inner-movie is
+                // inset:0, so without an explicit top it glues to the top edge
+                // and leaves one giant void below (owner screenshot 2026-10-30).
+                const effectiveHeight = Math.max(12, Math.min(100, (rCanvas / rCropped) * 100.0));
                 innerMovie.style.width = "100%";
-                innerMovie.style.height = `${Math.max(12, Math.min(100, effectiveHeight)).toFixed(3)}%`;
+                innerMovie.style.height = `${effectiveHeight.toFixed(3)}%`;
+                innerMovie.style.top = `${((100 - effectiveHeight) / 2).toFixed(3)}%`;
+                innerMovie.style.left = "0%";
                 innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
             } else {
                 // Cropped picture is narrower/taller than canvas (pillarbox bars on left & right)
-                const effectiveWidth = (rCropped / rCanvas) * 100.0;
+                const effectiveWidth = Math.max(12, Math.min(100, (rCropped / rCanvas) * 100.0));
                 innerMovie.style.height = "100%";
-                innerMovie.style.width = `${Math.max(12, Math.min(100, effectiveWidth)).toFixed(3)}%`;
+                innerMovie.style.width = `${effectiveWidth.toFixed(3)}%`;
+                innerMovie.style.left = `${((100 - effectiveWidth) / 2).toFixed(3)}%`;
+                innerMovie.style.top = "0%";
                 innerMovie.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px rgba(245, 158, 11, 0.25)";
             }
 
@@ -1808,8 +1852,21 @@ function setupRecapVisualEditor() {
                 innerMovie.insertBefore(thumbImg, innerMovie.firstChild);
             }
 
+            const backdropEl = document.getElementById("video-backdrop-blur");
             if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
                 innerMovie.style.backgroundImage = "none";
+                // Fill the letterbox area with a blurred copy of the source
+                // frame, like the real render's blurred fill. Without this
+                // the canvas background stays "none" (set in
+                // handleVideoFileSelect) and the area renders as a void.
+                if (backdropEl) {
+                    if (fillMode === "blur" && state.recapThumbnailUrl) {
+                        backdropEl.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
+                        backdropEl.classList.add("on");
+                    } else {
+                        backdropEl.classList.remove("on");
+                    }
+                }
                 if (thumbImg) thumbImg.classList.add("hidden");
                 canvasVideo.style.display = "block";
                 canvasVideo.style.opacity = "1";
@@ -1821,6 +1878,7 @@ function setupRecapVisualEditor() {
                 canvasVideo.style.top = `${vidTop.toFixed(3)}%`;
                 if (fillBadge) fillBadge.style.display = "none";
             } else if (state.recapThumbnailUrl) {
+                if (backdropEl) backdropEl.classList.remove("on");
                 canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
                 canvas.style.backgroundSize = "cover";
                 canvas.style.backgroundPosition = "center";
@@ -1837,6 +1895,7 @@ function setupRecapVisualEditor() {
                 }
                 if (fillBadge) fillBadge.style.display = "none";
             } else {
+                if (backdropEl) backdropEl.classList.remove("on");
                 canvas.style.backgroundImage = "";
                 innerMovie.style.backgroundImage = "";
                 if (thumbImg) thumbImg.classList.add("hidden");
@@ -2197,7 +2256,12 @@ function setupRecapVisualEditor() {
             previewBox.classList.remove("two-lines");
             previewBox.classList.add("one-line");
             previewText.innerHTML = '"အခုတော့ အစီအစဉ် စတင်ပါပြီ..."';
-            previewText.style.whiteSpace = "nowrap";
+            // NOT nowrap: with nowrap the one-line line-clamp can never
+            // engage, and a long sample (e.g. the i18n subtitle sample
+            // applied by setLanguage) overflows the bar and hard-clips at
+            // both ends. Normal flow + the CSS line-clamp gives a clean
+            // single line with an ellipsis instead.
+            previewText.style.whiteSpace = "normal";
             previewText.style.lineHeight = "1.8";
         } else {
             previewBox.classList.remove("one-line");
@@ -2307,8 +2371,18 @@ function setupRecapVisualEditor() {
                 state.recapVideoTitle = data.title || "Movie Recap Video";
 
                 state.recapSourceDuration = data.duration_seconds || 0;
-                const maxAllowed = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
-                const isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+                const maxAllowed = recapNormalMaxSeconds();
+                let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+                let splitAutoEnabled = false;
+                if (isOverLimit && state.user?.is_admin) {
+                    isOverLimit = false; // admins are exempt from the cap
+                } else if (isOverLimit && state.user?.is_vip) {
+                    // Split path: the server segments the source into
+                    // <=10-min parts and processes each part.
+                    enableRecapSplitForLongVideo();
+                    splitAutoEnabled = true;
+                    isOverLimit = false;
+                }
                 const btnStartRecap = document.getElementById("btn-start-recap");
                 if (durSpan) {
                     if (isOverLimit) {
@@ -2336,6 +2410,7 @@ function setupRecapVisualEditor() {
                             btnStartRecap.disabled = false;
                             btnStartRecap.style.opacity = "";
                         }
+                        if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
                     }
                 }
 
@@ -2635,13 +2710,21 @@ async function handleStartRecap() {
     haptic("heavy");
     const btn = document.getElementById("btn-start-recap");
 
-    // Strictly enforce maximum duration: Free = 2 minutes (120s), VIP = 10 minutes (600s)
-    const maxRecapSec = state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
-    if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec) {
+    // Enforce the per-job cap: free 2 min, VIP 10 min, admins exempt.
+    // A >10 min VIP source is NOT blocked: it takes the split path
+    // (auto-enable split; the server segments the source into parts).
+    const maxRecapSec = recapNormalMaxSeconds();
+    if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
+        && state.user?.is_vip && !state.user?.is_admin) {
+        enableRecapSplitForLongVideo();
+        notifyRecapSplitAutoEnabled();
+    }
+    if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
+        && !state.user?.is_vip && !state.user?.is_admin) {
         const m = Math.floor(maxRecapSec / 60);
         showStudioToast(currentLang === "my"
-            ? `ဗီဒီယို ကြာချိန်သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး ${m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "" : "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
-            : `Video duration exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${m} minutes. Upgrade to VIP for up to 10 minutes.`, 'warning');
+            ? `ဗီဒီယို ကြာချိန်သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး ${m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "✂️ ၁၀ မိနစ်ထက် ရှည်လျှင် 'အပိုင်းခွဲ ထုတ်မယ်' ကို ဖွင့်ပြီး အပိုင်းလိုက် ထုတ်နိုင်ပါသည်ခင်ဗျာ။" : "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
+            : `Video duration exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${m} minutes.` + (state.user?.is_vip ? " Enable split output to receive longer videos as parts." : " Upgrade to VIP for up to 10 minutes."), 'warning');
         return;
     }
 
