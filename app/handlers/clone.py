@@ -762,7 +762,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
 
     try:
         target_chat_id = callback.from_user.id
-        from app.webapp.api import resolve_recap_deliverable_path
+        from app.webapp.api import resolve_recap_deliverable_path, resolve_recap_part_paths
         async with AsyncSessionLocal() as session:
             job = await session.get(Job, job_id)
             # Ownership: never deliver another user's recap video.
@@ -778,7 +778,34 @@ async def handle_send_recap_callback(callback: CallbackQuery):
             video_path = Path(resolved_vid) if resolved_vid and Path(resolved_vid).is_file() else None
             srt_path = Path(resolved_srt) if resolved_srt and Path(resolved_srt).is_file() else None
 
-            if video_path and video_path.is_file():
+            has_parts = bool(resolve_recap_part_paths(job_id))
+            from app.webapp.api import RECAP_JOBS_REGISTRY
+
+            is_segmented = bool(
+                (RECAP_JOBS_REGISTRY.get(job_id) or {}).get("segmented")
+            )
+            if has_parts and is_segmented:
+                # Split/segmented job: the parts ARE the delivery (the
+                # registered "video" is just part 1 — don't send it twice).
+                if srt_path and srt_path.is_file():
+                    try:
+                        await callback.bot.send_document(
+                            chat_id=target_chat_id,
+                            document=FSInputFile(str(srt_path), filename=f"subtitles_{job_id[:8]}.srt"),
+                            caption=t("clone_caption_subtitles", lang),
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+                try:
+                    from app.webapp.api import _deliver_recap_parts
+
+                    await _deliver_recap_parts(
+                        callback.bot, target_chat_id, job_id, lang
+                    )
+                except Exception:
+                    pass
+            elif video_path and video_path.is_file():
                 file_size = video_path.stat().st_size
                 if file_size <= 50 * 1024 * 1024:
                     await callback.bot.send_video(
@@ -819,6 +846,17 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                         )
                     except Exception:
                         pass
+                # Split jobs: deliver every part as well. For >10 min
+                # sources the full render usually exceeds the 50 MB bot
+                # limit, so the parts are the actual Telegram delivery.
+                try:
+                    from app.webapp.api import _deliver_recap_parts
+
+                    await _deliver_recap_parts(
+                        callback.bot, target_chat_id, job_id, lang
+                    )
+                except Exception:
+                    pass
             else:
                 # File no longer on this server's disk (no persistent
                 # disk: redeploys/restarts wipe generated outputs). The

@@ -1616,6 +1616,155 @@ def _recap_fallback_info(job_dir) -> tuple[bool, list]:
         return False, []
 
 
+def _recap_max_duration_allowed(is_vip: bool, is_admin: bool = False) -> int:
+    """Per-job source-duration cap (seconds). The 10-minute cap is the
+    owner's design and applies to everyone — including VIP. The only
+    exemption is ADMIN (same ``settings.is_admin`` identity used by
+    /api/user/me and the admin endpoints), who may run a long video as
+    one job. Longer sources for everyone else go through the split
+    path: the source is cut into ≤cap segments, each processed on its
+    own (see _recap_submit_duration_decision / _recap_should_segment).
+    """
+    if is_admin:
+        return 86400  # no practical cap (the 1 GB upload limit still applies)
+    if is_vip:
+        return int(getattr(settings, "recap_max_duration_seconds", 600) or 600)
+    return int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120)
+
+
+def _recap_submit_duration_decision(
+    *,
+    is_vip: bool,
+    is_admin: bool,
+    split_video: bool,
+    script_review: bool,
+    duration_seconds: float,
+) -> str:
+    """Submit-time verdict for a recap source of a known duration.
+
+    Returns "ok" (single job), "segment" (over the cap, but the split
+    path will cut the source into ≤cap segments in the worker), or
+    "reject" (over the cap with no sanctioned path).
+    """
+    cap = _recap_max_duration_allowed(is_vip, is_admin)
+    if not duration_seconds or duration_seconds <= cap:
+        return "ok"
+    if is_vip and split_video and not script_review:
+        # Script review edits ONE whole-video script, so it cannot be
+        # combined with segmented processing of an over-cap source.
+        return "segment"
+    return "reject"
+
+
+def _recap_should_segment(
+    *,
+    is_vip: bool,
+    is_admin: bool,
+    split_video: bool,
+    duration_seconds: float,
+) -> bool:
+    """Worker-side: should this job's source be cut into ≤cap segments
+    and processed part by part? Mirrors the submit decision."""
+    if is_admin or not split_video or not is_vip:
+        return False
+    return duration_seconds > _recap_max_duration_allowed(is_vip, is_admin)
+
+
+def resolve_recap_part_paths(job_id: str) -> list[dict]:
+    """Splitter deliverables for a recap job: [{n, path, label}], sorted.
+
+    Registry ``part{n}_path`` entries win; otherwise the job's
+    ``parts/recap_part_NN.mp4`` files on disk (they survive registry
+    restarts because the split naming is deterministic).
+    """
+    entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
+    labels: dict[int, str] = {}
+    for part in entry.get("parts") or []:
+        try:
+            labels[int(part.get("n"))] = str(part.get("label") or "")
+        except Exception:
+            continue
+
+    found: dict[int, str] = {}
+    for key, value in entry.items():
+        m = re.fullmatch(r"part([1-9][0-9]?)_path", str(key))
+        if m and value and Path(str(value)).is_file():
+            found[int(m.group(1))] = str(value)
+    if not found:
+        parts_dir = settings.storage_root / "recap_output" / job_id / "parts"
+        if parts_dir.is_dir():
+            for cand in sorted(parts_dir.glob("recap_part_*.mp4")):
+                m = re.fullmatch(r"recap_part_(\d+)\.mp4", cand.name)
+                if m and cand.stat().st_size > 1000:
+                    found[int(m.group(1))] = str(cand)
+    if not found:
+        return []
+
+    total = max(found)
+    out: list[dict] = []
+    for n in sorted(found):
+        label = labels.get(n) or ""
+        if not label:
+            try:
+                from app.services.recap_engine.video_splitter import (
+                    DEFAULT_LABEL_TEMPLATE,
+                    part_label,
+                )
+
+                label = part_label(DEFAULT_LABEL_TEMPLATE, n, total)
+            except Exception:
+                label = f"Part {n}/{total}"
+        out.append({"n": n, "path": found[n], "label": label})
+    return out
+
+
+async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my") -> int:
+    """Send every split part of a recap job to a Telegram chat.
+
+    Parts up to Telegram's 50 MB bot limit go as videos with their part
+    label; an oversized part gets a short note pointing at the Mini App
+    (where the same part is downloadable). Returns the number of parts
+    actually sent as video. Never raises.
+    """
+    from aiogram.types import FSInputFile
+    from app.services.downloader import format_filesize
+
+    sent = 0
+    try:
+        parts = resolve_recap_part_paths(job_id)
+    except Exception:
+        return 0
+    for part in parts:
+        try:
+            size = os.path.getsize(part["path"]) if os.path.isfile(part["path"]) else 0
+            if 0 < size <= 50 * 1024 * 1024:
+                vf = FSInputFile(part["path"], filename=Path(part["path"]).name)
+                caption = t(
+                    "recap_part_caption",
+                    lang,
+                    label=html.escape(str(part["label"])),
+                    size_formatted=format_filesize(size),
+                )
+                await bot.send_video(
+                    chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML"
+                )
+                sent += 1
+            else:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=t(
+                        "recap_part_too_large",
+                        lang,
+                        label=html.escape(str(part["label"])),
+                        size_formatted=format_filesize(size),
+                    ),
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send recap part {part.get('n')} of {job_id}: {e}")
+    return sent
+
+
 async def _send_recap_telegram_delivery(
     chat_id: int,
     video_path: str,
@@ -1626,6 +1775,7 @@ async def _send_recap_telegram_delivery(
     style: str,
     voice_name: str,
     duration_sec: int,
+    job_id: Optional[str] = None,
 ):
     """Deliver completed recap video and media files directly to user's Telegram."""
     if not settings.bot_token or not chat_id:
@@ -1670,9 +1820,21 @@ async def _send_recap_telegram_delivery(
             if _fb_used:
                 caption += t("recap_fallback_note", lang, count=len(_fb_segs) or 1)
 
-            if file_size <= 50 * 1024 * 1024:
+            parts_available = bool(job_id) and bool(resolve_recap_part_paths(job_id))
+            is_segmented = bool(job_id) and bool(
+                (RECAP_JOBS_REGISTRY.get(job_id) or {}).get("segmented")
+            )
+            if is_segmented:
+                # Segmented job: the registered video is only part 1 —
+                # the parts together are the whole delivery.
+                await _deliver_recap_parts(bot, chat_id, job_id, lang)
+            elif file_size <= 50 * 1024 * 1024:
                 vf = FSInputFile(video_path, filename=Path(video_path).name)
                 await bot.send_video(chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML")
+            elif parts_available:
+                # Full render exceeds Telegram's 50 MB bot limit, but the
+                # job was split: the parts ARE the Telegram delivery.
+                await _deliver_recap_parts(bot, chat_id, job_id, lang)
             else:
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
@@ -1702,6 +1864,12 @@ async def _send_recap_telegram_delivery(
             if srt_path and os.path.isfile(srt_path):
                 sf = FSInputFile(srt_path, filename=f"subtitles_{Path(srt_path).name}")
                 await bot.send_document(chat_id=chat_id, document=sf, caption=t("clone_caption_subtitles", lang), parse_mode="HTML")
+
+            # Split jobs: every part is delivered too (when the full video
+            # was oversized, or the job is segmented, the parts already
+            # went out above as the main delivery — don't send twice).
+            if parts_available and not is_segmented and file_size <= 50 * 1024 * 1024:
+                await _deliver_recap_parts(bot, chat_id, job_id, lang)
 
         finally:
             await bot.session.close()
@@ -1837,7 +2005,10 @@ async def _run_recap_background_job(
         if not is_vip:
             watermark_text = "✨ Voice Clone Pro - Recap Studio Ultra Suite တွင် ပြုလုပ်သည်"
 
-        max_dur_limit = 600 if is_vip else getattr(settings, "recap_free_max_duration_seconds", 120)
+        # Admin exemption: settings.is_admin is the same identity check
+        # /api/user/me uses; admins are exempt from the 10-minute cap.
+        is_admin_user = settings.is_admin(user_id)
+        max_dur_limit = _recap_max_duration_allowed(is_vip, is_admin_user)
 
         if phase == "script":
             # ── Script-review phase 1: download + plan ONLY (no TTS/render).
@@ -1867,6 +2038,7 @@ async def _run_recap_background_job(
                 _m, _s = int(_dur // 60), int(_dur % 60)
                 raise ValueError(
                     f"ဗီဒီယို ကြာချိန် ({_m:02d}:{_s:02d}) သည် {'VIP' if is_vip else 'အခမဲ့ (Free)'} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {int(max_dur_limit // 60)} မိနစ်) ထက် ကျော်လွန်နေပါသည်။"
+                    + (" 📝 Script review နဲ့ ၁၀ မိနစ်ကျော် အပိုင်းခွဲ တွဲသုံးလို့မရပါ — Script review ကို ပိတ်ပြီး ပြန်စမ်းပါခင်ဗျာ။" if getattr(req, "split_video", False) else "")
                 )
 
             from app.services.recap_engine.recap_pipeline import build_recap_script_plan
@@ -1897,10 +2069,74 @@ async def _run_recap_background_job(
             logger.info(f"Recap job {job_id}: script ready ({entry['segments_count']} segments), awaiting user review.")
             return
 
-        recap_fn = functools.partial(
+        # ── Split path for over-cap sources (phase "full" only) ──────
+        # The 10-minute cap is NOT raised: when a VIP enables split and
+        # the source is over the cap, the source is downloaded first and
+        # cut into ≤cap segments at narration pauses; each segment is
+        # then processed by the normal pipeline and becomes one
+        # deliverable part. Admins are exempt (single job, no cutting);
+        # script-review jobs never get here over-cap (script phase
+        # blocks them), and phase "render" always works from a reviewed
+        # whole-video script, so it is never segmented.
+        segmented_mode = False
+        segment_files: list[dict] = []
+        if phase == "full" and req.split_video and not is_admin_user:
+            if is_local_media(canonical_source_url):
+                local_source = str(Path(canonical_source_url).resolve())
+            else:
+                local_source, _dl_info = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        downloader.download_video,
+                        canonical_source_url,
+                        target_dir=str(job_dir),
+                        max_height=1080 if is_vip else 720,
+                    ),
+                )
+            from app.services.downloader import probe_local_media
+
+            _src_dur = float(
+                probe_local_media(local_source).get("duration", 0.0) or 0.0
+            )
+            if _recap_should_segment(
+                is_vip=is_vip,
+                is_admin=is_admin_user,
+                split_video=True,
+                duration_seconds=_src_dur,
+            ):
+                from app.services.recap_engine.recap_pipeline import find_binary
+                from app.services.recap_engine.video_splitter import (
+                    split_source_into_segments,
+                )
+
+                entry["progress_label"] = (
+                    "✂️ ဗီဒီယိုရှည်လို့ အပိုင်းခွဲနေပါတယ် (အပိုင်းတိုင်း ≤ ၁၀ မိနစ်)..."
+                )
+                segment_files = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        split_source_into_segments,
+                        local_source,
+                        job_dir / "source_segments",
+                        # Target below the cap: plan_parts may extend a
+                        # cut by up to 20 s to reach a narration pause.
+                        part_seconds=min(
+                            float(req.split_minutes) * 60.0,
+                            max_dur_limit - 30.0,
+                        ),
+                        ffmpeg=find_binary("ffmpeg"),
+                        ffprobe=find_binary("ffprobe"),
+                        log=lambda m: logger.info(f"Recap job {job_id}: {m}"),
+                    ),
+                )
+                segmented_mode = len(segment_files) >= 2
+            canonical_source_url = local_source
+
+        def _make_recap_fn(source, target_dir):
+            return functools.partial(
             downloader.generate_recap_video,
-            url_or_path=canonical_source_url,
-            target_dir=str(job_dir),
+            url_or_path=source,
+            target_dir=target_dir,
             voice=selected_voice,
             narrative_style=req.story_style,
             voice_speed=req.voice_speed,
@@ -1935,9 +2171,57 @@ async def _run_recap_background_job(
             progress_callback=progress_cb,
         )
 
-        recap_res = await loop.run_in_executor(None, recap_fn)
+        part_urls: list[dict] = []
+        first_part_dest: Optional[str] = None
+        if segmented_mode:
+            # Process every segment through the normal pipeline; each
+            # segment render becomes one deliverable part (≤cap each).
+            from app.services.recap_engine.video_splitter import (
+                DEFAULT_LABEL_TEMPLATE,
+                part_label,
+            )
+
+            parts_dir = job_dir / "parts"
+            parts_dir.mkdir(parents=True, exist_ok=True)
+            total_segs = len(segment_files)
+            recap_res = None
+            for seg in segment_files:
+                entry["progress_label"] = (
+                    f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
+                )
+                seg_res = await loop.run_in_executor(
+                    None,
+                    _make_recap_fn(seg["path"], str(job_dir / f"seg{seg['n']:02d}")),
+                )
+                seg_video = seg_res.get("final_video") or seg_res.get("final_video_path")
+                if not seg_video or not Path(seg_video).is_file():
+                    raise RuntimeError(
+                        f"Segment {seg['n']}/{total_segs} render produced no video"
+                    )
+                dest = parts_dir / f"recap_part_{seg['n']:02d}.mp4"
+                if Path(seg_video).resolve() != dest.resolve():
+                    shutil.move(seg_video, dest)
+                entry[f"part{seg['n']}_path"] = str(dest)
+                part_urls.append({
+                    "n": seg["n"],
+                    "label": part_label(DEFAULT_LABEL_TEMPLATE, seg["n"], total_segs),
+                    "url": f"/api/recap/download/{job_id}/part{seg['n']}",
+                })
+                if recap_res is None:
+                    recap_res = seg_res
+                    first_part_dest = str(dest)
+            logger.info(
+                f"Recap job {job_id}: segmented source processed as "
+                f"{total_segs} parts (each ≤ cap)"
+            )
+        else:
+            recap_res = await loop.run_in_executor(
+                None, _make_recap_fn(canonical_source_url, str(job_dir))
+            )
 
         video_path = recap_res.get("final_video") or recap_res.get("final_video_path")
+        if segmented_mode and first_part_dest:
+            video_path = first_part_dest
         audio_path = recap_res.get("audio") or recap_res.get("final_audio_path")
         srt_path = recap_res.get("subtitles_srt")
         script_path = _build_clean_recap_script_file(job_dir, job_id, req.story_style, srt_path)
@@ -1959,14 +2243,24 @@ async def _run_recap_background_job(
             "srt": f"/api/recap/download/{job_id}/srt" if srt_path else None,
             "script": f"/api/recap/download/{job_id}/script" if script_path else None,
         }
+        if segmented_mode:
+            entry["segmented"] = True
+            entry["parts"] = part_urls
+            entry["download_urls"]["parts"] = part_urls
+            entry["split_note"] = (
+                f"မူရင်းဗီဒီယို ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်း {len(part_urls)} ပိုင်း "
+                "ခွဲပြီး လုပ်ပေးထားပါတယ် — အပိုင်းအားလုံး ဒေါင်းလုဒ်ရယူနိုင်ပါတယ်။"
+            )
 
         # Optional Video Splitter post-process (Recapter parity): cut the
         # FINISHED recap into labelled parts at narration pauses. It is
         # part of the same single credit — never charged again. A split
         # failure must not fail the job: the full video above stays the
         # deliverable and the error is surfaced on the status response.
-        entry["parts"] = []
-        if req.split_video and video_path and Path(video_path).is_file():
+        # Skipped in segmented mode: the parts already ARE the segments.
+        if not segmented_mode:
+            entry["parts"] = []
+        if req.split_video and not segmented_mode and video_path and Path(video_path).is_file():
             try:
                 from app.services.recap_engine.recap_pipeline import find_binary
                 from app.services.recap_engine.video_splitter import split_rendered_video
@@ -2251,8 +2545,13 @@ async def create_recap_job(
             detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
         )
 
-    # Free user duration limit: Max 2 minutes (120s); VIP: Max 10 minutes (600s)
-    max_duration_allowed = 600 if is_vip else getattr(settings, "recap_free_max_duration_seconds", 120)
+    # Duration cap (owner's design): 10 min per job for everyone,
+    # VIP included; free tier 2 min. Admins are exempt. A VIP source
+    # over the cap is accepted ONLY via the split path (no script
+    # review): the worker cuts the source into ≤cap segments and
+    # processes each part separately.
+    is_admin_user = settings.is_admin(user.id)
+    max_duration_allowed = _recap_max_duration_allowed(is_vip, is_admin_user)
     checked_duration = req.duration_seconds
 
     # Early duration validation via yt-dlp or ffprobe before deducting credits or queueing
@@ -2271,15 +2570,28 @@ async def create_recap_job(
             logger.warning(f"Could not pre-probe video duration for {req.url}: {probe_err}")
 
     if checked_duration and checked_duration > max_duration_allowed:
-        dur_mins = int(checked_duration) // 60
-        dur_secs = int(checked_duration) % 60
-        max_m = max_duration_allowed // 60
-        tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
-        raise HTTPException(
-            status_code=400,
-            detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ "
-                   + ("ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
+        decision = _recap_submit_duration_decision(
+            is_vip=is_vip,
+            is_admin=is_admin_user,
+            split_video=bool(req.split_video),
+            script_review=bool(req.script_review),
+            duration_seconds=float(checked_duration),
         )
+        if decision != "segment":
+            dur_mins = int(checked_duration) // 60
+            dur_secs = int(checked_duration) % 60
+            max_m = max_duration_allowed // 60
+            tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
+            if is_vip and req.split_video and req.script_review:
+                hint = "📝 Script ကို အရင်စစ်မယ် ရွေးထားရင် ၁၀ မိနစ်အထိပဲ ရပါတယ် — အပိုင်းခွဲပြီး လုပ်ချင်ရင် Script review ကို ပိတ်ပြီး ပြန်စမ်းပါခင်ဗျာ။"
+            elif is_vip:
+                hint = "✂️ ၁၀ မိနစ်ထက် ရှည်သော ဗီဒီယိုများကို 'အပိုင်းခွဲ ထုတ်မယ်' ကို ဖွင့်ပြီး အပိုင်းလိုက် ထုတ်နိုင်ပါသည်ခင်ဗျာ။"
+            else:
+                hint = "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။"
+            raise HTTPException(
+                status_code=400,
+                detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ " + hint,
+            )
 
     # Concurrency: at most settings.max_concurrent_jobs_per_user (default
     # 1, same as voice clones) active recap jobs per user; admins exempt.
@@ -2645,6 +2957,7 @@ async def send_recap_to_telegram(
         style="Pro Dubbed",
         voice_name=voice_label,
         duration_sec=0,
+        job_id=job_id,
     )
     return {"success": True, "message": "Telegram သို့ ဗီဒီယို ပို့ပြီးပါပြီခင်ဗျာ!"}
 

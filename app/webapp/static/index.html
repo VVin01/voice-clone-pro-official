@@ -306,6 +306,9 @@
                         <div class="mockup-screen-container mt-2">
                             <div class="mockup-screen ratio-9-16" id="recap-mockup-frame">
                                 <div class="video-bg-placeholder mirrored" id="video-bg-canvas">
+                                    <!-- Blurred source backdrop for the letterbox area in
+                                         video mode (mirrors the real render's blurred fill) -->
+                                    <div class="video-backdrop-blur" id="video-backdrop-blur"></div>
                                     <!-- Inner Movie Visualizer with Crop guides -->
                                     <div class="mockup-inner-movie" id="mockup-inner-movie">
                                         <!-- Embedded HTML5 Video Player for Instant Frame Seeking -->

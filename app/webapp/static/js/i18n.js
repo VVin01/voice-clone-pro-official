@@ -800,6 +800,11 @@ function setLanguage(lang) {
     if (lang !== "my" && lang !== "en") lang = "my";
     currentLang = lang;
     localStorage.setItem("studio_lang", lang);
+    // Language class drives Myanmar-safe typography (tall glyph stacks
+    // need ~1.9 line-height in toasts/alerts; Latin stays compact).
+    document.documentElement.lang = lang === "my" ? "my" : "en";
+    document.body.classList.toggle("lang-my", lang === "my");
+    document.body.classList.toggle("lang-en", lang === "en");
 
     // Update toggle button text
     const langBtn = document.getElementById("btn-lang-toggle");
