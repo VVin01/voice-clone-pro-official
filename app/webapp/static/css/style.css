@@ -668,6 +668,22 @@ select.studio-input { min-height: 50px; }
 }
 
 /* ── Live canvas mockup ─────────────────────────────────────────────── */
+/* Preview empty/loading state: the tidy placeholder shown in the Step-2
+   card until a source is ready (the mockup + toolbar stay hidden). */
+.preview-empty-state {
+    border: 1.5px dashed var(--border-strong); border-radius: var(--r-lg);
+    padding: 34px 20px; display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, 0.03);
+}
+.preview-empty-inner { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; }
+.preview-empty-icon { font-size: 40px; line-height: 1; }
+.preview-empty-title { font-size: 16px; font-weight: 700; }
+.preview-empty-desc { font-size: 13px; opacity: 0.75; line-height: 1.9; max-width: 300px; }
+.preview-reveal { animation: previewRevealIn 0.35s ease both; }
+@keyframes previewRevealIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
 .mockup-screen-container { display: flex; justify-content: center; }
 .mockup-screen {
     width: 100%; max-width: 300px; margin: 0 auto;
