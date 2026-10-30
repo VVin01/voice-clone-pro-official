@@ -12,12 +12,13 @@ from app.db.session import AsyncSessionLocal
 from app.models.enums import AccountCategory, JobStatus
 from app.models.schema import Job, VoiceModel
 from app.services.audio import CURATED_TTS_VOICES, SPEED_RATES
+from app.services.gate import build_gate_reminder_text, is_gate_configured, verify_user_membership
 from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.models import get_available_models_for_user
 from app.services.queue import create_voice_clone_job, get_queue_position
 from app.ui.helpers import safe_edit_message
-from app.ui.keyboards import back_to_menu_kb
+from app.ui.keyboards import back_to_menu_kb, membership_gate_kb
 from app.worker import process_single_job
 
 from pathlib import Path
@@ -62,6 +63,38 @@ async def handle_voice_clone_start(callback: CallbackQuery, state: FSMContext):
     if not is_admin and balance.total_usable_seconds <= 0:
         await callback.answer(t("tts_insufficient_balance", lang), show_alert=True)
         return
+
+    # Membership gate at the generate entry point: a user who taps an old
+    # menu message without having joined BOTH chats gets the shared join
+    # reminder (per-chat status + both join buttons + live re-check)
+    # instead of entering the clone flow. Live check, fail closed —
+    # mirrors /start; admins bypass inside verify_user_membership. Only
+    # runs when the gate is configured (an unconfigured gate has nothing
+    # valid to point the user at — the Mini App reports that case as
+    # GATE_NOT_CONFIGURED instead).
+    if not is_admin and is_gate_configured():
+        async with AsyncSessionLocal() as gate_session:
+            gate_user, _ = await get_or_create_user(gate_session, callback.from_user.id)
+            gate_ok, _ = await verify_user_membership(gate_session, gate_user, callback.bot)
+            gate_ch, gate_gp = gate_user.channel_verified, gate_user.group_verified
+            gate_lang = gate_user.language_code
+            await gate_session.commit()
+        if not gate_ok:
+            await safe_edit_message(
+                callback,
+                build_gate_reminder_text(gate_lang, gate_ch, gate_gp),
+                reply_markup=membership_gate_kb(
+                    channel_link=settings.channel_invite_link,
+                    group_link=settings.group_invite_link,
+                    lang=gate_lang,
+                ),
+                parse_mode="HTML",
+            )
+            try:
+                await callback.answer()
+            except Exception:
+                pass
+            return
 
     if is_admin:
         # Admins are exempt from user-facing account limits (FREE/PURCHASED)

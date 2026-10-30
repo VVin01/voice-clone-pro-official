@@ -59,13 +59,17 @@
              Uses /api/user/me gate fields + POST /api/user/verify-membership (gate branch). -->
         <div id="gate-banner" class="gate-banner hidden" role="alert">
             <div class="gate-banner-text">
-                <strong id="gate-banner-title" data-i18n="gate_banner_title">🔒 Channel နှင့် Group ကို အရင် Join ပါ</strong>
-                <span id="gate-banner-desc" data-i18n="gate_banner_desc">Join ပြီးမှ Verify နှိပ်ပါ — ပြီးမှ Voice / Recap ထုတ်နိုင်မယ်။</span>
+                <strong id="gate-banner-title" data-i18n="gate_banner_title">✨ နောက်တစ်ဆင့်ပဲ လိုပါတော့တယ်</strong>
+                <span id="gate-banner-desc" data-i18n="gate_banner_desc">Channel နဲ့ Group ကို Join လိုက်ရင် Voice / Recap အကုန် သုံးနိုင်ပါပြီ။ Join ပြီးရင် «ပြန်စစ်မည်» ကို နှိပ်လိုက်ရုံပါပဲ။</span>
+            </div>
+            <div class="gate-banner-chips">
+                <span id="gate-chip-channel" class="gate-chip">📢 Channel</span>
+                <span id="gate-chip-group" class="gate-chip">👥 Group</span>
             </div>
             <div class="gate-banner-actions">
                 <a id="gate-link-channel" class="btn mini-btn" data-i18n="gate_join_channel" href="#" target="_blank" rel="noopener">Channel Join</a>
                 <a id="gate-link-group" class="btn mini-btn" data-i18n="gate_join_group" href="#" target="_blank" rel="noopener">Group Join</a>
-                <button id="gate-btn-verify" class="btn gold-gradient-btn" type="button" data-i18n="gate_verify_btn" onclick="verifyMembershipFromBanner()">✓ Verify လုပ်မယ်</button>
+                <button id="gate-btn-verify" class="btn gold-gradient-btn" type="button" data-i18n="gate_verify_btn" onclick="verifyMembershipFromBanner()">✅ Join ပြီးပြီ — ပြန်စစ်မည်</button>
             </div>
             <p id="gate-banner-status" class="gate-banner-status"></p>
         </div>

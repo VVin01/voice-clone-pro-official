@@ -55,7 +55,15 @@ def restore_settings():
     orig_admin_ids = settings.admin_ids_raw
     orig_bot_token = settings.bot_token
     orig_welcome_bonus_seconds = settings.welcome_bonus_seconds
+    # Gate IDs too: several gate tests assign them directly on the
+    # settings object, and without a restore the "configured" state
+    # leaks into later test files (order-dependent failures once entry
+    # points consult is_gate_configured()).
+    orig_required_channel_id = settings.required_channel_id
+    orig_required_group_id = settings.required_group_id
     yield
     settings.admin_ids_raw = orig_admin_ids
     settings.bot_token = orig_bot_token
     settings.welcome_bonus_seconds = orig_welcome_bonus_seconds
+    settings.required_channel_id = orig_required_channel_id
+    settings.required_group_id = orig_required_group_id
