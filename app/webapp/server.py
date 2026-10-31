@@ -248,6 +248,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Webhook mode acks updates with 200 and processes them in
+    # background tasks; give in-flight updates a bounded chance to
+    # finish before the loop tears down, or an update accepted just
+    # before a deploy/restart would be silently lost even though
+    # Telegram already recorded it as delivered (hunt #6). The helper
+    # existed but was never wired into shutdown.
+    try:
+        from app.webapp.telegram_webhook import drain_background_tasks
+        await drain_background_tasks()
+    except Exception:
+        pass
+
     cleanup_task.cancel()
     recap_worker_task.cancel()
 
@@ -306,11 +318,22 @@ async def telegram_webhook(request: Request):
 
 @webapp_app.middleware("http")
 async def telegram_webhook_path_dispatch(request: Request, call_next):
-    """Dynamic path dispatcher for Telegram webhook requests."""
+    """Dynamic path dispatcher for Telegram webhook requests.
+
+    Only intercepts while a bot is actually attached for webhook mode
+    in this process (hunt #6): otherwise the request falls through to
+    normal routing (which reaches the same endpoint via the route
+    registered above), so a misconfigured BOT_WEBHOOK_PATH can never
+    hijack a Mini App API route in a process that is not serving
+    webhooks.
+    """
     if request.method == "POST":
         current_path = get_webhook_path()
         if request.url.path == current_path:
-            return await telegram_webhook_endpoint(request)
+            from app.webapp.telegram_webhook import is_webhook_active
+
+            if is_webhook_active():
+                return await telegram_webhook_endpoint(request)
     return await call_next(request)
 
 

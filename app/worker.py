@@ -35,6 +35,39 @@ logger = logging.getLogger(__name__)
 TELEGRAM_SEND_LIMIT_BYTES = 50 * 1024 * 1024
 
 
+def _implausible_audio_reason(text: str, duration_seconds: int, speed_preset) -> str | None:
+    """User-facing reason when produced audio is too short for its text.
+
+    Production-measured Burmese narration pace: the primary engine
+    runs ≈17.6 chars/s, the Edge fallback ≈19–22 chars/s, and the
+    fastest legitimate speed preset multiplies pace by ≈1.3 (≈28
+    chars/s at the extreme). A result above ~35 chars/s (30 slow /
+    44 fast) cannot contain the submitted text — it is a truncated
+    synthesis, not a fast reading. Short texts are exempt: duration
+    rounding (whole seconds) dominates there.
+    """
+    chars = len((text or "").strip())
+    if chars < 300 or not duration_seconds or duration_seconds <= 0:
+        return None
+    if isinstance(speed_preset, (int, float)):
+        max_rate = 35.0 * min(1.5, max(0.7, float(speed_preset)))
+    else:
+        sp = str(speed_preset or "normal").strip().lower()
+        if sp in ("fast", "1.2x", "1.2"):
+            max_rate = 44.0
+        elif sp in ("slow", "0.8x", "0.8"):
+            max_rate = 30.0
+        else:
+            max_rate = 35.0
+    if duration_seconds < chars / max_rate:
+        return (
+            "ထုတ်လုပ်လိုက်သော အသံသည် စာသားအားလုံးကို မပါဝင်နိုင်လောက်အောင် "
+            f"တိုလွန်းနေပါသည် (စာလုံး {chars} လုံး အတွက် {duration_seconds} စက္ကန့်သာ ရှိပါသည်)။ "
+            "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
+    return None
+
+
 async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
     """Upload generated audio file from Local Worker to Render Cloud so Mini App & Bot can serve it."""
     import os
@@ -284,6 +317,18 @@ async def process_single_job(
         # Stage 4: Preparing Output and Deducting Balance
         await tracker.update_step(4)
         duration_seconds = get_wav_duration_seconds(converted_wav_path)
+
+        # Truncation gate (hunt #6): nothing compared the produced
+        # audio against the submitted text, so a silently truncated
+        # synthesis was charged and delivered as SUCCESS — the exact
+        # 2026-10-29 incident (847 chars shipped in 23 s). Fail the
+        # job instead (the failure path refunds any debit and tells
+        # the user why) when the pace is physically implausible.
+        implausible = _implausible_audio_reason(
+            clean_text, duration_seconds, job.speed_preset
+        )
+        if implausible:
+            raise RuntimeError(implausible)
 
         # Preserve the generated audio in permanent outputs storage for Mini App & API downloads
         outputs_dir = settings.storage_root / "outputs"

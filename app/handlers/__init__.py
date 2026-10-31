@@ -75,7 +75,47 @@ def setup_handlers(dp: Dispatcher, session_factory: Any = None) -> None:
             return True
 
         logger.error("Unhandled exception in event: %s", exc, exc_info=exc)
-        return False
+        # Hunt #6: a generic handler failure used to end here — the
+        # user who tapped the button or sent the message got SILENCE
+        # (a callback spinner that never resolves, a message that is
+        # never answered). Send a best-effort generic notice in the
+        # user's language instead; every send is wrapped because the
+        # failure may itself be about reachability (blocked bot, stale
+        # query), and a failed notice must never mask the real error.
+        try:
+            from app.services.i18n import t as _t
+
+            upd = event.update
+            user_id = None
+            if upd is not None:
+                if upd.message and upd.message.from_user:
+                    user_id = upd.message.from_user.id
+                elif upd.callback_query and upd.callback_query.from_user:
+                    user_id = upd.callback_query.from_user.id
+            lang = "my"
+            if user_id:
+                session_maker = session_factory or AsyncSessionLocal
+                try:
+                    async with session_maker() as session:
+                        from app.models.schema import User as _User
+
+                        _u = await session.get(_User, user_id)
+                        if _u is not None and _u.language_code:
+                            lang = _u.language_code
+                except Exception:
+                    pass
+            notice = _t("bot_generic_error", lang)
+            if upd is not None and upd.callback_query is not None:
+                try:
+                    await upd.callback_query.answer(notice, show_alert=True)
+                except Exception:
+                    if upd.callback_query.message is not None:
+                        await upd.callback_query.message.answer(notice)
+            elif upd is not None and upd.message is not None:
+                await upd.message.answer(notice)
+        except Exception:
+            pass
+        return True
 
     for router in (start_router, menu_router, clone_router, payment_router, custom_voice_router, admin_router):
         if router.parent_router is not dp:
