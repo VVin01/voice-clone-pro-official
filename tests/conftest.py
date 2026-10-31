@@ -55,6 +55,10 @@ def restore_settings():
     orig_admin_ids = settings.admin_ids_raw
     orig_bot_token = settings.bot_token
     orig_welcome_bonus_seconds = settings.welcome_bonus_seconds
+    orig_bot_mode = getattr(settings, "bot_mode", "polling")
+    orig_webhook_secret = getattr(settings, "telegram_webhook_secret", "")
+    orig_webhook_path = getattr(settings, "bot_webhook_path", "/telegram/webhook")
+    orig_public_base_url = getattr(settings, "public_base_url", "")
     # Gate IDs too: several gate tests assign them directly on the
     # settings object, and without a restore the "configured" state
     # leaks into later test files (order-dependent failures once entry
@@ -75,3 +79,13 @@ def restore_settings():
     settings.required_group_id = orig_required_group_id
     settings.character_limit_free = orig_char_limit
     settings.character_limit_purchased = orig_purchased_limit
+    settings.bot_mode = orig_bot_mode
+    settings.telegram_webhook_secret = orig_webhook_secret
+    settings.bot_webhook_path = orig_webhook_path
+    settings.public_base_url = orig_public_base_url
+    try:
+        from app.webapp.telegram_webhook import detach_bot, recent_update_ids
+        detach_bot()
+        recent_update_ids.clear()
+    except Exception:
+        pass
