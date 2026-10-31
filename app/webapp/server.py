@@ -194,7 +194,23 @@ async def lifespan(app: FastAPI):
 
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     recap_worker_task = asyncio.create_task(_recap_queue_worker())
+
+    # Telegram webhook registration when in webhook mode and bot attached
+    try:
+        from app.webapp.telegram_webhook import schedule_webhook_registration
+        schedule_webhook_registration()
+    except Exception as hook_err:
+        import logging
+        logging.getLogger(__name__).warning("Telegram webhook registration startup error: %s", hook_err)
+
     yield
+
+    try:
+        from app.webapp.telegram_webhook import cancel_webhook_registration
+        cancel_webhook_registration()
+    except Exception:
+        pass
+
     cleanup_task.cancel()
     recap_worker_task.cancel()
 
@@ -238,6 +254,27 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 # Mount static assets
 webapp_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Telegram Bot Webhook Intake Endpoint
+from app.webapp.telegram_webhook import (
+    get_webhook_path,
+    telegram_webhook_endpoint,
+)
+
+@webapp_app.post(get_webhook_path())
+async def telegram_webhook(request: Request):
+    """Telegram webhook intake endpoint for incoming bot updates."""
+    return await telegram_webhook_endpoint(request)
+
+
+@webapp_app.middleware("http")
+async def telegram_webhook_path_dispatch(request: Request, call_next):
+    """Dynamic path dispatcher for Telegram webhook requests."""
+    if request.method == "POST":
+        current_path = get_webhook_path()
+        if request.url.path == current_path:
+            return await telegram_webhook_endpoint(request)
+    return await call_next(request)
 
 
 @webapp_app.middleware("http")
