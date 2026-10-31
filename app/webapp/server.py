@@ -14,9 +14,53 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.session import init_db
 from app.webapp.api import api_router
 from app.webapp.rate_limit import RateLimitMiddleware
+
+
+async def reset_stale_running_recap_jobs(
+    session: AsyncSession | None = None,
+    cutoff_minutes: int = 10,
+) -> int:
+    """Reset orphaned RUNNING recap jobs older than cutoff_minutes to QUEUED.
+
+    Deploy-overlap orphan-reset guard:
+    At startup, previously all RUNNING recap jobs were reset to QUEUED unconditionally.
+    During a Render deploy overlap, the new instance boots while the old instance
+    is actively rendering recap jobs. Resetting only jobs whose last state change
+    (started_at, falling back to created_at) is older than 10 minutes ensures
+    freshly-running jobs on the active instance survive without double-rendering
+    or duplicate top-up charges.
+    """
+    from datetime import timedelta
+    from sqlalchemy import update
+    from app.db.session import AsyncSessionLocal
+    from app.models.enums import JobStatus, JobType
+    from app.models.schema import Job, utc_now
+
+    cutoff = utc_now() - timedelta(minutes=cutoff_minutes)
+    stmt = (
+        update(Job)
+        .where(
+            Job.status == JobStatus.RUNNING.value,
+            (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap"),
+            (Job.started_at <= cutoff) | (Job.started_at.is_(None) & (Job.created_at <= cutoff)),
+        )
+        .values(status=JobStatus.QUEUED.value, started_at=None)
+    )
+
+    if session is not None:
+        res = await session.execute(stmt)
+        await session.commit()
+        return res.rowcount
+
+    async with AsyncSessionLocal() as sess:
+        res = await sess.execute(stmt)
+        await sess.commit()
+        return res.rowcount
 
 
 async def _dispatch_oldest_queued_recap() -> bool:
@@ -148,24 +192,17 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Initial retention cleanup error: %s", cl_err)
 
-    # Recover any orphaned RUNNING recap jobs left behind by previous deploys/restarts
+    # Recover any orphaned RUNNING recap jobs left behind by previous deploys/restarts.
+    # Age-aware guard (deploy overlap): only reset rows older than 10 minutes so
+    # active renders on the old instance during deploy overlap are not disrupted.
     try:
-        from app.models.schema import Job
-        from app.models.enums import JobStatus, JobType
-        from app.db.session import AsyncSessionLocal
-        from sqlalchemy import update
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                update(Job)
-                .where(
-                    Job.status == JobStatus.RUNNING.value,
-                    (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap")
-                )
-                .values(status=JobStatus.QUEUED.value, started_at=None)
-            )
-            await session.commit()
+        recovered = await reset_stale_running_recap_jobs(cutoff_minutes=10)
+        if recovered:
+            import logging
+            logging.getLogger(__name__).info("Recovered %d stale RUNNING recap jobs at startup", recovered)
     except Exception as rec_err:
-        pass
+        import logging
+        logging.getLogger(__name__).warning("Error resetting stale recap jobs on startup: %s", rec_err)
 
     # Periodic background task every 30 minutes
     async def _periodic_cleanup():
