@@ -105,7 +105,7 @@ class Settings(BaseSettings):
 
     # Tutorial Links & Controls (Voice Clone & Movie Recap)
     tutorial_video_link: str = Field(
-        default="https://t.me/VoiceClonePro/16",
+        default="https://t.me/VoiceClonePro/28",
         alias="TUTORIAL_VIDEO_LINK",
     )
     tutorial_video_enabled: bool = Field(default=True, alias="TUTORIAL_VIDEO_ENABLED")
@@ -115,7 +115,7 @@ class Settings(BaseSettings):
         alias="TUTORIAL_VOICE_TITLE",
     )
     tutorial_voice_link: str = Field(
-        default="https://t.me/VoiceClonePro/16",
+        default="https://t.me/VoiceClonePro/29",
         alias="TUTORIAL_VOICE_LINK",
     )
     tutorial_voice_enabled: bool = Field(default=True, alias="TUTORIAL_VOICE_ENABLED")
@@ -125,10 +125,47 @@ class Settings(BaseSettings):
         alias="TUTORIAL_RECAP_TITLE",
     )
     tutorial_recap_link: str = Field(
-        default="https://t.me/VoiceClonePro/16",
+        default="https://t.me/VoiceClonePro/30",
         alias="TUTORIAL_RECAP_LINK",
     )
     tutorial_recap_enabled: bool = Field(default=True, alias="TUTORIAL_RECAP_ENABLED")
+
+    # Remaining tutorial links (premium polish follow-up): every tutorial
+    # in the @VoiceClonePro channel is admin-editable from Admin → Settings,
+    # not just video/voice/recap above. Defaults match the frontend
+    # TUTORIAL_LINKS registry; msg 38 is the index post linking all 10.
+    tutorial_index_link: str = Field(
+        default="https://t.me/VoiceClonePro/38",
+        alias="TUTORIAL_INDEX_LINK",
+    )
+    tutorial_plans_link: str = Field(
+        default="https://t.me/VoiceClonePro/31",
+        alias="TUTORIAL_PLANS_LINK",
+    )
+    tutorial_customvoice_link: str = Field(
+        default="https://t.me/VoiceClonePro/32",
+        alias="TUTORIAL_CUSTOMVOICE_LINK",
+    )
+    tutorial_downloader_link: str = Field(
+        default="https://t.me/VoiceClonePro/33",
+        alias="TUTORIAL_DOWNLOADER_LINK",
+    )
+    tutorial_scriptedit_link: str = Field(
+        default="https://t.me/VoiceClonePro/34",
+        alias="TUTORIAL_SCRIPTEDIT_LINK",
+    )
+    tutorial_recapadvanced_link: str = Field(
+        default="https://t.me/VoiceClonePro/35",
+        alias="TUTORIAL_RECAPADVANCED_LINK",
+    )
+    tutorial_refer_link: str = Field(
+        default="https://t.me/VoiceClonePro/36",
+        alias="TUTORIAL_REFER_LINK",
+    )
+    tutorial_support_link: str = Field(
+        default="https://t.me/VoiceClonePro/37",
+        alias="TUTORIAL_SUPPORT_LINK",
+    )
 
     # Edge TTS defaults
     default_tts_voice: str = "my-MM-ThihaNeural"

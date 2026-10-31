@@ -1943,6 +1943,13 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .nav-item { min-width: 0; padding: 4px 1px; font-size: 10.5px; }
 .nav-label { max-width: 100%; }
 
+/* 1b · Seven-item nav (admin variant, Home tab added): reclaim the
+      item padding/gap and drop the label a half-step so the widest
+      Myanmar label (အသံဖန်တီး) keeps real clearance inside its pill
+      instead of crowding the neighbours — measured at 390px. */
+.bottom-nav:has(#nav-btn-admin:not(.hidden)) { gap: 0; }
+.bottom-nav:has(#nav-btn-admin:not(.hidden)) .nav-item { padding: 4px 0; font-size: 10px; }
+
 /* 2 · Pill groups: wrap cleanly inside the container instead of pushing
       pills off-screen; a group label takes a row of its own (the pattern
       the spec rows already use), so picker rows read label → options. */
@@ -2320,7 +2327,7 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .pill-btn, .pill-main, .style-chip,
 .mini-btn-seek, .slider-header, #all-voices-toggle-text,
 .hub-link, .lang-pill-btn, .dl-meta-title, #btn-dl-use-in-recap,
-.result-title, .modal-title,
+.result-title, .modal-title, .home-tut-name,
 .stat-lbl, .input-label, .mini-tag, .filter-pill, .adm-nav-btn,
 .btn-approve, .btn-retry-job, .queue-act-btn, .queue-section-header,
 .badge-status, .adm-detail-name, .adm-user-name, .slip-user,
@@ -2336,4 +2343,164 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .persona-meta { width: 100%; min-width: 0; }
 .persona-name {
     white-space: normal; overflow: visible; text-overflow: clip;
+}
+
+/* ════════════════ PREMIUM POLISH PASS — 2026-10-31 ════════════════
+   MYANMAR TYPOGRAPHY STANDARD (applies app-wide):
+   • Font stack: "Padauk" first for ALL Myanmar text (headings AND body).
+     Noto Sans Myanmar's medial-ra glyph is a heavy closed bracket that
+     reads as a box outline around ကြ/မြ/ပြီ clusters; Padauk draws the
+     medial as a fine open sweep. Latin/digits fall through to the
+     system stack.
+   • Line-height: Myanmar glyph stacks (above/below marks + medials)
+     are ~1.35× Latin x-height. Under body.lang-my: headings/labels
+     ≥ 1.55, single-line controls ≥ 1.6, multi-line body text ≥ 1.85,
+     toast/alert prose 1.9–1.95. NEVER set line-height < 1.5 on an
+     element that can contain Myanmar — stacks clip or collide.
+   • Sizes: card titles 15px/700, body 13–14px, secondary 12–12.5px,
+     micro-labels ≥ 11px. Descriptions clamp cleanly (2 lines) instead
+     of mid-word/mid-parenthesis ellipsis cuts.
+   • No fixed heights on text containers; let stacks grow the box. */
+
+/* P3 — Padauk-first for regular-weight body text (completes the font
+   fix: the wave-2 sweep covered weight ≥600; body copy had the same
+   bracket defect at reading sizes). */
+.persona-desc, .ref-desc, .voice-card .v-desc, .persona-badge,
+.hub-row-meta, .history-item-body, .script-hint, .plan-how-text,
+.pay-note, .drop-subtext, .preview-empty-desc, .adm-audit-detail,
+.tutorial-banner-text span, .gate-banner-text span,
+.adm-user-sub, .adm-price-alloc, .sample-desc, .slip-file-name,
+.queue-notice-banner .notice-text, .load-error-text,
+.studio-input, .studio-textarea, #voice-text-input, .seg-textarea {
+    font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
+}
+
+/* A2 — Myanmar line-height completion for multi-line body copy. */
+body.lang-my .persona-desc { line-height: 1.85; }
+body.lang-my .ref-desc { line-height: 1.85; }
+body.lang-my .voice-card .v-desc { line-height: 1.7; }
+body.lang-my .hub-row-meta { line-height: 1.8; }
+body.lang-my .history-item-body { line-height: 1.85; }
+body.lang-my .script-hint { line-height: 1.85; }
+body.lang-my .plan-how-text { line-height: 1.85; }
+body.lang-my .pay-note { line-height: 1.85; }
+body.lang-my .drop-subtext { line-height: 1.8; }
+body.lang-my .preview-empty-desc { line-height: 1.85; }
+body.lang-my .adm-audit-detail { line-height: 1.8; }
+body.lang-my .load-error-text { line-height: 1.8; }
+
+/* A3 — smoother pane transition (softens the base 0.22s snap). */
+.tab-pane.active { animation: paneIn 0.32s cubic-bezier(0.22, 0.9, 0.3, 1); }
+
+/* P1 — scroll affordance: soft fade on the clipped edge of the admin
+   sub-nav and the queue filter strip (both scroll horizontally). */
+.adm-nav, #adm-screen-jobs .filter-scroll-strip {
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 26px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 26px), transparent 100%);
+}
+
+/* P5 — Admin Overview recent-actions: the label column may shrink and
+   wrap internally; the timestamp never orphans onto its own line, and
+   the card header wraps cleanly instead of squeezing. */
+.adm-action-row-line > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+#admin-recent-card .card-header-row { flex-wrap: wrap; row-gap: 4px; }
+#admin-recent-card .card-label { min-width: 0; }
+
+/* P11 — persona voice-card descriptions: clean 2-line clamp instead of
+   a mid-parenthesis single-line cut. */
+.voice-card .v-desc {
+    white-space: normal; overflow: hidden; text-overflow: clip;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+
+/* A1 — staged progress steppers (honest stages, no fake percentages). */
+.stage-stepper {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+    margin-top: var(--s3);
+}
+.stage-chip {
+    font-size: 12px; font-weight: 600; line-height: 1.6;
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-3);
+    background: var(--surface-2);
+}
+.stage-chip.active {
+    color: var(--gold-2); border-color: var(--gold-border);
+    background: var(--gold-soft); animation: stagePulse 1.6s ease-in-out infinite;
+}
+.stage-chip.done { color: var(--green); border-color: rgba(30,160,90,.4); background: rgba(30,160,90,.08); }
+.stage-arrow { color: var(--text-3); font-size: 13px; }
+@keyframes stagePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* A4 — Home samples card. */
+.home-samples-card { display: flex; flex-direction: column; gap: var(--s3); }
+.sample-row { display: flex; flex-direction: column; gap: 6px; }
+.sample-row + .sample-row { border-top: 1px solid var(--divider); padding-top: var(--s3); }
+.sample-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.sample-name { font-size: 14px; font-weight: 700; line-height: 1.55; }
+.sample-desc { font-size: 12px; color: var(--text-2); line-height: 1.6; }
+.sample-audio { width: 100%; height: 40px; }
+
+/* Home tab — tutorials list + start-creating rows (one shared row
+   pattern: icon, title block, chevron; rows divide hairline-thin). */
+.home-tut-list { display: flex; flex-direction: column; }
+.home-tut-row {
+    display: flex; align-items: center; gap: var(--s2);
+    width: 100%; padding: 11px 2px; text-align: left;
+    background: transparent; border: none; cursor: pointer; color: var(--text);
+}
+.home-tut-row + .home-tut-row { border-top: 1px solid var(--divider); }
+.home-tut-row:active { background: var(--surface-2); border-radius: var(--r-sm, 10px); }
+.home-tut-icon { font-size: 19px; line-height: 1.2; flex: 0 0 auto; width: 26px; text-align: center; }
+.home-tut-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.home-tut-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; line-height: 1.55; }
+.home-tut-text .home-tut-name { flex: none; }
+.home-tut-desc { font-size: 12px; color: var(--text-2); line-height: 1.6; }
+.home-tut-chevron { flex: 0 0 auto; font-size: 20px; line-height: 1; color: var(--text-3); }
+body.lang-my .home-tut-name { line-height: 1.7; }
+body.lang-my .home-tut-desc { line-height: 1.8; }
+#home-tutorials-card .card-header-row, #home-start-card .card-label { margin-bottom: var(--s2); }
+
+/* A5 — Home load-error strip. */
+.load-error-strip {
+    display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+    padding: 10px 12px; border-radius: var(--r-md);
+    border: 1px solid rgba(217,45,32,.35); background: rgba(217,45,32,.06);
+}
+.load-error-text { flex: 1; min-width: 180px; font-size: 13px; color: var(--red); }
+
+/* A6 — sticky create CTAs: float above the bottom nav (nav pill is
+   bottom:10px + 64px tall; content already clears ~44px past it). */
+.sticky-cta-bar {
+    position: fixed; left: 12px; right: 12px; z-index: 60;
+    bottom: calc(64px + 10px + 12px + env(safe-area-inset-bottom, 0px));
+    max-width: 640px; margin: 0 auto;
+    padding: 8px; border-radius: var(--r-lg, 20px);
+    background: var(--glass-strong, rgba(255,255,255,.82));
+    border: 1px solid var(--border-strong);
+    backdrop-filter: var(--blur-card); -webkit-backdrop-filter: var(--blur-card);
+    box-shadow: 0 12px 32px rgba(22,40,60,.22);
+    animation: stickyCtaIn 0.25s ease;
+}
+.sticky-cta-btn { width: 100%; }
+@keyframes stickyCtaIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* T3 — compact per-section tutorial banners reuse the Voice banner
+   pattern at a smaller footprint. */
+.tutorial-banner-card.compact { padding: 10px 12px; }
+.tutorial-banner-card.compact .tutorial-banner-text strong { font-size: 13px; }
+.tutorial-banner-card.compact .tutorial-banner-text span { font-size: 11.5px; }
+
+/* T4 — Recap Step-1 tutorial button shows the configured title; keep it
+   inside the step header row. */
+#recap-step1-tut-btn {
+    max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* P10 — slip upload: styled label button (the input itself is the
+   standard visually-hidden file input used across the app). */
+.slip-file-label { width: 100%; justify-content: center; }
+.slip-file-name {
+    display: block; margin-top: 6px; font-size: 12px; color: var(--text-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }

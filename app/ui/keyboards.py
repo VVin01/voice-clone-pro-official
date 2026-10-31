@@ -44,7 +44,7 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
     tutorial_url = (
         getattr(settings, "tutorial_video_link", "").strip()
         or os.getenv("TUTORIAL_VIDEO_LINK", "").strip()
-        or "https://t.me/VoiceClonePro/16"
+        or "https://t.me/VoiceClonePro/28"
     )
     switch_lang_text = t("menu_switch_lang", lang)
     verify_gate_text = t("menu_verify_gate", lang)
