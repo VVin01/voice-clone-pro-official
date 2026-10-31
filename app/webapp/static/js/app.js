@@ -453,6 +453,10 @@ function setupTabs() {
             const activePane = document.getElementById(targetTab);
             if (activePane) activePane.classList.add("active");
 
+            if (targetTab === "tab-history") {
+                loadUserHistory();
+            }
+
             if (targetTab === "tab-admin") {
                 loadAdminData();
                 loadAdminQueue();
@@ -3798,32 +3802,125 @@ async function submitPaymentSlip() {
 }
 
 // ── TAB 5: Role-Gated Admin Console ───────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// ADMIN CONSOLE (rebuilt 2026-10-31)
+// Hub + one-topic screens: Overview / Payments / Jobs / Users /
+// Broadcast / Activity / Settings. Every list has loading, empty and
+// error states. Destructive actions live in danger zones and are
+// confirmation-guarded; balance changes always require a reason and go
+// through the audited /api/admin/adjust-user path (unchanged backend).
+// ══════════════════════════════════════════════════════════════════════
+
+const ADM_SECTIONS = ["overview", "payments", "jobs", "users", "broadcast", "activity", "settings"];
+let admCurrentSection = "overview";
+let admCurrentUserId = null;
+let admLoadedSections = {};
+
+function admFmtBytes(n) {
+    if (n == null) return "—";
+    if (n >= 1073741824) return (n / 1073741824).toFixed(2) + " GB";
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+    return Math.round(n / 1024) + " KB";
+}
+
+function admFmtDate(iso) {
+    if (!iso) return "—";
+    return String(iso).replace("T", " ").slice(0, 16);
+}
+
+function admStateLoading(el) {
+    if (el) el.innerHTML = `<div class="adm-state"><span class="spinner"></span><span>${t("admin_loading")}</span></div>`;
+}
+
+function admStateEmpty(el, msgKey) {
+    if (el) el.innerHTML = `<div class="adm-state adm-state-empty"><span class="adm-state-icon">📭</span><span>${t(msgKey || "admin_empty")}</span></div>`;
+}
+
+function admStateError(el, retryJs) {
+    if (el) el.innerHTML = `<div class="adm-state adm-state-error"><span class="adm-state-icon">⚠️</span><span>${t("admin_load_error")}</span>${retryJs ? `<button class="mini-chip" onclick="${retryJs}">${t("admin_retry")}</button>` : ""}</div>`;
+}
+
+function showAdminSection(name) {
+    if (!ADM_SECTIONS.includes(name)) name = "overview";
+    admCurrentSection = name;
+    haptic("light");
+    document.querySelectorAll("#adm-nav .adm-nav-btn").forEach(b => {
+        b.classList.toggle("active", b.getAttribute("data-adm-section") === name);
+    });
+    ADM_SECTIONS.forEach(s => {
+        const el = document.getElementById("adm-screen-" + s);
+        if (el) el.classList.toggle("hidden", s !== name);
+    });
+    const pane = document.getElementById("tab-admin");
+    if (pane) pane.scrollTop = 0;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    // Lazy-load each screen the first time it is opened.
+    if (name === "payments" && !admLoadedSections.payments) { loadAdminData(); admLoadedSections.payments = true; }
+    if (name === "jobs") loadAdminQueue();
+    if (name === "users" && !admLoadedSections.users) { loadAdminUsersRecent(); admLoadedSections.users = true; }
+    if (name === "activity" && !admLoadedSections.activity) { loadAdminAudit(); admLoadedSections.activity = true; }
+    if (name === "settings") { loadAdminSettings(); loadAdminPricing(); }
+    if (name === "broadcast") {
+        const ta = document.getElementById("adm-broadcast-text");
+        if (ta && !ta.dataset.admCountBound) {
+            ta.dataset.admCountBound = "1";
+            ta.addEventListener("input", () => {
+                const c = document.getElementById("adm-broadcast-count");
+                if (c) c.innerText = ta.value.length;
+            });
+        }
+    }
+}
+window.showAdminSection = showAdminSection;
+
+function showAdminJobsTab(tab) {
+    const live = document.getElementById("adm-jobs-live");
+    const hist = document.getElementById("adm-jobs-history");
+    const bLive = document.getElementById("adm-jobs-tab-live");
+    const bHist = document.getElementById("adm-jobs-tab-history");
+    if (live) live.classList.toggle("hidden", tab !== "live");
+    if (hist) hist.classList.toggle("hidden", tab !== "history");
+    if (bLive) bLive.classList.toggle("active", tab === "live");
+    if (bHist) bHist.classList.toggle("active", tab === "history");
+    if (tab === "history") loadAdminHistory(); else loadAdminQueue();
+}
+window.showAdminJobsTab = showAdminJobsTab;
+
+// ── Overview + Payments ──────────────────────────────────────────────
+
 async function loadAdminData() {
     if (!state.user?.is_admin) return;
     try {
-        // Load overview stats
         const resStats = await fetch("/api/admin/overview", { headers: getAuthHeaders() });
         if (resStats.ok) {
             const stats = await resStats.json();
-            const elUsers = document.getElementById("adm-total-users");
-            const elVip = document.getElementById("adm-vip-users");
-            const elSlips = document.getElementById("adm-pending-slips");
-            const elQueue = document.getElementById("adm-queued-jobs");
-            if (elUsers) elUsers.innerText = stats.total_users;
-            if (elVip) elVip.innerText = stats.vip_users;
-            if (elSlips) elSlips.innerText = stats.pending_slips;
-            if (elQueue) elQueue.innerText = stats.queued_jobs !== undefined ? stats.queued_jobs : 0;
-            // Production ops health (2026-10-31)
-            const elF24 = document.getElementById("adm-failed-24h");
-            const elBan = document.getElementById("adm-banned-users");
-            const elNew = document.getElementById("adm-new-24h");
+            const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+            set("adm-total-users", stats.total_users ?? 0);
+            set("adm-vip-users", stats.vip_users ?? 0);
+            set("adm-pending-slips", stats.pending_slips ?? 0);
+            set("adm-queued-jobs", stats.queued_jobs ?? 0);
+            set("adm-failed-24h", stats.failed_jobs_24h ?? 0);
+            set("adm-banned-users", stats.banned_users ?? 0);
+            set("adm-new-24h", stats.new_users_24h ?? 0);
             const elSize = document.getElementById("adm-storage-size");
-            if (elF24) elF24.innerText = stats.failed_jobs_24h ?? 0;
-            if (elBan) elBan.innerText = stats.banned_users ?? 0;
-            if (elNew) elNew.innerText = stats.new_users_24h ?? 0;
-            if (elSize) {
-                const fmt = (n) => n == null ? "—" : (n >= 1073741824 ? (n / 1073741824).toFixed(2) + " GB" : n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB");
-                elSize.innerText = fmt(stats.db_size_bytes) + " / " + fmt(stats.storage_bytes);
+            if (elSize) elSize.innerText = admFmtBytes(stats.db_size_bytes) + " / " + admFmtBytes(stats.storage_bytes);
+            const badge = document.getElementById("adm-nav-slips-badge");
+            if (badge) {
+                badge.innerText = stats.pending_slips ?? 0;
+                badge.classList.toggle("hidden", !(stats.pending_slips > 0));
+            }
+            const chips = document.getElementById("adm-jobs-by-status");
+            if (chips && stats.jobs_by_status) {
+                const order = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"];
+                chips.innerHTML = order
+                    .filter(k => stats.jobs_by_status[k] !== undefined)
+                    .map(k => `<span class="mini-tag adm-status-tag ${k.toLowerCase()}">${k}: <strong>${stats.jobs_by_status[k]}</strong></span>`)
+                    .join("");
+            }
+            const worker = document.getElementById("adm-worker-line");
+            if (worker) {
+                worker.innerText = "☁️ " + (stats.cloud_worker_status || "Render Cloud");
             }
             const actionsBox = document.getElementById("admin-recent-actions");
             if (actionsBox) {
@@ -3832,58 +3929,62 @@ async function loadAdminData() {
                     actionsBox.innerHTML = `<p class="text-muted">—</p>`;
                 } else {
                     actionsBox.innerHTML = acts.map(a => `
-                        <div class="slip-item-row" style="padding:4px 0;">
-                            <span>• <b>${a.action}</b> → ${a.target_type} ${a.target_id}</span>
-                            <span class="text-muted" style="margin-left:auto; font-size:11px;">${(a.created_at || "").replace("T", " ").slice(0, 16)}</span>
+                        <div class="adm-action-row-line">
+                            <span>• <b>${escapeHtml(a.action)}</b> → ${escapeHtml(a.target_type || "")} ${escapeHtml(String(a.target_id || ""))}</span>
+                            <span class="text-muted adm-line-time">${admFmtDate(a.created_at)}</span>
                         </div>`).join("");
                 }
             }
         }
-
-        // Load live processing queue & dynamic settings
-        loadAdminQueue();
-        loadAdminSettings();
-
-        // Load pending payment slips
-        const resSlips = await fetch("/api/admin/pending-slips", { headers: getAuthHeaders() });
-        const slipsContainer = document.getElementById("admin-slips-list");
-        if (resSlips.ok && slipsContainer) {
-            const slips = await resSlips.json();
-            if (slips.length === 0) {
-                slipsContainer.innerHTML = `<p class="text-muted">${t("admin_no_slips")}</p>`;
-            } else {
-                slipsContainer.innerHTML = "";
-                slips.forEach(s => {
-                    const item = document.createElement("div");
-                    item.className = "slip-item-card";
-                    item.innerHTML = `
-                        <div class="slip-item-row">
-                            <img src="${s.slip_url}" class="slip-thumb" onclick="openSlipModal('${s.slip_url}')" title="Click to view full image">
-                            <div class="slip-info">
-                                <div class="slip-user">${s.user_name} (@${s.username || s.user_id})</div>
-                                <div class="slip-amount">${s.amount_mmk.toLocaleString()} MMK • Package: ${s.package_code}</div>
-                                <div class="slip-date">${s.created_at}</div>
-                            </div>
-                        </div>
-                        <div class="slip-actions">
-                            <button class="btn-approve" onclick="adminApproveSlip('${s.id}')">${t("btn_approve")}</button>
-                            <button class="btn-reject" onclick="adminRejectSlip('${s.id}')">${t("btn_reject")}</button>
-                        </div>
-                    `;
-                    slipsContainer.appendChild(item);
-                });
-                // Receipts now require auth: hydrate thumbnails via fetch.
-                slipsContainer.querySelectorAll(".slip-thumb").forEach(async (imgEl) => {
-                    const authUrl = await fetchAuthImageUrl(imgEl.getAttribute("src"));
-                    if (authUrl) imgEl.src = authUrl;
-                });
-            }
-        }
-        // Load 24h global history
-        loadAdminHistory();
     } catch (e) {
-        console.warn("Error loading admin data:", e);
+        console.warn("Error loading admin overview:", e);
     }
+
+    // Pending payment slips
+    const slipsContainer = document.getElementById("admin-slips-list");
+    try {
+        const resSlips = await fetch("/api/admin/pending-slips", { headers: getAuthHeaders() });
+        if (resSlips.ok && slipsContainer) {
+            renderAdminSlips(await resSlips.json());
+        } else if (slipsContainer) {
+            admStateError(slipsContainer, "loadAdminData()");
+        }
+    } catch (e) {
+        if (slipsContainer) admStateError(slipsContainer, "loadAdminData()");
+    }
+}
+
+function renderAdminSlips(slips) {
+    const slipsContainer = document.getElementById("admin-slips-list");
+    if (!slipsContainer) return;
+    if (!slips.length) {
+        admStateEmpty(slipsContainer, "admin_no_slips");
+        return;
+    }
+    slipsContainer.innerHTML = "";
+    slips.forEach(s => {
+        const item = document.createElement("div");
+        item.className = "slip-item-card";
+        item.innerHTML = `
+            <div class="slip-item-row">
+                <img src="${s.slip_url}" class="slip-thumb" onclick="openSlipModal('${s.slip_url}')" title="Click to view full image">
+                <div class="slip-info">
+                    <div class="slip-user adm-tap" onclick="openAdminUserDetail(${s.user_id})">${escapeHtml(s.user_name)}${s.username ? ` (@${escapeHtml(s.username)})` : ` (ID: ${s.user_id})`}</div>
+                    <div class="slip-amount">${(s.amount_mmk || 0).toLocaleString()} MMK • ${escapeHtml(s.package_code)}</div>
+                    <div class="slip-date">${escapeHtml(s.created_at)}</div>
+                </div>
+            </div>
+            <div class="slip-actions">
+                <button class="btn-approve" onclick="adminApproveSlip('${s.id}')">${t("btn_approve")}</button>
+                <button class="btn-reject" onclick="adminRejectSlip('${s.id}')">${t("btn_reject")}</button>
+            </div>
+        `;
+        slipsContainer.appendChild(item);
+    });
+    slipsContainer.querySelectorAll(".slip-thumb").forEach(async (imgEl) => {
+        const authUrl = await fetchAuthImageUrl(imgEl.getAttribute("src"));
+        if (authUrl) imgEl.src = authUrl;
+    });
 }
 
 async function openSlipModal(url) {
@@ -3925,8 +4026,21 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
         titleEl.innerText = title || `Job #${jobId.slice(0, 10)}`;
     }
 
+    // ONE availability decision for the whole card: the API only hands out
+    // media URLs when the output file is actually on the server, so "no
+    // URLs" means the media is gone — every control below follows this flag.
+    const mediaAvailable = jobType === "RECAP"
+        ? !!(deliverables.video || downloadUrl)
+        : !!(deliverables.download || deliverables.audio || downloadUrl);
+
     if (bodyEl) {
-        if (jobType === "RECAP") {
+        if (!mediaAvailable) {
+            bodyEl.innerHTML = `
+                <div class="modal-video-wrapper">
+                    ${mediaGonePanelHtml(jobId)}
+                </div>
+            `;
+        } else if (jobType === "RECAP") {
             const videoUrl = deliverables.video || downloadUrl;
             bodyEl.innerHTML = `
                 <div class="modal-video-wrapper">
@@ -3954,7 +4068,20 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
 
     if (delivEl) {
         let buttons = '';
-        if (jobType === "RECAP") {
+        if (!mediaAvailable) {
+            // Media gone: ALL download controls disabled together, so the
+            // card can never show one live button next to a dead one.
+            const dis = (label) => `<span class="mini-chip" style="opacity: 0.45; pointer-events: none;" aria-disabled="true">${label}</span>`;
+            if (jobType === "RECAP") {
+                buttons += dis("🎬 Download Video");
+                buttons += dis("🎙️ Download Audio");
+                buttons += dis("📝 Subtitles (SRT)");
+                buttons += dis("📄 Script (TXT)");
+            } else {
+                buttons += dis("📥 Download WAV / MP3");
+            }
+            buttons += dis("↗️ Browser Tab တွင်ဖွင့်မည်");
+        } else if (jobType === "RECAP") {
             if (deliverables.video) {
                 buttons += `<a href="${deliverables.video}" download class="mini-chip gold" target="_blank">🎬 Download Video</a>`;
             }
@@ -3973,7 +4100,7 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
                 buttons += `<a href="${dlUrl}" download class="mini-chip gold" target="_blank">📥 Download WAV / MP3</a>`;
             }
         }
-        if (downloadUrl) {
+        if (mediaAvailable && downloadUrl) {
             buttons += `<a href="${downloadUrl}" target="_blank" class="mini-chip" style="opacity: 0.85;">↗️ Browser Tab တွင်ဖွင့်မည်</a>`;
         }
         delivEl.innerHTML = buttons;
@@ -3996,31 +4123,38 @@ function closeAdminMediaModal() {
     modal.classList.add("hidden");
 }
 
+// Shared "media gone" panel for the admin media modal. The copy states the
+// real retention rule (files are kept on the server for 7 days, then the
+// retention sweep removes them) — it must never blame deploys or disk
+// wipes: outputs live on the persistent disk and survive restarts.
+// Regenerate is the single primary action here.
+function mediaGonePanelHtml(jobId) {
+    return `
+        <div class="admin-media-err-banner mt-3 p-3 text-center" style="border-radius: 12px; border: 1px solid rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08);">
+            <div style="font-size: 1.6rem; margin-bottom: 4px;">⌛</div>
+            <strong style="color: #fca5a5; font-size: 13px;">အသံ/ဗီဒီယို ဖိုင် မတွေ့တော့ပါ (File No Longer Available)</strong>
+            <p class="text-xs text-muted mt-1" style="line-height: 1.5;">
+                ထုတ်လုပ်ထားသော ဖိုင်များကို ဆာဗာပေါ်တွင် ၇ ရက်အထိ သိမ်းဆည်းပေးထားပြီး၊ သက်တမ်းကျော်လွန်ပါက အလိုအလျောက် ဖျက်သိမ်းပါသည်။ ဤဖိုင်ကို ပြန်လိုချင်ပါက Regenerate နှိပ်ပါ — အလုပ်ကို အသစ် ပြန်လည် ထုတ်လုပ်ပေးပါမည်။
+            </p>
+            <div class="mt-2" style="display: flex; gap: 8px; justify-content: center;">
+                <button class="btn mini-btn secondary-btn" onclick="closeAdminMediaModal(); adminRetryJob('${jobId}');">
+                    🔄 ပြန်လည် ထုတ်လုပ်မည် (Regenerate / Retry)
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 function handleAdminMediaError(mediaEl, jobId, jobType) {
-    console.warn("Admin media failed to load (expired/missing on server):", jobId);
+    console.warn("Admin media failed to load (missing on server):", jobId);
     const wrapper = mediaEl.parentElement;
     if (wrapper) {
         mediaEl.style.display = "none";
         const oldErr = wrapper.querySelector(".admin-media-err-banner");
         if (!oldErr) {
             const errDiv = document.createElement("div");
-            errDiv.className = "admin-media-err-banner mt-3 p-3 text-center";
-            errDiv.style.borderRadius = "12px";
-            errDiv.style.border = "1px solid rgba(239, 68, 68, 0.35)";
-            errDiv.style.background = "rgba(239, 68, 68, 0.08)";
-            errDiv.innerHTML = `
-                <div style="font-size: 1.6rem; margin-bottom: 4px;">⌛</div>
-                <strong style="color: #fca5a5; font-size: 13px;">အသံ/ဗီဒီယို ဖိုင် သက်တမ်းကုန်ဆုံးသွားပါပြီ (Media Expired / 404)</strong>
-                <p class="text-xs text-muted mt-1" style="line-height: 1.5;">
-                    ဤအလုပ်သည် ၂၄ နာရီကျော်လွန်သွားပြီဖြစ်၍ (သို့မဟုတ် Cloud Server အသစ် Deploy တင်ချိန်တွင် ယာယီ Disk Storage ဖိုင် ရှင်းလင်းခံရသဖြင့်) အသံဖိုင် မရှိတော့ပါ။
-                </p>
-                <div class="mt-2" style="display: flex; gap: 8px; justify-content: center;">
-                    <button class="btn mini-btn secondary-btn" onclick="closeAdminMediaModal(); adminRetryJob('${jobId}');">
-                        🔄 ပြန်လည် ထုတ်လုပ်မည် (Regenerate / Retry)
-                    </button>
-                </div>
-            `;
-            wrapper.appendChild(errDiv);
+            errDiv.innerHTML = mediaGonePanelHtml(jobId);
+            wrapper.appendChild(errDiv.firstElementChild);
         }
     }
 }
@@ -4042,7 +4176,7 @@ function handleAdminMediaLoaded(mediaEl) {
 
 async function adminApproveSlip(reqId) {
     haptic("medium");
-    showStudioConfirm("အတည်ပြုပြီး VIP သို့ မြှင့်တင်ပေးမည်လား?", async () => {
+    showStudioConfirm(t("admin_confirm_approve"), async () => {
         try {
             const res = await fetch("/api/admin/approve-slip", {
                 method: "POST",
@@ -4050,7 +4184,8 @@ async function adminApproveSlip(reqId) {
                 body: JSON.stringify({ request_id: reqId }),
             });
             const data = await res.json();
-            showStudioToast(data.message, 'info');
+            showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
+            admLoadedSections.payments = false;
             loadAdminData();
         } catch (e) {
             showStudioToast(e.message, 'error');
@@ -4060,7 +4195,7 @@ async function adminApproveSlip(reqId) {
 
 async function adminRejectSlip(reqId) {
     haptic("medium");
-    const reason = prompt("ပယ်ဖျက်ရသည့် အကြောင်းပြချက် ထည့်ပါ:", "Invalid payment receipt");
+    const reason = prompt(t("admin_reject_reason_ph"), "Invalid payment slip");
     if (!reason) return;
     try {
         const res = await fetch("/api/admin/reject-slip", {
@@ -4076,6 +4211,8 @@ async function adminRejectSlip(reqId) {
     }
 }
 
+// ── Users: search, recent list, detail ───────────────────────────────
+
 function _adminReason() {
     const el = document.getElementById("adm-adjust-reason");
     return el ? el.value.trim() : "";
@@ -4086,10 +4223,23 @@ function _adminRequireReason() {
     if (reason.length < 3) {
         showStudioToast(t("admin_reason_required"), "warning");
         const el = document.getElementById("adm-adjust-reason");
-        if (el) el.focus();
+        if (el) { el.focus(); el.scrollIntoView({ behavior: "smooth", block: "center" }); }
         return null;
     }
     return reason;
+}
+
+function admUserRowHtml(u) {
+    const initial = escapeHtml((u.first_name || "?").trim().charAt(0).toUpperCase() || "?");
+    const balFmt = Math.floor((u.balance_seconds || 0) / 60) + "m";
+    return `<div class="adm-user-row adm-tap" onclick="openAdminUserDetail(${u.id})">
+        <div class="adm-avatar">${initial}</div>
+        <div class="adm-user-main">
+            <div class="adm-user-name">${escapeHtml(u.first_name || "-")}${u.username ? ` (@${escapeHtml(u.username)})` : ""} <span class="badge-status ${u.is_banned ? "blocked" : "active"}">${u.is_banned ? "BLOCKED" : "ACTIVE"}</span></div>
+            <div class="adm-user-sub">ID: ${u.id} \u2022 ${escapeHtml(u.account_category || "FREE")} \u2022 \u23f1 ${balFmt} \u2022 \ud83c\udfac ${u.recap_credits ?? 0}${u.is_banned ? " \u2022 \ud83d\udeab" : ""}</div>
+        </div>
+        <span class="adm-row-chev">\u203a</span>
+    </div>`;
 }
 
 async function adminSearchUsers() {
@@ -4097,61 +4247,204 @@ async function adminSearchUsers() {
     const box = document.getElementById("admin-user-search-results");
     const q = qEl ? qEl.value.trim() : "";
     if (q.length < 2) { showStudioToast(t("admin_search_short"), "warning"); return; }
-    if (box) box.innerHTML = `<p class="text-muted">${t("gate_checking")}</p>`;
+    admStateLoading(box);
     try {
         const res = await fetch(`/api/admin/users/search?q=${encodeURIComponent(q)}`, { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Search failed");
         if (!box) return;
-        if (!data.users.length) { box.innerHTML = `<p class="text-muted">${t("admin_search_none")}</p>`; return; }
-        box.innerHTML = "";
-        data.users.forEach(u => {
-            const row = document.createElement("div");
-            row.className = "slip-item-card";
-            const mins = Math.floor((u.balance_seconds || 0) / 60);
-            row.innerHTML = `
-                <div class="slip-item-row">
-                    <div class="slip-info">
-                        <div class="slip-user">${u.first_name || "User"} ${u.username ? "(@" + u.username + ")" : ""} ${u.is_banned ? "🚫" : ""}</div>
-                        <div class="slip-amount">ID: ${u.id} • ${u.account_category} • ⏱ ${mins}m • 🎬 ${u.recap_credits} credits • ${u.status}</div>
-                    </div>
-                </div>
-                <div class="slip-actions">
-                    <button class="btn-approve" onclick="adminPickUser(${u.id})">${t("btn_select_user")}</button>
-                    ${u.is_banned
-                        ? `<button class="btn-approve" onclick="adminUnbanUser(${u.id})">${t("btn_unban_user")}</button>`
-                        : `<button class="btn-reject" onclick="adminBanUser(${u.id})">${t("btn_ban_user")}</button>`}
-                </div>`;
-            box.appendChild(row);
-        });
+        if (!data.users.length) { admStateEmpty(box, "admin_search_none"); return; }
+        box.innerHTML = data.users.map(admUserRowHtml).join("");
     } catch (e) {
-        if (box) box.innerHTML = `<p class="text-muted">${e.message}</p>`;
+        admStateError(box, "adminSearchUsers()");
     }
 }
 window.adminSearchUsers = adminSearchUsers;
 
-function adminPickUser(uid) {
-    const input = document.getElementById("adm-target-user-id");
-    if (input) { input.value = uid; input.scrollIntoView({ behavior: "smooth", block: "center" }); }
+async function loadAdminUsersRecent() {
+    const box = document.getElementById("admin-users-recent");
+    if (!box) return;
+    admStateLoading(box);
+    try {
+        const res = await fetch("/api/admin/users?limit=20", { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        if (!data.users.length) { admStateEmpty(box, "admin_empty"); return; }
+        box.innerHTML = data.users.map(admUserRowHtml).join("");
+    } catch (e) {
+        admStateError(box, "loadAdminUsersRecent()");
+    }
 }
+window.loadAdminUsersRecent = loadAdminUsersRecent;
+
+async function openAdminUserDetail(uid) {
+    admCurrentUserId = uid;
+    haptic("light");
+    const main = document.getElementById("adm-users-main");
+    const detail = document.getElementById("adm-user-detail");
+    if (main) main.classList.add("hidden");
+    if (detail) detail.classList.remove("hidden");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    const nameEl = document.getElementById("adm-detail-name");
+    if (nameEl) nameEl.innerText = t("admin_loading");
+    try {
+        const res = await fetch(`/api/admin/users/${uid}`, { headers: getAuthHeaders() });
+        const u = await res.json();
+        if (!res.ok) throw new Error(u.detail || "Failed");
+        renderAdminUserDetail(u);
+    } catch (e) {
+        showStudioToast(e.message, "error");
+        closeAdminUserDetail();
+        return;
+    }
+    loadAdminUserJobs(uid);
+}
+window.openAdminUserDetail = openAdminUserDetail;
+
+function renderAdminUserDetail(u) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+    set("adm-detail-avatar", (u.first_name || "U").slice(0, 1).toUpperCase());
+    set("adm-detail-name", u.first_name || "User");
+    set("adm-detail-sub", (u.username ? "@" + u.username + " • " : "") + "ID: " + u.id);
+    const st = document.getElementById("adm-detail-status");
+    if (st) {
+        st.className = "badge-status " + (u.is_banned ? "failed" : "success");
+        st.innerText = u.is_banned ? t("admin_status_banned") : t("admin_status_active");
+    }
+    const meta = document.getElementById("adm-detail-meta");
+    if (meta) {
+        meta.innerHTML = `
+            <span class="mini-tag">${u.account_category === "PURCHASED" ? "👑 VIP" : "FREE"}</span>
+            <span class="mini-tag">${t("admin_joined")}: ${admFmtDate(u.created_at)}</span>
+            ${u.language_code ? `<span class="mini-tag">${escapeHtml(u.language_code.toUpperCase())}</span>` : ""}`;
+    }
+    const mins = Math.floor((u.balance_seconds || 0) / 60);
+    const secs = (u.balance_seconds || 0) % 60;
+    set("adm-detail-balance", mins + "m " + secs + "s");
+    set("adm-detail-credits", String(u.recap_credits ?? 0));
+    set("adm-detail-jobs", `${u.jobs_total ?? 0} (${u.jobs_success ?? 0}✓ / ${u.jobs_failed ?? 0}✗)`);
+    set("adm-detail-lastjob", admFmtDate(u.last_job_at));
+    // Reset adjust form
+    ["adm-adj-minutes", "adm-adj-seconds", "adm-adj-credits"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = 0;
+    });
+    const tier = document.getElementById("adm-adj-tier");
+    if (tier) tier.value = "";
+    renderAdminBanZone(u);
+}
+
+function renderAdminBanZone(u) {
+    const zone = document.getElementById("adm-detail-ban-zone");
+    if (!zone) return;
+    zone.innerHTML = u.is_banned
+        ? `<button class="btn secondary-btn adm-wide-btn" onclick="adminUnbanUser(${u.id})">${t("btn_unban_user")}</button>`
+        : `<button class="btn adm-danger-btn adm-wide-btn" onclick="adminBanUser(${u.id})">${t("btn_ban_user")}</button>`;
+}
+
+function closeAdminUserDetail() {
+    admCurrentUserId = null;
+    const main = document.getElementById("adm-users-main");
+    const detail = document.getElementById("adm-user-detail");
+    if (detail) detail.classList.add("hidden");
+    if (main) main.classList.remove("hidden");
+}
+window.closeAdminUserDetail = closeAdminUserDetail;
+
+function adminPickUser(uid) { openAdminUserDetail(uid); }
 window.adminPickUser = adminPickUser;
+
+function admFillUser(userId) {
+    showAdminSection("users");
+    openAdminUserDetail(userId);
+}
+window.admFillUser = admFillUser;
+
+function adminAdjustPreset(minutes, seconds, credits, tier) {
+    const m = document.getElementById("adm-adj-minutes");
+    const s = document.getElementById("adm-adj-seconds");
+    const c = document.getElementById("adm-adj-credits");
+    const tEl = document.getElementById("adm-adj-tier");
+    if (m) m.value = minutes;
+    if (s) s.value = seconds;
+    if (c) c.value = credits;
+    if (tEl && tier !== undefined) tEl.value = tier;
+    haptic("light");
+}
+window.adminAdjustPreset = adminAdjustPreset;
+
+async function adminApplyAdjust() {
+    const uid = admCurrentUserId;
+    if (!uid) { showStudioToast(t("admin_no_user"), "warning"); return; }
+    const minutes = parseInt(document.getElementById("adm-adj-minutes")?.value || "0", 10) || 0;
+    const seconds = parseInt(document.getElementById("adm-adj-seconds")?.value || "0", 10) || 0;
+    const credits = parseInt(document.getElementById("adm-adj-credits")?.value || "0", 10) || 0;
+    const tier = document.getElementById("adm-adj-tier")?.value || "";
+    if (!tier && minutes === 0 && seconds === 0 && credits === 0) {
+        showStudioToast(t("admin_nothing_to_adjust"), "warning");
+        return;
+    }
+    const reason = _adminRequireReason();
+    if (reason === null) return;
+    const isNegative = (minutes * 60 + seconds) < 0 || credits < 0;
+    const doApply = async () => {
+        haptic("medium");
+        try {
+            const payload = { user_id: uid, add_minutes: minutes, add_seconds: seconds, add_recap_credits: credits, reason };
+            if (tier) payload.account_category = tier;
+            const res = await fetch("/api/admin/adjust-user", {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            showStudioToast(data.message, "success");
+            const reasonEl = document.getElementById("adm-adjust-reason");
+            if (reasonEl) reasonEl.value = "";
+            openAdminUserDetail(uid);
+            loadAdminData();
+        } catch (e) {
+            showStudioToast(e.message, "error");
+        }
+    };
+    if (isNegative) {
+        showStudioConfirm(t("admin_confirm_negative_adjust"), doApply);
+    } else {
+        await doApply();
+    }
+}
+window.adminApplyAdjust = adminApplyAdjust;
 
 async function _adminBanCall(uid, ban) {
     const reason = ban ? _adminRequireReason() : _adminReason();
     if (ban && reason === null) return;
-    haptic("medium");
-    try {
-        const res = await fetch(`/api/admin/users/${uid}/${ban ? "ban" : "unban"}`, {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ reason: reason || "" }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Failed");
-        showStudioToast(data.message, "success");
-        loadAdminData();
-    } catch (e) {
-        showStudioToast(e.message, "error");
+    const doCall = async () => {
+        haptic("medium");
+        try {
+            const res = await fetch(`/api/admin/users/${uid}/${ban ? "ban" : "unban"}`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ reason: reason || "" }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            showStudioToast(data.message, "success");
+            if (ban) {
+                const reasonEl = document.getElementById("adm-adjust-reason");
+                if (reasonEl) reasonEl.value = "";
+            }
+            if (admCurrentUserId === uid) openAdminUserDetail(uid);
+            loadAdminUsersRecent();
+            loadAdminData();
+        } catch (e) {
+            showStudioToast(e.message, "error");
+        }
+    };
+    if (ban) {
+        showStudioConfirm(t("admin_confirm_ban"), doCall);
+    } else {
+        await doCall();
     }
 }
 
@@ -4160,93 +4453,32 @@ window.adminBanUser = adminBanUser;
 async function adminUnbanUser(uid) { await _adminBanCall(uid, false); }
 window.adminUnbanUser = adminUnbanUser;
 
-async function adminBanTarget() {
-    const input = document.getElementById("adm-target-user-id");
-    const uid = input ? parseInt(input.value) : 0;
-    if (!uid) { showStudioToast("Telegram ID ထည့်ပါ", "info"); return; }
-    await _adminBanCall(uid, true);
-}
-window.adminBanTarget = adminBanTarget;
-
-async function adminUnbanTarget() {
-    const input = document.getElementById("adm-target-user-id");
-    const uid = input ? parseInt(input.value) : 0;
-    if (!uid) { showStudioToast("Telegram ID ထည့်ပါ", "info"); return; }
-    await _adminBanCall(uid, false);
-}
-window.adminUnbanTarget = adminUnbanTarget;
-
-async function adminGrantVip() {
-    const input = document.getElementById("adm-target-user-id");
-    const uid = input ? parseInt(input.value) : 0;
-    if (!uid) {
-        showStudioToast("Telegram ID ထည့်ပါ", 'info');
-        return;
-    }
-    const reason = _adminRequireReason();
-    if (reason === null) return;
-    haptic("medium");
+async function loadAdminUserJobs(uid) {
+    const box = document.getElementById("adm-user-jobs");
+    if (!box) return;
+    admStateLoading(box);
     try {
-        const res = await fetch("/api/admin/adjust-user", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ user_id: uid, account_category: "PURCHASED", reason }),
-        });
+        const params = new URLSearchParams({ timeframe: "all", status: "all", job_type: "all", limit: "20", user_id: String(uid) });
+        const res = await fetch(`/api/admin/history?${params.toString()}`, { headers: getAuthHeaders() });
         const data = await res.json();
-        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
-        loadAdminData();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        const jobs = data.history || [];
+        if (!jobs.length) { admStateEmpty(box, "admin_user_jobs_empty"); return; }
+        box.innerHTML = jobs.map(j => `
+            <div class="adm-job-mini">
+                <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬' : '🎙️'}</span>
+                <span class="adm-job-mini-main">${escapeHtml(j.input_snippet || j.preset_voice || "—")}</span>
+                <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
+                <span class="text-muted text-xs">${escapeHtml(j.time_ago || "")}</span>
+            </div>`).join("");
     } catch (e) {
-        showStudioToast(e.message, 'error');
+        admStateError(box, `loadAdminUserJobs(${uid})`);
     }
 }
+window.loadAdminUserJobs = loadAdminUserJobs;
 
-async function adminAddMinutes() {
-    const input = document.getElementById("adm-target-user-id");
-    const uid = input ? parseInt(input.value) : 0;
-    if (!uid) {
-        showStudioToast("Telegram ID ထည့်ပါ", 'info');
-        return;
-    }
-    const reason = _adminRequireReason();
-    if (reason === null) return;
-    haptic("medium");
-    try {
-        const res = await fetch("/api/admin/adjust-user", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ user_id: uid, add_minutes: 60, reason }),
-        });
-        const data = await res.json();
-        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
-        loadAdminData();
-    } catch (e) {
-        showStudioToast(e.message, 'error');
-    }
-}
 
-async function adminAddRecapCredits() {
-    const input = document.getElementById("adm-target-user-id");
-    const uid = input ? parseInt(input.value) : 0;
-    if (!uid) {
-        showStudioToast("Telegram ID ထည့်ပါ", 'info');
-        return;
-    }
-    const reason = _adminRequireReason();
-    if (reason === null) return;
-    haptic("medium");
-    try {
-        const res = await fetch("/api/admin/adjust-user", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ user_id: uid, add_recap_credits: 10, reason }),
-        });
-        const data = await res.json();
-        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
-        loadAdminData();
-    } catch (e) {
-        showStudioToast(e.message, 'error');
-    }
-}
+// ── Broadcast ────────────────────────────────────────────────────────
 
 async function adminSendBroadcast() {
     const textEl = document.getElementById("adm-broadcast-text");
@@ -4256,98 +4488,62 @@ async function adminSendBroadcast() {
 
     const msg = textEl ? textEl.value.trim() : "";
     if (!msg) {
-        showStudioToast(currentLang === "my" ? "မက်ဆေ့ခ်ျ စာသား ရိုက်ထည့်ပေးပါ" : "Please enter broadcast message text", 'info');
+        showStudioToast(t("admin_broadcast_empty"), 'info');
         return;
     }
     haptic("heavy");
-    showStudioConfirm(currentLang === "my"
-        ? "အသုံးပြုသူ အားလုံးထံသို့ ဤ Broadcast မက်ဆေ့ခ်ျ ပို့မှာ သေချာပါသလား?"
-        : "Are you sure you want to broadcast this message to all users?",
-        async () => {
-            if (btn) btn.disabled = true;
-    if (btnText) btnText.textContent = currentLang === "my" ? "⏳ ပို့ဆောင်နေပါသည်..." : "⏳ Sending broadcast...";
-    if (reportBox) {
-        reportBox.classList.remove("hidden");
-        reportBox.innerHTML = `<div style="text-align: center; color: var(--gold-primary); padding: 10px;">
-            <span class="spinner" style="display:inline-block; margin-right:6px;"></span>
-            ${currentLang === "my" ? "Telegram Bot မှတစ်ဆင့် အသုံးပြုသူများထံ စစ်ဆေး ပို့ဆောင်နေပါသည်..." : "Delivering messages via Telegram Bot..."}
-        </div>`;
-    }
-
-    try {
-        const res = await fetch("/api/admin/broadcast", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ message: msg }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            throw new Error(data.detail || "Broadcast request failed");
-        }
-
-        const bd = data.breakdown || {};
-        const isMy = (currentLang === "my");
-        
-        let reportHtml = `
-            <div style="border-left: 3px solid #10b981; padding-left: 10px; margin-bottom: 12px;">
-                <strong style="color: #10b981; font-size: 14px;">
-                    ${isMy ? "📢 Broadcast ပို့ဆောင်မှု အစီရင်ခံစာ" : "📢 Broadcast Delivery Telemetry Report"}
-                </strong>
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
-                <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
-                    <div style="color: #94a3b8; font-size: 11px;">${isMy ? "👥 DB စုစုပေါင်း" : "Total DB Users"}</div>
-                    <div style="color: #fff; font-size: 16px; font-weight: 700;">${data.total_users_in_db || 0} ဦး</div>
-                </div>
-                <div style="background: rgba(255,255,255,0.03); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
-                    <div style="color: #94a3b8; font-size: 11px;">${isMy ? "🎯 ပို့ရန် စစ်ဆေးခဲ့သူ" : "Targeted Users"}</div>
-                    <div style="color: #38bdf8; font-size: 16px; font-weight: 700;">${data.total_targeted || 0} ဦး</div>
-                </div>
-                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); padding: 8px; border-radius: 8px;">
-                    <div style="color: #10b981; font-size: 11px;">${isMy ? "✅ အောင်မြင်စွာ ပို့ဆောင်ပြီး" : "Delivered"}</div>
-                    <div style="color: #10b981; font-size: 16px; font-weight: 700;">${data.sent_count || 0} ဦး</div>
-                </div>
-                <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); padding: 8px; border-radius: 8px;">
-                    <div style="color: #ef4444; font-size: 11px;">${isMy ? "❌ မရောက်ရှိခဲ့သူ" : "Undelivered"}</div>
-                    <div style="color: #ef4444; font-size: 16px; font-weight: 700;">${data.failed_count || 0} ဦး</div>
-                </div>
-            </div>
-            
-            <div style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.6;">
-                <div style="color: #f59e0b; font-weight: 600; margin-bottom: 6px;">
-                    ${isMy ? "🔍 မရောက်ရှိရသည့် အသေးစိတ် အကြောင်းအရင်းများ:" : "🔍 Undelivered Breakdown & Reasons:"}
-                </div>
-                <div style="color: #cbd5e1;">• 🚫 <b>${bd.blocked_by_user || 0} ဦး</b>: ${isMy ? "Bot ကို Block ထားသူများ (DB တွင် BLOCKED အဖြစ် အလိုအလျောက် သတ်မှတ်ပေးခဲ့သည်)" : "Blocked bot (Auto-marked as BLOCKED in DB)"}</div>
-                <div style="color: #cbd5e1;">• ⚠️ <b>${bd.deactivated_or_not_found || 0} ဦး</b>: ${isMy ? "Telegram Account ဖျက်ထားသူ / ရှာမတွေ့သူများ" : "Telegram account deleted / not found"}</div>
-                <div style="color: #cbd5e1;">• 🧪 <b>${bd.invalid_test_id || 0} ဦး</b>: ${isMy ? "Test / စမ်းသပ် ID အဟောင်းများ (< ၈ လုံး)" : "Legacy Test IDs (< 8 digits)"}</div>
-                ${bd.pre_existing_blocked_in_db ? `<div style="color: #cbd5e1;">• 🛡️ <b>${bd.pre_existing_blocked_in_db} ဦး</b>: ${isMy ? "ယခင်ကတည်းက DB တွင် Blocked ဖြစ်နေသူများ" : "Pre-existing blocked users in DB"}</div>` : ""}
-                ${bd.other_errors ? `<div style="color: #cbd5e1;">• ❓ <b>${bd.other_errors} ဦး</b>: ${isMy ? "အခြား ကွန်ရက်/ချိတ်ဆက်မှု အမှား" : "Network/Other errors"}</div>` : ""}
-            </div>
-        `;
-
+    showStudioConfirm(t("admin_confirm_broadcast"), async () => {
+        if (btn) btn.disabled = true;
+        if (btnText) btnText.textContent = t("admin_broadcast_sending");
         if (reportBox) {
-            reportBox.innerHTML = reportHtml;
+            reportBox.classList.remove("hidden");
+            reportBox.innerHTML = `<div class="adm-state"><span class="spinner"></span><span>${t("admin_broadcast_sending")}</span></div>`;
         }
+        try {
+            const res = await fetch("/api/admin/broadcast", {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ message: msg }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Broadcast request failed");
 
-        showStudioToast(isMy 
-            ? `📢 Broadcast ပို့ဆောင်မှု ပြီးဆုံးပါပြီ! (အောင်မြင်: ${data.sent_count} ဦး / စုစုပေါင်း: ${data.total_users_in_db} ဦး)` 
-            : `📢 Broadcast Completed! (Delivered: ${data.sent_count} / Total: ${data.total_users_in_db})`, 'success');
-
-        if (textEl) textEl.value = "";
-    } catch (e) {
-        if (reportBox) {
-            reportBox.innerHTML = `<div style="color: #ef4444; padding: 10px;">❌ ${e.message}</div>`;
+            const bd = data.breakdown || {};
+            const row = (label, val) => `<div class="adm-bc-row"><span>${label}</span><strong>${val}</strong></div>`;
+            reportBox.innerHTML = `
+                <div class="adm-bc-title">📢 ${t("admin_broadcast_report")}</div>
+                <div class="adm-bc-grid">
+                    <div class="adm-bc-cell"><span>${t("admin_bc_total")}</span><strong>${data.total_users_in_db || 0}</strong></div>
+                    <div class="adm-bc-cell"><span>${t("admin_bc_targeted")}</span><strong>${data.total_targeted || 0}</strong></div>
+                    <div class="adm-bc-cell ok"><span>${t("admin_bc_delivered")}</span><strong>${data.sent_count || 0}</strong></div>
+                    <div class="adm-bc-cell bad"><span>${t("admin_bc_failed")}</span><strong>${data.failed_count || 0}</strong></div>
+                </div>
+                <div class="adm-bc-detail">
+                    ${row(t("admin_bc_blocked"), bd.blocked_by_user || 0)}
+                    ${row(t("admin_bc_deactivated"), bd.deactivated_or_not_found || 0)}
+                    ${row(t("admin_bc_testids"), bd.invalid_test_id || 0)}
+                    ${bd.pre_existing_blocked_in_db ? row(t("admin_bc_preblocked"), bd.pre_existing_blocked_in_db) : ""}
+                    ${bd.other_errors ? row(t("admin_bc_other"), bd.other_errors) : ""}
+                </div>`;
+            showStudioToast(`${t("admin_bc_delivered")}: ${data.sent_count} / ${data.total_users_in_db}`, 'success');
+            if (textEl) {
+                textEl.value = "";
+                const c = document.getElementById("adm-broadcast-count");
+                if (c) c.innerText = "0";
+            }
+        } catch (e) {
+            if (reportBox) reportBox.innerHTML = `<div class="adm-state adm-state-error"><span>❌ ${escapeHtml(e.message)}</span></div>`;
+            showStudioToast(e.message, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+            if (btnText) btnText.textContent = t("btn_send_broadcast");
         }
-        showStudioToast(e.message, 'error');
-    } finally {
-        if (btn) btn.disabled = false;
-        if (btnText) btnText.textContent = currentLang === "my" ? "Broadcast ပို့မည်" : "Send Broadcast";
-    }
-        }
-    );
+    });
 }
+window.adminSendBroadcast = adminSendBroadcast;
 
-// ── Admin Queue & Engine Monitor Controller ────────────────────────────────
+// ── Live queue ───────────────────────────────────────────────────────
+
 let adminQueueStatusFilter = "all";
 let adminQueueEngineFilter = "all";
 
@@ -4358,14 +4554,13 @@ function setQueueStatusFilter(status) {
     });
     loadAdminQueue();
 }
+window.setQueueStatusFilter = setQueueStatusFilter;
 
 function setQueueEngineFilter(engine) {
     adminQueueEngineFilter = engine;
-    document.querySelectorAll("#queue-engine-filters .engine-pill").forEach(btn => {
-        btn.classList.toggle("active", btn.getAttribute("data-engine") === engine);
-    });
     loadAdminQueue();
 }
+window.setQueueEngineFilter = setQueueEngineFilter;
 
 async function loadAdminQueue(isSilent = false) {
     if (!state.user?.is_admin) return;
@@ -4373,35 +4568,26 @@ async function loadAdminQueue(isSilent = false) {
     const bannerEl = document.getElementById("admin-queue-status-banner");
     if (!container) return;
 
-    if (!isSilent && container.innerHTML.trim() === "") {
-        container.innerHTML = `<p class="text-muted">${t("admin_queue_loading")}</p>`;
-    }
+    if (!isSilent && container.children.length === 0) admStateLoading(container);
 
     try {
         const url = `/api/admin/queue?status=${encodeURIComponent(adminQueueStatusFilter)}&engine=${encodeURIComponent(adminQueueEngineFilter)}&limit=50`;
         const res = await fetch(url, { headers: getAuthHeaders() });
-        if (!res.ok) return;
-
+        if (!res.ok) {
+            if (!isSilent) admStateError(container, "loadAdminQueue()");
+            return;
+        }
         const data = await res.json();
 
-        // 1. Update Counts
         const c = data.counts || { total_listed: 0, queued: 0, running: 0, success: 0, failed: 0 };
-        const elTotal = document.getElementById("cnt-total");
-        const elQueued = document.getElementById("cnt-queued");
-        const elRunning = document.getElementById("cnt-running");
-        const elSuccess = document.getElementById("cnt-success");
-        const elFailed = document.getElementById("cnt-failed");
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+        set("cnt-total", c.total_listed);
+        set("cnt-queued", c.queued);
+        set("cnt-running", c.running);
+        set("cnt-success", c.success);
+        set("cnt-failed", c.failed);
+        set("adm-queued-jobs", c.queued);
 
-        if (elTotal) elTotal.innerText = c.total_listed;
-        if (elQueued) elQueued.innerText = c.queued;
-        if (elRunning) elRunning.innerText = c.running;
-        if (elSuccess) elSuccess.innerText = c.success;
-        if (elFailed) elFailed.innerText = c.failed;
-
-        const elTopQueue = document.getElementById("adm-queued-jobs");
-        if (elTopQueue) elTopQueue.innerText = c.queued;
-
-        // 2. Render High-Visibility Active Queue Status Banner (cloud pipeline)
         if (bannerEl) {
             if (c.queued === 0 && c.running === 0) {
                 bannerEl.innerHTML = `
@@ -4410,44 +4596,32 @@ async function loadAdminQueue(isSilent = false) {
                         <div class="status-banner-info">
                             <div class="status-banner-title">${t("admin_queue_idle_title")}</div>
                             <div class="status-banner-desc">${t("admin_queue_idle_desc")}</div>
-                            <div class="status-banner-meta">
-                                <span class="meta-pill">☁️ Engine: <strong>Cloud AI</strong></span>
-                                <span class="meta-pill">⏳ Active Queue: <strong>0 Pending</strong></span>
-                            </div>
                         </div>
-                    </div>
-                `;
+                    </div>`;
             } else if (c.running > 0) {
                 bannerEl.innerHTML = `
                     <div class="active-queue-status-banner running">
                         <div class="status-banner-icon pulsing">⚡</div>
                         <div class="status-banner-info">
                             <div class="status-banner-title">${t("admin_queue_running_title")}</div>
-                            <div class="status-banner-desc">Cloud engine is actively processing <strong>${c.running}</strong> job(s) right now.</div>
-                            <div class="status-banner-meta">
-                                <span class="meta-pill">⚡ Running: <strong>${c.running}</strong></span>
-                                <span class="meta-pill">⏳ Waiting: <strong>${c.queued}</strong></span>
-                            </div>
+                            <div class="status-banner-desc">${tf("admin_queue_running_desc", { running: c.running, queued: c.queued })}</div>
                         </div>
-                    </div>
-                `;
+                    </div>`;
             } else {
                 bannerEl.innerHTML = `
                     <div class="active-queue-status-banner queued">
                         <div class="status-banner-icon">⏳</div>
                         <div class="status-banner-info">
                             <div class="status-banner-title">${t("admin_queue_queued_title")}</div>
-                            <div class="status-banner-desc">${c.queued} job(s) waiting in queue. The cloud engine picks them up automatically.</div>
+                            <div class="status-banner-desc">${tf("admin_queue_queued_desc", { queued: c.queued })}</div>
                         </div>
-                    </div>
-                `;
+                    </div>`;
             }
         }
 
-        // 3. Render Jobs with Clear Visual Grouping
         const jobs = data.jobs || [];
         if (jobs.length === 0) {
-            container.innerHTML = `<p class="text-muted" style="padding: 12px 0;">${t("admin_queue_empty")}</p>`;
+            admStateEmpty(container, "admin_queue_empty");
             return;
         }
 
@@ -4455,7 +4629,7 @@ async function loadAdminQueue(isSilent = false) {
             const statusLower = (j.status || "queued").toLowerCase();
             const engineLower = (j.engine || "voxcpm").toLowerCase();
             const engineLabel = engineLower === "recap" ? "🎬 RECAP" : "☁️ VOXCPM AI";
-            
+
             let statusBadgeText = j.status;
             let durationTxt = `⏳ ${j.created_ago}`;
             if (statusLower === "success") {
@@ -4463,32 +4637,31 @@ async function loadAdminQueue(isSilent = false) {
                 durationTxt = `⏱️ ${j.duration_seconds || '15'}s • ${j.created_ago}`;
             } else if (statusLower === "queued") {
                 statusBadgeText = t("badge_queued") || "⏳ WAITING";
-                durationTxt = `⏳ In Queue: ${j.created_ago}`;
+                durationTxt = `⏳ ${j.created_ago}`;
             } else if (statusLower === "running") {
                 statusBadgeText = t("badge_running") || "⚡ PROCESSING";
-                durationTxt = `⚡ Processing since: ${j.created_ago}`;
+                durationTxt = `⚡ ${j.created_ago}`;
             } else if (statusLower === "failed") {
                 statusBadgeText = t("badge_failed") || "❌ FAILED";
+            } else if (statusLower === "cancelled") {
+                statusBadgeText = t("badge_cancelled") || "⏹ CANCELLED";
             }
 
             let actionsHtml = "";
             if (statusLower === "failed" || statusLower === "cancelled") {
-                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 Retry</button>`;
+                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>`;
             } else if (statusLower === "queued" || statusLower === "running") {
-                actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ Cancel</button>`;
+                actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ ${t("admin_cancel_job")}</button>`;
             }
-
             if (j.is_expired) {
-                actionsHtml += `<span class="badge-expired text-xs" title="ဖိုင်သက်တမ်းကုန်သွားပါပြီ (Expired)">⌛ သက်တမ်းကုန်</span>`;
-                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')" title="ပြန်လည်ထုတ်လုပ်မည်">🔄 Re-gen</button>`;
+                actionsHtml += `<span class="badge-expired text-xs">⌛ ${t("admin_expired")}</span>`;
+                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>`;
             } else if (j.download_url) {
                 const qDelivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
                 const qTitleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
                 actionsHtml += `<button class="queue-act-btn uid" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${qDelivStr}', '${qTitleStr}')">▶️ Play</button>`;
                 actionsHtml += `<a href="${j.download_url}" target="_blank" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
             }
-
-            actionsHtml += `<button class="queue-act-btn uid" onclick="admFillUser(${j.user_id})" title="Copy User ID to management input">👤 Target</button>`;
 
             return `
                 <div class="queue-item" id="queue-item-${j.id}">
@@ -4500,55 +4673,45 @@ async function loadAdminQueue(isSilent = false) {
                         </div>
                         <span class="queue-timing">${durationTxt}</span>
                     </div>
-
                     <div class="queue-item-meta">
-                        <span class="queue-user-pill" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.user_name)} (@${escapeHtml(j.username || 'none')}) • ID: ${j.user_id}</span>
+                        <span class="queue-user-pill" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.user_name)}${j.username ? ` (@${escapeHtml(j.username)})` : ""} • ID: ${j.user_id}</span>
                         <span>#${j.id.slice(0, 8)}</span>
                     </div>
-
-                    <div class="queue-item-body">
-                        ${escapeHtml(j.input_snippet || "Task Content")}
-                    </div>
-
+                    <div class="queue-item-body">${escapeHtml(j.input_snippet || "Task Content")}</div>
                     ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(j.error_message)}</div>` : ""}
-
                     <div class="queue-item-footer">
-                        <span class="queue-timing">Created: ${escapeHtml(j.created_ago)}</span>
-                        <div class="queue-actions-row">
-                            ${actionsHtml}
-                        </div>
+                        <span class="queue-timing">${escapeHtml(j.created_ago)}</span>
+                        <div class="queue-actions-row">${actionsHtml}</div>
                     </div>
-                </div>
-            `;
+                </div>`;
         };
 
         if (adminQueueStatusFilter === "all") {
             const activeJobs = jobs.filter(j => j.status === "QUEUED" || j.status === "RUNNING");
             const finishedJobs = jobs.filter(j => j.status !== "QUEUED" && j.status !== "RUNNING");
-
             let fullHtml = "";
             if (activeJobs.length > 0) {
-                fullHtml += `<div class="queue-section-header active" style="grid-column: 1 / -1;">🔥 ${t("admin_active_section_title")} (${activeJobs.length})</div>`;
+                fullHtml += `<div class="queue-section-header active">${t("admin_active_section_title")} (${activeJobs.length})</div>`;
                 fullHtml += activeJobs.map(renderJobCard).join("");
             }
-
             if (finishedJobs.length > 0) {
-                fullHtml += `<div class="queue-section-header history" style="grid-column: 1 / -1;">📜 ${t("admin_history_section_title")} (${finishedJobs.length})</div>`;
+                fullHtml += `<div class="queue-section-header history">${t("admin_history_section_title")} (${finishedJobs.length})</div>`;
                 fullHtml += finishedJobs.map(renderJobCard).join("");
             }
-
-            container.innerHTML = fullHtml || `<p class="text-muted" style="padding: 12px 0;">${t("admin_queue_empty")}</p>`;
+            container.innerHTML = fullHtml || "";
+            if (!fullHtml) admStateEmpty(container, "admin_queue_empty");
         } else {
             container.innerHTML = jobs.map(renderJobCard).join("");
         }
-
     } catch (e) {
         console.warn("Could not load admin queue:", e);
+        if (!isSilent) admStateError(container, "loadAdminQueue()");
     }
 }
+window.loadAdminQueue = loadAdminQueue;
 
 async function adminCancelJob(jobId) {
-    showStudioConfirm("Are you sure you want to cancel this job?", async () => {
+    showStudioConfirm(t("admin_confirm_cancel_job"), async () => {
         haptic("medium");
         try {
             const res = await fetch(`/api/admin/queue/${jobId}/cancel`, {
@@ -4557,10 +4720,9 @@ async function adminCancelJob(jobId) {
             });
             const data = await res.json();
             if (data.success) {
-                if (data.refund && data.refund.refunded) {
-                    showStudioToast("✅ Job cancelled — charge refunded to the user", "success");
-                }
+                showStudioToast(data.refund && data.refund.refunded ? t("admin_cancel_refunded") : t("admin_cancel_done"), "success");
                 loadAdminQueue();
+                loadAdminHistory();
             } else {
                 showStudioToast(data.message || data.detail || "Failed to cancel job", 'error');
             }
@@ -4569,16 +4731,449 @@ async function adminCancelJob(jobId) {
         }
     });
 }
+window.adminCancelJob = adminCancelJob;
 
-function admFillUser(userId) {
-    const input = document.getElementById("adm-target-user-id");
-    if (input) {
-        input.value = userId;
-        input.scrollIntoView({ behavior: "smooth", block: "center" });
-        input.focus();
-        haptic("light");
+// ── History ──────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+
+let adminHistFilter = {
+    timeframe: "24h",
+    status: "all",
+    job_type: "all",
+    job_id: ""
+};
+
+function setAdminHistFilter(key, val) {
+    if (key) adminHistFilter[key] = val;
+    const chips = document.querySelectorAll('.filter-chip[data-filter-type="timeframe"]');
+    chips.forEach(c => c.classList.toggle('active', c.getAttribute('data-val') === adminHistFilter.timeframe));
+    const selStatus = document.getElementById("adm-hist-status-sel");
+    if (selStatus && selStatus.value !== adminHistFilter.status) selStatus.value = adminHistFilter.status;
+    const selType = document.getElementById("adm-hist-type-sel");
+    if (selType && selType.value !== adminHistFilter.job_type) selType.value = adminHistFilter.job_type;
+    loadAdminHistory();
+}
+window.setAdminHistFilter = setAdminHistFilter;
+
+function adminSearchJobId() {
+    const el = document.getElementById("adm-hist-jobid");
+    adminHistFilter.job_id = el ? el.value.trim() : "";
+    loadAdminHistory();
+}
+window.adminSearchJobId = adminSearchJobId;
+
+async function loadAdminHistory() {
+    const container = document.getElementById("admin-global-history-list");
+    try {
+        const params = new URLSearchParams({
+            timeframe: adminHistFilter.timeframe || "24h",
+            status: adminHistFilter.status || "all",
+            job_type: adminHistFilter.job_type || "all",
+            limit: "100"
+        });
+        if (adminHistFilter.job_id) params.set("job_id", adminHistFilter.job_id);
+        const res = await fetch(`/api/admin/history?${params.toString()}`, { headers: getAuthHeaders() });
+        if (!res.ok) {
+            if (container) admStateError(container, "loadAdminHistory()");
+            return;
+        }
+        const data = await res.json();
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+        set("adm-hist-total", data.total_count ?? (data.history?.length || 0));
+        set("adm-hist-failed", data.total_failed || 0);
+        set("adm-hist-success", data.total_success || 0);
+        set("adm-hist-recap", data.total_recap || 0);
+        set("adm-hist-voice", data.total_voice || 0);
+
+        const history = data.history || [];
+        if (!container) return;
+        if (history.length === 0) {
+            admStateEmpty(container, "admin_history_empty");
+            return;
+        }
+        container.innerHTML = history.map(j => {
+            const delivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
+            const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
+            const isFailed = (j.status === "FAILED");
+            const isSuccess = (j.status === "SUCCESS");
+            const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
+            const borderCls = isFailed ? 'border-danger-dim' : (isSuccess ? (j.is_expired ? 'border-warning-dim' : 'border-success-dim') : (isRunning ? 'border-running-dim' : ''));
+            return `
+            <div class="history-item ${borderCls}" id="adm-job-item-${j.id}">
+                <div class="history-item-header">
+                    <div>
+                        <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬 RECAP' : '🎙️ VOICE'}</span>
+                        <span class="mini-tag adm-tap" style="margin-left: 4px;" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.username ? '@' + j.username : 'ID: ' + j.user_id)}</span>
+                    </div>
+                    <div>
+                        <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
+                        ${j.is_expired ? `<span class="badge-expired" style="margin-left: 4px;">⌛ ${t("admin_expired")}</span>` : ''}
+                    </div>
+                </div>
+                <div class="history-item-body">
+                    <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
+                    ${j.error_message ? `
+                        <div class="history-error-snippet text-xs text-danger mt-1 p-2 glass-inset">
+                            ⚠️ <strong>Error:</strong> ${escapeHtml(j.error_message.slice(0, 180))}${j.error_message.length > 180 ? '...' : ''}
+                        </div>` : ''}
+                    <div id="retry-status-box-${j.id}"></div>
+                </div>
+                <div class="history-item-footer">
+                    <span>⏱️ ${j.time_ago} <code class="adm-job-code">(${j.id.slice(0, 8)})</code></span>
+                    <div class="history-btn-row" id="adm-actions-row-${j.id}">
+                        ${j.is_expired ? `
+                            <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>
+                        ` : (j.download_url ? `
+                            <button class="btn-play-preview" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${delivStr}', '${titleStr}')">▶️ Preview</button>
+                            <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
+                        ` : '')}
+                        ${isFailed ? `
+                            <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>
+                        ` : ''}
+                        <button class="btn mini-btn danger-btn" onclick="adminDeleteSingleJob('${j.id}')">🗑️ ${t("admin_delete")}</button>
+                    </div>
+                </div>
+            </div>`;
+        }).join("");
+    } catch (e) {
+        console.warn("Could not load admin history:", e);
+        if (container) admStateError(container, "loadAdminHistory()");
     }
 }
+window.loadAdminHistory = loadAdminHistory;
+
+async function adminRetryJob(jobId) {
+    haptic("medium");
+    const itemEl = document.getElementById(`adm-job-item-${jobId}`);
+    const retryBtn = document.getElementById(`btn-retry-${jobId}`);
+    const statusBox = document.getElementById(`retry-status-box-${jobId}`);
+
+    if (retryBtn) {
+        retryBtn.disabled = true;
+        retryBtn.innerText = "⏳ စတင်နေဆဲ...";
+    }
+    if (itemEl) {
+        itemEl.className = "history-item border-running-dim";
+        const badge = itemEl.querySelector('.history-item-badge[class*="status-"]');
+        if (badge) {
+            badge.className = "history-item-badge status-running";
+            badge.innerText = "QUEUED";
+        }
+    }
+    if (statusBox) {
+        statusBox.innerHTML = `
+            <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
+                ⏳ <strong>Queue ထဲသို့ ထည့်သွင်းပြီး စတင်လုပ်ဆောင်နေပါပြီ...</strong>
+            </div>
+        `;
+    }
+
+    try {
+        const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            loadAdminQueue(true);
+            pollAdminJobProgress(jobId);
+        } else {
+            showStudioToast("Retry failed: " + (data.detail || data.message || "Unknown error"), 'error');
+            if (retryBtn) {
+                retryBtn.disabled = false;
+                retryBtn.innerText = "🔄 Retry";
+            }
+        }
+    } catch (e) {
+        showStudioToast("Retry error: " + e.message, 'error');
+        if (retryBtn) {
+            retryBtn.disabled = false;
+            retryBtn.innerText = "🔄 Retry";
+        }
+    }
+}
+
+let activeRetryPollers = {};
+
+function pollAdminJobProgress(jobId) {
+    if (activeRetryPollers[jobId]) {
+        clearInterval(activeRetryPollers[jobId]);
+    }
+
+    let pollCount = 0;
+    const maxPolls = 80; // Up to ~3.5 mins
+
+    activeRetryPollers[jobId] = setInterval(async () => {
+        pollCount++;
+        if (pollCount > maxPolls) {
+            clearInterval(activeRetryPollers[jobId]);
+            delete activeRetryPollers[jobId];
+            return;
+        }
+
+        try {
+            const itemEl = document.getElementById(`adm-job-item-${jobId}`);
+            const isRecap = jobId.startsWith("rc_") || (itemEl && itemEl.querySelector('.badge-recap'));
+            const statusUrl = isRecap ? `/api/recap/${jobId}/status` : `/api/jobs/${jobId}/status`;
+
+            const res = await fetch(statusUrl, { headers: getAuthHeaders() });
+            if (!res.ok) return;
+
+            const data = await res.json();
+            const statusBox = document.getElementById(`retry-status-box-${jobId}`);
+            const badge = itemEl ? itemEl.querySelector('.history-item-badge[class*="status-"]') : null;
+            const actionsRow = document.getElementById(`adm-actions-row-${jobId}`);
+            const retryBtn = document.getElementById(`btn-retry-${jobId}`);
+
+            if (data.status === "RUNNING" || data.status === "QUEUED") {
+                if (badge) {
+                    badge.className = "history-item-badge status-running";
+                    badge.innerText = data.status;
+                }
+                if (statusBox) {
+                    let label = data.progress_label || (data.status === "QUEUED" ? "တန်းစီဇယားထဲတွင် စောင့်ဆိုင်းနေပါသည်..." : "လုပ်ဆောင်နေဆဲ...");
+                    if (data.is_waiting_laptop_worker) {
+                        label = "VoxCPM2 Cloud တွင် စောင့်ဆိုင်းနေပါသည်...";
+                    }
+                    const step = data.progress_step ? `[${data.progress_step}] ` : '';
+                    const pct = data.progress_percent || (data.status === "RUNNING" ? 50 : 10);
+                    statusBox.innerHTML = `
+                        <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
+                            ⏳ <strong>${step}${escapeHtml(label)}</strong> (${pct}%)
+                        </div>
+                    `;
+                }
+            } else if (data.status === "SUCCESS") {
+                clearInterval(activeRetryPollers[jobId]);
+                delete activeRetryPollers[jobId];
+
+                if (itemEl) itemEl.className = "history-item border-success-dim";
+                if (badge) {
+                    badge.className = "history-item-badge status-success";
+                    badge.innerText = "SUCCESS";
+                }
+                if (statusBox) {
+                    statusBox.innerHTML = `
+                        <div class="text-xs mt-1 p-2" style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; color: #34d399;">
+                            🎉 <strong>အလုပ်ပြီးမြောက်ပါပြီ! (100%)</strong>
+                        </div>
+                    `;
+                }
+                if (retryBtn) retryBtn.remove();
+                const expiredBadge = itemEl ? itemEl.querySelector('.badge-expired') : null;
+                if (expiredBadge) expiredBadge.remove();
+
+                if (actionsRow && !actionsRow.querySelector('.btn-play-preview')) {
+                    const mediaUrl = isRecap
+                        ? (data.download_urls?.video || `/api/recap/stream/${jobId}/video`)
+                        : (data.output_audio_url || `/api/audio/stream/${jobId}`);
+                    const previewBtn = document.createElement('button');
+                    previewBtn.className = 'btn-play-preview';
+                    previewBtn.innerText = '▶️ Preview';
+                    previewBtn.onclick = () => openAdminMediaModal(
+                        jobId,
+                        isRecap ? 'RECAP' : 'VOICE_CLONE',
+                        mediaUrl,
+                        JSON.stringify(data.download_urls || {}),
+                        `Job #${jobId.slice(0, 8)}`
+                    );
+                    actionsRow.prepend(previewBtn);
+                }
+                // Refresh global history counters
+                setTimeout(loadAdminHistory, 2500);
+            } else if (data.status === "FAILED") {
+                clearInterval(activeRetryPollers[jobId]);
+                delete activeRetryPollers[jobId];
+
+                if (itemEl) itemEl.className = "history-item border-danger-dim";
+                if (badge) {
+                    badge.className = "history-item-badge status-failed";
+                    badge.innerText = "FAILED";
+                }
+                if (statusBox) {
+                    statusBox.innerHTML = `
+                        <div class="text-xs mt-1 p-2" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
+                            ⚠️ <strong>Error:</strong> ${escapeHtml(data.error_message || "Execution failed")}
+                        </div>
+                    `;
+                }
+                if (retryBtn) {
+                    retryBtn.disabled = false;
+                    retryBtn.innerText = "🔄 Retry";
+                }
+            }
+        } catch (pollErr) {
+            console.debug("Admin poller tick error:", pollErr);
+        }
+    }, 2500);
+}
+
+async function adminDeleteSingleJob(jobId) {
+    showStudioConfirm(tf("admin_confirm_delete_job", { id: jobId.slice(0, 8) }), async () => {
+        haptic("heavy");
+        try {
+            const res = await fetch("/api/admin/history/purge", {
+                method: "POST",
+                headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: "single", job_id: jobId }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                const el = document.getElementById(`adm-job-item-${jobId}`);
+                if (el) el.remove();
+                loadAdminHistory();
+            } else {
+                showStudioToast("Delete failed: " + (data.detail || data.message || "Unknown error"), 'error');
+            }
+        } catch (e) {
+            showStudioToast("Delete error: " + e.message, 'error');
+        }
+    });
+}
+window.adminDeleteSingleJob = adminDeleteSingleJob;
+
+async function adminPurgeHistory(mode) {
+    let confirmMsg = "";
+    if (mode === "failed") confirmMsg = t("admin_confirm_purge_failed");
+    else if (mode === "older_retention") confirmMsg = t("admin_confirm_purge_older");
+    else if (mode === "matching") confirmMsg = tf("admin_confirm_purge_matching", { timeframe: adminHistFilter.timeframe, status: adminHistFilter.status, job_type: adminHistFilter.job_type });
+    else confirmMsg = t("admin_confirm_purge_generic");
+
+    showStudioConfirm(confirmMsg, async () => {
+        haptic("heavy");
+        try {
+            const res = await fetch("/api/admin/history/purge", {
+                method: "POST",
+                headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    mode: mode,
+                    timeframe: adminHistFilter.timeframe,
+                    status: adminHistFilter.status,
+                    job_type: adminHistFilter.job_type,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showStudioToast(`✅ ${data.message || `Purged: ${data.purged_count}`}`, 'success');
+                loadAdminHistory();
+            } else {
+                showStudioToast("Purge failed: " + (data.detail || data.message || "Unknown error"), 'error');
+            }
+        } catch (e) {
+            showStudioToast("Purge error: " + e.message, 'error');
+        }
+    });
+}
+window.adminPurgeHistory = adminPurgeHistory;
+
+async function adminTriggerPurge24h() {
+    // Name kept for compatibility; the purge boundary is the media
+    // retention window (settings.media_retention_days, default 7 days),
+    // matching the automatic sweep.
+    return adminPurgeHistory("older_retention");
+}
+window.adminTriggerPurge24h = adminTriggerPurge24h;
+
+// ── Activity (audit log) ─────────────────────────────────────────────
+
+async function loadAdminAudit() {
+    const box = document.getElementById("admin-audit-list");
+    if (!box) return;
+    admStateLoading(box);
+    try {
+        const res = await fetch("/api/admin/audit-log?limit=50", { headers: getAuthHeaders() });
+        const rows = await res.json();
+        if (!res.ok) throw new Error("Failed");
+        if (!rows.length) { admStateEmpty(box, "admin_audit_empty"); return; }
+        box.innerHTML = rows.map(r => {
+            let detailTxt = "";
+            try {
+                const d = typeof r.details === "string" ? JSON.parse(r.details) : (r.details || {});
+                const parts = Object.entries(d).map(([k, v]) => `${k}: ${v && typeof v === "object" ? JSON.stringify(v) : v}`);
+                detailTxt = parts.join(" • ");
+            } catch (e) { detailTxt = ""; }
+            return `
+            <div class="adm-audit-row">
+                <div class="adm-audit-main">
+                    <b>${escapeHtml(r.action)}</b>
+                    <span class="text-muted">${escapeHtml(r.target_type || "")} ${escapeHtml(String(r.target_id || ""))}</span>
+                </div>
+                ${detailTxt ? `<div class="adm-audit-detail">${escapeHtml(detailTxt)}</div>` : ""}
+                <div class="adm-audit-time">${admFmtDate(r.created_at)} • Admin ${r.admin_id}</div>
+            </div>`;
+        }).join("");
+    } catch (e) {
+        admStateError(box, "loadAdminAudit()");
+    }
+}
+window.loadAdminAudit = loadAdminAudit;
+
+// ── Pricing ──────────────────────────────────────────────────────────
+
+async function loadAdminPricing() {
+    const box = document.getElementById("admin-pricing-list");
+    if (!box) return;
+    admStateLoading(box);
+    try {
+        const res = await fetch("/api/admin/pricing", { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        const plans = data.plans || [];
+        if (!plans.length) { admStateEmpty(box, "admin_empty"); return; }
+        box.innerHTML = plans.map(p => {
+            const alloc = p.recap_credits > 0 && p.minutes > 0
+                ? `${p.minutes}m + ${p.recap_credits} cr`
+                : (p.recap_credits > 0 ? `${p.recap_credits} credits` : `${p.minutes} min`);
+            return `
+            <div class="adm-price-row">
+                <div class="adm-price-main">
+                    <div class="adm-price-code">${escapeHtml(p.code)}</div>
+                    <div class="adm-price-alloc">${escapeHtml(p.category)} • ${alloc}</div>
+                </div>
+                <input type="number" class="studio-input adm-price-input" id="adm-price-${escapeHtml(p.code)}" value="${p.price_mmk}" min="100" step="100">
+                <span class="adm-price-cur">MMK</span>
+                <button class="btn mini-btn gold-btn" onclick="adminSavePrice('${escapeHtml(p.code)}')">${t("admin_pricing_save")}</button>
+            </div>`;
+        }).join("");
+    } catch (e) {
+        admStateError(box, "loadAdminPricing()");
+    }
+}
+window.loadAdminPricing = loadAdminPricing;
+
+async function adminSavePrice(code) {
+    const input = document.getElementById("adm-price-" + code);
+    const price = parseInt(input?.value || "0", 10) || 0;
+    showStudioConfirm(tf("admin_confirm_price", { code, price: price.toLocaleString() }), async () => {
+        haptic("medium");
+        try {
+            const res = await fetch(`/api/admin/pricing/${encodeURIComponent(code)}`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ price_mmk: price }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            showStudioToast(data.message, "success");
+            loadAdminPricing();
+        } catch (e) {
+            showStudioToast(e.message, "error");
+        }
+    });
+}
+window.adminSavePrice = adminSavePrice;
+
+// ── Settings (loaders/savers preserved from the previous console) ────
 
 async function loadAdminSettings() {
     if (!state.user?.is_admin) return;
@@ -4757,471 +5352,174 @@ async function saveAdminSettings() {
     }
 }
 
-// ── 24-Hour Job History & Lifecycle Controller ─────────────────────────────
-function escapeHtml(str) {
-    if (!str) return "";
-    return String(str)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+// ── Dedicated History Hub ────────────────────────────────────────────────
+// One unified, newest-first list of ALL the user's jobs (voice + recap),
+// served by the existing GET /api/history endpoint (payload unchanged).
+// The per-studio history lists were removed; studios link here instead.
+let hubHistoryFilter = "all";
+let hubHistoryCache = null;      // last fetched history array (null = not loaded yet)
+let hubHistoryError = false;     // last fetch failed
+let hubOpenDetailId = null;      // job id whose detail block is expanded
+
+function openHistoryHub() {
+    switchTab("tab-history");
+    loadUserHistory();
+}
+window.openHistoryHub = openHistoryHub;
+
+function setHubHistoryFilter(filter) {
+    hubHistoryFilter = filter || "all";
+    document.querySelectorAll(".hub-filter-chip").forEach(c => {
+        c.classList.toggle("active", c.getAttribute("data-hub-filter") === hubHistoryFilter);
+    });
+    renderHistoryHub();
+}
+window.setHubHistoryFilter = setHubHistoryFilter;
+
+function toggleHistoryDetail(jobId) {
+    haptic("light");
+    hubOpenDetailId = (hubOpenDetailId === jobId) ? null : jobId;
+    document.querySelectorAll("#hub-history-list .hub-row").forEach(row => {
+        const open = row.getAttribute("data-job-id") === hubOpenDetailId;
+        row.classList.toggle("open", open);
+        const det = row.querySelector(".hub-detail");
+        if (det) det.classList.toggle("hidden", !open);
+        const chev = row.querySelector(".hub-chevron");
+        if (chev) chev.textContent = open ? "⌃" : "›";
+    });
+}
+window.toggleHistoryDetail = toggleHistoryDetail;
+
+function hubStatusBorder(status) {
+    switch ((status || "").toUpperCase()) {
+        case "SUCCESS": return "border-success-dim";
+        case "FAILED": return "border-failed-dim";
+        case "RUNNING": return "border-running-dim";
+        case "QUEUED": return "border-warning-dim";
+        default: return "";
+    }
+}
+
+// Detail block shown when a hub row is tapped. It reuses the exact same
+// actions/handlers the old per-studio history cards offered (download,
+// send-to-Telegram, in-player view, live tracking) — nothing new invented.
+function hubHistoryDetailHtml(j) {
+    const isRecap = j.job_type === "RECAP";
+    let inner = "";
+    if (isRecap && j.parts_count && j.parts_count > 1) {
+        inner += `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>`;
+    }
+    let actions = "";
+    if (j.status === "FAILED") {
+        actions = `<span class="badge-expired text-xs" style="color:#f87171;">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
+    } else if (j.status === "RUNNING" || j.status === "QUEUED") {
+        actions = isRecap
+            ? `<button type="button" onclick="startRecapJobPolling('${j.id}')" class="history-dl-link">${t("hist_track_recap")}</button>`
+            : `<button type="button" onclick="startJobPolling('${j.id}')" class="history-dl-link">${t("hist_track_voice")}</button>`;
+    } else if (j.is_expired) {
+        actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
+    } else if (isRecap) {
+        if (j.deliverables?.video) {
+            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+        }
+        if (j.deliverables?.audio) actions += ` <a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.wav" class="history-dl-link">🎙️ Audio</a>`;
+        if (j.deliverables?.srt) actions += ` <a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>`;
+        if (j.deliverables?.script) actions += ` <a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>`;
+    } else if (j.download_url) {
+        actions = `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+    }
+    if (actions) inner += `<div class="history-btn-row hub-detail-actions">${actions}</div>`;
+    return inner;
+}
+
+function hubHistoryRowHtml(j) {
+    const isRecap = j.job_type === "RECAP";
+    const open = hubOpenDetailId === j.id;
+    const snippet = j.input_snippet || (isRecap ? "Movie Recap" : "Voice Synthesis");
+    const title = isRecap ? escapeHtml(snippet) : `&quot;${escapeHtml(snippet)}&quot;`;
+    return `
+    <div class="hub-row ${hubStatusBorder(j.status)} ${open ? "open" : ""}" data-job-id="${j.id}">
+        <button type="button" class="hub-row-main" onclick="toggleHistoryDetail('${j.id}')" aria-expanded="${open}">
+            <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
+            <span class="hub-row-text">
+                <span class="hub-row-title">${title}</span>
+                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : ""}${escapeHtml(j.preset_voice || "")} · ⏱️ ${escapeHtml(j.time_ago || "")}</span>
+            </span>
+            <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
+            <span class="hub-chevron">${open ? "⌃" : "›"}</span>
+        </button>
+        <div class="hub-detail ${open ? "" : "hidden"}">${hubHistoryDetailHtml(j)}</div>
+    </div>`;
+}
+
+function renderHistoryHub() {
+    const container = document.getElementById("hub-history-list");
+    if (!container) return;
+
+    if (hubHistoryCache === null && !hubHistoryError) {
+        container.innerHTML = `<div class="hub-state"><p class="text-muted">${t("history_loading")}</p></div>`;
+        return;
+    }
+    if (hubHistoryError) {
+        container.innerHTML = `
+            <div class="hub-state">
+                <div class="hub-state-emoji">⚠️</div>
+                <p class="hub-state-text">${t("history_error")}</p>
+                <button type="button" class="mini-chip" onclick="loadUserHistory()">${t("history_retry")}</button>
+            </div>`;
+        return;
+    }
+
+    const all = hubHistoryCache || [];
+    if (all.length === 0) {
+        container.innerHTML = `
+            <div class="hub-state">
+                <div class="hub-state-emoji">📜</div>
+                <p class="hub-state-text" data-i18n="history_empty">${t("history_empty")}</p>
+                <p class="text-muted hub-state-sub">${t("history_empty_hint")}</p>
+            </div>`;
+        return;
+    }
+
+    const jobs = hubHistoryFilter === "all" ? all : all.filter(h => h.job_type === hubHistoryFilter);
+    if (jobs.length === 0) {
+        container.innerHTML = `
+            <div class="hub-state">
+                <div class="hub-state-emoji">🔍</div>
+                <p class="hub-state-text">${t("history_filter_empty")}</p>
+                <button type="button" class="mini-chip" onclick="setHubHistoryFilter('all')">${t("history_show_all")}</button>
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = jobs.map(hubHistoryRowHtml).join("");
 }
 
 async function loadUserHistory() {
+    const container = document.getElementById("hub-history-list");
+    if (container && hubHistoryCache === null && !hubHistoryError) {
+        renderHistoryHub(); // loading state
+    }
     try {
         const res = await fetch("/api/history", {
             headers: getAuthHeaders(),
         });
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`history ${res.status}`);
 
         const data = await res.json();
         const history = data.history || [];
-
-        const voiceContainer = document.getElementById("voice-user-history-list");
-        const recapContainer = document.getElementById("recap-user-history-list");
-
-        const voiceJobs = history.filter(h => h.job_type === "VOICE_CLONE");
-        const recapJobs = history.filter(h => h.job_type === "RECAP");
-
-        // Render Voice History (24h)
-        if (voiceContainer) {
-            if (voiceJobs.length === 0) {
-                voiceContainer.innerHTML = `<p class="text-muted" data-i18n="history_empty">${t("history_empty")}</p>`;
-            } else {
-                voiceContainer.innerHTML = voiceJobs.map(j => `
-                    <div class="history-item">
-                        <div class="history-item-header">
-                            <span class="history-item-badge badge-voice">🎙️ ${escapeHtml(j.preset_voice)}</span>
-                            <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
-                        </div>
-                        <div class="history-item-body">"${escapeHtml(j.input_snippet || "Voice Synthesis")}"</div>
-                        <div class="history-item-footer">
-                            <span>⏱️ ${j.time_ago}</span>
-                            <div class="history-btn-row">
-                                ${j.status === "FAILED" ? `
-                                    <span class="badge-expired text-xs" style="color:#f87171;">❌ မအောင်မြင်ပါ</span>
-                                ` : (j.status === "RUNNING" || j.status === "QUEUED") ? `
-                                    <button type="button" onclick="startJobPolling('${j.id}')" class="history-dl-link">⏳ ထုတ်လုပ်နေဆဲ (ကြည့်မည်)</button>
-                                ` : j.is_expired ? `
-                                    <span class="badge-expired text-xs" title="ဖိုင်သက်တမ်းကုန်သွားပါပြီ">⌛ သက်တမ်းကုန်</span>
-                                ` : (j.download_url ? `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : '')}
-                            </div>
-                        </div>
-                    </div>
-                `).join("");
-            }
-        }
-
-        // Render Recap History (24h)
-        if (recapContainer) {
-            if (recapJobs.length === 0) {
-                recapContainer.innerHTML = `<p class="text-muted" data-i18n="history_empty">${t("history_empty")}</p>`;
-            } else {
-                recapContainer.innerHTML = recapJobs.map(j => `
-                    <div class="history-item">
-                        <div class="history-item-header">
-                            <span class="history-item-badge badge-recap">🎬 RECAP • ${escapeHtml(j.preset_voice)}</span>
-                            <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
-                        </div>
-                        <div class="history-item-body">🔗 ${escapeHtml(j.input_snippet || "Movie Recap")}</div>
-                        ${(j.parts_count && j.parts_count > 1) ? `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>` : ''}
-                        <div class="history-item-footer">
-                            <span>⏱️ ${j.time_ago}</span>
-                            <div class="history-btn-row">
-                                ${j.status === "FAILED" ? `
-                                    <span class="badge-expired text-xs" style="color:#f87171;">❌ မအောင်မြင်ပါ (Credit ပြန်အမ်းပြီး)</span>
-                                ` : (j.status === "RUNNING" || j.status === "QUEUED") ? `
-                                    <button type="button" onclick="startRecapJobPolling('${j.id}')" class="history-dl-link">⏳ ထုတ်လုပ်နေဆဲ (ခြေရာခံမည်)</button>
-                                ` : j.is_expired ? `
-                                    <span class="badge-expired text-xs" title="ဗီဒီယိုဖိုင်သက်တမ်းကုန်သွားပါပြီ">⌛ သက်တမ်းကုန်</span>
-                                ` : `
-                                    ${j.deliverables?.video ? `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link" title="Mini App တွင် တိုက်ရိုက်ကြည့်မည်">▶️ ကြည့်မည်</button> <a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn" title="Telegram သို့ ပို့မည်">📱 Telegram</button>` : ''}
-                                    ${j.deliverables?.audio ? `<a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.wav" class="history-dl-link">🎙️ Audio</a>` : ''}
-                                    ${j.deliverables?.srt ? `<a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>` : ''}
-                                    ${j.deliverables?.script ? `<a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>` : ''}
-                                `}
-                            </div>
-                        </div>
-                    </div>
-                `).join("");
-            }
-        }
+        // Unified merge: the endpoint already returns both job types; sort
+        // newest-first client-side by created_at so the hub order never
+        // depends on server grouping.
+        history.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+        hubHistoryCache = history;
+        hubHistoryError = false;
+        renderHistoryHub();
     } catch (e) {
         console.warn("Could not load user history:", e);
+        hubHistoryError = true;
+        renderHistoryHub();
     }
-}
-
-let adminHistFilter = {
-    timeframe: "24h",
-    status: "all",
-    job_type: "all"
-};
-
-function setAdminHistFilter(key, val) {
-    if (key) {
-        adminHistFilter[key] = val;
-    }
-    // Update active state on timeframe chips
-    const chips = document.querySelectorAll('.filter-chip[data-filter-type="timeframe"]');
-    chips.forEach(c => {
-        if (c.getAttribute('data-val') === adminHistFilter.timeframe) {
-            c.classList.add('active');
-        } else {
-            c.classList.remove('active');
-        }
-    });
-
-    const selStatus = document.getElementById("adm-hist-status-sel");
-    if (selStatus && selStatus.value !== adminHistFilter.status) {
-        selStatus.value = adminHistFilter.status;
-    }
-
-    const selType = document.getElementById("adm-hist-type-sel");
-    if (selType && selType.value !== adminHistFilter.job_type) {
-        selType.value = adminHistFilter.job_type;
-    }
-
-    loadAdminHistory();
-}
-
-async function loadAdminHistory() {
-    try {
-        const params = new URLSearchParams({
-            timeframe: adminHistFilter.timeframe || "24h",
-            status: adminHistFilter.status || "all",
-            job_type: adminHistFilter.job_type || "all",
-            limit: "100"
-        });
-        const res = await fetch(`/api/admin/history?${params.toString()}`, {
-            headers: getAuthHeaders(),
-        });
-        if (!res.ok) return;
-
-        const data = await res.json();
-        const elTotal = document.getElementById("adm-hist-total");
-        const elFailed = document.getElementById("adm-hist-failed");
-        const elSuccess = document.getElementById("adm-hist-success");
-        const elRecap = document.getElementById("adm-hist-recap");
-        const elVoice = document.getElementById("adm-hist-voice");
-        const container = document.getElementById("admin-global-history-list");
-
-        if (elTotal) elTotal.innerText = data.total_count ?? (data.history?.length || 0);
-        if (elFailed) elFailed.innerText = data.total_failed || 0;
-        if (elSuccess) elSuccess.innerText = data.total_success || 0;
-        if (elRecap) elRecap.innerText = data.total_recap || 0;
-        if (elVoice) elVoice.innerText = data.total_voice || 0;
-
-        const history = data.history || [];
-        if (container) {
-            if (history.length === 0) {
-                container.innerHTML = `<div class="p-4 text-center text-muted" style="border: 1px dashed rgba(255,255,255,0.1); border-radius: 12px;">
-                    <p style="font-size: 1.1rem; margin-bottom: 4px;">📭 မှတ်တမ်းမရှိပါ</p>
-                    <span class="text-xs">ရွေးချယ်ထားသော Filter နှင့် ကိုက်ညီသည့် အလုပ်မှတ်တမ်း ရှာမတွေ့ပါ။</span>
-                </div>`;
-            } else {
-                container.innerHTML = history.map(j => {
-                    const delivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
-                    const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
-                    const isFailed = (j.status === "FAILED");
-                    const isSuccess = (j.status === "SUCCESS");
-                    const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
-                    const borderCls = isFailed ? 'border-danger-dim' : (isSuccess ? (j.is_expired ? 'border-warning-dim' : 'border-success-dim') : (isRunning ? 'border-running-dim' : ''));
-
-                    return `
-                    <div class="history-item ${borderCls}" id="adm-job-item-${j.id}">
-                        <div class="history-item-header">
-                            <div>
-                                <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">
-                                    ${j.job_type === 'RECAP' ? '🎬 RECAP' : '🎙️ VOICE'}
-                                </span>
-                                <span class="mini-tag" style="margin-left: 4px;">👤 ${escapeHtml(j.username ? '@' + j.username : 'ID: ' + j.user_id)}</span>
-                            </div>
-                            <div>
-                                <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
-                                ${j.is_expired ? `<span class="badge-expired" style="margin-left: 4px;">⌛ သက်တမ်းကုန်</span>` : ''}
-                            </div>
-                        </div>
-                        <div class="history-item-body">
-                            <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
-                            ${j.error_message ? `
-                                <div class="history-error-snippet text-xs text-danger mt-1 p-2 glass-inset" style="border-radius: 8px; word-break: break-all; color: #fca5a5; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25);">
-                                    ⚠️ <strong>Error:</strong> ${escapeHtml(j.error_message.slice(0, 180))}${j.error_message.length > 180 ? '...' : ''}
-                                </div>
-                            ` : ''}
-                            <div id="retry-status-box-${j.id}"></div>
-                        </div>
-                        <div class="history-item-footer">
-                            <span>⏱️ ${j.time_ago} <code style="opacity: 0.7; font-size: 10px;">(${j.id.slice(0,8)})</code></span>
-                            <div class="history-btn-row" id="adm-actions-row-${j.id}">
-                                ${j.is_expired ? `
-                                    <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')" title="ဖိုင်သက်တမ်းကုန်သွားသဖြင့် အသစ်ပြန်လည်ထုတ်ယူမည်">
-                                        🔄 ပြန်ထုတ်မည်
-                                    </button>
-                                ` : (j.download_url ? `
-                                    <button class="btn-play-preview" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${delivStr}', '${titleStr}')">
-                                        ▶️ Preview
-                                    </button>
-                                    <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
-                                ` : '')}
-                                ${isFailed ? `
-                                    <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')" title="Re-queue this failed job">
-                                        🔄 Retry
-                                    </button>
-                                ` : ''}
-                                <button class="btn mini-btn danger-btn" onclick="adminDeleteSingleJob('${j.id}')" title="Delete record and media files">
-                                    🗑️ ဖျက်မည်
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                }).join("");
-            }
-        }
-    } catch (e) {
-        console.warn("Could not load admin history:", e);
-    }
-}
-
-let activeRetryPollers = {};
-
-async function adminRetryJob(jobId) {
-    haptic("medium");
-    const itemEl = document.getElementById(`adm-job-item-${jobId}`);
-    const retryBtn = document.getElementById(`btn-retry-${jobId}`);
-    const statusBox = document.getElementById(`retry-status-box-${jobId}`);
-
-    if (retryBtn) {
-        retryBtn.disabled = true;
-        retryBtn.innerText = "⏳ စတင်နေဆဲ...";
-    }
-    if (itemEl) {
-        itemEl.className = "history-item border-running-dim";
-        const badge = itemEl.querySelector('.history-item-badge[class*="status-"]');
-        if (badge) {
-            badge.className = "history-item-badge status-running";
-            badge.innerText = "QUEUED";
-        }
-    }
-    if (statusBox) {
-        statusBox.innerHTML = `
-            <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
-                ⏳ <strong>Queue ထဲသို့ ထည့်သွင်းပြီး စတင်လုပ်ဆောင်နေပါပြီ...</strong>
-            </div>
-        `;
-    }
-
-    try {
-        const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
-            method: "POST",
-            headers: getAuthHeaders(),
-        });
-        const data = await res.json();
-        if (res.ok) {
-            loadAdminQueue(true);
-            pollAdminJobProgress(jobId);
-        } else {
-            showStudioToast("Retry failed: " + (data.detail || data.message || "Unknown error"), 'error');
-            if (retryBtn) {
-                retryBtn.disabled = false;
-                retryBtn.innerText = "🔄 Retry";
-            }
-        }
-    } catch (e) {
-        showStudioToast("Retry error: " + e.message, 'error');
-        if (retryBtn) {
-            retryBtn.disabled = false;
-            retryBtn.innerText = "🔄 Retry";
-        }
-    }
-}
-
-function pollAdminJobProgress(jobId) {
-    if (activeRetryPollers[jobId]) {
-        clearInterval(activeRetryPollers[jobId]);
-    }
-
-    let pollCount = 0;
-    const maxPolls = 80; // Up to ~3.5 mins
-
-    activeRetryPollers[jobId] = setInterval(async () => {
-        pollCount++;
-        if (pollCount > maxPolls) {
-            clearInterval(activeRetryPollers[jobId]);
-            delete activeRetryPollers[jobId];
-            return;
-        }
-
-        try {
-            const itemEl = document.getElementById(`adm-job-item-${jobId}`);
-            const isRecap = jobId.startsWith("rc_") || (itemEl && itemEl.querySelector('.badge-recap'));
-            const statusUrl = isRecap ? `/api/recap/${jobId}/status` : `/api/jobs/${jobId}/status`;
-
-            const res = await fetch(statusUrl, { headers: getAuthHeaders() });
-            if (!res.ok) return;
-
-            const data = await res.json();
-            const statusBox = document.getElementById(`retry-status-box-${jobId}`);
-            const badge = itemEl ? itemEl.querySelector('.history-item-badge[class*="status-"]') : null;
-            const actionsRow = document.getElementById(`adm-actions-row-${jobId}`);
-            const retryBtn = document.getElementById(`btn-retry-${jobId}`);
-
-            if (data.status === "RUNNING" || data.status === "QUEUED") {
-                if (badge) {
-                    badge.className = "history-item-badge status-running";
-                    badge.innerText = data.status;
-                }
-                if (statusBox) {
-                    let label = data.progress_label || (data.status === "QUEUED" ? "တန်းစီဇယားထဲတွင် စောင့်ဆိုင်းနေပါသည်..." : "လုပ်ဆောင်နေဆဲ...");
-                    if (data.is_waiting_laptop_worker) {
-                        label = "VoxCPM2 Cloud တွင် စောင့်ဆိုင်းနေပါသည်...";
-                    }
-                    const step = data.progress_step ? `[${data.progress_step}] ` : '';
-                    const pct = data.progress_percent || (data.status === "RUNNING" ? 50 : 10);
-                    statusBox.innerHTML = `
-                        <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
-                            ⏳ <strong>${step}${escapeHtml(label)}</strong> (${pct}%)
-                        </div>
-                    `;
-                }
-            } else if (data.status === "SUCCESS") {
-                clearInterval(activeRetryPollers[jobId]);
-                delete activeRetryPollers[jobId];
-
-                if (itemEl) itemEl.className = "history-item border-success-dim";
-                if (badge) {
-                    badge.className = "history-item-badge status-success";
-                    badge.innerText = "SUCCESS";
-                }
-                if (statusBox) {
-                    statusBox.innerHTML = `
-                        <div class="text-xs mt-1 p-2" style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; color: #34d399;">
-                            🎉 <strong>အလုပ်ပြီးမြောက်ပါပြီ! (100%)</strong>
-                        </div>
-                    `;
-                }
-                if (retryBtn) retryBtn.remove();
-                const expiredBadge = itemEl ? itemEl.querySelector('.badge-expired') : null;
-                if (expiredBadge) expiredBadge.remove();
-
-                if (actionsRow && !actionsRow.querySelector('.btn-play-preview')) {
-                    const mediaUrl = isRecap
-                        ? (data.download_urls?.video || `/api/recap/stream/${jobId}/video`)
-                        : (data.output_audio_url || `/api/audio/stream/${jobId}`);
-                    const previewBtn = document.createElement('button');
-                    previewBtn.className = 'btn-play-preview';
-                    previewBtn.innerText = '▶️ Preview';
-                    previewBtn.onclick = () => openAdminMediaModal(
-                        jobId,
-                        isRecap ? 'RECAP' : 'VOICE_CLONE',
-                        mediaUrl,
-                        JSON.stringify(data.download_urls || {}),
-                        `Job #${jobId.slice(0, 8)}`
-                    );
-                    actionsRow.prepend(previewBtn);
-                }
-                // Refresh global history counters
-                setTimeout(loadAdminHistory, 2500);
-            } else if (data.status === "FAILED") {
-                clearInterval(activeRetryPollers[jobId]);
-                delete activeRetryPollers[jobId];
-
-                if (itemEl) itemEl.className = "history-item border-danger-dim";
-                if (badge) {
-                    badge.className = "history-item-badge status-failed";
-                    badge.innerText = "FAILED";
-                }
-                if (statusBox) {
-                    statusBox.innerHTML = `
-                        <div class="text-xs mt-1 p-2" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
-                            ⚠️ <strong>Error:</strong> ${escapeHtml(data.error_message || "Execution failed")}
-                        </div>
-                    `;
-                }
-                if (retryBtn) {
-                    retryBtn.disabled = false;
-                    retryBtn.innerText = "🔄 Retry";
-                }
-            }
-        } catch (pollErr) {
-            console.debug("Admin poller tick error:", pollErr);
-        }
-    }, 2500);
-}
-
-async function adminDeleteSingleJob(jobId) {
-    showStudioConfirm(`ဤအလုပ် (Job: ${jobId.slice(0,8)}) နှင့် သက်ဆိုင်ရာ အသံ/ဗီဒီယို ဖိုင်များကို Database နှင့် Disk မှ လုံးဝ ဖျက်ပစ်မည်မှာ သေချာပါသလား?`, async () => {
-        haptic("heavy");
-        try {
-            const res = await fetch("/api/admin/history/purge", {
-                method: "POST",
-                headers: {
-                    ...getAuthHeaders(),
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    mode: "single",
-                    job_id: jobId,
-                }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                const el = document.getElementById(`adm-job-item-${jobId}`);
-                if (el) el.remove();
-                loadAdminHistory();
-            } else {
-                showStudioToast("Delete failed: " + (data.detail || data.message || "Unknown error"), 'error');
-            }
-        } catch (e) {
-            showStudioToast("Delete error: " + e.message, 'error');
-        }
-    });
-}
-
-async function adminPurgeHistory(mode) {
-    let confirmMsg = "";
-    if (mode === "failed") {
-        confirmMsg = "❌ မအောင်မြင်ဘဲ ရပ်တန့်နေသော Error ဖြစ်ထားသည့် အလုပ်များ (FAILED Jobs) အားလုံးကို ဖိုင်များနှင့်တကွ လုံးဝရှင်းလင်းမည်မှာ သေချာပါသလား?";
-    } else if (mode === "older_24h") {
-        confirmMsg = "⏱️ ၂၄ နာရီကျော်လွန်နေသော အလုပ်များနှင့် ဖိုင်များအားလုံးကို ရှင်းလင်းဖျက်သိမ်းမည်မှာ သေချာပါသလား?";
-    } else if (mode === "matching") {
-        confirmMsg = `🎯 လက်ရှိ Filter သတ်မှတ်ချက် (အချိန်: ${adminHistFilter.timeframe}, အခြေအနေ: ${adminHistFilter.status}, အမျိုးအစား: ${adminHistFilter.job_type}) နှင့် ကိုက်ညီသည့် အလုပ်များအားလုံးကို ရှင်းလင်းမည်မှာ သေချာပါသလား?`;
-    } else {
-        confirmMsg = "အလုပ်မှတ်တမ်းများနှင့် ဖိုင်များကို ရှင်းလင်းမည်မှာ သေချာပါသလား?";
-    }
-
-    showStudioConfirm(confirmMsg, async () => {
-        haptic("heavy");
-        try {
-            const res = await fetch("/api/admin/history/purge", {
-                method: "POST",
-                headers: {
-                    ...getAuthHeaders(),
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    mode: mode,
-                    timeframe: adminHistFilter.timeframe,
-                    status: adminHistFilter.status,
-                    job_type: adminHistFilter.job_type,
-                }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                showStudioToast(`✅ ${data.message || `အောင်မြင်စွာ ရှင်းလင်းပြီးပါပြီ (ဖျက်ပြီးသမျှ: ${data.purged_count})`}`, 'success');
-                loadAdminHistory();
-            } else {
-                showStudioToast("Purge failed: " + (data.detail || data.message || "Unknown error"), 'error');
-            }
-        } catch (e) {
-            showStudioToast("Purge error: " + e.message, 'error');
-        }
-    });
-}
-
-async function adminTriggerPurge24h() {
-    return adminPurgeHistory("older_24h");
 }
 
 async function openRecapInPlayer(recapJobId) {

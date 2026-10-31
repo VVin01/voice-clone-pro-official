@@ -47,14 +47,15 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Error during webapp DB init: %s", e)
 
-    # Initial 24h cleanup on startup
+    # Initial media-retention cleanup on startup (default: purge jobs and
+    # files older than 7 days — see settings.media_retention_days)
     import asyncio
     try:
-        from app.webapp.api import cleanup_expired_jobs_24h
-        await cleanup_expired_jobs_24h()
+        from app.webapp.api import cleanup_expired_jobs
+        await cleanup_expired_jobs()
     except Exception as cl_err:
         import logging
-        logging.getLogger(__name__).warning("Initial 24h cleanup error: %s", cl_err)
+        logging.getLogger(__name__).warning("Initial retention cleanup error: %s", cl_err)
 
     # Recover any orphaned RUNNING recap jobs left behind by previous deploys/restarts
     try:
@@ -80,8 +81,8 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(1800)  # 30 mins
             try:
-                from app.webapp.api import cleanup_expired_jobs_24h
-                await cleanup_expired_jobs_24h()
+                from app.webapp.api import cleanup_expired_jobs
+                await cleanup_expired_jobs()
             except Exception:
                 pass
 
