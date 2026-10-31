@@ -69,13 +69,27 @@ async def run_bot_and_worker(mode: str) -> None:
             await setup_bot_commands(bot)
             dp = Dispatcher()
             setup_handlers(dp)
-            bot_mode = (getattr(settings, "bot_mode", "polling") or "").strip().lower()
+            from app.webapp.telegram_webhook import (
+                attach_bot,
+                clear_webhook_for_polling,
+                register_webhook,
+                resolve_bot_mode,
+            )
+            # Webhook mode is honoured only when it can actually work
+            # (valid secret/URL and the web server runs in this process);
+            # a misconfigured BOT_MODE=webhook falls back to polling
+            # loudly instead of leaving the bot silent.
+            bot_mode = resolve_bot_mode(
+                web_server_in_process=mode in ("all", "web_and_bot", "bot_and_web")
+            )
             if bot_mode == "webhook":
                 logger.info("BOT_MODE=webhook enabled: attaching bot to web service and registering webhook (polling disabled)...")
-                from app.webapp.telegram_webhook import attach_bot, register_webhook
                 attach_bot(bot, dp)
                 await register_webhook(bot, dp)
             else:
+                # Rollback safety: remove a stale webhook left over from a
+                # previous webhook-mode deploy, or polling receives nothing.
+                await clear_webhook_for_polling(bot)
                 logger.info("Starting Telegram bot polling (drop_pending_updates=True)...")
                 bot_task = asyncio.create_task(dp.start_polling(bot, drop_pending_updates=True))
                 tasks.append(bot_task)

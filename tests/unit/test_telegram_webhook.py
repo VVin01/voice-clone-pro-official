@@ -257,7 +257,7 @@ async def test_bot_mode_polling_path_unchanged():
 
 @pytest.mark.asyncio
 async def test_bot_mode_webhook_skips_polling_and_registers_webhook():
-    """Mode switch to webhook: does NOT start polling; registers webhook idempotently."""
+    """Mode switch to webhook (valid config): does NOT start polling; registers webhook."""
     from main import run_bot_and_worker
 
     call_order = []
@@ -272,25 +272,159 @@ async def test_bot_mode_webhook_skips_polling_and_registers_webhook():
         call_order.append("register_webhook")
         return True
 
+    # Real wiring: main.py resolves the effective mode through
+    # telegram_webhook.resolve_bot_mode(), which reads the real settings
+    # object - so the valid webhook configuration is set there (the
+    # fixtures restore every field afterwards). Webhook also requires the
+    # web server in-process, hence mode="web_and_bot" with serve mocked.
+    settings.bot_token = "fake_test_token_123456"
+    settings.bot_mode = "webhook"
+    settings.telegram_webhook_secret = "valid_secret_for_wiring_test"
+    settings.public_base_url = "https://voice-clone-studio.onrender.com"
+
     with patch("main.init_db", AsyncMock()), \
-         patch("main.settings") as mock_settings, \
          patch("main.setup_bot_commands", side_effect=mock_setup_commands), \
          patch("aiogram.Dispatcher.start_polling", side_effect=mock_start_polling), \
          patch("app.webapp.telegram_webhook.register_webhook", side_effect=mock_reg_webhook), \
+         patch("uvicorn.Server.serve", new=AsyncMock(return_value=None)), \
          patch("main.Bot") as mock_bot_cls:
 
-        mock_settings.bot_token = "fake_test_token_123456"
-        mock_settings.log_level = "INFO"
-        mock_settings.bot_mode = "webhook"
         mock_bot_instance = MagicMock()
         mock_bot_instance.session.close = AsyncMock()
         mock_bot_cls.return_value = mock_bot_instance
 
-        await run_bot_and_worker(mode="bot")
+        await run_bot_and_worker(mode="web_and_bot")
 
     # In webhook mode: setup_commands, then register_webhook; start_polling NEVER called
     assert call_order == ["setup_bot_commands", "register_webhook"]
     assert "start_polling" not in call_order
+
+
+@pytest.mark.asyncio
+async def test_webhook_mode_with_missing_secret_falls_back_to_polling():
+    """Wiring: BOT_MODE=webhook without TELEGRAM_WEBHOOK_SECRET falls back to
+    polling via resolve_bot_mode() instead of leaving the bot silent."""
+    from main import run_bot_and_worker
+
+    call_order = []
+
+    async def mock_setup_commands(bot):
+        call_order.append("setup_bot_commands")
+
+    async def mock_start_polling(*args, **kwargs):
+        call_order.append("start_polling")
+
+    mock_register_webhook = AsyncMock()
+
+    settings.bot_token = "fake_test_token_123456"
+    settings.bot_mode = "webhook"
+    settings.telegram_webhook_secret = ""  # missing -> webhook unusable
+    settings.public_base_url = "https://voice-clone-studio.onrender.com"
+
+    with patch("main.init_db", AsyncMock()), \
+         patch("main.setup_bot_commands", side_effect=mock_setup_commands), \
+         patch("aiogram.Dispatcher.start_polling", side_effect=mock_start_polling), \
+         patch("app.webapp.telegram_webhook.register_webhook", mock_register_webhook), \
+         patch("uvicorn.Server.serve", new=AsyncMock(return_value=None)), \
+         patch("main.Bot") as mock_bot_cls:
+
+        mock_bot_instance = MagicMock()
+        mock_bot_instance.session.close = AsyncMock()
+        # No webhook registered: the polling rollback guard is a read-only no-op.
+        mock_bot_instance.get_webhook_info = AsyncMock(return_value=MagicMock(url=""))
+        mock_bot_instance.delete_webhook = AsyncMock()
+        mock_bot_cls.return_value = mock_bot_instance
+
+        await run_bot_and_worker(mode="web_and_bot")
+
+    # Fell back to polling; webhook never registered, nothing deleted
+    assert call_order == ["setup_bot_commands", "start_polling"]
+    assert not mock_register_webhook.called
+    assert not mock_bot_instance.delete_webhook.called
+
+
+@pytest.mark.asyncio
+async def test_webhook_mode_without_web_server_falls_back_to_polling():
+    """Wiring: BOT_MODE=webhook with RUN_MODE=bot (nothing serves the webhook
+    path in this process) falls back to polling via resolve_bot_mode()."""
+    from main import run_bot_and_worker
+
+    call_order = []
+
+    async def mock_setup_commands(bot):
+        call_order.append("setup_bot_commands")
+
+    async def mock_start_polling(*args, **kwargs):
+        call_order.append("start_polling")
+
+    mock_register_webhook = AsyncMock()
+
+    settings.bot_token = "fake_test_token_123456"
+    settings.bot_mode = "webhook"
+    settings.telegram_webhook_secret = "valid_secret_for_wiring_test"
+    settings.public_base_url = "https://voice-clone-studio.onrender.com"
+
+    with patch("main.init_db", AsyncMock()), \
+         patch("main.setup_bot_commands", side_effect=mock_setup_commands), \
+         patch("aiogram.Dispatcher.start_polling", side_effect=mock_start_polling), \
+         patch("app.webapp.telegram_webhook.register_webhook", mock_register_webhook), \
+         patch("main.Bot") as mock_bot_cls:
+
+        mock_bot_instance = MagicMock()
+        mock_bot_instance.session.close = AsyncMock()
+        mock_bot_instance.get_webhook_info = AsyncMock(return_value=MagicMock(url=""))
+        mock_bot_instance.delete_webhook = AsyncMock()
+        mock_bot_cls.return_value = mock_bot_instance
+
+        await run_bot_and_worker(mode="bot")
+
+    assert call_order == ["setup_bot_commands", "start_polling"]
+    assert not mock_register_webhook.called
+
+
+@pytest.mark.asyncio
+async def test_polling_mode_clears_stale_webhook_before_polling():
+    """Wiring: in polling mode a leftover webhook registration is removed
+    (delete_webhook with drop_pending_updates=False) BEFORE polling starts,
+    via clear_webhook_for_polling()."""
+    from main import run_bot_and_worker
+
+    call_order = []
+
+    async def mock_setup_commands(bot):
+        call_order.append("setup_bot_commands")
+
+    async def mock_start_polling(*args, **kwargs):
+        call_order.append("start_polling")
+
+    async def mock_delete_webhook(*args, **kwargs):
+        call_order.append("delete_webhook")
+        return True
+
+    settings.bot_token = "fake_test_token_123456"
+    settings.bot_mode = "polling"
+
+    with patch("main.init_db", AsyncMock()), \
+         patch("main.setup_bot_commands", side_effect=mock_setup_commands), \
+         patch("aiogram.Dispatcher.start_polling", side_effect=mock_start_polling), \
+         patch("main.Bot") as mock_bot_cls:
+
+        mock_bot_instance = MagicMock()
+        mock_bot_instance.session.close = AsyncMock()
+        mock_bot_instance.get_webhook_info = AsyncMock(
+            return_value=MagicMock(
+                url="https://voice-clone-studio.onrender.com/telegram/webhook"
+            )
+        )
+        mock_bot_instance.delete_webhook = AsyncMock(side_effect=mock_delete_webhook)
+        mock_bot_cls.return_value = mock_bot_instance
+
+        await run_bot_and_worker(mode="bot")
+
+    # The stale webhook is deleted before polling starts, keeping pending updates
+    assert call_order == ["setup_bot_commands", "delete_webhook", "start_polling"]
+    delete_kwargs = mock_bot_instance.delete_webhook.call_args.kwargs
+    assert delete_kwargs["drop_pending_updates"] is False
 
 
 @pytest.mark.asyncio
