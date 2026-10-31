@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     worker_token: str = Field(default="", alias="WORKER_TOKEN")
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
+    # Telegram update intake mode & webhook configuration
+    # BOT_MODE: "polling" (default, existing behaviour) or "webhook".
+    # In webhook mode, long polling is disabled and updates arrive via
+    # POST {BOT_WEBHOOK_PATH} on the existing FastAPI Mini App service.
+    bot_mode: str = Field(default="polling", alias="BOT_MODE")
+    telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
+    bot_webhook_path: str = Field(default="/telegram/webhook", alias="BOT_WEBHOOK_PATH")
+    public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
+
     # Membership Gate (Channel and Group)
     required_channel_id: str = Field(default="", alias="REQUIRED_CHANNEL_ID")
     required_group_id: str = Field(default="", alias="REQUIRED_GROUP_ID")
