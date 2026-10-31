@@ -2841,13 +2841,24 @@ async def _run_recap_background_job(
                 pass
 
 
-async def cleanup_expired_jobs_24h() -> int:
+async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
     """
-    Purge jobs and generated media files older than 24 hours to enforce privacy and free disk space.
-    Removes DB records and physical files (recap output dirs, temporary voice clones).
+    Purge jobs and generated media files older than the media retention
+    window (settings.media_retention_days, default 7 days) to free disk
+    space. Removes DB records and physical files (recap output dirs,
+    generated voice clones).
+
+    Ordering is deliberate: the DB record is deleted and committed BEFORE
+    any file is touched. The old sweep removed the files first, so a failed
+    record delete left a SUCCESS job whose media was already gone — the
+    permanent false "Media Expired" state. Now, if the record delete fails,
+    the files stay put and the job keeps working; a failed file removal
+    only leaves an orphan file on disk, never a broken job.
     """
+    days = retention_days if retention_days is not None else _media_retention_days()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     deleted_count = 0
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    file_targets: list[tuple[str, list[Path]]] = []
 
     try:
         from app.db.session import AsyncSessionLocal
@@ -2857,46 +2868,44 @@ async def cleanup_expired_jobs_24h() -> int:
             expired_jobs = res.scalars().all()
 
             for j in expired_jobs:
-                try:
-                    # 1. Clean recap output directory
-                    if j.job_type == JobType.RECAP.value or j.id.startswith("rc_"):
-                        job_dir = settings.storage_root / "recap_output" / j.id
-                        if job_dir.is_dir():
-                            shutil.rmtree(job_dir, ignore_errors=True)
-
-                    # 2. Clean voice clone generated files
-                    if j.result_path and Path(j.result_path).is_file():
-                        try:
-                            Path(j.result_path).unlink(missing_ok=True)
-                        except Exception:
-                            pass
-                    if j.source_audio_path and Path(j.source_audio_path).is_file():
-                        try:
-                            Path(j.source_audio_path).unlink(missing_ok=True)
-                        except Exception:
-                            pass
-
-                    # 3. Clean from memory registry
-                    RECAP_JOBS_REGISTRY.pop(j.id, None)
-
-                    # 4. Delete DB record
-                    await session.delete(j)
-                    deleted_count += 1
-                except Exception as del_err:
-                    logger.warning(f"Error cleaning job {j.id}: {del_err}")
+                # Snapshot every on-disk target BEFORE the record goes away.
+                targets: list[Path] = []
+                if j.job_type == JobType.RECAP.value or j.id.startswith("rc_"):
+                    targets.append(settings.storage_root / "recap_output" / j.id)
+                if j.result_path:
+                    targets.append(Path(j.result_path))
+                if j.source_audio_path:
+                    targets.append(Path(j.source_audio_path))
+                file_targets.append((j.id, targets))
+                await session.delete(j)
+                deleted_count += 1
 
             await session.commit()
-
-            # Clean memory registry keys older than 24h
-            now_ts = time.time()
-            expired_keys = [k for k, v in RECAP_JOBS_REGISTRY.items() if now_ts - v.get("created_at", 0) > 86400]
-            for k in expired_keys:
-                RECAP_JOBS_REGISTRY.pop(k, None)
-
-            if deleted_count > 0:
-                logger.info(f"Auto-cleaned {deleted_count} expired (>24h) jobs and media files.")
     except Exception as e:
-        logger.error(f"Error during 24h cleanup: {e}")
+        logger.error(f"Error during media-retention cleanup (records): {e}")
+        return 0
+
+    # Records are gone; now remove the files (best-effort — a failure here
+    # can only orphan files, it can never break a live job record).
+    for job_id, targets in file_targets:
+        for target in targets:
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                elif target.is_file():
+                    target.unlink(missing_ok=True)
+            except Exception as file_err:
+                logger.warning(f"Error removing media for purged job {job_id}: {file_err}")
+        RECAP_JOBS_REGISTRY.pop(job_id, None)
+
+    # Clean memory registry keys older than the retention window
+    now_ts = time.time()
+    expired_keys = [k for k, v in RECAP_JOBS_REGISTRY.items() if now_ts - v.get("created_at", 0) > days * 86400]
+    for k in expired_keys:
+        RECAP_JOBS_REGISTRY.pop(k, None)
+
+    if deleted_count > 0:
+        logger.info(f"Auto-cleaned {deleted_count} expired (>{days}d) jobs and media files.")
 
     return deleted_count
 
@@ -3151,9 +3160,14 @@ async def get_recap_status(
 
     is_success = (job.status == JobStatus.SUCCESS.value)
     is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
+    # Same single availability check as every other serializer: a SUCCESS
+    # record alone does not make the media downloadable (e.g. after the
+    # retention sweep removed the files).
+    media_available = bool(is_success and check_job_file_exists(job_id, True, job.result_path))
+    is_expired = bool(is_success and not media_available)
     _fb_used, _fb_segs = _recap_fallback_info(settings.storage_root / "recap_output" / job_id)
     # Split parts survive in the job dir even after the registry entry is
-    # gone (24h cleanup window), so rebuild their URLs from disk.
+    # gone (retention window), so rebuild their URLs from disk.
     _db_parts: list = []
     if is_success:
         _parts_dir = settings.storage_root / "recap_output" / job_id / "parts"
@@ -3181,11 +3195,12 @@ async def get_recap_status(
         "segmented": len(_db_parts) >= 2,
         "parts_count": len(_db_parts) or None,
         "credits_charged": None,
+        "is_expired": is_expired,
         "download_urls": {
-            "video": f"/api/recap/download/{job_id}/video" if is_success else None,
-            "audio": f"/api/recap/download/{job_id}/audio" if is_success else None,
-            "srt": f"/api/recap/download/{job_id}/srt" if is_success else None,
-            "script": f"/api/recap/download/{job_id}/script" if is_success else None,
+            "video": f"/api/recap/download/{job_id}/video" if media_available else None,
+            "audio": f"/api/recap/download/{job_id}/audio" if media_available else None,
+            "srt": f"/api/recap/download/{job_id}/srt" if media_available else None,
+            "script": f"/api/recap/download/{job_id}/script" if media_available else None,
             "parts": _db_parts,
         },
     }
@@ -3449,7 +3464,46 @@ async def send_voice_to_telegram(
         await bot.session.close()
 
 
-# ── 5.1. 24-Hour Job History & Lifecycle Management ─────────────────────────
+# ── 5.1. Job History & Media Lifecycle Management ──────────────────────────
+def _media_retention_days() -> int:
+    """Generated-media retention window in days (single source of truth).
+
+    Outputs are stored on the persistent disk and kept for this many days;
+    the sweep, the history window and the user-facing copy all derive from
+    this one value so they can never disagree.
+    """
+    try:
+        days = int(getattr(settings, "media_retention_days", 7) or 7)
+    except Exception:
+        days = 7
+    return max(1, days)
+
+
+def _job_deliverables(job, is_recap: bool, file_exists: bool):
+    """The ONE deliverables builder for every job serializer.
+
+    Returns (download_url, deliverables). Media URLs are handed out only
+    when the job succeeded AND its output file is actually present, so the
+    history list, the admin history, the admin queue and the media modal
+    can never disagree about whether a job's downloads are live.
+    """
+    if getattr(job, "status", None) != JobStatus.SUCCESS.value or not file_exists:
+        return None, {}
+    if is_recap:
+        download_url = f"/api/recap/stream/{job.id}/video"
+        return download_url, {
+            "video": f"/api/recap/stream/{job.id}/video",
+            "audio": f"/api/recap/stream/{job.id}/audio",
+            "srt": f"/api/recap/download/{job.id}/srt",
+            "script": f"/api/recap/download/{job.id}/script",
+        }
+    download_url = f"/api/audio/stream/{job.id}"
+    return download_url, {
+        "audio": f"/api/audio/stream/{job.id}",
+        "download": f"/api/audio/download/{job.id}",
+    }
+
+
 def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str] = None) -> bool:
     """Safely check if the completed job's output media file exists on container disk."""
     try:
@@ -3480,10 +3534,11 @@ async def get_user_history(
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Get user's 24-hour job generation history (both Voice Clone and Recap).
-    Jobs older than 24 hours are automatically purged.
+    Get user's job generation history (both Voice Clone and Recap) within
+    the media retention window (default 7 days). Older jobs are purged by
+    the retention sweep together with their files.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_media_retention_days())
     stmt = (
         select(Job)
         .where(Job.user_id == user.id, Job.created_at >= cutoff)
@@ -3499,36 +3554,23 @@ async def get_user_history(
         mins_ago = int((time.time() - created_ts) // 60)
         time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
 
-        deliverables = {}
-        download_url = None
         is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_"))
 
-        # Verify whether output file actually exists on current container disk
+        # Verify whether the output file actually exists on the persistent
+        # disk — the single availability check every serializer shares.
         file_exists = False
         if j.status == JobStatus.SUCCESS.value:
             file_exists = check_job_file_exists(j.id, is_recap, j.result_path)
         is_expired = bool(j.status == JobStatus.SUCCESS.value and not file_exists)
 
-        if j.status == JobStatus.SUCCESS.value and not is_expired:
-            if is_recap:
-                recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
-                if recap_entry and recap_entry.get("download_urls"):
-                    deliverables = recap_entry["download_urls"]
-                    download_url = deliverables.get("video")
-                else:
-                    download_url = f"/api/recap/stream/{j.id}/video"
-                    deliverables = {
-                        "video": f"/api/recap/stream/{j.id}/video",
-                        "audio": f"/api/recap/stream/{j.id}/audio",
-                        "srt": f"/api/recap/download/{j.id}/srt",
-                        "script": f"/api/recap/download/{j.id}/script",
-                    }
-            else:
-                download_url = f"/api/audio/stream/{j.id}"
-                deliverables = {
-                    "audio": f"/api/audio/stream/{j.id}",
-                    "download": f"/api/audio/download/{j.id}",
-                }
+        download_url, deliverables = _job_deliverables(j, is_recap, file_exists)
+        if is_recap and download_url:
+            # A live registry entry carries the job's own download URLs
+            # (e.g. segmented parts); prefer them when present.
+            recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
+            if recap_entry and recap_entry.get("download_urls"):
+                deliverables = recap_entry["download_urls"]
+                download_url = deliverables.get("video") or download_url
 
         raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
         _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None
@@ -3556,7 +3598,8 @@ async def get_user_history(
         "success": True,
         "count": len(out),
         "history": out,
-        "ttl_hours": 24,
+        "ttl_hours": _media_retention_days() * 24,
+        "retention_days": _media_retention_days(),
     }
 
 
@@ -3566,11 +3609,18 @@ async def get_admin_global_history(
     status: str = "all",
     job_type: str = "all",
     limit: int = 150,
+    user_id: Optional[int] = None,
+    job_id: Optional[str] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
     Admin Only: Filter and view all users' generated jobs with custom timeframe & status filters.
+
+    Optional narrowing (2026-10-31 admin rebuild): ``user_id`` restricts to a
+    single user's jobs (per-user job history) and ``job_id`` matches a job ID
+    prefix (the UI displays short 8-char IDs, so admins can search by those).
+    Both are purely additive filters — existing callers are unaffected.
     """
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -3580,6 +3630,12 @@ async def get_admin_global_history(
         select(Job, User.username, User.first_name)
         .outerjoin(User, Job.user_id == User.id)
     )
+
+    if user_id is not None:
+        stmt = stmt.where(Job.user_id == user_id)
+
+    if job_id and job_id.strip():
+        stmt = stmt.where(Job.id.like(f"{job_id.strip()}%"))
 
     if timeframe == "24h":
         stmt = stmt.where(Job.created_at >= now_utc - timedelta(hours=24))
@@ -3622,29 +3678,14 @@ async def get_admin_global_history(
         mins_ago = int((time.time() - created_ts) // 60)
         time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
 
-        # Verify whether output file actually exists on current container disk
+        # Verify whether the output file actually exists on the persistent
+        # disk — the single availability check every serializer shares.
         file_exists = False
         if job.status == JobStatus.SUCCESS.value:
             file_exists = check_job_file_exists(job.id, is_recap, job.result_path)
         is_expired = bool(job.status == JobStatus.SUCCESS.value and not file_exists)
 
-        deliverables = {}
-        download_url = None
-        if job.status == JobStatus.SUCCESS.value and not is_expired:
-            if is_recap:
-                download_url = f"/api/recap/stream/{job.id}/video"
-                deliverables = {
-                    "video": f"/api/recap/stream/{job.id}/video",
-                    "audio": f"/api/recap/stream/{job.id}/audio",
-                    "srt": f"/api/recap/download/{job.id}/srt",
-                    "script": f"/api/recap/download/{job.id}/script",
-                }
-            else:
-                download_url = f"/api/audio/stream/{job.id}"
-                deliverables = {
-                    "audio": f"/api/audio/stream/{job.id}",
-                    "download": f"/api/audio/download/{job.id}",
-                }
+        download_url, deliverables = _job_deliverables(job, is_recap, file_exists)
 
         raw_snippet = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
         out.append({
@@ -3675,6 +3716,8 @@ async def get_admin_global_history(
         "total_recap": total_recap,
         "timeframe": timeframe,
         "status_filter": status,
+        "user_id_filter": user_id,
+        "job_id_filter": job_id,
         "history": out,
     }
 
@@ -3704,6 +3747,11 @@ async def purge_admin_history(
         stmt = stmt.where(Job.id == req.job_id)
     elif req.mode == "failed":
         stmt = stmt.where(Job.status == JobStatus.FAILED.value)
+    elif req.mode == "older_retention":
+        # Beyond the media retention window (default 7 days) — the same
+        # boundary the automatic sweep uses, so a manual purge can never
+        # wipe media users are still entitled to download.
+        stmt = stmt.where(Job.created_at < now_utc - timedelta(days=_media_retention_days()))
     elif req.mode == "older_24h":
         stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
     elif req.mode == "all_completed":
@@ -3763,17 +3811,6 @@ async def purge_admin_history(
         "purged_count": deleted_count,
         "message": f"မှတ်တမ်းနှင့် ဖိုင်တွဲ {deleted_count} ခုကို အောင်မြင်စွာ ရှင်းလင်းဖျက်သိမ်းပြီးပါပြီ။",
     }
-
-
-@api_router.post("/admin/cleanup-24h")
-async def trigger_admin_cleanup(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session),
-):
-    """Admin Only: Manually purge all expired jobs and disk files older than 24 hours."""
-    if not settings.is_admin(user.id):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return await purge_admin_history(AdminPurgeHistoryRequest(mode="older_24h"), user=user, db=db)
 
 
 # ── 6. VIP Pricing Plans & Payments ────────────────────────────────────────
@@ -4153,8 +4190,6 @@ async def get_admin_overview(
     running_jobs = running_total_res.scalar() or 0
 
 
-    worker_info = await _get_laptop_worker_status(db)
-
     # ── Production ops visibility (2026-10-31) ──────────────────────
     cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
     failed_24h = (await db.execute(
@@ -4230,8 +4265,6 @@ async def get_admin_overview(
         "queued_jobs": queued_jobs,
         "running_jobs": running_jobs,
         "cloud_worker_status": "ONLINE (Render Cloud)",
-        "laptop_worker": worker_info,
-        "laptop_worker_status": f"{worker_info['status_text']} [Engine: {worker_info['engine']}]",
         "failed_jobs_24h": failed_24h,
         "jobs_by_status": jobs_by_status,
         "banned_users": banned_users,
@@ -4303,6 +4336,78 @@ async def search_admin_users(
             "created_at": u.created_at.isoformat() if u.created_at else None,
         })
     return {"users": out, "count": len(out)}
+
+
+async def _admin_user_row(db: AsyncSession, u: User) -> dict:
+    """Canonical admin user payload (same shape as /admin/users/search)."""
+    bal = await db.get(MinuteBalance, u.id)
+    return {
+        "id": u.id,
+        "username": u.username,
+        "first_name": u.first_name,
+        "account_category": u.account_category,
+        "status": u.status,
+        "is_banned": (u.status or "") == UserStatus.BLOCKED.value,
+        "recap_credits": getattr(u, "recap_credits", 0) or 0,
+        "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+@api_router.get("/admin/users")
+async def list_admin_users(
+    limit: int = 30,
+    offset: int = 0,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Most recently joined users (admin only) — the Users screen landing list.
+
+    Search requires a query of 2+ characters; admins also need a way to
+    simply browse who just joined without knowing a name or ID first.
+    """
+    limit = max(1, min(int(limit or 30), 100))
+    offset = max(0, int(offset or 0))
+    rows = (await db.execute(
+        select(User).order_by(User.created_at.desc()).limit(limit).offset(offset)
+    )).scalars().all()
+    out = [await _admin_user_row(db, u) for u in rows]
+    return {"users": out, "count": len(out), "limit": limit, "offset": offset}
+
+
+@api_router.get("/admin/users/{user_id}")
+async def get_admin_user_detail(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Full detail for one user (admin only): profile, balances, job stats.
+
+    Powers the Mini App user-detail screen reached from search results,
+    the recent-users list, job rows and slip rows.
+    """
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    payload = await _admin_user_row(db, target)
+    payload["language_code"] = target.language_code
+
+    async def _count(*conds) -> int:
+        return (await db.execute(
+            select(func.count(Job.id)).where(Job.user_id == user_id, *conds)
+        )).scalar() or 0
+
+    payload["jobs_total"] = await _count()
+    payload["jobs_success"] = await _count(Job.status == JobStatus.SUCCESS.value)
+    payload["jobs_failed"] = await _count(Job.status == JobStatus.FAILED.value)
+    payload["jobs_active"] = await _count(
+        Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value])
+    )
+    last_job_at = (await db.execute(
+        select(func.max(Job.created_at)).where(Job.user_id == user_id)
+    )).scalar()
+    payload["last_job_at"] = last_job_at.isoformat() if last_job_at else None
+    return payload
 
 
 class BanUserRequest(BaseModel):
@@ -4411,30 +4516,17 @@ async def get_admin_queue(
 
         is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_") or j.engine == "recap")
 
-        # Verify whether output file actually exists on current container disk
+        # Verify whether the output file actually exists on the persistent
+        # disk — the single availability check every serializer shares.
+        # (This endpoint previously handed out download URLs for SUCCESS
+        # jobs even when it had just flagged them expired, which is how the
+        # media modal ended up with live buttons for dead files.)
         file_exists = False
         if j.status == JobStatus.SUCCESS.value:
             file_exists = check_job_file_exists(j.id, is_recap, j.result_path)
         is_expired = bool(j.status == JobStatus.SUCCESS.value and not file_exists)
 
-        download_url = None
-        deliverables = {}
-        if is_recap:
-            download_url = f"/api/recap/stream/{j.id}/video" if j.status == JobStatus.SUCCESS.value else None
-            if j.status == JobStatus.SUCCESS.value:
-                deliverables = {
-                    "video": f"/api/recap/stream/{j.id}/video",
-                    "audio": f"/api/recap/stream/{j.id}/audio",
-                    "srt": f"/api/recap/download/{j.id}/srt",
-                    "script": f"/api/recap/download/{j.id}/script",
-                }
-        else:
-            download_url = f"/api/audio/stream/{j.id}" if j.status == JobStatus.SUCCESS.value else None
-            if j.status == JobStatus.SUCCESS.value:
-                deliverables = {
-                    "audio": f"/api/audio/stream/{j.id}",
-                    "download": f"/api/audio/download/{j.id}",
-                }
+        download_url, deliverables = _job_deliverables(j, is_recap, file_exists)
 
         jobs_out.append({
             "id": j.id,
@@ -4673,6 +4765,72 @@ async def update_admin_settings(
             await set_dynamic_setting(db, k, v, admin_id=admin.id)
     await db.commit()
     return {"success": True, "message": "Settings updated successfully!", "updated": updates}
+
+
+@api_router.get("/admin/pricing")
+async def get_admin_pricing(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List editable plan prices (admin only).
+
+    Mirrors the bot's pricing manager exactly: prices live on PricingPlan
+    rows (seeded defaults) and edits go through the same audited service.
+    Catalogue metadata (category/minutes/credits) is attached for display.
+    """
+    from app.services.payments import get_active_pricing_plans, get_plan_by_code
+
+    plans = await get_active_pricing_plans(db)
+    out = []
+    for p in plans:
+        cat = get_plan_by_code(p.code) or {}
+        out.append({
+            "code": p.code,
+            "category": cat.get("category", "voice"),
+            "minutes": p.minutes,
+            "recap_credits": cat.get("recap_credits", 0),
+            "price_mmk": p.price_mmk,
+            "is_active": bool(p.is_active),
+            "sort_order": p.sort_order,
+        })
+    return {"plans": out, "count": len(out)}
+
+
+class AdminPricingUpdateRequest(BaseModel):
+    price_mmk: int
+
+
+@api_router.post("/admin/pricing/{code}")
+async def update_admin_pricing(
+    code: str,
+    req: AdminPricingUpdateRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Update one plan's price (admin only) via the audited pricing service.
+
+    Bounds mirror the bot's price editor: 100 – 10,000,000 MMK.
+    """
+    from app.services.payments import update_pricing_plan_price
+
+    price = int(req.price_mmk or 0)
+    if price < 100 or price > 10_000_000:
+        raise HTTPException(
+            status_code=400,
+            detail="Price must be between 100 and 10,000,000 MMK",
+        )
+    ok, plan, _msg = await update_pricing_plan_price(
+        db, code, price, admin_id=admin.id
+    )
+    if not ok or plan is None:
+        raise HTTPException(status_code=404, detail="Pricing plan not found")
+    await db.commit()
+    return {
+        "success": True,
+        "code": plan.code,
+        "price_mmk": plan.price_mmk,
+        "message": f"Price updated: {plan.code} = {plan.price_mmk:,} MMK",
+    }
 
 
 @api_router.get("/admin/pending-slips")

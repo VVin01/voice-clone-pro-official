@@ -130,7 +130,6 @@
                             <p class="ref-desc" data-i18n="custom_ref_desc">မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။</p>
                             <div class="ref-upload-row">
                                 <label class="btn-file-upload" for="ref-audio-input">
-                                    <span class="upload-icon">📁</span>
                                     <span id="ref-audio-label" data-i18n="ref_file_btn">Reference Audio ဖိုင် ရွေးချယ်မည်</span>
                                 </label>
                                 <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
@@ -171,11 +170,9 @@
                     </div>
                     <div id="voice-preflight" class="voice-preflight" aria-live="polite"></div>
                     <button class="btn gold-gradient-btn" id="btn-generate-voice">
-                        <span class="btn-icon">🚀</span>
                         <span class="btn-text" data-i18n="btn_generate">အသံ စတင်ထုတ်ယူမည်</span>
                     </button>
                     <div class="queue-notice-banner" id="voice-queue-notice">
-                        <span class="notice-icon">⚡</span>
                         <span class="notice-text" data-i18n="queue_notice_voxcpm">⚡ ပုံမှန်ခန့်မှန်းကြာချိန်: ၅-၁၅ စက္ကန့် • Live Cloud AI စနစ်</span>
                     </div>
                 </div>
@@ -207,17 +204,10 @@
                     </div>
                 </div>
 
-                <!-- 24-Hour User Voice History -->
-                <div class="card glass mt-4" id="voice-history-card">
-                    <div class="card-header-row">
-                        <div class="card-label" data-i18n="history_voice_title">🕒 ၂၄ နာရီအတွင်း Voice ဖန်တီးမှုများ</div>
-                        <button class="mini-chip" onclick="loadUserHistory()">🔄 Refresh</button>
-                    </div>
-                    <p class="history-expiry-note" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအတွင်းသာ သိမ်းဆည်းထားပြီးနောက် အလိုအလျောက် ပယ်ဖျက်ပါမည်</p>
-                    <div id="voice-user-history-list" class="history-list-container mt-2">
-                        <p class="text-muted" data-i18n="history_empty">လတ်တလော ၂၄ နာရီအတွင်း ဖန်တီးထားသော ဖိုင် မရှိသေးပါ</p>
-                    </div>
-                </div>
+                <!-- History now lives in the dedicated History tab -->
+                <button type="button" class="hub-link mt-4" onclick="openHistoryHub()">
+                    <span data-i18n="history_view_all">မှတ်တမ်း အကုန် ကြည့်ရန်</span><span class="hub-link-arrow">→</span>
+                </button>
             </section>
 
             <!-- ════ TAB 2: AI RECAP STUDIO ════ -->
@@ -506,17 +496,14 @@
                                         <!-- Overlay Toggles -->
                                         <div class="overlays-toggle-row">
                                             <button class="mini-toggle active" id="btn-toggle-subs">
-                                                <span class="t-icon">📝</span>
                                                 <span class="t-lbl" data-i18n="recap_burn_subs_label">စာတန်းထိုး:</span>
                                                 <span class="t-val" data-i18n="toggle_on">ON ✅</span>
                                             </button>
                                             <button class="mini-toggle active" id="btn-toggle-blur">
-                                                <span class="t-icon">🌫️</span>
                                                 <span class="t-lbl" data-i18n="recap_blur_subs_label">Blur Box:</span>
                                                 <span class="t-val" data-i18n="toggle_on">ON ✅</span>
                                             </button>
                                             <button class="mini-toggle active" id="btn-toggle-logo">
-                                                <span class="t-icon">⭐</span>
                                                 <span class="t-lbl" data-i18n="recap_logo_toggle_label">Logo:</span>
                                                 <span class="t-val" data-i18n="toggle_on">ON ✅</span>
                                             </button>
@@ -821,7 +808,6 @@
                     <div class="recap-action-cta-wrap mt-3">
                         <p class="rights-note mt-2" data-i18n="recap_rights_note" style="font-size:12px; opacity:0.85; text-align:left;">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ ဒီ App က အသံ အသစ်၊ ဘာသာပြန် Script နှင့် ပုံစံပြောင်း Render ဖြင့် ဗီဒီယိုကို ပြောင်းလဲပေးပါသည် — သို့သော် မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
                         <button class="btn gold-gradient-btn massive-btn" id="btn-start-recap">
-    <span class="btn-icon">⚡</span>
     <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Pro Recap ဖန်တီးမည် (1 Credit)</span>
 </button>
                     </div>
@@ -890,17 +876,14 @@
                     <div class="carousel-track" id="carousel-track">
                         <!-- Slide 0: High-Speed Studio -->
                         <div class="carousel-slide active" data-slide="0">
-                            <span class="slide-icon">⚡</span>
                             <span class="slide-text" data-i18n="queue_notice_recap">⚡ High-Speed Studio: Shorts (၁-၃ မိနစ်) ~ ၁.၅ မိနစ် • Cinema (၅-၁၀ မိနစ်) ~ ၃-၄ မိနစ် (Groq Whisper Turbo + 1080p Cinema Compositing)</span>
                         </div>
                         <!-- Slide 1: Telegram Background Delivery -->
                         <div class="carousel-slide" data-slide="1">
-                            <span class="slide-icon">✨</span>
                             <span class="slide-text" data-i18n="telegram_bg_assurance">✨ ဖုန်း Screen ရှေ့တွင် စောင့်မနေပါနှင့် — Cloud AI Render ပြီးစီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ဆောင်ပေးပါမည်။</span>
                         </div>
                         <!-- Slide 2: Tier Limit & Watermark Policy -->
                         <div class="carousel-slide" data-slide="2" id="recap-limit-pill">
-                            <span class="slide-icon">⏱️</span>
                             <span class="slide-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP: ၁၀ မိနစ်အထိ (No Watermark)</span>
                         </div>
                     </div>
@@ -916,17 +899,10 @@
                 </div>
 
 
-                <!-- 24-Hour User Recap History -->
-                <div class="card glass mt-4" id="recap-history-card">
-                    <div class="card-header-row">
-                        <div class="card-label" data-i18n="history_recap_title">🕒 ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ</div>
-                        <button class="mini-chip" onclick="loadUserHistory()">🔄 Refresh</button>
-                    </div>
-                    <p class="history-expiry-note" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအတွင်းသာ သိမ်းဆည်းထားပြီးနောက် အလိုအလျောက် ပယ်ဖျက်ပါမည်</p>
-                    <div id="recap-user-history-list" class="history-list-container mt-2">
-                        <p class="text-muted" data-i18n="history_empty">လတ်တလော ၂၄ နာရီအတွင်း ဖန်တီးထားသော ဖိုင် မရှိသေးပါ</p>
-                    </div>
-                </div>
+                <!-- History now lives in the dedicated History tab -->
+                <button type="button" class="hub-link mt-4" onclick="openHistoryHub()">
+                    <span data-i18n="history_view_all">မှတ်တမ်း အကုန် ကြည့်ရန်</span><span class="hub-link-arrow">→</span>
+                </button>
             </section>
 
             <!-- ════ TAB 3: DOWNLOADER ════ -->
@@ -1180,453 +1156,521 @@
                 </div>
             </section>
 
-            <!-- ════ TAB 5: ADMIN CONSOLE (Role-Gated) ════ -->
+            <!-- ════ TAB 5: HISTORY HUB (all creations in one place) ════ -->
+            <section id="tab-history" class="tab-pane">
+                <div class="pane-header">
+                    <h2 data-i18n="history_title">📜 မှတ်တမ်း</h2>
+                    <p data-i18n="history_subtitle">သင် ဖန်တီးထားသော Voice နှင့် Recap အလုပ်များ အားလုံး တစ်နေရာတည်းတွင်</p>
+                </div>
+
+                <div class="hub-filter-row" role="tablist" aria-label="History filter">
+                    <button type="button" class="filter-chip hub-filter-chip active" data-hub-filter="all" onclick="setHubHistoryFilter('all')"><span data-i18n="history_filter_all">အားလုံး</span></button>
+                    <button type="button" class="filter-chip hub-filter-chip" data-hub-filter="VOICE_CLONE" onclick="setHubHistoryFilter('VOICE_CLONE')"><span data-i18n="history_filter_voice">🎙️ အသံ</span></button>
+                    <button type="button" class="filter-chip hub-filter-chip" data-hub-filter="RECAP" onclick="setHubHistoryFilter('RECAP')"><span data-i18n="history_filter_recap">🎬 Recap</span></button>
+                    <button type="button" class="mini-chip hub-refresh-chip" onclick="loadUserHistory()" title="Refresh" aria-label="Refresh">🔄</button>
+                </div>
+
+                <p class="history-expiry-note mt-2" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၇ ရက်အထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
+
+                <div id="hub-history-list" class="hub-history-list mt-3">
+                    <p class="text-muted" data-i18n="history_loading">မှတ်တမ်း ရယူနေပါတယ်…</p>
+                </div>
+            </section>
+
+            <!-- ════ TAB 6: ADMIN CONSOLE (Role-Gated) — rebuilt 2026-10-31 ════ -->
+
             <section id="tab-admin" class="tab-pane hidden">
                 <div class="pane-header">
                     <div class="pane-title-row">
-                        <h2 data-i18n="admin_title">⚡ Executive Control Center</h2>
+                        <h2 data-i18n="admin_title">🛡️ Admin Console</h2>
                         <span class="badge-studio gold">ADMIN</span>
                     </div>
-                    <p data-i18n="admin_subtitle">စနစ်ကြီးကြပ်မှု၊ ငွေလွှဲပြေစာ စစ်ဆေးခြင်းနှင့် အသုံးပြုသူများ စီမံခန့်ခွဲမှု</p>
+                    <p data-i18n="admin_subtitle">စနစ် အခြေအနေ၊ ပြေစာ စစ်ဆေးမှုနှင့် အသုံးပြုသူ စီမံခန့်ခွဲမှု</p>
                 </div>
 
-                <!-- Admin Statistics Grid -->
-                <div class="admin-stats-grid">
-                    <div class="card glass stat-mini-card">
-                        <span class="stat-lbl" data-i18n="admin_stat_users">အသုံးပြုသူ စုစုပေါင်း</span>
-                        <span class="stat-num" id="adm-total-users">0</span>
-                    </div>
-                    <div class="card glass stat-mini-card">
-                        <span class="stat-lbl" data-i18n="admin_stat_vip">VIP အသင်းဝင်များ</span>
-                        <span class="stat-num text-gold" id="adm-vip-users">0</span>
-                    </div>
-                    <div class="card glass stat-mini-card">
-                        <span class="stat-lbl" data-i18n="admin_stat_slips">စစ်ဆေးရန် ပြေစာများ</span>
-                        <span class="stat-num text-danger" id="adm-pending-slips">0</span>
-                    </div>
-                    <div class="card glass stat-mini-card">
-                        <span class="stat-lbl" data-i18n="admin_stat_queue">Queue ရှိ အလုပ်များ</span>
-                        <span class="stat-num" id="adm-queued-jobs">0</span>
-                    </div>
+                <!-- Admin sub-navigation: one topic per screen -->
+                <div class="adm-nav" id="adm-nav" role="tablist">
+                    <button type="button" class="adm-nav-btn active" data-adm-section="overview" onclick="showAdminSection('overview')"><span data-i18n="adm_nav_overview">ခြုံငုံ</span></button>
+                    <button type="button" class="adm-nav-btn" data-adm-section="payments" onclick="showAdminSection('payments')"><span data-i18n="adm_nav_payments">ပြေစာ</span><span class="adm-nav-badge hidden" id="adm-nav-slips-badge">0</span></button>
+                    <button type="button" class="adm-nav-btn" data-adm-section="jobs" onclick="showAdminSection('jobs')"><span data-i18n="adm_nav_jobs">အလုပ်များ</span></button>
+                    <button type="button" class="adm-nav-btn" data-adm-section="users" onclick="showAdminSection('users')"><span data-i18n="adm_nav_users">အသုံးပြုသူ</span></button>
+                    <button type="button" class="adm-nav-btn" data-adm-section="broadcast" onclick="showAdminSection('broadcast')"><span data-i18n="adm_nav_broadcast">Broadcast</span></button>
+                    <button type="button" class="adm-nav-btn" data-adm-section="activity" onclick="showAdminSection('activity')"><span data-i18n="adm_nav_activity">မှတ်တမ်း</span></button>
+                    <button type="button" class="adm-nav-btn" data-adm-section="settings" onclick="showAdminSection('settings')"><span data-i18n="adm_nav_settings">ဆက်တင်</span></button>
                 </div>
 
-                <!-- Production Ops Health (2026-10-31) -->
-                <div class="card glass mt-3" id="admin-ops-card">
-                    <div class="card-label" data-i18n="admin_ops_header">🩺 စနစ် အခြေအနေ (Ops)</div>
-                    <div class="admin-stats-grid mt-2">
+                <!-- ── SCREEN: Overview ─────────────────────────────── -->
+                <div class="adm-screen" id="adm-screen-overview">
+                    <div class="admin-stats-grid">
                         <div class="card glass stat-mini-card">
-                            <span class="stat-lbl" data-i18n="admin_stat_failed24">၂၄ နာရီအတွင်း ပျက်တဲ့ အလုပ်</span>
-                            <span class="stat-num text-danger" id="adm-failed-24h">0</span>
+                            <span class="stat-lbl" data-i18n="admin_stat_users">အသုံးပြုသူ စုစုပေါင်း</span>
+                            <span class="stat-num" id="adm-total-users">0</span>
                         </div>
                         <div class="card glass stat-mini-card">
-                            <span class="stat-lbl" data-i18n="admin_stat_banned">ပိတ်ထားသော အကောင့်</span>
-                            <span class="stat-num" id="adm-banned-users">0</span>
+                            <span class="stat-lbl" data-i18n="admin_stat_vip">VIP အဖွဲ့ဝင်များ</span>
+                            <span class="stat-num text-gold" id="adm-vip-users">0</span>
                         </div>
-                        <div class="card glass stat-mini-card">
-                            <span class="stat-lbl" data-i18n="admin_stat_new24">၂၄ နာရီအတွင်း အသစ်</span>
-                            <span class="stat-num" id="adm-new-24h">0</span>
+                        <div class="card glass stat-mini-card adm-tap" onclick="showAdminSection('payments')">
+                            <span class="stat-lbl" data-i18n="admin_stat_slips">စစ်ဆေးရန် ပြေစာများ</span>
+                            <span class="stat-num text-danger" id="adm-pending-slips">0</span>
                         </div>
-                        <div class="card glass stat-mini-card">
-                            <span class="stat-lbl" data-i18n="admin_stat_storage">DB / Storage</span>
-                            <span class="stat-num" id="adm-storage-size" style="font-size:15px;">—</span>
-                        </div>
-                    </div>
-                    <div class="card-label mt-3" style="font-size:13px;" data-i18n="admin_recent_actions">🕘 Admin လုပ်ဆောင်ချက် နောက်ဆုံးများ</div>
-                    <div id="admin-recent-actions" class="mt-2">
-                        <p class="text-muted">—</p>
-                    </div>
-                </div>
-
-                <!-- ⚡ Live Processing Queue & Jobs Inspector ⚡ -->
-                <div class="card glass mt-3" id="admin-queue-card">
-                    <div class="card-header-row">
-                        <div class="card-label-col">
-                            <div class="card-label" data-i18n="admin_queue_header">⚡ Live Processing Queue & Jobs Inspector</div>
-                        </div>
-                        <div class="queue-header-actions">
-                            <button class="mini-chip" id="adm-queue-refresh-btn" onclick="loadAdminQueue()">🔄 Refresh</button>
+                        <div class="card glass stat-mini-card adm-tap" onclick="showAdminSection('jobs')">
+                            <span class="stat-lbl" data-i18n="admin_stat_queue">Queue ရှိ အလုပ်များ</span>
+                            <span class="stat-num" id="adm-queued-jobs">0</span>
                         </div>
                     </div>
 
-                    <!-- Queue Filters: one compact row — scrollable status strip + engine select -->
-                    <div class="queue-filter-bar mt-2">
-                        <div class="filter-scroll-strip" id="queue-status-filters">
-                            <button type="button" class="filter-pill active" data-status="all" onclick="setQueueStatusFilter('all')">
-                                <span data-i18n="filter_all">All</span> <span class="pill-badge" id="cnt-total">0</span>
-                            </button>
-                            <button type="button" class="filter-pill" data-status="queued" onclick="setQueueStatusFilter('queued')">
-                                <span data-i18n="filter_queued">⏳ Queued</span> <span class="pill-badge text-gold" id="cnt-queued">0</span>
-                            </button>
-                            <button type="button" class="filter-pill" data-status="running" onclick="setQueueStatusFilter('running')">
-                                <span data-i18n="filter_running">⚡ Running</span> <span class="pill-badge text-cyan" id="cnt-running">0</span>
-                            </button>
-                            <button type="button" class="filter-pill" data-status="success" onclick="setQueueStatusFilter('success')">
-                                <span data-i18n="filter_success">✅ Success</span> <span class="pill-badge" id="cnt-success">0</span>
-                            </button>
-                            <button type="button" class="filter-pill" data-status="failed" onclick="setQueueStatusFilter('failed')">
-                                <span data-i18n="filter_failed">❌ Failed</span> <span class="pill-badge text-danger" id="cnt-failed">0</span>
-                            </button>
+                    <div class="card glass mt-3" id="admin-ops-card">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="admin_ops_header">🩺 စနစ် အခြေအနေ</div>
+                            <button class="mini-chip" onclick="loadAdminData()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
                         </div>
-
-                        <select class="queue-engine-select" id="queue-engine-select" onchange="setQueueEngineFilter(this.value)" aria-label="Engine filter">
-                            <option value="all">All Engines</option>
-                            <option value="voxcpm">☁️ VoxCPM AI</option>
-                            <option value="recap">🎬 Movie Recap</option>
-                        </select>
+                        <div class="admin-stats-grid mt-2">
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_stat_failed24">၂၄ နာရီအတွင်း ပျက်သော အလုပ်</span>
+                                <span class="stat-num text-danger" id="adm-failed-24h">0</span>
+                            </div>
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_stat_banned">ပိတ်ထားသော အကောင့်</span>
+                                <span class="stat-num" id="adm-banned-users">0</span>
+                            </div>
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_stat_new24">၂၄ နာရီအတွင်း အသစ်</span>
+                                <span class="stat-num" id="adm-new-24h">0</span>
+                            </div>
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_stat_storage">DB / Storage</span>
+                                <span class="stat-num" id="adm-storage-size" style="font-size:15px;">—</span>
+                            </div>
+                        </div>
+                        <div class="adm-status-chips mt-2" id="adm-jobs-by-status"></div>
+                        <p class="text-muted text-xs mt-2" id="adm-worker-line">—</p>
                     </div>
 
-                    <!-- Active Queue Status Banner (Idle / Running / Queued) -->
-                    <div id="admin-queue-status-banner" class="mt-2"></div>
-
-                    <!-- Live Queue List Container -->
-                    <div id="admin-queue-list" class="admin-queue-container mt-2">
-                        <p class="text-muted" data-i18n="admin_queue_loading">Loading live queue...</p>
-                    </div>
-                </div>
-
-
-                <!-- Quick User Manager -->
-
-                <div class="card glass mt-3">
-                    <div class="card-label" data-i18n="admin_user_manage_header">👤 အသုံးပြုသူ ရှာဖွေ ပြင်ဆင်ခြင်း</div>
-                    <div class="admin-user-inputs mt-2">
-                        <div class="admin-action-row">
-                            <input type="text" id="adm-user-search-q" data-i18n-ph="admin_user_search_ph" placeholder="ID / @username / နာမည် ရိုက်ရှာပါ" class="studio-input" style="flex:1;">
-                            <button class="btn mini-btn secondary-btn" onclick="adminSearchUsers()" data-i18n="btn_search_users">🔎 ရှာမည်</button>
+                    <div class="card glass mt-3">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="admin_recent_actions">🕘 Admin လုပ်ဆောင်ချက် နောက်ဆုံးများ</div>
+                            <button class="mini-chip" onclick="showAdminSection('activity')"><span data-i18n="admin_view_all">အားလုံး ကြည့်မည်</span> ›</button>
                         </div>
-                        <div id="admin-user-search-results" class="mt-2"></div>
-                        <input type="number" id="adm-target-user-id" data-i18n-ph="admin_user_id_ph" placeholder="Telegram ID (ဥပမာ: 1957002115)" class="studio-input mt-2">
-                        <input type="text" id="adm-adjust-reason" data-i18n-ph="admin_adjust_reason_ph" placeholder="အကြောင်းပြချက် (ပြင်ဆင်/Ban လုပ်ရင် မဖြစ်မနေ လိုပါတယ်)" class="studio-input mt-2">
-                        <div class="admin-action-row mt-2">
-                            <button class="btn mini-btn gold-btn" onclick="adminGrantVip()" data-i18n="btn_grant_vip">👑 VIP သို့ တင်မည်</button>
-                            <button class="btn mini-btn secondary-btn" onclick="adminAddMinutes()" data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</button>
-                            <button class="btn mini-btn cyan-btn" onclick="adminAddRecapCredits()" data-i18n="btn_add_recap_credit">🎬 +10 Recap Credit</button>
-                        </div>
-                        <div class="admin-action-row mt-2">
-                            <button class="btn mini-btn" style="background:#dc2626;color:#fff;" onclick="adminBanTarget()" data-i18n="btn_ban_user">🚫 Ban လုပ်မည်</button>
-                            <button class="btn mini-btn secondary-btn" onclick="adminUnbanTarget()" data-i18n="btn_unban_user">✅ Ban ပြန်ဖြုတ်မည်</button>
+                        <div id="admin-recent-actions" class="mt-2">
+                            <p class="text-muted">—</p>
                         </div>
                     </div>
                 </div>
 
-                <!-- Pending Payment Slips Management -->
-                <div class="card glass mt-3">
-                    <div class="card-header-row">
-                        <div class="card-label" data-i18n="admin_slips_header">📋 စစ်ဆေးရန် စောင့်ဆိုင်းနေသော ငွေလွှဲပြေစာများ</div>
-                        <button class="mini-chip" onclick="loadAdminData()">🔄 Refresh</button>
-                    </div>
-                    <div id="admin-slips-list" class="mt-2">
-                        <p class="text-muted" data-i18n="admin_no_slips">စစ်ဆေးရန် ပြေစာ မရှိသေးပါ</p>
+                <!-- ── SCREEN: Payments ─────────────────────────────── -->
+                <div class="adm-screen hidden" id="adm-screen-payments">
+                    <div class="card glass">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="admin_slips_header">📋 စစ်ဆေးရန် ပြေစာများ</div>
+                            <button class="mini-chip" onclick="loadAdminData()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                        </div>
+                        <div id="admin-slips-list" class="mt-2">
+                            <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                        </div>
                     </div>
                 </div>
 
-                <!-- ⚙️ Platform Dynamic Settings Manager ⚙️ -->
+                <!-- ── SCREEN: Jobs ─────────────────────────────────── -->
+                <div class="adm-screen hidden" id="adm-screen-jobs">
+                    <div class="adm-seg" role="tablist">
+                        <button type="button" class="adm-seg-btn active" id="adm-jobs-tab-live" onclick="showAdminJobsTab('live')"><span data-i18n="adm_jobs_live">Live Queue</span></button>
+                        <button type="button" class="adm-seg-btn" id="adm-jobs-tab-history" onclick="showAdminJobsTab('history')"><span data-i18n="adm_jobs_history">မှတ်တမ်း</span></button>
+                    </div>
 
-                <div class="advanced-studio-accordion mt-3" id="admin-settings-card">
-                                    <button type="button" class="advanced-accordion-header" onclick="toggleSectionAccordion(this)">
-                                        <div class="accordion-header-left">
-                                            <div class="accordion-title-wrap">
-                                                <span class="accordion-title" data-i18n="admin_settings_header">⚙️ Dynamic Platform Settings</span>
-                                            </div>
-                                        </div>
-                                        <span class="accordion-chevron">▼</span>
+                    <!-- Live queue -->
+                    <div id="adm-jobs-live">
+                        <div class="card glass mt-3" id="admin-queue-card">
+                            <div class="card-header-row">
+                                <div class="card-label" data-i18n="admin_queue_header">⚡ Live Queue</div>
+                                <button class="mini-chip" id="adm-queue-refresh-btn" onclick="loadAdminQueue()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                            </div>
+                            <div class="queue-filter-bar mt-2">
+                                <div class="filter-scroll-strip" id="queue-status-filters">
+                                    <button type="button" class="filter-pill active" data-status="all" onclick="setQueueStatusFilter('all')">
+                                        <span data-i18n="filter_all">All</span> <span class="pill-badge" id="cnt-total">0</span>
                                     </button>
-                                    <div class="advanced-accordion-body hidden">
-                                        <div class="accordion-refresh-row">
-                                            <button class="mini-chip" onclick="loadAdminSettings()">🔄 Refresh</button>
-                                        </div>
-                                            <div class="admin-settings-form mt-2">
-                                                <div class="form-row-2">
-                                                    <div>
-                                                        <label class="input-label" data-i18n="settings_kpay_num">KBZPay Phone Number</label>
-                                                        <input type="text" id="adm-set-kpay-num" class="studio-input" placeholder="09790760003">
-                                                    </div>
-                                                    <div>
-                                                        <label class="input-label" data-i18n="settings_kpay_name">KBZPay Account Name</label>
-                                                        <input type="text" id="adm-set-kpay-name" class="studio-input" placeholder="Win Kyaw Oo">
-                                                    </div>
-                                                </div>
-                                                <div class="form-row-2 mt-2">
-                                                    <div>
-                                                        <label class="input-label" data-i18n="settings_wave_num">WavePay Phone Number</label>
-                                                        <input type="text" id="adm-set-wave-num" class="studio-input" placeholder="09790760003">
-                                                    </div>
-                                                    <div>
-                                                        <label class="input-label" data-i18n="settings_wave_name">WavePay Account Name</label>
-                                                        <input type="text" id="adm-set-wave-name" class="studio-input" placeholder="Win Kyaw Oo">
-                                                    </div>
-                                                </div>
-
-                                                <div class="form-row-2 mt-2">
-                                                    <div>
-                                                        <label class="input-label" data-i18n="settings_tutorial_link">Default Tutorial Fallback Link</label>
-                                                        <input type="text" id="adm-set-tutorial-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/16">
-                                                    </div>
-                                                    <div class="toggle-control-col">
-                                                        <label class="input-label" data-i18n="settings_maintenance">Maintenance Mode</label>
-                                                        <label class="switch-luxury">
-                                                            <input type="checkbox" id="adm-set-maintenance">
-                                                            <span class="slider round"></span>
-                                                        </label>
-                                                    </div>
-                                                </div>
-                                                <button class="btn gold-gradient-btn mt-3" onclick="saveAdminSettings()">
-                                                    <span class="btn-icon">💾</span>
-                                                    <span data-i18n="btn_save_settings">Save Platform Settings</span>
-                                                </button>
-                                            </div>
-                                    </div>
-                                </div>
-
-                <div class="advanced-studio-accordion mt-3" id="admin-tutorials-accordion">
-                                    <button type="button" class="advanced-accordion-header" onclick="toggleSectionAccordion(this)">
-                                        <div class="accordion-header-left">
-                                            <div class="accordion-title-wrap">
-                                                <span class="accordion-title">📚 Tutorial Guide Video Controls</span>
-                                            </div>
-                                            <span class="badge-mini-gold">Voice &amp; Recap</span>
-                                        </div>
-                                        <span class="accordion-chevron">▼</span>
+                                    <button type="button" class="filter-pill" data-status="queued" onclick="setQueueStatusFilter('queued')">
+                                        <span data-i18n="filter_queued">⏳ Queued</span> <span class="pill-badge text-gold" id="cnt-queued">0</span>
                                     </button>
-                                    <div class="advanced-accordion-body hidden">
-                                        <div class="tutorial-admin-section mt-3">
-                                            <p class="text-xs text-muted mb-2">ဗီဒီယို အဆင်သင့်မဖြစ်သေးပါက ခလုတ်ကို ပိတ်ထားနိုင်ပြီး၊ အဆင်သင့်ဖြစ်ပါက ဖွင့်၍ Link ထည့်သွင်းနိုင်ပါသည်</p>
-
-                                            <!-- 1. Voice Clone Tutorial Box -->
-                                            <div class="admin-tut-box glass-inset mb-2">
-                                                <div class="tut-box-header">
-                                                    <span class="tut-box-title">🎙️ Voice Clone Tutorial</span>
-                                                    <label class="switch-luxury">
-                                                        <input type="checkbox" id="adm-tut-voice-enabled" checked>
-                                                        <span class="slider round"></span>
-                                                    </label>
-                                                </div>
-                                                <div class="form-row-2 mt-1">
-                                                    <div>
-                                                        <label class="input-label text-xs">Label (ခေါင်းစဉ်)</label>
-                                                        <input type="text" id="adm-tut-voice-title" class="studio-input" placeholder="Voice Clone ပြုလုပ်နည်း လမ်းညွှန်">
-                                                    </div>
-                                                    <div>
-                                                        <label class="input-label text-xs">Video Link (URL)</label>
-                                                        <input type="text" id="adm-tut-voice-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/16">
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <!-- 2. Movie Recap Tutorial Box -->
-                                            <div class="admin-tut-box glass-inset mb-2">
-                                                <div class="tut-box-header">
-                                                    <span class="tut-box-title">🎬 Movie Recap Tutorial</span>
-                                                    <label class="switch-luxury">
-                                                        <input type="checkbox" id="adm-tut-recap-enabled" checked>
-                                                        <span class="slider round"></span>
-                                                    </label>
-                                                </div>
-                                                <div class="form-row-2 mt-1">
-                                                    <div>
-                                                        <label class="input-label text-xs">Label (ခေါင်းစဉ်)</label>
-                                                        <input type="text" id="adm-tut-recap-title" class="studio-input" placeholder="Movie Recap ပြုလုပ်နည်း လမ်းညွှန်">
-                                                    </div>
-                                                    <div>
-                                                        <label class="input-label text-xs">Video Link (URL)</label>
-                                                        <input type="text" id="adm-tut-recap-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/16">
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                <!-- 🤖 Gemini Model Chain Configuration Card -->
-
-                <div class="advanced-studio-accordion mt-3" id="admin-gemini-models-card">
-                                    <button type="button" class="advanced-accordion-header" onclick="toggleSectionAccordion(this)">
-                                        <div class="accordion-header-left">
-                                            <div class="accordion-title-wrap">
-                                                <span class="accordion-title">🤖 Gemini AI Model Chain (မော်ဒယ် ဦးစားပေး အဆင့်ဆင့်)</span>
-                                            </div>
-                                            <span class="badge-studio gold">AI PIPELINE</span>
-                                        </div>
-                                        <span class="accordion-chevron">▼</span>
+                                    <button type="button" class="filter-pill" data-status="running" onclick="setQueueStatusFilter('running')">
+                                        <span data-i18n="filter_running">⚡ Running</span> <span class="pill-badge text-cyan" id="cnt-running">0</span>
                                     </button>
-                                    <div class="advanced-accordion-body hidden">
-                                            <p class="text-xs text-muted mb-3">
-                                                Gemini API အတွက် မူလမော်ဒယ် (Primary) နှင့် အရန်မော်ဒယ်များ (Fallback 1, 2, 3) ကို ဦးစားပေး အစဉ်အတိုင်း သတ်မှတ်နိုင်ပါသည်။ Rate limit သို့မဟုတ် Error တက်ပါက အလိုအလျောက် အဆင့်ဆင့် ကျော်လွှား အသုံးပြုသွားပါမည်။
-                                            </p>
-
-                                            <div class="gemini-chain-grid mb-3">
-                                                <!-- Tier 1: Primary -->
-                                                <div class="model-tier-box">
-                                                    <div class="tier-badge tier-primary">🥇 ၁။ Primary (အဓိက ဦးစားပေး)</div>
-                                                    <div class="model-select-wrap mt-1">
-                                                        <select id="adm-gemini-primary" class="studio-input" onchange="checkCustomModel('adm-gemini-primary')">
-                                                            <option value="gemini-3.6-flash">gemini-3.6-flash (Recommended / Fast & Stable)</option>
-                                                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                                            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
-                                                            <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-                                                            <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
-                                                        </select>
-                                                        <input type="text" id="adm-gemini-primary-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.6-flash">
-                                                    </div>
-                                                </div>
-
-                                                <!-- Tier 2: Fallback 1 -->
-                                                <div class="model-tier-box">
-                                                    <div class="tier-badge tier-fb1">🥈 ၂။ Fallback 1 (ဒုတိယ အရန်)</div>
-                                                    <div class="model-select-wrap mt-1">
-                                                        <select id="adm-gemini-fb1" class="studio-input" onchange="checkCustomModel('adm-gemini-fb1')">
-                                                            <option value="gemini-3.5-flash">gemini-3.5-flash (Standard Fallback)</option>
-                                                            <option value="gemini-3.6-flash">gemini-3.6-flash</option>
-                                                            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
-                                                            <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-                                                            <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
-                                                        </select>
-                                                        <input type="text" id="adm-gemini-fb1-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash">
-                                                    </div>
-                                                </div>
-
-                                                <!-- Tier 3: Fallback 2 -->
-                                                <div class="model-tier-box">
-                                                    <div class="tier-badge tier-fb2">🥉 ၃။ Fallback 2 (တတိယ အရန်)</div>
-                                                    <div class="model-select-wrap mt-1">
-                                                        <select id="adm-gemini-fb2" class="studio-input" onchange="checkCustomModel('adm-gemini-fb2')">
-                                                            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Lightweight Fast)</option>
-                                                            <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-                                                            <option value="gemini-3.6-flash">gemini-3.6-flash</option>
-                                                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                                            <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
-                                                        </select>
-                                                        <input type="text" id="adm-gemini-fb2-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash-lite">
-                                                    </div>
-                                                </div>
-
-                                                <!-- Tier 4: Fallback 3 -->
-                                                <div class="model-tier-box">
-                                                    <div class="tier-badge tier-fb3">🎖️ ၄။ Fallback 3 (စတုတ္ထ အရန်)</div>
-                                                    <div class="model-select-wrap mt-1">
-                                                        <select id="adm-gemini-fb3" class="studio-input" onchange="checkCustomModel('adm-gemini-fb3')">
-                                                            <option value="gemini-flash-lite-latest">gemini-flash-lite-latest (Emergency Fast)</option>
-                                                            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
-                                                            <option value="gemini-3.6-flash">gemini-3.6-flash</option>
-                                                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                                            <option value="custom">✏️ Custom Model ရိုက်ထည့်မည်...</option>
-                                                        </select>
-                                                        <input type="text" id="adm-gemini-fb3-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-flash-lite-latest">
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <button class="btn gold-gradient-btn" onclick="saveGeminiModelSettings()">
-                                                <span class="btn-icon">⚡</span>
-                                                <span>Gemini Model သတ်မှတ်ချက် သိမ်းဆည်းမည် (Save Chain)</span>
-                                            </button>
-                                    </div>
-                                </div>
-
-                <!-- Broadcast Sender -->
-
-                <div class="advanced-studio-accordion mt-3" id="admin-broadcast-card">
-                                    <button type="button" class="advanced-accordion-header" onclick="toggleSectionAccordion(this)">
-                                        <div class="accordion-header-left">
-                                            <div class="accordion-title-wrap">
-                                                <span class="accordion-title" data-i18n="admin_broadcast_header">📢 Telegram Bot အားလုံးသို့ Broadcast စာပို့ရန်</span>
-                                            </div>
-                                        </div>
-                                        <span class="accordion-chevron">▼</span>
+                                    <button type="button" class="filter-pill" data-status="success" onclick="setQueueStatusFilter('success')">
+                                        <span data-i18n="filter_success">✅ Success</span> <span class="pill-badge" id="cnt-success">0</span>
                                     </button>
-                                    <div class="advanced-accordion-body hidden">
-                                            <textarea id="adm-broadcast-text" data-i18n-ph="admin_broadcast_ph" placeholder="Broadcast စာသား ရိုက်ထည့်ပါ..." rows="3" class="studio-input mt-2"></textarea>
-                                            <button class="btn gold-gradient-btn mt-2" id="adm-broadcast-btn" onclick="adminSendBroadcast()">
-                                                <span class="btn-icon">🚀</span>
-                                                <span id="adm-broadcast-btn-text" data-i18n="btn_send_broadcast">Broadcast ပို့မည်</span>
-                                            </button>
-                                            <!-- Broadcast Telemetry Report Box -->
-                                            <div id="adm-broadcast-report" class="broadcast-report-box mt-3 hidden"></div>
-                                    </div>
-                                </div>
-
-                <!-- All Users Job Production History & Selective Purge Control -->
-                <div class="advanced-studio-accordion mt-3" id="admin-history-card">
-                                    <button type="button" class="advanced-accordion-header" onclick="toggleSectionAccordion(this)">
-                                        <div class="accordion-header-left">
-                                            <div class="accordion-title-wrap">
-                                                <span class="accordion-title" data-i18n="admin_history_header">📊 ထုတ်ယူမှု မှတ်တမ်းနှင့် စိတ်ကြိုက် ရှင်းလင်းမှု (History & Purge)</span>
-                                            </div>
-                                        </div>
-                                        <span class="accordion-chevron">▼</span>
+                                    <button type="button" class="filter-pill" data-status="failed" onclick="setQueueStatusFilter('failed')">
+                                        <span data-i18n="filter_failed">❌ Failed</span> <span class="pill-badge text-danger" id="cnt-failed">0</span>
                                     </button>
-                                    <div class="advanced-accordion-body hidden">
-                                        <div class="accordion-refresh-row">
-                                            <button class="mini-chip" onclick="loadAdminHistory()">🔄 Refresh</button>
-                                        </div>
-                                            <!-- Filter Controls Bar -->
-                                            <div class="admin-filter-bar glass-inset mt-2 p-2">
-                                                <!-- Filter Row 1: Timeframe -->
-                                                <div class="filter-group mb-2">
-                                                    <span class="text-xs text-muted font-bold">⏱️ အချိန်ကာလ ရွေးချယ်ရန်:</span>
-                                                    <div class="filter-chips-row mt-1">
-                                                        <button class="filter-chip active" data-filter-type="timeframe" data-val="24h" onclick="setAdminHistFilter('timeframe', '24h')">၂၄ နာရီအတွင်း</button>
-                                                        <button class="filter-chip" data-filter-type="timeframe" data-val="7d" onclick="setAdminHistFilter('timeframe', '7d')">၇ ရက်အတွင်း</button>
-                                                        <button class="filter-chip" data-filter-type="timeframe" data-val="older_24h" onclick="setAdminHistFilter('timeframe', 'older_24h')">၂၄ နာရီကျော်လွန်</button>
-                                                        <button class="filter-chip" data-filter-type="timeframe" data-val="all" onclick="setAdminHistFilter('timeframe', 'all')">အချိန်အားလုံး</button>
-                                                    </div>
-                                                </div>
-
-                                                <!-- Filter Row 2: Status & Type -->
-                                                <div class="form-row-2">
-                                                    <div>
-                                                        <label class="input-label text-xs">🚦 အခြေအနေ (Status)</label>
-                                                        <select id="adm-hist-status-sel" class="studio-input text-xs" onchange="setAdminHistFilter('status', this.value)">
-                                                            <option value="all">အားလုံး (All Statuses)</option>
-                                                            <option value="SUCCESS">✅ အောင်မြင်ပြီး (SUCCESS)</option>
-                                                            <option value="FAILED">❌ မအောင်မြင်သော Error များ (FAILED)</option>
-                                                            <option value="RUNNING">⏳ လည်ပတ်ဆဲ (RUNNING)</option>
-                                                            <option value="QUEUED">📋 တန်းစီနေဆဲ (QUEUED)</option>
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label class="input-label text-xs">🎬 အမျိုးအစား (Job Type)</label>
-                                                        <select id="adm-hist-type-sel" class="studio-input text-xs" onchange="setAdminHistFilter('job_type', this.value)">
-                                                            <option value="all">အားလုံး (Recap & Voice)</option>
-                                                            <option value="RECAP">🎬 Movie Recap သီးသန့်</option>
-                                                            <option value="VOICE_CLONE">🎙️ Voice Clone သီးသန့်</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <!-- Selective Purge Action Bar -->
-                                            <div class="admin-purge-bar mt-2 mb-2 p-2">
-                                                <div class="card-subtitle-row mb-1">
-                                                    <span class="text-xs text-danger font-bold">🗑️ စိတ်ကြိုက် ရှင်းလင်းဖျက်သိမ်းခြင်း (Selective Purge)</span>
-                                                </div>
-                                                <div class="admin-purge-grid mt-1">
-                                                    <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('failed')">
-                                                        <span>❌ FAILED ရှင်းမည်</span>
-                                                    </button>
-                                                    <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('older_24h')">
-                                                        <span>⏱️ >၂၄ နာရီ ရှင်းမည်</span>
-                                                    </button>
-                                                    <button class="btn mini-btn secondary-btn purge-btn" onclick="adminPurgeHistory('matching')">
-                                                        <span>🎯 Filter မိသမျှ ရှင်းမည်</span>
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            <!-- Stats Row -->
-                                            <div class="admin-history-stats-row mt-2">
-                                                <span class="mini-tag">ပြသထားမှု: <strong id="adm-hist-total">0</strong></span>
-                                                <span class="mini-tag">မအောင်မြင်: <strong id="adm-hist-failed" class="text-danger">0</strong></span>
-                                                <span class="mini-tag">အောင်မြင်: <strong id="adm-hist-success" class="text-success">0</strong></span>
-                                                <span class="mini-tag">Recap: <strong id="adm-hist-recap" class="text-gold">0</strong></span>
-                                                <span class="mini-tag">Voice: <strong id="adm-hist-voice" class="text-cyan">0</strong></span>
-                                            </div>
-
-                                            <div id="admin-global-history-list" class="admin-history-container mt-2">
-                                                <p class="text-muted">Loading history...</p>
-                                            </div>
-                                    </div>
                                 </div>
+                                <select class="queue-engine-select" id="queue-engine-select" onchange="setQueueEngineFilter(this.value)" aria-label="Engine filter">
+                                    <option value="all">All Engines</option>
+                                    <option value="voxcpm">☁️ VoxCPM AI</option>
+                                    <option value="recap">🎬 Movie Recap</option>
+                                </select>
+                            </div>
+                            <div id="admin-queue-status-banner" class="mt-2"></div>
+                            <div id="admin-queue-list" class="admin-queue-container mt-2">
+                                <p class="text-muted" data-i18n="admin_queue_loading">Loading live queue...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- History & purge -->
+                    <div id="adm-jobs-history" class="hidden">
+                        <div class="card glass mt-3">
+                            <div class="card-header-row">
+                                <div class="card-label" data-i18n="admin_history_header">📜 အလုပ် မှတ်တမ်း</div>
+                                <button class="mini-chip" onclick="loadAdminHistory()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                            </div>
+                            <div class="filter-chips-row mt-2" id="adm-hist-timeframe-chips">
+                                <button class="filter-chip active" data-filter-type="timeframe" data-val="24h" onclick="setAdminHistFilter('timeframe', '24h')"><span data-i18n="adm_tf_24h">၂၄ နာရီ</span></button>
+                                <button class="filter-chip" data-filter-type="timeframe" data-val="7d" onclick="setAdminHistFilter('timeframe', '7d')"><span data-i18n="adm_tf_7d">၇ ရက်</span></button>
+                                <button class="filter-chip" data-filter-type="timeframe" data-val="older_24h" onclick="setAdminHistFilter('timeframe', 'older_24h')"><span data-i18n="adm_tf_older">၂၄ နာရီကျော်</span></button>
+                                <button class="filter-chip" data-filter-type="timeframe" data-val="all" onclick="setAdminHistFilter('timeframe', 'all')"><span data-i18n="filter_all">အားလုံး</span></button>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="adm_filter_status">အခြေအနေ</label>
+                                    <select id="adm-hist-status-sel" class="studio-input text-xs" onchange="setAdminHistFilter('status', this.value)">
+                                        <option value="all">All Statuses</option>
+                                        <option value="SUCCESS">✅ SUCCESS</option>
+                                        <option value="FAILED">❌ FAILED</option>
+                                        <option value="RUNNING">⚡ RUNNING</option>
+                                        <option value="QUEUED">⏳ QUEUED</option>
+                                        <option value="CANCELLED">⏹ CANCELLED</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="adm_filter_type">အမျိုးအစား</label>
+                                    <select id="adm-hist-type-sel" class="studio-input text-xs" onchange="setAdminHistFilter('job_type', this.value)">
+                                        <option value="all">Recap &amp; Voice</option>
+                                        <option value="RECAP">🎬 Movie Recap</option>
+                                        <option value="VOICE_CLONE">🎙️ Voice Clone</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="admin-action-row mt-2">
+                                <input type="text" id="adm-hist-jobid" data-i18n-ph="admin_job_search_ph" placeholder="Job ID ဥပမာ rc_88f2" class="studio-input" style="flex:2;">
+                                <button class="btn mini-btn secondary-btn" onclick="adminSearchJobId()"><span data-i18n="btn_search">ရှာမည်</span></button>
+                            </div>
+                            <div class="admin-history-stats-row mt-2">
+                                <span class="mini-tag"><span data-i18n="adm_hist_shown">ပြသထားမှု</span>: <strong id="adm-hist-total">0</strong></span>
+                                <span class="mini-tag"><span data-i18n="filter_failed">မအောင်မြင်</span>: <strong id="adm-hist-failed" class="text-danger">0</strong></span>
+                                <span class="mini-tag"><span data-i18n="filter_success">အောင်မြင်</span>: <strong id="adm-hist-success" class="text-success">0</strong></span>
+                                <span class="mini-tag">Recap: <strong id="adm-hist-recap" class="text-gold">0</strong></span>
+                                <span class="mini-tag">Voice: <strong id="adm-hist-voice" class="text-cyan">0</strong></span>
+                            </div>
+                            <div id="admin-global-history-list" class="admin-history-container mt-2">
+                                <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                            </div>
+                            <div class="adm-danger-zone mt-3">
+                                <div class="adm-danger-title" data-i18n="admin_purge_title">🗑️ မှတ်တမ်း ရှင်းလင်းရန်</div>
+                                <p class="text-muted text-xs" data-i18n="admin_purge_note">ဖျက်လိုက်သော ဖိုင်နှင့် မှတ်တမ်းများ ပြန် မရနိုင်ပါ။</p>
+                                <div class="admin-purge-grid mt-2">
+                                    <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('failed')"><span data-i18n="adm_purge_failed">❌ FAILED ရှင်းမည်</span></button>
+                                    <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('older_retention')"><span data-i18n="adm_purge_older">⏱️ ၇ ရက်ကျော် ရှင်းမည်</span></button>
+                                    <button class="btn mini-btn secondary-btn purge-btn" onclick="adminPurgeHistory('matching')"><span data-i18n="adm_purge_matching">🎯 Filter မိသမျှ ရှင်းမည်</span></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── SCREEN: Users ────────────────────────────────── -->
+                <div class="adm-screen hidden" id="adm-screen-users">
+                    <div id="adm-users-main">
+                        <div class="card glass">
+                            <div class="card-label" data-i18n="admin_user_manage_header">👤 အသုံးပြုသူ ရှာဖွေရန်</div>
+                            <div class="admin-action-row mt-2">
+                                <input type="text" id="adm-user-search-q" data-i18n-ph="admin_user_search_ph" placeholder="ID / @username / နာမည် ရိုက်ရှာပါ" class="studio-input" style="flex:1;">
+                                <button class="btn mini-btn secondary-btn" onclick="adminSearchUsers()" data-i18n="btn_search_users">🔎 ရှာမည်</button>
+                            </div>
+                            <div id="admin-user-search-results" class="mt-2"></div>
+                        </div>
+                        <div class="card glass mt-3">
+                            <div class="card-header-row">
+                                <div class="card-label" data-i18n="admin_users_recent">🆕 နောက်ဆုံး ဝင်လာသူများ</div>
+                                <button class="mini-chip" onclick="loadAdminUsersRecent()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                            </div>
+                            <div id="admin-users-recent" class="mt-2">
+                                <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- User detail (sub-view) -->
+                    <div id="adm-user-detail" class="hidden">
+                        <button type="button" class="adm-back-btn" onclick="closeAdminUserDetail()">‹ <span data-i18n="admin_back">နောက်သို့</span></button>
+                        <div class="card glass mt-2">
+                            <div class="adm-detail-head">
+                                <div class="adm-avatar" id="adm-detail-avatar">?</div>
+                                <div class="adm-detail-id">
+                                    <div class="adm-detail-name" id="adm-detail-name">—</div>
+                                    <div class="adm-detail-sub" id="adm-detail-sub">—</div>
+                                </div>
+                                <span class="badge-status" id="adm-detail-status">—</span>
+                            </div>
+                            <div class="adm-detail-meta" id="adm-detail-meta"></div>
+                            <div class="admin-stats-grid mt-2">
+                                <div class="card glass stat-mini-card">
+                                    <span class="stat-lbl" data-i18n="admin_balance_voice">🎙️ Voice လက်ကျန်</span>
+                                    <span class="stat-num" id="adm-detail-balance">—</span>
+                                </div>
+                                <div class="card glass stat-mini-card">
+                                    <span class="stat-lbl" data-i18n="admin_balance_recap">🎬 Recap Credit</span>
+                                    <span class="stat-num" id="adm-detail-credits">—</span>
+                                </div>
+                                <div class="card glass stat-mini-card">
+                                    <span class="stat-lbl" data-i18n="admin_jobs_stat">အလုပ် (အောင်/ပျက်)</span>
+                                    <span class="stat-num" id="adm-detail-jobs" style="font-size:16px;">—</span>
+                                </div>
+                                <div class="card glass stat-mini-card">
+                                    <span class="stat-lbl" data-i18n="admin_last_job">နောက်ဆုံး အလုပ်</span>
+                                    <span class="stat-num" id="adm-detail-lastjob" style="font-size:13px;">—</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_adjust_title">✏️ လက်ကျန် ပြင်ဆင်ရန်</div>
+                            <div class="filter-chips-row mt-2">
+                                <button type="button" class="filter-chip" onclick="adminAdjustPreset(60, 0, 0)"><span data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</span></button>
+                                <button type="button" class="filter-chip" onclick="adminAdjustPreset(0, 0, 10)"><span data-i18n="btn_add_recap_credit">🎬 +10 Credit</span></button>
+                                <button type="button" class="filter-chip" onclick="adminAdjustPreset(0, 0, 0, 'PURCHASED')"><span data-i18n="btn_grant_vip">👑 VIP တင်မည်</span></button>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="admin_adjust_minutes">မိနစ် (+ / −)</label>
+                                    <input type="number" id="adm-adj-minutes" class="studio-input" value="0">
+                                </div>
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="admin_adjust_seconds">စက္ကန့် (+ / −)</label>
+                                    <input type="number" id="adm-adj-seconds" class="studio-input" value="0">
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="admin_adjust_credits">Recap Credit (+ / −)</label>
+                                    <input type="number" id="adm-adj-credits" class="studio-input" value="0">
+                                </div>
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="admin_adjust_tier">အဆင့် (Tier)</label>
+                                    <select id="adm-adj-tier" class="studio-input">
+                                        <option value="" data-i18n="admin_tier_keep">မပြောင်းပါ</option>
+                                        <option value="PURCHASED">👑 PURCHASED (VIP)</option>
+                                        <option value="FREE">FREE</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <input type="text" id="adm-adjust-reason" data-i18n-ph="admin_adjust_reason_ph" placeholder="အကြောင်းပြချက် (မဖြစ်မနေ လိုပါတယ်)" class="studio-input mt-2">
+                            <button class="btn gold-gradient-btn mt-3" id="adm-adjust-apply-btn" onclick="adminApplyAdjust()">
+                                <span data-i18n="btn_apply_adjust">ပြင်ဆင်ချက် အတည်ပြုမည်</span>
+                            </button>
+                        </div>
+
+                        <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_user_jobs">📜 ဒီလူ၏ အလုပ်များ</div>
+                            <div id="adm-user-jobs" class="mt-2">
+                                <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                            </div>
+                        </div>
+
+                        <div class="card glass adm-danger-card mt-3">
+                            <div class="card-label text-danger" data-i18n="admin_danger_zone">⚠️ Danger Zone</div>
+                            <p class="text-muted text-xs mt-1" data-i18n="admin_ban_note">Ban လုပ်ရင် Bot နှင့် Mini App နှစ်ခုလုံး သုံးလို့ မရတော့ပါ။ အကြောင်းပြချက် အထက်မှာ အရင် ရိုက်ပါ။</p>
+                            <div class="mt-2" id="adm-detail-ban-zone"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── SCREEN: Broadcast ────────────────────────────── -->
+                <div class="adm-screen hidden" id="adm-screen-broadcast">
+                    <div class="card glass">
+                        <div class="card-label" data-i18n="admin_broadcast_header">📢 Broadcast</div>
+                        <p class="text-muted text-xs mt-1" data-i18n="admin_broadcast_note">Bot အသုံးပြုသူ အားလုံးထံ တစ်ပြိုင်နက် ပို့ပါမည်။ ပို့ပြီးရင် ပြန် ရုပ်သိမ်းလို့ မရပါ။</p>
+                        <textarea id="adm-broadcast-text" data-i18n-ph="admin_broadcast_ph" placeholder="Broadcast စာသား ရိုက်ထည့်ပါ..." rows="4" class="studio-input mt-2"></textarea>
+                        <div class="adm-broadcast-meta"><span id="adm-broadcast-count">0</span> <span data-i18n="admin_chars">လုံး</span></div>
+                        <button class="btn gold-gradient-btn mt-2" id="adm-broadcast-btn" onclick="adminSendBroadcast()">
+                            <span id="adm-broadcast-btn-text" data-i18n="btn_send_broadcast">Broadcast ပို့မည်</span>
+                        </button>
+                        <div id="adm-broadcast-report" class="broadcast-report-box mt-3 hidden"></div>
+                    </div>
+                </div>
+
+                <!-- ── SCREEN: Activity (audit log) ─────────────────── -->
+                <div class="adm-screen hidden" id="adm-screen-activity">
+                    <div class="card glass">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="admin_audit_title">🕘 Admin မှတ်တမ်း (Audit Log)</div>
+                            <button class="mini-chip" onclick="loadAdminAudit()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                        </div>
+                        <div id="admin-audit-list" class="mt-2">
+                            <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── SCREEN: Settings ─────────────────────────────── -->
+                <div class="adm-screen hidden" id="adm-screen-settings">
+                    <div class="card glass">
+                        <div class="card-label" data-i18n="admin_settings_header">⚙️ Platform ဆက်တင်များ</div>
+                        <div class="admin-settings-form mt-2">
+                            <div class="form-row-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_kpay_num">KBZPay ဖုန်းနံပါတ်</label>
+                                    <input type="text" id="adm-set-kpay-num" class="studio-input" placeholder="09xxxxxxxxx">
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_kpay_name">KBZPay အကောင့် နာမည်</label>
+                                    <input type="text" id="adm-set-kpay-name" class="studio-input" placeholder="Account Name">
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_wave_num">WavePay ဖုန်းနံပါတ်</label>
+                                    <input type="text" id="adm-set-wave-num" class="studio-input" placeholder="09xxxxxxxxx">
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_wave_name">WavePay အကောင့် နာမည်</label>
+                                    <input type="text" id="adm-set-wave-name" class="studio-input" placeholder="Account Name">
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_tutorial_link">Tutorial Link (အရန်)</label>
+                                    <input type="text" id="adm-set-tutorial-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/30">
+                                </div>
+                                <div class="toggle-control-col">
+                                    <label class="input-label" data-i18n="settings_maintenance">Maintenance Mode</label>
+                                    <label class="switch-luxury">
+                                        <input type="checkbox" id="adm-set-maintenance">
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glass mt-3">
+                        <div class="card-label"><span data-i18n="adm_tutorials_title">📚 Tutorial ဗီဒီယိုများ</span> <span class="badge-mini-gold">Voice &amp; Recap</span></div>
+                        <div class="admin-tut-box glass-inset mt-2">
+                            <div class="tut-box-header">
+                                <span class="tut-box-title">🎙️ Voice Clone Tutorial</span>
+                                <label class="switch-luxury">
+                                    <input type="checkbox" id="adm-tut-voice-enabled" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            <div class="form-row-2 mt-1">
+                                <div>
+                                    <label class="input-label text-xs">Label</label>
+                                    <input type="text" id="adm-tut-voice-title" class="studio-input" placeholder="Voice Clone ပြုလုပ်နည်း လမ်းညွှန်">
+                                </div>
+                                <div>
+                                    <label class="input-label text-xs">Video Link (URL)</label>
+                                    <input type="text" id="adm-tut-voice-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/29">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="admin-tut-box glass-inset mt-2">
+                            <div class="tut-box-header">
+                                <span class="tut-box-title">🎬 Movie Recap Tutorial</span>
+                                <label class="switch-luxury">
+                                    <input type="checkbox" id="adm-tut-recap-enabled" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            <div class="form-row-2 mt-1">
+                                <div>
+                                    <label class="input-label text-xs">Label</label>
+                                    <input type="text" id="adm-tut-recap-title" class="studio-input" placeholder="Movie Recap ပြုလုပ်နည်း လမ်းညွှန်">
+                                </div>
+                                <div>
+                                    <label class="input-label text-xs">Video Link (URL)</label>
+                                    <input type="text" id="adm-tut-recap-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/30">
+                                </div>
+                            </div>
+                        </div>
+                        <button class="btn gold-gradient-btn mt-3" onclick="saveAdminSettings()">
+                            <span class="btn-icon">💾</span>
+                            <span data-i18n="btn_save_settings">ဆက်တင်များ သိမ်းမည်</span>
+                        </button>
+                    </div>
+
+                    <div class="card glass mt-3">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="admin_pricing_title">💰 Plan ဈေးနှုန်းများ</div>
+                            <button class="mini-chip" onclick="loadAdminPricing()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                        </div>
+                        <div id="admin-pricing-list" class="mt-2">
+                            <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                        </div>
+                    </div>
+
+                    <div class="card glass mt-3">
+                        <div class="card-label"><span data-i18n="adm_gemini_title">🤖 Gemini Model Chain</span> <span class="badge-studio gold">AI</span></div>
+                        <p class="text-muted text-xs mt-1" data-i18n="adm_gemini_note">Primary က စပြီး အဆင့်ဆင့် သုံးပါတယ်။ Error တက်ရင် နောက် model ကို အလိုအလျောက် ပြောင်းပါတယ်။</p>
+                        <div class="gemini-chain-grid mt-2">
+                            <div class="model-tier-box">
+                                <div class="tier-badge tier-primary" data-i18n="adm_gemini_primary">၁။ Primary</div>
+                                <div class="model-select-wrap mt-1">
+                                    <select id="adm-gemini-primary" class="studio-input" onchange="checkCustomModel('adm-gemini-primary')">
+                                        <option value="gemini-3.6-flash">gemini-3.6-flash (Recommended)</option>
+                                        <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                        <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                        <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                                        <option value="custom">✏️ Custom…</option>
+                                    </select>
+                                    <input type="text" id="adm-gemini-primary-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.6-flash">
+                                </div>
+                            </div>
+                            <div class="model-tier-box">
+                                <div class="tier-badge tier-fb1" data-i18n="adm_gemini_fb1">၂။ Fallback 1</div>
+                                <div class="model-select-wrap mt-1">
+                                    <select id="adm-gemini-fb1" class="studio-input" onchange="checkCustomModel('adm-gemini-fb1')">
+                                        <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                        <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                        <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                        <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                                        <option value="custom">✏️ Custom…</option>
+                                    </select>
+                                    <input type="text" id="adm-gemini-fb1-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash">
+                                </div>
+                            </div>
+                            <div class="model-tier-box">
+                                <div class="tier-badge tier-fb2" data-i18n="adm_gemini_fb2">၃။ Fallback 2</div>
+                                <div class="model-select-wrap mt-1">
+                                    <select id="adm-gemini-fb2" class="studio-input" onchange="checkCustomModel('adm-gemini-fb2')">
+                                        <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                        <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                                        <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                        <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                        <option value="custom">✏️ Custom…</option>
+                                    </select>
+                                    <input type="text" id="adm-gemini-fb2-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash-lite">
+                                </div>
+                            </div>
+                            <div class="model-tier-box">
+                                <div class="tier-badge tier-fb3" data-i18n="adm_gemini_fb3">၄။ Fallback 3</div>
+                                <div class="model-select-wrap mt-1">
+                                    <select id="adm-gemini-fb3" class="studio-input" onchange="checkCustomModel('adm-gemini-fb3')">
+                                        <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                                        <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                        <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                        <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                                        <option value="custom">✏️ Custom…</option>
+                                    </select>
+                                    <input type="text" id="adm-gemini-fb3-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-flash-lite-latest">
+                                </div>
+                            </div>
+                        </div>
+                        <button class="btn gold-gradient-btn mt-3" onclick="saveGeminiModelSettings()">
+                            <span class="btn-icon">⚡</span>
+                            <span data-i18n="adm_gemini_save">Model Chain သိမ်းမည်</span>
+                        </button>
+                    </div>
+                </div>
             </section>
 
         </main>
@@ -1648,6 +1692,10 @@
             <button class="nav-item" data-tab="tab-vip">
                 <span class="nav-icon">💎</span>
                 <span class="nav-label" data-i18n="tab_vip">VIP Plans</span>
+            </button>
+            <button class="nav-item" data-tab="tab-history">
+                <span class="nav-icon">📜</span>
+                <span class="nav-label" data-i18n="tab_history">မှတ်တမ်း</span>
             </button>
             <button class="nav-item hidden" id="nav-btn-admin" data-tab="tab-admin">
                 <span class="nav-icon">⚡</span>

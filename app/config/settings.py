@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # Stale Job Crash Recovery (seconds)
     stale_job_timeout_seconds: int = Field(default=1800, alias="STALE_JOB_TIMEOUT_SECONDS")
 
+    # Generated-media retention (days). Job outputs live on the persistent
+    # disk (storage_root) and survive restarts/deploys; the periodic sweep
+    # removes a job's files and record only once it is older than this
+    # window. User-facing copy states this same number — keep them in sync.
+    media_retention_days: int = Field(default=7, alias="MEDIA_RETENTION_DAYS")
+
     # Tutorial Links & Controls (Voice Clone & Movie Recap)
     tutorial_video_link: str = Field(
         default="https://t.me/VoiceClonePro/16",
