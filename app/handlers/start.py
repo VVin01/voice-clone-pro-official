@@ -16,6 +16,7 @@ from app.services.gate import (
     gate_still_missing_text,
     verify_user_membership,
 )
+from app.models.enums import UserStatus
 from app.services.i18n import t
 from app.services.ledger import get_or_create_user
 from app.ui.helpers import safe_edit_message
@@ -25,16 +26,17 @@ logger = logging.getLogger(__name__)
 start_router = Router(name="start")
 
 
+def _is_banned_user(user, telegram_id: int) -> bool:
+    """Mirror AccessControlMiddleware: status=BLOCKED is banned (admins bypass)."""
+    return (
+        getattr(user, "status", None) == UserStatus.BLOCKED.value
+        and not settings.is_admin(telegram_id)
+    )
+
+
 @start_router.message(CommandStart())
 async def handle_start(message: Message, command: CommandObject):
     telegram_id = message.from_user.id
-    if settings.maintenance_mode and not settings.is_admin(telegram_id):
-        try:
-            await message.answer(f"{t('maintenance_title', 'my')}\n\n{t('maintenance_desc', 'my')}", parse_mode="HTML")
-        except TelegramForbiddenError:
-            logger.info("handle_start: Bot blocked by user %s during maintenance", telegram_id)
-        return
-
     username = message.from_user.username
     first_name = message.from_user.first_name
     ref_arg = command.args if command and command.args else None
@@ -48,6 +50,26 @@ async def handle_start(message: Message, command: CommandObject):
             referral_code_arg=ref_arg,
         )
         await session.commit()
+
+        # Banned users get the same suspension notice the rest of the bot
+        # uses (AccessControlMiddleware, user_account_suspended) — no menu.
+        if _is_banned_user(user, telegram_id):
+            banned_lang = user.language_code or "my"
+            try:
+                await message.answer(t("user_account_suspended", banned_lang))
+            except TelegramForbiddenError:
+                logger.info("handle_start: Bot blocked by banned user %s", telegram_id)
+            return
+
+        # Maintenance: use the loaded user's stored language; 'my' is only
+        # the fallback for genuinely new users (default language_code).
+        if settings.maintenance_mode and not settings.is_admin(telegram_id):
+            maint_lang = user.language_code or "my"
+            try:
+                await message.answer(f"{t('maintenance_title', maint_lang)}\n\n{t('maintenance_desc', maint_lang)}", parse_mode="HTML")
+            except TelegramForbiddenError:
+                logger.info("handle_start: Bot blocked by user %s during maintenance", telegram_id)
+            return
 
         if is_new:
             # Let user choose language first
@@ -102,6 +124,17 @@ async def handle_set_language(callback: CallbackQuery):
 
     async with AsyncSessionLocal() as session:
         user, _ = await get_or_create_user(session, callback.from_user.id)
+
+        if _is_banned_user(user, callback.from_user.id):
+            banned_lang = user.language_code or lang_code
+            await session.commit()
+            await safe_edit_message(callback, t("user_account_suspended", banned_lang))
+            try:
+                await callback.answer()
+            except Exception:
+                pass
+            return
+
         user.language_code = lang_code
 
         is_verified, _ = await verify_user_membership(session, user, callback.bot)
@@ -124,7 +157,8 @@ async def handle_set_language(callback: CallbackQuery):
         text, kb = await render_main_menu(callback.from_user.id, lang_code, session=session)
         await session.commit()
 
-    await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
+    welcome_text = f"{t('welcome_title', lang_code)}\n\n{t('welcome_desc', lang_code)}\n\n{text}"
+    await safe_edit_message(callback, welcome_text, reply_markup=kb, parse_mode="HTML")
     try:
         await callback.answer()
     except Exception:
@@ -136,6 +170,14 @@ async def handle_gate_verify(callback: CallbackQuery):
     async with AsyncSessionLocal() as session:
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
+
+        if _is_banned_user(user, callback.from_user.id):
+            await session.commit()
+            try:
+                await callback.answer(t("user_account_suspended", lang), show_alert=True)
+            except Exception:
+                pass
+            return
 
         is_verified, _ = await verify_user_membership(session, user, callback.bot)
 

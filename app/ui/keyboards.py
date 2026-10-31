@@ -36,15 +36,14 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
         or "https://voice-clone-studio-c1er.onrender.com"
     )
 
-    is_my = (lang == "my")
     launch_text = t("menu_launch_text", lang)
-    recap_text = "🎬 Movie Recap Maker" if is_my else "🎬 Movie Recap Maker"
-    dl_text = "📥 Media Downloader" if is_my else "📥 Media Downloader"
-    tutorial_text = t("menu_tutorial_text", lang)
+    recap_text = t("menu_recap_text", lang)
+    dl_text = t("menu_downloader_text", lang)
+    tutorial_text = t("menu_tutorials_text", lang)
     tutorial_url = (
-        getattr(settings, "tutorial_video_link", "").strip()
-        or os.getenv("TUTORIAL_VIDEO_LINK", "").strip()
-        or "https://t.me/VoiceClonePro/28"
+        getattr(settings, "tutorial_index_link", "").strip()
+        or os.getenv("TUTORIAL_INDEX_LINK", "").strip()
+        or "https://t.me/VoiceClonePro/38"
     )
     switch_lang_text = t("menu_switch_lang", lang)
     verify_gate_text = t("menu_verify_gate", lang)
@@ -60,6 +59,9 @@ def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMark
         ],
         [
             InlineKeyboardButton(text=t("btn_menu_refer_earn", lang), callback_data="menu:refer_earn"),
+        ],
+        [
+            InlineKeyboardButton(text=t("menu_buy_minutes_text", lang), callback_data="menu:buy_minutes"),
         ],
         [
             InlineKeyboardButton(text=switch_lang_text, callback_data="menu:change_lang"),

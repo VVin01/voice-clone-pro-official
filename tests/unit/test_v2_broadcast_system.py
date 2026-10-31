@@ -96,5 +96,7 @@ async def test_mark_user_blocked_updates_imported_audience(db_session):
 
     refreshed_user = await db_session.get(User, 801)
     refreshed_imp = await db_session.get(ImportedAudience, 801)
-    assert refreshed_user.status == UserStatus.BLOCKED.value
+    # Hunt B1: bot-block is a send-suppression flag, not an admin ban.
+    assert refreshed_user.bot_blocked is True
+    assert refreshed_user.status == UserStatus.ACTIVE.value
     assert refreshed_imp.broadcast_eligible is False

@@ -74,8 +74,12 @@ def _pane(html: str, pane_id: str) -> str:
 
 def test_home_samples_use_komin_and_mahnin_routes():
     assert 'id="home-samples-card"' in INDEX_HTML
-    assert 'src="/api/voices/sample/komin"' in INDEX_HTML
-    assert 'src="/api/voices/sample/mahnin"' in INDEX_HTML
+    # Hunt #2 V2: /api/voices/sample now requires the Telegram auth
+    # header, which an <audio src> load cannot send — the players carry
+    # the route in data-sample-url and setupSamplePlayers() fetches it
+    # with auth (see test_hunt2_small_criticals_2026_10_31.py).
+    assert 'data-sample-url="/api/voices/sample/komin"' in INDEX_HTML
+    assert 'data-sample-url="/api/voices/sample/mahnin"' in INDEX_HTML
     # kozayar must never be a demo sample (owner verdict 2026-10-31)
     assert "sample/kozayar" not in INDEX_HTML
     # Placement (owner restructure 2026-10-31): the samples card lives

@@ -16,6 +16,7 @@ from app.services.gate import build_gate_reminder_text, is_gate_configured, veri
 from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.models import get_available_models_for_user
+from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.queue import create_voice_clone_job, get_queue_position
 from app.ui.helpers import safe_edit_message
 from app.ui.keyboards import back_to_menu_kb, membership_gate_kb
@@ -208,6 +209,10 @@ async def handle_clone_text_input(message: Message, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "my")
     raw_text = (message.text or "").strip()
+    # Encoding repair before this handler's own length checks
+    # (hunt #4 A1): Zawgyi-typed text becomes Unicode here, and again
+    # idempotently inside create_voice_clone_job for the API surface.
+    raw_text = convert_zawgyi_to_unicode(raw_text)
 
     if not raw_text:
         return
@@ -556,6 +561,27 @@ async def handle_voxcpm_reference_skip(callback: CallbackQuery, state: FSMContex
 
 # ── Shared Job Submission Helpers ─────────────────────────────────────────────
 
+# Mirrors app/webapp/api.py `_voice_job_error_detail`: every queue-failure
+# reason code resolves to a user-safe localized message; unknown reasons
+# fall back to a generic message and the raw code is NEVER shown.
+_VOICE_QUEUE_FAILURE_KEYS: dict[str, str] = {
+    "MODEL_NOT_AUTHORIZED": "queue_failed_model_not_authorized",
+    "LEGACY_MODEL_ENGINE_REMOVED": "queue_failed_legacy_model",
+    "CONCURRENT_JOB_LIMIT_EXCEEDED": "queue_failed_concurrent",
+    "DAILY_JOB_LIMIT_EXCEEDED": "queue_failed_daily",
+    "INSUFFICIENT_BALANCE": "queue_failed_insufficient_balance",
+    "TEXT_EXCEEDS_CHARACTER_LIMIT": "queue_failed_text_limit",
+    "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT": "queue_failed_text_limit",
+    "AUDIO_FILE_NOT_FOUND": "queue_failed_audio_not_found",
+}
+
+
+def voice_queue_failure_message(reason: str | None, lang: str) -> str:
+    """Localized, user-safe message for a create_voice_clone_job reason."""
+    key = _VOICE_QUEUE_FAILURE_KEYS.get(reason or "", "queue_failed_generic")
+    return t(key, lang)
+
+
 async def _submit_voice_job(
     callback: CallbackQuery,
     lang: str,
@@ -580,12 +606,7 @@ async def _submit_voice_job(
             source_audio_path=source_audio_path,
         )
         if not job:
-            if reason == "DAILY_JOB_LIMIT_EXCEEDED":
-                err_msg = t("queue_daily_limit_exceeded", lang)
-            elif reason == "CONCURRENT_JOB_LIMIT_EXCEEDED":
-                err_msg = t("queue_concurrent_limit_exceeded", lang)
-            else:
-                err_msg = t("tts_queue_failed", lang, reason=reason)
+            err_msg = voice_queue_failure_message(reason, lang)
             await callback.answer(err_msg, show_alert=True)
             return
 
@@ -632,12 +653,7 @@ async def _submit_voxcpm_job(
             source_audio_path=source_audio_path,
         )
         if not job:
-            if reason == "DAILY_JOB_LIMIT_EXCEEDED":
-                err_msg = t("queue_daily_limit_exceeded", lang)
-            elif reason == "CONCURRENT_JOB_LIMIT_EXCEEDED":
-                err_msg = t("queue_concurrent_limit_exceeded", lang)
-            else:
-                err_msg = t("tts_queue_failed", lang, reason=reason)
+            err_msg = voice_queue_failure_message(reason, lang)
             await message.answer(err_msg, reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
             return
 
@@ -704,7 +720,27 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 if matches and matches[0].is_file():
                     res_path = matches[0]
 
-            if res_path and res_path.is_file():
+            if res_path and res_path.is_file() and res_path.stat().st_size > 50 * 1024 * 1024:
+                # Over the Telegram Bot API send cap (hunt #3 B1): the
+                # send would fail inside Telegram. Same honest routing
+                # as the missing-file branch below — a Mini App button,
+                # never a dead link; the file stays downloadable there.
+                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=t("clone_btn_miniapp_listen", lang),
+                            web_app=WebAppInfo(url=f"{app_url}?job_id={job_id}")
+                        )
+                    ]
+                ])
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=t("clone_audio_too_large_text", lang, job_id=job_id[:8]),
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                )
+            elif res_path and res_path.is_file():
                 await callback.bot.send_audio(
                     chat_id=target_chat_id,
                     audio=FSInputFile(str(res_path)),

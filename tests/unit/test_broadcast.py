@@ -561,7 +561,11 @@ async def test_deliver_broadcast_conservative_send_interval():
 
 @pytest.mark.asyncio
 async def test_deliver_broadcast_marks_user_blocked_on_forbidden(db_session):
-    """Verify definitive TelegramForbiddenError marks User.status as BLOCKED in database."""
+    """Verify definitive TelegramForbiddenError flags the user bot_blocked.
+
+    Since hunt B1 the flag is send-suppression ONLY: status must stay
+    ACTIVE (status=BLOCKED is reserved for admin bans).
+    """
     user, _ = await get_or_create_user(db_session, telegram_id=9101, language_code="en")
     assert user.status == UserStatus.ACTIVE.value
     await db_session.flush()
@@ -582,9 +586,10 @@ async def test_deliver_broadcast_marks_user_blocked_on_forbidden(db_session):
     assert result.skipped == 1
     assert result.sent == 0
 
-    # User in database must be updated to BLOCKED
+    # User must be flagged bot_blocked while status stays ACTIVE
     updated_user = await db_session.get(User, 9101)
-    assert updated_user.status == UserStatus.BLOCKED.value
+    assert updated_user.bot_blocked is True
+    assert updated_user.status == UserStatus.ACTIVE.value
 
 
 @pytest.mark.asyncio

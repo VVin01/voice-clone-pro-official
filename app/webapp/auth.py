@@ -8,9 +8,16 @@ from __future__ import annotations
 import hmac
 import hashlib
 import json
+import time
 import urllib.parse
 from typing import Optional, Dict, Any
 from app.config import settings
+
+# initData is a bearer credential: whoever holds the string can act as
+# the user. Telegram support's own guidance is to reject stale
+# auth_date values; without an age limit a leaked initData string
+# (logs, screenshots, shared links) stays valid forever.
+INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 def parse_and_verify_init_data(init_data: str, bot_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -41,6 +48,20 @@ def parse_and_verify_init_data(init_data: str, bot_token: Optional[str] = None) 
         calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(calculated_hash, received_hash):
+            return None
+
+        # Freshness check (security fix 2026-10-31): auth_date is part
+        # of the HMAC-signed payload, so now that the signature has
+        # verified it can be trusted. Reject initData that carries no
+        # auth_date or one older than INIT_DATA_MAX_AGE_SECONDS.
+        auth_date_raw = data_dict.get("auth_date")
+        if not auth_date_raw:
+            return None
+        try:
+            auth_date = int(auth_date_raw)
+        except (TypeError, ValueError):
+            return None
+        if time.time() - auth_date > INIT_DATA_MAX_AGE_SECONDS:
             return None
 
         # Extract authenticated user information

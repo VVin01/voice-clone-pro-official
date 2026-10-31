@@ -59,6 +59,14 @@ class User(Base):
     welcome_bonus_awarded: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, index=True
     )
+    # True when Telegram reports the user has blocked the bot
+    # (TelegramForbiddenError on a send). This is NOT an admin ban:
+    # status stays untouched, broadcasts skip flagged users, and the
+    # flag clears on the user's next successful inbound interaction.
+    # Admin bans are expressed ONLY via status == BLOCKED.
+    bot_blocked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     referral_code: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
     )
@@ -297,6 +305,30 @@ class PaymentRequest(Base):
     )
 
 
+class PaymentIntent(Base):
+    """A buy-flow package selection that survives a bot restart (B2).
+
+    The aiogram FSM is in-memory: a deploy/restart between tapping a
+    package and sending the slip photo silently lost the flow — the
+    photo arrived with no state and met silence. The selection is
+    persisted here at tap time; a photo/document arriving with no
+    live FSM state but a recent (<24h) intent resumes the slip flow
+    from this row. One row per user (re-selection overwrites); the
+    row is cleared when a slip is created or the buy menu is
+    re-entered (flow abandoned).
+    """
+
+    __tablename__ = "payment_intents"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    package_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    chosen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False
+    )
+
+
 class VoiceModel(Base):
     __tablename__ = "voice_models"
 
@@ -426,6 +458,12 @@ class Job(Base):
     status_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     result_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON blob for recap jobs: the full submit-time RecapConfigRequest
+    # plus credit state (credits_charged / credit_deducted / phase /
+    # is_vip), so a restart/deploy re-dispatch restores the job exactly
+    # instead of rebuilding it with default settings. Nullable: rows
+    # created before this column existed simply have no persisted state.
+    recap_config: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

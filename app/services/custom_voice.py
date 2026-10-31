@@ -141,14 +141,37 @@ async def assign_model_to_request(
     admin_id: int,
     notes: str | None = None,
 ) -> tuple[bool, CustomVoiceRequest | None, str]:
-    """Admin fulfills request by assigning a voice model (newly trained or existing)."""
-    req = await get_custom_voice_request_by_id(session, request_id)
+    """Admin fulfills request by assigning a voice model (newly trained or existing).
+
+    The request row is locked (with_for_update) and must still be
+    PENDING: terminal requests (APPROVED/REJECTED) are refused so a
+    double-tap or stale admin screen can never flip a decided request
+    or duplicate its grant (hunt B3).
+    """
+    stmt = (
+        select(CustomVoiceRequest)
+        .where(CustomVoiceRequest.id == request_id)
+        .with_for_update()
+    )
+    req = (await session.execute(stmt)).scalar_one_or_none()
     if not req:
         return False, None, "REQUEST_NOT_FOUND"
+
+    if req.status != CustomVoiceRequestStatus.PENDING.value:
+        return False, req, f"REQUEST_NOT_PENDING:{req.status}"
 
     model = await session.get(VoiceModel, model_id)
     if not model:
         return False, None, "MODEL_NOT_FOUND"
+
+    # The production engine (VoxCPM2 cloud) can only run models whose
+    # pth_path marker is "voxcpm" — locally-trained .pth files are not
+    # runnable in production, and queue.create_voice_clone_job would
+    # silently fall back to the cloud voice while the user believed
+    # their trained voice was used (hunt V1). Refuse the assignment
+    # outright instead of granting a silently-dead approval.
+    if model.pth_path != "voxcpm":
+        return False, req, "MODEL_NOT_RUNNABLE: production engine cannot run this model file"
 
     # 1. Grant user access to this model if not already granted
     grant_stmt = select(UserVoiceModelGrant).where(
@@ -194,10 +217,26 @@ async def reject_custom_voice_request(
     admin_id: int,
     reason: str,
 ) -> tuple[bool, CustomVoiceRequest | None, str]:
-    """Admin rejects a request with an explanation, freeing user's slot."""
-    req = await get_custom_voice_request_by_id(session, request_id)
+    """Admin rejects a request with an explanation, freeing user's slot.
+
+    Locked + PENDING-only like assignment (hunt B3): rejecting an
+    already-APPROVED request is refused rather than silently flipping
+    it to REJECTED while the user's model grant stayed alive (which
+    freed a slot AND kept the model, defeating the slot cap).
+    Revoking an approved grant is a separate admin action, not a
+    side effect of reject.
+    """
+    stmt = (
+        select(CustomVoiceRequest)
+        .where(CustomVoiceRequest.id == request_id)
+        .with_for_update()
+    )
+    req = (await session.execute(stmt)).scalar_one_or_none()
     if not req:
         return False, None, "REQUEST_NOT_FOUND"
+
+    if req.status != CustomVoiceRequestStatus.PENDING.value:
+        return False, req, f"REQUEST_NOT_PENDING:{req.status}"
 
     req.status = CustomVoiceRequestStatus.REJECTED.value
     req.admin_notes = reason.strip()

@@ -30,7 +30,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, func, update, or_, text
+from sqlalchemy import case, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -38,7 +38,8 @@ from app.db.session import get_db_session
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
 from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, PaymentRequest, AuditLog, utc_now
 from app.services.i18n import t
-from app.services.models import get_authorized_model
+from app.services.models import get_authorized_model, get_available_models_for_user
+from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.curated_voices import list_curated_voices, get_curated_voice
 from app.webapp.auth import parse_and_verify_init_data
 
@@ -164,6 +165,16 @@ async def require_gate_verified(
 
     if settings.is_admin(user.id):
         return user
+    # Maintenance enforcement (hunt C1): the flag existed and the bot
+    # honoured it at /start and the clone entry, but Mini App writes
+    # never checked it — during maintenance the webapp kept accepting
+    # generations, slips and uploads. Admins are exempt (above);
+    # reads stay open (this dependency only guards writes).
+    if getattr(settings, "maintenance_mode", False):
+        raise HTTPException(
+            status_code=403,
+            detail="MAINTENANCE_MODE: ဆာဗာ ပြုပြင်ထိန်းသိမ်းမှု ဆောင်ရွက်နေပါသည် — မကြာမီ ပြန်လည် အသုံးပြုနိုင်ပါမည်။",
+        )
     # Production ban enforcement (2026-10-31): the bot has always blocked
     # status=BLOCKED users via AccessControlMiddleware, but the Mini App
     # API never checked the flag, so a banned user could keep generating
@@ -254,7 +265,7 @@ async def _save_upload_streaming(upload_file, dest_path, max_bytes: int) -> int:
                     break
                 total += len(chunk)
                 if total > max_bytes:
-                    raise HTTPException(status_code=413, detail="File size exceeds the allowed limit")
+                    raise HTTPException(status_code=413, detail="ဖိုင် အရွယ်အစား ကန့်သတ်ချက် ကျော်လွန်နေပါသည်")
                 out.write(chunk)
     except HTTPException:
         try:
@@ -267,7 +278,10 @@ async def _save_upload_streaming(upload_file, dest_path, max_bytes: int) -> int:
             dest_path.unlink(missing_ok=True)
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {exc}")
+        # Never leak the raw exception (paths/internals) to the client:
+        # log it server-side, return a clean user-safe detail.
+        logger.warning("Failed to save uploaded file %s: %s", dest_path, exc)
+        raise HTTPException(status_code=500, detail="ဖိုင် သိမ်းဆည်းရာတွင် အဆင်မပြေ ဖြစ်သွားပါသည် — ခဏနေ ပြန်ကြိုးစားပါ")
     return total
 
 
@@ -276,10 +290,16 @@ async def _recap_active_job_count(db, user_id: int) -> int:
 
     Registry entries and DB rows describe the same job, so counting both
     naively would double-count and break limits above 1.
+
+    SCRIPT_READY counts as active (hunt #3 E8): a job parked in script
+    review still owns the user's slot — its DB row stays RUNNING, so
+    the DB branch below already covers the normal path; the registry
+    branch names it too so a registry-only job (whose DB insert failed
+    at submit) cannot open a parallel-submit window either.
     """
     ids = set()
     for job_id, entry in RECAP_JOBS_REGISTRY.items():
-        if entry.get("user_id") == user_id and entry.get("status") in ("QUEUED", "RUNNING"):
+        if entry.get("user_id") == user_id and entry.get("status") in ("QUEUED", "RUNNING", "SCRIPT_READY"):
             ids.add(job_id)
     try:
         res = await db.execute(
@@ -306,14 +326,21 @@ async def _refund_recap_credits(user_id: int, count: int) -> bool:
     """
     if count <= 0:
         return False
+    if settings.is_admin(user_id):
+        return False
     try:
         from app.db.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as session:
-            user = await session.get(User, user_id)
-            if not user or settings.is_admin(user.id):
+            # Atomic increment (hunt F5): no read-modify-write window in
+            # which a concurrent charge could be overwritten.
+            result = await session.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(recap_credits=User.recap_credits + count)
+            )
+            if not result.rowcount:
                 return False
-            user.recap_credits = (getattr(user, "recap_credits", 0) or 0) + count
             await session.commit()
             return True
     except Exception as exc:
@@ -337,19 +364,24 @@ async def _charge_recap_credits(user_id: int, count: int) -> bool:
     """
     if count <= 0:
         return True
+    if settings.is_admin(user_id):
+        return True
     try:
         from app.db.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as session:
-            user = await session.get(User, user_id)
-            if not user:
+            # Atomic all-or-nothing charge (hunt F5): the WHERE clause
+            # is the balance check, so two concurrent charges can no
+            # longer both pass a stale read and drive the balance
+            # negative / hand out a free job. 0 rows updated means the
+            # user is missing or the balance cannot cover the charge.
+            result = await session.execute(
+                update(User)
+                .where(User.id == user_id, User.recap_credits >= count)
+                .values(recap_credits=User.recap_credits - count)
+            )
+            if not result.rowcount:
                 return False
-            if settings.is_admin(user.id):
-                return True
-            balance = getattr(user, "recap_credits", 0) or 0
-            if balance < count:
-                return False
-            user.recap_credits = balance - count
             await session.commit()
             return True
     except Exception as exc:
@@ -373,6 +405,177 @@ class _RecapInsufficientCreditsError(Exception):
         )
 
 
+def _persisted_recap_state(
+    req: "RecapConfigRequest",
+    *,
+    credit_deducted: bool,
+    credits_charged: int,
+    is_vip: bool,
+    phase: str,
+    estimated_parts=None,
+    credit_refunded: bool = False,
+    credits_refunded: int = 0,
+) -> str:
+    """Serialize everything a recap job needs to survive a restart.
+
+    Stored on the Job row (jobs.recap_config) at submit time. Before
+    this existed, the row carried only URL/title/voice, so the queue
+    worker's post-restart re-dispatch rebuilt the job with DEFAULT
+    settings (ratio, subtitle style, TTS engine, split choices and the
+    script-review phase all lost), no record of the submit credit
+    (refunds silently vanished) and a zeroed per-part charge counter
+    (the segment top-up then charged the full N parts a second time).
+
+    ``credit_refunded`` / ``credits_refunded`` (hunt #5): the refund
+    state rides along too, so a restart between a refund and a later
+    re-dispatch (or a registry-less admin cancel) can neither lose the
+    charge amount nor refund the same charge twice.
+    """
+    return json.dumps(
+        {
+            "config": req.model_dump(),
+            "credit_deducted": bool(credit_deducted),
+            "credits_charged": int(credits_charged),
+            "is_vip": bool(is_vip),
+            "phase": phase,
+            "credits_estimated": estimated_parts,
+            "credit_refunded": bool(credit_refunded),
+            "credits_refunded": int(credits_refunded),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _load_persisted_recap_state(job) -> Optional[dict]:
+    """Parse a Job row's persisted recap state, or None when the row
+    predates persistence (or the blob is unusable) — callers then fall
+    back to the historical reconstruction."""
+    raw = getattr(job, "recap_config", None)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("config"), dict):
+        return None
+    return data
+
+
+async def _persist_recap_credits_charged(entry: dict) -> None:
+    """Write a job's credit state back to its Job row: the topped-up
+    charge total (so a restart AFTER the segment top-up restores the
+    real total instead of the submit-time 1, which would charge the
+    same parts twice and over-refund on failure) and, once issued, the
+    refund flag + amount (hunt #5: so a restart after a refund cannot
+    lose the fact and refund a second time). Best-effort: the registry
+    entry remains authoritative for the live process."""
+    job_id = entry.get("id")
+    if not job_id:
+        return
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            state = _load_persisted_recap_state(job) if job is not None else None
+            if state is None:
+                return
+            state["credits_charged"] = int(entry.get("credits_charged") or 0)
+            state["credit_deducted"] = bool(entry.get("credit_deducted"))
+            state["credit_refunded"] = bool(entry.get("credit_refunded"))
+            state["credits_refunded"] = int(entry.get("credits_refunded") or 0)
+            job.recap_config = json.dumps(state, ensure_ascii=False)
+            await session.commit()
+    except Exception as exc:
+        logger.warning(f"Could not persist recap charge state for {job_id}: {exc}")
+
+
+def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> dict:
+    """Build the config, registry entry and run kwargs needed to
+    (re-)dispatch a persisted recap job — shared by the server queue
+    worker (post-restart pickup) and the admin retry endpoint.
+
+    Jobs submitted after the 2026-10-31 persistence fix carry their
+    full submit-time config + credit state on the Job row; those are
+    restored verbatim. Legacy rows without persisted state fall back
+    to the historical reconstruction (URL/title/voice from the row,
+    defaults for everything else, no credit state).
+
+    ``restore_credit_state=False`` is for admin retries of FAILED /
+    CANCELLED jobs: their original charge was already refunded by the
+    failure/cancel paths, so the retry runs uncharged — exactly how
+    retries behaved before persistence existed.
+    """
+    source_url = getattr(job, "source_audio_path", None) or job.input_text or ""
+    # Encoding repair (hunt #4 A1): rows created before the intake
+    # conversion may still hold a Zawgyi title — heal them on retry.
+    clean_title = _clean_recap_display_title(
+        convert_zawgyi_to_unicode(job.input_text or ""), source_url
+    ) or "Movie Recap Video"
+    state = _load_persisted_recap_state(job)
+    if state is not None:
+        cfg = RecapConfigRequest(**state["config"])
+        is_vip = bool(state.get("is_vip"))
+        phase = state.get("phase") or ("script" if cfg.script_review else "full")
+        credit_deducted = bool(state.get("credit_deducted")) if restore_credit_state else False
+        credits_charged = int(state.get("credits_charged") or 0) if restore_credit_state else 0
+        credit_refunded = bool(state.get("credit_refunded")) if restore_credit_state else False
+        credits_refunded = int(state.get("credits_refunded") or 0) if restore_credit_state else 0
+        credits_estimated = state.get("credits_estimated")
+    else:
+        cfg = RecapConfigRequest(
+            url=source_url,
+            title=clean_title,
+            voice_slug=job.preset_voice or "komin",
+        )
+        is_vip = (
+            (user.account_category == AccountCategory.PURCHASED.value) if user else False
+        ) or settings.is_admin(job.user_id)
+        phase = "full"
+        credit_deducted = False
+        credits_charged = 0
+        credit_refunded = False
+        credits_refunded = 0
+        credits_estimated = None
+
+    entry = {
+        "id": job.id,
+        "user_id": job.user_id,
+        "title": clean_title,
+        "status": "QUEUED",
+        "progress_percent": 5,
+        "progress_step": "0/4",
+        "progress_label": "⏳ Picking up from queue...",
+        "created_at": time.time(),
+        "video_path": None,
+        "audio_path": None,
+        "srt_path": None,
+        "script_path": None,
+        "download_urls": {},
+        "error_message": None,
+        "script_review": bool(cfg.script_review),
+        "segments_count": None,
+        "split_video": bool(cfg.split_video),
+        "parts": [],
+        "split_error": None,
+        "split_note": None,
+        "credit_deducted": credit_deducted,
+        "credits_charged": credits_charged,
+        "credit_refunded": credit_refunded,
+        "credits_refunded": credits_refunded,
+        "credits_estimated": credits_estimated,
+        "parts_count": None,
+    }
+    return {
+        "cfg": cfg,
+        "entry": entry,
+        "is_vip": is_vip,
+        "credit_deducted": credit_deducted,
+        "phase": phase,
+    }
+
+
 async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: int) -> int:
     """Bring a segmented recap job's charge to 1 credit PER PART.
 
@@ -392,6 +595,10 @@ async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: i
     entry["credits_charged"] = int(total_parts)
     entry["credit_deducted"] = True
     entry["parts_count"] = int(total_parts)
+    # Keep the Job row's persisted total in step, so a restart after
+    # this top-up restores N (not the submit-time 1) and can neither
+    # double-charge the parts nor lose track of the refund amount.
+    await _persist_recap_credits_charged(entry)
     return int(total_parts)
 
 
@@ -411,6 +618,11 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     if await _refund_recap_credits(user_id, amount):
         entry["credit_refunded"] = True
         entry["credits_refunded"] = amount
+        # Persist the refund on the Job row too (hunt #5): if the
+        # process restarts now, the re-dispatch plan restores the flag
+        # and a second failure cannot refund the same charge again;
+        # a registry-less admin cancel likewise sees it was refunded.
+        await _persist_recap_credits_charged(entry)
         return True
     return False
 
@@ -436,6 +648,33 @@ def _voice_job_error_detail(reason: str) -> str:
         "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT": "စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်။",
         "AUDIO_FILE_NOT_FOUND": "အသံဖိုင် မတွေ့ရှိပါ။",
     }.get(reason, "အလုပ်ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်ပါသည်။")
+
+
+_INVALID_PRESET_VOICE_DETAIL = "ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ အသံ ပြန်ရွေးပေးပါခင်ဗျာ။"
+
+
+def _require_valid_preset_voice(preset_voice: Optional[str]) -> None:
+    """Allowlist for the client-supplied preset_voice (XSS fix, hunt #2 X1).
+
+    preset_voice is stored verbatim on the Job row and later rendered
+    in the admin Mini App, so an arbitrary string here is a stored-XSS
+    vector (a JS-string breakout payload survived HTML escaping in the
+    old admin onclick handlers). Downstream — queue, worker, engines —
+    the value is ONLY ever resolved through get_curated_voice(), so the
+    curated persona slugs are the complete legitimate set. Anything
+    else is rejected here instead of being stored with a silent
+    fallback voice.
+
+    The same invariant is enforced inside the queue service itself
+    (hunt #3 E4), which raises ValueError; the endpoints translate
+    that into this same clean 400 so behaviour is identical whichever
+    layer trips first.
+    """
+    if preset_voice is not None and get_curated_voice(preset_voice) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=_INVALID_PRESET_VOICE_DETAIL,
+        )
 
 
 # Admin-editable tutorial links beyond the original video/voice/recap
@@ -679,6 +918,11 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         "tutorial_recap_enabled",
         default="true",
     )
+    maintenance_raw = await get_dynamic_setting(
+        db,
+        "maintenance_mode",
+        default=str(getattr(settings, "maintenance_mode", False)).lower(),
+    )
     return {
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
@@ -690,6 +934,9 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         "tutorial_recap_enabled": str(tut_recap_enabled).lower() != "false",
         "channel_invite_link": getattr(settings, "channel_invite_link", "https://t.me/VoiceCloneProChannel"),
         "group_invite_link": getattr(settings, "group_invite_link", "https://t.me/VoiceCloneProGroup"),
+        # So the Mini App can show its maintenance state instead of
+        # letting writes fail one by one (hunt C1).
+        "maintenance_mode": str(maintenance_raw).lower() in ("true", "1", "yes"),
     }
 
 
@@ -733,6 +980,20 @@ async def list_voice_models(
 
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
 
+    # Privacy scoping (hunt #2 V2): SYSTEM models stay listed for
+    # everyone exactly as before, but a PERSONAL model is only listed
+    # for its owner, an admin, or a user holding a grant — the same
+    # visibility the bot enforces via get_available_models_for_user.
+    # Previously every signed-in user could enumerate (and sample)
+    # other users' personal models.
+    authorized_ids = {m.id for m in await get_available_models_for_user(db, user.id)}
+    models = [
+        m for m in models
+        if m.type != VoiceModelType.PERSONAL.value
+        or m.owner_user_id == user.id
+        or m.id in authorized_ids
+    ]
+
     model_list = []
     for m in models:
         allowed = is_vip or m.allowed_for_free
@@ -751,11 +1012,14 @@ async def list_voice_models(
 # ── 3. Voice Generation ───────────────────────────────────────────────────
 class VoiceGenerateRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000)
-    model_slug: str = "voxcpm-cloud-ai"
-    speed: str = "normal"
-    gender_preset: str = "m2m"
-    engine: str = "voxcpm"
-    preset_voice: Optional[str] = None
+    # Length caps aligned to the columns these values land in
+    # (hunt #4 A2): an over-long string used to sail through
+    # validation and die as a Postgres truncation 500 at insert.
+    model_slug: str = Field("voxcpm-cloud-ai", max_length=255)  # VoiceModel.slug String(255)
+    speed: str = Field("normal", max_length=20)
+    gender_preset: str = Field("m2m", max_length=20)
+    engine: str = Field("voxcpm", max_length=20)  # Job.engine String(20)
+    preset_voice: Optional[str] = Field(None, max_length=50)  # Job.preset_voice String(50)
 
 
 @api_router.post("/voices/generate")
@@ -766,9 +1030,14 @@ async def create_voice_job(
     _gate: User = Depends(require_gate_verified),
 ):
     """Submit a voice clone generation job from Mini App."""
-    clean_text = req.text.strip()
+    # Encoding repair before the length check below (hunt #4 A1):
+    # Zawgyi-typed text becomes Unicode so the counted length is the
+    # spoken length; create_voice_clone_job converts again idempotently.
+    clean_text = convert_zawgyi_to_unicode(req.text.strip())
     if not clean_text:
         raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ရန် လိုအပ်ပါသည်")
+
+    _require_valid_preset_voice(req.preset_voice)
 
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
     char_limit = settings.character_limit_purchased if is_vip else settings.character_limit_free
@@ -837,17 +1106,22 @@ async def create_voice_job(
     # directly with only a character-limit check.
     from app.services.queue import create_voice_clone_job
 
-    job, _reason = await create_voice_clone_job(
-        db,
-        user.id,
-        text=clean_text,
-        model_id=model.id,
-        gender_preset=req.gender_preset,
-        speed_preset=req.speed,
-        edge_voice=resolved_edge_voice,
-        engine=actual_engine,
-        preset_voice=req.preset_voice,
-    )
+    try:
+        job, _reason = await create_voice_clone_job(
+            db,
+            user.id,
+            text=clean_text,
+            model_id=model.id,
+            gender_preset=req.gender_preset,
+            speed_preset=req.speed,
+            edge_voice=resolved_edge_voice,
+            engine=actual_engine,
+            preset_voice=req.preset_voice,
+        )
+    except ValueError:
+        # Service-level preset_voice invariant (E4): same clean 400
+        # the endpoint pre-check above raises.
+        raise HTTPException(status_code=400, detail=_INVALID_PRESET_VOICE_DETAIL)
     if not job:
         raise HTTPException(
             status_code=_voice_job_error_status(_reason),
@@ -884,9 +1158,13 @@ async def create_voice_job_with_audio(
     _gate: User = Depends(require_gate_verified),
 ):
     """Submit a voice clone generation job with uploaded Reference Audio from Mini App."""
-    clean_text = text.strip()
+    # Encoding repair before the length check below (hunt #4 A1), same
+    # as the JSON endpoint above.
+    clean_text = convert_zawgyi_to_unicode(text.strip())
     if not clean_text:
         raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ရန် လိုအပ်ပါသည်")
+
+    _require_valid_preset_voice(preset_voice)
 
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
     char_limit = settings.character_limit_purchased if is_vip else settings.character_limit_free
@@ -972,18 +1250,29 @@ async def create_voice_job_with_audio(
     # authorization) before enqueueing.
     from app.services.queue import create_voice_clone_job
 
-    job, _reason = await create_voice_clone_job(
-        db,
-        user.id,
-        text=clean_text,
-        model_id=model.id,
-        gender_preset=gender_preset,
-        speed_preset=speed,
-        edge_voice=resolved_edge_voice,
-        engine=actual_engine,
-        preset_voice=preset_voice,
-        source_audio_path=ref_audio_path,
-    )
+    try:
+        job, _reason = await create_voice_clone_job(
+            db,
+            user.id,
+            text=clean_text,
+            model_id=model.id,
+            gender_preset=gender_preset,
+            speed_preset=speed,
+            edge_voice=resolved_edge_voice,
+            engine=actual_engine,
+            preset_voice=preset_voice,
+            source_audio_path=ref_audio_path,
+        )
+    except ValueError:
+        # Service-level preset_voice invariant (E4): clean up the
+        # uploaded reference audio, then the same clean 400 the
+        # endpoint pre-check above raises.
+        if ref_audio_path:
+            try:
+                Path(ref_audio_path).unlink()
+            except OSError:
+                pass
+        raise HTTPException(status_code=400, detail=_INVALID_PRESET_VOICE_DETAIL)
     if not job:
         # Do not leave the uploaded reference audio behind on failure.
         if ref_audio_path:
@@ -1101,18 +1390,18 @@ async def upload_worker_job_result(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Internal sync endpoint for Laptop Worker to upload converted audio results to Render Cloud."""
-    # Security fix (audit 2026-10-28): use a separate worker
-    # token. Fall back to the bot token only with a warning so
-    # existing deployments do not break immediately.
-    worker_token = getattr(settings, "worker_token", "") or settings.bot_token
-    if not getattr(settings, "worker_token", ""):
-        logger.warning(
-            "WORKER_TOKEN is not set; falling back to the Telegram "
-            "bot token for worker uploads. Set a separate "
-            "WORKER_TOKEN and rotate it."
-        )
-    expected_token = worker_token
-    if not auth_token or auth_token != expected_token:
+    # Hardening (hunt F8): the endpoint lives ONLY when a dedicated
+    # WORKER_TOKEN is configured. The old fallback accepted the
+    # Telegram bot token — readable by every code path — as the
+    # upload credential; that is gone. Unset → 404 (the endpoint is
+    # effectively absent; co-located mode needs no upload at all).
+    worker_token = (getattr(settings, "worker_token", "") or "").strip()
+    if not worker_token:
+        raise HTTPException(status_code=404, detail="Not found")
+    import hmac as _hmac
+
+    supplied_token = (auth_token or "").strip()
+    if not supplied_token or not _hmac.compare_digest(supplied_token, worker_token):
         raise HTTPException(status_code=403, detail="Unauthorized worker upload")
 
     job = await db.get(Job, job_id)
@@ -1166,8 +1455,20 @@ async def upload_worker_job_result(
 
 @api_router.get("/voices/sample/{slug}")
 @api_router.get("/voices/preview/{slug}")
-async def get_voice_sample_audio(slug: str, db: AsyncSession = Depends(get_db_session)):
-    """Serve sample audio preview for curated VoxCPM2 voice personas."""
+async def get_voice_sample_audio(
+    slug: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Serve sample audio preview for curated VoxCPM2 voice personas.
+
+    Authenticated (privacy fix, hunt #2 V2): samples used to be served
+    to anyone who knew or guessed a slug — including other users'
+    PERSONAL model samples. Curated / SYSTEM samples stay available to
+    any signed-in user; a PERSONAL model's sample requires ownership
+    or a grant (get_authorized_model semantics) and is denied
+    404-style, mirroring the other media endpoints.
+    """
     clean_id = slug.strip().lower()
 
     # Curated personas that were remapped to a human voice (see
@@ -1195,6 +1496,20 @@ async def get_voice_sample_audio(slug: str, db: AsyncSession = Depends(get_db_se
     }
     target_id = alias_map.get(clean_id, clean_id)
 
+    # Personal-model guard, resolved BEFORE anything is served: if
+    # this slug names a PERSONAL model, only its owner / a grantee /
+    # an admin may hear its sample, and a personal slug never falls
+    # through to the shared fallback sample below.
+    stmt = select(VoiceModel).where(VoiceModel.slug == slug)
+    res = await db.execute(stmt)
+    m = res.scalar_one_or_none()
+    if m is not None and m.type == VoiceModelType.PERSONAL.value:
+        if await get_authorized_model(db, user.id, m.id) is None:
+            raise HTTPException(status_code=404, detail="Sample audio not found")
+        if m.sample_audio_path and Path(m.sample_audio_path).is_file():
+            return FileResponse(path=m.sample_audio_path, media_type="audio/wav")
+        raise HTTPException(status_code=404, detail="Sample audio not found")
+
     # 1. Check static sample mp3 in static/audio/samples/
     sample_file = settings.root / "app" / "webapp" / "static" / "audio" / "samples" / f"{target_id}.mp3"
     if sample_file.is_file():
@@ -1204,10 +1519,8 @@ async def get_voice_sample_audio(slug: str, db: AsyncSession = Depends(get_db_se
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    # 2. Check DB VoiceModel sample_audio_path
-    stmt = select(VoiceModel).where(VoiceModel.slug == slug)
-    res = await db.execute(stmt)
-    m = res.scalar_one_or_none()
+    # 2. Check DB VoiceModel sample_audio_path (SYSTEM models; personal
+    # models were already resolved by the guard above)
     if m and m.sample_audio_path and Path(m.sample_audio_path).is_file():
         return FileResponse(path=m.sample_audio_path, media_type="audio/wav")
 
@@ -1242,9 +1555,11 @@ async def extract_media_info(
         raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
 
     try:
-        canonical_url = unshorten_url(url)
+        # unshorten_url follows redirects synchronously — off the
+        # event loop (deep-hunt #4 D1), like the download endpoints.
+        canonical_url = await asyncio.to_thread(unshorten_url, url)
     except Exception:
-        raise HTTPException(status_code=400, detail="This URL is not allowed")
+        raise HTTPException(status_code=400, detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ")
     # SSRF: unshorten_url now validates every redirect hop, and this
     # re-validates the final URL (DNS resolve + private-range block)
     # before yt-dlp is allowed to fetch it.
@@ -1253,12 +1568,16 @@ async def extract_media_info(
 
         canonical_url = validate_public_url(canonical_url)
     except Exception:
-        raise HTTPException(status_code=400, detail="This URL is not allowed")
+        raise HTTPException(status_code=400, detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ")
 
     try:
         from app.services.downloader import MediaDownloader
         downloader = MediaDownloader()
-        info = downloader.get_info(canonical_url)
+        # yt-dlp metadata fetch is synchronous network work; running it
+        # on the event loop froze the bot + Mini App for seconds on
+        # every extract (deep-hunt #4 D1). Same to_thread wrap the
+        # neighbouring download endpoints already use.
+        info = await asyncio.to_thread(downloader.get_info, canonical_url)
         duration_sec = info.get("duration", 0) or 0
         mins, secs = divmod(int(duration_sec), 60)
         duration_str = f"{mins:02d}:{secs:02d}"
@@ -1396,12 +1715,14 @@ async def fetch_downloader_format(
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
     try:
-        canonical_url = unshorten_url(url)
+        # Same event-loop fix as the extract endpoint (deep-hunt #4 D1):
+        # redirect-following is synchronous network work.
+        canonical_url = await asyncio.to_thread(unshorten_url, url)
         from app.services.url_safety import validate_public_url
 
         canonical_url = validate_public_url(canonical_url)
     except Exception:
-        raise HTTPException(status_code=400, detail="This URL is not allowed")
+        raise HTTPException(status_code=400, detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ")
 
     download_id = uuid.uuid4().hex[:12]
     dest = _dl_dir(download_id)
@@ -1430,8 +1751,10 @@ async def fetch_downloader_format(
         raise
     except Exception as e:
         shutil.rmtree(dest, ignore_errors=True)
+        # The raw exception (yt-dlp output) stays in the log only —
+        # API callers get a clean localized detail (hunt F11).
         logger.warning(f"downloader fetch ({fmt}) failed for {canonical_url}: {e}")
-        raise HTTPException(status_code=400, detail=str(e)[:300] or "Download failed")
+        raise HTTPException(status_code=400, detail="ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။")
 
     if not file_path or not Path(file_path).is_file():
         shutil.rmtree(dest, ignore_errors=True)
@@ -1513,7 +1836,7 @@ async def send_downloader_to_telegram(
         return {"success": True, "message": "Telegram သို့ ဖိုင် ပို့ပြီးပါပြီခင်ဗျာ!"}
     except Exception as e:
         logger.warning(f"Failed to send downloader file {download_id} to {user.id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်: {e}")
+        raise HTTPException(status_code=500, detail="Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်")
     finally:
         await bot.session.close()
 
@@ -1558,6 +1881,10 @@ async def upload_recap_video(
     display_title = Path(clean_name).stem or "Uploaded Movie Video"
     UPLOADED_VIDEO_TITLES[str(saved_path)] = display_title
     UPLOADED_VIDEO_TITLES[saved_path.name] = display_title
+    UPLOADED_VIDEO_OWNERS[str(saved_path)] = user.id
+    UPLOADED_VIDEO_OWNERS[str(saved_path.resolve())] = user.id
+    UPLOADED_VIDEO_OWNERS[saved_path.name] = user.id
+    UPLOADED_VIDEO_OWNERS[thumb_path.name] = user.id
 
     return {
         "success": True,
@@ -1576,21 +1903,66 @@ async def upload_recap_video(
     }
 
 
+async def _recap_frame_owner_id(db: AsyncSession, resolved_path: Path) -> Optional[int]:
+    """Resolve which user owns the file a /recap/frame request targets.
+
+    Ownership sources, in order:
+    1. the upload registry (files uploaded via /recap/upload_video —
+       including a job's uploaded source after a restart, via source 3);
+    2. the recap job whose output directory contains the file
+       (storage/recap_output/<job_id>/...), via its DB row or the
+       in-memory registry;
+    3. any job whose recorded source file this is (Job.source_audio_path).
+
+    Returns None when no owner can be established — callers must deny
+    non-admins in that case rather than serve an unowned file.
+    """
+    owner = UPLOADED_VIDEO_OWNERS.get(str(resolved_path))
+    if owner is None:
+        owner = UPLOADED_VIDEO_OWNERS.get(resolved_path.name)
+    if owner is not None:
+        return owner
+
+    res_storage = settings.storage_root.resolve()
+    try:
+        rel = resolved_path.relative_to(res_storage)
+    except ValueError:
+        rel = None
+
+    if rel is not None and len(rel.parts) >= 2 and rel.parts[0] == "recap_output":
+        job = await db.get(Job, rel.parts[1])
+        if job is not None:
+            return job.user_id
+        entry = RECAP_JOBS_REGISTRY.get(rel.parts[1])
+        if entry is not None:
+            return entry.get("user_id")
+
+    # Job.source_audio_path stores the path as submitted (unresolved),
+    # so match both the resolved and the storage-relative spellings.
+    candidates = {str(resolved_path)}
+    if rel is not None:
+        candidates.add(str(settings.storage_root / rel))
+    res = await db.execute(
+        select(Job.user_id).where(Job.source_audio_path.in_(candidates))
+    )
+    return res.scalars().first()
+
+
 @api_router.get("/recap/frame")
 async def get_recap_frame(
     path: str = Query(...),
     t: Optional[float] = Query(None),
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Serve or dynamically generate video frame snapshot at timestamp t with caching and security containment."""
     clean_p = Path(path).name
     # Search in temp uploads dir
     cand = settings.storage_root / "temp" / "recap_uploads" / clean_p
-    if cand.is_file() and t is None:
-        return FileResponse(cand, media_type="image/jpeg")
+    direct_thumb = cand.is_file() and t is None
 
     # If t is given and path points to an uploaded or local video file
-    actual_path = settings.storage_root / "temp" / "recap_uploads" / clean_p
+    actual_path = cand
     if not actual_path.is_file():
         cand_path = Path(path)
         actual_path = cand_path if cand_path.is_absolute() else (settings.storage_root / cand_path)
@@ -1608,6 +1980,19 @@ async def get_recap_frame(
         raise
     except Exception:
         raise HTTPException(status_code=403, detail="Access denied")
+
+    # Ownership check (security fix 2026-10-31): containment alone let
+    # ANY signed-in user extract frames from any file in storage —
+    # other users' uploads and job outputs included. Resolve the file
+    # to its owner and apply the same owner-or-admin rule (with the
+    # same 404-style denial) as the job download endpoints.
+    if not settings.is_admin(user.id):
+        owner_id = await _recap_frame_owner_id(db, res_actual)
+        if owner_id is None or owner_id != user.id:
+            raise HTTPException(status_code=404, detail="Frame not found")
+
+    if direct_thumb:
+        return FileResponse(cand, media_type="image/jpeg")
 
     if actual_path.is_file():
         seek_sec = max(0.1, float(t or 1.0))
@@ -1630,7 +2015,24 @@ async def get_recap_frame(
 
 # ── 5. Recap Studio Configuration & Background Pipeline ─────────────────────
 RECAP_JOBS_REGISTRY: Dict[str, Dict[str, Any]] = {}
+# Global recap execution cap (deep-hunt #4 D2): the per-user cap (1
+# active job) never bounded the SYSTEM — N users submitting together
+# meant N simultaneous ffmpeg render chains on the single instance,
+# slowing everything to a crawl and risking OOM. At most 2 recap jobs
+# execute at once, across EVERY dispatch path (submit, script-render,
+# admin retry, bot admin, queue-worker re-dispatch): the semaphore is
+# acquired inside _run_recap_background_job itself, so a dispatched
+# job whose turn has not come simply waits — still QUEUED in the
+# registry, never failed or dropped — until a slot frees.
+RECAP_EXECUTION_SEMAPHORE = asyncio.Semaphore(2)
 UPLOADED_VIDEO_TITLES: Dict[str, str] = {}
+# Upload ownership for /recap/frame (security fix 2026-10-31): maps an
+# uploaded file (absolute path, resolved path, and basename — the same
+# key shapes UPLOADED_VIDEO_TITLES uses) to the uploading user's id.
+# Recap uploads previously had no owner record at all, so the frame
+# endpoint could only check storage containment and any signed-in user
+# could pull frames from anyone else's upload.
+UPLOADED_VIDEO_OWNERS: Dict[str, int] = {}
 
 
 def _clean_recap_display_title(raw_title: Optional[str], fallback_url: Optional[str] = None) -> str:
@@ -1831,12 +2233,19 @@ RECAP_SOURCE_LANGUAGE_CODES = frozenset({
 })
 RECAP_RENDER_QUALITIES = frozenset({"standard", "high", "max"})
 RECAP_TTS_ENGINES = frozenset({"voxcpm", "gemini"})
+# Recap narrator slugs the worker still maps even though they are not
+# curated personas (legacy Edge female voice). Every other legitimate
+# recap voice_slug is a curated persona slug — see create_recap_job.
+RECAP_LEGACY_EDGE_VOICE_SLUGS = frozenset({"nilar"})
 
 
 class RecapConfigRequest(BaseModel):
-    url: str
-    title: Optional[str] = None
-    voice_slug: str = "komin"
+    # Bounded (hunt #4 A2): the URL feeds yt-dlp and the persisted
+    # config; the title feeds display + the persisted config. Real
+    # URLs/titles are far below these caps.
+    url: str = Field(..., max_length=2048)
+    title: Optional[str] = Field(None, max_length=500)
+    voice_slug: str = Field("komin", max_length=50)  # Job.preset_voice String(50)
     story_style: str = "viral"        # viral, dramatic, funny, pov, standard
     ratio: str = "9:16"               # Original, 9:16, 16:9, 1:1
     ratio_fill: str = "blur"          # blur, crop, black
@@ -2293,7 +2702,75 @@ def _load_recap_script_plan(job_id: str):
         raise HTTPException(status_code=500, detail="Recap script is unreadable")
 
 
+async def _recap_job_marked_cancelled(job_id: str, entry: Optional[dict] = None) -> bool:
+    """True when a recap job was cancelled while it waited or rendered.
+
+    Two signals, either is authoritative:
+
+    * the registry entry carries the admin cancel path's marker --
+      status ``CANCELLED``, or ``FAILED`` with the "Cancelled by
+      Administrator" message (that is exactly what the cancel endpoint
+      writes into the entry, and no fresh dispatch ever starts from a
+      FAILED entry: retries build a new QUEUED one);
+    * the Job row's status is CANCELLED (the cancel endpoint writes
+      that first, before touching the registry).
+
+    A failed status READ is not treated as a cancellation -- the
+    execute path's own DB writes already tolerate transient errors,
+    and treating a hiccup as a cancel would silently drop real jobs.
+    """
+    if entry:
+        status = str(entry.get("status") or "")
+        if status == "CANCELLED":
+            return True
+        if status == "FAILED" and str(entry.get("error_message") or "").startswith("Cancelled"):
+            return True
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            row = (
+                await session.execute(select(Job.status).where(Job.id == job_id))
+            ).first()
+        return bool(row) and row[0] == JobStatus.CANCELLED.value
+    except Exception as exc:
+        logger.warning(f"Could not re-check cancel state for recap job {job_id}: {exc}")
+        return False
+
+
 async def _run_recap_background_job(
+    job_id: str,
+    req: RecapConfigRequest,
+    user_id: int,
+    chat_id: int,
+    is_vip: bool = False,
+    credit_deducted: bool = False,
+    phase: str = "full",
+    resume_source: Optional[str] = None,
+):
+    """Capped entry point for every recap execution (deep-hunt #4 D2).
+
+    All dispatch sites (submit, script-render, admin retry, bot admin,
+    the server queue worker's re-dispatch) call this name; the global
+    semaphore guarantees at most 2 renders execute at once. A job that
+    cannot get a slot yet waits inside this coroutine — its registry
+    entry stays QUEUED and the queue worker's guard sees that status,
+    so it is never re-dispatched, failed, or dropped while waiting.
+    """
+    async with RECAP_EXECUTION_SEMAPHORE:
+        await _execute_recap_background_job(
+            job_id,
+            req,
+            user_id,
+            chat_id,
+            is_vip=is_vip,
+            credit_deducted=credit_deducted,
+            phase=phase,
+            resume_source=resume_source,
+        )
+
+
+async def _execute_recap_background_job(
     job_id: str,
     req: RecapConfigRequest,
     user_id: int,
@@ -2315,6 +2792,19 @@ async def _run_recap_background_job(
         "credits_charged",
         int(entry.get("credits_charged") or (1 if credit_deducted else 0)),
     )
+
+    # Post-semaphore cancel re-check (hunt #5): this coroutine may have
+    # waited inside _run_recap_background_job for an execution slot
+    # while an admin cancelled the job -- the cancel path has already
+    # written the terminal state and refunded the charge. Flipping to
+    # RUNNING here would resurrect a cancelled, refunded job, render
+    # it and deliver its video. Abort quietly instead: no status flip,
+    # no render, no delivery, no credit movement.
+    if await _recap_job_marked_cancelled(job_id, entry):
+        logger.info(
+            f"Recap job {job_id} was cancelled while waiting for an execution slot; not running."
+        )
+        return
 
     entry["status"] = "RUNNING"
     entry["progress_percent"] = 15
@@ -2723,6 +3213,19 @@ async def _run_recap_background_job(
                 logger.warning(f"Recap job {job_id}: video split failed (full video kept): {split_err}")
                 entry["split_error"] = str(split_err)[:300]
 
+        # Delivery-boundary cancel re-check (hunt #5): an admin may
+        # have cancelled (and refunded) this job while it rendered.
+        # Never write SUCCESS, notify, or deliver in that case --
+        # mirror the cancel path's own registry marker and stop. The
+        # charge stays exactly as the cancel path left it (refunded).
+        if await _recap_job_marked_cancelled(job_id, entry):
+            entry["status"] = "FAILED"
+            entry["error_message"] = "Cancelled by Administrator"
+            logger.info(
+                f"Recap job {job_id} was cancelled during rendering; not delivering."
+            )
+            return
+
         # Update Job in database
         try:
             async with AsyncSessionLocal() as session:
@@ -2888,7 +3391,20 @@ async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
     try:
         from app.db.session import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
-            stmt = select(Job).where(Job.created_at < cutoff)
+            stmt = select(Job).where(
+                Job.created_at < cutoff,
+                # Terminal statuses only (fix 2026-10-31): the sweep
+                # previously matched on age alone, so a QUEUED/RUNNING
+                # job older than the window — e.g. one re-queued after
+                # a restart — could have its record and files deleted
+                # mid-flight. PENDING/QUEUED/RUNNING jobs are never
+                # swept, however old they are.
+                Job.status.in_([
+                    JobStatus.SUCCESS.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]),
+            )
             res = await session.execute(stmt)
             expired_jobs = res.scalars().all()
 
@@ -2929,8 +3445,65 @@ async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
     for k in expired_keys:
         RECAP_JOBS_REGISTRY.pop(k, None)
 
+    # Orphaned temp artefacts (hunt D3): the record sweep above only
+    # reaches files a Job row points at. Recap uploads that were
+    # previewed but never submitted (or whose job row is long gone)
+    # and the derived frame-cache JPGs accumulated forever. Rules:
+    # never delete anything younger than the window, and never delete
+    # a file (or its _thumb sibling) that ANY surviving job row still
+    # references — a non-terminal job may still need its source.
+    orphan_count = 0
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(Job.source_audio_path, Job.result_path)
+            )).all()
+        referenced_names: set[str] = set()
+        referenced_stems: set[str] = set()
+        for src_path, res_path in rows:
+            for p in (src_path, res_path):
+                if p:
+                    referenced_names.add(Path(p).name)
+                    referenced_stems.add(Path(p).stem)
+        cutoff_ts = cutoff.timestamp()
+
+        def _is_orphan(f: Path) -> bool:
+            stem = f.stem[:-6] if f.stem.endswith("_thumb") else f.stem
+            return (
+                f.name not in referenced_names
+                and stem not in referenced_stems
+                and f.stat().st_mtime < cutoff_ts
+            )
+
+        uploads_dir = settings.storage_root / "temp" / "recap_uploads"
+        if uploads_dir.is_dir():
+            for f in uploads_dir.iterdir():
+                try:
+                    if f.is_file() and _is_orphan(f):
+                        f.unlink(missing_ok=True)
+                        orphan_count += 1
+                except OSError:
+                    pass
+        # Frame-cache JPGs are a pure derived cache (regenerated from
+        # the source file on demand), so age alone decides for them.
+        temp_dir = settings.storage_root / "temp"
+        if temp_dir.is_dir():
+            for f in temp_dir.glob("frame_*.jpg"):
+                try:
+                    if f.is_file() and f.stat().st_mtime < cutoff_ts:
+                        f.unlink(missing_ok=True)
+                        orphan_count += 1
+                except OSError:
+                    pass
+    except Exception as e:
+        logger.warning(f"Orphan temp cleanup failed: {e}")
+
     if deleted_count > 0:
         logger.info(f"Auto-cleaned {deleted_count} expired (>{days}d) jobs and media files.")
+    if orphan_count > 0:
+        logger.info(f"Auto-cleaned {orphan_count} orphaned temp artefacts (>{days}d).")
 
     return deleted_count
 
@@ -2943,6 +3516,12 @@ async def create_recap_job(
     _gate: User = Depends(require_gate_verified),
 ):
     """Submit 1-Click Pro Recap Job with complete ratio, audio, subtitle, and transformation settings."""
+    # Encoding repair at intake (hunt #4 A1): a Zawgyi-typed title is
+    # displayed on the output video, so store/speak it as Unicode. The
+    # request object is mutated before every downstream use (display
+    # title, persisted recap state, registry entry, background job).
+    if req.title:
+        req.title = convert_zawgyi_to_unicode(req.title)
     # SSRF + local-file containment, before any probe, deduction, or queueing.
     _req_url = (req.url or "").strip()
     if _req_url.startswith(("http://", "https://")):
@@ -2950,7 +3529,9 @@ async def create_recap_job(
             from app.services.downloader import extract_first_url as _extract_first, unshorten_url as _unshorten
             from app.services.url_safety import validate_public_url as _validate_url
 
-            _canon = _unshorten(_extract_first(_req_url) or _req_url)
+            # Redirect-following is synchronous network work — off the
+            # event loop like the pre-check below (deep-hunt #4 D1).
+            _canon = await asyncio.to_thread(_unshorten, _extract_first(_req_url) or _req_url)
             _validate_url(_canon)
         except HTTPException:
             raise
@@ -2969,10 +3550,31 @@ async def create_recap_job(
         except Exception:
             raise HTTPException(status_code=400, detail="Local video path is not allowed")
 
-    is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
-    credits = getattr(user, "recap_credits", 0)
+    # Narrator slug allowlist (stored-XSS fix, hunt #2 X1): voice_slug
+    # is persisted as the job's preset_voice and rendered in the admin
+    # Mini App, so it must never be an arbitrary client string. The
+    # legitimate set is the curated personas (the only voices the
+    # recap UI offers and the worker resolves) plus the legacy Edge
+    # slug the worker still maps. Checked before any credit moves.
+    _voice_slug = (req.voice_slug or "").strip().lower()
+    if get_curated_voice(_voice_slug) is None and _voice_slug not in RECAP_LEGACY_EDGE_VOICE_SLUGS:
+        raise HTTPException(
+            status_code=400,
+            detail="ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ အသံ ပြန်ရွေးပေးပါခင်ဗျာ။",
+        )
 
-    if not is_vip and credits <= 0:
+    is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
+    credits = getattr(user, "recap_credits", 0) or 0
+
+    # Credit gate (money fix 2026-10-31): EVERY non-admin needs at
+    # least one recap credit to submit. Previously this gate skipped
+    # PURCHASED ("VIP") users entirely while the deduction below only
+    # ran when the balance was positive — so anyone who had bought a
+    # voice-only plan (recap_credits == 0) could run recaps free
+    # forever. VIP status keeps its duration-tier benefits; it no
+    # longer bypasses the credit check, exactly like the segmented
+    # path's _recap_segment_balance_ok pre-check already required.
+    if not settings.is_admin(user.id) and credits <= 0:
         raise HTTPException(
             status_code=403,
             detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
@@ -2992,8 +3594,12 @@ async def create_recap_job(
         try:
             if req.url.startswith("http://") or req.url.startswith("https://"):
                 from app.services.downloader import extract_first_url, unshorten_url, MediaDownloader
-                can_url = unshorten_url(extract_first_url(req.url) or req.url)
-                info = MediaDownloader().get_info(can_url)
+                # Both calls are synchronous network work — keep them
+                # off the single shared event loop (deep-hunt #4 D1).
+                can_url = await asyncio.to_thread(
+                    unshorten_url, extract_first_url(req.url) or req.url
+                )
+                info = await asyncio.to_thread(MediaDownloader().get_info, can_url)
                 checked_duration = info.get("duration", 0) or 0
             elif os.path.isfile(req.url):
                 from app.services.recap_engine.core import probe_duration, find_ffprobe
@@ -3065,11 +3671,31 @@ async def create_recap_job(
                 detail="A recap job is already running for your account. Please wait for it to finish before starting another.",
             )
 
-    # Deduct credit if non-admin
+    # Deduct the submit credit: unconditional for non-admins. (It used
+    # to be conditional on a positive balance, which is what let
+    # 0-credit VIP users run free.) Admins are never charged.
+    # Atomic conditional UPDATE (hunt F5): the gate above read the
+    # balance in this session, but a concurrent submit in another
+    # session could have taken the last credit in between — the WHERE
+    # clause re-checks at write time, and 0 rows means the race was
+    # lost, which is answered exactly like the gate's own rejection.
     deducted_credit = False
-    if not settings.is_admin(user.id) and hasattr(user, "recap_credits") and user.recap_credits > 0:
-        user.recap_credits -= 1
+    if not settings.is_admin(user.id):
+        charge_result = await db.execute(
+            update(User)
+            .where(User.id == user.id, User.recap_credits >= 1)
+            .values(recap_credits=User.recap_credits - 1)
+        )
+        if not charge_result.rowcount:
+            await db.rollback()
+            raise HTTPException(
+                status_code=403,
+                detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
+            )
         await db.commit()
+        # The bulk UPDATE does not sync the in-memory instance; reload
+        # so remaining_credits and the persisted job state are exact.
+        await db.refresh(user)
         deducted_credit = True
 
     job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
@@ -3117,6 +3743,16 @@ async def create_recap_job(
             input_text=clean_display_title,
             source_audio_path=req.url,
             seconds_estimated=120,
+            # Full config + credit state, so a restart/deploy
+            # re-dispatch restores THIS job instead of a default one.
+            recap_config=_persisted_recap_state(
+                req,
+                credit_deducted=deducted_credit,
+                credits_charged=1 if deducted_credit else 0,
+                is_vip=is_vip,
+                phase="script" if req.script_review else "full",
+                estimated_parts=estimated_parts,
+            ),
         )
         db.add(db_job)
         await db.commit()
@@ -3293,7 +3929,10 @@ async def update_recap_script(
             [{"index": item.index, "narration": item.narration} for item in req.segments],
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        # apply_script_edits' ValueErrors are developer-facing
+        # validation text; log the specifics, answer cleanly (F11).
+        logger.warning(f"Script edit rejected for job {job_id}: {exc}")
+        raise HTTPException(status_code=400, detail="Script ပြင်ဆင်မှု မအောင်မြင်ပါ — အကြောင်းအရာကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။")
 
     if result["updated"]:
         atomic_write_json(plan_path, plan)
@@ -3471,6 +4110,14 @@ async def send_voice_to_telegram(
     if not audio_path or not audio_path.is_file():
         raise HTTPException(status_code=404, detail="အသံဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
 
+    # Telegram Bot API send cap (hunt #3 B1): voice WAVs run ~5.8 MB/min,
+    # so a ≳9-minute result exceeds 50 MB and the send would fail inside
+    # Telegram. Same coded 413 the downloader send endpoint raises; the
+    # client turns it into the "download it instead" message and the job
+    # itself stays SUCCESS with the file downloadable in the Mini App.
+    if audio_path.stat().st_size > _DL_TELEGRAM_LIMIT:
+        raise HTTPException(status_code=413, detail="file_too_large_telegram")
+
     from aiogram import Bot
     from aiogram.types import FSInputFile
     bot = Bot(token=settings.bot_token)
@@ -3484,7 +4131,7 @@ async def send_voice_to_telegram(
         return {"success": True, "message": "Telegram သို့ အသံဖိုင် ပို့ပြီးပါပြီခင်ဗျာ!"}
     except Exception as e:
         logger.warning(f"Failed to send voice to Telegram chat {user.id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်: {e}")
+        raise HTTPException(status_code=500, detail="Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်")
     finally:
         await bot.session.close()
 
@@ -4024,14 +4671,33 @@ async def submit_payment_slip(
     # partial file when the cap is exceeded.
     await _save_upload_streaming(slip_file, dest_path, MAX_SLIP_UPLOAD_BYTES)
 
-    # Plan catalogue is the single source of truth for what a code buys.
-    # Unknown codes are rejected instead of silently defaulting to 250 min.
+    # Resolve the plan EXACTLY like the bot flow
+    # (payments.create_payment_request): the DB PricingPlan row wins,
+    # the static catalogue is the fallback. The webapp previously read
+    # the catalogue only, so an admin price edit (which writes the DB
+    # row) made bot slips and webapp slips for the same code disagree
+    # on minutes/price. Unknown codes are rejected instead of silently
+    # defaulting to 250 min.
+    from app.models.schema import PricingPlan
     from app.services.payments import get_plan_by_code
 
-    _plan = get_plan_by_code(package_code)
-    if _plan is None:
-        raise HTTPException(status_code=400, detail="Unknown plan code")
-    minutes = _plan["minutes"]
+    _db_plan = (
+        await db.execute(select(PricingPlan).where(PricingPlan.code == package_code))
+    ).scalar_one_or_none()
+    if _db_plan is not None:
+        minutes = _db_plan.minutes
+        amount_mmk = _db_plan.price_mmk
+    else:
+        _plan = get_plan_by_code(package_code)
+        if _plan is None:
+            raise HTTPException(status_code=400, detail="Unknown plan code")
+        minutes = _plan["minutes"]
+        # The amount is plan-derived (deep-hunt #4 A6), exactly like
+        # the bot flow: the client-typed amount_mmk form field is
+        # attacker-controlled, and the stored value is the number the
+        # admin sees in the pending list and the Telegram alert — so
+        # it must be the plan's real price, never what was typed.
+        amount_mmk = _plan["price_mmk"]
 
     pay_req = PaymentRequest(
         id=str(uuid.uuid4()),
@@ -4265,6 +4931,32 @@ async def get_admin_overview(
     except Exception:
         storage_bytes = None
 
+    # Disk-space guard (hunt D2): the 10GB persistent disk had NO
+    # free-space visibility anywhere — a full disk fails jobs and
+    # uploads mysteriously. Surface usage here and warn in the log
+    # when free space drops under 1 GB or usage passes 90%.
+    disk_info = None
+    try:
+        import shutil as _shutil
+
+        usage = _shutil.disk_usage(str(settings.storage_root))
+        used_pct = round(usage.used / usage.total * 100, 1) if usage.total else 0.0
+        disk_low = usage.free < 1024 ** 3 or used_pct > 90.0
+        disk_info = {
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "free_bytes": usage.free,
+            "used_percent": used_pct,
+            "low": disk_low,
+        }
+        if disk_low:
+            logger.warning(
+                "LOW DISK SPACE on storage volume: %.1f%% used, %d bytes free (root=%s)",
+                used_pct, usage.free, settings.storage_root,
+            )
+    except Exception:
+        disk_info = None
+
     recent_actions = []
     try:
         rows = (await db.execute(
@@ -4296,6 +4988,7 @@ async def get_admin_overview(
         "new_users_24h": new_users_24h,
         "db_size_bytes": db_size_bytes,
         "storage_bytes": storage_bytes,
+        "disk": disk_info,
         "recent_admin_actions": recent_actions,
     }
 
@@ -4467,7 +5160,7 @@ async def ban_admin_user(
         details_json=json.dumps({"reason": reason, "via": "miniapp", "already_banned": already}),
     ))
     await db.commit()
-    return {"success": True, "message": f"User {user_id} banned", "already_banned": already}
+    return {"success": True, "message": f"အသုံးပြုသူ {user_id} ကို Ban လိုက်ပါပြီ", "already_banned": already}
 
 
 @api_router.post("/admin/users/{user_id}/unban")
@@ -4482,6 +5175,9 @@ async def unban_admin_user(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     target.status = UserStatus.ACTIVE.value
+    # Lifting a ban also clears any bot-blocked send-suppression flag so
+    # the user starts fully clean.
+    target.bot_blocked = False
     db.add(AuditLog(
         admin_id=admin.id,
         action="user.unban",
@@ -4490,7 +5186,7 @@ async def unban_admin_user(
         details_json=json.dumps({"reason": (req.reason or "").strip(), "via": "miniapp"}),
     ))
     await db.commit()
-    return {"success": True, "message": f"User {user_id} unbanned"}
+    return {"success": True, "message": f"အသုံးပြုသူ {user_id} ၏ Ban ကို ဖယ်ရှားပြီးပါပြီ"}
 
 
 @api_router.get("/admin/queue")
@@ -4619,37 +5315,23 @@ async def retry_queued_job(
 
     if job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap":
         try:
-            from app.webapp.api import _run_recap_background_job, RecapConfigRequest
+            from app.webapp.api import _run_recap_background_job, _recap_redispatch_plan
             u = await db.get(User, job.user_id)
-            is_vip = ((u.account_category == AccountCategory.PURCHASED.value) if u else False) or settings.is_admin(job.user_id)
-            source_url = job.source_audio_path or job.input_text or ""
-            clean_title = _clean_recap_display_title(job.input_text, source_url)
-            cfg = RecapConfigRequest(
-                url=source_url,
-                title=clean_title,
-                voice_slug=job.preset_voice or "komin",
-            )
-            RECAP_JOBS_REGISTRY[job_id] = {
-                "id": job_id,
-                "user_id": job.user_id,
-                "title": clean_title,
-                "status": "QUEUED",
-                "progress_percent": 5,
-                "progress_step": "0/4",
-                "progress_label": "🔄 Re-queued by Administrator...",
-                "created_at": time.time(),
-                "video_path": None,
-                "audio_path": None,
-                "srt_path": None,
-                "script_path": None,
-                "download_urls": {},
-                "error_message": None,
-            }
-            asyncio.create_task(_run_recap_background_job(job_id, cfg, job.user_id, job.chat_id or job.user_id, is_vip=is_vip))
+            # Restore the persisted submit-time config like the queue
+            # worker does — but NOT the credit state: a FAILED/CANCELLED
+            # job's charge was already refunded by the failure/cancel
+            # paths, so the retry runs uncharged (historical behaviour).
+            plan = _recap_redispatch_plan(job, u, restore_credit_state=False)
+            plan["entry"]["progress_label"] = "🔄 Re-queued by Administrator..."
+            RECAP_JOBS_REGISTRY[job_id] = plan["entry"]
+            asyncio.create_task(_run_recap_background_job(
+                job_id, plan["cfg"], job.user_id, job.chat_id or job.user_id,
+                is_vip=plan["is_vip"], credit_deducted=False, phase=plan["phase"],
+            ))
         except Exception as e:
             logger.warning(f"Could not re-dispatch recap job background task: {e}")
 
-    return {"success": True, "message": f"Job {job_id[:8]} re-queued successfully!"}
+    return {"success": True, "message": f"အလုပ် {job_id[:8]} ကို တန်းစီထဲ ပြန်ထည့်ပြီးပါပြီ"}
 
 
 @api_router.post("/admin/queue/{job_id}/cancel")
@@ -4694,12 +5376,38 @@ async def cancel_queued_job(
                 if await _refund_recap_job_charge(job.user_id, entry):
                     refund_info = {"refunded": True, "recap_credits": int(entry.get("credits_refunded") or 0)}
             else:
-                # Registry lost (server restart): the submit-time base
-                # credit is the only charge we can prove; refund exactly
-                # that. A second cancel is impossible (status is now
-                # CANCELLED), so this cannot double-refund.
-                if not settings.is_admin(job.user_id) and await _refund_recap_credits(job.user_id, 1):
-                    refund_info = {"refunded": True, "recap_credits": 1, "note": "base credit only (registry unavailable)"}
+                # Registry lost (server restart): read the charge from
+                # the persisted blob on the Job row (hunt #5) -- a
+                # segmented job may have been charged N credits, not
+                # the submit-time 1 this fallback used to assume, and
+                # a blob that already records the refund must not be
+                # refunded a second time. Legacy rows without a blob
+                # keep the historical behaviour: the submit-time base
+                # credit is the only provable charge. A second cancel
+                # is impossible (status is now CANCELLED).
+                persisted = _load_persisted_recap_state(job)
+                proven_credits = 1
+                already_refunded = False
+                if persisted is not None:
+                    already_refunded = bool(persisted.get("credit_refunded"))
+                    if persisted.get("credit_deducted"):
+                        proven_credits = max(1, int(persisted.get("credits_charged") or 1))
+                if already_refunded:
+                    refund_info = {
+                        "refunded": True,
+                        "recap_credits": int(persisted.get("credits_refunded") or proven_credits),
+                        "note": "charge already refunded before the restart (persisted state)",
+                    }
+                elif not settings.is_admin(job.user_id) and await _refund_recap_credits(job.user_id, proven_credits):
+                    refund_info = {
+                        "refunded": True,
+                        "recap_credits": proven_credits,
+                        "note": (
+                            "registry unavailable; amount restored from persisted recap state"
+                            if persisted is not None
+                            else "base credit only (registry unavailable)"
+                        ),
+                    }
         else:
             from app.services.ledger import refund_job_seconds
             before = (await db.execute(
@@ -4724,7 +5432,7 @@ async def cancel_queued_job(
         details_json=json.dumps({"refund": refund_info, "job_type": "recap" if is_recap else "voice"}),
     ))
     await db.commit()
-    return {"success": True, "message": f"Job {job_id[:8]} marked as CANCELLED.", "refund": refund_info}
+    return {"success": True, "message": f"အလုပ် {job_id[:8]} ကို ပယ်ဖျက်ပြီးပါပြီ", "refund": refund_info}
 
 
 class AdminSettingsPayload(BaseModel):
@@ -4788,6 +5496,57 @@ async def get_admin_settings(
     }
 
 
+# Settings-save validation (deep-hunt #4 B1): dynamic settings were
+# stored verbatim, so one malformed tutorial link saved here later
+# broke the bot's main menu for EVERY user (Telegram rejects a message
+# whose inline keyboard carries a bad URL), and a payment number could
+# be blanked, leaving invoices with no account to pay into. The update
+# endpoint therefore validates the WHOLE payload before applying any
+# of it: Telegram links must be real t.me links (the three shapes the
+# product uses: channel/group name, name + post id, +invite hash) and
+# payment numbers must be non-empty. The regex itself is the shared
+# helper in app.services.url_safety -- the bot's tutorial-URL receivers
+# validate against the very same pattern (hunt #5 parity).
+from app.services.url_safety import TELEGRAM_LINK_RE as _TELEGRAM_LINK_RE
+_PAYMENT_NUMBER_KEYS = ("payment_kpay_number", "payment_wave_number")
+
+
+def _validate_admin_settings_updates(updates: dict) -> dict:
+    """Validate an admin-settings payload BEFORE anything is applied.
+
+    Returns the updates with link values whitespace-stripped. Raises
+    HTTPException(400) on the first invalid field — the caller applies
+    nothing in that case (all-or-nothing), so a half-saved settings
+    page can never leave the bot menu or invoices broken.
+    """
+    cleaned = dict(updates)
+    for key, value in updates.items():
+        if value is None:
+            continue
+        if key.endswith("_link"):
+            link = str(value).strip()
+            if not _TELEGRAM_LINK_RE.match(link):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"လင့်ခ် မမှန်ကန်ပါ ({key}) — Telegram လင့်ခ်သည် "
+                        "https://t.me/… ပုံစံသာ ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = link
+        elif key in _PAYMENT_NUMBER_KEYS:
+            if not str(value).strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"ငွေလွှဲ နံပါတ် ({key}) ကို အလွတ် ထားလို့ မရပါ — "
+                        "နံပါတ် ထည့်ပေးပါ။ မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+    return cleaned
+
+
 @api_router.post("/admin/settings")
 async def update_admin_settings(
     payload: AdminSettingsPayload,
@@ -4797,11 +5556,13 @@ async def update_admin_settings(
     """Update dynamic platform settings directly from Admin Console."""
     from app.services.dynamic_settings import set_dynamic_setting
     updates = payload.model_dump(exclude_unset=True)
+    # All-or-nothing: validate every field before applying any of them.
+    updates = _validate_admin_settings_updates(updates)
     for k, v in updates.items():
         if v is not None:
             await set_dynamic_setting(db, k, v, admin_id=admin.id)
     await db.commit()
-    return {"success": True, "message": "Settings updated successfully!", "updated": updates}
+    return {"success": True, "message": "ဆက်တင်များ အောင်မြင်စွာ သိမ်းပြီးပါပြီ", "updated": updates}
 
 
 @api_router.get("/admin/pricing")
@@ -4866,7 +5627,7 @@ async def update_admin_pricing(
         "success": True,
         "code": plan.code,
         "price_mmk": plan.price_mmk,
-        "message": f"Price updated: {plan.code} = {plan.price_mmk:,} MMK",
+        "message": f"ဈေးနှုန်း ပြင်ပြီးပါပြီ: {plan.code} = {plan.price_mmk:,} MMK",
     }
 
 
@@ -4911,38 +5672,28 @@ async def approve_payment_slip(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Approve a payment request: upgrade user to PURCHASED and credit balance."""
-    p_req = await db.get(PaymentRequest, req.request_id)
-    if not p_req or p_req.status != PaymentStatus.PENDING.value:
+    """Approve a payment request: upgrade user to PURCHASED and credit balance.
+
+    Money fix (2026-10-31): this handler previously credited by hand and
+    called ledger.credit_purchased_minutes() with keyword arguments that
+    function does not accept (payment_request_id= / admin_id=), so EVERY
+    approval of a minutes-bearing plan raised TypeError before commit —
+    the slip stayed PENDING and the buyer was never credited. It now
+    goes through the SAME locked service the bot approval path uses
+    (app.services.payments.approve_payment_request: row lock + PENDING
+    check + idempotent crediting + audit log), so both admin surfaces
+    behave identically and a double approval can never double-credit.
+    """
+    from app.services.payments import approve_payment_request, get_plan_by_code as _get_plan
+
+    ok, p_req, _code = await approve_payment_request(db, req.request_id, admin_id=admin.id)
+    if not ok or p_req is None:
         raise HTTPException(status_code=404, detail="Pending payment request not found")
-
-    p_req.status = PaymentStatus.APPROVED.value
-    p_req.reviewed_by = admin.id
-    p_req.reviewed_at = utc_now()
-
-    recap_added = 0
-    # Upgrade user to PURCHASED
-    target_user = await db.get(User, p_req.user_id)
-    if target_user:
-        target_user.account_category = AccountCategory.PURCHASED.value
-        from app.services.payments import get_plan_by_code as _get_plan
-
-        _plan = _get_plan(p_req.package_code)
-        recap_added = _plan["recap_credits"] if _plan else 0
-        if recap_added:
-            target_user.recap_credits = (getattr(target_user, "recap_credits", 0) or 0) + recap_added
-
-    # Credit minutes
-    if p_req.minutes > 0:
-        from app.services.ledger import credit_purchased_minutes
-        await credit_purchased_minutes(
-            session=db,
-            user_id=p_req.user_id,
-            minutes=p_req.minutes,
-            payment_request_id=p_req.id,
-            admin_id=admin.id,
-        )
     await db.commit()
+
+    _plan = _get_plan(p_req.package_code)
+    recap_added = _plan["recap_credits"] if _plan else 0
+    target_user = await db.get(User, p_req.user_id)
 
     # Instant Telegram notification to the approved user
     if settings.bot_token and p_req.user_id:
@@ -4971,12 +5722,12 @@ async def approve_payment_slip(
         except Exception as notify_err:
             logger.warning(f"Failed to notify user {p_req.user_id} of approval: {notify_err}")
 
-    return {"success": True, "message": f"Approved payment for User {p_req.user_id} (+{p_req.minutes} mins, +{recap_added} recap credits)"}
+    return {"success": True, "message": f"အသုံးပြုသူ {p_req.user_id} အတွက် ငွေပေးချေမှု အတည်ပြုပြီးပါပြီ (+{p_req.minutes} မိနစ်, +{recap_added} Recap Credits)"}
 
 
 class RejectSlipRequest(BaseModel):
     request_id: str
-    reason: str = "Invalid payment slip"
+    reason: str = "ပြေစာ မမှန်ကန်ပါ"
 
 
 @api_router.post("/admin/reject-slip")
@@ -4985,15 +5736,19 @@ async def reject_payment_slip(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Reject a payment request."""
-    p_req = await db.get(PaymentRequest, req.request_id)
-    if not p_req or p_req.status != PaymentStatus.PENDING.value:
-        raise HTTPException(status_code=404, detail="Pending payment request not found")
+    """Reject a payment request.
 
-    p_req.status = PaymentStatus.REJECTED.value
-    p_req.reviewed_by = admin.id
-    p_req.reviewed_at = utc_now()
-    p_req.rejection_reason = req.reason
+    Parity with the approve path (2026-10-31): rejection also goes
+    through the locked payments service the bot uses (row lock + PENDING
+    check + audit log) instead of mutating the row by hand here.
+    """
+    from app.services.payments import reject_payment_request
+
+    ok, p_req, _code = await reject_payment_request(
+        db, req.request_id, admin_id=admin.id, reason=req.reason
+    )
+    if not ok or p_req is None:
+        raise HTTPException(status_code=404, detail="Pending payment request not found")
     await db.commit()
 
     # Instant Telegram notification to the user about rejection
@@ -5019,15 +5774,20 @@ async def reject_payment_slip(
         except Exception as notify_err:
             logger.warning(f"Failed to notify user {p_req.user_id} of rejection: {notify_err}")
 
-    return {"success": True, "message": f"Rejected payment request {p_req.id}"}
+    return {"success": True, "message": f"ငွေပေးချေမှု တောင်းဆိုချက် {p_req.id} ကို ငြင်းပယ်ပြီးပါပြီ"}
 
 
 class AdjustUserRequest(BaseModel):
     user_id: int
     account_category: Optional[str] = None
-    add_minutes: int = 0
-    add_seconds: int = 0
-    add_recap_credits: int = 0
+    # Sanity ceilings (hunt #4 B4): these were unbounded ints, so a
+    # huge value overflowed the 32-bit Integer balance columns and
+    # 500'd the adjust. The caps sit far above any legitimate manual
+    # adjustment (±100k minutes ≈ 69 days of voice) while keeping
+    # every derived seconds total comfortably inside Integer range.
+    add_minutes: int = Field(0, ge=-100_000, le=100_000)
+    add_seconds: int = Field(0, ge=-6_000_000, le=6_000_000)
+    add_recap_credits: int = Field(0, ge=-100_000, le=100_000)
     reason: str = ""
 
 
@@ -5081,7 +5841,21 @@ async def adjust_user_status(
         target_user.account_category = req.account_category
 
     if credits_delta != 0:
-        target_user.recap_credits = max(0, (getattr(target_user, "recap_credits", 0) or 0) + credits_delta)
+        # Atomic floor-guarded update (hunt F5): same max(0, …)
+        # semantics as before, but as a single conditional UPDATE so a
+        # concurrent charge/refund can no longer be overwritten by a
+        # stale read-modify-write.
+        await db.execute(
+            update(User)
+            .where(User.id == target_user.id)
+            .values(
+                recap_credits=case(
+                    (User.recap_credits + credits_delta < 0, 0),
+                    else_=User.recap_credits + credits_delta,
+                )
+            )
+        )
+        await db.refresh(target_user)
 
     db.add(AuditLog(
         admin_id=admin.id,
@@ -5097,7 +5871,7 @@ async def adjust_user_status(
         }),
     ))
     await db.commit()
-    return {"success": True, "message": f"User {req.user_id} updated successfully"}
+    return {"success": True, "message": f"အသုံးပြုသူ {req.user_id} ကို ပြင်ဆင်ပြီးပါပြီ"}
 
 
 class BroadcastRequest(BaseModel):
@@ -5117,12 +5891,22 @@ async def send_admin_broadcast(
             status_code=400,
             detail="Broadcast message is too short. Minimum 4 characters required to prevent accidental sends.",
         )
+    if len(text) > 4096:
+        # Telegram rejects message text over 4096 chars; without this
+        # check every per-user send failed silently and the campaign
+        # "completed" with 0 delivered (hunt #3 B2). Reject up front,
+        # before any delivery is attempted.
+        raise HTTPException(
+            status_code=400,
+            detail="Broadcast စာသား ရှည်လွန်းပါသည် — Telegram ကန့်သတ်ချက် (အက္ခရာ 4096 လုံး) ထက် ကျော်နေပါသည်။ တိုအောင် ပြင်ပြီး ပြန်စမ်းပါခင်ဗျာ။",
+        )
 
     # 1. Total users in database
     total_db_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
 
-    # 2. Targeted active users
-    stmt = select(User.id).where(User.status == "ACTIVE")
+    # 2. Targeted active users (bot_blocked users are send-suppressed
+    # via their flag only — they are not admin-banned; hunt B1)
+    stmt = select(User.id).where(User.status == "ACTIVE", User.bot_blocked.is_not(True))
     res = await db.execute(stmt)
     user_ids = res.scalars().all()
     db_blocked_count = total_db_users - len(user_ids)
@@ -5180,12 +5964,14 @@ async def send_admin_broadcast(
 
         await bot.session.close()
 
-        # Update newly blocked users in database so subsequent broadcasts do not re-attempt
+        # Flag users who blocked the bot so subsequent broadcasts do not
+        # re-attempt. This sets ONLY the bot_blocked send-suppression flag —
+        # status stays untouched (status=BLOCKED is an admin ban; hunt B1).
         if newly_blocked_ids:
             await db.execute(
                 update(User)
                 .where(User.id.in_(newly_blocked_ids))
-                .values(status="BLOCKED")
+                .values(bot_blocked=True)
             )
             await db.commit()
 
@@ -5227,4 +6013,4 @@ async def send_admin_broadcast(
             },
         }
 
-    return {"success": True, "message": f"Broadcast queued for {len(user_ids)} users"}
+    return {"success": True, "message": f"အသုံးပြုသူ {len(user_ids)} ဦးထံ Broadcast ပို့ရန် တန်းစီပြီးပါပြီ"}

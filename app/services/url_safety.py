@@ -29,6 +29,7 @@ passing yt-dlp a local file, which is out of scope for this patch.
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 from urllib.parse import urlparse, urljoin
 
@@ -144,3 +145,26 @@ def follow_redirects_safely(url: str, max_redirects: int = MAX_REDIRECTS) -> str
                 # its own error, rather than masking it as SSRF.
                 return current
     raise SSRFBlockedError("too many redirects")
+
+
+# ---------------------------------------------------------------------------
+# Telegram link shape (tutorial / invite links)
+# ---------------------------------------------------------------------------
+
+# The three t.me shapes the product uses: a channel/group name, a name
+# plus a post id, and a +invite hash. Shared by every surface that
+# ACCEPTS a Telegram link for storage -- the Mini App admin settings
+# (deep-hunt #4 B1: a malformed tutorial link saved there later broke
+# the bot's main menu for every user, because Telegram rejects a
+# message whose inline keyboard carries a bad URL) and the bot's own
+# tutorial-URL receivers (hunt #5 parity: they used to accept any
+# http(s) string, so the bot path could store exactly the junk the
+# webapp path was fixed to reject).
+TELEGRAM_LINK_RE = re.compile(
+    r"^https://t\.me/(?:\+[A-Za-z0-9_-]+|[A-Za-z0-9_]+(?:/\d+)?)$"
+)
+
+
+def is_valid_telegram_link(url: str) -> bool:
+    """True when ``url`` is one of the accepted t.me link shapes."""
+    return bool(TELEGRAM_LINK_RE.match((url or "").strip()))

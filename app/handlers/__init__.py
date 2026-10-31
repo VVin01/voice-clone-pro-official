@@ -43,7 +43,7 @@ def setup_handlers(dp: Dispatcher, session_factory: Any = None) -> None:
                     async with session_maker() as session:
                         await mark_user_blocked(session, user_id)
                 except Exception as mark_err:
-                    logger.debug("Failed to mark user %s as BLOCKED: %s", user_id, mark_err)
+                    logger.debug("Failed to flag user %s as bot_blocked: %s", user_id, mark_err)
             return True
 
         if isinstance(exc, TelegramBadRequest):

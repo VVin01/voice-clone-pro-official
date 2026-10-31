@@ -72,13 +72,14 @@ async def render_main_menu(
     else:
         category_badge = t("hist_tier_free", active_lang)
 
+    _recap_credits = getattr(user, "recap_credits", None)
     info_text = t(
         "menu_account_info",
         active_lang,
         category=category_badge,
         total_min=balance.total_usable_minutes,
         purchased_min=balance.purchased_minutes,
-        recap_credits=getattr(user, "recap_credits", 3) or 3,
+        recap_credits=3 if _recap_credits is None else _recap_credits,
     )
     text = info_text
     kb = main_menu_kb(is_admin=is_admin, lang=active_lang)
@@ -118,6 +119,14 @@ async def handle_menu_refer_earn(callback: CallbackQuery):
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
         stats = await get_referral_stats(session, user.id)
+
+    # Maintenance: referral rewards are a write surface (hunt C1).
+    if settings.maintenance_mode and not settings.is_admin(callback.from_user.id):
+        try:
+            await callback.answer(t("maintenance_desc", lang), show_alert=True)
+        except Exception:
+            pass
+        return
 
     bot_info = await callback.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user.referral_code}"
@@ -580,7 +589,18 @@ async def handle_play_voice_sample(callback: CallbackQuery, session: AsyncSessio
     try:
         model_id = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
-        await safe_answer_callback(callback, "Invalid sample request", show_alert=True)
+        _lang = "my"
+        try:
+            if session is not None:
+                _u, _ = await get_or_create_user(session, callback.from_user.id)
+                _lang = _u.language_code
+            else:
+                async with AsyncSessionLocal() as _s:
+                    _u, _ = await get_or_create_user(_s, callback.from_user.id)
+                    _lang = _u.language_code
+        except Exception:
+            pass
+        await safe_answer_callback(callback, t("sample_invalid_request", _lang), show_alert=True)
         return
 
     user_id = callback.from_user.id
@@ -595,7 +615,7 @@ async def handle_play_voice_sample(callback: CallbackQuery, session: AsyncSessio
             model = await s.get(VoiceModel, model_id)
 
     if not model:
-        await safe_answer_callback(callback, "Model not found", show_alert=True)
+        await safe_answer_callback(callback, t("sample_model_not_found", lang), show_alert=True)
         return
 
     sample_path = model.sample_audio_path
@@ -658,5 +678,5 @@ async def handle_play_voice_sample(callback: CallbackQuery, session: AsyncSessio
         await safe_answer_callback(callback, toast, show_alert=False)
     except Exception as exc:
         logger.error("Failed to send sample audio for model %s: %s", model_id, exc)
-        await safe_answer_callback(callback, "⚠️ Failed to send audio sample", show_alert=True)
+        await safe_answer_callback(callback, t("sample_send_failed", lang), show_alert=True)
 

@@ -82,9 +82,11 @@ async def init_db() -> None:
             if dialect_name == "postgresql":
                 # PostgreSQL safe IF NOT EXISTS column additions
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS recap_credits INTEGER DEFAULT 3"))
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS engine VARCHAR(20) DEFAULT 'voxcpm'"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preset_voice VARCHAR(50)"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_config TEXT"))
                 connection.execute(text("ALTER TABLE voice_models ADD COLUMN IF NOT EXISTS sample_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
             elif dialect_name == "sqlite":
@@ -93,6 +95,8 @@ async def init_db() -> None:
                 cols_users = [row[1] for row in res_users.fetchall()]
                 if "recap_credits" not in cols_users:
                     connection.execute(text("ALTER TABLE users ADD COLUMN recap_credits INTEGER DEFAULT 3"))
+                if "bot_blocked" not in cols_users:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN bot_blocked BOOLEAN DEFAULT 0"))
 
                 res = connection.execute(text("PRAGMA table_info(voice_models)"))
                 cols = [row[1] for row in res.fetchall()]
@@ -103,6 +107,8 @@ async def init_db() -> None:
                 cols_jobs = [row[1] for row in res_jobs.fetchall()]
                 if "source_audio_path" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN source_audio_path TEXT"))
+                if "recap_config" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN recap_config TEXT"))
                 if "engine" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN engine VARCHAR(20) DEFAULT 'voxcpm'"))
                 if "preset_voice" not in cols_jobs:

@@ -131,31 +131,41 @@ async def test_recap_active_count_union_not_sum():
 
 # ── 5. Credit refund ───────────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_refund_recap_credit_adds_one(monkeypatch):
+async def test_refund_recap_credit_adds_one(monkeypatch, tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
     from app.config import settings
+    from app.db.base import Base
+    from app.models.schema import User
     from app.webapp import api as api_mod
 
     monkeypatch.setattr(settings, "admin_ids_raw", "999001")
-    user = MagicMock()
-    user.id = 123
-    user.recap_credits = 4
 
-    class FakeSession:
-        async def __aenter__(self):
-            return self
+    # Hardening F5 made the refund an atomic conditional UPDATE, which
+    # a get()/commit() dict fake cannot execute — this harness now
+    # points AsyncSessionLocal at a real file-backed SQLite DB (one
+    # short-lived engine per session). Behaviour asserted is unchanged.
+    db_file = str(tmp_path / "refund.db")
+    sync_engine = create_engine(f"sqlite:///{db_file}")
+    Base.metadata.create_all(sync_engine)
+    sync_engine.dispose()
 
-        async def __aexit__(self, *a):
-            return False
+    def make_session():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", future=True)
+        maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+        return maker()
 
-        async def get(self, *a, **k):
-            return user
+    async with make_session() as s:
+        s.add(User(id=123, recap_credits=4))
+        await s.commit()
 
-        async def commit(self):
-            return None
-
-    monkeypatch.setattr("app.db.session.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", make_session)
     assert await api_mod._refund_recap_credit(123) is True
-    assert user.recap_credits == 5
+
+    async with make_session() as s:
+        stored = await s.get(User, 123)
+        assert stored.recap_credits == 5
 
 
 # ── 1 & 2. Auth dependencies on receipts / frame ───────────────────────────
