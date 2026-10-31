@@ -70,7 +70,13 @@ async def get_broadcast_recipient_ids(
     else:  # Default to REGISTERED_ALL
         stmt = (
             select(User.id)
-            .where(User.status == UserStatus.ACTIVE.value)
+            .where(
+                User.status == UserStatus.ACTIVE.value,
+                # Users who blocked the bot are send-suppressed via the
+                # bot_blocked flag only — they are NOT admin-banned, so
+                # status is never touched for them (hunt B1).
+                User.bot_blocked.is_not(True),
+            )
             .order_by(User.id.asc())
         )
 
@@ -79,9 +85,17 @@ async def get_broadcast_recipient_ids(
 
 
 async def mark_user_blocked(session: AsyncSession, user_id: int) -> None:
-    """Mark user status as BLOCKED upon definitive TelegramForbiddenError."""
+    """Flag a user as having blocked the bot (TelegramForbiddenError).
+
+    Sets ONLY the ``bot_blocked`` flag: broadcasts skip flagged users,
+    and the flag clears on the user's next successful inbound
+    interaction. The user's ``status`` is deliberately NOT touched —
+    status == BLOCKED is reserved for admin bans (hunt B1). Users who
+    were set to status=BLOCKED by this path before the flag existed
+    cannot be distinguished from admin bans and are left as-is.
+    """
     try:
-        stmt = update(User).where(User.id == user_id).values(status=UserStatus.BLOCKED.value)
+        stmt = update(User).where(User.id == user_id).values(bot_blocked=True)
         await session.execute(stmt)
 
         stmt_imported = (
@@ -92,9 +106,9 @@ async def mark_user_blocked(session: AsyncSession, user_id: int) -> None:
         await session.execute(stmt_imported)
 
         await session.commit()
-        logger.info("Marked user %s as BLOCKED/ineligible in database", user_id)
+        logger.info("Flagged user %s as bot_blocked/ineligible in database", user_id)
     except Exception as e:
-        logger.error("Failed to mark user %s as BLOCKED: %s", user_id, e)
+        logger.error("Failed to flag user %s as bot_blocked: %s", user_id, e)
 
 
 async def create_or_get_broadcast_campaign(
@@ -281,8 +295,9 @@ async def deliver_broadcast(
 
                 await sleep_func(sleep_duration)
             except TelegramForbiddenError as e:
-                # Requirement 4: Mark user as BLOCKED in database upon definitive TelegramForbiddenError
-                logger.info("Bot forbidden/blocked for user %s; skipping and updating user status to BLOCKED", user_id)
+                # Requirement 4: Flag the user bot_blocked (send suppression
+                # only — NOT an admin ban) upon definitive TelegramForbiddenError
+                logger.info("Bot forbidden/blocked for user %s; skipping and flagging bot_blocked", user_id)
                 skipped += 1
                 if delivery:
                     delivery.status = BroadcastDeliveryStatus.SKIPPED.value

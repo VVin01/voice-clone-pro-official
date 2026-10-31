@@ -29,6 +29,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.services.myanmar_text import convert_zawgyi_to_unicode
+
 from .core import normalize_segments
 from .recap_planner import (
     _foreign_letters,
@@ -69,6 +71,11 @@ def clean_edited_narration(text: Any) -> str:
     recap-script-spelling branch)."""
     value = re.sub(r"\s+", " ", str(text or "")).strip()
     if value:
+        # Encoding repair (hunt #4 A1): a line typed on a Zawgyi
+        # keyboard is saved as Unicode so the TTS speaks what the user
+        # sees. This is encoding normalization, not an orthography
+        # rewrite — genuine Unicode passes through byte-identical.
+        value = convert_zawgyi_to_unicode(value)
         value = normalize_burmese_homoglyphs(value)
     return value
 

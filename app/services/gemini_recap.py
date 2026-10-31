@@ -13,6 +13,34 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _resolve_primary_model() -> str:
+    """The operator-configured primary Gemini model for this module.
+
+    Unified with the recap planner's resolution (hunt #3 A5): this
+    module used to read only the GEMINI_MODEL env var — a name
+    nothing sets — so the configured primary never applied here.
+    Precedence mirrors recap_planner: dynamic setting →
+    GEMINI_PRIMARY_MODEL → GEMINI_TEXT_MODEL → legacy GEMINI_MODEL.
+    Retired/slow generations (2.5 / 3.8) are rejected, as before.
+    """
+    raw = ""
+    try:
+        from app.config import settings
+
+        raw = str(getattr(settings, "gemini_primary_model", "") or "").strip()
+    except Exception:
+        raw = ""
+    if not raw:
+        raw = (
+            os.environ.get("GEMINI_PRIMARY_MODEL", "").strip()
+            or os.environ.get("GEMINI_TEXT_MODEL", "").strip()
+            or os.environ.get("GEMINI_MODEL", "").strip()
+        )
+    if raw and "2.5" not in raw and "3.8" not in raw:
+        return raw
+    return ""
+
+
 def get_gemini_api_key() -> Optional[str]:
     """Retrieve Gemini API key from environment."""
     load_dotenv()
@@ -96,8 +124,7 @@ Format your output strictly using these two delimiters:
     from google import genai
     client = genai.Client(api_key=key)
 
-    raw_env_model = os.environ.get("GEMINI_MODEL", "").strip()
-    env_model = raw_env_model if (raw_env_model and "2.5" not in raw_env_model and "3.8" not in raw_env_model) else ""
+    env_model = _resolve_primary_model()
     # Use active fast Gemini models (gemini-3.6-flash, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-flash-lite-latest)
     candidate_models = [m for m in [env_model, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"] if m]
     response = None

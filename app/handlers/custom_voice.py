@@ -59,6 +59,14 @@ async def handle_custom_voice_menu(
             await s.commit()
             quota = await get_user_custom_voice_quota(s, user_id)
 
+    # Maintenance: custom-voice requests are a write surface (hunt C1).
+    if settings.maintenance_mode and not settings.is_admin(user_id):
+        try:
+            await callback.answer(t("maintenance_desc", lang), show_alert=True)
+        except Exception:
+            pass
+        return
+
     # Membership gate at this entry point too: non-members get the shared
     # join reminder (per-chat status + join buttons + live re-check),
     # never the custom-voice flow. Live check, fail closed — mirrors

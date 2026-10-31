@@ -1103,7 +1103,7 @@ async def test_non_admin_cannot_reach_admin_operations(db_session, monkeypatch):
 
     send_msg_calls = [c[0][0] for c in bot.call_args_list if c[0] and type(c[0][0]).__name__ == "SendMessage"]
     assert len(send_msg_calls) == 1
-    assert "access denied" in send_msg_calls[0].text.lower() or "admin only" in send_msg_calls[0].text.lower() or "ခွင့်ပြုချက်မရှိ" in send_msg_calls[0].text
+    assert "access denied" in send_msg_calls[0].text.lower() or "admin only" in send_msg_calls[0].text.lower() or "ဝင်ရောက်ခွင့်မရှိပါ" in send_msg_calls[0].text
 
     # 2. Normal user sends admin:dashboard callback
     bot.reset_mock()
@@ -1113,5 +1113,5 @@ async def test_non_admin_cannot_reach_admin_operations(db_session, monkeypatch):
 
     answer_cb_calls = [c[0][0] for c in bot.call_args_list if c[0] and type(c[0][0]).__name__ == "AnswerCallbackQuery"]
     assert len(answer_cb_calls) == 1
-    assert "access denied" in answer_cb_calls[0].text.lower() or "admin only" in answer_cb_calls[0].text.lower() or "ခွင့်ပြုချက်မရှိ" in answer_cb_calls[0].text
+    assert "access denied" in answer_cb_calls[0].text.lower() or "admin only" in answer_cb_calls[0].text.lower() or "ဝင်ရောက်ခွင့်မရှိပါ" in answer_cb_calls[0].text
     assert answer_cb_calls[0].show_alert is True

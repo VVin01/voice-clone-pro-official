@@ -189,7 +189,12 @@ async def test_global_error_handler_suppresses_inaccessible_message_error():
 
 @pytest.mark.asyncio
 async def test_global_error_handler_suppresses_telegram_forbidden_error(db_session):
-    """Verify global_error_handler catches TelegramForbiddenError, marks user BLOCKED in DB, and returns True."""
+    """Verify global_error_handler catches TelegramForbiddenError, marks the
+    user bot_blocked in DB, and returns True.
+
+    Hardening B1 semantics: a user blocking the BOT is not an admin
+    ban — only the bot_blocked flag is set; status stays ACTIVE (the
+    old assertion here expected status=BLOCKED, conflating the two)."""
     from aiogram import Dispatcher
     from aiogram.exceptions import TelegramForbiddenError
     from app.models.enums import UserStatus
@@ -227,7 +232,8 @@ async def test_global_error_handler_suppresses_telegram_forbidden_error(db_sessi
 
     assert result is True
     updated_user = await db_session.get(User, target_user_id)
-    assert updated_user.status == UserStatus.BLOCKED.value
+    assert updated_user.bot_blocked is True
+    assert updated_user.status == UserStatus.ACTIVE.value  # NOT an admin ban (B1)
 
 
 @pytest.mark.asyncio
@@ -264,7 +270,10 @@ async def test_handle_start_catches_forbidden_error_gracefully(db_session, monke
     await handle_start(mock_msg, cmd)
 
     updated_user = await db_session.get(User, user_id)
-    assert updated_user.status == UserStatus.BLOCKED.value
+    # B1 semantics: bot-blocked is flagged, never converted into an
+    # admin ban (status stays ACTIVE).
+    assert updated_user.bot_blocked is True
+    assert updated_user.status == UserStatus.ACTIVE.value
 
 
 @pytest.mark.asyncio

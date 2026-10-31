@@ -12,6 +12,14 @@ from app.services.models import get_authorized_model
 
 logger = logging.getLogger(__name__)
 
+# Deliberately FAST upper-bound speaking rate for the F6 submit
+# pre-check below. Measured Myanmar TTS output runs ~10-14 chars/sec,
+# so 20 chars/sec UNDER-estimates the real duration in virtually every
+# case: a job rejected by the pre-check was guaranteed to fail at
+# post-generation charge time. Borderline jobs still pass, and
+# consume_seconds remains the billing source of truth.
+ESTIMATED_MAX_CHARS_PER_SECOND = 20.0
+
 
 async def get_queue_position(session: AsyncSession, job_id: str) -> int:
     """Calculate truthful queue position: count of active jobs created before this job."""
@@ -45,6 +53,30 @@ async def create_voice_clone_job(
     """Validate character limits, balance, model authorization and enqueue job."""
     from pathlib import Path
 
+    # Encoding repair at intake (hunt #4 A1): Zawgyi-typed text is
+    # converted to Unicode BEFORE every length/balance check below, so
+    # the character counts (and therefore billing) always match the
+    # text that will actually be spoken, and the Job row stores the
+    # Unicode form. Genuine Unicode passes through byte-identical;
+    # this is the single choke point shared by the bot and Mini App.
+    from app.services.myanmar_text import convert_zawgyi_to_unicode
+
+    text = convert_zawgyi_to_unicode(text or "")
+
+    # Invariant (X1 follow-up, hunt #3 E4): preset_voice is stored on
+    # the Job row and rendered in the admin Mini App, so only curated
+    # persona slugs may ever reach storage. The webapp endpoints
+    # pre-validate, but the check lives HERE, in the service, so no
+    # present or future caller can store an arbitrary string (the
+    # stored-XSS payload class). Bot callers pass None and are
+    # unaffected; the webapp translates this ValueError into its
+    # clean 400.
+    if preset_voice is not None:
+        from app.services.curated_voices import get_curated_voice
+
+        if get_curated_voice(preset_voice) is None:
+            raise ValueError(f"Unknown preset_voice: {preset_voice!r}")
+
     user, _ = await get_or_create_user(session, user_id)
 
     # 1. Validate model authorization & engine resolution.
@@ -57,6 +89,17 @@ async def create_voice_clone_job(
     model = None
     if model_id is not None:
         model = await get_authorized_model(session, user_id, model_id)
+    if model is not None and model.pth_path != "voxcpm":
+        # A granted custom model the production engine cannot run
+        # (legacy grant from before assign started refusing these —
+        # hunt V1): the job falls back to the cloud voice below. The
+        # behaviour is unchanged for those rows, but the remap is no
+        # longer SILENT — it is logged with the model and user ids.
+        logger.warning(
+            "Custom voice model %s (slug=%s, pth_path=%r) is not runnable by the "
+            "production engine; voice job for user %s falls back to the cloud voice",
+            model.id, model.slug, model.pth_path, user_id,
+        )
     if not model or model.pth_path != "voxcpm":
         stmt_v = select(VoiceModel).where(VoiceModel.slug == "voxcpm-cloud-ai")
         res_v = await session.execute(stmt_v)
@@ -121,6 +164,25 @@ async def create_voice_clone_job(
         balance = await get_minute_balance(session, user_id)
         if balance.total_usable_seconds <= 0:
             return None, "INSUFFICIENT_BALANCE"
+
+        # Pre-check (hunt F6): the balance is only charged AFTER
+        # generation, by the real duration (worker stage 4). A job
+        # whose text plainly cannot fit the balance therefore burned a
+        # full GPU generation, produced unusable output, and failed
+        # with nothing delivered. Reject those up front with the same
+        # mapped insufficient-balance detail; the estimate uses the
+        # deliberately-fast rate above so only guaranteed-waste jobs
+        # are stopped.
+        if valid_text:
+            estimated_seconds = len(valid_text) / ESTIMATED_MAX_CHARS_PER_SECOND
+            if estimated_seconds > balance.total_usable_seconds:
+                logger.info(
+                    "Voice job pre-check rejected for user %s: ~%ss estimated vs %ss usable",
+                    user_id,
+                    int(estimated_seconds),
+                    balance.total_usable_seconds,
+                )
+                return None, "INSUFFICIENT_BALANCE"
 
     import uuid
     if not edge_voice:

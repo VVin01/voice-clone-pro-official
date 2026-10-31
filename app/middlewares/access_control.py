@@ -22,10 +22,14 @@ class AccessControlMiddleware(BaseMiddleware):
     Intercepts Message and CallbackQuery events before filters, commands, and FSM states.
     - If user is an admin: bypasses immediately with zero DB lookup.
     - If user is not yet in the database: allows through (for initial registration / /start).
-    - If user has status BLOCKED:
+    - If user has status BLOCKED (admin ban):
         * Message: responds with account suspension notice.
         * CallbackQuery: answers callback query with account suspension notice as an alert.
         * Drops the event immediately (does not invoke downstream handler).
+    - If the user carries the bot_blocked flag (they once blocked the bot on a
+      send), any inbound event proves they can reach the bot again, so the
+      flag is cleared and the event passes through. The flag alone never
+      blocks an interaction.
     - If an unexpected database error occurs: fails closed gracefully for non-admins with
       a generic error notice without crashing the dispatcher.
     """
@@ -101,5 +105,30 @@ class AccessControlMiddleware(BaseMiddleware):
                     send_err,
                 )
             return None
+
+        # A user who previously blocked the bot (bot_blocked flag) is
+        # interacting again — that is only possible after unblocking, so
+        # clear the send-suppression flag. Failure to clear is non-fatal.
+        if getattr(user, "bot_blocked", False):
+            try:
+                from sqlalchemy import update as sa_update
+
+                async with self.session_factory() as session:
+                    await session.execute(
+                        sa_update(User)
+                        .where(User.id == user_id)
+                        .values(bot_blocked=False)
+                    )
+                    await session.commit()
+                logger.info(
+                    "AccessControl: Cleared bot_blocked flag for user %s on inbound interaction",
+                    user_id,
+                )
+            except Exception as clear_err:
+                logger.debug(
+                    "AccessControl: Failed to clear bot_blocked for user %s: %s",
+                    user_id,
+                    clear_err,
+                )
 
         return await handler(event, data)

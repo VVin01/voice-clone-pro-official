@@ -123,13 +123,16 @@ async def test_admin_assign_existing_model_and_reusability(db_session):
     u2, _ = await get_or_create_user(db_session, telegram_id=8806)
     u2.account_category = AccountCategory.PURCHASED.value
 
-    # Create VoiceModel in DB (e.g. Nay Toe trained on Colab)
+    # Create VoiceModel in DB. pth_path="voxcpm": since hardening V1
+    # the assign path refuses models the production engine cannot
+    # run; this test's subject is assign mechanics/reusability, so
+    # its fixture is a runnable model.
     model = VoiceModel(
         id=7701,
         name="Nay Toe Official",
         slug="nay-toe-official",
         model_dir="storage/models/naytoe",
-        pth_path="storage/models/naytoe.pth",
+        pth_path="voxcpm",
         index_path="storage/models/naytoe.index",
         type=VoiceModelType.SYSTEM.value,
         status=VoiceModelStatus.ACTIVE.value,
@@ -277,7 +280,7 @@ async def test_admin_cvr_callbacks_workflow(db_session):
         name="Test Voice Output",
         slug="test-voice-output",
         model_dir="storage/models/test",
-        pth_path="storage/models/test.pth",
+        pth_path="voxcpm",  # runnable model (see the V1 note above)
         type=VoiceModelType.SYSTEM.value,
         status=VoiceModelStatus.ACTIVE.value,
     )

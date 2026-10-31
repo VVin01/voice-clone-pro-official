@@ -5,6 +5,7 @@ Hosts frontend Single Page Application (SPA) and REST API endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -16,6 +17,96 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.db.session import init_db
 from app.webapp.api import api_router
 from app.webapp.rate_limit import RateLimitMiddleware
+
+
+async def _dispatch_oldest_queued_recap() -> bool:
+    """One recap queue-worker cycle: dispatch the oldest QUEUED recap job.
+
+    Returns True when a job was claimed and dispatched.
+
+    Ordering matters (hunt #5): the re-dispatch plan is built BEFORE
+    the atomic DB claim. Plan building is a pure function of the row,
+    but a corrupt persisted blob could make it raise -- claimed first,
+    that exception stranded the job in RUNNING, where no later poll
+    would ever see it again (this worker only picks QUEUED rows) and
+    nobody was told. Now a raising plan is logged and the job stays
+    QUEUED for the next poll.
+    """
+    import logging
+
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.enums import JobStatus, JobType
+    from app.models.schema import Job, User
+    from app.services.queue import claim_job_for_running
+    from app.webapp.api import (
+        RECAP_JOBS_REGISTRY,
+        _recap_redispatch_plan,
+        _run_recap_background_job,
+    )
+
+    _log = logging.getLogger("RecapWorker")
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(Job)
+            .where(
+                Job.status == JobStatus.QUEUED.value,
+                (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap"),
+            )
+            .order_by(Job.created_at)
+            .limit(1)
+        )
+        res = await session.execute(stmt)
+        queued_recap = res.scalar_one_or_none()
+        if not queued_recap:
+            return False
+        jid = str(queued_recap.id)
+        mem_entry = RECAP_JOBS_REGISTRY.get(jid)
+        if mem_entry and mem_entry.get("status") in ("RUNNING", "QUEUED"):
+            # Already dispatched in this process; the registry guard is
+            # per-process, so the DB claim below remains the real
+            # cross-instance guard during deploy overlaps.
+            return False
+        user = await session.get(User, queued_recap.user_id)
+        # Restore the job's persisted submit-time config + credit state
+        # (jobs.recap_config); legacy rows fall back to reconstruction.
+        # This used to rebuild a DEFAULT config here, silently changing
+        # the user's video and corrupting its credit accounting on
+        # every restart/deploy -- and it ran AFTER the claim.
+        try:
+            plan = _recap_redispatch_plan(queued_recap, user)
+        except Exception:
+            _log.warning(
+                f"Could not build re-dispatch plan for recap job {jid}; "
+                "leaving it QUEUED for the next poll.",
+                exc_info=True,
+            )
+            return False
+        # DB-level claim (hunt F10): the registry guard above is
+        # per-process, so during a deploy overlap (old + new instance
+        # both polling) both workers could dispatch the same QUEUED
+        # job -- double render, double per-part top-up. The atomic
+        # QUEUED->RUNNING flip lets exactly one instance win; the loser
+        # skips this cycle. Startup resets orphaned RUNNING rows back
+        # to QUEUED before this loop starts, so legitimately reset
+        # jobs claim cleanly.
+        if not await claim_job_for_running(session, jid):
+            return False
+        _log.info(f"Auto-dispatching queued recap job {jid}...")
+        RECAP_JOBS_REGISTRY[jid] = plan["entry"]
+        asyncio.create_task(
+            _run_recap_background_job(
+                jid,
+                plan["cfg"],
+                queued_recap.user_id,
+                queued_recap.chat_id or queued_recap.user_id,
+                is_vip=plan["is_vip"],
+                credit_deducted=plan["credit_deducted"],
+                phase=plan["phase"],
+            )
+        )
+        return True
 
 
 @asynccontextmanager
@@ -90,73 +181,15 @@ async def lifespan(app: FastAPI):
     async def _recap_queue_worker():
         """Continuously check for any QUEUED Movie Recap jobs in DB and auto-process them."""
         import logging
-        from app.models.schema import Job, User
-        from app.models.enums import JobStatus, JobType
-        from app.db.session import AsyncSessionLocal
-        from app.webapp.api import _run_recap_background_job, RecapConfigRequest, RECAP_JOBS_REGISTRY
-        from sqlalchemy import select
 
         _log = logging.getLogger("RecapWorker")
         while True:
             try:
-                async with AsyncSessionLocal() as session:
-                    stmt = (
-                        select(Job)
-                        .where(
-                            Job.status == JobStatus.QUEUED.value,
-                            (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap")
-                        )
-                        .order_by(Job.created_at)
-                        .limit(1)
-                    )
-                    res = await session.execute(stmt)
-                    queued_recap = res.scalar_one_or_none()
-                    if queued_recap:
-                        jid = str(queued_recap.id)
-                        mem_entry = RECAP_JOBS_REGISTRY.get(jid)
-                        if not mem_entry or mem_entry.get("status") not in ("RUNNING", "QUEUED"):
-                            _log.info(f"Auto-dispatching queued recap job {jid}...")
-                            from app.config import settings
-                            from app.models.enums import AccountCategory
-                            from app.webapp.api import _clean_recap_display_title
-                            user = await session.get(User, queued_recap.user_id)
-                            is_vip = ((user.account_category == AccountCategory.PURCHASED.value) if user else False) or settings.is_admin(queued_recap.user_id)
-                            source_url = getattr(queued_recap, "source_audio_path", None) or queued_recap.input_text or ""
-                            _raw_title = queued_recap.input_text or ""
-                            _clean_title = _clean_recap_display_title(_raw_title, source_url) or "Movie Recap Video"
-                            cfg = RecapConfigRequest(
-                                url=source_url,
-                                title=_clean_title,
-                                voice_slug=queued_recap.preset_voice or "komin",
-                            )
-                            import time
-                            RECAP_JOBS_REGISTRY[jid] = {
-                                "id": jid,
-                                "user_id": queued_recap.user_id,
-                                "title": _clean_title,
-                                "status": "QUEUED",
-                                "progress_percent": 5,
-                                "progress_step": "0/4",
-                                "progress_label": "⏳ Picking up from queue...",
-                                "created_at": time.time(),
-                                "video_path": None,
-                                "audio_path": None,
-                                "srt_path": None,
-                                "script_path": None,
-                                "download_urls": {},
-                                "error_message": None,
-                            }
-                            asyncio.create_task(
-                                _run_recap_background_job(
-                                    jid,
-                                    cfg,
-                                    queued_recap.user_id,
-                                    queued_recap.chat_id or queued_recap.user_id,
-                                    is_vip=is_vip,
-                                )
-                            )
+                await _dispatch_oldest_queued_recap()
             except Exception:
-                pass
+                # Keep the loop alive, but never silently (hunt #5):
+                # a swallowed cycle error here used to be invisible.
+                _log.warning("Recap queue worker cycle failed", exc_info=True)
             await asyncio.sleep(3)
 
     cleanup_task = asyncio.create_task(_periodic_cleanup())
@@ -209,13 +242,28 @@ webapp_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static
 
 @webapp_app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
-    """Ensure Telegram Webview and browsers never serve stale cached SPA assets."""
+    """Cache policy for the SPA (hunt F14).
+
+    - ``/`` (index.html): no-store. It is the asset manifest — the
+      ``?v=`` version strings in it decide which asset URLs the
+      client requests — so it must always be fresh after a deploy.
+    - ``/static/*``: no-cache (revalidate, never blind-store). The
+      blanket no-store previously forced every Mini App open to
+      re-download ~670 KB of JS/CSS. Asset URLs are versioned per
+      release in index.html (e.g. ``app.js?v=20261031_fix_v1``),
+      so a deploy that changes an asset also changes its URL; and
+      Starlette StaticFiles answers the revalidation with ETag /
+      Last-Modified 304s, so even an unversioned edit is never
+      served stale — repeat opens just stop paying full price.
+    """
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
+    if request.url.path == "/":
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    elif request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 

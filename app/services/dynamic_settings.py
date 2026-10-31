@@ -10,6 +10,22 @@ from app.models.schema import AuditLog, BotSetting
 
 logger = logging.getLogger(__name__)
 
+
+def _loggable_value(key: str, value) -> str:
+    """A setting value as it may appear in logs.
+
+    payment_* values are bank-account identifiers (KBZPay/Wave
+    numbers and account names): the settings loader and updater used
+    to spray them into the service logs on every boot/save (hunt L3).
+    They are masked in the codebase's usual partial style; every
+    other setting logs in full as before.
+    """
+    if key.startswith("payment_"):
+        text = str(value)
+        return f"{text[:3]}…{text[-2:]}" if len(text) > 6 else "•••"
+    return str(value)
+
+
 SETTING_TYPES: dict[str, type] = {
     "free_monthly_allowance_seconds": int,
     "character_limit_free": int,
@@ -98,10 +114,19 @@ async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
                     parsed_val = str(raw_val)
                 if hasattr(settings, key):
                     setattr(settings, key, parsed_val)
-                    logger.info("Loaded dynamic setting '%s' = %s", key, parsed_val)
+                    logger.info("Loaded dynamic setting '%s' = %s", key, _loggable_value(key, parsed_val))
             except Exception as e:
-                logger.warning("Failed to cast dynamic setting '%s' with value '%s': %s", key, raw_val, e)
+                logger.warning("Failed to cast dynamic setting '%s' with value '%s': %s", key, _loggable_value(key, raw_val), e)
     return loaded
+
+
+# Keys writable through set_dynamic_setting (hunt C5): exactly the
+# registered dynamic settings — every one is a real Settings
+# attribute (verified), and secrets like bot_token / API keys are
+# NOT in SETTING_TYPES, so no admin surface (least of all the
+# callback-data-driven preset handler, whose key comes from the
+# callback string itself) can write or overwrite them here.
+DYNAMIC_SETTING_KEYS = frozenset(SETTING_TYPES)
 
 
 async def set_dynamic_setting(
@@ -111,10 +136,36 @@ async def set_dynamic_setting(
     admin_id: int | None = None,
 ) -> None:
     """Save setting to database, apply to in-memory settings, and write an AuditLog entry."""
+    if key not in DYNAMIC_SETTING_KEYS:
+        raise ValueError(f"Not a writable dynamic setting: {key!r}")
     str_val = str(value).lower() if isinstance(value, bool) else str(value)
     old_val = getattr(settings, key, None)
 
-    # 1. Update in-memory settings
+    # 1. Persist in database FIRST (hunt #4 B2-settings): the old
+    # order applied the value to the in-memory settings object before
+    # the DB write, so a failed flush/commit left memory and DB
+    # permanently diverged until the next restart.
+    row = (await session.execute(select(BotSetting).where(BotSetting.key == key))).scalar_one_or_none()
+    if row is not None:
+        row.value = str_val
+    else:
+        session.add(BotSetting(key=key, value=str_val))
+
+    # 2. Write AuditLog
+    if admin_id is not None:
+        session.add(
+            AuditLog(
+                admin_id=admin_id,
+                action="settings.update",
+                target_type="setting",
+                target_id=key,
+                details_json=json.dumps({"old": str(old_val), "new": str_val}),
+            )
+        )
+
+    await session.flush()
+
+    # 3. Only now — persistence succeeded — apply to in-memory settings.
     if key in SETTING_TYPES:
         expected_type = SETTING_TYPES[key]
         if expected_type is bool:
@@ -128,27 +179,7 @@ async def set_dynamic_setting(
     elif hasattr(settings, key):
         setattr(settings, key, str_val)
 
-    # 2. Persist in database
-    row = (await session.execute(select(BotSetting).where(BotSetting.key == key))).scalar_one_or_none()
-    if row is not None:
-        row.value = str_val
-    else:
-        session.add(BotSetting(key=key, value=str_val))
-
-    # 3. Write AuditLog
-    if admin_id is not None:
-        session.add(
-            AuditLog(
-                admin_id=admin_id,
-                action="settings.update",
-                target_type="setting",
-                target_id=key,
-                details_json=json.dumps({"old": str(old_val), "new": str_val}),
-            )
-        )
-
-    await session.flush()
-    logger.info("Dynamic setting '%s' updated to '%s' by admin %s", key, str_val, admin_id)
+    logger.info("Dynamic setting '%s' updated to '%s' by admin %s", key, _loggable_value(key, str_val), admin_id)
 
 
 async def get_dynamic_setting(session: AsyncSession, key: str, default: str | None = None) -> str | None:

@@ -28,10 +28,23 @@ from app.services.progress import JobProgressTracker, render_stepper_progress, s
 
 logger = logging.getLogger(__name__)
 
+# Telegram Bot API refuses bot uploads above 50 MB. Voice WAVs run
+# ~5.8 MB/min, so long generations can cross the cap; delivery must
+# check before sending (hunt #3 B1) — the recap pipeline applies the
+# same limit to its sends.
+TELEGRAM_SEND_LIMIT_BYTES = 50 * 1024 * 1024
+
 
 async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
     """Upload generated audio file from Local Worker to Render Cloud so Mini App & Bot can serve it."""
     import os
+    # Hardening (hunt F8): without a dedicated WORKER_TOKEN there is
+    # no remote worker to sync for — the co-located worker writes
+    # straight into shared storage, so this is a no-op. The bot
+    # token is never used as an upload credential anymore.
+    worker_token = (getattr(settings, "worker_token", "") or "").strip()
+    if not worker_token:
+        return
     cloud_url = os.getenv("RENDER_EXTERNAL_URL", "").strip() or os.getenv("MINI_APP_URL", "").strip() or "https://voice-clone-studio-c1er.onrender.com"
     if not file_path or not file_path.is_file():
         return
@@ -40,13 +53,6 @@ async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
         async with httpx.AsyncClient(timeout=90.0) as client:
             with open(file_path, "rb") as f:
                 files = {"file": (file_path.name, f, "audio/wav")}
-                worker_token = getattr(settings, "worker_token", "") or settings.bot_token
-                if not getattr(settings, "worker_token", ""):
-                    logger.warning(
-                        "WORKER_TOKEN is not set; falling back to the Telegram "
-                        "bot token for worker uploads. Set a separate "
-                        "WORKER_TOKEN and rotate it."
-                    )
                 headers = {"X-Worker-Token": worker_token}
                 url = f"{cloud_url}/api/internal/worker/upload-result/{job_id}"
                 resp = await client.post(url, files=files, headers=headers)
@@ -329,20 +335,43 @@ async def process_single_job(
             if getattr(job, "auto_deliver", False):
                 try:
                     audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
-                    audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
-                    caption = t(
-                        "status_completed_caption",
-                        lang,
-                        completed_status=t("status_completed", lang),
-                        model_name=html.escape(str(caption_model_name)),
-                        duration_seconds=duration_seconds,
-                    ) + fallback_note
-                    await bot.send_audio(
-                        chat_id=target_chat_id,
-                        audio=audio_file,
-                        caption=caption,
-                        parse_mode="HTML",
-                    )
+                    if audio_source_path.stat().st_size > TELEGRAM_SEND_LIMIT_BYTES:
+                        # Over the Bot API send cap (hunt #3 B1): a
+                        # send_audio attempt would fail inside Telegram
+                        # and the user heard nothing at all. Tell them
+                        # plainly and route to the Mini App, where the
+                        # file stays downloadable; job still SUCCESS.
+                        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+                        app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                        kb = InlineKeyboardMarkup(inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text=t("clone_btn_miniapp_listen", lang),
+                                    web_app=WebAppInfo(url=f"{app_url}?tab=tab-voice")
+                                )
+                            ]
+                        ])
+                        await bot.send_message(
+                            chat_id=target_chat_id,
+                            text=t("clone_audio_too_large_text", lang, job_id=job.id[:8]) + fallback_note,
+                            reply_markup=kb,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
+                        caption = t(
+                            "status_completed_caption",
+                            lang,
+                            completed_status=t("status_completed", lang),
+                            model_name=html.escape(str(caption_model_name)),
+                            duration_seconds=duration_seconds,
+                        ) + fallback_note
+                        await bot.send_audio(
+                            chat_id=target_chat_id,
+                            audio=audio_file,
+                            caption=caption,
+                            parse_mode="HTML",
+                        )
                     if target_msg_id:
                         await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
                 except Exception as send_err:

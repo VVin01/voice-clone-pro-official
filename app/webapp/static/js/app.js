@@ -19,9 +19,14 @@ function showStudioToast(message, type = 'info', duration = 3500) {
     toast.className = `studio-toast ${type}`;
     toast.innerHTML = `
         <span class="toast-icon">${icons[type] || icons.info}</span>
-        <span class="toast-msg">${message}</span>
+        <span class="toast-msg"></span>
         <button class="toast-close" onclick="this.parentNode.remove()" aria-label="Close">✕</button>
     `;
+    // The message is COPY, never markup (hunt X2): it is rendered via
+    // textContent so no caller- or server-supplied string can inject
+    // HTML into the toast. Caller audit: all ~86 call sites pass plain
+    // i18n copy — none relied on markup in the message.
+    toast.querySelector('.toast-msg').textContent = message;
 
     document.body.appendChild(toast);
     if (duration > 0) setTimeout(() => toast && toast.remove(), duration);
@@ -41,13 +46,15 @@ function showStudioConfirm(message, onConfirm, onCancel) {
     modal.innerHTML = `
         <div class="studio-confirm-card">
             <div class="studio-confirm-icon">⚠️</div>
-            <div class="studio-confirm-msg">${message}</div>
+            <div class="studio-confirm-msg"></div>
             <div class="studio-confirm-actions">
-                <button id="studio-confirm-cancel" class="btn secondary-btn">မဟုတ်ဘူး / Cancel</button>
-                <button id="studio-confirm-ok" class="btn gold-gradient-btn">သဘောတူ / OK</button>
+                <button id="studio-confirm-cancel" class="btn secondary-btn">${typeof t === "function" ? t("confirm_cancel") : "မဟုတ်ဘူး"}</button>
+                <button id="studio-confirm-ok" class="btn gold-gradient-btn">${typeof t === "function" ? t("confirm_ok") : "သဘောတူ"}</button>
             </div>
         </div>
     `;
+    // Message via textContent — copy, never markup (hunt X2, as above).
+    modal.querySelector('.studio-confirm-msg').textContent = message;
 
     document.body.appendChild(modal);
 
@@ -56,6 +63,138 @@ function showStudioConfirm(message, onConfirm, onCancel) {
     document.getElementById('studio-confirm-cancel').onclick = () => { remove(); if (onCancel) onCancel(); };
     modal.addEventListener('click', (e) => { if (e.target === modal) { remove(); if (onCancel) onCancel(); } });
 }
+
+/**
+ * mapErrorToToast(raw, flow) — the ONLY way an error becomes a toast
+ * (toast/start fix 2026-10-31).
+ *
+ * Raw server `detail` strings and stored job `error_message` values are
+ * technical text (yt-dlp dumps, Python exceptions, coded prefixes) and
+ * must NEVER be interpolated into a user-facing toast. This mapper
+ * pattern-matches the known families and returns a safe i18n string;
+ * anything unrecognized collapses to the flow's generic message.
+ * String MATCHING on the raw text is allowed; DISPLAYING it is not —
+ * with ONE narrow exception (E2): the two pass-through families below,
+ * which match the closed set of our own localized Burmese details by
+ * distinctive marker phrases and return them unchanged.
+ *
+ * flow: 'voice' | 'recap' | 'upload' | 'download' | 'send' | 'generic'
+ */
+function mapErrorToToast(raw, flow = 'generic') {
+    const rawStr = (raw == null ? '' : String(raw));
+    const s = rawStr.toLowerCase();
+    const has = (...needles) => needles.some(n => s.includes(n));
+    // Pass-through families (E2 fix 2026-10-31): a NARROW exception to
+    // the never-display rule, for strings that are verifiably OUR OWN
+    // localized user-facing copy. These details are closed-set Burmese
+    // sentences produced by api.py itself; collapsing them into the
+    // flow generic both destroys information the user needs (the exact
+    // recap top-up count) and asserts a refund that never happened
+    // (pre-charge rejections charged nothing). Matching is on
+    // distinctive marker phrases of that closed set — any raw,
+    // foreign or technical string still falls through to the generics
+    // below, unchanged.
+    //
+    // (a) Recap insufficient-credits: the segmented shortfall message
+    // (worker _RecapInsufficientCreditsError and the submit-time
+    // segmented pre-check share the markers). The exact total matters.
+    if (flow === 'recap' && has('စုစုပေါင်း') && has('credits လိုအပ်ပါတယ်')) {
+        return rawStr;
+    }
+    // (b) Voice submit rejections that happen BEFORE any charge
+    // (_voice_job_error_detail's closed Burmese set: balance, daily
+    // limit, concurrency, character limit, model/file problems). None
+    // of them may wear err_voice_failed's "balance was refunded" copy.
+    if (flow === 'voice' && has(
+        'လက်ကျန်မိနစ် မလုံလောက်ပါ',
+        'ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ',
+        'တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်',
+        'စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်',
+        'အသံမော်ဒယ် မတွေ့ရှိပါ',
+        'အသံဖိုင် မတွေ့ရှိပါ',
+        'ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ',
+        'အလုပ်ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်ပါသည်',
+    )) {
+        return rawStr;
+    }
+    // Suspended account (api.py require gate raises USER_BANNED: …).
+    if (has('user_banned')) return t('err_banned');
+    // Membership gate codes: the fetch interceptor already raises the
+    // join reminder for MEMBERSHIP_REQUIRED / GATE_NOT_CONFIGURED; keep
+    // the same user-facing copy here for non-intercepted paths.
+    if (has('membership_required', 'gate_not_configured', 'gate_')) return t('gate_required_toast');
+    // File too large (coded detail + the 413 wording, both languages).
+    if (has('file_too_large', 'file size exceeds', 'too large', '413')) return t('err_too_large');
+    // Voice engine quota / capacity: stored job errors mention ZeroGPU
+    // quota or HF 402s when the pool is exhausted.
+    if (has('quota', 'zerogpu', '402', 'gpu')) {
+        return flow === 'recap' ? t('err_recap_failed') : t('err_engine_busy');
+    }
+    // Link-block family: recap/download jobs fail inside yt-dlp when a
+    // platform blocks the server (YouTube/TikTok/Douyin/extract errors).
+    if (has('youtube', 'tiktok', 'douyin', 'extract', 'yt-dlp', 'fresh cookies')) {
+        if (flow === 'recap') return t('err_recap_failed');
+        if (flow === 'download') return t('err_download_failed');
+    }
+    switch (flow) {
+        case 'voice': return t('err_voice_failed');
+        case 'recap': return t('err_recap_failed');
+        case 'upload': return t('err_upload_failed');
+        case 'download': return t('err_download_failed');
+        case 'send': return t('err_send_telegram');
+        default: return t('err_generic');
+    }
+}
+window.mapErrorToToast = mapErrorToToast;
+
+// showErrorToast(err, flow): console keeps the diagnostic, the user
+// only ever sees the mapped premium copy.
+function showErrorToast(err, flow = 'generic') {
+    try { console.warn('Flow error (' + flow + '):', err); } catch (e) {}
+    const raw = err && err.message ? err.message : err;
+    showStudioToast(mapErrorToToast(raw, flow), 'error');
+}
+window.showErrorToast = showErrorToast;
+
+/**
+ * showStudioInputModal({title, placeholder, initialValue, confirmLabel,
+ * onConfirm}) — premium replacement for the native prompt dialog (used by
+ * the slip-rejection flow; mirrors the ban-reason modal pattern).
+ */
+function showStudioInputModal(opts) {
+    const existing = document.getElementById('studio-input-modal');
+    if (existing) existing.remove();
+    const esc = (v) => String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    const modal = document.createElement('div');
+    modal.id = 'studio-input-modal';
+    modal.className = 'studio-confirm-overlay';
+    modal.innerHTML = `
+        <div class="studio-confirm-card">
+            <div class="studio-confirm-icon">📝</div>
+            <div class="studio-confirm-msg">${esc(opts.title || '')}</div>
+            <input id="studio-input-field" class="studio-input" type="text"
+                   placeholder="${esc(opts.placeholder || '')}" value="${esc(opts.initialValue || '')}">
+            <div class="studio-confirm-actions">
+                <button id="studio-input-cancel" class="btn secondary-btn">${t('confirm_cancel')}</button>
+                <button id="studio-input-ok" class="btn gold-gradient-btn">${esc(opts.confirmLabel || t('confirm_ok'))}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    const field = document.getElementById('studio-input-field');
+    if (field) { field.focus(); try { field.select(); } catch (e) {} }
+    const remove = () => modal.remove();
+    document.getElementById('studio-input-ok').onclick = () => {
+        const value = field ? field.value.trim() : '';
+        remove();
+        if (opts.onConfirm) opts.onConfirm(value);
+    };
+    document.getElementById('studio-input-cancel').onclick = remove;
+    modal.addEventListener('click', (e) => { if (e.target === modal) remove(); });
+}
+window.showStudioInputModal = showStudioInputModal;
 
 /**
  * app.js - Unified Telegram Mini App Client Controller
@@ -104,6 +243,7 @@ const state = {
     recapVoice: "komin",
     recapJobId: null,
     recapPollTimer: null,
+    recapScriptReadyJobId: null,
     alertDismissTimer: null,
 };
 
@@ -264,6 +404,16 @@ function setupSamplePlayers() {
         a.addEventListener("play", () => { try { b.pause(); } catch (e) {} });
         b.addEventListener("play", () => { try { a.pause(); } catch (e) {} });
     }
+    // /api/voices/sample requires the Telegram auth header (privacy
+    // fix, hunt #2 V2), which an <audio src> load cannot send — fetch
+    // each sample with auth and hand the player a blob URL instead.
+    [a, b].forEach(async (el) => {
+        if (!el) return;
+        const url = el.getAttribute("data-sample-url");
+        if (!url) return;
+        const authUrl = await fetchAuthImageUrl(url);
+        if (authUrl) el.src = authUrl;
+    });
 }
 
 function getAuthHeaders(includeContentType = true) {
@@ -302,8 +452,43 @@ function closeOpenViaTelegramModal() {
     if (modal) modal.classList.add("hidden");
 }
 window.closeOpenViaTelegramModal = closeOpenViaTelegramModal;
+// Session expiry (E1 fix 2026-10-31): the server rejects initData
+// whose auth_date is older than 24h (F4). A Mini App left open longer
+// than that 401s on every call — but the "Open via Telegram" modal is
+// the wrong explanation there (the user IS inside Telegram). Detect
+// the stale-auth_date case client-side and show the dedicated
+// session-expired message instead; all other 401s keep the modal.
+const INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
+function initDataExpired() {
+    try {
+        let authDate = 0;
+        if (state.tg && state.tg.initDataUnsafe) {
+            authDate = Number(state.tg.initDataUnsafe.auth_date || 0);
+        }
+        if (!authDate && state.tg && state.tg.initData) {
+            const m = /(?:^|&)auth_date=(\d+)/.exec(state.tg.initData);
+            if (m) authDate = Number(m[1]);
+        }
+        if (!authDate) return false;
+        return (Date.now() / 1000 - authDate) > INIT_DATA_MAX_AGE_SECONDS;
+    } catch (e) {
+        return false;
+    }
+}
+window.initDataExpired = initDataExpired;
+let sessionExpiredShown = false;
 function isAuthFailure(res) {
-    if (res && res.status === 401) { showOpenViaTelegramModal(); return true; }
+    if (res && res.status === 401) {
+        if (initDataExpired()) {
+            if (!sessionExpiredShown) {
+                sessionExpiredShown = true;
+                showStudioToast(t("err_session_expired"), 'error', 6000);
+            }
+            return true;
+        }
+        showOpenViaTelegramModal();
+        return true;
+    }
     return false;
 }
 window.isAuthFailure = isAuthFailure;
@@ -917,8 +1102,10 @@ async function loadLegacyModels() {
 // ── Voice Preview Audio Player Controller ──────────────────────────────────
 let currentVoiceAudio = null;
 let currentPreviewButton = null;
+let previewFetchSeq = 0;
 
 function stopCurrentVoicePreview() {
+    previewFetchSeq++; // cancel any in-flight sample fetch
     if (currentVoiceAudio) {
         currentVoiceAudio.pause();
         currentVoiceAudio.currentTime = 0;
@@ -936,7 +1123,7 @@ function stopCurrentVoicePreview() {
     }
 }
 
-function playVoicePreview(voiceId, buttonEl) {
+async function playVoicePreview(voiceId, buttonEl) {
     haptic("light");
     if (!voiceId) return;
 
@@ -947,8 +1134,15 @@ function playVoicePreview(voiceId, buttonEl) {
 
     stopCurrentVoicePreview();
 
+    // /api/voices/sample requires the Telegram auth header (privacy
+    // fix, hunt #2 V2), which a plain Audio() load cannot send — fetch
+    // the sample with auth and play the resulting blob URL, the same
+    // pattern as fetchAuthImageUrl for protected images.
+    const seq = ++previewFetchSeq;
     const audioUrl = `/api/voices/sample/${encodeURIComponent(voiceId)}`;
-    const audio = new Audio(audioUrl);
+    const authUrl = await fetchAuthImageUrl(audioUrl);
+    if (seq !== previewFetchSeq) return; // a newer tap superseded this one
+    const audio = new Audio(authUrl || audioUrl);
     currentVoiceAudio = audio;
     currentPreviewButton = buttonEl;
 
@@ -1470,7 +1664,7 @@ async function handleVoiceGenerate() {
         startJobPolling(data.job_id);
 
     } catch (err) {
-        showStudioToast(err.message, 'info');
+        showErrorToast(err, 'voice');
         if (progressBox) progressBox.classList.add("hidden");
         if (btnGen) btnGen.disabled = false;
     }
@@ -1551,7 +1745,7 @@ function startJobPolling(jobId) {
             } else if (data.status === "FAILED") {
                 clearInterval(state.pollTimer);
                 haptic("error");
-                showStudioToast("Generation failed: " + (data.error_message || "Unknown error"), 'error');
+                showStudioToast(mapErrorToToast(data.error_message, 'voice'), 'error');
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
             }
@@ -1584,9 +1778,7 @@ function enableRecapSplitForLongVideo() {
     }
 }
 function notifyRecapSplitAutoEnabled() {
-    showStudioToast(currentLang === "my"
-        ? "✂️ ဗီဒီယိုက ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်းခွဲပြီး လုပ်ပေးပါမယ် — 'အပိုင်းခွဲ ထုတ်မယ်' ကို အလိုအလျောက် ဖွင့်ပေးထားပါတယ်။ ပြီးသွားရင် အပိုင်းအားလုံး ရပါမယ်။"
-        : "✂️ This video is longer than 10 minutes, so it will be processed in parts — split output was enabled automatically, and you will receive every part.", 'info');
+    showStudioToast(t("toast_split_auto"), 'info');
 }
 
 // Segmented (over-cap) recaps are charged 1 credit PER PART. This
@@ -1851,13 +2043,11 @@ function setupRecapVisualEditor() {
                         btnStartRecap.disabled = true;
                         btnStartRecap.style.opacity = "0.5";
                     }
-                    showStudioToast(currentLang === "my"
-                        ? `⚠️ သတိပေးချက်: တင်သွင်းထားသော ဗီဒီယိုဖိုင် ကြာချိန် (${durStr}) သည် ${tierLabel} ကန့်သတ်ချက် (အများဆုံး ${maxM} မိနစ်) ထက် ကျော်လွန်နေပါသည်ခင်ဗျာ။\n\nကျေးဇူးပြု၍ မိနစ်ပိုတိုသော ဗီဒီယိုကို ရွေးချယ်ပါ သို့မဟုတ် ၁၀ မိနစ်အထိ ပြုလုပ်နိုင်သော VIP သို့ အဆင့်မြှင့်တင်ပါရန်။`
-                        : `⚠️ Warning: Video duration (${durStr}) exceeds ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`, 'warning');
+                    showStudioToast(t("toast_duration_over"), 'warning');
                 } else {
                     durSpan.className = "mini-tag";
                     durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#10b981; font-weight:700; margin-left:4px;">(Ready)</span>`;
-                    if (btnStartRecap) {
+                    if (btnStartRecap && !recapJobIsActive()) {
                         btnStartRecap.disabled = false;
                         btnStartRecap.style.opacity = "";
                     }
@@ -1874,7 +2064,7 @@ function setupRecapVisualEditor() {
 
             haptic("success");
         } catch (err) {
-            showStudioToast("Video upload error: " + err.message, 'error');
+            showErrorToast(err, 'upload');
             if (progressWrap) progressWrap.classList.add("hidden");
             // Upload failed: drop the local preview and fall back to the
             // empty state (unless an earlier uploaded source is usable).
@@ -2001,9 +2191,7 @@ function setupRecapVisualEditor() {
                     btnPlayToggle.classList.remove("active");
                 }
             } else {
-                showStudioToast(currentLang === "my"
-                    ? "💡 တိုက်ရိုက်ဗီဒီယို (Live Video Scrubbing) ကို Frame အလိုက် ကြည့်ရှုလိုပါက အဆင့် (၁) ရှိ '📁 Video Upload' ခလုတ်ဖြင့် MP4 ဗီဒီယိုကို တိုက်ရိုက်တင်သွင်း၍ အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
-                    : "💡 Live real-time video scrubbing is active when you upload an MP4 video file.", 'info');
+                showStudioToast(t("toast_scrub_hint"), 'info');
             }
         });
 
@@ -2944,13 +3132,11 @@ function setupRecapVisualEditor() {
                             btnStartRecap.disabled = true;
                             btnStartRecap.style.opacity = "0.5";
                         }
-                        showStudioToast(currentLang === "my"
-                            ? `⚠️ သတိပေးချက်: သင်ထည့်သွင်းထားသော ဗီဒီယို ကြာချိန် (${durStr}) သည် ${tierLabel} ကန့်သတ်ချက် (အများဆုံး ${maxM} မိနစ်) ထက် ကျော်လွန်နေပါသည်ခင်ဗျာ။\n\nကျေးဇူးပြု၍ မိနစ်ပိုတိုသော ဗီဒီယိုကို ရွေးချယ်ပါ သို့မဟုတ် ၁၀ မိနစ်အထိ ပြုလုပ်နိုင်သော VIP သို့ အဆင့်မြှင့်တင်ပါရန်။`
-                            : `⚠️ Warning: Video duration (${durStr}) exceeds your ${tierLabel} limit (${maxM}m). Please select a shorter video or upgrade to VIP.`, 'warning');
+                        showStudioToast(t("toast_duration_over"), 'warning');
                     } else {
                         durSpan.className = "mini-tag";
                         durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid") || "Ready"})</span>`;
-                        if (btnStartRecap) {
+                        if (btnStartRecap && !recapJobIsActive()) {
                             btnStartRecap.disabled = false;
                             btnStartRecap.style.opacity = "";
                         }
@@ -2995,11 +3181,11 @@ function setupRecapVisualEditor() {
                 setRecapPreviewState(recapHasSource() ? "ready" : "empty");
                 const msg = err.message || "";
                 if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
-                    showStudioToast(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် လင့်ခ်ဖြင့် တိုက်ရိုက်စစ်ဆေးမရပါခင်ဗျာ။\n\nဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။`, 'warning');
+                    showStudioToast(t("toast_douyin_blocked"), 'warning', 6000);
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
                 } else {
-                    showStudioToast(err.message || "Failed to inspect video link", 'error');
+                    showErrorToast(err, 'generic');
                 }
             } finally {
                 btnAnalyze.disabled = false;
@@ -3242,7 +3428,25 @@ window.toggleAdvancedRecapStudio = function() {
     }
 };
 
+// A recap job is active while its status-polling timer runs: the
+// timer is created in startRecapJobPolling and cleared on every
+// terminal state (SCRIPT_READY / SUCCESS / FAILED). Used to stop the
+// Analyze/Upload success paths from re-enabling the Start button
+// mid-job and to refuse a parallel submit (double-submit fix, hunt
+// #2 R1 — a second submit charged a second credit and left the first
+// job untracked).
+//
+// SCRIPT_READY counts as active too (hunt #3 E8): polling stops while
+// the script awaits review, but the job still owns the user's recap
+// slot (the server counts it as active), so the poller records it in
+// state.recapScriptReadyJobId and it keeps blocking a parallel submit
+// until the user renders it.
+function recapJobIsActive() {
+    return !!state.recapPollTimer || !!state.recapScriptReadyJobId;
+}
+
 async function handleStartRecap() {
+    if (recapJobIsActive()) return; // a recap job is already running
     const urlInput = document.getElementById("recap-url-input");
     let url = state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : "");
     if (!state.uploadedVideoPath && url) {
@@ -3269,9 +3473,11 @@ async function handleStartRecap() {
     if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
         && !state.user?.is_vip && !state.user?.is_admin) {
         const m = Math.floor(maxRecapSec / 60);
-        showStudioToast(currentLang === "my"
-            ? `ဗီဒီယို ကြာချိန်သည် ${state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)"} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး ${m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ ` + (state.user?.is_vip ? "✂️ ၁၀ မိနစ်ထက် ရှည်လျှင် 'အပိုင်းခွဲ ထုတ်မယ်' ကို ဖွင့်ပြီး အပိုင်းလိုက် ထုတ်နိုင်ပါသည်ခင်ဗျာ။" : "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။")
-            : `Video duration exceeds your ${state.user?.is_vip ? "VIP" : "Free"} limit of ${m} minutes.` + (state.user?.is_vip ? " Enable split output to receive longer videos as parts." : " Upgrade to VIP for up to 10 minutes."), 'warning');
+        showStudioToast(tf("toast_recap_over_limit", {
+            tier: state.user?.is_vip ? "VIP" : (currentLang === "my" ? "အခမဲ့ (Free)" : "Free"),
+            m,
+            hint: t(state.user?.is_vip ? "toast_recap_over_hint_vip" : "toast_recap_over_hint_free"),
+        }), 'warning', 6000);
         return;
     }
 
@@ -3359,7 +3565,7 @@ async function handleStartRecap() {
         startRecapJobPolling(data.recap_id);
 
     } catch (err) {
-        showStudioToast(err.message, 'info');
+        showErrorToast(err, 'recap');
         if (progressBox) progressBox.classList.add("hidden");
         if (btn) btn.disabled = false;
     }
@@ -3400,7 +3606,10 @@ function startRecapJobPolling(jobId) {
             if (data.status === "SCRIPT_READY") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
-                if (btn) btn.disabled = false;
+                // The job is NOT done: it waits for script review and
+                // still counts as active (E8) — Start stays disabled
+                // until the user renders it.
+                state.recapScriptReadyJobId = jobId;
                 setRecapStage(null, "SCRIPT_READY");
                 if (progressBox) progressBox.classList.add("hidden");
                 showStudioToast(t("toast_script_ready"), 'info');
@@ -3511,13 +3720,15 @@ function startRecapJobPolling(jobId) {
                 haptic("error");
                 if (progressBox) progressBox.classList.add("hidden");
 
-                const errMsg = data.error_message || "Processing error";
+                const errMsg = data.error_message || "";
+                // The stored error is technical text (e.g. a raw yt-dlp
+                // dump): it is only pattern-matched by the mapper, never
+                // displayed. Type is 'error' (this branch used to toast
+                // with 'success' styling for a failure).
+                showStudioToast(mapErrorToToast(errMsg, 'recap'), 'error', 6000);
                 if (errMsg.includes("Douyin") || errMsg.includes("Fresh cookies")) {
-                    showStudioToast(`⚠️ Douyin Anti-Bot အကာအကွယ်ကြောင့် တိုက်ရိုက်ဒေါင်းလုဒ် မအောင်မြင်ပါခင်ဗျာ။\n\nCredit ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်။ ဖုန်းထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Upload MP4' ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍ အလွယ်တကူ ဆက်လက်ပြုလုပ်နိုင်ပါသည်ခင်ဗျာ။`, 'error');
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
-                } else {
-                    showStudioToast(`⚠️ Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်:\n${errMsg}\n\n✅ သင့် Recap Credit ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။`, 'success');
                 }
                 loadUserProfile();
                 loadUserHistory();
@@ -3566,7 +3777,7 @@ async function openRecapScriptEditor(jobId) {
         const btnRender = document.getElementById("btn-script-render");
         if (btnRender) btnRender.onclick = () => renderRecapScript(jobId);
     } catch (err) {
-        showStudioToast(err.message, 'error');
+        showErrorToast(err, 'generic');
     }
 }
 
@@ -3595,7 +3806,7 @@ async function saveRecapScript(jobId) {
         }
         return true;
     } catch (err) {
-        showStudioToast(err.message, 'error');
+        showErrorToast(err, 'generic');
         return false;
     }
 }
@@ -3612,10 +3823,13 @@ async function renderRecapScript(jobId) {
         if (!res.ok) throw new Error(data.detail || "Render start failed");
         const box = document.getElementById("recap-script-box");
         if (box) box.classList.add("hidden");
+        // Review is over: the job is back to polling, and the poll
+        // timer alone governs "active" from here (E8).
+        state.recapScriptReadyJobId = null;
         showStudioToast(t("recap_processing_msg") || "Processing...", 'info');
         startRecapJobPolling(jobId);
     } catch (err) {
-        showStudioToast(err.message, 'error');
+        showErrorToast(err, 'generic');
     }
 }
 
@@ -3652,7 +3866,7 @@ async function dlDownloadFile(downloadUrl, filename, btn) {
         setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
         haptic("success");
     } catch (err) {
-        showStudioToast(err.message, 'error');
+        showErrorToast(err, 'download');
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
@@ -3674,7 +3888,7 @@ async function dlSendTelegram(downloadId, btn) {
         haptic("success");
         showStudioToast(t("toast_telegram_sent"), 'success');
     } catch (err) {
-        showStudioToast(err.message, 'error');
+        showErrorToast(err, 'send');
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
@@ -3750,7 +3964,7 @@ async function dlFetchFormat(fmt, cardBtn) {
         haptic("success");
         showStudioToast(t("dl_ready"), 'success');
     } catch (err) {
-        showStudioToast(err.message, 'error');
+        showErrorToast(err, 'download');
     } finally {
         if (cardBtn) cardBtn.disabled = false;
         if (descEl && !(fmt === "srt" && dlCurrent && dlCurrent.has_subtitles === false)) {
@@ -3808,7 +4022,7 @@ function setupDownloader() {
 
                 resultCard.classList.remove("hidden");
             } catch (err) {
-                showStudioToast(err.message, 'info');
+                showErrorToast(err, 'download');
             } finally {
                 btnDl.disabled = false;
             }
@@ -3916,14 +4130,27 @@ function closePaymentDrawer() {
 function copyAccount(accNum) {
     haptic("medium");
     const numToCopy = accNum || "09790760003";
+    // No native prompt dialog anywhere in the Mini App: when the Clipboard
+    // API is unavailable, show the number in the premium modal with a
+    // copy button instead.
+    const showNumberModal = () => showStudioInputModal({
+        title: t("account_number_title"),
+        initialValue: numToCopy,
+        confirmLabel: t("btn_copy"),
+        onConfirm: () => {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(numToCopy).then(() => {
+                    showStudioToast(`${numToCopy}\n${t("toast_copied")}`, 'success');
+                }).catch(() => {});
+            }
+        },
+    });
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(numToCopy).then(() => {
             showStudioToast(`${numToCopy}\n${t("toast_copied")}`, 'success');
-        }).catch(() => {
-            prompt("Account Number:", numToCopy);
-        });
+        }).catch(showNumberModal);
     } else {
-        prompt("Account Number:", numToCopy);
+        showNumberModal();
     }
 }
 
@@ -3931,7 +4158,7 @@ function copyAccount(accNum) {
 async function sendVoiceToTelegram(targetJobId) {
     const jobId = targetJobId || state.activeJobId;
     if (!jobId) {
-        showStudioToast(t("toast_empty_text") || "Voice Job ID not found", 'warning');
+        showStudioToast(t("toast_job_id_missing"), 'warning');
         return;
     }
     haptic("medium");
@@ -3947,6 +4174,17 @@ async function sendVoiceToTelegram(targetJobId) {
             headers: getAuthHeaders(),
         });
         const data = await res.json();
+        if (!res.ok && data.detail === "file_too_large_telegram") {
+            // Over Telegram's 50 MB send cap (B1): the file is fine and
+            // stays downloadable here — say exactly that instead of a
+            // generic send failure (same coded detail as the downloader).
+            showStudioToast(t("dl_too_large_telegram"), 'warning', 6000);
+            if (btn && !targetJobId) {
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+            return;
+        }
         if (!res.ok) throw new Error(data.detail || "Failed to send to Telegram");
         haptic("success");
         if (btn && !targetJobId) {
@@ -3955,7 +4193,7 @@ async function sendVoiceToTelegram(targetJobId) {
         }
         showStudioToast(t("toast_telegram_sent"), 'success');
     } catch (err) {
-        showStudioToast(err.message || "Failed to send to Telegram", 'error');
+        showErrorToast(err, 'send');
         if (btn && !targetJobId) {
             btn.disabled = false;
             btn.innerHTML = originalContent;
@@ -3967,7 +4205,7 @@ window.sendVoiceToTelegram = sendVoiceToTelegram;
 async function sendRecapToTelegram(targetJobId) {
     const jobId = targetJobId || state.recapJobId;
     if (!jobId) {
-        showStudioToast(t("toast_empty_url") || "Recap Job ID not found", 'warning');
+        showStudioToast(t("toast_job_id_missing"), 'warning');
         return;
     }
     haptic("medium");
@@ -3991,7 +4229,7 @@ async function sendRecapToTelegram(targetJobId) {
         }
         showStudioToast(t("toast_telegram_sent"), 'success');
     } catch (err) {
-        showStudioToast(err.message || "Failed to send to Telegram", 'error');
+        showErrorToast(err, 'send');
         if (btn && !targetJobId) {
             btn.disabled = false;
             btn.innerHTML = originalContent;
@@ -4029,7 +4267,7 @@ async function submitPaymentSlip() {
     const fileInput = document.getElementById("slip-file-input");
     const file = fileInput && fileInput.files ? fileInput.files[0] : null;
     if (!file) {
-        showStudioToast("ကျေးဇူးပြု၍ ငွေလွှဲပြေစာ ပုံကို ရွေးချယ်ပေးပါခင်ဗျာ။", 'info');
+        showStudioToast(t("toast_slip_no_file"), 'info');
         return;
     }
 
@@ -4063,7 +4301,7 @@ async function submitPaymentSlip() {
         const previewBox = document.getElementById("slip-preview-box");
         if (previewBox) previewBox.classList.add("hidden");
     } catch (e) {
-        showStudioToast(e.message, 'error');
+        showErrorToast(e, 'generic');
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -4380,6 +4618,27 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
     modal.classList.remove("hidden");
 }
 
+// Admin Play/Preview buttons carry their job data in data-* attributes
+// and are wired here after each render (stored-XSS fix, hunt #2 X1):
+// job fields such as preset_voice are user-controlled, so they must
+// never be interpolated into an inline onclick JS string — the old
+// handlers escaped only double quotes, and a payload like
+// x');alert(1);// broke straight out of the single-quoted argument.
+function wireAdminMediaButtons(root) {
+    if (!root) return;
+    root.querySelectorAll(".adm-media-open-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            openAdminMediaModal(
+                btn.dataset.jobId,
+                btn.dataset.jobType,
+                btn.dataset.downloadUrl,
+                btn.dataset.deliverables,
+                btn.dataset.title
+            );
+        });
+    });
+}
+
 function closeAdminMediaModal() {
     const modal = document.getElementById("admin-media-modal");
     if (!modal) return;
@@ -4445,6 +4704,18 @@ function handleAdminMediaLoaded(mediaEl) {
     }
 }
 
+// Admin error toasts: localized premium prefix first; the raw server
+// detail is appended after " — " only when it adds diagnostic value
+// (audit A4). Generic placeholder details ("Failed"/"Error") are noise
+// and dropped.
+function adminErrorText(prefixKey, raw) {
+    const prefix = t(prefixKey);
+    const detail = (raw == null ? "" : String(raw)).trim();
+    if (!detail || detail === "Failed" || detail === "Error" || detail === prefix) return prefix;
+    return `${prefix} — ${detail}`;
+}
+window.adminErrorText = adminErrorText;
+
 async function adminApproveSlip(reqId) {
     haptic("medium");
     showStudioConfirm(t("admin_confirm_approve"), async () => {
@@ -4455,31 +4726,49 @@ async function adminApproveSlip(reqId) {
                 body: JSON.stringify({ request_id: reqId }),
             });
             const data = await res.json();
-            showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
+            if (res.ok) {
+                showStudioToast(data.message || t("admin_done"), 'success');
+            } else {
+                showStudioToast(adminErrorText("admin_generic_err", data.detail || data.message), 'error');
+            }
             admLoadedSections.payments = false;
             loadAdminData();
         } catch (e) {
-            showStudioToast(e.message, 'error');
+            showStudioToast(adminErrorText("admin_generic_err", e.message), 'error');
         }
     });
 }
 
 async function adminRejectSlip(reqId) {
     haptic("medium");
-    const reason = prompt(t("admin_reject_reason_ph"), "Invalid payment slip");
-    if (!reason) return;
-    try {
-        const res = await fetch("/api/admin/reject-slip", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ request_id: reqId, reason: reason }),
-        });
-        const data = await res.json();
-        showStudioToast(data.message || data.detail || "Error", res.ok ? 'info' : 'error');
-        loadAdminData();
-    } catch (e) {
-        showStudioToast(e.message, 'error');
-    }
+    // Premium modal-with-input (mirrors the ban-reason pattern) — the
+    // native prompt dialog is gone from the Mini App. Same {request_id,
+    // reason} payload as before.
+    showStudioInputModal({
+        title: t("admin_reject_title"),
+        placeholder: t("admin_reject_reason_ph"),
+        initialValue: t("admin_reject_default"),
+        confirmLabel: t("admin_reject_btn"),
+        onConfirm: async (reason) => {
+            if (!reason) return;
+            try {
+                const res = await fetch("/api/admin/reject-slip", {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ request_id: reqId, reason: reason }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showStudioToast(data.message || t("admin_done"), 'success');
+                } else {
+                    showStudioToast(adminErrorText("admin_generic_err", data.detail || data.message), 'error');
+                }
+                loadAdminData();
+            } catch (e) {
+                showStudioToast(adminErrorText("admin_generic_err", e.message), 'error');
+            }
+        },
+    });
 }
 
 // ── Users: search, recent list, detail ───────────────────────────────
@@ -4583,7 +4872,7 @@ async function openAdminUserDetail(uid) {
         if (!res.ok) throw new Error(u.detail || "Failed");
         renderAdminUserDetail(u);
     } catch (e) {
-        showStudioToast(e.message, "error");
+        showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
         closeAdminUserDetail();
         return;
     }
@@ -4679,6 +4968,11 @@ async function adminApplyAdjust() {
     const isNegative = (minutes * 60 + seconds) < 0 || credits < 0;
     const doApply = async () => {
         haptic("medium");
+        // In-flight guard (hunt #2 R4): a double-tap on Apply would
+        // otherwise credit/debit twice — disable the button for the
+        // duration of the request, mirroring submitPaymentSlip.
+        const applyBtn = document.getElementById("adm-adjust-apply-btn");
+        if (applyBtn) applyBtn.disabled = true;
         try {
             const payload = { user_id: uid, add_minutes: minutes, add_seconds: seconds, add_recap_credits: credits, reason };
             if (tier) payload.account_category = tier;
@@ -4695,7 +4989,9 @@ async function adminApplyAdjust() {
             openAdminUserDetail(uid);
             loadAdminData();
         } catch (e) {
-            showStudioToast(e.message, "error");
+            showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
+        } finally {
+            if (applyBtn) applyBtn.disabled = false;
         }
     };
     if (isNegative) {
@@ -4728,7 +5024,7 @@ async function _adminBanCall(uid, ban) {
             loadAdminUsersRecent();
             loadAdminData();
         } catch (e) {
-            showStudioToast(e.message, "error");
+            showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
         }
     };
     if (ban) {
@@ -4823,7 +5119,7 @@ async function adminSendBroadcast() {
             }
         } catch (e) {
             if (reportBox) reportBox.innerHTML = `<div class="adm-state adm-state-error"><span>❌ ${escapeHtml(e.message)}</span></div>`;
-            showStudioToast(e.message, 'error');
+            showStudioToast(adminErrorText("admin_generic_err", e.message), 'error');
         } finally {
             if (btn) btn.disabled = false;
             if (btnText) btnText.textContent = t("btn_send_broadcast");
@@ -4947,9 +5243,8 @@ async function loadAdminQueue(isSilent = false) {
                 actionsHtml += `<span class="badge-expired text-xs">⌛ ${t("admin_expired")}</span>`;
                 actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>`;
             } else if (j.download_url) {
-                const qDelivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
-                const qTitleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
-                actionsHtml += `<button class="queue-act-btn uid" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${qDelivStr}', '${qTitleStr}')">▶️ Play</button>`;
+                const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`;
+                actionsHtml += `<button class="queue-act-btn uid adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(qTitle)}">▶️ Play</button>`;
                 actionsHtml += `<a href="${j.download_url}" target="_blank" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
             }
 
@@ -4993,6 +5288,7 @@ async function loadAdminQueue(isSilent = false) {
         } else {
             container.innerHTML = jobs.map(renderJobCard).join("");
         }
+        wireAdminMediaButtons(container);
     } catch (e) {
         console.warn("Could not load admin queue:", e);
         if (!isSilent) admStateError(container, "loadAdminQueue()");
@@ -5014,10 +5310,10 @@ async function adminCancelJob(jobId) {
                 loadAdminQueue();
                 loadAdminHistory();
             } else {
-                showStudioToast(data.message || data.detail || "Failed to cancel job", 'error');
+                showStudioToast(adminErrorText("admin_cancel_err", data.detail || data.message), 'error');
             }
         } catch (e) {
-            showStudioToast("Cancel error: " + e.message, 'error');
+            showStudioToast(adminErrorText("admin_cancel_err", e.message), 'error');
         }
     });
 }
@@ -5092,8 +5388,7 @@ async function loadAdminHistory() {
             return;
         }
         container.innerHTML = history.map(j => {
-            const delivStr = JSON.stringify(j.deliverables || {}).replace(/"/g, '&quot;');
-            const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`.replace(/"/g, '&quot;');
+            const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`;
             const isFailed = (j.status === "FAILED");
             const isSuccess = (j.status === "SUCCESS");
             const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
@@ -5124,7 +5419,7 @@ async function loadAdminHistory() {
                         ${j.is_expired ? `
                             <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>
                         ` : (j.download_url ? `
-                            <button class="btn-play-preview" onclick="openAdminMediaModal('${j.id}', '${j.job_type}', '${escapeHtml(j.download_url)}', '${delivStr}', '${titleStr}')">▶️ Preview</button>
+                            <button class="btn-play-preview adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(titleStr)}">▶️ Preview</button>
                             <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
                         ` : '')}
                         ${isFailed ? `
@@ -5135,6 +5430,7 @@ async function loadAdminHistory() {
                 </div>
             </div>`;
         }).join("");
+        wireAdminMediaButtons(container);
     } catch (e) {
         console.warn("Could not load admin history:", e);
         if (container) admStateError(container, "loadAdminHistory()");
@@ -5178,14 +5474,14 @@ async function adminRetryJob(jobId) {
             loadAdminQueue(true);
             pollAdminJobProgress(jobId);
         } else {
-            showStudioToast("Retry failed: " + (data.detail || data.message || "Unknown error"), 'error');
+            showStudioToast(adminErrorText("admin_retry_err", data.detail || data.message), 'error');
             if (retryBtn) {
                 retryBtn.disabled = false;
                 retryBtn.innerText = "🔄 Retry";
             }
         }
     } catch (e) {
-        showStudioToast("Retry error: " + e.message, 'error');
+        showStudioToast(adminErrorText("admin_retry_err", e.message), 'error');
         if (retryBtn) {
             retryBtn.disabled = false;
             retryBtn.innerText = "🔄 Retry";
@@ -5323,10 +5619,10 @@ async function adminDeleteSingleJob(jobId) {
                 if (el) el.remove();
                 loadAdminHistory();
             } else {
-                showStudioToast("Delete failed: " + (data.detail || data.message || "Unknown error"), 'error');
+                showStudioToast(adminErrorText("admin_delete_err", data.detail || data.message), 'error');
             }
         } catch (e) {
-            showStudioToast("Delete error: " + e.message, 'error');
+            showStudioToast(adminErrorText("admin_delete_err", e.message), 'error');
         }
     });
 }
@@ -5354,13 +5650,13 @@ async function adminPurgeHistory(mode) {
             });
             const data = await res.json();
             if (res.ok) {
-                showStudioToast(`✅ ${data.message || `Purged: ${data.purged_count}`}`, 'success');
+                showStudioToast(data.message || tf("admin_purged", { count: data.purged_count || 0 }), 'success');
                 loadAdminHistory();
             } else {
-                showStudioToast("Purge failed: " + (data.detail || data.message || "Unknown error"), 'error');
+                showStudioToast(adminErrorText("admin_purge_err", data.detail || data.message), 'error');
             }
         } catch (e) {
-            showStudioToast("Purge error: " + e.message, 'error');
+            showStudioToast(adminErrorText("admin_purge_err", e.message), 'error');
         }
     });
 }
@@ -5457,7 +5753,7 @@ async function adminSavePrice(code) {
             showStudioToast(data.message, "success");
             loadAdminPricing();
         } catch (e) {
-            showStudioToast(e.message, "error");
+            showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
         }
     });
 }
@@ -5603,11 +5899,11 @@ async function saveGeminiModelSettings() {
             body: JSON.stringify(payload),
         });
         const data = await res.json();
-        showStudioToast("✅ Gemini Model Chain အောင်မြင်စွာ ပြောင်းလဲသိမ်းဆည်းပြီးပါပြီ!\n\n" +
-              `Primary: ${primary}\nFallback 1: ${fb1}\nFallback 2: ${fb2}\nFallback 3: ${fb3}`, 'success');
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        showStudioToast(t("admin_gemini_saved"), 'success');
         loadAdminSettings();
     } catch (e) {
-        showStudioToast("Failed to save Gemini models: " + e.message, 'error');
+        showStudioToast(adminErrorText("admin_gemini_save_err", e.message), 'error');
     }
 }
 
@@ -5660,10 +5956,11 @@ async function saveAdminSettings() {
             body: JSON.stringify(payload),
         });
         const data = await res.json();
-        showStudioToast(data.message || "Settings updated successfully!", 'success');
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        showStudioToast(data.message || t("admin_settings_saved"), 'success');
         loadAdminSettings();
     } catch (e) {
-        showStudioToast("Failed to save settings: " + e.message, 'error');
+        showStudioToast(adminErrorText("admin_settings_save_err", e.message), 'error');
     }
 }
 

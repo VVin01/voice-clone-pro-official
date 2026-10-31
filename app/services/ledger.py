@@ -71,6 +71,15 @@ async def get_or_create_user(
     If the user is new and was referred with a valid code, creates a PENDING referral.
     Safely handles concurrent registrations, unique constraint collisions, and rollbacks.
     """
+    # Profile fields are truncated to their column widths at this
+    # single intake choke point (hunt #4 A2): Telegram display names
+    # can exceed String(150)/String(100), which used to surface as a
+    # Postgres 500 on registration/profile refresh. Every caller
+    # (bot /start, webapp auth) funnels through here.
+    if username:
+        username = username[:100]
+    if first_name:
+        first_name = first_name[:150]
     stmt = select(User).where(User.id == telegram_id)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()

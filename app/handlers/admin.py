@@ -108,6 +108,7 @@ from app.ui.keyboards import (
     admin_model_sample_cancel_kb,
 )
 from app.services.dynamic_settings import load_dynamic_settings, set_dynamic_setting
+from app.services.url_safety import is_valid_telegram_link
 from app.ui.helpers import safe_edit_message
 
 logger = logging.getLogger(__name__)
@@ -161,10 +162,23 @@ async def is_authorized_admin(event: CallbackQuery | Message) -> bool:
     user_id = event.from_user.id if event.from_user else None
     if not settings.is_admin(user_id):
         logger.warning("Unauthorized admin access attempt by user %s", user_id)
+        # Resolve the caller's actual language like neighbouring handlers
+        # (user.language_code), instead of forcing English. Callers with no
+        # stored profile have no actual language on record, so the previous
+        # English text remains the fallback for them only.
+        lang = "en"
+        if user_id is not None:
+            try:
+                async with AsyncSessionLocal() as _s:
+                    _u = await _s.get(User, user_id)
+                    if _u is not None and _u.language_code:
+                        lang = _u.language_code
+            except Exception:
+                pass
         if isinstance(event, CallbackQuery):
-            await event.answer(t("admin_not_authorized", "en"), show_alert=True)
+            await event.answer(t("admin_not_authorized", lang), show_alert=True)
         else:
-            await event.answer(t("admin_not_authorized", "en"))
+            await event.answer(t("admin_not_authorized", lang))
         return False
     return True
 
@@ -2020,6 +2034,10 @@ async def handle_admin_user_toggle_status(
             await callback.answer("User not found", show_alert=True)
             return
         target_user.status = new_status
+        if action != "BLOCK":
+            # Unblocking an admin ban also clears the bot-blocked
+            # send-suppression flag so the user starts fully clean (B1).
+            target_user.bot_blocked = False
         session.add(AuditLog(
             admin_id=callback.from_user.id,
             action="user.block" if action == "BLOCK" else "user.unblock",
@@ -2037,6 +2055,8 @@ async def handle_admin_user_toggle_status(
                 await callback.answer("User not found", show_alert=True)
                 return
             target_user.status = new_status
+            if action != "BLOCK":
+                target_user.bot_blocked = False
             s.add(AuditLog(
                 admin_id=callback.from_user.id,
                 action="user.block" if action == "BLOCK" else "user.unblock",
@@ -2657,12 +2677,18 @@ async def handle_admin_price_set(callback: CallbackQuery, session: AsyncSession 
 
     from app.services.payments import update_pricing_plan_price
     if session is not None:
-        await update_pricing_plan_price(session, code, new_price, admin_id=callback.from_user.id)
+        ok, _plan, _msg = await update_pricing_plan_price(session, code, new_price, admin_id=callback.from_user.id)
         await session.commit()
     else:
         async with AsyncSessionLocal() as s:
-            await update_pricing_plan_price(s, code, new_price, admin_id=callback.from_user.id)
+            ok, _plan, _msg = await update_pricing_plan_price(s, code, new_price, admin_id=callback.from_user.id)
             await s.commit()
+
+    if not ok:
+        # The service enforces the 100 – 10,000,000 MMK range; this
+        # preset path previously skipped the check the typed path has.
+        await callback.answer("❌ Price must be between 100 and 10,000,000 MMK", show_alert=True)
+        return
 
     await callback.answer(f"✅ Price updated: {code} = {new_price:,} MMK", show_alert=False)
     await handle_admin_pricing(callback, session=session)
@@ -2997,13 +3023,20 @@ async def handle_admin_settings_preset(callback: CallbackQuery, session: AsyncSe
     key = parts[2]
     val = parts[3]
 
-    if session is not None:
-        await set_dynamic_setting(session, key, val, admin_id=callback.from_user.id)
-        await session.commit()
-    else:
-        async with AsyncSessionLocal() as s:
-            await set_dynamic_setting(s, key, val, admin_id=callback.from_user.id)
-            await s.commit()
+    # The key comes from callback data: set_dynamic_setting enforces
+    # the dynamic-key allowlist (secrets are not writable), and a
+    # crafted/stale key gets an alert instead of a crash (hunt C5).
+    try:
+        if session is not None:
+            await set_dynamic_setting(session, key, val, admin_id=callback.from_user.id)
+            await session.commit()
+        else:
+            async with AsyncSessionLocal() as s:
+                await set_dynamic_setting(s, key, val, admin_id=callback.from_user.id)
+                await s.commit()
+    except ValueError:
+        await callback.answer(f"Unknown setting: {key}", show_alert=True)
+        return
 
     await callback.answer(f"✅ Updated {key} = {val}", show_alert=False)
     await handle_admin_settings(callback, session=session)
@@ -3052,17 +3085,21 @@ async def handle_admin_settings_input_receive(message: Message, state: FSMContex
     else:
         parsed_val = raw_val
 
-    if session is not None:
-        admin_user, _ = await get_or_create_user(session, message.from_user.id)
-        lang = admin_user.language_code if admin_user else "my"
-        await set_dynamic_setting(session, key, parsed_val, admin_id=message.from_user.id)
-        await session.commit()
-    else:
-        async with AsyncSessionLocal() as s:
-            admin_user, _ = await get_or_create_user(s, message.from_user.id)
+    try:
+        if session is not None:
+            admin_user, _ = await get_or_create_user(session, message.from_user.id)
             lang = admin_user.language_code if admin_user else "my"
-            await set_dynamic_setting(s, key, parsed_val, admin_id=message.from_user.id)
-            await s.commit()
+            await set_dynamic_setting(session, key, parsed_val, admin_id=message.from_user.id)
+            await session.commit()
+        else:
+            async with AsyncSessionLocal() as s:
+                admin_user, _ = await get_or_create_user(s, message.from_user.id)
+                lang = admin_user.language_code if admin_user else "my"
+                await set_dynamic_setting(s, key, parsed_val, admin_id=message.from_user.id)
+                await s.commit()
+    except ValueError:
+        await message.answer(f"❌ Unknown setting: <code>{key}</code>")
+        return
 
     await state.clear()
 
@@ -3174,21 +3211,12 @@ async def handle_admin_tutorial_voice_toggle(callback: CallbackQuery):
         row = (await session.execute(stmt)).scalar_one_or_none()
         current_val = (row.value.lower() == "true") if row else True
         new_val = not current_val
-        val_str = "true" if new_val else "false"
 
-        if not row:
-            session.add(BotSetting(key="tutorial_voice_enabled", value=val_str))
-        else:
-            row.value = val_str
-            row.updated_at = utc_now()
-
-        session.add(AuditLog(
-            admin_id=callback.from_user.id,
-            action="admin.tutorial_voice_toggle",
-            target_type="bot_setting",
-            target_id="tutorial_voice_enabled",
-            details_json=f'{{"enabled": {str(new_val).lower()}}}',
-        ))
+        # Through the one settings write path (hunt C2): persists,
+        # audits (settings.update) and applies to memory together —
+        # the old direct BotSetting write left the in-memory value
+        # stale until the next reload.
+        await set_dynamic_setting(session, "tutorial_voice_enabled", new_val, admin_id=callback.from_user.id)
         await session.commit()
 
     status_str = "Enabled" if new_val else "Disabled"
@@ -3206,21 +3234,9 @@ async def handle_admin_tutorial_recap_toggle(callback: CallbackQuery):
         row = (await session.execute(stmt)).scalar_one_or_none()
         current_val = (row.value.lower() == "true") if row else True
         new_val = not current_val
-        val_str = "true" if new_val else "false"
 
-        if not row:
-            session.add(BotSetting(key="tutorial_recap_enabled", value=val_str))
-        else:
-            row.value = val_str
-            row.updated_at = utc_now()
-
-        session.add(AuditLog(
-            admin_id=callback.from_user.id,
-            action="admin.tutorial_recap_toggle",
-            target_type="bot_setting",
-            target_id="tutorial_recap_enabled",
-            details_json=f'{{"enabled": {str(new_val).lower()}}}',
-        ))
+        # Through the one settings write path (hunt C2), as above.
+        await set_dynamic_setting(session, "tutorial_recap_enabled", new_val, admin_id=callback.from_user.id)
         await session.commit()
 
     status_str = "Enabled" if new_val else "Disabled"
@@ -3266,10 +3282,15 @@ async def handle_admin_tutorial_voice_url_input(message: Message, state: FSMCont
         return
 
     url = (message.text or "").strip()
-    if not (url.startswith("http://") or url.startswith("https://")) or len(url) < 10:
+    # Same t.me validation as the Mini App settings save (hunt #5
+    # parity): this receiver used to accept any http(s) string, so the
+    # bot path could store exactly the malformed link the webapp path
+    # was fixed to reject -- and a bad stored link breaks the main
+    # menu's URL button for every user.
+    if not is_valid_telegram_link(url):
         await message.answer(
             "⚠️ <b>Invalid URL format!</b>\n"
-            "The link must start with <code>http://</code> or <code>https://</code>.\n"
+            "The link must be a Telegram link, e.g. <code>https://t.me/VoiceClonePro/29</code>.\n"
             "Please try again or tap cancel below:",
             reply_markup=admin_tutorial_cancel_kb("en"),
             parse_mode="HTML",
@@ -3280,21 +3301,8 @@ async def handle_admin_tutorial_voice_url_input(message: Message, state: FSMCont
     async with AsyncSessionLocal() as session:
         admin_user, _ = await get_or_create_user(session, message.from_user.id)
         lang = admin_user.language_code if admin_user else "my"
-        stmt = select(BotSetting).where(BotSetting.key == "tutorial_voice_link")
-        row = (await session.execute(stmt)).scalar_one_or_none()
-        if not row:
-            session.add(BotSetting(key="tutorial_voice_link", value=url))
-        else:
-            row.value = url
-            row.updated_at = utc_now()
-
-        session.add(AuditLog(
-            admin_id=message.from_user.id,
-            action="admin.tutorial_voice_update",
-            target_type="bot_setting",
-            target_id="tutorial_voice_link",
-            details_json=f'{{"url": "{url}"}}',
-        ))
+        # Through the one settings write path (hunt C2).
+        await set_dynamic_setting(session, "tutorial_voice_link", url, admin_id=message.from_user.id)
         await session.commit()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -3314,10 +3322,12 @@ async def handle_admin_tutorial_recap_url_input(message: Message, state: FSMCont
         return
 
     url = (message.text or "").strip()
-    if not (url.startswith("http://") or url.startswith("https://")) or len(url) < 10:
+    # Same t.me validation as the Mini App settings save (hunt #5
+    # parity) -- see the voice receiver above.
+    if not is_valid_telegram_link(url):
         await message.answer(
             "⚠️ <b>Invalid URL format!</b>\n"
-            "The link must start with <code>http://</code> or <code>https://</code>.\n"
+            "The link must be a Telegram link, e.g. <code>https://t.me/VoiceClonePro/30</code>.\n"
             "Please try again or tap cancel below:",
             reply_markup=admin_tutorial_cancel_kb("en"),
             parse_mode="HTML",
@@ -3328,21 +3338,8 @@ async def handle_admin_tutorial_recap_url_input(message: Message, state: FSMCont
     async with AsyncSessionLocal() as session:
         admin_user, _ = await get_or_create_user(session, message.from_user.id)
         lang = admin_user.language_code if admin_user else "my"
-        stmt = select(BotSetting).where(BotSetting.key == "tutorial_recap_link")
-        row = (await session.execute(stmt)).scalar_one_or_none()
-        if not row:
-            session.add(BotSetting(key="tutorial_recap_link", value=url))
-        else:
-            row.value = url
-            row.updated_at = utc_now()
-
-        session.add(AuditLog(
-            admin_id=message.from_user.id,
-            action="admin.tutorial_recap_update",
-            target_type="bot_setting",
-            target_id="tutorial_recap_link",
-            details_json=f'{{"url": "{url}"}}',
-        ))
+        # Through the one settings write path (hunt C2).
+        await set_dynamic_setting(session, "tutorial_recap_link", url, admin_id=message.from_user.id)
         await session.commit()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -3382,21 +3379,8 @@ async def handle_admin_tutorial_remove_confirm(callback: CallbackQuery):
         return
 
     async with AsyncSessionLocal() as session:
-        stmt = select(BotSetting).where(BotSetting.key == "tutorial_video_link")
-        row = (await session.execute(stmt)).scalar_one_or_none()
-        if not row:
-            session.add(BotSetting(key="tutorial_video_link", value=""))
-        else:
-            row.value = ""
-            row.updated_at = utc_now()
-
-        session.add(AuditLog(
-            admin_id=callback.from_user.id,
-            action="admin.tutorial_remove",
-            target_type="bot_setting",
-            target_id="tutorial_video_link",
-            details_json='{"action": "removed"}',
-        ))
+        # Through the one settings write path (hunt C2).
+        await set_dynamic_setting(session, "tutorial_video_link", "", admin_id=callback.from_user.id)
         await session.commit()
 
     await callback.answer("Guide video link removed!", show_alert=False)
@@ -3619,6 +3603,14 @@ async def handle_admin_broadcast_message_input(
 
     if not broadcast_text or len(broadcast_text) < 4:
         await message.answer("⚠️ Broadcast စာသား တိုလွန်းပါသည်။ မတော်တဆ မှားယွင်းပေးပို့ခြင်း မဖြစ်စေရန် အနည်းဆုံး အက္ခရာ ၄ လုံး ရိုက်ထည့်ပါရန်။")
+        return
+
+    if len(broadcast_text) > 4096:
+        # Telegram rejects message text over 4096 chars; without this
+        # check the campaign was created and every recipient silently
+        # skipped (hunt #3 B2). Reject at compose time, before any
+        # campaign exists; the admin stays in waiting_for_message.
+        await message.answer("⚠️ Broadcast စာသား ရှည်လွန်းပါသည်။ Telegram ကန့်သတ်ချက် (အက္ခရာ ၄၀၉၆ လုံး) ထက် ကျော်နေပါသည် — တိုအောင် ပြင်ပြီး ပြန်ပို့ပါရန်။")
         return
 
     if session is not None:
