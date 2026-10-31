@@ -3237,7 +3237,7 @@ async def handle_admin_tutorial_edit_voice_url(callback: CallbackQuery, state: F
     text = (
         "✏️ <b>Enter Voice Clone Guide Video URL</b>\n\n"
         "Please type or paste the video link for Voice Clone Tutorial:\n"
-        "Example: <code>https://t.me/VoiceClonePro/16</code>"
+        "Example: <code>https://t.me/VoiceClonePro/29</code>"
     )
     kb = admin_tutorial_cancel_kb("en")
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -3253,7 +3253,7 @@ async def handle_admin_tutorial_edit_recap_url(callback: CallbackQuery, state: F
     text = (
         "✏️ <b>Enter Movie Recap Guide Video URL</b>\n\n"
         "Please type or paste the video link for Movie Recap Tutorial:\n"
-        "Example: <code>https://t.me/VoiceClonePro/16</code>"
+        "Example: <code>https://t.me/VoiceClonePro/30</code>"
     )
     kb = admin_tutorial_cancel_kb("en")
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")

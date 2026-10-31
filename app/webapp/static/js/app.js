@@ -120,11 +120,150 @@ function initTelegram() {
 }
 
 function haptic(type = "light") {
+    // Route each semantic type to the correct Telegram HapticFeedback API:
+    // success/error/warning are NOT impact styles — they belong to
+    // notificationOccurred(); "selection" belongs to selectionChanged().
+    // Everything is feature-detected so non-Telegram contexts never break.
     try {
-        if (state.tg?.HapticFeedback) {
-            state.tg.HapticFeedback.impactOccurred(type);
+        const hf = state.tg?.HapticFeedback;
+        if (!hf) return;
+        if (type === "success" || type === "error" || type === "warning") {
+            if (typeof hf.notificationOccurred === "function") {
+                hf.notificationOccurred(type);
+                return;
+            }
+        }
+        if (type === "selection") {
+            if (typeof hf.selectionChanged === "function") {
+                hf.selectionChanged();
+                return;
+            }
+        }
+        if (typeof hf.impactOccurred === "function") {
+            const style = ["light", "medium", "heavy", "rigid", "soft"].includes(type) ? type : "light";
+            hf.impactOccurred(style);
         }
     } catch (e) {}
+}
+window.haptic = haptic;
+
+// ── Fetch with timeout (premium polish) ────────────────────────────────
+// Data loaders use this so a hung connection ends in the loader's error
+// state (with Retry) instead of an endless spinner.
+const FETCH_TIMEOUT_MS = 12000;
+async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: ctrl.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+window.fetchWithTimeout = fetchWithTimeout;
+
+// ── Home load error strip (premium polish) ─────────────────────────────
+function setHomeLoadErrorVisible(visible) {
+    const strip = document.getElementById("home-load-error");
+    if (strip) strip.classList.toggle("hidden", !visible);
+}
+function retryHomeLoad() {
+    setHomeLoadErrorVisible(false);
+    loadUserProfile();
+    loadCuratedVoices();
+}
+window.retryHomeLoad = retryHomeLoad;
+
+// ── Staged progress steppers (premium polish) ──────────────────────────
+// Honest stage chips mapped to REAL job states only — no fake progress:
+//   Voice:  submit → Script active · QUEUED/RUNNING → Voice active ·
+//           SUCCESS → all done.
+//   Recap:  server progress_step "N/4" — 0–2 are the script phase
+//           (download/transcribe/translate), 3 is voice+video render
+//           (script & voice complete, video active), 4/SUCCESS → done.
+//           SCRIPT_READY pauses with Script done, Voice next.
+function renderStageStepper(el, labels, activeIndex, completeAll) {
+    if (!el) return;
+    const key = labels.join("|") + "#" + (completeAll ? "done" : activeIndex) + "#" + currentLang;
+    if (el.dataset.stageKey === key) return;
+    el.dataset.stageKey = key;
+    el.innerHTML = labels.map((label, i) => {
+        const cls = completeAll || i < activeIndex ? "done" : (i === activeIndex ? "active" : "upcoming");
+        const mark = cls === "done" ? "✓ " : "";
+        return `<span class="stage-chip ${cls}">${mark}${label}</span>${i < labels.length - 1 ? '<span class="stage-arrow">›</span>' : ""}`;
+    }).join("");
+}
+function voiceStageLabels() { return [t("stage_script"), t("stage_voice"), t("stage_ready")]; }
+function recapStageLabels() { return [t("stage_script"), t("stage_voice"), t("stage_video"), t("stage_ready")]; }
+function setVoiceStage(mode) {
+    const el = document.getElementById("voice-stage-stepper");
+    if (!el) return;
+    if (mode === "success") renderStageStepper(el, voiceStageLabels(), 2, true);
+    else if (mode === "working") renderStageStepper(el, voiceStageLabels(), 1, false);
+    else renderStageStepper(el, voiceStageLabels(), 0, false);
+}
+function setRecapStage(stepStr, status) {
+    const el = document.getElementById("recap-stage-stepper");
+    if (!el) return;
+    if (status === "SUCCESS") { renderStageStepper(el, recapStageLabels(), 3, true); return; }
+    if (status === "SCRIPT_READY") { renderStageStepper(el, recapStageLabels(), 1, false); return; }
+    const n = parseInt(String(stepStr || "0").split("/")[0], 10) || 0;
+    if (n >= 4) renderStageStepper(el, recapStageLabels(), 3, true);
+    else if (n === 3) renderStageStepper(el, recapStageLabels(), 2, false);
+    else renderStageStepper(el, recapStageLabels(), 0, false);
+}
+window.setVoiceStage = setVoiceStage;
+window.setRecapStage = setRecapStage;
+
+// ── Sticky create CTAs (premium polish) ────────────────────────────────
+// Mirror bars for the Voice / Recap primary actions. A bar appears only
+// while its tab is active AND the real in-flow button is scrolled out of
+// view; clicks forward to the real button (no duplicate logic), and the
+// disabled state mirrors the real button.
+const STICKY_CTA_PAIRS = [
+    { tab: "tab-voice", bar: "sticky-cta-voice", src: "btn-generate-voice", btn: "btn-generate-voice-sticky" },
+    { tab: "tab-recap", bar: "sticky-cta-recap", src: "btn-start-recap", btn: "btn-start-recap-sticky" },
+];
+const stickyCtaInView = {};
+function refreshStickyCtas() {
+    STICKY_CTA_PAIRS.forEach(p => {
+        const bar = document.getElementById(p.bar);
+        const src = document.getElementById(p.src);
+        const btn = document.getElementById(p.btn);
+        if (!bar || !src || !btn) return;
+        const pane = document.getElementById(p.tab);
+        const tabActive = !!(pane && pane.classList.contains("active"));
+        btn.disabled = !!src.disabled;
+        bar.classList.toggle("hidden", !(tabActive && stickyCtaInView[p.src] === false));
+    });
+}
+window.refreshStickyCtas = refreshStickyCtas;
+function setupStickyCtas() {
+    if (!("IntersectionObserver" in window)) return;
+    const io = new IntersectionObserver((entries) => {
+        entries.forEach(en => { stickyCtaInView[en.target.id] = en.isIntersecting; });
+        refreshStickyCtas();
+    }, { threshold: 0.01 });
+    STICKY_CTA_PAIRS.forEach(p => {
+        const src = document.getElementById(p.src);
+        const btn = document.getElementById(p.btn);
+        if (src) {
+            io.observe(src);
+            new MutationObserver(refreshStickyCtas).observe(src, { attributes: true, attributeFilter: ["disabled"] });
+        }
+        if (btn && src) btn.addEventListener("click", () => { if (!btn.disabled) src.click(); });
+    });
+    refreshStickyCtas();
+}
+
+// ── Home sample players: only one plays at a time ──────────────────────
+function setupSamplePlayers() {
+    const a = document.getElementById("sample-audio-voice");
+    const b = document.getElementById("sample-audio-recap");
+    if (a && b) {
+        a.addEventListener("play", () => { try { b.pause(); } catch (e) {} });
+        b.addEventListener("play", () => { try { a.pause(); } catch (e) {} });
+    }
 }
 
 function getAuthHeaders(includeContentType = true) {
@@ -231,16 +370,78 @@ async function fetchAuthImageUrl(url) {
 window.fetchAuthImageUrl = fetchAuthImageUrl;
 
 // ── Tutorial Video Link Controller (Voice Clone & Movie Recap) ───────────────
+// Tutorial registry (premium polish): every tutorial lives as a message in
+// the @VoiceClonePro channel; msg 38 is the index post linking all 10.
+// Resolution is settings-first for EVERY key — all links are editable in
+// Admin → Settings: video/voice/recap use their dedicated tutorialConfig
+// slots below, the rest use tutorialLinkOverrides (fed by /api/user/me).
+// These registry values are the fallback defaults, so no in-app entry can
+// point at a dead link.
+const TUTORIAL_LINKS = {
+    index: "https://t.me/VoiceClonePro/38",
+    bot: "https://t.me/VoiceClonePro/28",
+    video: "https://t.me/VoiceClonePro/28",
+    voice: "https://t.me/VoiceClonePro/29",
+    recap: "https://t.me/VoiceClonePro/30",
+    plans: "https://t.me/VoiceClonePro/31",
+    customvoice: "https://t.me/VoiceClonePro/32",
+    downloader: "https://t.me/VoiceClonePro/33",
+    scriptedit: "https://t.me/VoiceClonePro/34",
+    recapadvanced: "https://t.me/VoiceClonePro/35",
+    refer: "https://t.me/VoiceClonePro/36",
+    support: "https://t.me/VoiceClonePro/37",
+};
+window.TUTORIAL_LINKS = TUTORIAL_LINKS;
+
+// Built-in default titles (mirrors of the server-side defaults). When the
+// configured title is one of these, the banner label is owned by i18n so
+// the EN UI never shows a Myanmar leftover; an admin-customised title is
+// always respected as-is.
+const TUTORIAL_DEFAULT_TITLES = [
+    "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
+    "🎙️ Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
+    "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်",
+    "🎬 Movie Recap ပြုလုပ်နည်း လမ်းညွှန်",
+];
+function tutorialDisplayTitle(configTitle, i18nKey) {
+    if (configTitle && !TUTORIAL_DEFAULT_TITLES.includes(configTitle)) return configTitle;
+    return t(i18nKey);
+}
+
+// Admin-settings key behind each remaining registry tutorial. "bot"
+// shares the main video slot (tutorialConfig.fallbackUrl); voice/recap
+// keep their dedicated slots in tutorialConfig.
+const TUTORIAL_SETTING_KEYS = {
+    index: "tutorial_index_link",
+    plans: "tutorial_plans_link",
+    customvoice: "tutorial_customvoice_link",
+    downloader: "tutorial_downloader_link",
+    scriptedit: "tutorial_scriptedit_link",
+    recapadvanced: "tutorial_recapadvanced_link",
+    refer: "tutorial_refer_link",
+    support: "tutorial_support_link",
+};
+let tutorialLinkOverrides = {};
+
+// Settings-first resolution for every tutorial key; the registry
+// default is the fallback when no admin value is set.
+function resolveTutorialLink(type) {
+    if (type === "voice") return tutorialConfig.voice.url || TUTORIAL_LINKS.voice;
+    if (type === "recap") return tutorialConfig.recap.url || TUTORIAL_LINKS.recap;
+    if (type === "video" || type === "bot") return tutorialConfig.fallbackUrl || TUTORIAL_LINKS.video;
+    return tutorialLinkOverrides[type] || TUTORIAL_LINKS[type] || "";
+}
+
 let tutorialConfig = {
-    fallbackUrl: "https://t.me/VoiceClonePro/16",
+    fallbackUrl: TUTORIAL_LINKS.video,
     voice: {
         title: "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
-        url: "https://t.me/VoiceClonePro/16",
+        url: TUTORIAL_LINKS.voice,
         enabled: true
     },
     recap: {
         title: "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်",
-        url: "https://t.me/VoiceClonePro/16",
+        url: TUTORIAL_LINKS.recap,
         enabled: true
     }
 };
@@ -261,27 +462,40 @@ function updateTutorialUI(data) {
         tutorialConfig.recap.enabled = String(data.tutorial_recap_enabled).toLowerCase() !== "false" && data.tutorial_recap_enabled !== false;
     }
 
+    // Remaining tutorials: admin value wins over the registry default;
+    // an empty value clears the override (back to the default).
+    for (const [tutKey, settingKey] of Object.entries(TUTORIAL_SETTING_KEYS)) {
+        const v = data[settingKey];
+        if (v !== undefined) {
+            if (v) tutorialLinkOverrides[tutKey] = v;
+            else delete tutorialLinkOverrides[tutKey];
+        }
+    }
+
     // Apply visibility & title to Voice banner in Tab 1
     const voiceBanner = document.getElementById("voice-tutorial-banner");
     const voiceTitle = document.getElementById("voice-tut-title");
     if (voiceBanner) {
         if (tutorialConfig.voice.enabled) {
             voiceBanner.classList.remove("hidden");
-            if (voiceTitle && tutorialConfig.voice.title) voiceTitle.textContent = tutorialConfig.voice.title;
+            if (voiceTitle) voiceTitle.textContent = tutorialDisplayTitle(tutorialConfig.voice.title, "tutorial_banner_title");
         } else {
             voiceBanner.classList.add("hidden");
         }
     }
 
-    // Apply visibility & title to Recap banner in Tab 2
-    const recapBanner = document.getElementById("recap-tutorial-banner");
-    const recapTitle = document.getElementById("recap-tut-title");
-    if (recapBanner) {
+    // Recap Step-1 mini button: uses the configured recap title and
+    // respects tutorial_recap_enabled (hidden when disabled, like the
+    // Voice banner). (The old dead block that managed a non-existent
+    // recap banner element has been removed.)
+    const recapStepBtn = document.getElementById("recap-step1-tut-btn");
+    if (recapStepBtn) {
         if (tutorialConfig.recap.enabled) {
-            recapBanner.classList.remove("hidden");
-            if (recapTitle && tutorialConfig.recap.title) recapTitle.textContent = tutorialConfig.recap.title;
+            recapStepBtn.classList.remove("hidden");
+            recapStepBtn.textContent = tutorialDisplayTitle(tutorialConfig.recap.title, "recap_tutorial_title");
+            recapStepBtn.title = tutorialDisplayTitle(tutorialConfig.recap.title, "recap_tutorial_title");
         } else {
-            recapBanner.classList.add("hidden");
+            recapStepBtn.classList.add("hidden");
         }
     }
 
@@ -296,8 +510,29 @@ function updateTutorialUI(data) {
     }
 }
 
+function openTutorialUrl(url) {
+    if (!url) return;
+    if (window.Telegram?.WebApp?.openLink) {
+        window.Telegram.WebApp.openLink(url);
+    } else {
+        window.open(url, "_blank");
+    }
+}
+
 function openTutorialVideo(type = "auto") {
     haptic("light");
+    // Registry tutorials (premium polish): index (msg 38), plans,
+    // customvoice, downloader, scriptedit, recapadvanced, refer, support,
+    // bot — resolved settings-first via resolveTutorialLink().
+    if (type && type !== "auto" && type !== "voice" && type !== "recap" && type !== "video"
+        && Object.prototype.hasOwnProperty.call(TUTORIAL_LINKS, type)) {
+        openTutorialUrl(resolveTutorialLink(type));
+        return;
+    }
+    if (type === "video") {
+        openTutorialUrl(tutorialConfig.fallbackUrl || TUTORIAL_LINKS.video);
+        return;
+    }
     let target = null;
     let fallbackType = type;
 
@@ -336,12 +571,8 @@ function openTutorialVideo(type = "auto") {
         return;
     }
 
-    const url = target.url || tutorialConfig.fallbackUrl || "https://t.me/VoiceClonePro/16";
-    if (window.Telegram?.WebApp?.openLink) {
-        window.Telegram.WebApp.openLink(url);
-    } else {
-        window.open(url, "_blank");
-    }
+    const url = target.url || tutorialConfig.fallbackUrl || TUTORIAL_LINKS.bot;
+    openTutorialUrl(url);
 }
 window.openTutorialVideo = openTutorialVideo;
 window.updateTutorialUI = updateTutorialUI;
@@ -423,6 +654,9 @@ function switchTab(tabId) {
     });
     const activePane = document.getElementById(tabId);
     if (activePane) activePane.classList.add("active");
+    // Tab switches start at the top of the new pane (premium polish).
+    window.scrollTo({ top: 0, behavior: "auto" });
+    refreshStickyCtas();
 }
 window.switchTab = switchTab;
 
@@ -431,6 +665,11 @@ function toggleLanguage() {
     haptic("medium");
     const nextLang = currentLang === "my" ? "en" : "my";
     setLanguage(nextLang);
+    // The voices expander label is state-dependent (show vs hide), so
+    // re-apply the correct variant after the generic i18n pass.
+    const avTxt = document.getElementById("all-voices-toggle-text");
+    const avWrap = document.getElementById("all-voices-dropdown-wrap");
+    if (avTxt && avWrap) avTxt.innerText = avWrap.classList.contains("hidden") ? t("voices_show_all") : t("voices_hide_all");
     loadCuratedVoices();
     loadUserProfile();
     updateRecapSplitCostHint();
@@ -452,6 +691,9 @@ function setupTabs() {
             });
             const activePane = document.getElementById(targetTab);
             if (activePane) activePane.classList.add("active");
+            // Tab switches start at the top of the new pane (premium polish).
+            window.scrollTo({ top: 0, behavior: "auto" });
+            refreshStickyCtas();
 
             if (targetTab === "tab-history") {
                 loadUserHistory();
@@ -483,9 +725,14 @@ function setupTabs() {
 // ── API: Load User Profile ─────────────────────────────────────────────────
 async function loadUserProfile() {
     try {
-        const res = await fetch("/api/user/me", { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout("/api/user/me", { headers: getAuthHeaders() });
         if (isAuthFailure(res)) return;
-        if (!res.ok) return;
+        if (!res.ok) {
+            // Server-side failure: surface the Home error + Retry strip
+            // (401/403 stay with the auth/ban flows that own them).
+            if (res.status >= 500) setHomeLoadErrorVisible(true);
+            return;
+        }
         const data = await res.json();
         state.user = data;
         // Admins are never entry-gate locked (see entry-gate section).
@@ -493,6 +740,7 @@ async function loadUserProfile() {
         updateRecapSplitCostHint();
 
         if (data) {
+            setHomeLoadErrorVisible(false);
             updateTutorialUI(data);
         }
 
@@ -577,6 +825,8 @@ async function loadUserProfile() {
 
     } catch (err) {
         console.warn("User profile fetch error:", err);
+        // No endless spinner: show a clear error + Retry on Home.
+        setHomeLoadErrorVisible(true);
     }
 }
 
@@ -643,13 +893,17 @@ function renderCuratedVoices() {
 
 async function loadCuratedVoices() {
     try {
-        const res = await fetch("/api/voices/curated", { headers: getAuthHeaders() });
-        if (!res.ok) return;
+        const res = await fetchWithTimeout("/api/voices/curated", { headers: getAuthHeaders() });
+        if (!res.ok) throw new Error(`curated ${res.status}`);
         const voices = await res.json();
         state.curatedVoices = voices;
         renderCuratedVoices();
     } catch (e) {
         console.warn("Could not load curated voices:", e);
+        const grid = document.getElementById("personas-grid");
+        if (grid && !(state.curatedVoices || []).length) {
+            grid.innerHTML = `<div class="adm-state-error">${escapeHtml(t("home_load_error"))} <button type="button" class="mini-chip" onclick="loadCuratedVoices()">${escapeHtml(t("admin_retry"))}</button></div>`;
+        }
     }
 }
 
@@ -1158,6 +1412,7 @@ async function handleVoiceGenerate() {
     if (progressBox) progressBox.classList.remove("hidden");
     if (resultBox) resultBox.classList.add("hidden");
     if (btnGen) btnGen.disabled = true;
+    setVoiceStage("submit");
 
     try {
         let res;
@@ -1207,6 +1462,7 @@ async function handleVoiceGenerate() {
         }
 
         state.activeJobId = data.job_id;
+        setVoiceStage("working");
         if (statusMsg) statusMsg.innerText = t("preparing_msg");
         if (progressFill) progressFill.style.width = "30%";
         if (etaText) etaText.innerText = t("calculating_eta");
@@ -1241,18 +1497,22 @@ function startJobPolling(jobId) {
             const btnGen = document.getElementById("btn-generate-voice");
 
             if (data.is_waiting_laptop_worker) {
+                setVoiceStage("working");
                 if (statusMsg) statusMsg.innerText = t("voxcpm_status_waiting");
                 if (etaText) etaText.innerText = t("worker_auto_complete");
                 if (progressFill) progressFill.style.width = "35%";
             } else if (data.status === "QUEUED") {
+                setVoiceStage("working");
                 if (progressFill) progressFill.style.width = "45%";
                 if (statusMsg) statusMsg.innerText = t("cloud_queue_waiting");
             } else if (data.status === "RUNNING") {
+                setVoiceStage("working");
                 if (progressFill) progressFill.style.width = "80%";
                 if (statusMsg) statusMsg.innerText = "⚡ အသံထွက်ပေါ်အောင် ပေါင်းစပ်နေပါသည်...";
             } else if (data.status === "SUCCESS") {
                 clearInterval(state.pollTimer);
-                haptic("heavy");
+                setVoiceStage("success");
+                haptic("success");
                 if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
@@ -1290,6 +1550,7 @@ function startJobPolling(jobId) {
 
             } else if (data.status === "FAILED") {
                 clearInterval(state.pollTimer);
+                haptic("error");
                 showStudioToast("Generation failed: " + (data.error_message || "Unknown error"), 'error');
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
@@ -2956,7 +3217,7 @@ window.toggleAllRecapVoices = function() {
     if (!dropdown) return;
     const isHidden = dropdown.classList.toggle("hidden");
     if (txt) {
-        txt.innerText = isHidden ? "အခြားအသံများ ရွေးချယ်ရန် (Show all 12 voices) ▼" : "အသံစာရင်း ပိတ်မည် (Hide) ▲";
+        txt.innerText = isHidden ? t("voices_show_all") : t("voices_hide_all");
     }
 };
 
@@ -3028,6 +3289,7 @@ async function handleStartRecap() {
         progressBox.scrollIntoView({ behavior: "smooth" });
     }
     if (progressFill) progressFill.style.width = "10%";
+    setRecapStage("1/4", null);
     if (statusMsg) statusMsg.innerText = (state.lang === "my"
         ? "⚡ [1/4] Groq Cloud Whisper Turbo Audio Ingestion စတင်နေပါသည်..."
         : "⚡ [1/4] Groq Cloud Whisper Turbo Audio Ingestion starting...");
@@ -3133,11 +3395,13 @@ function startRecapJobPolling(jobId) {
             if (stepText && data.progress_step) {
                 stepText.innerText = `Step ${data.progress_step} • ${t("queue_notice_recap")}`;
             }
+            setRecapStage(data.progress_step, data.status);
 
             if (data.status === "SCRIPT_READY") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
                 if (btn) btn.disabled = false;
+                setRecapStage(null, "SCRIPT_READY");
                 if (progressBox) progressBox.classList.add("hidden");
                 showStudioToast(t("toast_script_ready"), 'info');
                 openRecapScriptEditor(jobId);
@@ -3244,6 +3508,7 @@ function startRecapJobPolling(jobId) {
                 state.recapPollTimer = null;
                 try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
                 if (btn) btn.disabled = false;
+                haptic("error");
                 if (progressBox) progressBox.classList.add("hidden");
 
                 const errMsg = data.error_message || "Processing error";
@@ -3619,7 +3884,7 @@ async function openPaymentDrawer(packageCode, amount, title) {
 
     // Dynamic sync of payment account numbers from API
     try {
-        const res = await fetch("/api/vip/plans", { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout("/api/vip/plans", { headers: getAuthHeaders() });
         if (res.ok) {
             const data = await res.json();
             const accounts = data.payment_accounts || [];
@@ -3743,7 +4008,9 @@ function setupSlipPreview() {
     if (fileInput && previewBox && previewImg) {
         fileInput.addEventListener("change", (e) => {
             const file = e.target.files && e.target.files[0];
+            const nameEl = document.getElementById("slip-file-name");
             if (file) {
+                if (nameEl) nameEl.textContent = file.name;
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     previewImg.src = ev.target.result;
@@ -3751,6 +4018,7 @@ function setupSlipPreview() {
                 };
                 reader.readAsDataURL(file);
             } else {
+                if (nameEl) nameEl.textContent = t("slip_file_none");
                 previewBox.classList.add("hidden");
             }
         });
@@ -3892,7 +4160,7 @@ window.showAdminJobsTab = showAdminJobsTab;
 async function loadAdminData() {
     if (!state.user?.is_admin) return;
     try {
-        const resStats = await fetch("/api/admin/overview", { headers: getAuthHeaders() });
+        const resStats = await fetchWithTimeout("/api/admin/overview", { headers: getAuthHeaders() });
         if (resStats.ok) {
             const stats = await resStats.json();
             const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
@@ -3938,12 +4206,15 @@ async function loadAdminData() {
         }
     } catch (e) {
         console.warn("Error loading admin overview:", e);
+        // Not silent: the recent-actions card shows error + Retry.
+        const actionsBox = document.getElementById("admin-recent-actions");
+        if (actionsBox && !actionsBox.children.length) admStateError(actionsBox, loadAdminData);
     }
 
     // Pending payment slips
     const slipsContainer = document.getElementById("admin-slips-list");
     try {
-        const resSlips = await fetch("/api/admin/pending-slips", { headers: getAuthHeaders() });
+        const resSlips = await fetchWithTimeout("/api/admin/pending-slips", { headers: getAuthHeaders() });
         if (resSlips.ok && slipsContainer) {
             renderAdminSlips(await resSlips.json());
         } else if (slipsContainer) {
@@ -4229,6 +4500,25 @@ function _adminRequireReason() {
     return reason;
 }
 
+// Dedicated Danger-Zone ban reason (premium polish P12): the ban flow no
+// longer borrows the Adjust card's reason field. Same {reason} payload
+// and AuditLog behaviour server-side.
+function _adminBanReason() {
+    const el = document.getElementById("adm-ban-reason");
+    return el ? el.value.trim() : "";
+}
+
+function _adminRequireBanReason() {
+    const reason = _adminBanReason();
+    if (reason.length < 3) {
+        showStudioToast(t("admin_reason_required"), "warning");
+        const el = document.getElementById("adm-ban-reason");
+        if (el) { el.focus(); el.scrollIntoView({ behavior: "smooth", block: "center" }); }
+        return null;
+    }
+    return reason;
+}
+
 function admUserRowHtml(u) {
     const initial = escapeHtml((u.first_name || "?").trim().charAt(0).toUpperCase() || "?");
     const balFmt = Math.floor((u.balance_seconds || 0) / 60) + "m";
@@ -4249,7 +4539,7 @@ async function adminSearchUsers() {
     if (q.length < 2) { showStudioToast(t("admin_search_short"), "warning"); return; }
     admStateLoading(box);
     try {
-        const res = await fetch(`/api/admin/users/search?q=${encodeURIComponent(q)}`, { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout(`/api/admin/users/search?q=${encodeURIComponent(q)}`, { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Search failed");
         if (!box) return;
@@ -4266,7 +4556,7 @@ async function loadAdminUsersRecent() {
     if (!box) return;
     admStateLoading(box);
     try {
-        const res = await fetch("/api/admin/users?limit=20", { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout("/api/admin/users?limit=20", { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
         if (!data.users.length) { admStateEmpty(box, "admin_empty"); return; }
@@ -4288,7 +4578,7 @@ async function openAdminUserDetail(uid) {
     const nameEl = document.getElementById("adm-detail-name");
     if (nameEl) nameEl.innerText = t("admin_loading");
     try {
-        const res = await fetch(`/api/admin/users/${uid}`, { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout(`/api/admin/users/${uid}`, { headers: getAuthHeaders() });
         const u = await res.json();
         if (!res.ok) throw new Error(u.detail || "Failed");
         renderAdminUserDetail(u);
@@ -4417,7 +4707,7 @@ async function adminApplyAdjust() {
 window.adminApplyAdjust = adminApplyAdjust;
 
 async function _adminBanCall(uid, ban) {
-    const reason = ban ? _adminRequireReason() : _adminReason();
+    const reason = ban ? _adminRequireBanReason() : _adminBanReason();
     if (ban && reason === null) return;
     const doCall = async () => {
         haptic("medium");
@@ -4431,7 +4721,7 @@ async function _adminBanCall(uid, ban) {
             if (!res.ok) throw new Error(data.detail || "Failed");
             showStudioToast(data.message, "success");
             if (ban) {
-                const reasonEl = document.getElementById("adm-adjust-reason");
+                const reasonEl = document.getElementById("adm-ban-reason");
                 if (reasonEl) reasonEl.value = "";
             }
             if (admCurrentUserId === uid) openAdminUserDetail(uid);
@@ -4459,7 +4749,7 @@ async function loadAdminUserJobs(uid) {
     admStateLoading(box);
     try {
         const params = new URLSearchParams({ timeframe: "all", status: "all", job_type: "all", limit: "20", user_id: String(uid) });
-        const res = await fetch(`/api/admin/history?${params.toString()}`, { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout(`/api/admin/history?${params.toString()}`, { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
         const jobs = data.history || [];
@@ -4572,7 +4862,7 @@ async function loadAdminQueue(isSilent = false) {
 
     try {
         const url = `/api/admin/queue?status=${encodeURIComponent(adminQueueStatusFilter)}&engine=${encodeURIComponent(adminQueueEngineFilter)}&limit=50`;
-        const res = await fetch(url, { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout(url, { headers: getAuthHeaders() });
         if (!res.ok) {
             if (!isSilent) admStateError(container, "loadAdminQueue()");
             return;
@@ -4782,7 +5072,7 @@ async function loadAdminHistory() {
             limit: "100"
         });
         if (adminHistFilter.job_id) params.set("job_id", adminHistFilter.job_id);
-        const res = await fetch(`/api/admin/history?${params.toString()}`, { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout(`/api/admin/history?${params.toString()}`, { headers: getAuthHeaders() });
         if (!res.ok) {
             if (container) admStateError(container, "loadAdminHistory()");
             return;
@@ -5091,7 +5381,7 @@ async function loadAdminAudit() {
     if (!box) return;
     admStateLoading(box);
     try {
-        const res = await fetch("/api/admin/audit-log?limit=50", { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout("/api/admin/audit-log?limit=50", { headers: getAuthHeaders() });
         const rows = await res.json();
         if (!res.ok) throw new Error("Failed");
         if (!rows.length) { admStateEmpty(box, "admin_audit_empty"); return; }
@@ -5125,7 +5415,7 @@ async function loadAdminPricing() {
     if (!box) return;
     admStateLoading(box);
     try {
-        const res = await fetch("/api/admin/pricing", { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout("/api/admin/pricing", { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
         const plans = data.plans || [];
@@ -5175,6 +5465,20 @@ window.adminSavePrice = adminSavePrice;
 
 // ── Settings (loaders/savers preserved from the previous console) ────
 
+// [input element id, settings key] for the tutorial links beyond the
+// original video/voice/recap slots — one tidy block in the Tutorials
+// card of Admin → Settings; all ride the same settings save flow.
+const ADMIN_TUTORIAL_LINK_FIELDS = [
+    ["adm-tut-index-link", "tutorial_index_link"],
+    ["adm-tut-plans-link", "tutorial_plans_link"],
+    ["adm-tut-customvoice-link", "tutorial_customvoice_link"],
+    ["adm-tut-downloader-link", "tutorial_downloader_link"],
+    ["adm-tut-scriptedit-link", "tutorial_scriptedit_link"],
+    ["adm-tut-recapadvanced-link", "tutorial_recapadvanced_link"],
+    ["adm-tut-refer-link", "tutorial_refer_link"],
+    ["adm-tut-support-link", "tutorial_support_link"],
+];
+
 async function loadAdminSettings() {
     if (!state.user?.is_admin) return;
     try {
@@ -5211,6 +5515,11 @@ async function loadAdminSettings() {
         if (elTutRecapEn) elTutRecapEn.checked = String(s.tutorial_recap_enabled).toLowerCase() !== "false" && s.tutorial_recap_enabled !== false;
         if (elTutRecapTitle) elTutRecapTitle.value = s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
         if (elTutRecapLink) elTutRecapLink.value = s.tutorial_recap_link || s.tutorial_video_link || "";
+
+        for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
+            const el = document.getElementById(elId);
+            if (el) el.value = s[settingKey] || "";
+        }
 
         setSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", s.gemini_primary_model || "gemini-3.6-flash");
         setSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", s.gemini_fallback_1 || "gemini-3.5-flash");
@@ -5319,6 +5628,11 @@ async function saveAdminSettings() {
     const tutRecapTitle = document.getElementById("adm-tut-recap-title")?.value?.trim() || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
     const tutRecapLink = document.getElementById("adm-tut-recap-link")?.value?.trim() || "";
 
+    const tutExtraLinks = {};
+    for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
+        tutExtraLinks[settingKey] = document.getElementById(elId)?.value?.trim() || "";
+    }
+
     const payload = {
         payment_kpay_number: kpayNum,
         payment_kpay_name: kpayName,
@@ -5331,6 +5645,7 @@ async function saveAdminSettings() {
         tutorial_recap_enabled: tutRecapEn,
         tutorial_recap_title: tutRecapTitle,
         tutorial_recap_link: tutRecapLink,
+        ...tutExtraLinks,
         maintenance_mode: maint,
     };
     updateTutorialUI(payload);
@@ -5501,7 +5816,7 @@ async function loadUserHistory() {
         renderHistoryHub(); // loading state
     }
     try {
-        const res = await fetch("/api/history", {
+        const res = await fetchWithTimeout("/api/history", {
             headers: getAuthHeaders(),
         });
         if (!res.ok) throw new Error(`history ${res.status}`);
@@ -5904,6 +6219,8 @@ document.addEventListener("DOMContentLoaded", () => {
     setupDeliverablesDownloads();
     setupDownloader();
     setupSlipPreview();
+    setupStickyCtas();
+    setupSamplePlayers();
 
     loadUserProfile();
     loadCuratedVoices();

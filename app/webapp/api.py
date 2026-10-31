@@ -438,6 +438,22 @@ def _voice_job_error_detail(reason: str) -> str:
     }.get(reason, "အလုပ်ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်ပါသည်။")
 
 
+# Admin-editable tutorial links beyond the original video/voice/recap
+# slots: settings key -> registry default (channel post). Every tutorial
+# is editable from Admin → Settings; these ride the same dynamic-settings
+# store and the same /api/user/me payload as the original three.
+TUTORIAL_EXTRA_LINKS: dict[str, str] = {
+    "tutorial_index_link": "https://t.me/VoiceClonePro/38",
+    "tutorial_plans_link": "https://t.me/VoiceClonePro/31",
+    "tutorial_customvoice_link": "https://t.me/VoiceClonePro/32",
+    "tutorial_downloader_link": "https://t.me/VoiceClonePro/33",
+    "tutorial_scriptedit_link": "https://t.me/VoiceClonePro/34",
+    "tutorial_recapadvanced_link": "https://t.me/VoiceClonePro/35",
+    "tutorial_refer_link": "https://t.me/VoiceClonePro/36",
+    "tutorial_support_link": "https://t.me/VoiceClonePro/37",
+}
+
+
 # ── 1. User & Wallet Profile ───────────────────────────────────────────────
 @api_router.get("/user/me")
 async def get_user_profile(
@@ -460,7 +476,7 @@ async def get_user_profile(
     tutorial_link = await get_dynamic_setting(
         db,
         "tutorial_video_link",
-        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
+        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28"),
     )
     tutorial_enabled = await get_dynamic_setting(
         db,
@@ -497,6 +513,14 @@ async def get_user_profile(
         "tutorial_recap_enabled",
         default="true",
     )
+    tut_extra_links = {
+        key: await get_dynamic_setting(
+            db,
+            key,
+            default=getattr(settings, key, default),
+        )
+        for key, default in TUTORIAL_EXTRA_LINKS.items()
+    }
 
     # Check if user has an active or recently finished Recap/Voice job so Mini App can auto-resume
     active_recap_job_id = None
@@ -548,6 +572,7 @@ async def get_user_profile(
         "tutorial_recap_title": tut_recap_title,
         "tutorial_recap_link": tut_recap_link,
         "tutorial_recap_enabled": str(tut_recap_enabled).lower() != "false",
+        **tut_extra_links,
         # Gate status for the Mini App join-and-verify UX (2026-10-29).
         # This is the CACHED flag state only; a live check happens on
         # gated writes and via POST /api/user/verify-membership. Admins
@@ -617,7 +642,7 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
     tutorial_link = await get_dynamic_setting(
         db,
         "tutorial_video_link",
-        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
+        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28"),
     )
     tutorial_enabled = await get_dynamic_setting(
         db,
@@ -4715,6 +4740,14 @@ class AdminSettingsPayload(BaseModel):
     tutorial_recap_title: Optional[str] = None
     tutorial_recap_link: Optional[str] = None
     tutorial_recap_enabled: Optional[bool] = None
+    tutorial_index_link: Optional[str] = None
+    tutorial_plans_link: Optional[str] = None
+    tutorial_customvoice_link: Optional[str] = None
+    tutorial_downloader_link: Optional[str] = None
+    tutorial_scriptedit_link: Optional[str] = None
+    tutorial_recapadvanced_link: Optional[str] = None
+    tutorial_refer_link: Optional[str] = None
+    tutorial_support_link: Optional[str] = None
     maintenance_mode: Optional[bool] = None
     gemini_primary_model: Optional[str] = None
     gemini_fallback_1: Optional[str] = None
@@ -4735,14 +4768,18 @@ async def get_admin_settings(
         "payment_kpay_name": getattr(settings, "payment_kpay_name", ""),
         "payment_wave_number": getattr(settings, "payment_wave_number", ""),
         "payment_wave_name": getattr(settings, "payment_wave_name", ""),
-        "tutorial_video_link": getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/16"),
+        "tutorial_video_link": getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28"),
         "tutorial_video_enabled": getattr(settings, "tutorial_video_enabled", True),
         "tutorial_voice_title": getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
-        "tutorial_voice_link": getattr(settings, "tutorial_voice_link", "https://t.me/VoiceClonePro/16"),
+        "tutorial_voice_link": getattr(settings, "tutorial_voice_link", "https://t.me/VoiceClonePro/29"),
         "tutorial_voice_enabled": getattr(settings, "tutorial_voice_enabled", True),
         "tutorial_recap_title": getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
-        "tutorial_recap_link": getattr(settings, "tutorial_recap_link", "https://t.me/VoiceClonePro/16"),
+        "tutorial_recap_link": getattr(settings, "tutorial_recap_link", "https://t.me/VoiceClonePro/30"),
         "tutorial_recap_enabled": getattr(settings, "tutorial_recap_enabled", True),
+        **{
+            key: getattr(settings, key, default)
+            for key, default in TUTORIAL_EXTRA_LINKS.items()
+        },
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
         "gemini_primary_model": getattr(settings, "gemini_primary_model", "gemini-3.6-flash"),
         "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),
