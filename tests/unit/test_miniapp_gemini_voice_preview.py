@@ -69,7 +69,7 @@ def test_gemini_select_groups_males_before_females():
 def test_gemini_select_labels_are_owner_burmese_names():
     for value, label in _gemini_select_options():
         if not value:
-            assert label == "Auto (ကျား/မ အလိုက်)"
+            assert label == "Auto"  # tidy-up: short label + hint line (recap_gemini_auto_hint)
             continue
         expected = f"{DISPLAY_LABELS[value]} ({GENDER_TAGS[GEMINI_VOICE_GENDER[value]]})"
         assert label == expected, (value, label)

@@ -324,8 +324,10 @@ def test_e9_persona_display_names_unified():
         info = get_curated_voice(pid)
         assert info["name_my"].startswith(name), (pid, info["name_my"])
     assert "ကိုဖုန်း" not in INDEX_HTML and "ကိုဖုန်း" not in CURATED_PY
-    assert "(ကိုအောင် — Viral Shorts)" in INDEX_HTML
-    assert "(ကိုဘုန်း — Tech & Explainer)" in INDEX_HTML
+    # Recap tidy-up: the persona <select> is gone (all 12 voices are
+    # cards now); the unified display names live on the voice cards.
+    assert "ကိုအောင် (Ko Aung)" in INDEX_HTML
+    assert "ကိုဘုန်း (Ko Phone)" in INDEX_HTML
 
 
 def test_e10_burmese_table_translated():
@@ -377,8 +379,11 @@ def test_v2_send_telegram_single_emoji():
 
 def test_cache_buster_bumped():
     # Token supersession chain: r4 -> r6 (round 6) -> gv1 (Gemini
-    # voice preview feature, which changed all three statics).
-    assert INDEX_HTML.count("?v=20261101_gv1") == 3
+    # voice preview feature) -> rt1 (Recap tab tidy, all three statics)
+    # -> rt3 (tidy return pass 2: app.js / style.css / index.html).
+    assert INDEX_HTML.count("?v=20261101_rt3") == 3
+    assert "?v=20261101_rt1" not in INDEX_HTML
+    assert "?v=20261101_gv1" not in INDEX_HTML
     assert "?v=20261101_r6" not in INDEX_HTML
     assert "?v=20261101_r4" not in INDEX_HTML
 
