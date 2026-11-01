@@ -18,7 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from recap_planner import RecapPlanBuilder
-from core import EdgeSmartSync, probe_duration, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font
+from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +181,21 @@ def run_recap_pipeline(
         # subs usually sit higher (≈0.70) and would otherwise survive — mirrored into
         # unreadable mirror-writing by the default mirror pass.
         try:
+            # Detected bands are SOURCE-frame fractions; the preset
+            # boxes above and every blur-box consumer use CANVAS
+            # fractions. Convert through the render layout first so
+            # the dedupe comparison below and the overlay pass place
+            # the box on the picture area it actually describes
+            # (round-4 tear fix: unconverted bands landed mid-picture
+            # on blur-fill layouts and blurred a strip across the movie).
+            _src_w, _src_h = probe_video_size(ffprobe_bin, source)
+            _band_layout = frame_layout(
+                output_ratio, frame_fill, _src_w, _src_h,
+                crop_top=crop_top, crop_bottom=crop_bottom,
+                crop_left=crop_left, crop_right=crop_right,
+            )
             for band in detect_source_subtitle_bands(ffmpeg_bin, ffprobe_bin, source, target_job_dir, log=_log):
+                band = source_band_to_canvas_box(band, _band_layout)
                 top = band["y"] - band["h"] / 2.0
                 bot = band["y"] + band["h"] / 2.0
                 covered = False
