@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261101_r4">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261101_vx1">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -234,19 +234,14 @@
                             </button>
                         </div>
 
-                        <div id="curated-personas-card">
-                            <div class="card-header-row">
-                                <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော VoxCPM အသံများ (၁၂ မျိုး)</div>
-                                <span class="count-badge" id="personas-count">12 Personas</span>
-                            </div>
-                            <div class="persona-filter-row">
-                                <button type="button" class="filter-chip active" data-filter="all" onclick="filterPersonas('all')" data-i18n="persona_filter_all">🌟 အားလုံး</button>
-                                <button type="button" class="filter-chip" data-filter="male" onclick="filterPersonas('male')" data-i18n="persona_filter_male">👨 ယောက်ျားလေး</button>
-                                <button type="button" class="filter-chip" data-filter="female" onclick="filterPersonas('female')" data-i18n="persona_filter_female">👩 မိန်းကလေး</button>
-                            </div>
-                            <div class="personas-grid" id="personas-grid">
-                                <!-- Populated dynamically via JS with all 12 personas -->
-                            </div>
+                        <!-- Selected voice summary (compact UX): always shows the
+                             current persona; Change opens the picker card below
+                             the text input. Picker stays collapsed otherwise. -->
+                        <div class="voice-selected-row" id="voice-selected-row">
+                            <span class="vsr-label" data-i18n="voice_selected_label">ရွေးထားသောအသံ</span>
+                            <span class="vsr-avatar" id="voice-selected-avatar">🎙️</span>
+                            <span class="vsr-name" id="voice-selected-name">—</span>
+                            <button type="button" class="mini-chip vsr-change" id="btn-change-voice" onclick="togglePersonaPicker()" data-i18n="voice_change">ပြောင်းမည်</button>
                         </div>
 
                         <!-- Custom Reference Audio Section (inside same unified card) -->
@@ -288,6 +283,31 @@
                             <button class="pill-btn" data-speed="fast" data-i18n="speed_fast">1.2x မြန်</button>
                         </div>
                     </div>
+                </div>
+
+
+                <!-- Persona picker (compact UX): collapsed by default; opens
+                     from the summary chip's Change button and collapses again
+                     as soon as a persona is chosen. -->
+                <div class="card glass persona-picker-card picker-collapsed" id="persona-picker-card">
+                    <button type="button" class="picker-toggle-row" id="btn-toggle-picker" onclick="togglePersonaPicker()" aria-expanded="false">
+                        <span class="picker-toggle-title" data-i18n="voice_pick_title">🎙️ အသံရွေးရန်</span>
+                        <span class="picker-chevron" id="picker-chevron">▾</span>
+                    </button>
+                        <div id="curated-personas-card">
+                            <div class="card-header-row">
+                                <div class="card-label" data-i18n="curated_section_title">ကြိုတင်သတ်မှတ်ထားသော VoxCPM အသံများ (၁၂ မျိုး)</div>
+                                <span class="count-badge" id="personas-count">12 Personas</span>
+                            </div>
+                            <div class="persona-filter-row">
+                                <button type="button" class="filter-chip active" data-filter="all" onclick="filterPersonas('all')" data-i18n="persona_filter_all">🌟 အားလုံး</button>
+                                <button type="button" class="filter-chip" data-filter="male" onclick="filterPersonas('male')" data-i18n="persona_filter_male">👨 ယောက်ျားလေး</button>
+                                <button type="button" class="filter-chip" data-filter="female" onclick="filterPersonas('female')" data-i18n="persona_filter_female">👩 မိန်းကလေး</button>
+                            </div>
+                            <div class="personas-grid" id="personas-grid">
+                                <!-- Populated dynamically via JS with all 12 personas -->
+                            </div>
+                        </div>
                 </div>
 
                 <!-- Step 3: Generate -->
@@ -1988,7 +2008,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261101_r4"></script>
-    <script src="/static/js/app.js?v=20261101_r4"></script>
+    <script src="/static/js/i18n.js?v=20261101_vx1"></script>
+    <script src="/static/js/app.js?v=20261101_vx1"></script>
 </body>
 </html>

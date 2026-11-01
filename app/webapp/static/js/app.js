@@ -1152,6 +1152,10 @@ function renderCuratedVoices() {
             haptic("selection");
             state.selectedPersona = v.id;
             renderCuratedVoices();
+            // Compact UX: once a persona is chosen the picker collapses
+            // again — the summary chip above the text input is the
+            // persistent record of the choice.
+            setPersonaPickerOpen(false);
         });
 
         grid.appendChild(card);
@@ -1161,7 +1165,47 @@ function renderCuratedVoices() {
     if (countBadge) {
         countBadge.innerText = `${filtered.length} Personas`;
     }
+    updateSelectedVoiceSummary();
 }
+
+// ── Compact Voice UX: selected-voice summary chip + collapsible picker ────
+function personaShortName(name) {
+    // The picker label carries a parenthetical descriptor
+    // ("မင်းမင်း (ရုပ်ရှင်ဇာတ်လမ်းပြောသူ)") that truncates mid-parenthesis at summary
+    // chip width; the chip shows the persona's SHORT name only. The
+    // picker itself keeps the full label.
+    return String(name || "").replace(/\s*[\(（][^\)）]*[\)）]\s*$/, "").trim();
+}
+
+function updateSelectedVoiceSummary() {
+    const nameEl = document.getElementById("voice-selected-name");
+    const avatarEl = document.getElementById("voice-selected-avatar");
+    if (!nameEl) return;
+    const v = (state.curatedVoices || []).find(x => x.id === state.selectedPersona);
+    if (v) {
+        nameEl.innerText = personaShortName(v.name) || v.name;
+        if (avatarEl) avatarEl.innerText = v.avatar || "🎙️";
+    } else {
+        nameEl.innerText = state.selectedPersona || "—";
+        if (avatarEl) avatarEl.innerText = "🎙️";
+    }
+}
+
+function setPersonaPickerOpen(open) {
+    const card = document.getElementById("persona-picker-card");
+    if (!card) return;
+    card.classList.toggle("picker-collapsed", !open);
+    const toggle = document.getElementById("btn-toggle-picker");
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function togglePersonaPicker() {
+    haptic("selection");
+    const card = document.getElementById("persona-picker-card");
+    if (!card) return;
+    setPersonaPickerOpen(card.classList.contains("picker-collapsed"));
+}
+window.togglePersonaPicker = togglePersonaPicker;
 
 async function loadCuratedVoices() {
     try {
@@ -1288,17 +1332,24 @@ function switchVoxCPMSubMode(mode) {
     const btnCustom = document.getElementById("btn-submode-custom");
     const curatedCard = document.getElementById("curated-personas-card");
     const refSection = document.getElementById("ref-audio-section");
+    const pickerCard = document.getElementById("persona-picker-card");
+    const selectedRow = document.getElementById("voice-selected-row");
 
     if (mode === "curated") {
         if (btnCurated) btnCurated.classList.add("active");
         if (btnCustom) btnCustom.classList.remove("active");
         if (curatedCard) curatedCard.classList.remove("hidden");
         if (refSection) refSection.classList.add("hidden");
+        if (pickerCard) pickerCard.classList.remove("hidden");
+        if (selectedRow) selectedRow.classList.remove("hidden");
     } else {
         if (btnCustom) btnCustom.classList.add("active");
         if (btnCurated) btnCurated.classList.remove("active");
         if (curatedCard) curatedCard.classList.add("hidden");
         if (refSection) refSection.classList.remove("hidden");
+        // Custom mode has no persona picker / summary chip.
+        if (pickerCard) pickerCard.classList.add("hidden");
+        if (selectedRow) selectedRow.classList.add("hidden");
     }
 }
 
