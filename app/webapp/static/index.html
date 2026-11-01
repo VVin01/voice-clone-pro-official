@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261101_up1">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261101_jr1">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -80,6 +80,16 @@
             
             <!-- ════ TAB: HOME (landing — samples, tutorials, start) ════ -->
             <section id="tab-home" class="tab-pane active">
+                <!-- One-time welcome strip: shown by refreshWelcomeStrip()
+                     ONLY to a Free-plan account with zero completed jobs
+                     that has not dismissed it on this device. Slim single
+                     strip inside the Home flow — not a card, not a
+                     persistent banner. Hidden by default. -->
+                <div id="home-welcome-strip" class="welcome-strip hidden">
+                    <span class="welcome-strip-text" id="welcome-strip-text"></span>
+                    <button type="button" class="welcome-strip-btn" data-i18n="welcome_strip_btn" onclick="switchTab('tab-recap')">🎬 Recap စလုပ်မည်</button>
+                    <button type="button" class="welcome-strip-x" aria-label="Dismiss" onclick="dismissWelcomeStrip()">✕</button>
+                </div>
                 <!-- Samples card: real persona samples served by the app's
                      own /api/voices/sample route — komin for the Voice
                      Clone sample, mahnin (a Recap Studio narrator) for
@@ -367,6 +377,7 @@
                                 <input type="url" id="recap-url-input" data-i18n-ph="recap_url_placeholder" placeholder="ဗီဒီယို Link ကူးထည့်ပါ">
                                 <button class="btn mini-btn" id="btn-fetch-recap-info" data-i18n="btn_analyze">စစ်ဆေးမည်</button>
                             </div>
+                            <p class="link-source-help" data-i18n="link_help_recap">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်လို့ Link နဲ့ မရတာမျိုး ဖြစ်တတ်ပါတယ် — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်တာက အသေချာဆုံးပါ။</p>
                         </div>
 
                         <!-- Mode 2: Direct File Upload -->
@@ -1048,6 +1059,7 @@
                     <button class="btn primary-btn mt-3" id="btn-extract-dl">
                         <span data-i18n="btn_search_dl">🔍 ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာဖွေမည်</span>
                     </button>
+                    <p class="link-source-help" data-i18n="link_help_dl">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်ပါတယ် — Link မရရင် မူရင်း App ထဲက Link ကို တိုက်ရိုက် ကူးထည့်ပြီး ပြန်စမ်းကြည့်ပါ။</p>
                 </div>
 
                 <div class="card glass hidden" id="dl-result-card">
@@ -1976,7 +1988,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261101_up1"></script>
-    <script src="/static/js/app.js?v=20261101_up1"></script>
+    <script src="/static/js/i18n.js?v=20261101_jr1"></script>
+    <script src="/static/js/app.js?v=20261101_jr1"></script>
 </body>
 </html>

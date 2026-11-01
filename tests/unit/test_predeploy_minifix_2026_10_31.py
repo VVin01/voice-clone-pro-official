@@ -189,7 +189,14 @@ def test_e2_raw_strings_still_never_pass():
         # An ENGLISH "insufficient balance" worker error is technical
         # text, not our localized detail: it maps to the generic.
         assert r["raw_voice"] == r["voice_failed_generic"]
-        assert r["raw_recap"] == r["recap_failed_generic"]
+        # A YouTube sign-in wall is a BLOCKED SOURCE (journey audit
+        # 2026-10-31): it now maps to the specific blocked-link copy
+        # (source named + the working alternative), NOT the recap
+        # generic — and still never the raw string itself (the
+        # RAWSECRET123 check above covers both languages).
+        assert r["raw_recap"] != r["recap_failed_generic"]
+        assert "YouTube" in r["raw_recap"]
+    assert "Upload" in out["my"]["raw_recap"]
 
 
 def test_e2_mapper_markers_match_api_py_source():

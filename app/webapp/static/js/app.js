@@ -130,8 +130,19 @@ function mapErrorToToast(raw, flow = 'generic') {
     if (has('quota', 'zerogpu', '402', 'gpu')) {
         return flow === 'recap' ? t('err_recap_failed') : t('err_engine_busy');
     }
-    // Link-block family: recap/download jobs fail inside yt-dlp when a
-    // platform blocks the server (YouTube/TikTok/Douyin/extract errors).
+    // Link-block family: the SOURCE site refused the fetch (TikTok /
+    // VidMate / Douyin anti-bot walls, YouTube sign-in wall, HTTP 403,
+    // "no video formats"). Name the source when the raw error carries
+    // one and always give the flow's working alternative — never send
+    // the user back to retry the same blocked link (2026-10-31 journey
+    // audit: a new user burned 8 attempts on blocked links whose
+    // failure copy only said "try again").
+    const linkInfo = blockedLinkInfo(rawStr);
+    if (linkInfo.blocked && (flow === 'recap' || flow === 'download')) {
+        const head = linkInfo.source ? tf('err_link_blocked_named', { source: linkInfo.source }) : t('err_link_blocked');
+        return head + ' ' + t(flow === 'download' ? 'err_link_advice_dl' : 'err_link_advice_upload');
+    }
+    // Platform named without block evidence: previous generic mapping.
     if (has('youtube', 'tiktok', 'douyin', 'extract', 'yt-dlp', 'fresh cookies')) {
         if (flow === 'recap') return t('err_recap_failed');
         if (flow === 'download') return t('err_download_failed');
@@ -146,6 +157,30 @@ function mapErrorToToast(raw, flow = 'generic') {
     }
 }
 window.mapErrorToToast = mapErrorToToast;
+
+// Blocked-link detection shared by the toast mapper above and the
+// flows that react to a refused link (e.g. auto-switching Recap to
+// the file-upload tab — the path that always works). A link counts as
+// blocked when the raw error carries a refusal signal ("no video
+// formats", HTTP 403, sign-in wall, unsupported URL…) or names a
+// known source next to an extractor failure. Kept directly beside
+// the mapper: the predeploy-minifix node harness slices this whole
+// region out of app.js and executes it.
+const LINK_SOURCE_NAMES = [
+    ['tiktok', 'TikTok'], ['douyin', 'Douyin'], ['vidmate', 'VidMate'],
+    ['youtube', 'YouTube'], ['youtu.be', 'YouTube'],
+    ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['fb.watch', 'Facebook'],
+];
+function blockedLinkInfo(raw) {
+    const s = (raw == null ? '' : String(raw)).toLowerCase();
+    const has = (...needles) => needles.some(n => s.includes(n));
+    const hit = LINK_SOURCE_NAMES.find(([needle]) => s.includes(needle));
+    const blocked = has('no video formats', 'unsupported url', 'unable to extract',
+        'sign in to confirm', 'fresh cookies', 'http error 403', 'error 403', 'forbidden')
+        || (hit && has('extract', 'yt-dlp', 'download'));
+    return { blocked: !!blocked, source: hit ? hit[1] : null };
+}
+window.blockedLinkInfo = blockedLinkInfo;
 
 // showErrorToast(err, flow): console keeps the diagnostic, the user
 // only ever sees the mapped premium copy.
@@ -846,10 +881,17 @@ function switchTab(tabId) {
 window.switchTab = switchTab;
 
 // ── Language Toggle (i18n) ─────────────────────────────────────────────────
-function toggleLanguage() {
+async function toggleLanguage() {
     haptic("medium");
     const nextLang = currentLang === "my" ? "en" : "my";
     setLanguage(nextLang);
+    // Persist BEFORE the profile re-read below: /api/user/me echoes
+    // the stored language_code and loadUserProfile adopts it, so an
+    // un-awaited POST lets the stale value win the race and the
+    // toggle silently reverts (journey audit 2026-10-31: the toggle
+    // appeared completely dead while the server kept the new value,
+    // leaving a mixed-language UI on the next cold start).
+    try { await window.__langPersistPromise; } catch (e) {}
     // The voices expander label is state-dependent (show vs hide), so
     // re-apply the correct variant after the generic i18n pass.
     const avTxt = document.getElementById("all-voices-toggle-text");
@@ -986,6 +1028,7 @@ async function loadUserProfile() {
         }
 
         updateGateBanner(data);
+        refreshWelcomeStrip();
         if (data.is_banned) { setEntryGateMode("banned", data); lockEntryGate(); }
         updateVoicePreflight();
 
@@ -1370,6 +1413,43 @@ window.renderGateChips = renderGateChips;
 // Gate banner uses only fields /api/user/me already returns (gate branch);
 // it never changes job logic. GATE_NOT_CONFIGURED is a server-config error,
 // not a "you have not joined" message, so it is shown differently.
+// ── Home welcome strip (one-time, first-run only) ──────────────────
+// Shown ONLY when every condition holds: Free plan (not VIP, not
+// admin), ZERO completed jobs (server count on /api/user/me), and not
+// dismissed on this device (localStorage). Values come from the same
+// profile payload the header balance chips render, so the strip can
+// never promise more than the configured grants.
+function refreshWelcomeStrip() {
+    const strip = document.getElementById("home-welcome-strip");
+    if (!strip) return;
+    const u = state.user;
+    let show = false;
+    try {
+        show = !!u && !u.is_admin && !u.is_vip
+            && u.completed_jobs === 0
+            && localStorage.getItem("vcp_welcome_dismissed") !== "1";
+    } catch (e) { show = false; }
+    if (show) {
+        const txt = document.getElementById("welcome-strip-text");
+        if (txt) {
+            txt.innerText = tf("welcome_strip_text", {
+                credits: u.recap_credits ?? 0,
+                mins: u.balance_minutes ?? 0,
+            });
+        }
+        strip.classList.remove("hidden");
+    } else {
+        strip.classList.add("hidden");
+    }
+}
+
+function dismissWelcomeStrip() {
+    try { localStorage.setItem("vcp_welcome_dismissed", "1"); } catch (e) {}
+    const strip = document.getElementById("home-welcome-strip");
+    if (strip) strip.classList.add("hidden");
+}
+window.dismissWelcomeStrip = dismissWelcomeStrip;
+
 function updateGateBanner(data) {
     const banner = document.getElementById("gate-banner");
     if (!banner || !data) return;
@@ -3384,6 +3464,17 @@ function setupRecapVisualEditor() {
                 if (platformSpan) platformSpan.innerText = data.platform || "Video";
                 if (subSpan) subSpan.innerText = data.has_subtitles ? "✅ Subtitle Ready" : "⚠️ AI Auto Sub";
 
+                if (data.metadata_verified === false && durSpan) {
+                    // The extract endpoint could not verify this link
+                    // and answered with its graceful fallback: do not
+                    // present invented details as facts — no fake
+                    // "03:30" duration, no green "Ready" claim. The
+                    // job itself re-fetches for real; a blocked source
+                    // then fails with the specific blocked-link copy.
+                    durSpan.className = "mini-tag";
+                    durSpan.innerHTML = `⏱️ — <span style="color:#d97706; font-weight:700; margin-left:4px;">(${t("recap_unverified_note")})</span>`;
+                }
+
                 if (data.width && data.height) {
                     state.recapSourceWidth = data.width;
                     state.recapSourceHeight = data.height;
@@ -3420,6 +3511,16 @@ function setupRecapVisualEditor() {
                 const msg = err.message || "";
                 if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
                     showStudioToast(t("toast_douyin_blocked"), 'warning', 6000);
+                    const btnFileTab = document.getElementById("btn-source-mode-file");
+                    if (btnFileTab) btnFileTab.click();
+                } else if (blockedLinkInfo(msg).blocked) {
+                    // Blocked source (TikTok / VidMate / a 403 wall):
+                    // the mapper's specific copy names the source and
+                    // the fix, and the user lands on the upload tab —
+                    // the path that always works. Same treatment the
+                    // Douyin branch above already had; previously every
+                    // other blocked source fell into the bare generic.
+                    showErrorToast(err, 'recap');
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
                 } else {
@@ -3970,7 +4071,7 @@ function startRecapJobPolling(jobId) {
                 // displayed. Type is 'error' (this branch used to toast
                 // with 'success' styling for a failure).
                 showStudioToast(mapErrorToToast(errMsg, 'recap'), 'error', 6000);
-                if (errMsg.includes("Douyin") || errMsg.includes("Fresh cookies")) {
+                if (errMsg.includes("Douyin") || errMsg.includes("Fresh cookies") || blockedLinkInfo(errMsg).blocked) {
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
                 }
