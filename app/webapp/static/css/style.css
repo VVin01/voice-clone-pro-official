@@ -988,6 +988,7 @@ select.studio-input { min-height: 50px; }
     border: 1px solid var(--gold-border); border-radius: var(--r-md);
     font-size: 13.5px; font-weight: 700;
 }
+#recap-gemini-voice-wrap .studio-select { flex: 1; min-width: 0; }
 .style-pills-grid { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .style-select-pill {
     min-height: 44px; padding: 6px 13px;
