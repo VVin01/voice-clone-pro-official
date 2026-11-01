@@ -2553,3 +2553,31 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     color: var(--text-2); font-size: 14px; line-height: 1; padding: 8px 6px;
 }
 .link-source-help { margin: 8px 2px 0; font-size: 12px; line-height: 1.65; color: var(--text-2); }
+
+/* ── Voice compact UX 2026-11-01: text input first, persona picker
+   collapsed. The selected-voice summary row lives under the mode
+   segmented control; the picker card sits below the text input and
+   only opens on demand. New selectors only. ─────────────────────── */
+.voice-selected-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 10px; padding: 9px 12px;
+    border-radius: 14px; background: var(--surface);
+    border: 1px solid var(--border);
+}
+.vsr-label { font-size: 12px; color: var(--text-2); font-weight: 600; white-space: nowrap; }
+.vsr-avatar { font-size: 17px; line-height: 1; }
+.vsr-name {
+    flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vsr-change { flex-shrink: 0; }
+.persona-picker-card { padding-top: 6px; }
+.picker-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; border: none; background: transparent; cursor: pointer;
+    padding: 10px 4px 12px; font: inherit; color: inherit; text-align: left;
+}
+.picker-toggle-title { font-size: 14.5px; font-weight: 700; }
+.picker-chevron { font-size: 15px; color: var(--text-2); transition: transform .18s ease; }
+.persona-picker-card.picker-collapsed #curated-personas-card { display: none; }
+.persona-picker-card:not(.picker-collapsed) .picker-chevron { transform: rotate(180deg); }
