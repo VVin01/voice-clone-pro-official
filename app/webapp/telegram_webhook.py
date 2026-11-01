@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import re
 from collections import OrderedDict
@@ -54,6 +55,15 @@ _SECRET_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
 # Telegram update_ids are sequential per bot; a few thousand covers any
 # realistic retry window while staying a few hundred KB at most.
 RECENT_UPDATE_IDS_MAX = 4096
+
+# Defence-in-depth body cap for the intake endpoint (hunt #6). Telegram
+# updates are small JSON documents (a message with a 4096-char text is
+# still only a few KB), so 1 MiB is generous — but the endpoint is
+# public, sits in front of the app's rate limiter by design, and the
+# ASGI stack applies no size cap of its own to this path: without a cap
+# an unbounded (e.g. chunked) body would be buffered whole into memory
+# before JSON parsing.
+MAX_UPDATE_BODY_BYTES = 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +120,16 @@ def webhook_config_problems() -> list[str]:
         problems.append("PUBLIC_BASE_URL is not set")
     elif not base.lower().startswith("https://"):
         problems.append("PUBLIC_BASE_URL must start with https:// (Telegram requires HTTPS)")
+    # A webhook path that collides with the Mini App's own routes would
+    # shadow a live API/static route: the intake dispatcher intercepts
+    # POSTs to the configured path before routing. Refuse such a path
+    # (resolve_bot_mode then falls back to polling, loudly) instead of
+    # silently breaking part of the Mini App (hunt #6).
+    path = get_webhook_path()
+    if path == "/" or path == "/api" or path.startswith("/api/") or path.startswith("/static"):
+        problems.append(
+            "BOT_WEBHOOK_PATH collides with the Mini App routes; choose a dedicated path"
+        )
     return problems
 
 
@@ -268,10 +288,42 @@ async def telegram_webhook_endpoint(request: Request) -> JSONResponse:
         )
         return JSONResponse({"ok": False, "error": "bot not ready"}, status_code=503)
 
+    # Bounded body read (hunt #6): reject oversized payloads before they
+    # are buffered whole into memory. The Content-Length fast path covers
+    # honest clients; the streaming accumulation covers chunked bodies
+    # that carry no length header.
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_UPDATE_BODY_BYTES:
+                logger.warning(
+                    "Rejected oversized Telegram webhook payload (Content-Length %s).",
+                    content_length,
+                )
+                return JSONResponse(
+                    {"ok": False, "error": "payload too large"}, status_code=413
+                )
+        except ValueError:
+            pass
+    body = bytearray()
+    try:
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > MAX_UPDATE_BODY_BYTES:
+                logger.warning("Rejected oversized Telegram webhook payload (streamed body).")
+                return JSONResponse(
+                    {"ok": False, "error": "payload too large"}, status_code=413
+                )
+    except Exception as exc:
+        logger.error(
+            "Discarding unreadable Telegram webhook body (%s).", type(exc).__name__
+        )
+        return JSONResponse({"ok": True, "ignored": "malformed"})
+
     from aiogram.types import Update
 
     try:
-        payload = await request.json()
+        payload = json.loads(bytes(body))
         update = Update.model_validate(payload, context={"bot": bot})
     except Exception as exc:
         # Authenticated but unparseable: re-delivery can never succeed, so

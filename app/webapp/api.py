@@ -1752,9 +1752,15 @@ async def fetch_downloader_format(
     except Exception as e:
         shutil.rmtree(dest, ignore_errors=True)
         # The raw exception (yt-dlp output) stays in the log only —
-        # API callers get a clean localized detail (hunt F11).
+        # API callers get a clean localized detail (hunt F11). An
+        # exception whose text already IS a curated user message (the
+        # downloader's classified source errors and its Douyin/YouTube
+        # notices all start with "⚠️", hunt #6) is passed through, so
+        # the user learns WHY the source failed — blocked, removed,
+        # login-walled — instead of one generic line for every cause.
         logger.warning(f"downloader fetch ({fmt}) failed for {canonical_url}: {e}")
-        raise HTTPException(status_code=400, detail="ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။")
+        detail = str(e) if str(e).startswith("⚠️") else "ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။"
+        raise HTTPException(status_code=400, detail=detail)
 
     if not file_path or not Path(file_path).is_file():
         shutil.rmtree(dest, ignore_errors=True)

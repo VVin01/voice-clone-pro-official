@@ -350,5 +350,6 @@
   "worker_fallback_note": "\n\n⚠️ <i>(Note: Hugging Face ZeroGPU Free Quota was full, so this was generated with the backup Neural Audio.)</i>",
   "legacy_model_disabled": "⚠️ This old voice model can no longer be used.\n\nTo re-clone with VoxCPM2, choose the <b>VoxCPM (Cloud AI)</b> model and send a reference audio (3-30 seconds).",
   "pay_package_recap_btn": "🎬 {credits} Recap Videos — {price} MMK",
-  "pay_package_combined_btn": "🎙️🎬 {minutes} Min + {credits} Recap — {price} MMK"
+  "pay_package_combined_btn": "🎙️🎬 {minutes} Min + {credits} Recap — {price} MMK",
+  "bot_generic_error": "⚠️ Something went wrong. Please wait a moment and try again."
 }

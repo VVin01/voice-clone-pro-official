@@ -231,6 +231,83 @@ def detect_platform(url: str) -> str:
     else:
         return "Web Media"
 
+def classify_source_error(err_msg: str, url: str) -> Optional[str]:
+    """Map a raw yt-dlp / extractor error to a curated user-facing message.
+
+    Hunt #6: until now only two failure classes had human messages
+    (Douyin anti-bot, YouTube sign-in). Everything else — a TikTok
+    "No video formats found!", a share-site HTTP 403, a removed or
+    private video — reached the user as the raw English extractor
+    string (stored verbatim on the job and shown in the bot failure
+    notice and the Mini App job detail), with no hint of what to do
+    differently. This classifier covers the recurring source-side
+    classes; the raw text always stays in the logs.
+
+    Returns None for unrecognised errors so callers keep their
+    existing behaviour. Every returned message starts with "⚠️" — the
+    convention the API layer uses to recognise an already user-safe
+    detail string (the same convention the Douyin/YouTube messages
+    below already follow).
+    """
+    low = str(err_msg or "").lower()
+    platform = detect_platform(url or "")
+    specific = platform not in ("Web Media", "Uploaded Video", "Uploaded Audio")
+    subj = platform if specific else "ဒီ ဝက်ဘ်ဆိုက်"
+    video_ref = f"{platform} ဗီဒီယို" if specific else "ဗီဒီယို"
+    upload_hint = (
+        "ဗီဒီယိုဖိုင်ကို Mini App ရှိ '📁 Video Upload' မှ တိုက်ရိုက် တင်၍ "
+        "ပြုလုပ်နိုင်ပါသည် ခင်ဗျာ။"
+    )
+
+    if "unsupported url" in low:
+        return (
+            "⚠️ ဒီ လင့်ခ် အမျိုးအစား ကို မထောက်ပံ့သေးပါ။ "
+            "YouTube၊ TikTok၊ Facebook လင့်ခ်များဖြင့် စမ်းကြည့်ပါ။ " + upload_hint
+        )
+    if "403" in low and ("forbidden" in low or "http error" in low):
+        return f"⚠️ {subj} က ကျွန်တော်တို့ ဆာဗာမှ ဗီဒီယို ဆွဲယူခြင်းကို ပိတ်ထားပါသည်။ " + upload_hint
+    if (
+        "sign in" in low
+        or "log in" in low
+        or "login required" in low
+        or "fresh cookies" in low
+        or "use --cookies" in low
+    ):
+        return (
+            f"⚠️ {subj} က ဒီ ဗီဒီယို ကို ကြည့်ရန် အကောင့် ဝင်ရန် တောင်းဆိုနေပါသည်။ "
+            "အခြား လင့်ခ် ဖြင့် စမ်းကြည့်ပါ။ " + upload_hint
+        )
+    if (
+        "no video formats found" in low
+        or "video unavailable" in low
+        or "private video" in low
+        or "no longer available" in low
+        or "has been removed" in low
+        or "could not extract media info" in low
+    ):
+        return (
+            f"⚠️ ဒီ {video_ref} ကို ဖွင့်၍ မရပါ — ဖျက်ထားခြင်း သို့မဟုတ် private "
+            "ဖြစ်နေခြင်း ဖြစ်နိုင်ပါသည်။ လင့်ခ် မှန်မမှန် ပြန်စစ်ပါ။ "
+            "ဗီဒီယို ရှိနေသေးရင် ဖိုင်ကို တိုက်ရိုက် တင်၍ စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
+    if (
+        "timed out" in low
+        or "timeout" in low
+        or "connection reset" in low
+        or "connection aborted" in low
+        or "connection refused" in low
+        or "temporary failure" in low
+        or "urlopen error" in low
+        or "eof occurred" in low
+        or "http error 5" in low
+    ):
+        return (
+            "⚠️ ကွန်ရက် ချိတ်ဆက်မှု ယာယီ ပြဿနာ ဖြစ်သွားပါသည်။ "
+            "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
+    return None
+
+
 def format_duration(seconds: Optional[int]) -> str:
     """Format seconds into HH:MM:SS or MM:SS."""
     if not seconds:
@@ -578,6 +655,10 @@ class MediaDownloader:
                     "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
                     "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
                 ) from e
+            classified = classify_source_error(err_msg, expanded_url)
+            if classified:
+                logger.warning(f"Classified source error in get_info for {expanded_url}: {err_msg}")
+                raise RuntimeError(classified) from e
             raise
 
         # Subtitles inspection
@@ -683,6 +764,7 @@ class MediaDownloader:
         except Exception as e:
             err_msg = str(e)
             logger.warning(f"Primary download_video failed ({err_msg}). Attempting resilient format fallback...")
+            fb_exc = None
             try:
                 fallback_opts = dict(opts)
                 fallback_opts['format'] = 'bestvideo+bestaudio/best'
@@ -705,6 +787,9 @@ class MediaDownloader:
                     return file_path, info
             except Exception as fb_err:
                 logger.warning(f"Fallback download also failed: {fb_err}")
+                # Keep the fallback failure past the except block (the
+                # `as` name itself is unbound when the block ends).
+                fb_exc = fb_err
 
             if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
                 if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
@@ -722,6 +807,16 @@ class MediaDownloader:
                     "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
                     "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
                 ) from e
+            # Classify the FINAL failure (the resilient fallback's error
+            # is the one that actually decided the outcome).
+            classified = None
+            if fb_exc is not None:
+                classified = classify_source_error(str(fb_exc), expanded_url)
+            if not classified:
+                classified = classify_source_error(err_msg, expanded_url)
+            if classified:
+                logger.warning(f"Classified source error in download_video for {expanded_url}: {fb_exc}")
+                raise RuntimeError(classified) from (fb_exc or e)
             raise
 
     def download_audio(self, url: str, target_dir: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
@@ -790,6 +885,10 @@ class MediaDownloader:
                     "အသံဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ အခြားလင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
                     "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
                 ) from e
+            classified = classify_source_error(err_msg, expanded_url)
+            if classified:
+                logger.warning(f"Classified source error in download_audio for {expanded_url}: {err_msg}")
+                raise RuntimeError(classified) from e
             raise
 
     def download_audio_for_transcription(self, url: str, target_dir: Optional[str] = None) -> str:
@@ -809,18 +908,25 @@ class MediaDownloader:
             'writethumbnail': False,
         })
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(expanded_url, download=True)
-            fname = ydl.prepare_filename(info)
-            if os.path.exists(fname):
-                return fname
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(expanded_url, download=True)
+                fname = ydl.prepare_filename(info)
+        except Exception as e:
+            classified = classify_source_error(str(e), expanded_url)
+            if classified:
+                logger.warning(f"Classified source error in download_audio_for_transcription for {expanded_url}: {e}")
+                raise RuntimeError(classified) from e
+            raise
+        if os.path.exists(fname):
+            return fname
 
-            media_id = str(info.get("id", ""))
-            for f in os.listdir(dest_dir):
-                if media_id in f and f.startswith("transcribe_"):
-                    return os.path.join(dest_dir, f)
+        media_id = str(info.get("id", ""))
+        for f in os.listdir(dest_dir):
+            if media_id in f and f.startswith("transcribe_"):
+                return os.path.join(dest_dir, f)
 
-            raise FileNotFoundError(f"Downloaded audio for transcription not found: {fname}")
+        raise FileNotFoundError(f"Downloaded audio for transcription not found: {fname}")
 
     def download_subtitles(
         self,

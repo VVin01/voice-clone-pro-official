@@ -350,5 +350,6 @@
   "worker_fallback_note": "\n\n⚠️ <i>(မှတ်ချက်: Hugging Face ZeroGPU Free Quota ပြည့်သွားသဖြင့် အရန် Neural Audio ဖြင့် ထုတ်ယူပေးထားပါသည်)</i>",
   "legacy_model_disabled": "⚠️ ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။\n\nVoxCPM2 နဲ့ ပြန်ပွားဖို့ <b>VoxCPM (Cloud AI)</b> မော်ဒယ်ကို ရွေးပြီး ကိုးကားအသံ (၃-၃၀ စက္ကန့်) တစ်ခု ပို့ပေးပါ။",
   "pay_package_recap_btn": "🎬 {credits} Recap ကား — {price} ကျပ်",
-  "pay_package_combined_btn": "🎙️🎬 {minutes} မိနစ် + {credits} Recap — {price} ကျပ်"
+  "pay_package_combined_btn": "🎙️🎬 {minutes} မိနစ် + {credits} Recap — {price} ကျပ်",
+  "bot_generic_error": "⚠️ တစ်ခုခု ချို့ယွင်းသွားပါသည်။ ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါခင်ဗျာ။"
 }
