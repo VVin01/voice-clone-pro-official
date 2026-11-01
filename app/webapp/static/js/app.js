@@ -1368,7 +1368,10 @@ function setPersonaPickerOpen(open) {
     const card = document.getElementById("persona-picker-card");
     if (!card) return;
     card.classList.toggle("picker-collapsed", !open);
-    const toggle = document.getElementById("btn-toggle-picker");
+    // The picker now expands in place under the summary row, so the
+    // row's own Change button is the toggle and carries the aria state
+    // (the standalone picker toggle row was removed with the move).
+    const toggle = document.getElementById("btn-change-voice");
     if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
