@@ -357,7 +357,12 @@ def test_mapper_families_and_no_raw_leak():
     assert my["gate"] == my["gate2"]
     assert my["toolarge"] != my["unknown_generic"]
     assert my["quota_voice"] != my["unknown_voice"], "quota family must differ from voice default"
-    assert my["link_recap"] == my["unknown_recap"], "link family and default share recap guidance"
+    # Journey audit 2026-10-31: a BLOCKED source (here the YouTube
+    # sign-in wall) no longer shares the recap default — it maps to
+    # the specific blocked-link copy (source named + the working
+    # alternative). The no-raw-leak invariant above is unchanged.
+    assert my["link_recap"] != my["unknown_recap"], "blocked link must differ from recap default"
+    assert "YouTube" in my["link_recap"]
     assert my["link_dl"] == my["unknown_dl"]
     assert my["empty"] == my["unknown_voice"]
     assert my["nul"] == my["unknown_recap"]

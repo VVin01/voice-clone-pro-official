@@ -481,6 +481,15 @@ const translations = {
         preview_load_failed: "နမူနာ ဖွင့်လို့ မရပါ — ပြန် စမ်းကြည့်ပါ",
         err_send_telegram: "Telegram သို့ ပို့မရပါ — ခဏနေ ပြန်ကြိုးစားပါ",
         err_download_failed: "ဒေါင်းလုဒ် မအောင်မြင်ပါ — ခဏနေ ပြန်ကြိုးစားပါ",
+        err_link_blocked: "⛔ မူရင်းဆိုက်က ပြင်ပ Download ကို ပိတ်ထားလို့ ဒီ Link ကို မရပါ။",
+        err_link_blocked_named: "⛔ {source} က ပြင်ပ Download ကို ပိတ်ထားလို့ ဒီ Link ကို မရပါ။",
+        err_link_advice_upload: "Credit မဆုံးရှုံးပါ — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်ပေးရင် သေချာပေါက် ရပါတယ်။",
+        err_link_advice_dl: "မူရင်း App ထဲက Link ကို တိုက်ရိုက် ကူးထည့်ပြီး ပြန်စမ်းကြည့်ပါ။",
+        link_help_recap: "💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်လို့ Link နဲ့ မရတာမျိုး ဖြစ်တတ်ပါတယ် — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်တာက အသေချာဆုံးပါ။",
+        link_help_dl: "💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်ပါတယ် — Link မရရင် မူရင်း App ထဲက Link ကို တိုက်ရိုက် ကူးထည့်ပြီး ပြန်စမ်းကြည့်ပါ။",
+        recap_unverified_note: "အချက်အလက် အတည်မပြုရသေး",
+        welcome_strip_text: "🎉 အခမဲ့ လက်ဆောင် ရထားပါတယ် — Recap {credits} ကြိမ် + အသံ {mins} မိနစ်",
+        welcome_strip_btn: "🎬 Recap စလုပ်မည်",
         toast_job_id_missing: "အလုပ် ID မတွေ့ပါ — စာမျက်နှာကို ပြန်ဖွင့်ပြီး ပြန်ကြိုးစားပါ",
         toast_split_auto: "ဗီဒီယို ရှည်လို့ အပိုင်းခွဲ ထုတ်ပေးပါမယ် — 'အပိုင်းခွဲ' ကို အလိုအလျောက် ဖွင့်ထားပါတယ်",
         toast_duration_over: "ဗီဒီယို ကြာချိန် ကန့်သတ်ချက် ကျော်နေပါတယ် — အသေးစိတ် အပေါ်မှာ ကြည့်ပါ",
@@ -1122,6 +1131,15 @@ const translations = {
         preview_load_failed: "Couldn't load the sample — please try again",
         err_send_telegram: "Couldn't send to Telegram — please try again in a moment",
         err_download_failed: "Download failed — please try again in a moment",
+        err_link_blocked: "⛔ The source site blocks outside downloads, so this link can't be fetched.",
+        err_link_blocked_named: "⛔ {source} blocks outside downloads, so this link can't be fetched.",
+        err_link_advice_upload: "No credit was lost — upload the video file directly and it will work.",
+        err_link_advice_dl: "Copy the link directly from the original app and try again.",
+        link_help_recap: "💡 Some sites (TikTok, VidMate, …) block outside downloads, so a link may not work — uploading the video file directly is the most reliable way.",
+        link_help_dl: "💡 Some sites (TikTok, VidMate, …) block outside downloads — if a link fails, paste the link copied directly from the original app and try again.",
+        recap_unverified_note: "Details unverified",
+        welcome_strip_text: "🎉 Your free welcome gift is ready — {credits} free Recaps + {mins} Voice minutes",
+        welcome_strip_btn: "🎬 Start a Recap",
         toast_job_id_missing: "Job ID not found — reopen the page and try again",
         toast_split_auto: "This video is long, so it will be delivered in parts — split output was enabled for you",
         toast_duration_over: "This video exceeds your duration limit — see the note above",
@@ -1338,9 +1356,13 @@ function setLanguage(lang) {
         }
     });
 
-    // Notify backend if user is authenticated
+    // Notify backend if user is authenticated. The promise is kept
+    // on window so an explicit language toggle can await persistence
+    // before re-reading the profile (see toggleLanguage in app.js):
+    // without that ordering the profile's stale language_code races
+    // back and silently reverts the user's choice.
     if (window.getAuthHeaders) {
-        fetch("/api/user/language", {
+        window.__langPersistPromise = fetch("/api/user/language", {
             method: "POST",
             headers: window.getAuthHeaders(),
             body: JSON.stringify({ language: lang }),

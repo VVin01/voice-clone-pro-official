@@ -701,6 +701,25 @@ async def get_user_profile(
 ):
     """Retrieve user's VIP status, minute balance, allowance, and platform config."""
     from app.services.dynamic_settings import get_dynamic_setting
+    # Monthly free allowance: grant it here too (the bot /start flow
+    # and the voice submit path already do) so a Mini-App-first or
+    # new-month user sees their REAL free balance — the configured
+    # monthly grant — in the header chips, the Plans stats and the
+    # voice preflight, instead of a false "0 minutes — buy VIP"
+    # state (journey audit 2026-10-31). The grant is idempotent per
+    # calendar month, and a grant failure must never break the
+    # profile read.
+    try:
+        from app.services.ledger import grant_monthly_free_allowance
+
+        _granted, _bal = await grant_monthly_free_allowance(db, user.id)
+        if _granted:
+            await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
     bal = await db.get(MinuteBalance, user.id)
     seconds_left = bal.total_usable_seconds if bal else 0
     is_admin = settings.is_admin(user.id)
@@ -761,6 +780,22 @@ async def get_user_profile(
         for key, default in TUTORIAL_EXTRA_LINKS.items()
     }
 
+    # Completed-job count: the Home welcome strip's first-run gate
+    # (Free plan + zero completed jobs) reads this from the profile.
+    completed_jobs = None
+    try:
+        from sqlalchemy import func as _func
+
+        _cj = await db.execute(
+            select(_func.count(Job.id)).where(
+                Job.user_id == user.id,
+                Job.status == JobStatus.SUCCESS.value,
+            )
+        )
+        completed_jobs = int(_cj.scalar() or 0)
+    except Exception:
+        completed_jobs = None
+
     # Check if user has an active or recently finished Recap/Voice job so Mini App can auto-resume
     active_recap_job_id = None
     active_voice_job_id = None
@@ -803,6 +838,7 @@ async def get_user_profile(
         "has_recap_watermark": not is_vip,
         "active_recap_job_id": active_recap_job_id,
         "active_voice_job_id": active_voice_job_id,
+        "completed_jobs": completed_jobs,
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
         "tutorial_voice_title": tut_voice_title,
@@ -1594,6 +1630,7 @@ async def extract_media_info(
             "estimated_duration": duration_str,
             "duration_seconds": duration_sec,
             "has_subtitles": info.get("has_subtitles", False),
+            "metadata_verified": True,
             "formats_available": ["MP4 (Full HD Video)", "MP3 (192kbps Audio)", "SRT (Subtitles)"],
         }
     except Exception as e:
@@ -1612,6 +1649,12 @@ async def extract_media_info(
             "thumbnail": "",
             "estimated_duration": "03:30",
             "has_subtitles": False,
+            # metadata_verified=False: the payload above is a graceful
+            # placeholder (title/duration invented). The client must
+            # not present it as verified fact (journey audit
+            # 2026-10-31 — the "✅ Ready" + fake 03:30 card sent users
+            # into jobs pre-doomed at sources that block downloads).
+            "metadata_verified": False,
             "formats_available": ["MP4 (Video)", "MP3 (Audio 192k)", "SRT (Subtitles)"],
         }
 

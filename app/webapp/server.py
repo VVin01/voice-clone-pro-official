@@ -347,7 +347,7 @@ async def add_no_cache_headers(request: Request, call_next):
     - ``/static/*``: no-cache (revalidate, never blind-store). The
       blanket no-store previously forced every Mini App open to
       re-download ~670 KB of JS/CSS. Asset URLs are versioned per
-      release in index.html (e.g. ``app.js?v=20261101_up1``),
+      release in index.html (e.g. ``app.js?v=20261101_jr1``),
       so a deploy that changes an asset also changes its URL; and
       Starlette StaticFiles answers the revalidation with ETag /
       Last-Modified 304s, so even an unversioned edit is never
