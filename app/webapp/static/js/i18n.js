@@ -145,8 +145,8 @@ const translations = {
         // Video Transformations
         recap_anticopyright_label: "ဗီဒီယို ပုံစံပြောင်းမှုများ:",
         recap_mirror_label: "🪞 Mirror (ဘယ်/ညာ လှန်):",
-        mirror_on: "🪞 Mirror: ဖွင့် ✅",
-        mirror_off: "🪞 Mirror: ပိတ် ❌",
+        mirror_on: "ဖွင့် ✅",
+        mirror_off: "ပိတ် ❌",
         recap_zoom_label: "🔍 Micro-Zoom:",
         zoom_off: "1.0x ပုံမှန်",
         zoom_std: "1.06x စံနှုန်း 🔥",
@@ -844,8 +844,8 @@ const translations = {
         // Video Transformations
         recap_anticopyright_label: "Video Transformations:",
         recap_mirror_label: "🪞 Mirror (H-Flip):",
-        mirror_on: "🪞 Mirror: ON ✅",
-        mirror_off: "🪞 Mirror: OFF ❌",
+        mirror_on: "ON ✅",
+        mirror_off: "OFF ❌",
         recap_zoom_label: "🔍 Micro-Zoom:",
         zoom_off: "1.0x None",
         zoom_std: "1.06x Standard 🔥",

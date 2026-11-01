@@ -3023,3 +3023,88 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .adm-users-filter-row { margin-top: var(--s3); }
 .adm-users-filter-chip { white-space: nowrap; }
 #adm-users-load-more { width: 100%; margin-top: var(--s3); min-height: 44px; }
+
+/* ── Recap settings-UI fix batch (2026-11-02, RS-1/RS-2/RS-6/RS-7) ───
+   RS-1 — a multi-row .pill-group track kept border-radius:999px; on a
+   two-row track that arc is far larger than the active pill's own
+   corner arc at its 3px inset, so the white active pill's corner
+   paint crossed the track border at the diagonals (worst top-left,
+   where the default active sits; layout boxes were always inside).
+   A fixed 24px radius is concentric-safe for every pill height in
+   the tab (38–54px) and a visual no-op on single-row tracks, where
+   999px already clamped to ~half the track height. Inside a track
+   the active pill also drops its outer drop shadow (specular inset
+   only), so its paint can never leave the track. */
+.pill-group, .pill-group.sm { border-radius: 24px; }
+.pill-group .pill-btn.active { box-shadow: var(--glass-hi); }
+
+/* RS-6/RS-7 — the R28 "uniform tiles" flex rules (flex-basis 42%/26%
+   + white-space:normal) let Burmese parentheticals wrap on SOME pills
+   only, so row-mates rendered 53px next to 38px, and short last rows
+   left orphan tiles / full-width stretches. The Recap pickers below
+   are now grids with grid-auto-rows:1fr — every option in a picker
+   shares one height (its tallest option's), and the column counts
+   divide each picker's options evenly. Labels, order and meaning
+   are unchanged; the R28 flex rules above are superseded for these
+   pickers only (engine/lang/split-minutes/zoom keep their verdicts). */
+#recap-quality-picker, #recap-logo-pos-picker, #recap-fill-picker,
+#recap-crop-presets-toolbar, #sub-lines-picker-toolbar,
+#font-size-picker-toolbar, #recap-sub-font-picker, #recap-speed-picker {
+    display: grid; gap: var(--s1); align-items: stretch;
+}
+#recap-quality-picker { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
+#recap-logo-pos-picker { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
+#recap-crop-presets-toolbar { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
+#sub-lines-picker-toolbar { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
+#font-size-picker-toolbar { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; }
+#recap-sub-font-picker { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
+/* Fill's three labels are the tab's longest; as a one-column stack
+   each keeps its full one-line label at the standard 38px height. */
+#recap-fill-picker { grid-template-columns: 1fr; grid-auto-rows: 1fr; }
+#recap-fill-picker .pill-btn { white-space: nowrap; }
+/* Speed: 3 + 2 over a 6-column grid — both lines span full width. */
+#recap-speed-picker { grid-template-columns: repeat(6, 1fr); grid-auto-rows: 1fr; }
+#recap-speed-picker .pill-btn { grid-column: span 2; }
+#recap-speed-picker .pill-btn:nth-child(4),
+#recap-speed-picker .pill-btn:nth-child(5) { grid-column: span 3; }
+#sub-style-picker {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows: 1fr; gap: var(--s2); align-items: stretch;
+}
+#sub-style-picker .style-chip {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+}
+#story-style-picker-quick {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows: 1fr; gap: var(--s2); align-items: stretch;
+}
+#story-style-picker-quick .style-select-pill {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+}
+.ratio-pills-grid { grid-auto-rows: 1fr; }
+
+/* RS-2 — the canvas subtitle SAMPLE is a style preview, not the
+   caption layout itself; clamping it to the Lines setting hid the
+   sample's second line inside the band (24px clipped in every loaded
+   state). The preview text now always renders in full — it wraps
+   naturally and the box grows; state.recapLines still drives the
+   real render's line count exactly as before. */
+.preview-sub-box.one-line .preview-sub-text,
+.preview-sub-box.two-lines .preview-sub-text {
+    display: block; overflow: visible;
+}
+
+/* RS-7 minors — one packing rule for the seek panel: every line
+   spans the full panel width. The action buttons split into equal
+   thirds; the preset pills spread edge-to-edge on their own line
+   (they used to right-pack via margin-left:auto while the actions
+   left-packed, leaving opposite dead space). */
+.seek-actions-row .mini-btn-seek { flex: 1 1 0; }
+.seek-presets-pills {
+    flex: 1 1 100%; margin-left: 0; justify-content: space-between;
+}
+/* The crop-sync chip keeps its label on one line (it wrapped to two
+   inside the header row); the detail toggle takes the slack. */
+#btn-sync-crop { flex: 0 0 auto; }
+#btn-sync-crop .chip-lbl { white-space: nowrap; }
+.recap-detail-toggle { flex: 1 1 auto; min-width: 0; }
