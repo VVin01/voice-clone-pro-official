@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261101_gv1">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261101_rt1">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -403,6 +403,8 @@
                         <div class="step-badge-title">
                             <span class="step-num-pill">1</span>
                             <span class="step-title" data-i18n="recap_step1_title">ဗီဒီယို ရွေးချယ်ပါ (Video Source)</span>
+                        </div>
+                        <div class="step1-tut-row">
                             <button type="button" class="tutorial-mini-btn" id="recap-step1-tut-btn" onclick="openTutorialVideo('recap')">ကြည့်ရှုရန် ▶️</button>
                         </div>
 
@@ -489,9 +491,45 @@
                             <div class="preview-empty-inner hidden" id="recap-preview-loading-inner">
                                 <span class="preview-empty-icon spinner">⏳</span>
                                 <span class="preview-empty-title" data-i18n="recap_preview_loading">ဗီဒီယို စစ်ဆေးနေသည်…</span>
+                                <span class="preview-progress-shimmer" aria-hidden="true"></span>
+                                <span class="preview-empty-desc" data-i18n="recap_preview_unverified_hint">Link ကို စစ်ဆေး၍ မရသေးပါက အချက်အလက် အတည်မပြုရသေးဘဲ ဆက်လုပ်သွားပါမယ် — ဖိုင်တိုက်ရိုက် တင်တာက ပိုသေချာပါတယ်</span>
                             </div>
                         </div>
 
+<!-- 1. Video Aspect Ratio Selector (Ratio) -->
+                            <div class="recap-dock-section hidden" id="recap-preview-ratio-group">
+                                <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား (Aspect Ratio):</div>
+                                <div class="ratio-pills-grid" id="recap-ratio-picker">
+                                    <button class="ratio-btn active" data-ratio="9:16">
+                                        <span class="ratio-icon">📱</span>
+                                        <span class="ratio-title" data-i18n="ratio_9_16">📐 9:16 (TikTok / Reels / Shorts)</span>
+                                    </button>
+                                    <button class="ratio-btn" data-ratio="16:9">
+                                        <span class="ratio-icon">🖥️</span>
+                                        <span class="ratio-title" data-i18n="ratio_16_9">📐 16:9 (YouTube / အလျားလိုက်)</span>
+                                    </button>
+                                    <button class="ratio-btn" data-ratio="1:1">
+                                        <span class="ratio-icon">⏹️</span>
+                                        <span class="ratio-title" data-i18n="ratio_1_1">📐 1:1 (Square)</span>
+                                    </button>
+                                    <button class="ratio-btn" data-ratio="Original">
+                                        <span class="ratio-icon">🎞️</span>
+                                        <span class="ratio-title" data-i18n="ratio_original">📐 Original (မူရင်းအချိုးအစား)</span>
+                                    </button>
+                                </div>
+
+                                <!-- Aspect Ratio Fill Mode -->
+                                <div class="sub-specs-row mt-3">
+                                    <div class="spec-col span-all">
+                                        <span class="spec-lbl" data-i18n="recap_fill_label">ဘောင်ဖြည့်စွက်မှု (Aspect Fill):</span>
+                                        <div class="pill-group sm" id="recap-fill-picker">
+                                            <button class="pill-btn active" data-fill="blur" data-i18n="fill_blur">🌫️ Blur Background (ဝါးဖြည့်)</button>
+                                            <button class="pill-btn" data-fill="crop" data-i18n="fill_crop">✂️ Center Crop (အလယ်ဖြတ်)</button>
+                                            <button class="pill-btn" data-fill="black" data-i18n="fill_black">⬛ Black Bars (ဘေးဘောင်မည်း)</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         <!-- Dynamic Aspect Ratio Video Canvas -->
                         <div class="mockup-screen-container mt-2 hidden" id="recap-mockup-wrap">
                             <div class="mockup-screen ratio-9-16" id="recap-mockup-frame">
@@ -508,6 +546,13 @@
                                         <div class="crop-shade bottom" id="crop-shade-bottom"></div>
                                         <div class="crop-shade left" id="crop-shade-left"></div>
                                         <div class="crop-shade right" id="crop-shade-right"></div>
+                                    </div>
+                                    <!-- Designed no-thumbnail surface (shown by
+                                         updateCanvasMockupVisuals only when there is
+                                         no video/thumbnail media at all). -->
+                                    <div class="canvas-no-thumb hidden" id="canvas-no-thumb">
+                                        <span class="canvas-no-thumb-icon">🎬</span>
+                                        <span class="canvas-no-thumb-text" data-i18n="recap_canvas_no_thumb">နမူနာပုံ မရသေးပါ — စာတန်းနှင့် Blur နေရာကို ကြိုချိန်ညှိနိုင်ပါသည်</span>
                                     </div>
                                     <!-- Demo overlays live OUTSIDE the mirrored movie layer so
                                          their text always renders correctly. -->
@@ -542,103 +587,8 @@
                             </div>
                         </div>
 
-                        <!-- 🎛️ COMPACT STUDIO TOOLBAR (NO VERTICAL SCROLL FATIGUE) 🎛️ -->
-                    </div>
-
-                    <!-- ════ STEP 3: NARRATOR DUBBING VOICE ════ -->
-                    <div class="card glass recap-step-card mt-3">
-                        <div class="step-badge-title">
-                            <span class="step-num-pill">3</span>
-                            <span class="step-title" data-i18n="recap_step2_title">ဇာတ်လမ်းပြောမည့် မြန်မာအသံ ရွေးချယ်ပါ (Dub Voice)</span>
-                        </div>
-                        
-                        <!-- Top 4 Popular Voice Cards -->
-                        <div class="recap-top-voices-grid mt-2" id="recap-top-voices">
-                            <div class="voice-card active" data-voice="komin">
-                                <div class="v-avatar">👨‍💼</div>
-                                <div class="v-info">
-                                    <span class="v-name">ကိုမင်း (Ko Min) 🔥</span>
-                                    <span class="v-desc">ရုပ်ရှင်ဇာတ်လမ်းပြော အသံနက် (Cinema Classic)</span>
-                                </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komin', event)" title="နမူနာနားထောင်မည်">🔊</button>
-                            </div>
-                            <div class="voice-card" data-voice="kozayar">
-                                <div class="v-avatar">🎬</div>
-                                <div class="v-info">
-                                    <span class="v-name">ကိုဇေယျာ (Ko Zayar)</span>
-                                    <span class="v-desc">သည်းထိတ်ရင်ဖို Trailer အသံ (Thriller / Action)</span>
-                                </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kozayar', event)" title="နမူနာနားထောင်မည်">🔊</button>
-                            </div>
-                            <div class="voice-card" data-voice="koaung">
-                                <div class="v-avatar">⚡</div>
-                                <div class="v-info">
-                                    <span class="v-name">ကိုအောင် (Ko Aung)</span>
-                                    <span class="v-desc">သွက်လက်မြန်ဆန် (Viral Shorts & Reels)</span>
-                                </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('koaung', event)" title="နမူနာနားထောင်မည်">🔊</button>
-                            </div>
-                            <div class="voice-card" data-voice="mahnin">
-                                <div class="v-avatar">👩‍🦰</div>
-                                <div class="v-info">
-                                    <span class="v-name">မနှင်း (Ma Hnin)</span>
-                                    <span class="v-desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
-                                </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်">🔊</button>
-                            </div>
-                        </div>
-
-                        <!-- All 12 Voices Dropdown Expander -->
-                        <div class="more-voices-expander mt-2">
-                            <button type="button" class="btn-text-link" id="btn-toggle-all-voices" onclick="toggleAllRecapVoices()">
-                                <span id="all-voices-toggle-text" data-i18n="voices_show_all">အခြားအသံများ ရွေးချယ်ရန် (Show all 12 voices) ▼</span>
-                            </button>
-                            <div class="all-voices-dropdown hidden mt-2" id="all-voices-dropdown-wrap">
-                                <div class="recap-voice-row">
-                                    <select class="studio-select" id="recap-voice-select">
-                                        <option value="komin">👨‍💼 Ko Min (ကိုမင်း — Master Storyteller)</option>
-                                        <option value="kothura">🎙️ Ko Thura (ကိုသူရ — News & Docu)</option>
-                                        <option value="kozayar">🎬 Ko Zayar (ကိုဇေယျာ — Cinema Movie Trailer)</option>
-                                        <option value="koaung">⚡ Ko Aung (ကိုအောင် — Viral Shorts)</option>
-                                        <option value="komyat">🎙️ Ko Myat (ကိုမြတ် — Human Storyteller)</option>
-                                        <option value="kophone">💡 Ko Phone (ကိုဘုန်း — Tech & Explainer)</option>
-                                        <option value="mahnin">👩‍🦰 Ma Hnin (မနှင်း — Classic Audiobook)</option>
-                                        <option value="manadi">🎭 Ma Nadi (မနဒီ — Thriller Drama)</option>
-                                        <option value="mamay">🌟 Ma May (မမေ — Friendly Guide)</option>
-                                        <option value="mayoon">🧘 Ma Yoon (မယွန်း — Calm ASMR & Meditation)</option>
-                                        <option value="machaw">🌟 Ma Chaw (မချော — Human Creator & Guide)</option>
-                                        <option value="mathiri">💎 Ma Thiri (မသီရိ — Luxury Lifestyle)</option>
-                                    </select>
-                                    <button type="button" class="preview-recap-voice-btn" id="btn-preview-recap-voice" onclick="previewSelectedRecapVoice()">
-                                        <span class="preview-icon">🔊</span>
-                                        <span data-i18n="btn_preview_voice">နမူနာ နားထောင်မည်</span>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Quick Story Style Selector in Step 3 -->
-
-                        <!-- Narration engine: Persona (VoxCPM) or Gemini TTS -->
-                    </div>
-
-
-
-                    <!-- ════ STEP 4: 1-CLICK PRO RECAP ACTION ════ -->
-                    <div class="advanced-studio-accordion mt-3" id="recap-advanced-accordion">
-                        <button type="button" class="advanced-accordion-header" id="btn-toggle-advanced-recap" onclick="toggleAdvancedRecapStudio()">
-                            <div class="accordion-header-left">
-                                <span class="accordion-icon">⚙️</span>
-                                <div class="accordion-title-wrap">
-                                    <span class="accordion-title" data-i18n="advanced_settings_title">စိတ်ကြိုက် အသေးစိတ် ပြင်ဆင်ရန် (Advanced Customization)</span>
-                                    <span class="accordion-subtitle" data-i18n="advanced_settings_sub">Aspect Ratio၊ ဗီဒီယို ပုံစံပြောင်းမှုနှင့် ဘောင်ဖြတ်ခြင်း</span>
-                                </div>
-                            </div>
-                            <span class="accordion-chevron" id="accordion-chevron">▼</span>
-                        </button>
-
-                        <div class="advanced-accordion-body hidden" id="recap-advanced-body">
-                    <div class="card glass settings-group mt-3 hidden" id="recap-preview-controls-group">
+                        <!-- 🎛️ COMPACT STUDIO TOOLBAR (docked with the canvas) 🎛️ -->
+<div class="recap-dock-section hidden" id="recap-preview-controls-group">
                                 <div class="canvas-compact-toolbar mt-2" id="canvas-compact-toolbar">
                                     <!-- Segmented Navigation Pills -->
                                     <div class="toolbar-tabs-nav">
@@ -744,14 +694,14 @@
 
                                         <div class="style-selector-grid-2 mt-2">
                                             <div class="spec-col-half">
-                                                <span class="style-lbl">စာကြောင်းရေ (Lines):</span>
+                                                <span class="style-lbl" data-i18n="recap_sub_lines_label">စာကြောင်းရေ (Lines):</span>
                                                 <div class="pill-group sm" id="sub-lines-picker-toolbar">
                                                     <button class="pill-btn active" data-lines="1">1 Line</button>
                                                     <button class="pill-btn" data-lines="2">2 Lines</button>
                                                 </div>
                                             </div>
                                             <div class="spec-col-half">
-                                                <span class="style-lbl">စာလုံးအရွယ် (Size):</span>
+                                                <span class="style-lbl" data-i18n="recap_sub_size_label">စာလုံးအရွယ် (Size):</span>
                                                 <div class="pill-group sm" id="font-size-picker-toolbar">
                                                     <button class="pill-btn" data-size="13">13pt</button>
                                                     <button class="pill-btn active" data-size="16">16pt</button>
@@ -771,7 +721,7 @@
                                         </div>
 
                                         <div class="style-selector-row mt-2">
-                                            <span class="style-lbl">📐 ဘောင်ဖြတ်ခြင်း (Framing Crop Presets):</span>
+                                            <span class="style-lbl" data-i18n="recap_crop_presets_label">ဘောင်ဖြတ်ခြင်း (Framing Crop Presets):</span>
                                             <div class="pill-group sm" id="recap-crop-presets-toolbar">
                                                 <button class="pill-btn active" data-crop="full">📐 မူရင်း (0%)</button>
                                                 <button class="pill-btn" data-crop="cinema">🎞️ CinemaScope (12%)</button>
@@ -787,22 +737,202 @@
                                                 <button type="button" class="pill-btn" data-quality="max" data-i18n="recap_quality_max">Max</button>
                                             </div>
                                         </div>
+                                        <div class="style-selector-row mt-2">
+                                            <span class="style-lbl" data-i18n="recap_specs_title">စာလုံးနှင့် Logo အသေးစိတ် (Subtitle & Logo Specs):</span>
+                                            <span class="style-lbl" data-i18n="recap_logo_pos_label">Logo နေရာ:</span>
+                                            <div class="pill-group sm" id="recap-logo-pos-picker">
+                                        <button class="pill-btn active" data-pos="top-right" data-i18n="pos_top_right">အပေါ် ညာ</button>
+                                        <button class="pill-btn" data-pos="top-left" data-i18n="pos_top_left">အပေါ် ဘယ်</button>
+                                        <button class="pill-btn" data-pos="bottom-right" data-i18n="pos_bottom_right">အောက် ညာ</button>
+                                        <button class="pill-btn" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</button>
+                                    </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                    <div class="card glass settings-group mt-3">
-                                <div class="pill-group sm mt-3" id="recap-lang-picker">
-                                    <span class="spec-lbl" data-i18n="recap_lang_label">မူရင်း ဗီဒီယို ဘာသာစကား:</span>
-                                    <button type="button" class="pill-btn active" data-lang="auto" data-i18n="recap_lang_auto">Auto</button>
-                                    <button type="button" class="pill-btn" data-lang="en" data-i18n="recap_lang_en">English</button>
-                                    <button type="button" class="pill-btn" data-lang="zh" data-i18n="recap_lang_zh">Chinese</button>
-                                    <button type="button" class="pill-btn" data-lang="ko" data-i18n="recap_lang_ko">Korean</button>
-                                    <button type="button" class="pill-btn" data-lang="th" data-i18n="recap_lang_th">Thai</button>
-                                    <button type="button" class="pill-btn" data-lang="ja" data-i18n="recap_lang_ja">Japanese</button>
+                    </div>
+
+                    <!-- ════ STEP 3: NARRATOR DUBBING VOICE ════ -->
+                    <div class="card glass recap-step-card mt-3">
+                        <div class="step-badge-title">
+                            <span class="step-num-pill">3</span>
+                            <span class="step-title" data-i18n="recap_step2_title">ဇာတ်လမ်းပြောမည့် မြန်မာအသံ ရွေးချယ်ပါ (Dub Voice)</span>
+                        </div>
+                        
+<div class="pill-group sm recap-engine-row" id="recap-engine-picker">
+                                        <span class="spec-lbl" data-i18n="recap_engine_label">Narration Engine:</span>
+                                        <button type="button" class="pill-btn active" data-engine="voxcpm" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</button>
+                                        <button type="button" class="pill-btn" data-engine="gemini" data-i18n="recap_engine_gemini">✨ Gemini AI</button>
+                                    </div>
+                                    <div class="recap-gemini-wrap hidden mt-2" id="recap-gemini-voice-wrap">
+                                        <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
+                                        <select id="recap-gemini-voice-select" class="studio-select recap-gemini-select">
+                                            <option value="">Auto</option>
+                                            <option value="Charon">ကိုသီဟ (ကျား)</option>
+                                            <option value="Algenib">ကိုအာကာ (ကျား)</option>
+                                            <option value="Orus">ကိုမင်းခန့် (ကျား)</option>
+                                            <option value="Iapetus">ကိုလင်းခန့် (ကျား)</option>
+                                            <option value="Puck">ကိုသော်တာ (ကျား)</option>
+                                            <option value="Kore">မစန္ဒာ (မ)</option>
+                                            <option value="Leda">မနှင်းဆီ (မ)</option>
+                                            <option value="Sulafat">မမေသူ (မ)</option>
+                                            <option value="Gacrux">မသီရိ (မ)</option>
+                                            <option value="Achernar">မသွန်းရည် (မ)</option>
+                                        </select>
+                                        <p class="recap-auto-hint" data-i18n="recap_gemini_auto_hint">Auto ဆိုရင် ရွေးထားတဲ့ Persona အသံရဲ့ ကျား/မ အလိုက် အလိုက်ဖက်ဆုံး Gemini အသံကို သုံးပါမယ်</p>
+                                        <button type="button" class="preview-recap-voice-btn" id="btn-preview-gemini-voice" onclick="previewSelectedGeminiVoice()">
+                                            <span class="preview-icon">🔊</span>
+                                            <span data-i18n="btn_preview_voice">နမူနာ နားထောင်မည်</span>
+                                        </button>
+                                    </div>
+                        <!-- Persona voices (engine = Persona Voice) -->
+                        <div id="recap-persona-area">
+                        <!-- Top 4 Popular Voice Cards -->
+                        <div class="recap-top-voices-grid mt-2" id="recap-top-voices">
+                            <div class="voice-card active" data-voice="komin">
+                                <div class="v-avatar">👨‍💼</div>
+                                <div class="v-info">
+                                    <span class="v-name">ကိုမင်း (Ko Min) 🔥</span>
+                                    <span class="v-desc">ရုပ်ရှင်ဇာတ်လမ်းပြော အသံနက် (Cinema Classic)</span>
+                                </div>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                            </div>
+                            <div class="voice-card" data-voice="kozayar">
+                                <div class="v-avatar">🎬</div>
+                                <div class="v-info">
+                                    <span class="v-name">ကိုဇေယျာ (Ko Zayar)</span>
+                                    <span class="v-desc">သည်းထိတ်ရင်ဖို Trailer အသံ (Thriller / Action)</span>
+                                </div>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kozayar', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                            </div>
+                            <div class="voice-card" data-voice="koaung">
+                                <div class="v-avatar">⚡</div>
+                                <div class="v-info">
+                                    <span class="v-name">ကိုအောင် (Ko Aung)</span>
+                                    <span class="v-desc">သွက်လက်မြန်ဆန် (Viral Shorts & Reels)</span>
+                                </div>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('koaung', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                            </div>
+                            <div class="voice-card" data-voice="mahnin">
+                                <div class="v-avatar">👩‍🦰</div>
+                                <div class="v-info">
+                                    <span class="v-name">မနှင်း (Ma Hnin)</span>
+                                    <span class="v-desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
+                                </div>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                            </div>
+                        </div>
+
+                        <!-- All 12 Voices Dropdown Expander -->
+                        <div class="more-voices-expander mt-2">
+                            <button type="button" class="btn-text-link" id="btn-toggle-all-voices" onclick="toggleAllRecapVoices()">
+                                <span id="all-voices-toggle-text" data-i18n="voices_show_all">အခြားအသံများ ရွေးချယ်ရန် (Show all 12 voices) ▼</span>
+                            </button>
+                            <div class="all-voices-dropdown hidden mt-2" id="all-voices-dropdown-wrap">
+                            <div class="recap-top-voices-grid recap-all-voices-grid" id="recap-all-voices-grid">
+                                <div class="voice-card active" data-voice="komin">
+                                    <div class="v-avatar">👨‍💼</div>
+                                    <div class="v-info">
+                                        <span class="v-name">ကိုမင်း (Ko Min) 🔥</span>
+                                        <span class="v-desc">ရုပ်ရှင်ဇာတ်လမ်းပြော အသံနက် (Cinema Classic)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="kozayar">
+                                    <div class="v-avatar">🎬</div>
+                                    <div class="v-info">
+                                        <span class="v-name">ကိုဇေယျာ (Ko Zayar)</span>
+                                        <span class="v-desc">သည်းထိတ်ရင်ဖို Trailer အသံ (Thriller / Action)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kozayar', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="koaung">
+                                    <div class="v-avatar">⚡</div>
+                                    <div class="v-info">
+                                        <span class="v-name">ကိုအောင် (Ko Aung)</span>
+                                        <span class="v-desc">သွက်လက်မြန်ဆန် (Viral Shorts & Reels)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('koaung', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="mahnin">
+                                    <div class="v-avatar">👩‍🦰</div>
+                                    <div class="v-info">
+                                        <span class="v-name">မနှင်း (Ma Hnin)</span>
+                                        <span class="v-desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="kothura">
+                                    <div class="v-avatar">🎙️</div>
+                                    <div class="v-info">
+                                        <span class="v-name">ကိုသူရ (Ko Thura)</span>
+                                        <span class="v-desc">သတင်းနှင့် မှတ်တမ်း (News & Docu)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kothura', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="komyat">
+                                    <div class="v-avatar">🎙️</div>
+                                    <div class="v-info">
+                                        <span class="v-name">ကိုမြတ် (Ko Myat)</span>
+                                        <span class="v-desc">လူ့ဘဝဇာတ်လမ်း ပြောပြသူ (Human Storyteller)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komyat', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="kophone">
+                                    <div class="v-avatar">💡</div>
+                                    <div class="v-info">
+                                        <span class="v-name">ကိုဘုန်း (Ko Phone)</span>
+                                        <span class="v-desc">နည်းပညာနှင့် ရှင်းလင်းပြောပြသူ (Tech & Explainer)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kophone', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="manadi">
+                                    <div class="v-avatar">🎭</div>
+                                    <div class="v-info">
+                                        <span class="v-name">မနဒီ (Ma Nadi)</span>
+                                        <span class="v-desc">သည်းထိတ်ရင်ဖို ဒရာမာ (Thriller Drama)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('manadi', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="mamay">
+                                    <div class="v-avatar">🌟</div>
+                                    <div class="v-info">
+                                        <span class="v-name">မမေ (Ma May)</span>
+                                        <span class="v-desc">ရင်းနှီးပျော်ရွှင်သော လမ်းညွှန် (Friendly Guide)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mamay', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="mayoon">
+                                    <div class="v-avatar">🧘</div>
+                                    <div class="v-info">
+                                        <span class="v-name">မယွန်း (Ma Yoon)</span>
+                                        <span class="v-desc">တည်ငြိမ်နူးညံ့ (Calm ASMR & Meditation)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mayoon', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="machaw">
+                                    <div class="v-avatar">🌟</div>
+                                    <div class="v-info">
+                                        <span class="v-name">မချော (Ma Chaw)</span>
+                                        <span class="v-desc">ဖန်တီးသူ လမ်းညွှန် (Human Creator & Guide)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('machaw', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                </div>
+                                <div class="voice-card" data-voice="mathiri">
+                                    <div class="v-avatar">💎</div>
+                                    <div class="v-info">
+                                        <span class="v-name">မသီရိ (Ma Thiri)</span>
+                                        <span class="v-desc">အဆင့်မြင့် လူနေမှုပုံစံ (Luxury Lifestyle)</span>
+                                    </div>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mathiri', event)" title="နမူနာနားထောင်မည်">🔊</button>
                                 </div>
                             </div>
-                    <div class="card glass settings-group mt-3">
-                                <div class="story-style-block mt-3">
+                        </div>
+                        </div>
+
+                        </div><!-- /#recap-persona-area -->
+
+<div class="story-style-block mt-3">
                                     <div class="card-label story-style-label" data-i18n="recap_style_label">🎭 ဇာတ်လမ်းပြော စတိုင်လ် (Story Style):</div>
                                     <div class="style-pills-grid" id="story-style-picker-quick">
                                         <button type="button" class="style-select-pill active" data-story="viral">
@@ -821,110 +951,35 @@
                                             <span class="pill-main" data-i18n="style_standard">📖 ပုံမှန်ဇာတ်ကြောင်း</span>
                                         </button>
                                     </div>
-                                </div>
-                                <div class="mt-3">
-                                    <div class="pill-group sm" id="recap-engine-picker">
-                                        <span class="spec-lbl" data-i18n="recap_engine_label">Narration Engine:</span>
-                                        <button type="button" class="pill-btn active" data-engine="voxcpm" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</button>
-                                        <button type="button" class="pill-btn" data-engine="gemini" data-i18n="recap_engine_gemini">✨ Gemini AI</button>
-                                    </div>
-                                    <div class="pill-group sm hidden mt-2" id="recap-gemini-voice-wrap">
-                                        <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
-                                        <select id="recap-gemini-voice-select" class="studio-select">
-                                            <option value="">Auto (ကျား/မ အလိုက်)</option>
-                                            <option value="Charon">ကိုသီဟ (ကျား)</option>
-                                            <option value="Algenib">ကိုအာကာ (ကျား)</option>
-                                            <option value="Orus">ကိုမင်းခန့် (ကျား)</option>
-                                            <option value="Iapetus">ကိုလင်းခန့် (ကျား)</option>
-                                            <option value="Puck">ကိုသော်တာ (ကျား)</option>
-                                            <option value="Kore">မစန္ဒာ (မ)</option>
-                                            <option value="Leda">မနှင်းဆီ (မ)</option>
-                                            <option value="Sulafat">မမေသူ (မ)</option>
-                                            <option value="Gacrux">မသီရိ (မ)</option>
-                                            <option value="Achernar">မသွန်းရည် (မ)</option>
-                                        </select>
-                                        <button type="button" class="preview-recap-voice-btn" id="btn-preview-gemini-voice" onclick="previewSelectedGeminiVoice()">
-                                            <span class="preview-icon">🔊</span>
-                                            <span data-i18n="btn_preview_voice">နမူနာ နားထောင်မည်</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                    <div class="card glass settings-group mt-3">
-                                <label class="script-review-row mt-3" for="recap-script-review-toggle">
-                                    <input type="checkbox" id="recap-script-review-toggle">
-                                    <span data-i18n="recap_script_review_label">📝 Script ကို အရင် စစ်ပြင်မယ် (အသံ မထုတ်ခင်)</span>
-                                </label>
-                                <label class="script-review-row mt-2" for="recap-split-toggle">
-                                    <input type="checkbox" id="recap-split-toggle">
-                                    <span data-i18n="recap_split_label">✂️ ဗီဒီယိုကို အပိုင်းခွဲ ထုတ်မယ် (အပိုင်း လိုက်ခွဲထားသော Part များ)</span>
-                                </label>
-                                <div class="pill-group sm hidden mt-2" id="recap-split-minutes-wrap">
-                                    <span class="spec-lbl" data-i18n="recap_split_minutes_label">တစ်ပိုင်း ကြာချိန်:</span>
-                                    <span id="recap-split-minutes-picker">
-                                        <button type="button" class="pill-btn" data-split-min="2" data-i18n="recap_split_min_2">၂ မိနစ်</button>
-                                        <button type="button" class="pill-btn active" data-split-min="3" data-i18n="recap_split_min_3">၃ မိနစ်</button>
-                                        <button type="button" class="pill-btn" data-split-min="5" data-i18n="recap_split_min_5">၅ မိနစ်</button>
-                                    </span>
-                                </div>
-                                <p id="recap-split-cost-hint" class="hidden mt-2" style="font-size:12px; opacity:0.9;"></p>
-                            </div>
-        
-                            <!-- 1. Video Aspect Ratio Selector (Ratio) -->
-                            <div class="card glass mt-3 hidden" id="recap-preview-ratio-group">
-                                <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား (Aspect Ratio):</div>
-                                <div class="ratio-pills-grid" id="recap-ratio-picker">
-                                    <button class="ratio-btn active" data-ratio="9:16">
-                                        <span class="ratio-icon">📱</span>
-                                        <span class="ratio-title" data-i18n="ratio_9_16">📐 9:16 (TikTok / Reels / Shorts)</span>
-                                    </button>
-                                    <button class="ratio-btn" data-ratio="16:9">
-                                        <span class="ratio-icon">🖥️</span>
-                                        <span class="ratio-title" data-i18n="ratio_16_9">📐 16:9 (YouTube / အလျားလိုက်)</span>
-                                    </button>
-                                    <button class="ratio-btn" data-ratio="1:1">
-                                        <span class="ratio-icon">⏹️</span>
-                                        <span class="ratio-title" data-i18n="ratio_1_1">📐 1:1 (Square)</span>
-                                    </button>
-                                    <button class="ratio-btn" data-ratio="Original">
-                                        <span class="ratio-icon">🎞️</span>
-                                        <span class="ratio-title" data-i18n="ratio_original">📐 Original (မူရင်းအချိုးအစား)</span>
-                                    </button>
-                                </div>
+                                </div><!-- /.story-style-block -->
+                    </div>
 
-                                <!-- Aspect Ratio Fill Mode -->
-                                <div class="sub-specs-row mt-3">
-                                    <div class="spec-col span-all">
-                                        <span class="spec-lbl" data-i18n="recap_fill_label">ဘောင်ဖြည့်စွက်မှု (Aspect Fill):</span>
-                                        <div class="pill-group sm" id="recap-fill-picker">
-                                            <button class="pill-btn active" data-fill="blur" data-i18n="fill_blur">🌫️ Blur Background (ဝါးဖြည့်)</button>
-                                            <button class="pill-btn" data-fill="crop" data-i18n="fill_crop">✂️ Center Crop (အလယ်ဖြတ်)</button>
-                                            <button class="pill-btn" data-fill="black" data-i18n="fill_black">⬛ Black Bars (ဘေးဘောင်မည်း)</button>
-                                        </div>
-                                    </div>
+
+
+                    <!-- ════ STEP 4: 1-CLICK PRO RECAP ACTION ════ -->
+                    <div class="advanced-studio-accordion mt-3" id="recap-advanced-accordion">
+                        <button type="button" class="advanced-accordion-header" id="btn-toggle-advanced-recap" onclick="toggleAdvancedRecapStudio()">
+                            <div class="accordion-header-left">
+                                <span class="accordion-icon">⚙️</span>
+                                <div class="accordion-title-wrap">
+                                    <span class="accordion-title" data-i18n="advanced_settings_title">စိတ်ကြိုက် အသေးစိတ် ပြင်ဆင်ရန် (Advanced Customization)</span>
+                                    <span class="accordion-subtitle" data-i18n="advanced_settings_sub">Aspect Ratio၊ ဗီဒီယို ပုံစံပြောင်းမှုနှင့် ဘောင်ဖြတ်ခြင်း</span>
                                 </div>
                             </div>
+                            <span class="accordion-chevron" id="accordion-chevron">▼</span>
+                        </button>
 
-                            <!-- 2. Narration Story Style & Pacing -->
-                            <div class="card glass mt-3 hidden" id="recap-preview-speed-group">
-                                <div class="card-label" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း (Narration Speed / Pacing):</div>
-                                <div class="pill-group sm flex-wrap" id="recap-speed-picker">
-                                    <button class="pill-btn" data-speed="+0%" data-i18n="speed_0">+0% ပုံမှန်</button>
-                                    <button class="pill-btn" data-speed="+8%" data-i18n="speed_8">+8% သွက်</button>
-                                    <button class="pill-btn active" data-speed="+12%" data-i18n="speed_12">+12% အကြံပြု 🔥</button>
-                                    <button class="pill-btn" data-speed="+18%" data-i18n="speed_18">+18% မြန်</button>
-                                    <button class="pill-btn" data-speed="+22%" data-i18n="speed_22">+22% အထူးမြန်</button>
-                                </div>
-                            </div>
-
+                        <div class="advanced-accordion-body hidden" id="recap-advanced-body">
+                    <section class="recap-adv-section" id="recap-adv-section-frame">
                             <!-- 3. Video Transformations & Custom Video Crop -->
-                            <div class="card glass mt-3 hidden" id="recap-preview-transform-group">
+                            <div class="recap-adv-group hidden" id="recap-preview-transform-group">
                                 <div class="card-label" data-i18n="recap_anticopyright_label">ဗီဒီယို ပုံစံပြောင်းမှုများ (Video Transformations):</div>
                                 <div class="anticopyright-grid mt-2">
                                     <div class="spec-col">
                                         <span class="spec-lbl" data-i18n="recap_mirror_label">🪞 Video Mirror (ဘယ်/ညာ လှန်မည်):</span>
                                         <button class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true">
                                             <span class="toggle-status" data-i18n="mirror_on">🪞 Mirror: ON ✅</span>
+                                        <span class="switch-track" aria-hidden="true"></span>
                                         </button>
                                     </div>
                                     <div class="spec-col">
@@ -938,18 +993,16 @@
                                 </div>
 
                                 <div class="card-header-row mt-3">
-                                    <div class="card-label" data-i18n="recap_crop_label">📐 ဗီဒီယို ဘောင်စိတ်ကြိုက်ဖြတ်ခြင်း (Custom Video Crop):</div>
+                                    <button type="button" class="recap-detail-toggle" id="btn-toggle-crop-detail" onclick="toggleRecapCropDetail()">
+                                        <span data-i18n="recap_crop_label">📐 ဗီဒီယို ဘောင်စိတ်ကြိုက်ဖြတ်ခြင်း (Custom Video Crop):</span>
+                                        <span class="recap-detail-chevron" id="crop-detail-chevron">▼</span>
+                                    </button>
                                     <button class="chip-toggle active" id="btn-sync-crop" title="အပေါ်နှင့်အောက် တပြိုင်နက်ညှိမည်">
                                         <span class="chip-icon">🔗</span>
                                         <span class="chip-lbl" data-i18n="crop_sync_label">အပေါ်/အောက် တပြိုင်နက်</span>
                                     </button>
                                 </div>
-                                <div class="pill-group sm flex-wrap mt-2" id="recap-crop-presets">
-                                    <button class="pill-btn active" data-crop="full" data-i18n="crop_preset_full">📐 မူရင်း (0%)</button>
-                                    <button class="pill-btn" data-crop="cinema" data-i18n="crop_preset_cinema">🎞️ CinemaScope (12%)</button>
-                                    <button class="pill-btn" data-crop="side" data-i18n="crop_preset_side">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
-                                    <button class="pill-btn" data-crop="custom" data-i18n="crop_preset_custom">✂️ စိတ်ကြိုက်</button>
-                                </div>
+                                <div class="recap-detail-body hidden" id="recap-crop-detail">
                                 <div class="crop-sliders-grid mt-3">
                                     <div class="slider-group">
                                         <div class="slider-header">
@@ -980,30 +1033,60 @@
                                         <input type="range" min="0" max="30" value="0" class="studio-slider" id="slider-crop-right">
                                     </div>
                                 </div>
+                            </div><!-- /#recap-crop-detail -->
                             </div>
-
-                            <!-- 4. Font Size, Lines & Logo Position Selectors -->
-                            <div class="card glass mt-3">
-                                <div class="card-label">စာလုံးနှင့် Logo အသေးစိတ် (Subtitle & Logo Specs):</div>
-                                <div class="spec-col mt-3">
-                                    <span class="spec-lbl" data-i18n="recap_logo_pos_label">Logo နေရာ:</span>
-                                    <div class="pill-group sm" id="recap-logo-pos-picker">
-                                        <button class="pill-btn active" data-pos="top-right" data-i18n="pos_top_right">အပေါ် ညာ</button>
-                                        <button class="pill-btn" data-pos="top-left" data-i18n="pos_top_left">အပေါ် ဘယ်</button>
-                                        <button class="pill-btn" data-pos="bottom-right" data-i18n="pos_bottom_right">အောက် ညာ</button>
-                                        <button class="pill-btn" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</button>
-                                    </div>
+                    </section>
+                    <section class="recap-adv-section" id="recap-adv-section-speed">
+                            <!-- 2. Narration Story Style & Pacing -->
+                            <div class="recap-adv-group hidden" id="recap-preview-speed-group">
+                                <div class="card-label" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း (Narration Speed / Pacing):</div>
+                                <div class="pill-group sm flex-wrap" id="recap-speed-picker">
+                                    <button class="pill-btn" data-speed="+0%" data-i18n="speed_0">+0% ပုံမှန်</button>
+                                    <button class="pill-btn" data-speed="+8%" data-i18n="speed_8">+8% သွက်</button>
+                                    <button class="pill-btn active" data-speed="+12%" data-i18n="speed_12">+12% အကြံပြု 🔥</button>
+                                    <button class="pill-btn" data-speed="+18%" data-i18n="speed_18">+18% မြန်</button>
+                                    <button class="pill-btn" data-speed="+22%" data-i18n="speed_22">+22% အထူးမြန်</button>
                                 </div>
                             </div>
+                    </section>
+                    <section class="recap-adv-section" id="recap-adv-section-other">
+                                <div class="recap-adv-section-title" data-i18n="recap_adv_other_title">အခြား ဆက်တင်များ</div>
+<div class="pill-group sm mt-3" id="recap-lang-picker">
+                                    <span class="spec-lbl" data-i18n="recap_lang_label">မူရင်း ဗီဒီယို ဘာသာစကား:</span>
+                                    <button type="button" class="pill-btn active" data-lang="auto" data-i18n="recap_lang_auto">Auto</button>
+                                    <button type="button" class="pill-btn" data-lang="en" data-i18n="recap_lang_en">English</button>
+                                    <button type="button" class="pill-btn" data-lang="zh" data-i18n="recap_lang_zh">Chinese</button>
+                                    <button type="button" class="pill-btn" data-lang="ko" data-i18n="recap_lang_ko">Korean</button>
+                                    <button type="button" class="pill-btn" data-lang="th" data-i18n="recap_lang_th">Thai</button>
+                                    <button type="button" class="pill-btn" data-lang="ja" data-i18n="recap_lang_ja">Japanese</button>
+                                </div>
+<label class="script-review-row mt-3" for="recap-script-review-toggle">
+                                    <input type="checkbox" id="recap-script-review-toggle">
+                                    <span data-i18n="recap_script_review_label">📝 Script ကို အရင် စစ်ပြင်မယ် (အသံ မထုတ်ခင်)</span>
+                                </label>
+                                <label class="script-review-row mt-2" for="recap-split-toggle">
+                                    <input type="checkbox" id="recap-split-toggle">
+                                    <span data-i18n="recap_split_label">✂️ ဗီဒီယိုကို အပိုင်းခွဲ ထုတ်မယ် (အပိုင်း လိုက်ခွဲထားသော Part များ)</span>
+                                </label>
+                                <div class="pill-group sm hidden mt-2" id="recap-split-minutes-wrap">
+                                    <span class="spec-lbl" data-i18n="recap_split_minutes_label">တစ်ပိုင်း ကြာချိန်:</span>
+                                    <span id="recap-split-minutes-picker">
+                                        <button type="button" class="pill-btn" data-split-min="2" data-i18n="recap_split_min_2">2 မိနစ်</button>
+                                        <button type="button" class="pill-btn active" data-split-min="3" data-i18n="recap_split_min_3">3 မိနစ်</button>
+                                        <button type="button" class="pill-btn" data-split-min="5" data-i18n="recap_split_min_5">5 မိနစ်</button>
+                                    </span>
+                                </div>
+                                <p id="recap-split-cost-hint" class="hidden mt-2 recap-cost-hint"></p>
+                    </section>
                         </div>
                     </div>
 
                     <div class="recap-action-cta-wrap mt-3">
-                        <p class="rights-note mt-2" data-i18n="recap_rights_note" style="font-size:12px; opacity:0.85; text-align:left;">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ ဒီ App က အသံ အသစ်၊ ဘာသာပြန် Script နှင့် ပုံစံပြောင်း Render ဖြင့် ဗီဒီယိုကို ပြောင်းလဲပေးပါသည် — သို့သော် မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
                         <button class="btn gold-gradient-btn massive-btn" id="btn-start-recap">
     <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Pro Recap ဖန်တီးမည် (1 Credit)</span>
 </button>
                     </div>
+                    <p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ ဒီ App က အသံ အသစ်၊ ဘာသာပြန် Script နှင့် ပုံစံပြောင်း Render ဖြင့် ဗီဒီယိုကို ပြောင်းလဲပေးပါသည် — သို့သော် မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
 
                     <!-- ════ ⚙️ ADVANCED STUDIO SETTINGS ACCORDION ════ -->
 
@@ -2049,7 +2132,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261101_gv1"></script>
-    <script src="/static/js/app.js?v=20261101_gv1"></script>
+    <script src="/static/js/i18n.js?v=20261101_rt1"></script>
+    <script src="/static/js/app.js?v=20261101_rt1"></script>
 </body>
 </html>

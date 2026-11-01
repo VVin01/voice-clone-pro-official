@@ -464,6 +464,11 @@ function setupStickyCtas() {
         const src = document.getElementById(p.src);
         const btn = document.getElementById(p.btn);
         if (src) {
+            // Recap tidy-up: the in-flow recap button is a hidden mirror
+            // source only — the sticky bar is the one visible CTA. Done
+            // here (not in markup/CSS) so a no-IntersectionObserver
+            // WebView keeps the working in-flow button instead.
+            if (p.src === "btn-start-recap") src.classList.add("cta-source-hidden");
             io.observe(src);
             new MutationObserver(refreshStickyCtas).observe(src, { attributes: true, attributeFilter: ["disabled"] });
         }
@@ -1477,10 +1482,9 @@ async function playVoicePreview(voiceId, buttonEl) {
 }
 
 function previewSelectedRecapVoice() {
-    const sel = document.getElementById("recap-voice-select");
-    const btn = document.getElementById("btn-preview-recap-voice");
-    const voiceId = sel ? sel.value : "komin";
-    playVoicePreview(voiceId, btn);
+    // The all-voices <select> was removed (all 12 voices are cards now);
+    // kept as a thin wrapper over the current card selection.
+    playVoicePreview(state.recapVoice || "komin", null);
 }
 
 // ── Gemini TTS Voice Previews ──────────────────────────────────────
@@ -3297,11 +3301,21 @@ function setupRecapVisualEditor() {
                 thumbImg.id = "canvas-thumb-img";
                 thumbImg.className = "canvas-video-player hidden";
                 thumbImg.alt = "";
+                // A dead thumbnail URL must hide the element, never show
+                // the browser's broken-image glyph inside the canvas.
+                thumbImg.onerror = () => {
+                    thumbImg.dataset.failed = "1";
+                    thumbImg.classList.add("hidden");
+                    updateCanvasMockupVisuals();
+                };
+                thumbImg.onload = () => { delete thumbImg.dataset.failed; };
                 innerMovie.insertBefore(thumbImg, innerMovie.firstChild);
             }
 
             const backdropEl = document.getElementById("video-backdrop-blur");
+            const noThumbEl = document.getElementById("canvas-no-thumb");
             if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
+                if (noThumbEl) noThumbEl.classList.add("hidden");
                 innerMovie.style.backgroundImage = "none";
                 // Fill the letterbox area with a blurred copy of the source
                 // frame, like the real render's blurred fill. Without this
@@ -3325,13 +3339,15 @@ function setupRecapVisualEditor() {
                 canvasVideo.style.left = `${vidLeft.toFixed(3)}%`;
                 canvasVideo.style.top = `${vidTop.toFixed(3)}%`;
                 if (fillBadge) fillBadge.style.display = "none";
-            } else if (state.recapThumbnailUrl) {
+            } else if (state.recapThumbnailUrl && !(thumbImg && thumbImg.dataset.failed === "1")) {
+                if (noThumbEl) noThumbEl.classList.add("hidden");
                 if (backdropEl) backdropEl.classList.remove("on");
                 canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
                 canvas.style.backgroundSize = "cover";
                 canvas.style.backgroundPosition = "center";
                 innerMovie.style.backgroundImage = "none";
                 if (thumbImg) {
+                    if (thumbImg.getAttribute("src") !== state.recapThumbnailUrl) delete thumbImg.dataset.failed;
                     thumbImg.src = state.recapThumbnailUrl;
                     thumbImg.classList.remove("hidden");
                     thumbImg.style.display = "block";
@@ -3347,7 +3363,18 @@ function setupRecapVisualEditor() {
                 canvas.style.backgroundImage = "";
                 innerMovie.style.backgroundImage = "";
                 if (thumbImg) thumbImg.classList.add("hidden");
-                if (fillBadge) fillBadge.style.display = "";
+                // No media at all: collapse the letterbox strip geometry
+                // (its box-shadow drew seam/edge lines on the empty
+                // canvas in every ratio) and show the designed
+                // no-thumbnail placeholder over the gradient surface.
+                innerMovie.style.width = "100%";
+                innerMovie.style.height = "100%";
+                innerMovie.style.top = "0%";
+                innerMovie.style.left = "0%";
+                innerMovie.style.boxShadow = "none";
+                if (fillBadge) fillBadge.style.display = "none";
+                const noThumb = document.getElementById("canvas-no-thumb");
+                if (noThumb) noThumb.classList.remove("hidden");
             }
         }
         syncBlurBoxVisual();
@@ -3576,6 +3603,8 @@ function setupRecapVisualEditor() {
             state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
             const gv = document.getElementById("recap-gemini-voice-wrap");
             if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
+            const pa = document.getElementById("recap-persona-area");
+            if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
         });
     });
     const geminiVoiceSel = document.getElementById("recap-gemini-voice-select");
@@ -3709,7 +3738,7 @@ function setupRecapVisualEditor() {
         if (lines === 1) {
             previewBox.classList.remove("two-lines");
             previewBox.classList.add("one-line");
-            previewText.innerHTML = '"အခုတော့ အစီအစဉ် စတင်ပါပြီ..."';
+            previewText.innerHTML = t("sub_sample_text");
             // NOT nowrap: with nowrap the one-line line-clamp can never
             // engage, and a long sample (e.g. the i18n subtitle sample
             // applied by setLanguage) overflows the bar and hard-clips at
@@ -3720,7 +3749,7 @@ function setupRecapVisualEditor() {
         } else {
             previewBox.classList.remove("one-line");
             previewBox.classList.add("two-lines");
-            previewText.innerHTML = '"အခုတော့ ကျွန်တော်တို့ရဲ့<br>အစီအစဉ် စတင်ပါပြီ..."';
+            previewText.innerHTML = t("sub_sample_text");
             previewText.style.whiteSpace = "normal";
             previewText.style.lineHeight = "1.8";
         }
@@ -3947,30 +3976,18 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // Wire up Voice Cards in Step 2
-    const voiceCards = document.querySelectorAll("#recap-top-voices .voice-card");
-    const voiceSelect = document.getElementById("recap-voice-select");
+    // Wire up Voice Cards (top-4 grid + the all-12 grid in the expander
+    // render the SAME 12 voices as cards; one handler keeps both grids'
+    // active states in sync — there is no second <select> picker).
+    const voiceCards = document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card");
     voiceCards.forEach(card => {
         card.addEventListener("click", () => {
             haptic("selection");
             const voice = card.getAttribute("data-voice");
-            voiceCards.forEach(c => c.classList.remove("active"));
-            card.classList.add("active");
             state.recapVoice = voice;
-            if (voiceSelect) voiceSelect.value = voice;
+            voiceCards.forEach(c => c.classList.toggle("active", c.getAttribute("data-voice") === voice));
         });
     });
-
-    if (voiceSelect) {
-        voiceSelect.addEventListener("change", (e) => {
-            const v = e.target.value;
-            state.recapVoice = v;
-            voiceCards.forEach(c => {
-                if (c.getAttribute("data-voice") === v) c.classList.add("active");
-                else c.classList.remove("active");
-            });
-        });
-    }
 
     // 15. 1-Click Recap Action
     const btnRecap = document.getElementById("btn-start-recap");
@@ -4134,6 +4151,14 @@ window.toggleSectionAccordion = function(btn) {
     if (!wrap) return;
     const body = wrap.querySelector(".advanced-accordion-body");
     const chevron = btn.querySelector(".accordion-chevron");
+    if (!body) return;
+    const isHidden = body.classList.toggle("hidden");
+    if (chevron) chevron.innerText = isHidden ? "▼" : "▲";
+};
+
+window.toggleRecapCropDetail = function() {
+    const body = document.getElementById("recap-crop-detail");
+    const chevron = document.getElementById("crop-detail-chevron");
     if (!body) return;
     const isHidden = body.classList.toggle("hidden");
     if (chevron) chevron.innerText = isHidden ? "▼" : "▲";

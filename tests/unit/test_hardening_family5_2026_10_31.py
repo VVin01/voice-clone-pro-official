@@ -82,9 +82,11 @@ def test_asset_versions_bumped_for_fix_release():
         assert "20261030_release_v1" not in ref, ref
         assert "20261030_release_v2" not in ref, ref
         # 25th-release supersession: the token moved vx1 (23rd) -> r6 (round-6 batch).
-        # Gemini-voice-preview supersession: r6 -> gv1 (this feature
+        # Gemini-voice-preview supersession: r6 -> gv1 (that feature
         # changed index.html / app.js / style.css and added statics).
-        assert "?v=20261101_gv1" in ref, ref
+        # Recap-tab-tidy supersession: gv1 -> rt1 (this tidy changed
+        # index.html / app.js / i18n.js / style.css).
+        assert "?v=20261101_rt1" in ref, ref
     # The two scripts whose bytes changed must be on the new token.
-    assert "/static/js/app.js?v=20261101_gv1" in html
-    assert "/static/js/i18n.js?v=20261101_gv1" in html
+    assert "/static/js/app.js?v=20261101_rt1" in html
+    assert "/static/js/i18n.js?v=20261101_rt1" in html

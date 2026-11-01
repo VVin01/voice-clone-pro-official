@@ -63,10 +63,13 @@ def test_toolbar_group_starts_hidden_but_other_settings_do_not():
     group_tag = html.split('id="recap-preview-controls-group"')[0].rsplit("<div", 1)[1]
     assert "hidden" in group_tag
     # Non-preview settings stay reachable without a source: the language
-    # picker group must NOT be swept into the hidden set.
+    # picker group must NOT be swept into the hidden set. (Recap tidy-up:
+    # the picker now sits flattened in the Advanced "Other" section —
+    # no nested card — and is still not preview-gated.)
     assert 'id="recap-lang-picker"' in html
-    lang_card = html.split('id="recap-lang-picker"')[0].rsplit('class="card glass settings-group', 1)[1]
-    assert 'recap-preview-controls-group' not in lang_card
+    lang_wrap = html.split('id="recap-lang-picker"')[0].rsplit('<section', 1)[1]
+    assert 'recap-adv-section-other' in lang_wrap
+    assert "hidden" not in lang_wrap
 
 
 def test_state_machine_toggles_all_preview_surfaces():
@@ -134,7 +137,10 @@ def test_ratio_speed_transform_cards_start_hidden():
     assert 'id="recap-speed-picker"' in speed_card
     transform_card = html.split('id="recap-preview-transform-group"')[1][:6000]
     assert 'id="btn-toggle-mirror"' in transform_card
-    assert 'id="recap-crop-presets"' in transform_card
+    # Recap tidy-up dedupe: the Advanced crop-presets duplicate is gone;
+    # the single surviving set lives in the canvas toolbar.
+    assert 'id="recap-crop-presets"' not in html
+    assert 'id="recap-crop-presets-toolbar"' in html
 
 
 def test_state_machine_toggles_ratio_speed_transform_cards():

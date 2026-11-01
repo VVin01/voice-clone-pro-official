@@ -775,7 +775,7 @@ select.studio-input { min-height: 50px; }
 .upload-hint { font-size: 12px; color: var(--text-3); line-height: 1.55; }
 .upload-error-box { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s2) var(--s3); border-radius: var(--r-md); background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); }
 .upload-error-box .mini-chip { align-self: flex-start; }
-.upload-error-text { font-size: 13px; font-weight: 600; color: #f87171; line-height: 1.55; }
+.upload-error-text { font-size: 13px; font-weight: 600; color: var(--red); line-height: 1.55; }
 .video-info-card {
     display: flex; gap: var(--s3); align-items: center;
     background: var(--surface-2); border: 1px solid var(--border);
@@ -2623,3 +2623,226 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .picker-chevron { font-size: 15px; color: var(--text-2); transition: transform .18s ease; }
 .persona-picker-card.picker-collapsed #curated-personas-card { display: none; }
 .persona-picker-card:not(.picker-collapsed) .picker-chevron { transform: rotate(180deg); }
+
+/* ════════════════════════════════════════════════════════════════════
+   RECAP TAB TIDY (2026-11-01 — owner's premium/hierarchy directive)
+   One calm 3-step path (Source → Preview docked with it → Voice),
+   everything else behind labeled, collapsed, hairline-divided groups.
+   Presentation only: no control, id, or submitted value changes.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* B3 — sticky header/ADMIN bar: near-opaque glass, no ghosting. */
+.top-nav {
+    background: rgba(255, 255, 255, 0.97);
+    backdrop-filter: blur(26px) saturate(1.6);
+    -webkit-backdrop-filter: blur(26px) saturate(1.6);
+}
+
+/* AGY-4 — type scale: section landmarks are never smaller than body. */
+.recap-step-card .step-title { font-size: 15.5px; }
+.accordion-title { font-size: 15.5px; }
+#tab-recap .card-label, #tab-recap .recap-adv-section-title {
+    font-size: 14px; font-weight: 700; color: var(--text);
+}
+/* Legible floor for recap micro-labels (were 10.5–11px). */
+#tab-recap .mini-tag { font-size: 12px; }
+.preview-blur-box .blur-label { font-size: 12px; }
+.preview-logo-watermark { font-size: 12px; }
+.mockup-orig-sub { font-size: 12px; }
+
+/* E2 — Step-1 tutorial pill sits on its own quiet row under the title. */
+.step1-tut-row { display: flex; margin-top: var(--s2); }
+#recap-step1-tut-btn { max-width: 100%; }
+
+/* B2 — the sticky bar is the single Recap CTA: the tab keeps enough
+   bottom room that the bar + dock never sit on top of content. */
+#tab-recap { padding-bottom: 120px; }
+.cta-source-hidden { display: none !important; }
+
+/* Quiet, uniform labels inside the Recap tab. */
+#tab-recap .spec-lbl, #tab-recap .style-lbl {
+    font-size: 13px; font-weight: 600; color: var(--text-2);
+}
+
+/* ── Step 3: engine + Gemini select (B1/B4 — full width, nothing clips) */
+.recap-engine-row { display: flex; width: 100%; margin-top: var(--s3); }
+.recap-gemini-wrap { display: flex; flex-direction: column; gap: var(--s2); }
+.recap-gemini-select { width: 100%; min-width: 0; }
+.recap-auto-hint { font-size: 12px; line-height: 1.7; color: var(--text-3); }
+.recap-gemini-wrap .preview-recap-voice-btn { align-self: flex-start; }
+
+/* One preview-button anatomy across the tab (C2 single icon comes from
+   the label copy no longer carrying its own speaker glyph). */
+.preview-recap-voice-btn { border-radius: 999px; min-height: 44px; }
+
+/* ── Uniform pill groups (C1/C5/C9/C10): one component, even tiles.
+   Buttons grow to fill their row, so Burmese and EN render the same
+   systematic grid instead of ragged one-per-row stacks. */
+#story-style-picker-quick .style-select-pill,
+#recap-lang-picker .pill-btn,
+#recap-crop-presets-toolbar .pill-btn,
+#sub-style-picker .style-chip,
+#recap-logo-pos-picker .pill-btn,
+#recap-fill-picker .pill-btn,
+#recap-speed-picker .pill-btn {
+    flex: 1 1 42%; min-width: 0; white-space: normal; text-align: center;
+    display: inline-flex; align-items: center; justify-content: center;
+    line-height: 1.6;
+}
+#recap-quality-picker .pill-btn,
+#recap-sub-font-picker .pill-btn,
+#sub-lines-picker-toolbar .pill-btn,
+#font-size-picker-toolbar .pill-btn,
+#recap-split-minutes-picker .pill-btn,
+#recap-zoom-picker .pill-btn {
+    flex: 1 1 26%; min-width: 0; white-space: normal; text-align: center;
+    display: inline-flex; align-items: center; justify-content: center;
+    line-height: 1.6;
+}
+#recap-split-minutes-picker { display: flex; flex-wrap: wrap; gap: var(--s1); flex: 1; min-width: 0; }
+#recap-split-minutes-wrap { display: flex; flex-wrap: wrap; align-items: center; }
+#recap-engine-picker .pill-btn {
+    flex: 1 1 42%; min-width: 0; white-space: normal; text-align: center;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* C8 — ratio cards shrink to compact pills in their docked home. */
+.ratio-pills-grid { grid-template-columns: 1fr 1fr; gap: var(--s2); }
+.ratio-btn { min-height: 44px; padding: 6px 10px; border-radius: 999px; justify-content: center; }
+.ratio-btn .ratio-icon { display: none; }
+
+/* ── Docked canvas sections (AGY-2): hairline-divided, no nested cards */
+.recap-dock-section { border-top: 1px solid var(--divider); padding-top: var(--s3); margin-top: var(--s3); }
+
+/* D1/D4 — designed no-thumbnail canvas surface. */
+.canvas-no-thumb {
+    position: absolute; inset: 0; z-index: 3;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--s2); text-align: center; padding: var(--s4); pointer-events: none;
+}
+.canvas-no-thumb-icon { font-size: 34px; opacity: 0.9; }
+.canvas-no-thumb-text { font-size: 12.5px; font-weight: 600; line-height: 1.7; color: rgba(255, 255, 255, 0.85); max-width: 210px; }
+/* The drag boxes stay inside the frame in every ratio. */
+.draggable-box { max-width: 92%; box-sizing: border-box; }
+
+/* D5 — checking state: subtle progress shimmer under the title. */
+.preview-progress-shimmer {
+    width: 150px; height: 5px; border-radius: 999px; overflow: hidden;
+    background: var(--surface-3); position: relative; display: block;
+}
+.preview-progress-shimmer::after {
+    content: ""; position: absolute; inset: 0; width: 40%;
+    border-radius: 999px; background: var(--gold);
+    animation: previewShimmer 1.3s ease-in-out infinite alternate;
+}
+@keyframes previewShimmer { from { left: 0; } to { left: 60%; } }
+
+/* AGY-4 — empty state contrast on the light background. */
+.preview-empty-state { background: var(--surface-2); border-color: var(--border-strong); }
+.preview-empty-desc { opacity: 1; color: var(--text-2); }
+
+/* AGY-4 — canvas frame shadow joins the ambient tinted family. */
+.mockup-screen { box-shadow: 0 14px 34px rgba(70, 110, 160, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+/* Radii: recap cards use the token scale (was a hardcoded 20px). */
+#tab-recap .voice-card { border-radius: var(--r-md); }
+
+/* ── Advanced: flattened, labeled, hairline-divided (AGY-1) ───────── */
+.advanced-accordion-body { gap: 0; }
+.recap-adv-section { padding: var(--s4) 0; }
+.recap-adv-section + .recap-adv-section { border-top: 1px solid var(--divider); }
+.recap-adv-section:first-child { padding-top: var(--s2); }
+.recap-adv-section-title { margin-bottom: var(--s2); }
+.recap-adv-group { display: flex; flex-direction: column; }
+.recap-adv-group.hidden { display: none; }
+
+/* Nested fine-control expander (crop sliders live one level deeper). */
+.recap-detail-toggle {
+    display: inline-flex; align-items: center; gap: var(--s2);
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--text); font: inherit; text-align: left; min-width: 0;
+}
+.recap-detail-toggle .recap-detail-chevron { color: var(--text-3); font-size: 12px; }
+.recap-detail-body { margin-top: var(--s2); }
+.recap-detail-body.hidden { display: none; }
+
+/* ── ONE switch component (C4/C6): checkbox rows, mirror, Mask toggles.
+   Track 40×22, knob 16, accent = the app blue; label left, switch right. */
+.script-review-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--s3); min-height: 48px; padding: 8px 12px;
+}
+.script-review-row > span { flex: 1; min-width: 0; }
+.script-review-row input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 40px; height: 22px; flex: 0 0 auto; order: 2;
+    border-radius: 999px; background: var(--surface-3);
+    border: 1px solid var(--border-strong); position: relative;
+    cursor: pointer; transition: background 0.18s ease; margin: 0;
+}
+.script-review-row input[type="checkbox"]::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(22, 40, 60, 0.35);
+    transition: left 0.18s ease;
+}
+.script-review-row input[type="checkbox"]:checked { background: var(--gold); border-color: var(--gold-border); }
+.script-review-row input[type="checkbox"]:checked::after { left: 20px; }
+
+.toggle-pill-btn {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--s3); width: 100%; min-height: 48px; padding: 8px 12px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--r-md); color: var(--text-2);
+}
+.toggle-pill-btn.active { background: var(--gold-soft); color: var(--gold-2); border-color: var(--gold-border); }
+.switch-track {
+    width: 40px; height: 22px; flex: 0 0 auto; border-radius: 999px;
+    background: var(--surface-3); border: 1px solid var(--border-strong);
+    position: relative; transition: background 0.18s ease;
+}
+.switch-track::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(22, 40, 60, 0.35);
+    transition: left 0.18s ease;
+}
+.toggle-pill-btn.active .switch-track { background: var(--gold); border-color: var(--gold-border); }
+.toggle-pill-btn.active .switch-track::after { left: 20px; }
+/* Mask-tab toggles: uniform rows — label left, switch right (C3).
+   The .t-val span itself renders as the switch track (its ON/OFF text
+   stays in the DOM for state/i18n but is not painted). */
+.overlays-toggle-row { flex-direction: column; flex-wrap: nowrap; }
+.overlays-toggle-row .mini-toggle {
+    flex: 1 1 auto; width: 100%; min-height: 44px;
+    justify-content: space-between; padding: 8px 12px;
+}
+.mini-toggle .t-val {
+    width: 34px; height: 20px; flex: 0 0 auto; border-radius: 999px;
+    background: var(--surface-3); border: 1px solid var(--border-strong);
+    position: relative; font-size: 0; color: transparent; overflow: hidden;
+    transition: background 0.18s ease;
+}
+.mini-toggle .t-val::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(22, 40, 60, 0.35);
+    transition: left 0.18s ease;
+}
+.mini-toggle.active .t-val { background: var(--gold); border-color: var(--gold-border); }
+.mini-toggle.active .t-val::after { left: 16px; }
+
+/* E3 — copyright copy: small muted note below the CTA area. */
+.recap-rights-note {
+    font-size: 12px; line-height: 1.7; color: var(--text-3);
+    opacity: 0.85; text-align: left; margin-top: var(--s3);
+}
+.recap-cost-hint { font-size: 12px; opacity: 0.9; }
+
+/* Subtitle sample on the canvas: soft shadow, no hard black quad. */
+.preview-sub-box .preview-sub-text { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55); }
+
+/* AGY-4 — slider thumbs lose the dark-theme black rim; blur box gets
+   the glass specular highlight like every other frosted surface. */
+.studio-slider::-webkit-slider-thumb { border-color: #ffffff; }
+.studio-slider::-moz-range-thumb { border-color: #ffffff; }
+.preview-blur-box { box-shadow: var(--glass-hi); }
