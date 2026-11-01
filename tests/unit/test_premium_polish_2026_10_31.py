@@ -186,8 +186,10 @@ def test_t2_home_tutorials_list_covers_all_ten():
         assert f"openTutorialVideo('{key}')" in INDEX_HTML, key
     # 10 tutorial rows + 2 start-creating rows share the row pattern;
     # round-6 P2 adds ONE more home-tut-row: the Support contact row
-    # inside the new Refer & Support card.
-    assert INDEX_HTML.count('class="home-tut-row"') == 13
+    # inside the new Refer & Support card. Full-app polish (2026-11-01)
+    # adds TWO more: the Downloader + History rows of Home's new
+    # Tools / Library card (they replaced the bottom-nav entries).
+    assert INDEX_HTML.count('class="home-tut-row"') == 15
 
 
 def test_t3_studio_banners_removed_originals_kept():
@@ -220,8 +222,10 @@ def test_t4_no_stale_16_and_dead_code_removed():
 def test_home_tab_is_first_nav_and_landing_pane():
     nav_block = INDEX_HTML.split('<nav class="bottom-nav">')[1].split("</nav>")[0]
     order = re.findall(r'data-tab="(tab-[a-z]+)"', nav_block)
-    assert order == ["tab-home", "tab-voice", "tab-recap", "tab-downloader",
-                     "tab-vip", "tab-history", "tab-admin"]
+    # 2026-11-01 nav restructure (owner decision): Downloader + History
+    # left the dock for Home's Tools / Library section — 4 user tabs,
+    # 5 for admin. Their panes and entry points are unchanged.
+    assert order == ["tab-home", "tab-voice", "tab-recap", "tab-vip", "tab-admin"]
     # Home is the landing pane; Voice stays directly selectable.
     assert '<section id="tab-home" class="tab-pane active">' in INDEX_HTML
     assert '<section id="tab-voice" class="tab-pane">' in INDEX_HTML

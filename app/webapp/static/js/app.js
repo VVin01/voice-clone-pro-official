@@ -1069,6 +1069,15 @@ function switchTab(tabId) {
     if (targetBtn) {
         navButtons.forEach(b => b.classList.remove("active"));
         targetBtn.classList.add("active");
+    } else {
+        // Panes without a dock button of their own (Downloader / History
+        // live under Home's Tools / Library section now) keep Home lit,
+        // so the dock always shows where the user is.
+        const homeBtn = document.querySelector('.nav-item[data-tab="tab-home"]');
+        if (homeBtn) {
+            navButtons.forEach(b => b.classList.remove("active"));
+            homeBtn.classList.add("active");
+        }
     }
     document.querySelectorAll(".tab-pane").forEach(pane => {
         pane.classList.remove("active");
@@ -5703,17 +5712,70 @@ function _adminRequireBanReason() {
 }
 
 function admUserRowHtml(u) {
-    const initial = escapeHtml((u.first_name || "?").trim().charAt(0).toUpperCase() || "?");
+    // First grapheme, not charAt(0): names starting with an emoji or a
+    // combining stack otherwise render a blank/broken avatar initial.
+    const initial = escapeHtml((Array.from((u.first_name || "?").trim())[0] || "?").toUpperCase());
     const balFmt = Math.floor((u.balance_seconds || 0) / 60) + "m";
+    // Two-line row (full-app audit A-3/A-4/A-6): line 1 is the name
+    // (the only part allowed to ellipsize) beside badges that always
+    // render in full; line 2 carries @username + the ID/usage sub-line.
     return `<div class="adm-user-row adm-tap" onclick="openAdminUserDetail(${u.id})">
         <div class="adm-avatar">${initial}</div>
         <div class="adm-user-main">
-            <div class="adm-user-name">${escapeHtml(u.first_name || "-")}${u.username ? ` (@${escapeHtml(u.username)})` : ""} <span class="badge-status ${u.is_banned ? "blocked" : "active"}">${u.is_banned ? "BLOCKED" : "ACTIVE"}</span></div>
-            <div class="adm-user-sub">ID: ${u.id} \u2022 ${escapeHtml(u.account_category || "FREE")} \u2022 \u23f1 ${balFmt} \u2022 \ud83c\udfac ${u.recap_credits ?? 0}${u.is_banned ? " \u2022 \ud83d\udeab" : ""}</div>
+            <div class="adm-user-line1">
+                <span class="adm-user-name">${escapeHtml(u.first_name || "-")}</span>
+                ${u.account_category === "PURCHASED" ? `<span class="badge-vip">👑 VIP</span>` : ""}
+                <span class="badge-status ${u.is_banned ? "blocked" : "active"}">${u.is_banned ? "BLOCKED" : "ACTIVE"}</span>
+            </div>
+            <div class="adm-user-sub">${u.username ? `@${escapeHtml(u.username)} \u2022 ` : ""}ID: ${u.id} \u2022 ${escapeHtml(u.account_category || "FREE")} \u2022 \u23f1 ${balFmt} \u2022 \ud83c\udfac ${u.recap_credits ?? 0}${u.is_banned ? " \u2022 \ud83d\udeab" : ""}</div>
         </div>
         <span class="adm-row-chev">\u203a</span>
     </div>`;
 }
+
+// ── Admin Users list state (A-6): category filter + offset paging ──
+// The filter is applied SERVER-side via the endpoint's category param
+// (187+ users — filtering one fetched page client-side would lie).
+let admUsersCategory = "";   // "" | "FREE" | "PURCHASED"
+let admUsersOffset = 0;
+const ADM_USERS_PAGE = 20;
+
+function admUsersCategoryParam() {
+    return admUsersCategory ? `&category=${encodeURIComponent(admUsersCategory)}` : "";
+}
+
+function syncAdminUsersChips() {
+    document.querySelectorAll(".adm-users-filter-chip").forEach(c => {
+        c.classList.toggle("active", (c.getAttribute("data-cat") || "") === admUsersCategory);
+    });
+}
+
+function setAdminUsersCategory(cat) {
+    admUsersCategory = cat || "";
+    admUsersOffset = 0;
+    syncAdminUsersChips();
+    loadAdminUsersRecent();
+    // An on-screen search re-runs under the same filter.
+    const qEl = document.getElementById("adm-user-search-q");
+    if (qEl && qEl.value.trim().length >= 2) adminSearchUsers();
+}
+window.setAdminUsersCategory = setAdminUsersCategory;
+
+function loadMoreAdminUsers() {
+    admUsersOffset += ADM_USERS_PAGE;
+    loadAdminUsersRecent(true);
+}
+window.loadMoreAdminUsers = loadMoreAdminUsers;
+
+// Overview's VIP stat card: land on Users with the Paid filter active.
+function openAdminUsersPaid() {
+    admUsersCategory = "PURCHASED";
+    admUsersOffset = 0;
+    syncAdminUsersChips();
+    showAdminSection("users");
+    loadAdminUsersRecent();
+}
+window.openAdminUsersPaid = openAdminUsersPaid;
 
 async function adminSearchUsers() {
     const qEl = document.getElementById("adm-user-search-q");
@@ -5722,7 +5784,7 @@ async function adminSearchUsers() {
     if (q.length < 2) { showStudioToast(t("admin_search_short"), "warning"); return; }
     admStateLoading(box);
     try {
-        const res = await fetchWithTimeout(`/api/admin/users/search?q=${encodeURIComponent(q)}`, { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout(`/api/admin/users/search?q=${encodeURIComponent(q)}${admUsersCategoryParam()}`, { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Search failed");
         if (!box) return;
@@ -5734,17 +5796,32 @@ async function adminSearchUsers() {
 }
 window.adminSearchUsers = adminSearchUsers;
 
-async function loadAdminUsersRecent() {
+async function loadAdminUsersRecent(append = false) {
     const box = document.getElementById("admin-users-recent");
     if (!box) return;
-    admStateLoading(box);
+    const moreBtn = document.getElementById("adm-users-load-more");
+    if (!append) {
+        admUsersOffset = 0;
+        admStateLoading(box);
+        if (moreBtn) moreBtn.classList.add("hidden");
+    }
     try {
-        const res = await fetchWithTimeout("/api/admin/users?limit=20", { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout(`/api/admin/users?limit=${ADM_USERS_PAGE}&offset=${admUsersOffset}${admUsersCategoryParam()}`, { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
-        if (!data.users.length) { admStateEmpty(box, "admin_empty"); return; }
-        box.innerHTML = data.users.map(admUserRowHtml).join("");
+        if (!data.users.length) {
+            if (append) { if (moreBtn) moreBtn.classList.add("hidden"); return; }
+            admStateEmpty(box, "admin_empty");
+            return;
+        }
+        const rowsHtml = data.users.map(admUserRowHtml).join("");
+        if (append) box.insertAdjacentHTML("beforeend", rowsHtml);
+        else box.innerHTML = rowsHtml;
+        // More pages exist while the server reports un-fetched rows.
+        const total = typeof data.total === "number" ? data.total : admUsersOffset + data.users.length;
+        if (moreBtn) moreBtn.classList.toggle("hidden", admUsersOffset + data.users.length >= total);
     } catch (e) {
+        if (append) { showStudioToast(t("admin_load_error"), "error"); return; }
         admStateError(box, "loadAdminUsersRecent()");
     }
 }

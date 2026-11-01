@@ -2881,3 +2881,123 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     display: block; position: absolute; bottom: calc(100% + 1px); left: 50%;
     transform: translateX(-50%); line-height: 1.1;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   FULL-APP POLISH (2026-11-01) — closes the full-app audit's fixable
+   findings (fix/full-app-polish). Presentation rules; the matching
+   markup/JS changes are noted per item.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* NAV — the dock now carries 4 destinations (5 for admin): Downloader
+   and History moved into Home's Tools / Library card (owner decision
+   2026-11-01). Items are equal-flex, so the labels simply gain room. */
+
+/* G-1 — text ghosting under the floating dock at max scroll: the pill
+   goes near-opaque and a page-tone scrim fades content out behind it
+   (under the dock z-200 and the sticky CTA z-60, above flow content;
+   the max-scroll bottom clearance is unchanged). */
+.bottom-nav { background: rgba(255, 255, 255, 0.97); }
+.nav-scrim {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 108px;
+    background: linear-gradient(to top, rgba(220, 235, 247, 0.95) 26%, rgba(220, 235, 247, 0));
+    pointer-events: none; z-index: 40;
+}
+
+/* G-3 — multi-word headings read gappy at the display weight; pull
+   the tracking in slightly on the shared heading classes. */
+.card-label, .step-title, .pane-header h2 { letter-spacing: -0.2px; }
+
+/* H-1/H-2 — Refer card: the link gets its own wrapping box (full URL
+   readable, break-all at a smaller size) and the two actions become
+   wide one-line pills instead of squeezed circles. */
+.ref-link-row { display: block; }
+.ref-link-text {
+    display: block; white-space: normal; overflow: visible; text-overflow: clip;
+    word-break: break-all; font-size: 12px; line-height: 1.6;
+    background: var(--inset); border: 1px solid var(--border);
+    border-radius: var(--r-sm); padding: 8px 10px;
+}
+.ref-actions { display: flex; gap: var(--s2); margin-top: var(--s2); }
+.ref-actions .mini-chip {
+    flex: 1; justify-content: center; min-height: 42px;
+    font-size: 13.5px; white-space: nowrap;
+}
+
+/* V-1 — the speed label keeps its natural width; the row wraps as a
+   whole (label above the selector) instead of breaking the word. */
+.control-row .ctrl-title { flex: none; white-space: nowrap; }
+
+/* V-3 — persona preview button: icon + label stay on one line as one
+   centred group; descriptions balance instead of orphaning a syllable. */
+.voice-preview-btn { flex-wrap: nowrap; }
+.voice-preview-btn .preview-btn-label { white-space: nowrap; }
+.persona-desc { text-wrap: balance; }
+
+/* R-2 — Micro-Zoom pills: natural one-line tiles (the uniform-tile
+   rule above stretched them to a 26% basis with wrapping text, which
+   dropped the 🔥 onto a second line and grew the selected pill). */
+#recap-zoom-picker { align-items: stretch; }
+#recap-zoom-picker .pill-btn {
+    flex: 0 1 auto; white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* D-1 — downloader meta line: separators are generated only between
+   non-empty parts, and travel with their part when the line wraps —
+   no dangling "•" (the hardcoded separator spans left the markup). */
+.dl-meta-row > span:empty { display: none; }
+.dl-meta-row > span:not(:empty) ~ span:not(:empty)::before {
+    content: "•"; margin-right: 6px; color: var(--text-3);
+}
+
+/* Y-1/Y-2 — History rows: titles may use three lines before the clamp
+   (typical titles lose nothing), and the meta line wraps instead of
+   cutting off at one line. */
+.hub-row-title { -webkit-line-clamp: 3; }
+.hub-row-meta {
+    white-space: normal; overflow: visible; text-overflow: clip;
+    overflow-wrap: anywhere;
+}
+
+/* A-1 — admin sub-nav: every section visible at once as a wrapped
+   chip row; the scroll-strip fade mask goes with the scrolling. */
+.adm-nav {
+    flex-wrap: wrap; overflow-x: visible; overflow-y: visible;
+    -webkit-mask-image: none; mask-image: none;
+    border-radius: var(--r-lg);
+}
+
+/* A-2 — queue status filters: same wrap treatment, scoped to the one
+   strip (the engine select keeps its own row in the column bar). */
+#adm-screen-jobs #queue-status-filters {
+    flex-wrap: wrap; overflow-x: visible; overflow-y: visible;
+    -webkit-mask-image: none; mask-image: none;
+}
+
+/* A-3/A-4/A-6 — admin user rows: two lines. Line 1 = name (the only
+   ellipsising part) + badges with flex:none so ACTIVE/BLOCKED and the
+   👑 VIP badge always render in full; line 2 = @username + sub-line,
+   allowed to wrap rather than clip. */
+.adm-user-line1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.adm-user-name {
+    flex: 0 1 auto; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.adm-user-line1 .badge-status { flex: none; }
+.badge-vip {
+    flex: none; white-space: nowrap;
+    font-size: 10.5px; font-weight: 800; line-height: 1.5;
+    color: var(--gold-2); background: var(--gold-soft);
+    border: 1px solid var(--gold-border); border-radius: 999px;
+    padding: 1px 7px;
+}
+.adm-user-sub {
+    white-space: normal; overflow: visible; text-overflow: clip;
+    overflow-wrap: anywhere; line-height: 1.55;
+}
+
+/* A-6 — category filter chips + Load-more for the Users list (the
+   filter itself is server-side; see api.py / app.js). */
+.adm-users-filter-row { margin-top: var(--s3); }
+.adm-users-filter-chip { white-space: nowrap; }
+#adm-users-load-more { width: 100%; margin-top: var(--s3); min-height: 44px; }
