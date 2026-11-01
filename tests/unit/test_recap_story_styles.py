@@ -173,3 +173,36 @@ def test_standard_prompt_has_variety_rule(monkeypatch):
     assert "VARY SENTENCE OPENINGS" in prompt
     # Example connectives use the standard form 'အဲဒီ'.
     assert "အဲဒီနောက်" in prompt
+
+
+@pytest.mark.parametrize("style", ["viral", "funny", "pov", "dramatic", "narrator", "standard"])
+def test_spelling_word_choice_discipline_for_all_styles(monkeypatch, style):
+    # Owner verdict on jobs rc_1793525723 + rc_1793526555 (2026-11-01): wrong
+    # Burmese spelling/word choice and a mechanical, flat-feeling script.
+    # The discipline block is shared, so it must ride in every style's prompt.
+    prompt = _capture_prompt(monkeypatch, style)
+    # The malformed 'တကြီး' adverb family is banned as a spelling rule.
+    assert "NEVER the malformed 'တကြီး' adverb family" in prompt
+    assert "'အံ့ဩတကြီး'" in prompt and "'စိုးရိမ်တကြီး'" in prompt
+    # Foreign names: ONE natural, consistent form; no invented clusters.
+    assert "FOREIGN PROPER NAMES" in prompt
+    assert "NEVER 'လို့စ်' for Lois" in prompt
+    assert "two different spellings in the same story" in prompt
+    # Things called by their true names; natural constructions only.
+    assert "CALL THINGS WHAT THEY ARE" in prompt
+    assert "'အန္တရာယ်ကြားဆီ ရောက်သွားတယ်'" in prompt
+    assert "'နင်းခြေတာခံရတော့မှာ'" in prompt
+    # Anti-monotony: endings + rhythm vary — liveliness starts in the script.
+    assert "VARY SENTENCE ENDINGS & RHYTHM" in prompt
+    assert "'…ခဲ့ပါတယ်'" in prompt
+
+
+@pytest.mark.parametrize("style", ["viral", "funny", "pov", "dramatic", "narrator", "standard"])
+def test_audit_checks_spelling_discipline_for_all_styles(monkeypatch, style):
+    # The auditor must be able to repair the same defect classes the writer
+    # prompt forbids (owner verdict, jobs rc_1793525723 + rc_1793526555).
+    prompt = _capture_audit_prompt(monkeypatch, style)
+    assert "spelling & word-choice discipline" in prompt
+    assert "'လို့စ်'" in prompt
+    assert "'စက်ရုပ်', never 'သရဲ'" in prompt
+
