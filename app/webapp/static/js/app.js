@@ -1140,9 +1140,26 @@ async function playVoicePreview(voiceId, buttonEl) {
     // pattern as fetchAuthImageUrl for protected images.
     const seq = ++previewFetchSeq;
     const audioUrl = `/api/voices/sample/${encodeURIComponent(voiceId)}`;
+    // Loading state NOW (upload-ux pass): the authenticated blob fetch
+    // can take seconds, and the button used to look completely
+    // untouched until the audio was ready — taps looked ignored, and a
+    // failed fetch ended in total silence. Show the load on the button
+    // immediately and surface failures.
+    currentPreviewButton = buttonEl;
+    if (buttonEl) {
+        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
+        if (icon) icon.innerText = "⏳";
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        if (label) label.innerText = t("preview_loading");
+    }
     const authUrl = await fetchAuthImageUrl(audioUrl);
     if (seq !== previewFetchSeq) return; // a newer tap superseded this one
-    const audio = new Audio(authUrl || audioUrl);
+    if (!authUrl) {
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), 'error');
+        return;
+    }
+    const audio = new Audio(authUrl);
     currentVoiceAudio = audio;
     currentPreviewButton = buttonEl;
 
@@ -1630,13 +1647,13 @@ async function handleVoiceGenerate() {
             if (state.tg && state.tg.initData) {
                 headers["X-Telegram-Init-Data"] = state.tg.initData;
             }
-            res = await fetch("/api/voices/generate-with-audio", {
+            res = await fetchWithTimeout("/api/voices/generate-with-audio", {
                 method: "POST",
                 headers: headers,
                 body: formData,
-            });
+            }, 120000);
         } else {
-            res = await fetch("/api/voices/generate", {
+            res = await fetchWithTimeout("/api/voices/generate", {
                 method: "POST",
                 headers: getAuthHeaders(),
                 body: JSON.stringify({
@@ -1647,7 +1664,7 @@ async function handleVoiceGenerate() {
                     engine: "voxcpm", // VoxCPM2 only — backend default
                     preset_voice: presetVoice,
                 }),
-            });
+            }, 30000);
         }
 
         const data = await res.json();
@@ -1674,11 +1691,39 @@ function startJobPolling(jobId) {
     if (state.pollTimer) clearInterval(state.pollTimer);
 
     let tick = 0;
+    let failStreak = 0;
+    // Poll-death honesty (upload-ux pass): the old loop swallowed every
+    // failure and, at its 4-minute cap, stopped silently — leaving a
+    // frozen progress box that looked exactly like a stuck job. Now
+    // repeated failures surface a "reconnecting" note, and the cap
+    // closes the box with an explanation (the job itself keeps running
+    // server-side and lands in History).
+    const stopPollingTimedOut = () => {
+        clearInterval(state.pollTimer);
+        const box = document.getElementById("voice-progress-box");
+        if (box) box.classList.add("hidden");
+        const btn = document.getElementById("btn-generate-voice");
+        if (btn) btn.disabled = false;
+        showStudioToast(t("voice_wait_timeout"), 'info', 6000);
+    };
+    const registerPollFailure = () => {
+        failStreak++;
+        if (failStreak === 3) {
+            const eta = document.getElementById("voice-eta-text");
+            if (eta) eta.innerText = t("voice_reconnecting");
+        }
+        if (tick > 120) stopPollingTimedOut();
+    };
     state.pollTimer = setInterval(async () => {
         tick++;
         try {
             const res = await fetch(`/api/jobs/${jobId}/status`, { headers: getAuthHeaders() });
-            if (!res.ok) return;
+            if (!res.ok) { registerPollFailure(); return; }
+            if (failStreak >= 3) {
+                const eta = document.getElementById("voice-eta-text");
+                if (eta) eta.innerText = t("calculating_eta");
+            }
+            failStreak = 0;
             const data = await res.json();
 
             const statusMsg = document.getElementById("voice-status-msg");
@@ -1702,7 +1747,7 @@ function startJobPolling(jobId) {
             } else if (data.status === "RUNNING") {
                 setVoiceStage("working");
                 if (progressFill) progressFill.style.width = "80%";
-                if (statusMsg) statusMsg.innerText = "⚡ အသံထွက်ပေါ်အောင် ပေါင်းစပ်နေပါသည်...";
+                if (statusMsg) statusMsg.innerText = t("voice_synthesizing");
             } else if (data.status === "SUCCESS") {
                 clearInterval(state.pollTimer);
                 setVoiceStage("success");
@@ -1750,13 +1795,13 @@ function startJobPolling(jobId) {
                 if (btnGen) btnGen.disabled = false;
             }
 
-            if (tick > 120) { // 4 minutes timeout
-                clearInterval(state.pollTimer);
-                if (btnGen) btnGen.disabled = false;
+            if (tick > 120 && data.status !== "SUCCESS" && data.status !== "FAILED") { // 4 minutes timeout
+                stopPollingTimedOut();
             }
 
         } catch (e) {
             console.error(e);
+            registerPollFailure();
         }
     }, 2000);
 }
@@ -1968,117 +2013,290 @@ function setupRecapVisualEditor() {
         if (recapInfoBox) recapInfoBox.classList.remove("hidden");
         if (titleSpan) titleSpan.innerText = file.name;
         if (platformSpan) platformSpan.innerText = "Direct Upload (MP4)";
+        // A new pick replaces any earlier source: the previous file's
+        // confirmed server path and thumbnail must not leak onto this
+        // pick — a failed upload of the NEW file must never be able to
+        // submit, or claim Ready for, the OLD one.
+        state.uploadedVideoPath = null;
+        state.recapThumbnailUrl = null;
+        state.recapUploadPending = true;
 
-        // Upload asynchronously
-        const progressWrap = document.getElementById("recap-upload-progress");
-        const progressBar = document.getElementById("recap-upload-bar");
-        const progressLabel = document.getElementById("recap-upload-label");
-        if (progressWrap) progressWrap.classList.remove("hidden");
-        if (progressBar) progressBar.style.width = "40%";
-        if (progressLabel) progressLabel.innerText = "Uploading to Cloud Studio... 40%";
+        // Upload with REAL progress (XHR upload events), honest phases,
+        // cancel + inline retry: startRecapUpload owns the whole flow,
+        // including the success continuation (onRecapUploadSuccess).
+        startRecapUpload(file);
+    }
 
-        try {
-            const formData = new FormData();
-            formData.append("video_file", file);
-            const res = await fetch("/api/recap/upload_video", {
-                method: "POST",
-                headers: getAuthHeaders(false),
-                body: formData
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Upload failed");
+    // ── Recap file upload (upload-ux pass) ─────────────────────────────
+    // XMLHttpRequest is used on purpose: fetch() exposes no upload
+    // progress events, which is how the old UI ended up frozen on a
+    // hardcoded "40%" for the whole transfer. Phases stay honest: real
+    // byte % while sending, then an indeterminate "server is preparing"
+    // phase once the bytes are gone but the response (media probe +
+    // thumbnail) is still pending.
+    let recapUploadXhr = null;
+    let recapUploadTimer = null;
 
-            state.uploadedVideoPath = data.local_path;
-            state.recapVideoTitle = data.title || file.name;
-            state.recapSourceDuration = data.duration_seconds;
-            updateRecapSplitCostHint();
-            if (data.width && data.height) {
-                state.recapSourceWidth = data.width;
-                state.recapSourceHeight = data.height;
-            }
-            if (data.thumbnail) {
-                // /api/recap/frame needs the auth header: fetch it as a
-                // blob instead of assigning the raw URL to an <img>.
-                const authThumb = data.thumbnail.startsWith("/api/recap/frame")
-                    ? (await fetchAuthImageUrl(data.thumbnail))
-                    : data.thumbnail;
-                state.recapThumbnailUrl = authThumb || data.thumbnail;
-                const probeImg = new Image();
-                probeImg.onload = () => {
-                    if (probeImg.naturalWidth && probeImg.naturalHeight && (!state.recapSourceWidth || !state.recapSourceHeight)) {
-                        state.recapSourceWidth = probeImg.naturalWidth;
-                        state.recapSourceHeight = probeImg.naturalHeight;
-                        updateCanvasMockupVisuals();
-                    }
-                };
-                probeImg.src = state.recapThumbnailUrl;
-                updateCanvasMockupVisuals();
-            }
+    function recapUploadEls() {
+        return {
+            wrap: document.getElementById("recap-upload-progress"),
+            bar: document.getElementById("recap-upload-bar"),
+            label: document.getElementById("recap-upload-label"),
+            elapsed: document.getElementById("recap-upload-elapsed"),
+            hint: document.getElementById("recap-upload-hint"),
+            cancelBtn: document.getElementById("recap-upload-cancel"),
+            errorBox: document.getElementById("recap-upload-error"),
+            errorText: document.getElementById("recap-upload-error-text"),
+            errorHint: document.getElementById("recap-upload-error-hint"),
+        };
+    }
 
-            const maxAllowed = recapNormalMaxSeconds();
-            let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
-            let splitAutoEnabled = false;
-            if (isOverLimit && state.user?.is_admin) {
-                isOverLimit = false; // admins are exempt from the cap
-            } else if (isOverLimit && state.user?.is_vip) {
-                // Split path: the server segments the source into
-                // <=10-min parts and processes each part.
-                enableRecapSplitForLongVideo();
-                splitAutoEnabled = true;
-                isOverLimit = false;
-            }
-            const btnStartRecap = document.getElementById("btn-start-recap");
-            const durSpan = document.getElementById("recap-info-dur");
-
-            if (durSpan) {
-                if (isOverLimit) {
-                    durSpan.className = "mini-tag text-danger";
-                    const maxM = Math.floor(maxAllowed / 60);
-                    const tierLabel = state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)";
-                    const durM = Math.floor(data.duration_seconds / 60);
-                    const durS = Math.floor(data.duration_seconds % 60);
-                    const durStr = `${durM}:${durS < 10 ? '0' : ''}${durS}`;
-                    durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${tierLabel} ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်)</span>`;
-                    if (btnStartRecap) {
-                        btnStartRecap.disabled = true;
-                        btnStartRecap.style.opacity = "0.5";
-                    }
-                    showStudioToast(t("toast_duration_over"), 'warning');
-                } else {
-                    durSpan.className = "mini-tag";
-                    durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#10b981; font-weight:700; margin-left:4px;">(Ready)</span>`;
-                    if (btnStartRecap && !recapJobIsActive()) {
-                        btnStartRecap.disabled = false;
-                        btnStartRecap.style.opacity = "";
-                    }
-                    if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
-                }
-            }
-
-            if (progressBar) progressBar.style.width = "100%";
-            if (progressLabel) progressLabel.innerText = "✅ Video Ready for 1080p Recap!";
-            setRecapPreviewState("ready");
-            setTimeout(() => {
-                if (progressWrap) progressWrap.classList.add("hidden");
-            }, 1500);
-
-            haptic("success");
-        } catch (err) {
-            showErrorToast(err, 'upload');
-            if (progressWrap) progressWrap.classList.add("hidden");
-            // Upload failed: drop the local preview and fall back to the
-            // empty state (unless an earlier uploaded source is usable).
-            if (!state.uploadedVideoPath) {
-                if (canvasVideo) {
-                    try { canvasVideo.pause(); } catch (e) { /* noop */ }
-                    canvasVideo.removeAttribute("src");
-                    canvasVideo.load();
-                    canvasVideo.classList.add("hidden");
-                }
-                if (recapInfoBox) recapInfoBox.classList.add("hidden");
-            }
-            setRecapPreviewState(recapHasSource() ? "ready" : "empty");
+    // The info card must never claim a server-side Ready the server
+    // has not confirmed for the CURRENT pick. States: "pending" (file
+    // picked / uploading — neutral duration, not-on-server label),
+    // "failed" (upload error — duration cleared, failure label), and
+    // "ready" (ONLY from onRecapUploadSuccess; restores the Ready
+    // line — the duration chip itself stays owned by the
+    // success/analyze writers, which hold the real server metadata).
+    function setRecapInfoUploadState(mode) {
+        const durSpan = document.getElementById("recap-info-dur");
+        const subSpan = document.getElementById("recap-info-sub");
+        if (mode === "pending") {
+            if (durSpan) { durSpan.className = "mini-tag"; durSpan.innerText = "⏱️ 00:00"; }
+            if (subSpan) { subSpan.className = "mini-tag"; subSpan.innerText = t("recap_info_uploading"); }
+        } else if (mode === "failed") {
+            if (durSpan) { durSpan.className = "mini-tag"; durSpan.innerText = "⏱️ —"; }
+            if (subSpan) { subSpan.className = "mini-tag text-danger"; subSpan.innerText = t("recap_info_upload_failed"); }
+        } else if (mode === "ready") {
+            if (subSpan) { subSpan.className = "mini-tag text-green"; subSpan.innerText = t("recap_info_ready"); }
         }
+    }
+
+    function setRecapStartEnabled(enabled) {
+        const b = document.getElementById("btn-start-recap");
+        if (!b) return;
+        b.disabled = !enabled;
+        b.style.opacity = enabled ? "" : "0.5";
+    }
+
+    function formatUploadClock(ms) {
+        const s = Math.max(0, Math.floor(ms / 1000));
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    }
+
+    function formatUploadSize(bytes) {
+        if (bytes == null) return "";
+        if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+        if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+        if (bytes >= 1024) return Math.round(bytes / 1024) + " KB";
+        return bytes + " B";
+    }
+
+    function stopRecapUploadChrome() {
+        if (recapUploadTimer) { clearInterval(recapUploadTimer); recapUploadTimer = null; }
+        recapUploadXhr = null;
+    }
+
+    // Drop the local preview after a failed/cancelled upload and fall
+    // back to the empty state (unless an earlier source is usable).
+    // On upload error the info card itself stays visible
+    // (keepInfoCard) so it can show its not-uploaded state next to
+    // the error box instead of vanishing.
+    function resetRecapUploadPreview(keepInfoCard = false) {
+        if (!state.uploadedVideoPath) {
+            if (canvasVideo) {
+                try { canvasVideo.pause(); } catch (e) { /* noop */ }
+                canvasVideo.removeAttribute("src");
+                canvasVideo.load();
+                canvasVideo.classList.add("hidden");
+            }
+            const infoBox = document.getElementById("recap-video-info-box");
+            if (infoBox && !keepInfoCard) infoBox.classList.add("hidden");
+        }
+        setRecapPreviewState(recapHasSource() ? "ready" : "empty");
+    }
+
+    function startRecapUpload(file) {
+        const els = recapUploadEls();
+        if (recapUploadXhr) { try { recapUploadXhr.abort(); } catch (e) { /* noop */ } }
+        stopRecapUploadChrome();
+        state.recapUploadFile = file;
+        // Every (re)start drops the card to the honest pending state
+        // and locks the Recap CTA until the server confirms THIS file.
+        setRecapInfoUploadState("pending");
+        setRecapStartEnabled(false);
+
+        if (els.wrap) els.wrap.classList.remove("hidden");
+        if (els.errorBox) els.errorBox.classList.add("hidden");
+        if (els.cancelBtn) els.cancelBtn.classList.remove("hidden");
+        if (els.bar) {
+            els.bar.style.width = "0%";
+            els.bar.classList.remove("error", "indeterminate");
+            els.bar.classList.add("busy");
+        }
+        if (els.label) els.label.innerText = tf("upload_progress_label", { pct: 0 });
+        if (els.elapsed) els.elapsed.innerText = "⏱ 0:00";
+        if (els.hint) {
+            els.hint.innerText = tf("upload_expect_hint", { size: formatUploadSize(file.size) });
+            els.hint.classList.remove("hidden");
+        }
+
+        const startedAt = Date.now();
+        let lastProgressAt = Date.now();
+        let phase = "uploading";
+        let slowHintShown = false;
+        recapUploadTimer = setInterval(() => {
+            if (els.elapsed) els.elapsed.innerText = "⏱ " + formatUploadClock(Date.now() - startedAt);
+            if (phase === "uploading" && !slowHintShown && Date.now() - lastProgressAt > 45000) {
+                slowHintShown = true;
+                if (els.hint) els.hint.innerText = t("upload_slow_hint");
+            }
+        }, 500);
+
+        const xhr = new XMLHttpRequest();
+        recapUploadXhr = xhr;
+        xhr.open("POST", "/api/recap/upload_video");
+        const authHeaders = getAuthHeaders(false);
+        Object.keys(authHeaders).forEach(k => xhr.setRequestHeader(k, authHeaders[k]));
+
+        xhr.upload.onprogress = (ev) => {
+            lastProgressAt = Date.now();
+            if (!ev.lengthComputable) return;
+            const pct = Math.min(100, Math.round((ev.loaded / ev.total) * 100));
+            if (pct >= 100) {
+                phase = "processing";
+                if (els.bar) { els.bar.style.width = "100%"; els.bar.classList.remove("busy"); els.bar.classList.add("indeterminate"); }
+                if (els.label) els.label.innerText = t("upload_processing_label");
+            } else {
+                if (els.bar) els.bar.style.width = pct + "%";
+                if (els.label) els.label.innerText = tf("upload_progress_label", { pct });
+            }
+        };
+
+        xhr.onload = () => {
+            stopRecapUploadChrome();
+            let data = {};
+            try { data = JSON.parse(xhr.responseText || "{}"); } catch (e) { /* keep {} */ }
+            if (xhr.status >= 200 && xhr.status < 300) {
+                onRecapUploadSuccess(data, file);
+            } else {
+                onRecapUploadError(mapErrorToToast(data.detail || `Upload failed (${xhr.status})`, "upload"));
+            }
+        };
+        xhr.onerror = () => { stopRecapUploadChrome(); onRecapUploadError(t("err_upload_failed")); };
+        xhr.onabort = () => {
+            if (recapUploadXhr && recapUploadXhr !== xhr) return; // superseded by a newer upload
+            stopRecapUploadChrome();
+            if (els.bar) els.bar.classList.remove("busy", "indeterminate");
+            if (els.label) els.label.innerText = t("upload_cancelled_label");
+            if (els.cancelBtn) els.cancelBtn.classList.add("hidden");
+            if (els.hint) els.hint.classList.add("hidden");
+            setTimeout(() => { if (els.wrap) els.wrap.classList.add("hidden"); }, 1200);
+            resetRecapUploadPreview();
+        };
+
+        const formData = new FormData();
+        formData.append("video_file", file);
+        xhr.send(formData);
+    }
+
+    function onRecapUploadError(message) {
+        const els = recapUploadEls();
+        haptic("error");
+        if (els.bar) { els.bar.classList.remove("busy", "indeterminate"); els.bar.classList.add("error"); }
+        if (els.label) els.label.innerText = "";
+        if (els.cancelBtn) els.cancelBtn.classList.add("hidden");
+        if (els.hint) els.hint.classList.add("hidden");
+        if (els.errorText) els.errorText.innerText = message;
+        if (els.errorHint) els.errorHint.innerText = t("upload_error_hint");
+        if (els.errorBox) els.errorBox.classList.remove("hidden");
+        // The error box and the info card must tell the same story:
+        // drop the local preview, keep the card visible, and strip
+        // every Ready claim — this file never reached the server.
+        resetRecapUploadPreview(true);
+        setRecapInfoUploadState("failed");
+        setRecapStartEnabled(false);
+    }
+
+    async function onRecapUploadSuccess(data, file) {
+        state.uploadedVideoPath = data.local_path;
+        state.recapUploadPending = false;
+        state.recapVideoTitle = data.title || file.name;
+        state.recapSourceDuration = data.duration_seconds;
+        updateRecapSplitCostHint();
+        if (data.width && data.height) {
+            state.recapSourceWidth = data.width;
+            state.recapSourceHeight = data.height;
+        }
+        if (data.thumbnail) {
+            // /api/recap/frame needs the auth header: fetch it as a
+            // blob instead of assigning the raw URL to an <img>.
+            const authThumb = data.thumbnail.startsWith("/api/recap/frame")
+                ? (await fetchAuthImageUrl(data.thumbnail))
+                : data.thumbnail;
+            state.recapThumbnailUrl = authThumb || data.thumbnail;
+            const probeImg = new Image();
+            probeImg.onload = () => {
+                if (probeImg.naturalWidth && probeImg.naturalHeight && (!state.recapSourceWidth || !state.recapSourceHeight)) {
+                    state.recapSourceWidth = probeImg.naturalWidth;
+                    state.recapSourceHeight = probeImg.naturalHeight;
+                    updateCanvasMockupVisuals();
+                }
+            };
+            probeImg.src = state.recapThumbnailUrl;
+            updateCanvasMockupVisuals();
+        }
+
+        const maxAllowed = recapNormalMaxSeconds();
+        let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+        let splitAutoEnabled = false;
+        if (isOverLimit && state.user?.is_admin) {
+            isOverLimit = false; // admins are exempt from the cap
+        } else if (isOverLimit && state.user?.is_vip) {
+            // Split path: the server segments the source into
+            // <=10-min parts and processes each part.
+            enableRecapSplitForLongVideo();
+            splitAutoEnabled = true;
+            isOverLimit = false;
+        }
+        const btnStartRecap = document.getElementById("btn-start-recap");
+        const durSpan = document.getElementById("recap-info-dur");
+
+        if (durSpan) {
+            if (isOverLimit) {
+                durSpan.className = "mini-tag text-danger";
+                const maxM = Math.floor(maxAllowed / 60);
+                const tierLabel = state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)";
+                const durM = Math.floor(data.duration_seconds / 60);
+                const durS = Math.floor(data.duration_seconds % 60);
+                const durStr = `${durM}:${durS < 10 ? '0' : ''}${durS}`;
+                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${tierLabel} ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်)</span>`;
+                if (btnStartRecap) {
+                    btnStartRecap.disabled = true;
+                    btnStartRecap.style.opacity = "0.5";
+                }
+                showStudioToast(t("toast_duration_over"), 'warning');
+            } else {
+                durSpan.className = "mini-tag";
+                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#10b981; font-weight:700; margin-left:4px;">(Ready)</span>`;
+                if (btnStartRecap && !recapJobIsActive()) {
+                    btnStartRecap.disabled = false;
+                    btnStartRecap.style.opacity = "";
+                }
+                if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
+            }
+        }
+
+        const els = recapUploadEls();
+        if (els.bar) { els.bar.classList.remove("busy", "indeterminate"); els.bar.style.width = "100%"; }
+        setRecapInfoUploadState("ready");
+        if (els.label) els.label.innerText = t("upload_ready_label");
+        setRecapPreviewState("ready");
+        if (els.cancelBtn) els.cancelBtn.classList.add("hidden");
+        if (els.hint) els.hint.classList.add("hidden");
+        setTimeout(() => { if (els.wrap) els.wrap.classList.add("hidden"); }, 1500);
+
+        haptic("success");
     }
 
     if (dropZone) {
@@ -2101,8 +2319,27 @@ function setupRecapVisualEditor() {
     if (fileInput) {
         fileInput.addEventListener("change", (e) => {
             if (e.target.files && e.target.files.length > 0) {
-                handleVideoFileSelect(e.target.files[0]);
+                const picked = e.target.files[0];
+                // Reset the input so re-picking the SAME file after a
+                // failure fires "change" again (several WebViews swallow
+                // a same-file selection otherwise — retry was impossible).
+                e.target.value = "";
+                handleVideoFileSelect(picked);
             }
+        });
+    }
+
+    const uploadCancelBtn = document.getElementById("recap-upload-cancel");
+    if (uploadCancelBtn) {
+        uploadCancelBtn.addEventListener("click", () => {
+            if (recapUploadXhr) { try { recapUploadXhr.abort(); } catch (e) { /* noop */ } }
+        });
+    }
+    const uploadRetryBtn = document.getElementById("recap-upload-retry");
+    if (uploadRetryBtn) {
+        uploadRetryBtn.addEventListener("click", () => {
+            // Re-send the already-picked file — no re-picking needed.
+            if (state.recapUploadFile) startRecapUpload(state.recapUploadFile);
         });
     }
 
@@ -3082,11 +3319,11 @@ function setupRecapVisualEditor() {
             setRecapPreviewState("loading");
 
             try {
-                const res = await fetch("/api/downloader/extract", {
+                const res = await fetchWithTimeout("/api/downloader/extract", {
                     method: "POST",
                     headers: getAuthHeaders(),
                     body: JSON.stringify({ url: url }),
-                });
+                }, 60000);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || "Analysis failed");
 
@@ -3167,6 +3404,7 @@ function setupRecapVisualEditor() {
                 }
 
                 state.uploadedVideoPath = null;
+                state.recapUploadPending = false;
                 const sliderSeek = document.getElementById("slider-canvas-seek");
                 const seekBadge = document.getElementById("canvas-seek-time-badge");
                 if (sliderSeek) {
@@ -3447,6 +3685,12 @@ function recapJobIsActive() {
 
 async function handleStartRecap() {
     if (recapJobIsActive()) return; // a recap job is already running
+    // Hard guard: a picked file whose upload has not succeeded is NOT
+    // a recap source — never submit on the strength of a local pick.
+    if (state.recapUploadPending) {
+        showStudioToast(t("toast_recap_not_uploaded"), 'warning');
+        return;
+    }
     const urlInput = document.getElementById("recap-url-input");
     let url = state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : "");
     if (!state.uploadedVideoPath && url) {
@@ -3946,11 +4190,11 @@ async function dlFetchFormat(fmt, cardBtn) {
     if (cardBtn) cardBtn.disabled = true;
     if (descEl) descEl.innerText = t("dl_preparing");
     try {
-        const res = await fetch("/api/downloader/fetch", {
+        const res = await fetchWithTimeout("/api/downloader/fetch", {
             method: "POST",
             headers: getAuthHeaders(),
             body: JSON.stringify({ url: dlCurrent.url, format: fmt }),
-        });
+        }, 240000);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
             if (data.detail === "no_subtitles_available") {
@@ -3986,12 +4230,15 @@ function setupDownloader() {
             }
             haptic("medium");
             btnDl.disabled = true;
+            const dlBtnSpan = btnDl.querySelector("span");
+            const dlBtnOriginal = dlBtnSpan ? dlBtnSpan.innerText : "";
+            if (dlBtnSpan) dlBtnSpan.innerText = t("recap_preview_loading");
             try {
-                const res = await fetch("/api/downloader/extract", {
+                const res = await fetchWithTimeout("/api/downloader/extract", {
                     method: "POST",
                     headers: getAuthHeaders(),
                     body: JSON.stringify({ url: url }),
-                });
+                }, 60000);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || "Extraction failed");
 
@@ -4025,6 +4272,7 @@ function setupDownloader() {
                 showErrorToast(err, 'download');
             } finally {
                 btnDl.disabled = false;
+                if (dlBtnSpan) dlBtnSpan.innerText = dlBtnOriginal;
             }
         });
 
@@ -4274,6 +4522,9 @@ async function submitPaymentSlip() {
     haptic("heavy");
     const btn = document.getElementById("btn-submit-slip-action");
     if (btn) btn.disabled = true;
+    const slipBtnSpan = btn ? btn.querySelector("span") : null;
+    const slipBtnOriginal = slipBtnSpan ? slipBtnSpan.innerText : "";
+    if (slipBtnSpan) slipBtnSpan.innerText = t("slip_sending");
 
     try {
         const formData = new FormData();
@@ -4286,11 +4537,11 @@ async function submitPaymentSlip() {
             headers["X-Telegram-Init-Data"] = state.tg.initData;
         }
 
-        const res = await fetch("/api/vip/submit-slip", {
+        const res = await fetchWithTimeout("/api/vip/submit-slip", {
             method: "POST",
             headers: headers,
             body: formData,
-        });
+        }, 60000);
 
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Submission failed");
@@ -4304,6 +4555,7 @@ async function submitPaymentSlip() {
         showErrorToast(e, 'generic');
     } finally {
         if (btn) btn.disabled = false;
+        if (slipBtnSpan) slipBtnSpan.innerText = slipBtnOriginal;
     }
 }
 

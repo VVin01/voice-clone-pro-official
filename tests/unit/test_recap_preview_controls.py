@@ -90,8 +90,12 @@ def test_loading_and_ready_wired_on_extract_and_upload():
     assert js.count('setRecapPreviewState("ready");') >= 2
     # Extract start -> loading happens after the button spinner is set.
     assert 'btnAnalyze.innerText = "⏳...";\n            setRecapPreviewState("loading");' in js
-    # Upload success -> ready right at the "Video Ready" point.
-    assert '"✅ Video Ready for 1080p Recap!";\n            setRecapPreviewState("ready");' in js
+    # Upload success -> ready right at the "Video Ready" point. The
+    # upload-ux pass moved the label behind the i18n key
+    # upload_ready_label (my: "✅ ဗီဒီယို အဆင်သင့် ဖြစ်ပါပြီ!" /
+    # en: "✅ Video ready for Recap!"); the ready wiring adjacency
+    # at that point is unchanged.
+    assert 't("upload_ready_label");\n        setRecapPreviewState("ready");' in js
 
 
 def test_clearing_or_failing_source_returns_to_empty():

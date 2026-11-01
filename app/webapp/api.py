@@ -1873,15 +1873,22 @@ async def upload_recap_video(
     # partial file when the cap is exceeded.
     await _save_upload_streaming(video_file, saved_path, MAX_RECAP_UPLOAD_BYTES)
 
-    # Inspect media duration & metadata
+    # Inspect media duration & metadata and extract the preview
+    # thumbnail. These are blocking ffprobe/ffmpeg subprocess calls:
+    # run them off the event loop (upload-ux pass) so one upload's
+    # processing phase cannot stall every other request. Behaviour and
+    # response shape are unchanged.
     from app.services.downloader import probe_local_media, extract_thumbnail_from_media, format_duration, find_best_preview_timestamp
-    meta = probe_local_media(str(saved_path))
-    dur_sec = meta.get("duration", 0.0) or 0.0
 
-    # Extract optimal preview thumbnail
-    thumb_path = temp_dir / f"{file_id}_thumb.jpg"
-    best_ts = find_best_preview_timestamp(str(saved_path), target_dir=str(temp_dir))
-    extract_thumbnail_from_media(str(saved_path), str(thumb_path), timestamp_sec=best_ts)
+    def _probe_and_thumb():
+        meta_local = probe_local_media(str(saved_path))
+        best_ts_local = find_best_preview_timestamp(str(saved_path), target_dir=str(temp_dir))
+        thumb_path_local = temp_dir / f"{file_id}_thumb.jpg"
+        extract_thumbnail_from_media(str(saved_path), str(thumb_path_local), timestamp_sec=best_ts_local)
+        return meta_local, best_ts_local, thumb_path_local
+
+    meta, best_ts, thumb_path = await asyncio.to_thread(_probe_and_thumb)
+    dur_sec = meta.get("duration", 0.0) or 0.0
 
     thumb_url = f"/api/recap/frame?path={file_id}_thumb.jpg" if thumb_path.is_file() else ""
     display_title = Path(clean_name).stem or "Uploaded Movie Video"
