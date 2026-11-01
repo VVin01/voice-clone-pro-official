@@ -652,8 +652,7 @@ class MediaDownloader:
                 logger.warning(f"YouTube anti-bot challenge encountered in get_info: {err_msg}")
                 raise RuntimeError(
                     "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
-                    "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
+                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည်။"
                 ) from e
             classified = classify_source_error(err_msg, expanded_url)
             if classified:
@@ -804,8 +803,7 @@ class MediaDownloader:
                 logger.warning(f"YouTube anti-bot challenge encountered in download_video: {err_msg}")
                 raise RuntimeError(
                     "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
-                    "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
+                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည်။"
                 ) from e
             # Classify the FINAL failure (the resilient fallback's error
             # is the one that actually decided the outcome).
@@ -882,8 +880,7 @@ class MediaDownloader:
                 logger.warning(f"YouTube anti-bot challenge encountered in download_audio: {err_msg}")
                 raise RuntimeError(
                     "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                    "အသံဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ အခြားလင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည် "
-                    "(သို့မဟုတ် Render Dashboard Environment တွင် YOUTUBE_COOKIES ထည့်သွင်းပေးနိုင်ပါသည်)။"
+                    "အသံဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ အခြားလင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည်။"
                 ) from e
             classified = classify_source_error(err_msg, expanded_url)
             if classified:
