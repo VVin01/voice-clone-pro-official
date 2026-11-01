@@ -90,7 +90,7 @@ def test_asset_versions_bumped_for_fix_release():
         # / index.html changed again; i18n.js rides the shared token).
         # Admin-demote + voice-picker supersession: rt4 -> fp1 (index.html /
         # app.js / style.css changed; i18n.js rides the shared token).
-        assert "?v=20261102_rr1" in ref, ref
+        assert "?v=20261102_rs1" in ref, ref
     # The two scripts whose bytes changed must be on the new token.
-    assert "/static/js/app.js?v=20261102_rr1" in html
-    assert "/static/js/i18n.js?v=20261102_rr1" in html
+    assert "/static/js/app.js?v=20261102_rs1" in html
+    assert "/static/js/i18n.js?v=20261102_rs1" in html
