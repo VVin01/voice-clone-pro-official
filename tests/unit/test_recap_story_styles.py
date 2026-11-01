@@ -74,6 +74,60 @@ def test_storytelling_standard_present_for_all_styles(monkeypatch, style):
     assert "အဲ့ဒီနောက်" not in prompt
 
 
+@pytest.mark.parametrize("style", ["viral", "funny", "pov", "dramatic", "narrator", "standard"])
+def test_shared_standard_names_and_variety_for_all_styles(monkeypatch, style):
+    # All-styles pass (2026-11-01): the shared standard now also carries the
+    # name-use rule (from the viral A/B's one remaining miss — a named actor
+    # paraphrased into a coined role phrase) and varied sentence openings,
+    # which funny/pov/dramatic previously lacked entirely.
+    prompt = _capture_prompt(monkeypatch, style)
+    assert "USE THE SOURCE'S OWN NAMES" in prompt
+    assert "H. VARY SENTENCE OPENINGS" in prompt
+
+
+def test_pov_prompt_uses_standard_forms_and_scene_anchoring(monkeypatch):
+    prompt = _capture_prompt(monkeypatch, "pov", is_female=False)
+    # The limited-knowledge example must model the standard form it teaches:
+    # the colloquial 'အဲ့တုန်း' example contradicted shared rule F.
+    assert "အဲ့တုန်း" not in prompt
+    assert "အဲဒီတုန်းက" in prompt
+    # Drop-in comprehension, glossed for the first-person frame.
+    assert "SCENE ANCHORING IN POV" in prompt
+
+
+def _capture_audit_prompt(monkeypatch, style: str) -> str:
+    captured = {}
+    rows = [
+        {"id": row["id"], "timestamp": row["timestamp"],
+         "source_text": row["source_text"], "translation": SENTENCES[i]}
+        for i, row in enumerate(CURRENT)
+    ]
+
+    def fake_gemini_json(ai, prompt, retries=1, log=None):
+        captured["prompt"] = prompt
+        return {"checks": [{"id": row["id"], "status": "pass"} for row in rows]}
+
+    monkeypatch.setattr(planner, "_gemini_json", fake_gemini_json)
+    planner.audit_and_repair_batch(
+        None,
+        rows,
+        story_context={},
+        previous_context=[],
+        next_context=[],
+        log=lambda msg: None,
+        narrative_style=style,
+        is_female=False,
+    )
+    return captured["prompt"]
+
+
+@pytest.mark.parametrize("style", ["viral", "funny", "pov", "dramatic", "narrator", "standard"])
+def test_audit_checks_source_names_for_all_styles(monkeypatch, style):
+    prompt = _capture_audit_prompt(monkeypatch, style)
+    assert "called by the source's own names" in prompt
+    assert "coined role paraphrases" in prompt
+
+
 def test_opening_hook_must_establish_premise(monkeypatch):
     # CURRENT starts at ID 1 with no previous context -> first-batch intro rule.
     prompt = _capture_prompt(monkeypatch, "viral")
