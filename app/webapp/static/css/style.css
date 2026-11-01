@@ -822,7 +822,12 @@ select.studio-input { min-height: 50px; }
     background: linear-gradient(160deg, #1c2434 0%, #0d1119 70%);
     background-size: cover; background-position: center;
 }
-.video-bg-placeholder.mirrored .mockup-inner-movie { transform: scaleX(-1); }
+/* Mirror flips backdrop + inset together: the render's _visual_filters
+   applies hflip to the source BEFORE its bg/fg split, so in the real
+   output both layers come out flipped (overlays/subtitles never are —
+   they live outside these two layers). */
+.video-bg-placeholder.mirrored .mockup-inner-movie,
+.video-bg-placeholder.mirrored .video-backdrop-blur { transform: scaleX(-1); }
 .mockup-inner-movie { position: absolute; inset: 0; overflow: hidden; }
 .canvas-video-player { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .crop-shade { position: absolute; background: rgba(0, 0, 0, 0.55); z-index: 3; pointer-events: none; }
@@ -865,12 +870,14 @@ select.studio-input { min-height: 50px; }
     display: flex; align-items: center; justify-content: center; gap: 5px;
     min-height: 22px;
 }
-.preview-blur-box .blur-label { font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.7); white-space: nowrap; overflow: hidden; }
+/* The blur label is an editing affordance, not a standing caption:
+   hidden by default in every state (media or not) — at the shared
+   default Y=85% it otherwise paints over the subtitle sample text.
+   It is shown only while editing the box (see the F1 rules below). */
+.preview-blur-box .blur-label { display: none; font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.7); white-space: nowrap; overflow: hidden; }
 /* No-media placeholder state: slim outline only — with no media loaded
-   there is nothing to blur yet, and the label would collide with the
-   subtitle sample text at the shared default Y=85%. */
+   there is nothing to blur yet. */
 .preview-blur-box.no-media { background: rgba(120, 130, 150, 0.16); }
-.preview-blur-box.no-media .blur-label { display: none; }
 .drag-grip-icon { color: rgba(255, 255, 255, 0.8); font-size: 11px; }
 .box-resize-handle { position: absolute; left: 50%; transform: translateX(-50%); width: 34px; height: 8px; cursor: ns-resize; }
 .box-resize-handle.top { top: -5px; }
@@ -2729,6 +2736,13 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .canvas-no-thumb-icon { font-size: 34px; opacity: 0.9; }
 .canvas-no-thumb-text { font-size: 12.5px; font-weight: 600; line-height: 1.7; color: rgba(255, 255, 255, 0.85); max-width: 210px; }
+/* F4 — short frames (16:9, incl. the Original fallback shape): shrink
+   the placeholder block and lift it off the drag-box band, so the
+   glyph clears the frame's top edge and the hint text never touches
+   the boxes at the bottom. */
+.mockup-screen.ratio-16-9 .canvas-no-thumb { padding: var(--s2) var(--s4) 16%; gap: var(--s1); }
+.mockup-screen.ratio-16-9 .canvas-no-thumb-icon { font-size: 24px; }
+.mockup-screen.ratio-16-9 .canvas-no-thumb-text { font-size: 11.5px; line-height: 1.55; max-width: 250px; }
 /* The drag boxes stay inside the frame in every ratio. */
 .draggable-box { max-width: 92%; box-sizing: border-box; }
 
@@ -2853,3 +2867,17 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .studio-slider::-webkit-slider-thumb { border-color: #ffffff; }
 .studio-slider::-moz-range-thumb { border-color: #ffffff; }
 .preview-blur-box { box-shadow: var(--glass-hi); }
+
+/* F1 — the blur label paints only in its editing context: the Mask
+   toolbar tab is active (.label-on, toggled by the tab handler), the
+   box is being dragged/resized (.is-dragging), or it is hovered.
+   When shown it rides just ABOVE the blur band: both drag boxes are
+   centre-anchored at the same default Y=85%, so any inside placement
+   shares the subtitle sample's centred text line in some ratio (in
+   the short 16:9 frame the whole band is shorter than two lines). */
+.preview-blur-box.label-on .blur-label,
+.preview-blur-box.is-dragging .blur-label,
+.preview-blur-box:hover .blur-label {
+    display: block; position: absolute; bottom: calc(100% + 1px); left: 50%;
+    transform: translateX(-50%); line-height: 1.1;
+}

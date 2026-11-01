@@ -3078,6 +3078,9 @@ function setupRecapVisualEditor() {
             isResizing = true;
             startY = y;
             startH = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
+            // F1: resizing counts as interacting with the box — its
+            // label paints for the duration (same class as dragging).
+            if (previewBlur) previewBlur.classList.add("is-dragging");
             haptic("light");
         }
         function moveResize(y) {
@@ -3094,6 +3097,7 @@ function setupRecapVisualEditor() {
         }
         function endResize() {
             isResizing = false;
+            if (previewBlur) previewBlur.classList.remove("is-dragging");
         }
 
         handle.addEventListener("mousedown", (e) => {
@@ -3143,6 +3147,10 @@ function setupRecapVisualEditor() {
             haptic("selection");
             tbTabBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
+
+            // F1: the blur box's label is an editing affordance — it
+            // paints only while its own toolbar tab (Mask) is active.
+            if (previewBlur) previewBlur.classList.toggle("label-on", target === "mask");
 
             Object.entries(tbPanels).forEach(([key, panel]) => {
                 if (panel) {
@@ -3247,8 +3255,26 @@ function setupRecapVisualEditor() {
                 rSource = (state.recapRatio === "9:16" || state.recapRatio === "1:1") ? (16 / 9) : (9 / 16);
             }
 
+            // Fit aspect for the inset: when neither the extract nor a
+            // <video> reported the source's real dimensions but the
+            // preview thumbnail has loaded, fit to the picture actually
+            // on screen (its natural aspect). The fallback guess above
+            // assumes the opposite orientation of the canvas, which
+            // squeezed 16:9 into a narrow strip flanked by disjoint
+            // backdrop slices. Presentation only — reported state
+            // dimensions still win, and the "Original" frame shape is
+            // still driven by rSource alone.
+            let rFit = rSource;
+            if (!state.recapSourceWidth && !(canvasVideo && canvasVideo.videoWidth)) {
+                const loadedThumb = document.getElementById("canvas-thumb-img");
+                if (loadedThumb && loadedThumb.naturalWidth > 0 && loadedThumb.naturalHeight > 0 &&
+                    state.recapThumbnailUrl && loadedThumb.getAttribute("src") === state.recapThumbnailUrl) {
+                    rFit = loadedThumb.naturalWidth / loadedThumb.naturalHeight;
+                }
+            }
+
             // Cropped source aspect ratio matching FFmpeg's crop=c_sw:c_sh:c_x:c_y
-            const rCropped = rSource * (keepW / keepH);
+            const rCropped = rFit * (keepW / keepH);
             const hasCrop = (ct > 0.001 || cb > 0.001 || cl > 0.001 || cr > 0.001);
             const ratioDiff = Math.abs(rSource - rCanvas);
 
@@ -3308,7 +3334,18 @@ function setupRecapVisualEditor() {
                     thumbImg.classList.add("hidden");
                     updateCanvasMockupVisuals();
                 };
-                thumbImg.onload = () => { delete thumbImg.dataset.failed; };
+                thumbImg.onload = () => {
+                    delete thumbImg.dataset.failed;
+                    // F2: once the picture (and its real aspect) has
+                    // loaded, refit the inset — the first paint used
+                    // the fallback aspect guess. Keyed on the natural
+                    // size so each new image refits exactly once.
+                    const aspectKey = `${thumbImg.naturalWidth}x${thumbImg.naturalHeight}`;
+                    if (thumbImg.dataset.aspect !== aspectKey) {
+                        thumbImg.dataset.aspect = aspectKey;
+                        updateCanvasMockupVisuals();
+                    }
+                };
                 innerMovie.insertBefore(thumbImg, innerMovie.firstChild);
             }
 
@@ -3344,10 +3381,24 @@ function setupRecapVisualEditor() {
             } else if (state.recapThumbnailUrl && !(thumbImg && thumbImg.dataset.failed === "1")) {
                 mediaVisible = true;
                 if (noThumbEl) noThumbEl.classList.add("hidden");
-                if (backdropEl) backdropEl.classList.remove("on");
-                canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
-                canvas.style.backgroundSize = "cover";
-                canvas.style.backgroundPosition = "center";
+                // F2/F3: the letterbox backdrop is the SAME blurred
+                // layer the video branch uses — one centred inset over
+                // a blurred cover backdrop in every ratio (never the
+                // sharp canvas-cover slices), and the layer the Mirror
+                // flip covers, so backdrop + inset flip together,
+                // exactly like the render's hflip-before-split.
+                if (backdropEl) {
+                    if (fillMode === "blur") {
+                        backdropEl.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
+                        backdropEl.classList.add("on");
+                    } else {
+                        backdropEl.style.backgroundImage = "";
+                        backdropEl.classList.remove("on");
+                    }
+                }
+                canvas.style.backgroundImage = "";
+                canvas.style.backgroundSize = "";
+                canvas.style.backgroundPosition = "";
                 innerMovie.style.backgroundImage = "none";
                 if (thumbImg) {
                     if (thumbImg.getAttribute("src") !== state.recapThumbnailUrl) delete thumbImg.dataset.failed;

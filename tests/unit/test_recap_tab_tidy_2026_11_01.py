@@ -234,7 +234,8 @@ def test_split_minutes_use_western_digits():
 
 
 def test_cache_buster_bumped_for_tidy():
-    assert HTML.count("?v=20261101_rt2") == 3
+    assert HTML.count("?v=20261101_rt3") == 3
+    assert "?v=20261101_rt2" not in HTML
     assert "?v=20261101_rt1" not in HTML
     assert "?v=20261101_gv1" not in HTML
 
@@ -246,13 +247,74 @@ def test_no_media_blur_box_is_label_less():
     # displayed; only the video and live-thumbnail branches count.
     assert APP_JS.count("mediaVisible = true;") == 2
     # In no-media states (empty preview / dead thumbnail) the blur box
-    # renders label-less (slim outline only): at the shared default
-    # Y=85% its label text otherwise stacks onto the subtitle sample.
+    # renders as a slim, dimmed outline (the F1 scheme below hides its
+    # label by default in every state): at the shared default Y=85%
+    # its label text otherwise stacks onto the subtitle sample.
     assert 'blurBoxEl.classList.toggle("no-media", !mediaVisible)' in APP_JS
-    assert ".preview-blur-box.no-media .blur-label { display: none; }" in CSS
+    assert ".preview-blur-box.no-media { background: rgba(120, 130, 150, 0.16); }" in CSS
     # Presentation only: the box and its state defaults are untouched.
     assert 'id="preview-blur-box" style="top: 85%; height: 7%;' in HTML
     assert 'data-i18n="blur_box_label"' in HTML
+
+
+# ── Return pass 2 (real-source findings F1–F4) ──────────────────────
+
+def test_blur_label_paints_only_while_editing():
+    # F1: the collision was a MEDIA-state defect too — the label is an
+    # editing affordance, hidden by default in every state...
+    m = re.search(r"\.preview-blur-box \.blur-label \{([^}]*)\}", CSS)
+    assert m and "display: none" in m.group(1)
+    # ...and shown only in its editing contexts: Mask toolbar tab
+    # active, the box being dragged/resized, or hover.
+    for sel in (".preview-blur-box.label-on .blur-label",
+                ".preview-blur-box.is-dragging .blur-label",
+                ".preview-blur-box:hover .blur-label"):
+        assert sel in CSS, sel
+    # Shown, it rides just above the blur band so it never shares the
+    # subtitle sample's centred text line at the shared default Y=85%.
+    shown = re.search(
+        r"\.preview-blur-box\.label-on \.blur-label,\s*"
+        r"\.preview-blur-box\.is-dragging \.blur-label,\s*"
+        r"\.preview-blur-box:hover \.blur-label \{([^}]*)\}", CSS)
+    assert shown and "position: absolute" in shown.group(1)
+    assert shown and "bottom: calc(100% + 1px)" in shown.group(1)
+    # The Mask tab handler drives .label-on; resizing reuses the
+    # drag class so the label paints for the duration.
+    assert 'previewBlur.classList.toggle("label-on", target === "mask")' in APP_JS
+    assert 'previewBlur.classList.add("is-dragging")' in APP_JS
+    assert 'previewBlur.classList.remove("is-dragging")' in APP_JS
+
+
+def test_thumbnail_branch_uses_blurred_backdrop_layer():
+    # F2/F3: the thumbnail branch fills the SAME blurred backdrop layer
+    # as the video branch (one centred inset over a blurred cover
+    # backdrop in every ratio) — never the sharp canvas-cover slices.
+    assert APP_JS.count("backdropEl.style.backgroundImage = `url('${state.recapThumbnailUrl}')`") == 2
+    assert "canvas.style.backgroundImage = `url(" not in APP_JS
+
+
+def test_thumbnail_aspect_fit_and_refit_on_load():
+    # F2: with no reported source dimensions, the inset fits the loaded
+    # thumbnail's natural aspect instead of the canvas-opposite guess.
+    assert "loadedThumb.naturalWidth / loadedThumb.naturalHeight" in APP_JS
+    assert "const rCropped = rFit * (keepW / keepH);" in APP_JS
+    # ...and refits exactly once per image when it finishes loading.
+    assert "thumbImg.dataset.aspect" in APP_JS
+
+
+def test_mirror_flips_backdrop_and_inset_together():
+    # F3: the render applies hflip BEFORE its bg/fg split
+    # (core.py _visual_filters), so the mockup flips both layers with
+    # Mirror on and neither with it off; overlays stay unflipped.
+    assert ".video-bg-placeholder.mirrored .mockup-inner-movie" in CSS
+    assert ".video-bg-placeholder.mirrored .video-backdrop-blur { transform: scaleX(-1); }" in CSS
+
+
+def test_placeholder_composes_in_short_frames():
+    # F4: in 16:9 (and the Original fallback shape) the no-thumbnail
+    # placeholder shrinks and lifts off the drag-box band.
+    assert ".mockup-screen.ratio-16-9 .canvas-no-thumb" in CSS
+    assert ".mockup-screen.ratio-16-9 .canvas-no-thumb-icon { font-size: 24px; }" in CSS
 
 
 def test_toolbar_tabs_single_line_equal_height():

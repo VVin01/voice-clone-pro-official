@@ -380,8 +380,8 @@ def test_v2_send_telegram_single_emoji():
 def test_cache_buster_bumped():
     # Token supersession chain: r4 -> r6 (round 6) -> gv1 (Gemini
     # voice preview feature) -> rt1 (Recap tab tidy, all three statics)
-    # -> rt2 (tidy return pass: app.js / style.css / index.html).
-    assert INDEX_HTML.count("?v=20261101_rt2") == 3
+    # -> rt3 (tidy return pass 2: app.js / style.css / index.html).
+    assert INDEX_HTML.count("?v=20261101_rt3") == 3
     assert "?v=20261101_rt1" not in INDEX_HTML
     assert "?v=20261101_gv1" not in INDEX_HTML
     assert "?v=20261101_r6" not in INDEX_HTML
