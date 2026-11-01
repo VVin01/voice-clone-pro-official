@@ -5366,14 +5366,30 @@ async def get_admin_audit_log(
     ]
 
 
+def _admin_category_filter(category: str = "") -> str:
+    """Normalize the optional users-list category filter.
+
+    Only the two real account categories filter anything; an absent or
+    unrecognized value means "no filter" so a stale client can never
+    blank the admin's user list by sending garbage.
+    """
+    cat = (category or "").strip().upper()
+    return cat if cat in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value) else ""
+
+
 @api_router.get("/admin/users/search")
 async def search_admin_users(
     q: str = "",
     limit: int = 20,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
+    category: str = "",
 ):
-    """Search users by Telegram ID, @username or first name (admin only)."""
+    """Search users by Telegram ID, @username or first name (admin only).
+
+    The optional ``category`` (FREE|PURCHASED) narrows the search to the
+    Users screen's active filter chip, same as the browse list.
+    """
     query = (q or "").strip().lstrip("@")
     if len(query) < 2:
         raise HTTPException(status_code=400, detail="Search query too short (min 2 characters)")
@@ -5384,8 +5400,12 @@ async def search_admin_users(
     ]
     if query.isdigit():
         conds.append(User.id == int(query))
+    stmt = select(User).where(or_(*conds))
+    cat = _admin_category_filter(category)
+    if cat:
+        stmt = stmt.where(User.account_category == cat)
     rows = (await db.execute(
-        select(User).where(or_(*conds)).order_by(User.created_at.desc()).limit(limit)
+        stmt.order_by(User.created_at.desc()).limit(limit)
     )).scalars().all()
     out = []
     for u in rows:
@@ -5426,19 +5446,32 @@ async def list_admin_users(
     offset: int = 0,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
+    category: str = "",
 ):
     """Most recently joined users (admin only) — the Users screen landing list.
 
     Search requires a query of 2+ characters; admins also need a way to
     simply browse who just joined without knowing a name or ID first.
+    The optional ``category`` (FREE|PURCHASED) filters server-side (the
+    Users screen's filter chips page through the whole user base with
+    limit/offset, so filtering must happen here, not over one page);
+    ``total`` reports the filtered row count so the client knows when
+    "Load more" has reached the end.
     """
     limit = max(1, min(int(limit or 30), 100))
     offset = max(0, int(offset or 0))
+    stmt = select(User)
+    count_stmt = select(func.count(User.id))
+    cat = _admin_category_filter(category)
+    if cat:
+        stmt = stmt.where(User.account_category == cat)
+        count_stmt = count_stmt.where(User.account_category == cat)
+    total = (await db.execute(count_stmt)).scalar() or 0
     rows = (await db.execute(
-        select(User).order_by(User.created_at.desc()).limit(limit).offset(offset)
+        stmt.order_by(User.created_at.desc()).limit(limit).offset(offset)
     )).scalars().all()
     out = [await _admin_user_row(db, u) for u in rows]
-    return {"users": out, "count": len(out), "limit": limit, "offset": offset}
+    return {"users": out, "count": len(out), "limit": limit, "offset": offset, "total": total}
 
 
 @api_router.get("/admin/users/{user_id}")

@@ -234,7 +234,9 @@ def test_split_minutes_use_western_digits():
 
 
 def test_cache_buster_bumped_for_tidy():
-    assert HTML.count("?v=20261101_rt3") == 3
+    # rt4 = full-app polish batch (2026-11-01) superseding rt3.
+    assert HTML.count("?v=20261101_rt4") == 3
+    assert "?v=20261101_rt3" not in HTML
     assert "?v=20261101_rt2" not in HTML
     assert "?v=20261101_rt1" not in HTML
     assert "?v=20261101_gv1" not in HTML

@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261101_rt3">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261101_rt4">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -184,6 +184,8 @@
                     <p class="ref-desc" data-i18n="ref_desc">သူငယ်ချင်း တစ်ယောက် ဒီ link နဲ့ ဝင်၍ Channel + Group join လိုက်တာနဲ့ အသံအချိန် +30 စက္ကန့် ရပါမည် (အများဆုံး မိတ်ဆွေ 20 ယောက် = 10 မိနစ် အထိ)။</p>
                     <div class="ref-link-row">
                         <span class="ref-link-text" id="referral-link-text">—</span>
+                    </div>
+                    <div class="ref-actions">
                         <button type="button" class="mini-chip gold" onclick="copyReferralLink()" data-i18n="btn_copy">📋 ကူးမည်</button>
                         <button type="button" class="mini-chip" onclick="shareReferralLink()" data-i18n="ref_share_btn">↗️ မျှဝေမည်</button>
                     </div>
@@ -217,6 +219,32 @@
                             <span class="home-tut-text">
                                 <span class="home-tut-name" data-i18n="home_start_recap_name">Recap Maker</span>
                                 <span class="home-tut-desc" data-i18n="home_start_recap_desc">ဗီဒီယိုမှ Recap ဇာတ်လမ်း ဖန်တီးရန်</span>
+                            </span>
+                            <span class="home-tut-chevron">›</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tools / Library: Downloader + History live here now
+                     (owner decision 2026-11-01) — the bottom nav carries
+                     only the four primary destinations; these two views
+                     keep their panes, deep links and in-studio links. -->
+                <div class="card glass" id="home-tools-card">
+                    <div class="card-label" data-i18n="home_tools_title">🧰 ကိရိယာ နှင့် မှတ်တမ်း</div>
+                    <div class="home-tut-list">
+                        <button type="button" class="home-tut-row" onclick="switchTab('tab-downloader')">
+                            <span class="home-tut-icon">📥</span>
+                            <span class="home-tut-text">
+                                <span class="home-tut-name" data-i18n="home_tools_dl_name">ဗီဒီယို ဒေါင်းလုဒ်</span>
+                                <span class="home-tut-desc" data-i18n="home_tools_dl_desc">YouTube၊ TikTok၊ Facebook link တို့မှ ဗီဒီယို/အသံ ဆွဲယူရန်</span>
+                            </span>
+                            <span class="home-tut-chevron">›</span>
+                        </button>
+                        <button type="button" class="home-tut-row" onclick="openHistoryHub()">
+                            <span class="home-tut-icon">📜</span>
+                            <span class="home-tut-text">
+                                <span class="home-tut-name" data-i18n="home_tools_history_name">ကျွန်ုပ်၏ မှတ်တမ်း</span>
+                                <span class="home-tut-desc" data-i18n="home_tools_history_desc">ဖန်တီးခဲ့သော အသံနှင့် Recap အလုပ်များ အားလုံး</span>
                             </span>
                             <span class="home-tut-chevron">›</span>
                         </button>
@@ -272,13 +300,13 @@
                         <!-- Custom Reference Audio Section (inside same unified card) -->
                         <div class="ref-audio-card hidden" id="ref-audio-section">
                             <div class="card-header-row">
-                                <div class="card-label" data-i18n="custom_ref_title">🎙️ Reference Voice (အသံတူ Clone ရန် အသံနမူနာ)</div>
-                                <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့် (Optional)</span>
+                                <div class="card-label" data-i18n="custom_ref_title">🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)</div>
+                                <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့်</span>
                             </div>
                             <p class="ref-desc" data-i18n="custom_ref_desc">မိမိပြောလိုသော အသံပိုင်ရှင်၏ အသံဖိုင် (၃-၃၀ စက္ကန့် WAV/MP3) တင်သွင်းနိုင်ပါသည်။ မတင်ပါက Default Burmese AI Voice ဖြင့် ပြောပါမည်။</p>
                             <div class="ref-upload-row">
                                 <label class="btn-file-upload" for="ref-audio-input">
-                                    <span id="ref-audio-label" data-i18n="ref_file_btn">Reference Audio ဖိုင် ရွေးချယ်မည်</span>
+                                    <span id="ref-audio-label" data-i18n="ref_file_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
                                 </label>
                                 <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
                                 <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ဖျက်မည်</button>
@@ -301,7 +329,7 @@
                         <button class="mini-chip text-danger" onclick="clearVoiceText()" data-i18n="btn_clear_text">🗑️ ရှင်းမည်</button>
                     </div>
                     <div class="control-row divided mt-2">
-                        <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း (Speed):</span>
+                        <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း:</span>
                         <div class="pill-group" id="speed-selector">
                             <button class="pill-btn" data-speed="slow" data-i18n="speed_slow">0.8x နှေး</button>
                             <button class="pill-btn active" data-speed="normal" data-i18n="speed_normal">1.0x ပုံမှန်</button>
@@ -1205,9 +1233,7 @@
                             <div id="dl-result-title" class="dl-meta-title"></div>
                             <div class="dl-meta-row">
                                 <span id="dl-result-platform" class="dl-platform"></span>
-                                <span>•</span>
                                 <span id="dl-result-uploader"></span>
-                                <span>•</span>
                                 <span id="dl-result-duration"></span>
                             </div>
                         </div>
@@ -1489,7 +1515,7 @@
                             <span class="stat-lbl" data-i18n="admin_stat_users">အသုံးပြုသူ စုစုပေါင်း</span>
                             <span class="stat-num" id="adm-total-users">0</span>
                         </div>
-                        <div class="card glass stat-mini-card">
+                        <div class="card glass stat-mini-card adm-tap" onclick="openAdminUsersPaid()">
                             <span class="stat-lbl" data-i18n="admin_stat_vip">VIP အဖွဲ့ဝင်များ</span>
                             <span class="stat-num text-gold" id="adm-vip-users">0</span>
                         </div>
@@ -1666,10 +1692,15 @@
                         <div class="card glass">
                             <div class="card-label" data-i18n="admin_user_manage_header">👤 အသုံးပြုသူ ရှာဖွေရန်</div>
                             <div class="admin-action-row mt-2">
-                                <input type="text" id="adm-user-search-q" data-i18n-ph="admin_user_search_ph" placeholder="ID / @username / နာမည် ရိုက်ရှာပါ" class="studio-input" style="flex:1;">
+                                <input type="text" id="adm-user-search-q" data-i18n-ph="admin_user_search_ph" placeholder="ID / @username / နာမည်" class="studio-input" style="flex:1;">
                                 <button class="btn mini-btn secondary-btn" onclick="adminSearchUsers()" data-i18n="btn_search_users">🔎 ရှာမည်</button>
                             </div>
                             <div id="admin-user-search-results" class="mt-2"></div>
+                        </div>
+                        <div class="filter-chips-row adm-users-filter-row" id="adm-users-filter-chips">
+                            <button type="button" class="filter-chip adm-users-filter-chip active" data-cat="" onclick="setAdminUsersCategory('')"><span data-i18n="filter_all">အားလုံး</span></button>
+                            <button type="button" class="filter-chip adm-users-filter-chip" data-cat="FREE" onclick="setAdminUsersCategory('FREE')"><span data-i18n="adm_users_filter_free">အခမဲ့</span></button>
+                            <button type="button" class="filter-chip adm-users-filter-chip" data-cat="PURCHASED" onclick="setAdminUsersCategory('PURCHASED')"><span data-i18n="adm_users_filter_paid">ငွေပေးပြီး 👑</span></button>
                         </div>
                         <div class="card glass mt-3">
                             <div class="card-header-row">
@@ -1679,6 +1710,7 @@
                             <div id="admin-users-recent" class="mt-2">
                                 <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
                             </div>
+                            <button type="button" class="btn secondary-btn hidden" id="adm-users-load-more" onclick="loadMoreAdminUsers()"><span data-i18n="adm_users_load_more">နောက်ထပ် ပြရန်</span></button>
                         </div>
                     </div>
 
@@ -2029,6 +2061,7 @@
         </div>
 
         <!-- ════ BOTTOM LUXURY FLOATING DOCK ════ -->
+        <div class="nav-scrim" aria-hidden="true"></div>
         <nav class="bottom-nav">
             <button class="nav-item active" data-tab="tab-home">
                 <span class="nav-icon">🏠</span>
@@ -2042,17 +2075,9 @@
                 <span class="nav-icon">🎬</span>
                 <span class="nav-label" data-i18n="tab_recap">Recap Maker</span>
             </button>
-            <button class="nav-item" data-tab="tab-downloader">
-                <span class="nav-icon">📥</span>
-                <span class="nav-label" data-i18n="tab_downloader">Downloader</span>
-            </button>
             <button class="nav-item" data-tab="tab-vip">
                 <span class="nav-icon">💎</span>
                 <span class="nav-label" data-i18n="tab_vip">VIP Plans</span>
-            </button>
-            <button class="nav-item" data-tab="tab-history">
-                <span class="nav-icon">📜</span>
-                <span class="nav-label" data-i18n="tab_history">မှတ်တမ်း</span>
             </button>
             <button class="nav-item hidden" id="nav-btn-admin" data-tab="tab-admin">
                 <span class="nav-icon">⚡</span>
@@ -2132,7 +2157,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261101_rt3"></script>
-    <script src="/static/js/app.js?v=20261101_rt3"></script>
+    <script src="/static/js/i18n.js?v=20261101_rt4"></script>
+    <script src="/static/js/app.js?v=20261101_rt4"></script>
 </body>
 </html>
