@@ -1567,6 +1567,9 @@ MYANMAR_SPELLING_FIXES: dict[str, str] = {
     "အအပြဲ": "အပြင်းအထန်",  # garbled doubled-အ token in model output
     "ဘွားအေ": "အဘွား",  # grandmother — standard written form
     "လက်ဝတ်ရစား": "လက်ဝတ်ရတနာ",  # jewelry — modern standard term
+    "အံ့ဩတကြီး": "အံ့ဩစွာ",  # malformed 'တကြီး' adverb (jobs rc_1793525723 + rc_1793526555, owner report 2026-11-01)
+    "စိုးရိမ်တကြီး": "စိုးရိမ်စွာ",  # same malformed 'တကြီး' adverb family (job rc_1793526555)
+    "အန္တရာယ်ကြားဆီ": "အန္တရာယ်ထဲကို",  # broken construction (job rc_1793525723) — the natural form is ထဲကို
 }
 
 
