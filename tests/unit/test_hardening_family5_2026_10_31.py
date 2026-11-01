@@ -81,7 +81,7 @@ def test_asset_versions_bumped_for_fix_release():
     for ref in refs:
         assert "20261030_release_v1" not in ref, ref
         assert "20261030_release_v2" not in ref, ref
-        assert "?v=20261101_jr1" in ref, ref
+        assert "?v=20261101_h7" in ref, ref
     # The two scripts whose bytes changed must be on the new token.
-    assert "/static/js/app.js?v=20261101_jr1" in html
-    assert "/static/js/i18n.js?v=20261101_jr1" in html
+    assert "/static/js/app.js?v=20261101_h7" in html
+    assert "/static/js/i18n.js?v=20261101_h7" in html

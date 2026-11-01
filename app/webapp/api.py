@@ -4232,6 +4232,43 @@ def _job_deliverables(job, is_recap: bool, file_exists: bool):
     }
 
 
+_DIR_LISTING_CACHE: Dict[str, tuple] = {}
+_DIR_LISTING_TTL_SECONDS = 10.0
+
+
+def _cached_dir_entries(dir_path: Path) -> List[tuple]:
+    """(name, is_file) entries of a directory, cached for a few seconds.
+
+    check_job_file_exists falls back to scanning storage directories
+    for legacy rows whose result_path is missing or stale. The admin
+    history/queue serializers call it once per row (up to 300 rows),
+    the admin console auto-refreshes every few seconds, and every one
+    of those scans used to re-glob the same directories synchronously
+    on the event loop — an unfiltered admin list full of expired
+    SUCCESS rows (the exact rows that miss the result_path fast path)
+    meant hundreds of full directory scans per request (hunt #7).
+    The cache collapses that to one scan per directory per TTL
+    window; the match semantics are identical to the globs replaced.
+    """
+    key = str(dir_path)
+    now = time.monotonic()
+    hit = _DIR_LISTING_CACHE.get(key)
+    if hit and now - hit[0] < _DIR_LISTING_TTL_SECONDS:
+        return hit[1]
+    entries: List[tuple] = []
+    try:
+        with os.scandir(dir_path) as it:
+            for entry in it:
+                try:
+                    entries.append((entry.name, entry.is_file()))
+                except OSError:
+                    entries.append((entry.name, False))
+    except OSError:
+        entries = []
+    _DIR_LISTING_CACHE[key] = (now, entries)
+    return entries
+
+
 def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str] = None) -> bool:
     """Safely check if the completed job's output media file exists on container disk."""
     try:
@@ -4243,13 +4280,13 @@ def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str
                 return True
             outputs_dir = settings.storage_root / "outputs"
             if outputs_dir.is_dir():
-                matches = list(outputs_dir.glob(f"{job_id}*"))
-                if matches and matches[0].is_file():
+                if any(name.startswith(job_id) and is_file
+                       for name, is_file in _cached_dir_entries(outputs_dir)):
                     return True
             for cand_dir in [settings.storage_root / "outputs", settings.storage_root / "temp", settings.storage_root / "voices", settings.storage_root / "recap_output"]:
                 if cand_dir.is_dir():
-                    m = list(cand_dir.glob(f"*{job_id}*"))
-                    if m and m[0].is_file():
+                    if any(job_id in name and is_file
+                           for name, is_file in _cached_dir_entries(cand_dir)):
                         return True
             return False
     except Exception:
@@ -4726,6 +4763,40 @@ async def submit_payment_slip(
     # slip in memory. _save_upload_streaming raises 413 and deletes the
     # partial file when the cap is exceeded.
     await _save_upload_streaming(slip_file, dest_path, MAX_SLIP_UPLOAD_BYTES)
+
+    # Duplicate-slip guard (hunt #7): the identical slip IMAGE already
+    # sitting in one of this user's PENDING requests means this is the
+    # same payment evidence submitted twice (double-tap / retry after
+    # a hang), not a second purchase — two PENDING rows for one real
+    # payment get double-credited if an admin approves both. A
+    # genuinely separate payment has a different slip image, so it is
+    # never blocked by this check. The bot flow has the twin guard on
+    # the Telegram file_id (payments.create_payment_request).
+    import hashlib
+
+    def _sha256_of(path: Path) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    new_slip_hash = await asyncio.to_thread(_sha256_of, dest_path)
+    pending_slips = (await db.execute(
+        select(PaymentRequest).where(
+            PaymentRequest.user_id == user.id,
+            PaymentRequest.status == PaymentStatus.PENDING.value,
+            PaymentRequest.slip_url.is_not(None),
+        )
+    )).scalars().all()
+    for pending in pending_slips:
+        prior_path = receipts_dir / Path(pending.slip_url or "").name
+        if prior_path.is_file() and await asyncio.to_thread(_sha256_of, prior_path) == new_slip_hash:
+            dest_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=409,
+                detail="ဒီ ပြေစာပုံကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ စစ်ဆေးနေဆဲ ဖြစ်လို့ ထပ်မပို့ဘဲ ခဏ စောင့်ပေးပါ ခင်ဗျာ။",
+            )
 
     # Resolve the plan EXACTLY like the bot flow
     # (payments.create_payment_request): the DB PricingPlan row wins,

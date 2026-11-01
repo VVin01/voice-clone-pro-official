@@ -82,6 +82,28 @@ async def create_payment_request(
     receipt_file_id: str | None = None,
 ) -> PaymentRequest:
     """Create a new pending payment request."""
+    # Duplicate-slip guard (hunt #7): the SAME receipt evidence sent
+    # twice (a double-tap, a Telegram resend, or the after-restart
+    # resume racing the live FSM handler) used to create two PENDING
+    # requests for one real payment — approve both and the user is
+    # credited twice. Telegram file_ids are stable per photo/document,
+    # so an identical file_id already PENDING for this user means
+    # this submission is the same slip: return the existing request
+    # instead of minting a second one.
+    if receipt_file_id:
+        existing = (await session.execute(
+            select(PaymentRequest).where(
+                PaymentRequest.user_id == user_id,
+                PaymentRequest.receipt_file_id == receipt_file_id,
+                PaymentRequest.status == PaymentStatus.PENDING.value,
+            )
+        )).scalar_one_or_none()
+        if existing is not None:
+            logger.info(
+                "Duplicate slip submission by user %s ignored; existing request %s still pending",
+                user_id, existing.id,
+            )
+            return existing
     # Resolve package details: DB minute packs first, then the plan
     # catalogue (bundles/recap/combined codes are not DB PricingPlan rows,
     # but they are sellable through the bot buy menu and Mini App).

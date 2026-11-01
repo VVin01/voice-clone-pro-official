@@ -388,6 +388,22 @@ async def confirm_referral_and_reward(
 
     referrer_id = ref.referrer_id
 
+    # Serialize reward grants per referrer (hunt #7): two friends of
+    # the same referrer confirming membership at the same moment each
+    # counted the existing rewards and inserted the SAME reward_index
+    # - the unique constraint then failed one confirm with an
+    # IntegrityError inside the referred user's gate verification
+    # (reproduced live on the SQLite test harness), and the balance
+    # credit was a stale read-modify-write that could lose one grant.
+    # Locking the referrer's User row makes count + insert + credit
+    # atomic per referrer on Postgres - the same pattern the payment
+    # approval and purchased-credit paths already rely on. (On
+    # SQLite FOR UPDATE is a no-op, so the harness pins the lock
+    # ordering and the sequential end state instead.)
+    await session.execute(
+        select(User).where(User.id == referrer_id).with_for_update()
+    )
+
     # Check how many rewards this referrer has already earned
     count_stmt = select(func.count()).select_from(ReferralReward).where(ReferralReward.referrer_id == referrer_id)
     awarded_count = (await session.execute(count_stmt)).scalar() or 0
@@ -423,6 +439,7 @@ async def confirm_referral_and_reward(
             "Awarded referral reward %s/20 to referrer %s for referred user %s",
             reward_idx, referrer_id, referred_user_id
         )
+
 
     ref.status = "REWARDED"
     ref.rewarded_at = utc_now()
