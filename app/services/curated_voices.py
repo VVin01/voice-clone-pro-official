@@ -38,7 +38,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "komin": {
         "id": "komin",
         "gender": "male",
-        "name_my": "မင်းမင်း (ရုပ်ရှင်ဇာတ်လမ်းပြောသူ)",
+        "name_my": "ကိုမင်း (ရုပ်ရှင်ဇာတ်လမ်းပြောသူ)",
         "name_en": "Ko Min (Movie Recap Storyteller)",
         "desc_my": "နွေးထွေးတည်ကြည်ပြီး ဇာတ်လမ်းပြောရာတွင် အကောင်းဆုံး ရုပ်ရှင်အသံ",
         "desc_en": "Deep, warm, cinematic narrator ideal for movie recaps and docudramas",
@@ -92,7 +92,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "koaung": {
         "id": "koaung",
         "gender": "male",
-        "name_my": "အောင်အောင် (ခေတ်မီ Viral Creator)",
+        "name_my": "ကိုအောင် (ခေတ်မီ Viral Creator)",
         "name_en": "Ko Aung (Energetic Viral Creator)",
         "desc_my": "သွက်လက်တက်ကြွပြီး TikTok/Shorts နှင့် လိုက်ဖက်သော လူငယ်အသံ",
         "desc_en": "Fast-paced, vibrant, casual youth creator voice for TikTok and Shorts",
@@ -116,7 +116,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "mahnin": {
         "id": "mahnin",
         "gender": "female",
-        "name_my": "နှင်းနှင်း (အချစ်ဇာတ်လမ်း & Audiobook)",
+        "name_my": "မနှင်း (အချစ်ဇာတ်လမ်း & Audiobook)",
         "name_en": "Ma Hnin (Sweet Romance & Audiobook)",
         "desc_my": "နူးညံ့ချိုသာပြီး ရင်ထဲထိရှစေသော ဝတ္ထုစာအုပ်ဖတ်ပြသံ",
         "desc_en": "Gentle, melodious, heartfelt female voice for audiobooks & soft storytelling",
@@ -146,7 +146,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "manadi": {
         "id": "manadi",
         "gender": "female",
-        "name_my": "နဒီ (သည်းထိတ်ရင်ဖို & Movie Drama)",
+        "name_my": "မနဒီ (သည်းထိတ်ရင်ဖို & Movie Drama)",
         "name_en": "Ma Nadi (Dramatic Thriller Narrator)",
         "desc_my": "သည်းထိတ်ရင်ဖိုနှင့် စိတ်ဝင်စားဖွယ် ဇာတ်ဝင်ခန်းများကို ပေါ်လွင်စေသော အသံ",
         "desc_en": "Suspenseful, dramatic, expressive female voice for thrilling narratives",
@@ -170,7 +170,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
     "mamay": {
         "id": "mamay",
         "gender": "female",
-        "name_my": "မေမေ (ကြော်ငြာ & စီးပွားရေး လမ်းညွှန်)",
+        "name_my": "မမေ (ကြော်ငြာ & စီးပွားရေး လမ်းညွှန်)",
         "name_en": "Ma May (Commercial & Friendly Guide)",
         "desc_my": "ယဉ်ကျေးဖော်ရွေပြီး ယုံကြည်စိတ်ချရသော စီးပွားရေးကြော်ငြာသံ",
         "desc_en": "Articulate, polite, trustworthy, bright commercial & explainer voice",

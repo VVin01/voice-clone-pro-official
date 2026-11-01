@@ -600,6 +600,40 @@ select.studio-input { min-height: 50px; }
 .history-item-badge.status-failed { background: var(--red-soft); color: var(--red); }
 .history-item-badge.status-running { background: var(--sky-soft); color: var(--sky); }
 .history-item-badge.status-queued { background: var(--surface-3); color: var(--text-2); }
+.history-item-badge.hub-fallback-badge { background: rgba(217, 119, 6, 0.14); color: #d97706; }
+.hub-fallback-note { color: #d97706; font-weight: 600; }
+/* The hub detail note also carries .history-item-body (dark default
+   text, defined later in this file) — outrank it so the note reads
+   as the amber warning it is. */
+.history-item-body.hub-fallback-note { color: #d97706; }
+
+/* Refer & Support card (round-6 P2). */
+.ref-desc {
+    font-size: 13px;
+    line-height: 1.55;
+    opacity: 0.85;
+    margin: 6px 0 10px;
+}
+.ref-link-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ref-link-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.9;
+}
+.ref-stats {
+    font-size: 12px;
+    opacity: 0.75;
+    margin: 8px 0 4px;
+    min-height: 15px;
+}
 .history-item-body { font-size: 14px; color: var(--text); line-height: 1.6; word-break: break-word; }
 .history-item-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
 .history-item-footer > span { font-size: 12px; color: var(--text-3); }
@@ -1275,17 +1309,20 @@ select.studio-input { min-height: 50px; }
     width: calc(100% - 24px); max-width: 560px; z-index: 800;
 }
 .floating-alert-card {
-    display: flex; align-items: center; gap: var(--s3);
+    /* Round-6 P4: wrap so the action pill drops to its own row on
+       narrow screens — in a single row it squeezed the body into a
+       ~100px word-per-line column. */
+    display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
     background: var(--surface-2); border: 1px solid var(--gold-border);
     border-radius: var(--r-lg); padding: var(--s3) var(--s4);
     box-shadow: var(--shadow-pop); animation: fadeIn 0.25s ease;
 }
 .floating-alert-icon { font-size: 22px; flex-shrink: 0; }
-.floating-alert-body { flex: 1; min-width: 0; }
+.floating-alert-body { flex: 1 1 190px; min-width: 0; }
 .floating-alert-title { font-size: 14.5px; font-weight: 700; line-height: 1.5; }
 .floating-alert-desc { font-size: 12.5px; color: var(--text-2); line-height: 1.55; }
 .floating-alert-action {
-    flex-shrink: 0; min-height: 40px; padding: 5px 13px;
+    flex-shrink: 0; min-height: 40px; padding: 5px 13px; margin-left: auto;
     background: linear-gradient(135deg, var(--gold-2), var(--gold-deep)); color: #1a1206;
     border: none; border-radius: 999px; font-size: 13px; font-weight: 800;
 }
@@ -2159,6 +2196,10 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     border-radius: 999px; backdrop-filter: var(--blur-card);
     scrollbar-width: none; position: sticky; top: 8px; z-index: 30;
     box-shadow: var(--glass-hi);
+    /* Round-6 P10: a soft right-edge fade signals the row scrolls —
+       the last tabs used to sit off-screen with no affordance. */
+    -webkit-mask-image: linear-gradient(to right, #000 92%, transparent 100%);
+    mask-image: linear-gradient(to right, #000 92%, transparent 100%);
 }
 .adm-nav::-webkit-scrollbar { display: none; }
 .adm-nav-btn {

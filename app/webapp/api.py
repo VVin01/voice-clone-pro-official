@@ -694,6 +694,25 @@ TUTORIAL_EXTRA_LINKS: dict[str, str] = {
 
 
 # ── 1. User & Wallet Profile ───────────────────────────────────────────────
+async def _ensure_referral_code(db: AsyncSession, user: User) -> str:
+    """Return the user's referral code, lazily creating one if missing.
+
+    Codes are assigned at user creation in the bot flow
+    (ledger.get_or_create_user), but the WebApp auth path creates User
+    rows directly (get_current_user) and legacy rows may predate the
+    column — so /me heals a NULL code on first read using the same
+    collision-safe generator the bot uses.
+    """
+    code = getattr(user, "referral_code", None)
+    if code:
+        return code
+    from app.services.ledger import _find_available_referral_code
+    code = await _find_available_referral_code(db, user.id)
+    user.referral_code = code
+    await db.commit()
+    return code
+
+
 @api_router.get("/user/me")
 async def get_user_profile(
     user: User = Depends(get_current_user),
@@ -821,6 +840,22 @@ async def get_user_profile(
     except Exception:
         pass
 
+    # Round-6 P2: Refer & Support exposure. The referral programme is
+    # complete in the bot (ledger.py: attribution, +30s rewards capped
+    # at 20, get_referral_stats) but the Mini App never exposed it —
+    # users could only find a tutorial post. Ride the fields on /me so
+    # the Home card renders with zero extra fetches. A referral failure
+    # must never break the profile read.
+    referral_code = ""
+    referral_stats = None
+    try:
+        referral_code = await _ensure_referral_code(db, user)
+        from app.services.ledger import get_referral_stats
+        referral_stats = await get_referral_stats(db, user.id)
+    except Exception:
+        referral_code = referral_code or ""
+        referral_stats = None
+
     return {
         "id": user.id,
         "first_name": user.first_name,
@@ -839,6 +874,14 @@ async def get_user_profile(
         "active_recap_job_id": active_recap_job_id,
         "active_voice_job_id": active_voice_job_id,
         "completed_jobs": completed_jobs,
+        "referral_code": referral_code,
+        "referral_link": (
+            f"https://t.me/voiceclonepro_bot?start={referral_code}"
+            if referral_code else ""
+        ),
+        "referral": referral_stats,
+        "support_telegram": "@VoiceCloneProAdmin",
+        "support_link": "https://t.me/VoiceCloneProAdmin",
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
         "tutorial_voice_title": tut_voice_title,
@@ -2454,6 +2497,7 @@ def _recap_fallback_info(job_dir) -> tuple[bool, list]:
 # backwards within a job: callers pass the entry's current percent and
 # keep the returned maximum.
 _RECAP_STAGE_BANDS = {
+    "download": (5, 15),
     "transcribe": (15, 30),
     "context": (30, 42),
     "translate": (42, 54),
@@ -2461,8 +2505,11 @@ _RECAP_STAGE_BANDS = {
     "tts": (64, 82),
     "sync": (82, 95),
     "finalize": (95, 99),
+    "script_ready": (60, 64),
+    "split": (90, 95),
 }
 _RECAP_STAGE_STEPS = {
+    "download": "1/4",
     "transcribe": "1/4",
     "context": "2/4",
     "translate": "2/4",
@@ -2470,6 +2517,8 @@ _RECAP_STAGE_STEPS = {
     "tts": "3/4",
     "sync": "3/4",
     "finalize": "4/4",
+    "script_ready": "2/4",
+    "split": "3/4",
 }
 _RECAP_SUB_PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)\s*$")
 
@@ -2514,13 +2563,31 @@ def _recap_stage_progress(label, prev_percent=0):
     tail = low.rsplit(":", 1)[-1].strip()
     if "final recap video ready" in low:
         stage, frac, sub = "finalize", 1.0, ""
-    elif "transcription" in low or "transcribing" in low:
+    elif "downloading source" in low or "downloading the source" in low:
+        # Round-6 P6: the URL-ingest seam ("📥 Downloading source
+        # video from URL...") had no stage and reached the Burmese
+        # UI as raw English.
+        stage = "download"
+    elif (
+        "transcription" in low
+        or "transcribing" in low
+        or "transcript" in low
+        or "whisper" in low
+        or "ingestion" in low
+        or "key pool" in low
+        or "video duration" in low
+        or "🎬 source" in low
+    ):
+        # "transcript" (noun), the Whisper service's own status lines
+        # and the planner's setup lines all belong to this stage;
+        # before round 6 they fell through unmapped and the client
+        # fell back to the raw English label (round-5 P6).
         stage = "transcribe"
     elif "story context" in low:
         stage = "context"
-    elif "translation" in low:
+    elif "translation" in low or "translate batch" in low:
         stage = "translate"
-    elif "smart sync plan" in low:
+    elif "smart sync plan" in low or "smart sync boundaries" in low:
         stage = "plan"
     elif "plan ready" in low or "plan reused" in low:
         stage, frac = "plan", 1.0
@@ -2542,13 +2609,24 @@ def _recap_stage_progress(label, prev_percent=0):
     return stage, sub, max(prev, pct), _RECAP_STAGE_STEPS[stage]
 
 
-def _recap_set_entry_label(entry: dict, label: str) -> None:
-    """Write an authored progress label (Burmese UI copy written by the
-    API layer itself) and clear any engine stage mapping, so the client
-    shows this label rather than a stale localized stage line."""
+def _recap_set_entry_label(entry: dict, label: str, stage: str = None) -> None:
+    """Write an authored progress label and its canonical stage.
+
+    The label remains the API's raw text for other consumers, but the
+    Mini App renders ``progress_stage`` through i18n whenever one is
+    set — so authored seams must pass their stage (round-6 P6: the
+    English download / script-ready / completed labels used to reach
+    the Burmese UI verbatim because they cleared the stage). With no
+    stage the previous behaviour is kept (stage cleared, label shown
+    as-is — used for dynamic Burmese lines like per-part counters).
+    """
     entry["progress_label"] = label
-    entry["progress_stage"] = None
+    entry["progress_stage"] = stage
     entry["progress_sub"] = ""
+    if stage and stage in _RECAP_STAGE_BANDS:
+        entry["progress_step"] = _RECAP_STAGE_STEPS[stage]
+        lo, _hi = _RECAP_STAGE_BANDS[stage]
+        entry["progress_percent"] = max(int(entry.get("progress_percent", 0) or 0), lo)
 
 
 def _recap_max_duration_allowed(is_vip: bool, is_admin: bool = False) -> int:
@@ -2977,7 +3055,7 @@ async def _execute_recap_background_job(
     entry["status"] = "RUNNING"
     entry["progress_percent"] = 15
     entry["progress_step"] = "1/4"
-    _recap_set_entry_label(entry, "📥 Downloading source video from URL...")
+    _recap_set_entry_label(entry, "📥 Downloading source video from URL...", stage="download")
 
     try:
         from app.services.downloader import MediaDownloader
@@ -3089,7 +3167,7 @@ async def _execute_recap_background_job(
             # ── Script-review phase 1: download + plan ONLY (no TTS/render).
             # The job then waits in SCRIPT_READY until the user has reviewed
             # / edited the narration and POSTs /recap/{id}/render.
-            _recap_set_entry_label(entry, "🎙️ [1/4] Transcription + translation (script review)...")
+            _recap_set_entry_label(entry, "🎙️ [1/4] Transcription + translation (script review)...", stage="transcribe")
             if is_local_media(canonical_source_url):
                 script_source = str(Path(canonical_source_url).resolve())
                 if not Path(script_source).is_file():
@@ -3140,7 +3218,7 @@ async def _execute_recap_background_job(
             entry["status"] = "SCRIPT_READY"
             entry["progress_percent"] = 100
             entry["progress_step"] = "2/4"
-            _recap_set_entry_label(entry, "📝 Script ready — review & edit before rendering")
+            _recap_set_entry_label(entry, "📝 Script ready — review & edit before rendering", stage="script_ready")
             logger.info(f"Recap job {job_id}: script ready ({entry['segments_count']} segments), awaiting user review.")
             return
 
@@ -3325,7 +3403,7 @@ async def _execute_recap_background_job(
 
         entry["status"] = "SUCCESS"
         entry["progress_percent"] = 100
-        _recap_set_entry_label(entry, "🎉 Recap Video Generation Completed!")
+        _recap_set_entry_label(entry, "🎉 Recap Video Generation Completed!", stage="finalize")
         entry["video_path"] = video_path
         entry["audio_path"] = audio_path
         entry["srt_path"] = srt_path
@@ -3359,7 +3437,7 @@ async def _execute_recap_background_job(
                 from app.services.recap_engine.recap_pipeline import find_binary
                 from app.services.recap_engine.video_splitter import split_rendered_video
 
-                _recap_set_entry_label(entry, "✂️ Cutting into parts (smart cut at narration pauses)...")
+                _recap_set_entry_label(entry, "✂️ Cutting into parts (smart cut at narration pauses)...", stage="split")
                 split_res = await loop.run_in_executor(
                     None,
                     functools.partial(
@@ -4154,7 +4232,7 @@ async def render_recap_job(
     entry["status"] = "RUNNING"
     entry["progress_percent"] = 15
     entry["progress_step"] = "3/4"
-    _recap_set_entry_label(entry, "🗣️ Rendering with your reviewed script...")
+    _recap_set_entry_label(entry, "🗣️ Rendering with your reviewed script...", stage="tts")
     asyncio.create_task(_run_recap_background_job(
         job_id, req, user.id, user.id,
         is_vip=bool(entry.get("is_vip")),
@@ -5727,6 +5805,7 @@ class AdminSettingsPayload(BaseModel):
     tutorial_refer_link: Optional[str] = None
     tutorial_support_link: Optional[str] = None
     maintenance_mode: Optional[bool] = None
+    character_limit_free: Optional[int] = None
     gemini_primary_model: Optional[str] = None
     gemini_fallback_1: Optional[str] = None
     gemini_fallback_2: Optional[str] = None
@@ -5759,6 +5838,7 @@ async def get_admin_settings(
             for key, default in TUTORIAL_EXTRA_LINKS.items()
         },
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
+        "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
         "gemini_primary_model": getattr(settings, "gemini_primary_model", "gemini-3.6-flash"),
         "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),
         "gemini_fallback_2": getattr(settings, "gemini_fallback_2", "gemini-3.5-flash-lite"),
@@ -5814,6 +5894,24 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                         "နံပါတ် ထည့်ပေးပါ။ မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
                     ),
                 )
+        elif key == "character_limit_free":
+            # Round-6 P5: the free character limit became admin-visible;
+            # keep it inside sane bounds so a typo can neither brick the
+            # free tier (0) nor silently hand out the farm (huge).
+            try:
+                limit_val = int(value)
+            except (TypeError, ValueError):
+                limit_val = -1
+            if limit_val < 100 or limit_val > 10000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "အခမဲ့ စာလုံးရေ ကန့်သတ်ချက် (character_limit_free) သည် "
+                        "100 မှ 10000 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = limit_val
     return cleaned
 
 

@@ -204,8 +204,12 @@ def test_fc_stage_mapping_core_labels():
 
 
 def test_fc_unmapped_labels_keep_previous_state():
+    # Round-6 P6 supersession: the URL-download label used to be this
+    # test's unmapped example — it now maps to the "download" stage
+    # (that unmapped fall-through WAS the P6 raw-English leak). A
+    # genuinely stage-less engine noise line still keeps prior state.
     stage, sub, pct, step = api_mod._recap_stage_progress(
-        "📥 Downloading source video from URL...", 15
+        "🤖 Gemini primary text model: gemini-x", 15
     )
     assert stage is None and pct == 15
 

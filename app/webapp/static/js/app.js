@@ -48,7 +48,7 @@ function showStudioConfirm(message, onConfirm, onCancel) {
             <div class="studio-confirm-icon">⚠️</div>
             <div class="studio-confirm-msg"></div>
             <div class="studio-confirm-actions">
-                <button id="studio-confirm-cancel" class="btn secondary-btn">${typeof t === "function" ? t("confirm_cancel") : "မဟုတ်ဘူး"}</button>
+                <button id="studio-confirm-cancel" class="btn secondary-btn">${typeof t === "function" ? t("confirm_cancel") : "ပယ်ဖျက်မည်"}</button>
                 <button id="studio-confirm-ok" class="btn gold-gradient-btn">${typeof t === "function" ? t("confirm_ok") : "သဘောတူ"}</button>
             </div>
         </div>
@@ -630,6 +630,99 @@ async function fetchAuthImageUrl(url) {
 }
 window.fetchAuthImageUrl = fetchAuthImageUrl;
 
+// ── Authenticated result media (round-6 P1) ─────────────────────────
+// Generated results live behind the Telegram init-data header, which
+// <audio>/<video> elements and plain <a href> clicks cannot send —
+// raw API URLs answered 401, so the voice result player sat at
+// 0:00/0:00, the WAV download failed, and History's recap player
+// never loaded. Fetch the bytes WITH the header and hand over a
+// blob: object URL instead (the pattern dlDownloadFile proved for
+// the downloader). Per-element object URLs are revoked on replace.
+const _authMediaObjectUrls = new WeakMap();
+
+async function fetchAuthBlobUrl(url) {
+    if (!url) return null;
+    if (!url.startsWith("/api/")) return url;
+    try {
+        const res = await fetch(url, { headers: getAuthHeaders(false) });
+        if (isAuthFailure(res)) return null;
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+    } catch (e) { return null; }
+}
+
+async function setAuthMediaSource(el, url) {
+    if (!el || !url) return false;
+    const objUrl = await fetchAuthBlobUrl(url);
+    if (!objUrl) return false;
+    const prev = _authMediaObjectUrls.get(el);
+    el.src = objUrl;
+    if (objUrl.startsWith("blob:")) _authMediaObjectUrls.set(el, objUrl);
+    if (prev && prev !== objUrl) URL.revokeObjectURL(prev);
+    return true;
+}
+
+function clearAuthMediaSource(el) {
+    if (!el) return;
+    const prev = _authMediaObjectUrls.get(el);
+    if (prev) { URL.revokeObjectURL(prev); _authMediaObjectUrls.delete(el); }
+    el.removeAttribute("src");
+    try { el.load(); } catch (e) {}
+}
+
+async function downloadAuthFile(url, filename) {
+    if (!url) return;
+    try {
+        const objUrl = await fetchAuthBlobUrl(url);
+        if (!objUrl) throw new Error("Download failed");
+        const a = document.createElement("a");
+        a.href = objUrl;
+        if (filename) a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+        haptic("success");
+    } catch (err) {
+        showErrorToast(err, 'download');
+    }
+}
+window.downloadAuthFile = downloadAuthFile;
+
+async function openAuthFile(url) {
+    if (!url) return;
+    try {
+        const objUrl = await fetchAuthBlobUrl(url);
+        if (!objUrl) throw new Error("Open failed");
+        const a = document.createElement("a");
+        a.href = objUrl;
+        a.target = "_blank";
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
+    } catch (err) {
+        showErrorToast(err, 'download');
+    }
+}
+window.openAuthFile = openAuthFile;
+
+// Delegated handlers: anchors carrying data-dl-url are authenticated
+// downloads and anchors carrying data-open-url are authenticated
+// view-in-tab links — neither may navigate to the raw API URL.
+document.addEventListener("click", (e) => {
+    const a = e.target && e.target.closest ? e.target.closest("a[data-dl-url], a[data-open-url]") : null;
+    if (!a) return;
+    e.preventDefault();
+    if (a.hasAttribute("data-dl-url")) {
+        downloadAuthFile(a.getAttribute("data-dl-url"), a.getAttribute("data-dl-name") || a.getAttribute("download") || undefined);
+    } else {
+        openAuthFile(a.getAttribute("data-open-url"));
+    }
+});
+
 // ── Tutorial Video Link Controller (Voice Clone & Movie Recap) ───────────────
 // Tutorial registry (premium polish): every tutorial lives as a message in
 // the @VoiceClonePro channel; msg 38 is the index post linking all 10.
@@ -779,6 +872,68 @@ function openTutorialUrl(url) {
         window.open(url, "_blank");
     }
 }
+
+// ── Refer & Support (round-6 P2) ────────────────────────────────────
+// The referral programme itself lives in the bot (ledger.py); /me now
+// carries the user's own code/link + stats, rendered here on Home.
+let _referralLink = "";
+let _supportLink = "https://t.me/VoiceCloneProAdmin";
+
+function updateReferUI(data) {
+    if (!data) return;
+    _referralLink = data.referral_link || "";
+    if (data.support_link) _supportLink = data.support_link;
+    const lt = document.getElementById("referral-link-text");
+    if (lt) lt.textContent = _referralLink || t("ref_link_pending");
+    const st = document.getElementById("referral-stats-line");
+    const r = data.referral;
+    if (st) {
+        st.textContent = r ? tf("ref_stats_line", {
+            rewarded: r.rewarded_referrals || 0,
+            max: r.max_referrals || 20,
+            earned_min: Math.round((r.earned_minutes || 0) * 10) / 10,
+            remaining: r.remaining_slots != null ? r.remaining_slots : 20,
+        }) : "";
+    }
+}
+window.updateReferUI = updateReferUI;
+
+function copyReferralLink() {
+    haptic("light");
+    if (!_referralLink) return;
+    const link = _referralLink;
+    const done = () => showStudioToast(`${link}\n${t("toast_copied")}`, 'success');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(done).catch(() => {
+            showStudioInputModal({
+                title: t("ref_card_title"),
+                initialValue: link,
+                confirmLabel: t("btn_copy"),
+                onConfirm: () => {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(link).then(done).catch(() => {});
+                    }
+                },
+            });
+        });
+    }
+}
+window.copyReferralLink = copyReferralLink;
+
+function shareReferralLink() {
+    haptic("light");
+    if (!_referralLink) return;
+    const u = "https://t.me/share/url?url=" + encodeURIComponent(_referralLink)
+        + "&text=" + encodeURIComponent(t("ref_share_text"));
+    openTutorialUrl(u);
+}
+window.shareReferralLink = shareReferralLink;
+
+function openSupportContact() {
+    haptic("light");
+    openTutorialUrl(_supportLink);
+}
+window.openSupportContact = openSupportContact;
 
 function openTutorialVideo(type = "auto") {
     haptic("light");
@@ -941,6 +1096,9 @@ async function toggleLanguage() {
     loadCuratedVoices();
     loadUserProfile();
     updateRecapSplitCostHint();
+    // Recap step-1 info chips are painted from the analyze payload,
+    // not data-i18n — repaint them in the new language (round-6 P7).
+    if (typeof window.refreshRecapInfoMetaLanguage === "function") window.refreshRecapInfoMetaLanguage();
 }
 
 // ── Navigation (Tabs) ───────────────────────────────────────────────────────
@@ -1013,6 +1171,7 @@ async function loadUserProfile() {
         if (data) {
             setHomeLoadErrorVisible(false);
             updateTutorialUI(data);
+            updateReferUI(data);
         }
 
         // Sync language with user profile if saved
@@ -1918,12 +2077,7 @@ function startJobPolling(jobId) {
             const btnDl = document.getElementById("btn-download-audio");
             const btnGen = document.getElementById("btn-generate-voice");
 
-            if (data.is_waiting_laptop_worker) {
-                setVoiceStage("working");
-                if (statusMsg) statusMsg.innerText = t("voxcpm_status_waiting");
-                if (etaText) etaText.innerText = t("worker_auto_complete");
-                if (progressFill) progressFill.style.width = "35%";
-            } else if (data.status === "QUEUED") {
+            if (data.status === "QUEUED") {
                 setVoiceStage("working");
                 if (progressFill) progressFill.style.width = "45%";
                 if (statusMsg) statusMsg.innerText = t("cloud_queue_waiting");
@@ -1951,12 +2105,13 @@ function startJobPolling(jobId) {
                 }
 
                 if (audioPlayer && data.output_audio_url) {
-                    audioPlayer.src = data.output_audio_url;
-                    audioPlayer.load();
-                    audioPlayer.play().catch(() => {});
+                    setAuthMediaSource(audioPlayer, data.output_audio_url).then((ok) => {
+                        if (ok) { audioPlayer.load(); audioPlayer.play().catch(() => {}); }
+                    });
                 }
                 if (btnDl && data.output_audio_url) {
-                    btnDl.href = data.output_audio_url;
+                    btnDl.setAttribute("data-dl-url", data.output_audio_url);
+                    btnDl.setAttribute("data-dl-name", "voice_clone.wav");
                 }
                 loadUserProfile();
                 loadUserHistory();
@@ -2245,6 +2400,48 @@ function setupRecapVisualEditor() {
     // "ready" (ONLY from onRecapUploadSuccess; restores the Ready
     // line — the duration chip itself stays owned by the
     // success/analyze writers, which hold the real server metadata).
+    // Paint the analyze info card's duration/subtitle chips from an
+    // extract payload. Split out (round-6 P7) so a language toggle can
+    // repaint the SAME chips in the new language — they used to be
+    // baked once, in whichever language was active at analyze time,
+    // and the subtitle chip was hardcoded English in both modes.
+    function paintRecapInfoMeta(data, isOverLimit, maxAllowed) {
+        const durSpan = document.getElementById("recap-info-dur");
+        const subSpan = document.getElementById("recap-info-sub");
+        if (durSpan) {
+            if (data.metadata_verified === false) {
+                // Graceful-fallback metadata: no invented duration,
+                // no green "Ready" claim (journey-audit honesty rule).
+                durSpan.className = "mini-tag";
+                durSpan.innerHTML = `⏱️ — <span style="color:#d97706; font-weight:700; margin-left:4px;">(${t("recap_unverified_note")})</span>`;
+            } else if (isOverLimit) {
+                durSpan.className = "mini-tag text-danger";
+                const maxM = Math.floor(maxAllowed / 60);
+                const msg = (currentLang === "my")
+                    ? (state.user?.is_vip ? `အများဆုံး ${maxM} မိနစ်ထက် ကျော်လွန်နေပါသည်` : `အများဆုံး ၂ မိနစ်ထက် ကျော်လွန်နေပါသည် (VIP ရယူပါ)`)
+                    : (state.user?.is_vip ? `Exceeds max ${maxM}m` : `Exceeds Free 2m limit (Upgrade to VIP)`);
+                durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${msg})</span>`;
+            } else {
+                durSpan.className = "mini-tag";
+                durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid") || "Ready"})</span>`;
+            }
+        }
+        if (subSpan) subSpan.innerText = data.has_subtitles ? t("recap_sub_ready") : t("recap_sub_ai");
+    }
+
+    // Repaint the cached analyze result after a language change.
+    function refreshRecapInfoMetaLanguage() {
+        const data = state.lastRecapInfo;
+        if (!data) return;
+        const box = document.getElementById("recap-video-info-box");
+        if (!box || box.classList.contains("hidden")) return;
+        const maxAllowed = recapNormalMaxSeconds();
+        let isOverLimit = !!(data.duration_seconds && data.duration_seconds > maxAllowed);
+        if (isOverLimit && (state.user?.is_admin || state.user?.is_vip)) isOverLimit = false;
+        paintRecapInfoMeta(data, isOverLimit, maxAllowed);
+    }
+    window.refreshRecapInfoMetaLanguage = refreshRecapInfoMetaLanguage;
+
     function setRecapInfoUploadState(mode) {
         const durSpan = document.getElementById("recap-info-dur");
         const subSpan = document.getElementById("recap-info-sub");
@@ -3541,6 +3738,7 @@ function setupRecapVisualEditor() {
                 state.recapVideoTitle = data.title || "Movie Recap Video";
 
                 state.recapSourceDuration = data.duration_seconds || 0;
+                state.lastRecapInfo = data;
                 updateRecapSplitCostHint();
                 const maxAllowed = recapNormalMaxSeconds();
                 let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
@@ -3555,47 +3753,22 @@ function setupRecapVisualEditor() {
                     isOverLimit = false;
                 }
                 const btnStartRecap = document.getElementById("btn-start-recap");
-                if (durSpan) {
-                    if (isOverLimit) {
-                        durSpan.className = "mini-tag text-danger";
-                        const maxM = Math.floor(maxAllowed / 60);
-                        const tierLabel = state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)";
-                        const durM = Math.floor(data.duration_seconds / 60);
-                        const durS = Math.floor(data.duration_seconds % 60);
-                        const durStr = `${durM}:${durS < 10 ? '0' : ''}${durS}`;
-                        const msg = (currentLang === "my")
-                            ? (state.user?.is_vip ? `အများဆုံး ${maxM} မိနစ်ထက် ကျော်လွန်နေပါသည်` : `အများဆုံး ၂ မိနစ်ထက် ကျော်လွန်နေပါသည် (VIP ရယူပါ)`)
-                            : (state.user?.is_vip ? `Exceeds max ${maxM}m` : `Exceeds Free 2m limit (Upgrade to VIP)`);
-                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${msg})</span>`;
-                        if (btnStartRecap) {
-                            btnStartRecap.disabled = true;
-                            btnStartRecap.style.opacity = "0.5";
-                        }
-                        showStudioToast(t("toast_duration_over"), 'warning');
-                    } else {
-                        durSpan.className = "mini-tag";
-                        durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid") || "Ready"})</span>`;
-                        if (btnStartRecap && !recapJobIsActive()) {
-                            btnStartRecap.disabled = false;
-                            btnStartRecap.style.opacity = "";
-                        }
-                        if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
+                paintRecapInfoMeta(data, isOverLimit, maxAllowed);
+                if (isOverLimit) {
+                    if (btnStartRecap) {
+                        btnStartRecap.disabled = true;
+                        btnStartRecap.style.opacity = "0.5";
                     }
+                    showStudioToast(t("toast_duration_over"), 'warning');
+                } else {
+                    if (btnStartRecap && !recapJobIsActive()) {
+                        btnStartRecap.disabled = false;
+                        btnStartRecap.style.opacity = "";
+                    }
+                    if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
                 }
 
                 if (platformSpan) platformSpan.innerText = data.platform || "Video";
-                if (subSpan) subSpan.innerText = data.has_subtitles ? "✅ Subtitle Ready" : "⚠️ AI Auto Sub";
-
-                if (data.metadata_verified === false && durSpan) {
-                    // The extract endpoint could not verify this link
-                    // and answered with its graceful fallback: do not
-                    // present invented details as facts — no fake
-                    // "03:30" duration, no green "Ready" claim. The
-                    // job itself re-fetches for real; a blocked source
-                    // then fails with the specific blocked-link copy.
-                    durSpan.className = "mini-tag";
-                    durSpan.innerHTML = `⏱️ — <span style="color:#d97706; font-weight:700; margin-left:4px;">(${t("recap_unverified_note")})</span>`;
-                }
 
                 if (data.width && data.height) {
                     state.recapSourceWidth = data.width;
@@ -4157,10 +4330,11 @@ function startRecapJobPolling(jobId) {
                     btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
                 }
 
-                // Setup video player
+                // Setup video player (round-6 P1: blob URL — a raw
+                // API src cannot carry the init-data header and 401s)
                 const player = document.getElementById("recap-result-player");
                 if (player && data.download_urls?.video) {
-                    player.src = data.download_urls.video;
+                    setAuthMediaSource(player, data.download_urls.video);
                     player.classList.remove("hidden");
                 }
 
@@ -4171,19 +4345,15 @@ function startRecapJobPolling(jobId) {
                 const btnScript = document.getElementById("btn-recap-dl-script");
 
                 if (btnVideo && data.download_urls?.video) {
-                    btnVideo.href = data.download_urls.video;
                     btnVideo.setAttribute("data-dl-url", data.download_urls.video);
                 }
                 if (btnAudio && data.download_urls?.audio) {
-                    btnAudio.href = data.download_urls.audio;
                     btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
                 }
                 if (btnSrt && data.download_urls?.srt) {
-                    btnSrt.href = data.download_urls.srt;
                     btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
                 }
                 if (btnScript && data.download_urls?.script) {
-                    btnScript.href = data.download_urls.script;
                     btnScript.setAttribute("data-dl-url", data.download_urls.script);
                 }
 
@@ -4199,7 +4369,9 @@ function startRecapJobPolling(jobId) {
                         partsWrap.classList.remove("hidden");
                         parts.forEach(p => {
                             const a = document.createElement("a");
-                            a.href = p.url;
+                            a.href = "#";
+                            a.setAttribute("data-dl-url", p.url);
+                            if (p.n) a.setAttribute("data-dl-name", `recap_part_${p.n}.mp4`);
                             a.className = "btn mini-btn secondary-btn";
                             a.setAttribute("download", "");
                             a.textContent = "🎬 " + (p.label || ("Part " + p.n));
@@ -4885,7 +5057,12 @@ function showAdminSection(name) {
     admCurrentSection = name;
     haptic("light");
     document.querySelectorAll("#adm-nav .adm-nav-btn").forEach(b => {
-        b.classList.toggle("active", b.getAttribute("data-adm-section") === name);
+        const active = b.getAttribute("data-adm-section") === name;
+        b.classList.toggle("active", active);
+        // Round-6 P10: the sub-nav overflows on narrow screens and the
+        // last tabs sat off-screen with no cue — keep the active tab
+        // visible inside the scrollable pill row.
+        if (active) b.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
     });
     ADM_SECTIONS.forEach(s => {
         const el = document.getElementById("adm-screen-" + s);
@@ -5087,7 +5264,7 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             const videoUrl = deliverables.video || downloadUrl;
             bodyEl.innerHTML = `
                 <div class="modal-video-wrapper">
-                    <video id="admin-modal-video" src="${videoUrl}" controls autoplay playsinline class="admin-modal-player-video"
+                    <video id="admin-modal-video" data-auth-src="${videoUrl}" controls autoplay playsinline class="admin-modal-player-video"
                            onerror="handleAdminMediaError(this, '${jobId}', '${jobType}')"
                            onloadedmetadata="handleAdminMediaLoaded(this)">
                         Browser does not support HTML5 video.
@@ -5099,7 +5276,7 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             bodyEl.innerHTML = `
                 <div class="modal-audio-wrapper">
                     <div class="modal-audio-icon">🎧</div>
-                    <audio id="admin-modal-audio" src="${audioUrl}" controls autoplay class="admin-modal-player-audio"
+                    <audio id="admin-modal-audio" data-auth-src="${audioUrl}" controls autoplay class="admin-modal-player-audio"
                            onerror="handleAdminMediaError(this, '${jobId}', '${jobType}')"
                            onloadedmetadata="handleAdminMediaLoaded(this)">
                         Browser does not support HTML5 audio.
@@ -5107,6 +5284,14 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
                 </div>
             `;
         }
+    }
+
+    const modalMediaEl = bodyEl ? bodyEl.querySelector("video[data-auth-src], audio[data-auth-src]") : null;
+    if (modalMediaEl) {
+        const mediaElRef = modalMediaEl;
+        setAuthMediaSource(mediaElRef, mediaElRef.getAttribute("data-auth-src")).then((ok) => {
+            if (!ok) handleAdminMediaError(mediaElRef, jobId, jobType);
+        });
     }
 
     if (delivEl) {
@@ -5126,25 +5311,25 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             buttons += dis("↗️ Browser Tab တွင်ဖွင့်မည်");
         } else if (jobType === "RECAP") {
             if (deliverables.video) {
-                buttons += `<a href="${deliverables.video}" download class="mini-chip gold" target="_blank">🎬 Download Video</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.video}" data-dl-name="recap_video.mp4" class="mini-chip gold">🎬 Download Video</a>`;
             }
             if (deliverables.audio) {
-                buttons += `<a href="${deliverables.audio}" download class="mini-chip" target="_blank">🎙️ Download Audio</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.audio}" data-dl-name="voiceover.mp3" class="mini-chip">🎙️ Download Audio</a>`;
             }
             if (deliverables.srt) {
-                buttons += `<a href="${deliverables.srt}" download class="mini-chip" target="_blank">📝 Subtitles (SRT)</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.srt}" data-dl-name="subtitles.srt" class="mini-chip">📝 Subtitles (SRT)</a>`;
             }
             if (deliverables.script) {
-                buttons += `<a href="${deliverables.script}" download class="mini-chip" target="_blank">📄 Script (TXT)</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.script}" data-dl-name="script.txt" class="mini-chip">📄 Script (TXT)</a>`;
             }
         } else {
             const dlUrl = deliverables.download || downloadUrl;
             if (dlUrl) {
-                buttons += `<a href="${dlUrl}" download class="mini-chip gold" target="_blank">📥 Download WAV / MP3</a>`;
+                buttons += `<a href="#" data-dl-url="${dlUrl}" data-dl-name="voice.wav" class="mini-chip gold">📥 Download WAV / MP3</a>`;
             }
         }
         if (mediaAvailable && downloadUrl) {
-            buttons += `<a href="${downloadUrl}" target="_blank" class="mini-chip" style="opacity: 0.85;">↗️ Browser Tab တွင်ဖွင့်မည်</a>`;
+            buttons += `<a href="#" data-open-url="${downloadUrl}" class="mini-chip" style="opacity: 0.85;">↗️ Browser Tab တွင်ဖွင့်မည်</a>`;
         }
         delivEl.innerHTML = buttons;
     }
@@ -5179,9 +5364,9 @@ function closeAdminMediaModal() {
     const bodyEl = document.getElementById("admin-media-body");
     if (bodyEl) {
         const vid = bodyEl.querySelector("video");
-        if (vid) { vid.pause(); vid.src = ""; }
+        if (vid) { vid.pause(); clearAuthMediaSource(vid); }
         const aud = bodyEl.querySelector("audio");
-        if (aud) { aud.pause(); aud.src = ""; }
+        if (aud) { aud.pause(); clearAuthMediaSource(aud); }
         bodyEl.innerHTML = "";
     }
     modal.classList.add("hidden");
@@ -5779,7 +5964,7 @@ async function loadAdminQueue(isSilent = false) {
             } else if (j.download_url) {
                 const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`;
                 actionsHtml += `<button class="queue-act-btn uid adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(qTitle)}">▶️ Play</button>`;
-                actionsHtml += `<a href="${j.download_url}" target="_blank" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
+                actionsHtml += `<a href="#" data-open-url="${j.download_url}" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
             }
 
             return `
@@ -5954,7 +6139,7 @@ async function loadAdminHistory() {
                             <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>
                         ` : (j.download_url ? `
                             <button class="btn-play-preview adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(titleStr)}">▶️ Preview</button>
-                            <a href="${j.download_url}" target="_blank" class="history-dl-link" title="Open Stream">↗️</a>
+                            <a href="#" data-open-url="${j.download_url}" class="history-dl-link" title="Open Stream">↗️</a>
                         ` : '')}
                         ${isFailed ? `
                             <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>
@@ -6062,9 +6247,6 @@ function pollAdminJobProgress(jobId) {
                 }
                 if (statusBox) {
                     let label = data.progress_label || (data.status === "QUEUED" ? "တန်းစီဇယားထဲတွင် စောင့်ဆိုင်းနေပါသည်..." : "လုပ်ဆောင်နေဆဲ...");
-                    if (data.is_waiting_laptop_worker) {
-                        label = "VoxCPM2 Cloud တွင် စောင့်ဆိုင်းနေပါသည်...";
-                    }
                     const step = data.progress_step ? `[${data.progress_step}] ` : '';
                     const pct = data.progress_percent || (data.status === "RUNNING" ? 50 : 10);
                     statusBox.innerHTML = `
@@ -6322,6 +6504,7 @@ async function loadAdminSettings() {
         const elWaveName = document.getElementById("adm-set-wave-name");
         const elTutLink = document.getElementById("adm-set-tutorial-link");
         const elMaint = document.getElementById("adm-set-maintenance");
+        const elCharLimitFree = document.getElementById("adm-set-char-limit-free");
 
         const elTutVoiceEn = document.getElementById("adm-tut-voice-enabled");
         const elTutVoiceTitle = document.getElementById("adm-tut-voice-title");
@@ -6337,6 +6520,7 @@ async function loadAdminSettings() {
         if (elWaveName) elWaveName.value = s.payment_wave_name || "";
         if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
         if (elMaint) elMaint.checked = !!s.maintenance_mode;
+        if (elCharLimitFree && s.character_limit_free != null) elCharLimitFree.value = s.character_limit_free;
 
         if (elTutVoiceEn) elTutVoiceEn.checked = String(s.tutorial_voice_enabled).toLowerCase() !== "false" && s.tutorial_voice_enabled !== false;
         if (elTutVoiceTitle) elTutVoiceTitle.value = s.tutorial_voice_title || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
@@ -6449,6 +6633,8 @@ async function saveAdminSettings() {
     const waveName = document.getElementById("adm-set-wave-name")?.value?.trim();
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
+    const charLimitFreeRaw = document.getElementById("adm-set-char-limit-free")?.value?.trim();
+    const charLimitFree = charLimitFreeRaw === "" || charLimitFreeRaw == null ? null : parseInt(charLimitFreeRaw, 10);
 
     const tutVoiceEn = !!document.getElementById("adm-tut-voice-enabled")?.checked;
     const tutVoiceTitle = document.getElementById("adm-tut-voice-title")?.value?.trim() || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
@@ -6477,6 +6663,7 @@ async function saveAdminSettings() {
         tutorial_recap_link: tutRecapLink,
         ...tutExtraLinks,
         maintenance_mode: maint,
+        ...(Number.isFinite(charLimitFree) ? { character_limit_free: charLimitFree } : {}),
     };
     updateTutorialUI(payload);
 
@@ -6552,6 +6739,15 @@ function hubStatusBorder(status) {
 function hubHistoryDetailHtml(j) {
     const isRecap = j.job_type === "RECAP";
     let inner = "";
+    if (j.fallback_used) {
+        // Round-6 P3: the API has carried fallback_used all along
+        // (round-4 F-G) but History never rendered it — a degraded
+        // result looked identical to a genuine one.
+        const fbNote = isRecap
+            ? tf("recap_fallback_note", { count: (j.fallback_segments || []).length || 1 })
+            : t("voice_fallback_notice");
+        inner += `<div class="history-item-body hub-fallback-note">⚠️ ${escapeHtml(fbNote)}</div>`;
+    }
     if (isRecap && j.parts_count && j.parts_count > 1) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>`;
     }
@@ -6566,13 +6762,13 @@ function hubHistoryDetailHtml(j) {
         actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
     } else if (isRecap) {
         if (j.deliverables?.video) {
-            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="${j.deliverables.video}" download="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
         }
-        if (j.deliverables?.audio) actions += ` <a href="${j.deliverables.audio}" download="audio_${j.id.slice(0,8)}.wav" class="history-dl-link">🎙️ Audio</a>`;
-        if (j.deliverables?.srt) actions += ` <a href="${j.deliverables.srt}" download="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>`;
-        if (j.deliverables?.script) actions += ` <a href="${j.deliverables.script}" download="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>`;
+        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="audio_${j.id.slice(0,8)}.wav" class="history-dl-link">🎙️ Audio</a>`;
+        if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>`;
+        if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>`;
     } else if (j.download_url) {
-        actions = `<a href="${j.download_url}" download="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
     }
     if (actions) inner += `<div class="history-btn-row hub-detail-actions">${actions}</div>`;
     return inner;
@@ -6591,6 +6787,7 @@ function hubHistoryRowHtml(j) {
                 <span class="hub-row-title">${title}</span>
                 <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : ""}${escapeHtml(j.preset_voice || "")} · ⏱️ ${escapeHtml(j.time_ago || "")}</span>
             </span>
+            ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
             <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
             <span class="hub-chevron">${open ? "⌃" : "›"}</span>
         </button>
@@ -6691,24 +6888,21 @@ async function openRecapInPlayer(recapJobId) {
                 resultBox.scrollIntoView({ behavior: "smooth" });
             }
             if (player && data.download_urls?.video) {
-                player.src = data.download_urls.video;
+                setAuthMediaSource(player, data.download_urls.video).then((ok) => {
+                    if (ok) player.play().catch(() => {});
+                });
                 player.classList.remove("hidden");
-                player.play().catch(() => {});
             }
             if (btnVideo && data.download_urls?.video) {
-                btnVideo.href = data.download_urls.video;
                 btnVideo.setAttribute("data-dl-url", data.download_urls.video);
             }
             if (btnAudio && data.download_urls?.audio) {
-                btnAudio.href = data.download_urls.audio;
                 btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
             }
             if (btnSrt && data.download_urls?.srt) {
-                btnSrt.href = data.download_urls.srt;
                 btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
             }
             if (btnScript && data.download_urls?.script) {
-                btnScript.href = data.download_urls.script;
                 btnScript.setAttribute("data-dl-url", data.download_urls.script);
             }
             if (btnTg) {
@@ -6769,12 +6963,13 @@ async function checkStartupDeepLinks() {
                         resultBox.scrollIntoView({ behavior: "smooth" });
                     }
                     if (audioPlayer && data.output_audio_url) {
-                        audioPlayer.src = data.output_audio_url;
-                        audioPlayer.load();
-                        audioPlayer.play().catch(() => {});
+                        setAuthMediaSource(audioPlayer, data.output_audio_url).then((ok) => {
+                            if (ok) { audioPlayer.load(); audioPlayer.play().catch(() => {}); }
+                        });
                     }
                     if (btnDl && data.output_audio_url) {
-                        btnDl.href = data.output_audio_url;
+                        btnDl.setAttribute("data-dl-url", data.output_audio_url);
+                        btnDl.setAttribute("data-dl-name", "voice_clone.wav");
                     }
                     if (btnTg) {
                         btnTg.disabled = false;
@@ -6820,23 +7015,19 @@ async function checkStartupDeepLinks() {
                         }
                     }
                     if (player && data.download_urls?.video) {
-                        player.src = data.download_urls.video;
+                        setAuthMediaSource(player, data.download_urls.video);
                         player.classList.remove("hidden");
                     }
                     if (btnVideo && data.download_urls?.video) {
-                        btnVideo.href = data.download_urls.video;
                         btnVideo.setAttribute("data-dl-url", data.download_urls.video);
                     }
                     if (btnAudio && data.download_urls?.audio) {
-                        btnAudio.href = data.download_urls.audio;
                         btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
                     }
                     if (btnSrt && data.download_urls?.srt) {
-                        btnSrt.href = data.download_urls.srt;
                         btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
                     }
                     if (btnScript && data.download_urls?.script) {
-                        btnScript.href = data.download_urls.script;
                         btnScript.setAttribute("data-dl-url", data.download_urls.script);
                     }
                     if (btnTg) {

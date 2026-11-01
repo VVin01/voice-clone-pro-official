@@ -184,8 +184,10 @@ def test_t2_home_tutorials_list_covers_all_ten():
                 "downloader", "scriptedit", "recapadvanced", "refer",
                 "support"):
         assert f"openTutorialVideo('{key}')" in INDEX_HTML, key
-    # 10 tutorial rows + 2 start-creating rows share the row pattern
-    assert INDEX_HTML.count('class="home-tut-row"') == 12
+    # 10 tutorial rows + 2 start-creating rows share the row pattern;
+    # round-6 P2 adds ONE more home-tut-row: the Support contact row
+    # inside the new Refer & Support card.
+    assert INDEX_HTML.count('class="home-tut-row"') == 13
 
 
 def test_t3_studio_banners_removed_originals_kept():
