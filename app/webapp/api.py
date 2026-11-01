@@ -2439,6 +2439,118 @@ def _recap_fallback_info(job_dir) -> tuple[bool, list]:
         return False, []
 
 
+# ── Recap progress stage mapping (round-4 F-C) ─────────────────────
+# The recap engine reports progress as (step, total, raw English label)
+# triples: planner lines ("Timestamp translation", "Story context
+# memory"), pipeline wrappers that stack a prefix onto the engine's own
+# label ("Smart Sync: VoxCPM 2 3/10", "Smart Sync: Smart Sync video
+# 10/10"), and per-segment counters. The Mini App used to print those
+# raw strings verbatim in the Burmese UI, and derived the bar from the
+# coarse 4-step counter — which pinned the fill at 75% for the entire
+# render phase (round-3 U1). The mapper below converts each raw report
+# into a canonical stage (rendered localized by the client via
+# recap_stage_* i18n keys), an optional "i/n" sub-progress, and an
+# honest percent inside that stage's band. The percent never moves
+# backwards within a job: callers pass the entry's current percent and
+# keep the returned maximum.
+_RECAP_STAGE_BANDS = {
+    "transcribe": (15, 30),
+    "context": (30, 42),
+    "translate": (42, 54),
+    "plan": (54, 64),
+    "tts": (64, 82),
+    "sync": (82, 95),
+    "finalize": (95, 99),
+}
+_RECAP_STAGE_STEPS = {
+    "transcribe": "1/4",
+    "context": "2/4",
+    "translate": "2/4",
+    "plan": "2/4",
+    "tts": "3/4",
+    "sync": "3/4",
+    "finalize": "4/4",
+}
+_RECAP_SUB_PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)\s*$")
+
+
+def _recap_clean_progress_label(label) -> str:
+    """Collapse the pipeline's stacked "Smart Sync: " wrapper prefix.
+
+    The render runner wraps the engine's own label ("Smart Sync video
+    3/10") in "Smart Sync: ", producing "Smart Sync: Smart Sync video
+    3/10". Strip the wrapper whenever the inner label itself starts
+    with "Smart Sync" (repeatedly, for deeper stacks); every other
+    label passes through untouched.
+    """
+    clean = str(label or "").strip()
+    while True:
+        m = re.match(r"(?i)smart sync:\s+(?=smart sync\b)", clean)
+        if not m:
+            return clean
+        clean = clean[m.end():].strip()
+
+
+def _recap_stage_progress(label, prev_percent=0):
+    """Map one raw engine progress label to (stage, sub, percent, step).
+
+    stage is None for labels with no canonical stage (download phase,
+    unknown lines) — callers then keep the previous display state and
+    percent. sub is the label's own trailing "i/n" counter ("" when the
+    label carries none). percent is monotonic: never below prev_percent.
+    """
+    prev = int(prev_percent or 0)
+    clean = _recap_clean_progress_label(label)
+    low = clean.lower()
+    sub = ""
+    frac = 0.0
+    m = _RECAP_SUB_PROGRESS_RE.search(clean)
+    if m:
+        sub = f"{int(m.group(1))}/{int(m.group(2))}"
+        try:
+            frac = max(0.0, min(1.0, int(m.group(1)) / max(1, int(m.group(2)))))
+        except (TypeError, ValueError):
+            frac = 0.0
+    tail = low.rsplit(":", 1)[-1].strip()
+    if "final recap video ready" in low:
+        stage, frac, sub = "finalize", 1.0, ""
+    elif "transcription" in low or "transcribing" in low:
+        stage = "transcribe"
+    elif "story context" in low:
+        stage = "context"
+    elif "translation" in low:
+        stage = "translate"
+    elif "smart sync plan" in low:
+        stage = "plan"
+    elif "plan ready" in low or "plan reused" in low:
+        stage, frac = "plan", 1.0
+    elif (
+        "voxcpm" in low
+        or "gemini tts" in low
+        or "studio tts" in low
+        or "edge tts" in low
+        or "& smart sync render" in low
+        or tail.startswith("audio ")
+    ):
+        stage = "tts"
+    elif "smart sync video" in low or tail.startswith("video "):
+        stage = "sync"
+    else:
+        return None, "", prev, ""
+    lo, hi = _RECAP_STAGE_BANDS[stage]
+    pct = int(round(lo + frac * (hi - lo)))
+    return stage, sub, max(prev, pct), _RECAP_STAGE_STEPS[stage]
+
+
+def _recap_set_entry_label(entry: dict, label: str) -> None:
+    """Write an authored progress label (Burmese UI copy written by the
+    API layer itself) and clear any engine stage mapping, so the client
+    shows this label rather than a stale localized stage line."""
+    entry["progress_label"] = label
+    entry["progress_stage"] = None
+    entry["progress_sub"] = ""
+
+
 def _recap_max_duration_allowed(is_vip: bool, is_admin: bool = False) -> int:
     """Per-job source-duration cap (seconds). The 10-minute cap is the
     owner's design and applies to everyone — including VIP. The only
@@ -2865,7 +2977,7 @@ async def _execute_recap_background_job(
     entry["status"] = "RUNNING"
     entry["progress_percent"] = 15
     entry["progress_step"] = "1/4"
-    entry["progress_label"] = "📥 Downloading source video from URL..."
+    _recap_set_entry_label(entry, "📥 Downloading source video from URL...")
 
     try:
         from app.services.downloader import MediaDownloader
@@ -2887,10 +2999,20 @@ async def _execute_recap_background_job(
 
         def progress_cb(cur: int, tot: int, label: str):
             if entry:
-                entry["progress_step"] = f"{cur}/{tot}"
-                entry["progress_label"] = label
-                pct = int(min(95, max(15, (cur / max(1, tot)) * 100)))
-                entry["progress_percent"] = pct
+                # Round-4 F-C: raw engine labels become a canonical
+                # stage + sub-progress + band percent (monotonic);
+                # unmapped labels keep the previous display state.
+                stage, sub, pct, step = _recap_stage_progress(
+                    label, entry.get("progress_percent", 0)
+                )
+                if stage:
+                    entry["progress_stage"] = stage
+                    entry["progress_sub"] = sub
+                    entry["progress_step"] = step
+                    entry["progress_percent"] = pct
+                else:
+                    entry["progress_step"] = f"{cur}/{tot}"
+                entry["progress_label"] = _recap_clean_progress_label(label)
 
         from app.services.curated_voices import get_curated_voice
         p_info = get_curated_voice(req.voice_slug)
@@ -2967,7 +3089,7 @@ async def _execute_recap_background_job(
             # ── Script-review phase 1: download + plan ONLY (no TTS/render).
             # The job then waits in SCRIPT_READY until the user has reviewed
             # / edited the narration and POSTs /recap/{id}/render.
-            entry["progress_label"] = "🎙️ [1/4] Transcription + translation (script review)..."
+            _recap_set_entry_label(entry, "🎙️ [1/4] Transcription + translation (script review)...")
             if is_local_media(canonical_source_url):
                 script_source = str(Path(canonical_source_url).resolve())
                 if not Path(script_source).is_file():
@@ -3018,7 +3140,7 @@ async def _execute_recap_background_job(
             entry["status"] = "SCRIPT_READY"
             entry["progress_percent"] = 100
             entry["progress_step"] = "2/4"
-            entry["progress_label"] = "📝 Script ready — review & edit before rendering"
+            _recap_set_entry_label(entry, "📝 Script ready — review & edit before rendering")
             logger.info(f"Recap job {job_id}: script ready ({entry['segments_count']} segments), awaiting user review.")
             return
 
@@ -3062,8 +3184,9 @@ async def _execute_recap_background_job(
                     split_source_into_segments,
                 )
 
-                entry["progress_label"] = (
-                    "✂️ ဗီဒီယိုရှည်လို့ အပိုင်းခွဲနေပါတယ် (အပိုင်းတိုင်း ≤ ၁၀ မိနစ်)..."
+                _recap_set_entry_label(
+                    entry,
+                    "✂️ ဗီဒီယိုရှည်လို့ အပိုင်းခွဲနေပါတယ် (အပိုင်းတိုင်း ≤ ၁၀ မိနစ်)...",
                 )
                 segment_files = await loop.run_in_executor(
                     None,
@@ -3095,9 +3218,10 @@ async def _execute_recap_background_job(
                     total_parts = len(segment_files)
                     await _top_up_recap_segment_charge(user_id, entry, total_parts)
                     credit_deducted = True
-                    entry["progress_label"] = (
+                    _recap_set_entry_label(
+                        entry,
                         f"💳 အပိုင်း {total_parts} ပိုင်း × 1 Credit = {total_parts} Credits "
-                        "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်..."
+                        "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
                     )
             canonical_source_url = local_source
 
@@ -3155,8 +3279,8 @@ async def _execute_recap_background_job(
             total_segs = len(segment_files)
             recap_res = None
             for seg in segment_files:
-                entry["progress_label"] = (
-                    f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
+                _recap_set_entry_label(
+                    entry, f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
                 )
                 seg_res = await loop.run_in_executor(
                     None,
@@ -3201,7 +3325,7 @@ async def _execute_recap_background_job(
 
         entry["status"] = "SUCCESS"
         entry["progress_percent"] = 100
-        entry["progress_label"] = "🎉 Recap Video Generation Completed!"
+        _recap_set_entry_label(entry, "🎉 Recap Video Generation Completed!")
         entry["video_path"] = video_path
         entry["audio_path"] = audio_path
         entry["srt_path"] = srt_path
@@ -3235,7 +3359,7 @@ async def _execute_recap_background_job(
                 from app.services.recap_engine.recap_pipeline import find_binary
                 from app.services.recap_engine.video_splitter import split_rendered_video
 
-                entry["progress_label"] = "✂️ Cutting into parts (smart cut at narration pauses)..."
+                _recap_set_entry_label(entry, "✂️ Cutting into parts (smart cut at narration pauses)...")
                 split_res = await loop.run_in_executor(
                     None,
                     functools.partial(
@@ -3858,6 +3982,8 @@ async def get_recap_status(
             "progress_percent": entry.get("progress_percent", 0),
             "progress_step": entry.get("progress_step", ""),
             "progress_label": entry.get("progress_label", ""),
+            "progress_stage": entry.get("progress_stage"),
+            "progress_sub": entry.get("progress_sub", ""),
             "error_message": entry.get("error_message"),
             "fallback_used": bool(entry.get("fallback_used")),
             "fallback_segments": entry.get("fallback_segments", []),
@@ -4028,7 +4154,7 @@ async def render_recap_job(
     entry["status"] = "RUNNING"
     entry["progress_percent"] = 15
     entry["progress_step"] = "3/4"
-    entry["progress_label"] = "🗣️ Rendering with your reviewed script..."
+    _recap_set_entry_label(entry, "🗣️ Rendering with your reviewed script...")
     asyncio.create_task(_run_recap_background_job(
         job_id, req, user.id, user.id,
         is_vip=bool(entry.get("is_vip")),
@@ -4340,13 +4466,30 @@ async def get_user_history(
         raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
         _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None
         _hist_parts = ((_hist_entry or {}).get("parts") or []) if is_recap else []
+        if is_recap:
+            # Recap fallback truth lives in the engine's plan JSON on
+            # disk — the same source the recap status endpoint reads.
+            # The Job row's engine column only records the VOICE
+            # fallback, so deriving recap fallback_used from it claimed
+            # False for jobs whose completion toast had disclosed Edge
+            # segments (round-3 U4). Only completed jobs have a final
+            # plan; anything else honestly reports no fallback yet.
+            if j.status == JobStatus.SUCCESS.value:
+                _fb_used, _fb_segs = _recap_fallback_info(
+                    settings.storage_root / "recap_output" / j.id
+                )
+            else:
+                _fb_used, _fb_segs = False, []
+        else:
+            _fb_used, _fb_segs = j.engine == "edge_fallback", []
         out.append({
             "id": j.id,
             "job_type": "RECAP" if is_recap else "VOICE_CLONE",
             "parts_count": (len(_hist_parts) or None) if is_recap else None,
             "credits_charged": (_hist_entry or {}).get("credits_charged") if is_recap else None,
             "engine": j.engine,
-            "fallback_used": (not is_recap) and j.engine == "edge_fallback",
+            "fallback_used": _fb_used,
+            "fallback_segments": _fb_segs,
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
             "status": j.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,

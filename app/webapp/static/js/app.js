@@ -175,12 +175,53 @@ function blockedLinkInfo(raw) {
     const s = (raw == null ? '' : String(raw)).toLowerCase();
     const has = (...needles) => needles.some(n => s.includes(n));
     const hit = LINK_SOURCE_NAMES.find(([needle]) => s.includes(needle));
-    const blocked = has('no video formats', 'unsupported url', 'unable to extract',
-        'sign in to confirm', 'fresh cookies', 'http error 403', 'error 403', 'forbidden')
-        || (hit && has('extract', 'yt-dlp', 'download'));
+    const blocked = has(
+        'no video formats', 'unsupported url', 'unable to extract',
+        'sign in to confirm', 'fresh cookies', 'http error 403', 'error 403', 'forbidden',
+        // IP blocked (round-3: job rc_1793505308_08cd6b failed with
+        // "[TikTok] …: Your IP address is blocked from accessing this
+        // post" and fell through to the generic copy because none of
+        // the needles above matched it).
+        'ip address is blocked', 'ip is blocked', 'blocked from accessing',
+        // Login walls.
+        'login required', 'log in to', 'sign in to', 'please log in',
+        // Age gates.
+        'age-restricted', 'age restricted', 'confirm your age',
+        'inappropriate for some users',
+        // Region blocks.
+        'in your country', 'in your region', 'not available in your location',
+        'uploader has not made',
+        // Private / removed content.
+        'private video', 'video is private', 'this video is private',
+        'account is private', 'has been removed', 'video removed',
+        'no longer available', 'video unavailable', 'video is unavailable',
+        'content is not available', "content isn't available",
+        'post is not available')
+        || (hit && has('extract', 'yt-dlp', 'download', 'blocked'));
     return { blocked: !!blocked, source: hit ? hit[1] : null };
 }
 window.blockedLinkInfo = blockedLinkInfo;
+
+// setCardThumb(img, url): the one way info-card thumbnails are set.
+// An <img> left with an empty/removed source renders the browser's
+// broken-image glyph plus its alt text (round-3 U2: every fallback
+// card, and the uploaded-file card whose flow never set a thumbnail
+// at all). With a URL: show the image, and hide it again if the URL
+// itself fails to load. Without one: clear the source and hide the
+// element so the card simply has no thumbnail.
+function setCardThumb(img, url) {
+    if (!img) return;
+    if (url) {
+        img.onerror = () => { img.style.display = "none"; };
+        img.src = url;
+        img.style.display = "block";
+    } else {
+        img.onerror = null;
+        img.removeAttribute("src");
+        img.style.display = "none";
+    }
+}
+window.setCardThumb = setCardThumb;
 
 // showErrorToast(err, flow): console keeps the diagnostic, the user
 // only ever sees the mapped premium copy.
@@ -2102,6 +2143,10 @@ function setupRecapVisualEditor() {
         const fillBadge = document.getElementById("mockup-fill-badge");
         if (fillBadge) fillBadge.style.display = "none";
         if (recapInfoBox) recapInfoBox.classList.remove("hidden");
+        // The previous source's thumbnail must not ride along on this
+        // pick (round-4 F-D): hide the card image until THIS file's
+        // own frame arrives with the upload success.
+        setCardThumb(document.getElementById("recap-info-thumb"), null);
         if (titleSpan) titleSpan.innerText = file.name;
         if (platformSpan) platformSpan.innerText = "Direct Upload (MP4)";
         // A new pick replaces any earlier source: the previous file's
@@ -2278,6 +2323,11 @@ function setupRecapVisualEditor() {
         xhr.onabort = () => {
             if (recapUploadXhr && recapUploadXhr !== xhr) return; // superseded by a newer upload
             stopRecapUploadChrome();
+            // The upload is over: nothing is pending any more
+            // (round-3 U5). Leaving the flag set locked the Start
+            // button's guard even for a pasted URL, with no on-screen
+            // explanation, until an analyze happened to clear it.
+            state.recapUploadPending = false;
             if (els.bar) els.bar.classList.remove("busy", "indeterminate");
             if (els.label) els.label.innerText = t("upload_cancelled_label");
             if (els.cancelBtn) els.cancelBtn.classList.add("hidden");
@@ -2293,6 +2343,12 @@ function setupRecapVisualEditor() {
 
     function onRecapUploadError(message) {
         const els = recapUploadEls();
+        // Same terminal-state invariant as cancel (round-4 F-F): the
+        // upload is finished, so nothing is pending. The file-mode
+        // guard does not depend on this flag — the failed file has no
+        // server path (uploadedVideoPath stays null) and the CTA is
+        // disabled below; the flag only gates the URL path.
+        state.recapUploadPending = false;
         haptic("error");
         if (els.bar) { els.bar.classList.remove("busy", "indeterminate"); els.bar.classList.add("error"); }
         if (els.label) els.label.innerText = "";
@@ -2336,6 +2392,10 @@ function setupRecapVisualEditor() {
             };
             probeImg.src = state.recapThumbnailUrl;
             updateCanvasMockupVisuals();
+            // The info card shows this file's own frame too (round-4
+            // F-D: the upload flow never populated the card image, so
+            // it sat on the empty-src broken glyph at the ready moment).
+            setCardThumb(document.getElementById("recap-info-thumb"), state.recapThumbnailUrl);
         }
 
         const maxAllowed = recapNormalMaxSeconds();
@@ -3425,7 +3485,7 @@ function setupRecapVisualEditor() {
                 const platformSpan = document.getElementById("recap-info-platform");
                 const subSpan = document.getElementById("recap-info-sub");
 
-                if (thumbImg && data.thumbnail) thumbImg.src = data.thumbnail;
+                setCardThumb(thumbImg, data.thumbnail || null);
                 if (titleSpan) titleSpan.innerText = data.title || "Video";
                 state.recapVideoTitle = data.title || "Movie Recap Video";
 
@@ -3999,8 +4059,17 @@ function startRecapJobPolling(jobId) {
             if (progressFill && data.progress_percent) {
                 progressFill.style.width = `${Math.min(100, Math.max(10, data.progress_percent))}%`;
             }
-            if (statusMsg && data.progress_label) {
-                statusMsg.innerText = data.progress_label;
+            if (statusMsg) {
+                if (data.progress_stage) {
+                    // Round-4 F-C: canonical stage from the server,
+                    // rendered in the UI language — the raw engine
+                    // labels ("Smart Sync: VoxCPM 2 3/10", "Timestamp
+                    // translation") never reach the user any more.
+                    const stageText = t("recap_stage_" + data.progress_stage);
+                    statusMsg.innerText = data.progress_sub ? `${stageText} ${data.progress_sub}` : stageText;
+                } else if (data.progress_label) {
+                    statusMsg.innerText = data.progress_label;
+                }
             }
             if (stepText && data.progress_step) {
                 stepText.innerText = `Step ${data.progress_step} • ${t("queue_notice_recap")}`;
@@ -4108,14 +4177,11 @@ function startRecapJobPolling(jobId) {
                 loadUserProfile();
                 loadUserHistory();
 
-                showFloatingAlert(
-                    t("alert_recap_ready") || "🎉 Pro Movie Recap ဖန်တီးမှု ပြီးစီးပါပြီ!",
-                    currentLang === "my" ? "Full HD Video ပြင်ဆင်ပြီးစီးပါပြီ။ ကြည့်ရှုနိုင်ပါပြီ။" : "Your Movie Recap video is ready to watch or download.",
-                    () => {
-                        if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
-                    },
-                    currentLang === "my" ? "🎬 ကြည့်ရှုမည်" : "🎬 View Video"
-                );
+                // ONE completion surface (round-3 U3): the result box
+                // above — player + download buttons, already scrolled
+                // into view — is the completion surface. The floating
+                // alert that used to stack a near-identical second
+                // card directly below it is gone.
             } else if (data.status === "FAILED") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
@@ -4413,15 +4479,19 @@ function setupDownloader() {
                 if (dlTitle) dlTitle.innerText = data.title || "Video Content";
                 if (dlPlatform) dlPlatform.innerText = data.platform || "";
                 if (dlUploader) dlUploader.innerText = data.uploader || "Creator";
-                if (dlDuration) dlDuration.innerText = data.estimated_duration || "";
-                if (dlThumb) {
-                    if (data.thumbnail) {
-                        dlThumb.src = data.thumbnail;
-                        dlThumb.style.display = "block";
+                if (dlDuration) {
+                    if (data.metadata_verified === false) {
+                        // Same honesty treatment as the Recap card
+                        // (round-4 F-B): the extract fallback invents
+                        // the duration ("03:30") and the title/uploader
+                        // are placeholders — never render the fabricated
+                        // duration as plain fact.
+                        dlDuration.innerHTML = `⏱️ — <span style="color:#d97706; font-weight:700;">(${t("recap_unverified_note")})</span>`;
                     } else {
-                        dlThumb.style.display = "none";
+                        dlDuration.innerText = data.estimated_duration || "";
                     }
                 }
+                setCardThumb(dlThumb, data.thumbnail || null);
 
                 dlCurrent = { url: data.url || url, has_subtitles: data.has_subtitles };
                 dlSetSrtCardState(data.has_subtitles);
@@ -6723,6 +6793,12 @@ async function checkStartupDeepLinks() {
                         btnTg.classList.remove("sent");
                         btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
                     }
+                    // Cold-start restore: this alert is the ONLY
+                    // completion signal here (the user may be on any
+                    // tab when a previous session's job is restored),
+                    // so it stays — unlike the live poller's duplicate
+                    // (round-4 F-E), where the user is already watching
+                    // the result card appear.
                     showFloatingAlert(
                         t("alert_recap_ready") || "🎉 Pro Movie Recap အဆင်သင့်ဖြစ်ပါပြီ!",
                         currentLang === "my" ? "Full HD Video ကို တိုက်ရိုက်ဖွင့်ကြည့်နိုင်ပါပြီ။" : "Your recap video is ready to watch.",

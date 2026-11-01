@@ -605,6 +605,40 @@ def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
     }
 
 
+def source_band_to_canvas_box(band: dict[str, Any], layout: dict[str, Any]) -> dict[str, float]:
+    """Map a blur box from SOURCE-frame fractions to output-CANVAS fractions.
+
+    detect_source_subtitle_bands reports boxes in the source picture's own
+    fraction space ({x: left, y: centre, w, h} of the source frame), while
+    every overlays["blur_boxes"] consumer (apply_production_overlays, the
+    preview-frame renderer) reads boxes as fractions of the full output
+    canvas. Feeding source fractions straight through anchors the box at
+    the canvas top-left and scales it by the canvas size: on the default
+    9:16 blur-fill layout (a 1080x810 picture centred in a 1080x1920
+    canvas) a genuine subtitle band at source y~0.70 landed at canvas
+    y=1344 — the picture's bottom edge, mostly over the blurred
+    background, missing the subtitles it exists to cover — and the
+    height was inflated x2.37. Worse, a mid-frame false positive at
+    source y~0.48 blurred a visible strip across the middle of the
+    finished movie (the "tear" on job rc_1793503698_9e6603, round 4).
+    Convert through the layout's picture rect so the box covers the
+    same picture area it described in the source.
+    """
+    cw, ch = int(layout["cw"]), int(layout["ch"])
+    pw, ph = int(layout.get("pw", cw)), int(layout.get("ph", ch))
+    ox, oy = int(layout.get("ox", 0)), int(layout.get("oy", 0))
+    bx = _clamp01(band.get("x"), 0.0)
+    by = _clamp01(band.get("y"), 0.5)
+    bw = _clamp01(band.get("w"), 1.0)
+    bh = _clamp01(band.get("h"), 0.07)
+    return {
+        "x": round((ox + bx * pw) / cw, 4),
+        "y": round((oy + by * ph) / ch, 4),
+        "w": round(bw * pw / cw, 4),
+        "h": round(bh * ph / ch, 4),
+    }
+
+
 def _visual_filters(mirror_video: bool, zoom_factor: float,
                     layout: dict[str, Any] | None = None) -> tuple[str, float]:
     """Flip + zoom + placement on the output frame, as one filtergraph string.
@@ -1744,7 +1778,10 @@ def detect_source_subtitle_bands(
     Method: sample frames across the video, score every image row by "bright glyph pixels
     with a dark outline nearby" (the classic hard-sub look), aggregate across frames.
     A genuine subtitle band is text-dense in most frames; scene brightness is not.
-    Returns blur-box dicts in the overlays format ({x, y=center, w, h} canvas fractions).
+    Returns blur-box dicts in SOURCE-frame fractions ({x, y=center, w, h} of the
+    source picture) — NOT canvas fractions. Callers must map each box through
+    source_band_to_canvas_box() with the render layout before adding it to
+    overlays["blur_boxes"], whose consumers use output-canvas fractions.
     Any failure returns [] — detection must never block a render.
     """
     try:
@@ -1804,6 +1841,14 @@ def detect_source_subtitle_bands(
             top = grp[0] / h_px
             bot = (grp[-1] + 1) / h_px
             core_h = bot - top
+            if core_h < 0.015:
+                # Hairline row noise (1-3 rows at sample scale), never a
+                # text line: a real subtitle glyph band is several times
+                # taller. Round-4 evidence: on a subtitle-free cartoon
+                # the bright exhibit rows at y~0.48 formed a 0.5%-tall
+                # group that passed every other threshold and blurred a
+                # strip across the middle of the finished movie.
+                continue
             # Pad: dialogue subs often have a second line ABOVE the persistent one,
             # and the renderer's zoom shifts the band slightly — cover both.
             top = max(0.0, top - 1.4 * core_h)
