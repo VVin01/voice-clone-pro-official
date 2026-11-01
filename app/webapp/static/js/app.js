@@ -1483,6 +1483,90 @@ function previewSelectedRecapVoice() {
     playVoicePreview(voiceId, btn);
 }
 
+// ── Gemini TTS Voice Previews ──────────────────────────────────────
+// One owner-approved static sample per engine voice ships with the
+// app (static/audio/gemini/preview_<voice>.mp3). Playback mirrors
+// playVoicePreview exactly — the same shared player state
+// (currentVoiceAudio / currentPreviewButton / previewFetchSeq) and
+// the same fetch→blob helper — so a persona preview and a Gemini
+// preview stop each other, and the button runs the same
+// loading → playing → reset cycle via stopCurrentVoicePreview.
+const GEMINI_VOICE_PREVIEW_DIR = "/static/audio/gemini";
+
+function resolveGeminiPreviewVoice() {
+    const sel = document.getElementById("recap-gemini-voice-select");
+    const chosen = (sel && sel.value) || state.recapGeminiVoice || "";
+    if (chosen) return chosen;
+    // Auto: mirror the API (app/webapp/api.py) — the recap persona's
+    // gender resolves Kore for a female persona, Charon otherwise.
+    const slug = state.recapVoice || "komin";
+    const entry = (state.curatedVoices || []).find(v => v.id === slug);
+    const isFemale = entry ? entry.gender === "female"
+        : ["mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"].includes(slug);
+    return isFemale ? "Kore" : "Charon";
+}
+
+async function playGeminiVoicePreview(voiceName, buttonEl) {
+    haptic("light");
+    if (!voiceName) return;
+
+    if (currentVoiceAudio && currentPreviewButton === buttonEl) {
+        stopCurrentVoicePreview();
+        return;
+    }
+
+    stopCurrentVoicePreview();
+
+    const seq = ++previewFetchSeq;
+    const audioUrl = `${GEMINI_VOICE_PREVIEW_DIR}/preview_${voiceName.toLowerCase()}.mp3`;
+    // Loading state NOW, same as playVoicePreview: show the tap on
+    // the button immediately and surface failures instead of silence.
+    currentPreviewButton = buttonEl;
+    if (buttonEl) {
+        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
+        if (icon) icon.innerText = "⏳";
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        if (label) label.innerText = t("preview_loading");
+    }
+    const authUrl = await fetchAuthImageUrl(audioUrl);
+    if (seq !== previewFetchSeq) return; // a newer tap superseded this one
+    if (!authUrl) {
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), 'error');
+        return;
+    }
+    const audio = new Audio(authUrl);
+    currentVoiceAudio = audio;
+    currentPreviewButton = buttonEl;
+
+    if (buttonEl) {
+        buttonEl.classList.add("playing");
+        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
+        if (icon) icon.innerText = "⏸️";
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        if (label) label.innerText = t("preview_playing") || "ဖွင့်နေသည်...";
+    }
+
+    audio.play().catch(e => {
+        console.warn("Gemini voice preview playback error:", e);
+        stopCurrentVoicePreview();
+    });
+
+    audio.onended = () => {
+        stopCurrentVoicePreview();
+    };
+
+    audio.onerror = () => {
+        console.warn("Audio playback failed for Gemini voice:", voiceName);
+        stopCurrentVoicePreview();
+    };
+}
+
+function previewSelectedGeminiVoice() {
+    const btn = document.getElementById("btn-preview-gemini-voice");
+    playGeminiVoicePreview(resolveGeminiPreviewVoice(), btn);
+}
+
 // ── Voice Studio Controls & Sub-Modes ──────────────────────────────────────
 function switchVoxCPMSubMode(mode) {
     haptic("selection");
@@ -3498,6 +3582,10 @@ function setupRecapVisualEditor() {
     if (geminiVoiceSel) {
         geminiVoiceSel.addEventListener("change", () => {
             state.recapGeminiVoice = geminiVoiceSel.value || "";
+            // Stop a Gemini preview still playing the previous pick.
+            if (currentPreviewButton && currentPreviewButton.id === "btn-preview-gemini-voice") {
+                stopCurrentVoicePreview();
+            }
         });
     }
 
