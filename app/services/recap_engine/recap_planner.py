@@ -1374,7 +1374,7 @@ def translate_batch(
     style = str(narrative_style or "viral").lower().strip()
     is_very_first_batch = not previous_context and bool(current) and int(current[0].get("id", 0)) == 1
     intro_rule = (
-        "- For ID 1 ONLY (the opening line of the video), you may open with a brief, punchy hook introducing the situation, then immediately narrate ID 1's actual scene event."
+        "- For ID 1 ONLY (the opening line of the video), you may open with a brief, punchy hook introducing the situation, then immediately narrate ID 1's actual scene event. The hook must establish the story's premise concretely from the source itself — where we are, who matters, and what is going wrong — and it must AGREE with the opening scene: never tease a moment and then restart the story from a different place or contradict the first scene."
         if is_very_first_batch
         else "- DO NOT use opening intro phrases ('ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', 'ပရိသတ်ကြီးတို့ရေ...') anywhere in this batch because the story is already in progress!"
     )
@@ -1391,7 +1391,7 @@ def translate_batch(
 {intro_rule}
 {gender_rule}
 - NEVER insert random generic filler phrases ('ကြည့်ပါဦးဗျာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲ...', 'မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...') that disconnect consecutive sentences or replace actual plot meaning.
-- Turn short or fragmented source dialogues into clear, connected third-person Burmese recap storytelling using natural transition words ('အဲ့ဒီအခါမှာတော့...', 'ဒါကိုမြင်တော့...', 'ဒါကြောင့် သူက...', 'အဲ့ဒီနောက်မှာတော့...').
+- Turn short or fragmented source dialogues into clear, connected third-person Burmese recap storytelling using natural transition words ('အဲဒီအခါမှာတော့...', 'ဒါကိုမြင်တော့...', 'ဒါကြောင့် သူက...', 'အဲဒီနောက်မှာတော့...').
 - OPENING HOOK (ID 1 ONLY): The very first line must open a curiosity loop — tease the single most shocking/reversal moment of the story in ONE short punchy clause (e.g. the betrayal, the twist, the impossible choice) WITHOUT explaining how it ends, then flow straight into ID 1's actual scene. Never spoil the ending and never invent a moment that is not in the story.
 - SCENE-BOUNDARY PULL: At a genuine scene change or reveal, you MAY end the segment on the real plot's own unanswered question (what the character is about to do/discover) so viewers keep watching — the pull must come from the actual events, never from generic teaser filler (see the prohibition above).
 - VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
@@ -1432,7 +1432,7 @@ def translate_batch(
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the entire video sounds like ONE continuous, coherent story.
 {intro_rule}
 {gender_rule}
-- Clearly state who is speaking or acting, to whom, and why, using natural Burmese narrative connectives ('အဲ့ဒီနောက်...', 'ဒါကိုကြားတော့...', 'ဒါပေမဲ့လည်း...').
+- Clearly state who is speaking or acting, to whom, and why, using natural Burmese narrative connectives ('အဲဒီနောက်...', 'ဒါကိုကြားတော့...', 'ဒါပေမဲ့လည်း...').
 - VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
 - Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
@@ -1469,6 +1469,16 @@ CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်�
    - 'အကျပ်အတည်း' (NEVER 'အကြပ်အတည်း')
    - 'အဘွား' for grandmother (NEVER 'ဘွားအေ')
    - Standard Unicode characters ONLY: strictly use 'ဉ်' (U+1009) where required; NEVER use Ethiopic, Georgian, or Zawgyi look-alike glyphs.
+
+STORYTELLING STANDARD — SCENE-BY-SCENE NARRATION (မြင်ကွင်းအလိုက် ဇာတ်လမ်းပြော စံချိန်):
+The finished script must play like ONE storyteller telling the whole story scene by scene. A viewer who starts watching at ANY point must understand who is on screen, where they are, and what is at stake — without rewinding.
+A. DROP-IN COMPREHENSION (အလယ်က စကြည့်လည်း နားလည်စေရန်): Whenever the scene changes (new place, new time, or a different character taking focus), the FIRST sentence of the new scene must re-anchor the listener: name the actor, the place, and the stake in plain terms (e.g. 'တစ်နေရာရာမှာ ပုန်းကွယ်နေတဲ့ လူဆိုးကတော့...', 'ရတနာပြတိုက်ထဲမှာတော့...'). Never let a new scene open mid-thought as a bare continuation of the previous scene's sentence.
+B. NAME THE ACTOR — NEVER FLOAT THE SUBJECT: Every sentence must make its actor unmistakable from that sentence alone. After any scene change or focus shift, re-state the character's NAME or ROLE instead of a bare 'သူ' / 'သူက' / 'သူကတော့'. Strictly prohibited failure mode: 'ပြီးတော့ လို့အစ်ကို ဒီမှာပဲ ခဏစောင့်ခိုင်းခဲ့ပါတယ်' (who told her to wait? unnamed) followed by 'သူကတော့ သတင်းပို့ဖို့...' (a different person, still unnamed).
+C. DIALOGUE BECOMES NARRATION — NEVER DUBBING: Do NOT transcribe question-and-answer dialogue exchanges. Compress each exchange into ONE narrated beat stating who wanted what, who decided what, or what changed because of it (e.g. 'လို့အစ်က ဒီသတင်းကို လိုက်ယူဖို့ လာတာလို့ ရှင်းပြလိုက်တယ်'). A direct quote is allowed only for a single short exclamation that IS the scene's event (a warning shout, a name called out).
+D. CONCRETE FACTS — NO VAGUE FILLER: Carry every scene with the source's own concrete facts — numbers, amounts, objects, places, named actions ('ဒေါ်လာ သန်း ၅၀ တန် ရတနာ', 'သံမဏိလက်တံကြီး', 'ကောင်းကင်ယံကနေ ပျံသန်း'). NEVER pad a segment with vague invented filler such as 'ကပ်ဘေးတစ်ခု ကျရောက်လာပြီး' or 'အန္တရာယ်ဆိုးကြီးဆီ စွမ်းအားထက်ထက်နဲ့' — when the source gives a specific fact, the narration must carry that fact.
+E. REAL STANDARD WORDS ONLY: Every Burmese word must be a complete, real standard word. NEVER truncate or coin broken forms (never 'အရူး' — the complete word is 'အရူးအမူး' when someone acts wildly). If you are unsure of a word, use a simpler complete word instead.
+F. WRITE 'အဲဒီ' — NEVER 'အဲ့ဒီ': In narration always use the standard written form 'အဲဒီ' ('အဲဒီအချိန်မှာ', 'အဲဒီနောက်', 'အဲဒီသတင်း'). The colloquial spelling 'အဲ့ဒီ' is prohibited anywhere in the output.
+G. ENDINGS MUST MATCH THE SOURCE'S ARC: Never announce the whole story's conclusion ('ဇာတ်လမ်း နိဂုံး', 'ဇာတ်လမ်းဆုံးသွားပါပြီ') unless the source itself ends the entire story at that ID. When the source leaves the arc open — a fight about to begin, a rescue still on its way, a villain still at large — close the FINAL ID leaning forward on that real open question instead (e.g. 'ဒီလူဆိုးရဲ့ အစီအစဉ်ကို သူ ဘယ်လိုတားဆီးနိုင်မလဲ။').
 
 HARD RULES:
 1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every segment's true meaning must be faithfully narrated inside its own ID.
@@ -1687,6 +1697,7 @@ For EVERY CURRENT ID check:
 {audit_style_rule}
 - natural spoken colloquial style: strictly avoid formal literary 'သည်'/'သဖြင့်' bookish endings, no English/Latin words;
 - cinematic narrative flow: ensure natural, complete spoken sentences instead of awkward word-by-word literal translations or broken dialogue fragments;
+- scene anchoring & subject clarity: a row that opens a new scene re-names its actor, place and stake instead of floating a bare pronoun carried over from the previous scene; dialogue is narrated as beats, never transcribed question-and-answer exchanges; no vague invented filler replacing the source's concrete facts; complete standard words only (no truncated coined forms); the standard form 'အဲဒီ' is used (never 'အဲ့ဒီ');
 - strictly standard Myanmar Unicode characters only (no homoglyphs from Ethiopic or Georgian scripts);
 - no shifted chain where a row narrates another row;
 - no adjacent duplicate/near-duplicate outputs for different sources;
