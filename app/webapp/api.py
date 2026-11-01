@@ -1692,6 +1692,12 @@ async def extract_media_info(
             "thumbnail": "",
             "estimated_duration": "03:30",
             "has_subtitles": False,
+            # Shape parity with the verified payload above: unknown
+            # dimensions (None) / unverified duration (0) are explicit,
+            # so the client never has to guess at missing keys.
+            "width": None,
+            "height": None,
+            "duration_seconds": 0,
             # metadata_verified=False: the payload above is a graceful
             # placeholder (title/duration invented). The client must
             # not present it as verified fact (journey audit

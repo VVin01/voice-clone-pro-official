@@ -672,6 +672,23 @@ class MediaDownloader:
         filesize = info.get('filesize') or info.get('filesize_approx')
         platform = detect_platform(expanded_url)
 
+        # Source dimensions: most extractors fill the top-level pair, but
+        # some expose dimensions only per-format. The Recap preview's
+        # "Original" ratio depends on these — dropping them (as this
+        # function used to) made every URL source report null dims, and
+        # the client then framed vertical sources as 16:9.
+        width = info.get('width')
+        height = info.get('height')
+        if not (width and height):
+            best_w = best_h = None
+            for fmt in info.get('formats') or []:
+                fw, fh = fmt.get('width'), fmt.get('height')
+                if fw and fh and fmt.get('vcodec') not in (None, 'none'):
+                    if best_h is None or (fh, fw) > (best_h, best_w):
+                        best_w, best_h = fw, fh
+            if best_w and best_h:
+                width, height = best_w, best_h
+
         return {
             "id": info.get("id"),
             "title": title,
@@ -686,6 +703,8 @@ class MediaDownloader:
             "filesize_formatted": format_filesize(filesize),
             "available_subs": available_subs,
             "has_subtitles": len(available_subs) > 0,
+            "width": width,
+            "height": height,
             "raw_info": info
         }
 
