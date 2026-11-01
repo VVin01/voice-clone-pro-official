@@ -1361,19 +1361,31 @@ SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = {
 # LICENSE-*.txt files beside them), so subtitle burn-in resolves fonts from
 # the repo on any host (incl. Render) — never from a system-font assumption.
 # "default" is a SELECTOR, not a family: it means "no explicit choice" and
-# resolves to DEFAULT_SUBTITLE_FONT below. The "default" registry entry is
-# kept for back-compat — the Noto Sans Myanmar family stays reachable by
-# passing its family name explicitly — but it is no longer what an
-# un-chosen job burns (owner decision 2026-10-30: Padauk is the default;
-# at production size its stacks stay separate and read clearly, where the
-# Noto Sans variable font's stacks merged under the heavy outline).
+# resolves to DEFAULT_SUBTITLE_FONT below.
+#
+# 2026-11-01 shaping fix (branch fix/recap-subtitle-shaping): the 2026-10-30
+# pass made Padauk the default because the bundled Noto Sans VARIABLE font
+# (NotoSansMyanmar.ttf, an fvar build) merged its stacks under this style's
+# heavy outline. But Padauk's own cluster rendering — medial-ra as a tall
+# detached left stroke, subscript vowels hanging below the baseline — reads
+# as detached/mis-shaped glyphs at production caption size (owner verdict
+# 2026-11-01 on jobs rc_1793525723_d81691 / rc_1793526555_596395: the SRT
+# text is codepoint-perfect, the burned Padauk glyphs look unshaped). The
+# verified-good 2026-10-29 render (rc_1793279760_c4bede) burned the STATIC
+# Noto Sans Myanmar from the system fonts-noto package. So the "default"
+# entry now bundles the STATIC Noto Sans Myanmar Regular+Bold builds (the
+# same Debian fonts-noto files the Docker image installs) and is the
+# production default again. The variable NotoSansMyanmar.ttf must NEVER be
+# staged for libass (merged stacks) — it stays on disk only for the PIL
+# title/brand paths that reference it by filename. Padauk and Serif remain
+# selectable options.
 SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
     "default": {
         "name": "Noto Sans",
         "label": "Noto Sans",
         "short": "Noto Sans",
         "family": "Noto Sans Myanmar",
-        "files": ["NotoSansMyanmar.ttf"],
+        "files": ["NotoSansMyanmar-Regular.ttf", "NotoSansMyanmar-Bold.ttf"],
         "license": "OFL-1.1 (LICENSE-NotoSansMyanmar-OFL.txt)",
     },
     "serif": {
@@ -1396,9 +1408,10 @@ SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
 
 # The production default: what burns when the user has NOT explicitly
 # chosen a font (empty value, the "default" selector, or anything unknown).
-# Padauk since 2026-10-30 (owner decision) — clearest Myanmar stacks at
-# production subtitle size in the forensic font comparison.
-DEFAULT_SUBTITLE_FONT = "padauk"
+# Noto Sans Myanmar (static builds) — restored 2026-11-01 after the Padauk
+# default (2026-10-30) produced detached-looking clusters in production
+# renders; see the registry note above.
+DEFAULT_SUBTITLE_FONT = "default"
 
 
 def bundled_fonts_dir() -> Path:
@@ -1421,8 +1434,8 @@ def resolve_subtitle_font(value: str | None) -> tuple[str, str]:
 
     Accepts an option key ("serif"), a family name ("Noto Serif Myanmar"),
     or a legacy value. The "default" selector means "no explicit choice"
-    and resolves to DEFAULT_SUBTITLE_FONT (Padauk) — same for empty and
-    unknown values. Legacy "Pyidaungsu" maps to the default too:
+    and resolves to DEFAULT_SUBTITLE_FONT (Noto Sans Myanmar) — same for
+    empty and unknown values. Legacy "Pyidaungsu" maps to the default too:
     Pyidaungsu's GSUB shaping is incomplete for libass (see
     ensure_system_myanmar_fonts) and it is not bundled. A family name
     passed explicitly ("Noto Sans Myanmar") still round-trips to its own
@@ -1567,6 +1580,9 @@ MYANMAR_SPELLING_FIXES: dict[str, str] = {
     "အအပြဲ": "အပြင်းအထန်",  # garbled doubled-အ token in model output
     "ဘွားအေ": "အဘွား",  # grandmother — standard written form
     "လက်ဝတ်ရစား": "လက်ဝတ်ရတနာ",  # jewelry — modern standard term
+    "အံ့ဩတကြီး": "အံ့ဩစွာ",  # malformed 'တကြီး' adverb (jobs rc_1793525723 + rc_1793526555, owner report 2026-11-01)
+    "စိုးရိမ်တကြီး": "စိုးရိမ်စွာ",  # same malformed 'တကြီး' adverb family (job rc_1793526555)
+    "အန္တရာယ်ကြားဆီ": "အန္တရာယ်ထဲကို",  # broken construction (job rc_1793525723) — the natural form is ထဲကို
 }
 
 

@@ -1469,6 +1469,8 @@ CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်�
    - 'လူပုံလယ်' (NEVER 'လူပုံအလယ်')
    - 'အကျပ်အတည်း' (NEVER 'အကြပ်အတည်း')
    - 'အဘွား' for grandmother (NEVER 'ဘွားအေ')
+   - 'အံ့ဩစွာ' / 'စိုးရိမ်စွာ' (NEVER the malformed 'တကြီး' adverb family — 'အံ့ဩတကြီး', 'စိုးရိမ်တကြီး': emotion adverbs end in 'စွာ', never in 'တကြီး')
+   - FOREIGN PROPER NAMES (နိုင်ငံခြား အမည်နာမများ): Transliterate each foreign name into the natural Burmese form readers actually use, choose ONE spelling for that name, and repeat that exact spelling in EVERY segment of the whole script. NEVER invent stacked-letter cluster forms (NEVER 'လို့စ်' for Lois) and NEVER let one name appear in two different spellings in the same story — an unstable name spelling reads as a spelling error even when each form looks plausible on its own.
    - Standard Unicode characters ONLY: strictly use 'ဉ်' (U+1009) where required; NEVER use Ethiopic, Georgian, or Zawgyi look-alike glyphs.
 
 STORYTELLING STANDARD — SCENE-BY-SCENE NARRATION (မြင်ကွင်းအလိုက် ဇာတ်လမ်းပြော စံချိန်):
@@ -1481,6 +1483,8 @@ E. REAL STANDARD WORDS ONLY: Every Burmese word must be a complete, real standar
 F. WRITE 'အဲဒီ' — NEVER 'အဲ့ဒီ': In narration always use the standard written form 'အဲဒီ' ('အဲဒီအချိန်မှာ', 'အဲဒီနောက်', 'အဲဒီသတင်း'). The colloquial spelling 'အဲ့ဒီ' is prohibited anywhere in the output.
 G. ENDINGS MUST MATCH THE SOURCE'S ARC: Never announce the whole story's conclusion ('ဇာတ်လမ်း နိဂုံး', 'ဇာတ်လမ်းဆုံးသွားပါပြီ') unless the source itself ends the entire story at that ID. When the source leaves the arc open — a fight about to begin, a rescue still on its way, a villain still at large — close the FINAL ID leaning forward on that real open question instead (e.g. 'ဒီလူဆိုးရဲ့ အစီအစဉ်ကို သူ ဘယ်လိုတားဆီးနိုင်မလဲ။').
 H. VARY SENTENCE OPENINGS (ဝါကျအစပုံစံ မထပ်စေရန်): Do not start consecutive segments with the same connective or the same subject name. Alternate naturally among connectives ('အဲဒီအခါမှာတော့', 'ဒါကိုမြင်တော့', 'ဒါကြောင့်', 'အဲဒီနောက်မှာတော့'), name mentions, and pronouns so the narration never sounds mechanical — this applies in EVERY presentation style.
+I. CALL THINGS WHAT THEY ARE (အရာဝတ္ထုကို သူ့အမှန် အမည်နဲ့ ခေါ်ရန်): Name every thing by what it truly is in the source. A machine or robot is 'စက်ရုပ်' — NEVER call it 'သရဲ' or 'ဘီလူး' unless the source itself is genuinely supernatural. Use natural Burmese constructions, never broken invented ones: 'အန္တရာယ်ထဲကို ရောက်သွားတယ်' (NEVER 'အန္တရာယ်ကြားဆီ ရောက်သွားတယ်'), 'နင်းခြေခံရတော့မှာ' (NEVER the clumsy split 'နင်းခြေတာခံရတော့မှာ').
+J. VARY SENTENCE ENDINGS & RHYTHM — SOUND ALIVE, NOT MECHANICAL (အသက်ဝင်အောင် ဝါကျအဆုံး နဲ့ စည်းချက် ပြောင်းရန်): Do NOT let nearly every sentence end in '…ခဲ့ပါတယ်' — a script whose sentences all close the same way reads flat and mechanical no matter how good the voice is. Mix the endings the way a real storyteller does ('…တယ်', '…နေတယ်', '…လိုက်တယ်', '…သွားတယ်', '…ပါပဲ', a short bare punch ending, an occasional genuine question or exclamation where the story itself asks one) and mix SHORT punchy sentences at action and danger with longer flowing ones at calm moments. Liveliness starts here in the script: the voice reads exactly the rhythm written on this page.
 
 HARD RULES:
 1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every segment's true meaning must be faithfully narrated inside its own ID.
@@ -1700,6 +1704,7 @@ For EVERY CURRENT ID check:
 - natural spoken colloquial style: strictly avoid formal literary 'သည်'/'သဖြင့်' bookish endings, no English/Latin words;
 - cinematic narrative flow: ensure natural, complete spoken sentences instead of awkward word-by-word literal translations or broken dialogue fragments;
 - scene anchoring & subject clarity: a row that opens a new scene re-names its actor, place and stake instead of floating a bare pronoun carried over from the previous scene; dialogue is narrated as beats, never transcribed question-and-answer exchanges; no vague invented filler replacing the source's concrete facts; complete standard words only (no truncated coined forms); named characters are called by the source's own names, never by vague coined role paraphrases; the standard form 'အဲဒီ' is used (never 'အဲ့ဒီ');
+- spelling & word-choice discipline: standard spelling throughout — never the malformed 'တကြီး' adverb family ('အံ့ဩတကြီး', 'စိုးရိမ်တကြီး' — write 'အံ့ဩစွာ', 'စိုးရိမ်စွာ'); every foreign name keeps ONE consistent natural spelling across all rows (never stacked inventions like 'လို့စ်'); things are called by their true names (a robot is 'စက်ရုပ်', never 'သရဲ'); natural constructions only (never 'အန္တရာယ်ကြားဆီ' or 'နင်းခြေတာခံရတော့မှာ'); sentence endings are varied — a batch where nearly every row closes '…ခဲ့ပါတယ်' needs repair;
 - strictly standard Myanmar Unicode characters only (no homoglyphs from Ethiopic or Georgian scripts);
 - no shifted chain where a row narrates another row;
 - no adjacent duplicate/near-duplicate outputs for different sources;

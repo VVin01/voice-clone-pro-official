@@ -41,6 +41,24 @@ def test_narrator_prompt_consistency_and_gloss_stripping():
     assert "Charon" in p2 and "male" in p2
 
 
+def test_narrator_direction_is_lively_not_flat():
+    # Owner verdict on job rc_1793525723 (2026-11-01): the Gemini voice read
+    # the script flat and lifeless. The performed-narrator profile (v3) must
+    # demand energy and must not carry the old flattening cues.
+    p = g.narrator_prompt("စာသား တစ်ကြောင်း", "Charon")
+    assert "never flat or robotic" in g.DEFAULT_DIRECTION
+    assert "LIVELY, varied conversational pace" in p
+    assert "must be" in p and "audible" in p
+    assert "[expressive storytelling]" in p
+    # The old flattening cues are gone.
+    assert "[neutral]" not in p
+    assert "steady medium conversational pace" not in p
+    assert "controlled emotion" not in p
+    # One-narrator guardrails stay: no shouting, no character voices.
+    assert "Do not shout" in p
+    assert "speaker identity" in p
+
+
 def _pcm(seconds=0.5, rate=24000):
     return b"".join(struct.pack("<h", 1200) for _ in range(int(seconds * rate)))
 

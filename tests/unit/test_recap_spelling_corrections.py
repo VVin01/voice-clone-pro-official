@@ -11,6 +11,13 @@ Covers two failure modes found in the live recap script of job rc_1793279760
    'ဘွားအေ', 'လက်ဝတ်ရစား') that no post-generation check caught. The curated
    MYANMAR_SPELLING_FIXES map in normalize_burmese_orthography now fixes them;
    every recap segment passes through it before the TTS/subtitle split.
+
+A second owner report (2026-11-01, Gemini-TTS jobs rc_1793525723 and
+rc_1793526555) added the malformed 'တကြီး' adverb family ('အံ့ဩတကြီး',
+'စိုးရိမ်တကြီး') and the broken construction 'အန္တရာယ်ကြားဆီ' to the map.
+Foreign-name spellings (the 'လို့စ်' vs 'လို့အစ်' instability across those
+two jobs) are deliberately NOT in the map: names are governed by the planner
+prompt's one-consistent-form rule, not by substring replacement.
 """
 
 from app.services.recap_engine.core import (
@@ -41,6 +48,10 @@ CORRECT_SENTENCES = [
     "ပရိသတ်ကြီး ကျေးဇူးတင်ပါတယ်၊ ခဏစောင့်ပါ",
     "သူ အရမ်း ကြိုးစားနေပြီး ပြဿနာကို ဂရုစိုက် ဖြေရှင်းနေတယ်",
     "ဥယျာဉ်ထဲမှာ ပန်းတွေ ပွင့်နေတယ်",
+    # Corrected forms from the 2026-11-01 jobs pass through unchanged.
+    "သူက အံ့ဩစွာ မေးမြန်းလိုက်ပါတယ်",
+    "စိုးရိမ်စွာ သတိပေးလိုက်တာဖြစ်ပါတယ်",
+    "သူမ အန္တရာယ်ထဲကို ရောက်သွားခဲ့ပါတယ်",
 ]
 
 ERROR_FIXES = [
@@ -67,6 +78,16 @@ ERROR_FIXES = [
      "အဲဒီအချိန်မှာ သတင်းထောက် လို့အစ် ရောက်ရှိနေပါတယ်"),
     ("အဲ့ဒီနောက် သူဟာ အဲ့ဒီတော့မှ ပြန်ထွက်လာခဲ့တယ်",
      "အဲဒီနောက် သူဟာ အဲဒီတော့မှ ပြန်ထွက်လာခဲ့တယ်"),
+    # Malformed 'တကြီး' adverb family (jobs rc_1793525723 + rc_1793526555).
+    ("သူက အံ့ဩတကြီး မေးမြန်းလိုက်ပါတယ်",
+     "သူက အံ့ဩစွာ မေးမြန်းလိုက်ပါတယ်"),
+    ("မကြောက်ဘူးလားလို့ စိုးရိမ်တကြီး သတိပေးလိုက်တာဖြစ်ပါတယ်",
+     "မကြောက်ဘူးလားလို့ စိုးရိမ်စွာ သတိပေးလိုက်တာဖြစ်ပါတယ်"),
+    # Broken construction from job rc_1793525723. The name token 'လို့စ်' is
+    # intentionally left untouched: name spellings belong to the prompt rule,
+    # not to this deterministic map.
+    ("လို့စ်တစ်ယောက် အန္တရာယ်ကြားဆီ ရောက်ရှိသွားခဲ့ပါတယ်",
+     "လို့စ်တစ်ယောက် အန္တရာယ်ထဲကို ရောက်ရှိသွားခဲ့ပါတယ်"),
 ]
 
 
