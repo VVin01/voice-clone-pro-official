@@ -866,6 +866,11 @@ select.studio-input { min-height: 50px; }
     min-height: 22px;
 }
 .preview-blur-box .blur-label { font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.7); white-space: nowrap; overflow: hidden; }
+/* No-media placeholder state: slim outline only — with no media loaded
+   there is nothing to blur yet, and the label would collide with the
+   subtitle sample text at the shared default Y=85%. */
+.preview-blur-box.no-media { background: rgba(120, 130, 150, 0.16); }
+.preview-blur-box.no-media .blur-label { display: none; }
 .drag-grip-icon { color: rgba(255, 255, 255, 0.8); font-size: 11px; }
 .box-resize-handle { position: absolute; left: 50%; transform: translateX(-50%); width: 34px; height: 8px; cursor: ns-resize; }
 .box-resize-handle.top { top: -5px; }
@@ -891,9 +896,11 @@ select.studio-input { min-height: 50px; }
     border-radius: 999px; padding: 3px;
 }
 .tb-tab-btn {
-    flex: 1; min-height: 40px; padding: 5px 6px;
+    flex: 1; min-height: 40px; padding: 5px 4px;
+    display: flex; align-items: center; justify-content: center;
     background: transparent; border: none; border-radius: 999px;
-    color: var(--text-2); font-size: 13px; font-weight: 600; line-height: 1.45;
+    color: var(--text-2); font-size: 12.5px; font-weight: 600; line-height: 1.2;
+    white-space: nowrap;
 }
 .tb-tab-btn.active { background: var(--surface-3); color: var(--text); }
 .tb-tab-panel { display: flex; flex-direction: column; }

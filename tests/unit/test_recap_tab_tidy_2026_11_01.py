@@ -234,5 +234,32 @@ def test_split_minutes_use_western_digits():
 
 
 def test_cache_buster_bumped_for_tidy():
-    assert HTML.count("?v=20261101_rt1") == 3
+    assert HTML.count("?v=20261101_rt2") == 3
+    assert "?v=20261101_rt1" not in HTML
     assert "?v=20261101_gv1" not in HTML
+
+
+# ── Return pass: no-media blur label + toolbar tab fit ──────────────
+
+def test_no_media_blur_box_is_label_less():
+    # updateCanvasMockupVisuals tracks whether real media is actually
+    # displayed; only the video and live-thumbnail branches count.
+    assert APP_JS.count("mediaVisible = true;") == 2
+    # In no-media states (empty preview / dead thumbnail) the blur box
+    # renders label-less (slim outline only): at the shared default
+    # Y=85% its label text otherwise stacks onto the subtitle sample.
+    assert 'blurBoxEl.classList.toggle("no-media", !mediaVisible)' in APP_JS
+    assert ".preview-blur-box.no-media .blur-label { display: none; }" in CSS
+    # Presentation only: the box and its state defaults are untouched.
+    assert 'id="preview-blur-box" style="top: 85%; height: 7%;' in HTML
+    assert 'data-i18n="blur_box_label"' in HTML
+
+
+def test_toolbar_tabs_single_line_equal_height():
+    btn = re.search(r"\.tb-tab-btn \{([^}]*)\}", CSS)
+    assert btn and "white-space: nowrap" in btn.group(1)
+    assert btn and "align-items: center" in btn.group(1)
+    # Mask label shortened so all three tabs fit one line at 390px
+    # (no ellipsis-clipped Burmese anywhere).
+    assert "<span>🌫️ Blur စာတန်း</span>" in HTML
+    assert "Blur & စာတန်း" not in HTML

@@ -86,7 +86,9 @@ def test_asset_versions_bumped_for_fix_release():
         # changed index.html / app.js / style.css and added statics).
         # Recap-tab-tidy supersession: gv1 -> rt1 (this tidy changed
         # index.html / app.js / i18n.js / style.css).
-        assert "?v=20261101_rt1" in ref, ref
+        # Tidy return-pass supersession: rt1 -> rt2 (app.js / style.css
+        # / index.html changed again; i18n.js rides the shared token).
+        assert "?v=20261101_rt2" in ref, ref
     # The two scripts whose bytes changed must be on the new token.
-    assert "/static/js/app.js?v=20261101_rt1" in html
-    assert "/static/js/i18n.js?v=20261101_rt1" in html
+    assert "/static/js/app.js?v=20261101_rt2" in html
+    assert "/static/js/i18n.js?v=20261101_rt2" in html

@@ -3314,7 +3314,9 @@ function setupRecapVisualEditor() {
 
             const backdropEl = document.getElementById("video-backdrop-blur");
             const noThumbEl = document.getElementById("canvas-no-thumb");
+            let mediaVisible = false;
             if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
+                mediaVisible = true;
                 if (noThumbEl) noThumbEl.classList.add("hidden");
                 innerMovie.style.backgroundImage = "none";
                 // Fill the letterbox area with a blurred copy of the source
@@ -3340,6 +3342,7 @@ function setupRecapVisualEditor() {
                 canvasVideo.style.top = `${vidTop.toFixed(3)}%`;
                 if (fillBadge) fillBadge.style.display = "none";
             } else if (state.recapThumbnailUrl && !(thumbImg && thumbImg.dataset.failed === "1")) {
+                mediaVisible = true;
                 if (noThumbEl) noThumbEl.classList.add("hidden");
                 if (backdropEl) backdropEl.classList.remove("on");
                 canvas.style.backgroundImage = `url('${state.recapThumbnailUrl}')`;
@@ -3376,6 +3379,14 @@ function setupRecapVisualEditor() {
                 const noThumb = document.getElementById("canvas-no-thumb");
                 if (noThumb) noThumb.classList.remove("hidden");
             }
+            // No-media states (empty preview / dead thumbnail): both drag
+            // boxes share the default Y=85%, so the blur box's label text
+            // stacks onto the subtitle sample text unreadably. Render the
+            // blur box label-less there (slim outline only, still
+            // draggable). Presentation only — no state values, defaults,
+            // ids or handlers change; with real media the label returns.
+            const blurBoxEl = document.getElementById("preview-blur-box");
+            if (blurBoxEl) blurBoxEl.classList.toggle("no-media", !mediaVisible);
         }
         syncBlurBoxVisual();
         syncSubBoxVisual();
