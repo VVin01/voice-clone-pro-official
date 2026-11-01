@@ -57,6 +57,30 @@ def test_shared_rules_present_for_all_styles(monkeypatch, style):
     assert "Return exactly 3 items" in prompt
 
 
+@pytest.mark.parametrize("style", ["viral", "funny", "pov", "dramatic", "narrator", "standard"])
+def test_storytelling_standard_present_for_all_styles(monkeypatch, style):
+    # Owner-approved exemplar standard (2026-11-01): scene-by-scene narration a
+    # drop-in viewer can follow — shared by every style, not just one.
+    prompt = _capture_prompt(monkeypatch, style)
+    assert "STORYTELLING STANDARD" in prompt
+    assert "DROP-IN COMPREHENSION" in prompt
+    assert "NAME THE ACTOR" in prompt
+    assert "DIALOGUE BECOMES NARRATION" in prompt
+    assert "CONCRETE FACTS" in prompt
+    assert "REAL STANDARD WORDS ONLY" in prompt
+    assert "ENDINGS MUST MATCH THE SOURCE'S ARC" in prompt
+    # The standard form is taught; the colloquial example connectives are gone.
+    assert "အဲ့ဒီအခါ" not in prompt
+    assert "အဲ့ဒီနောက်" not in prompt
+
+
+def test_opening_hook_must_establish_premise(monkeypatch):
+    # CURRENT starts at ID 1 with no previous context -> first-batch intro rule.
+    prompt = _capture_prompt(monkeypatch, "viral")
+    assert "must AGREE with the opening scene" in prompt
+    assert "premise concretely" in prompt
+
+
 def test_viral_prompt_has_hook_and_retention_rules(monkeypatch):
     prompt = _capture_prompt(monkeypatch, "viral")
     assert "OPENING HOOK (ID 1 ONLY)" in prompt
@@ -64,6 +88,8 @@ def test_viral_prompt_has_hook_and_retention_rules(monkeypatch):
     assert "VARY SENTENCE OPENINGS" in prompt
     # The anti-filler rule must stay — hooks come from the plot, not teasers.
     assert "NEVER insert random generic filler phrases" in prompt
+    # Example connectives use the standard form 'အဲဒီ'.
+    assert "အဲဒီအခါမှာတော့" in prompt
 
 
 def test_funny_prompt_has_humor_source_and_taste_rules(monkeypatch):
@@ -91,3 +117,5 @@ def test_standard_prompt_has_variety_rule(monkeypatch):
     prompt = _capture_prompt(monkeypatch, "narrator")
     assert "CINEMATIC MOVIE RECAP NARRATOR" in prompt
     assert "VARY SENTENCE OPENINGS" in prompt
+    # Example connectives use the standard form 'အဲဒီ'.
+    assert "အဲဒီနောက်" in prompt
