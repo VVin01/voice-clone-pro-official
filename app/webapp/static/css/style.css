@@ -2612,8 +2612,10 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 
 /* ── Voice compact UX 2026-11-01: text input first, persona picker
    collapsed. The selected-voice summary row lives under the mode
-   segmented control; the picker card sits below the text input and
-   only opens on demand. New selectors only. ─────────────────────── */
+   segmented control; the picker only opens on demand. Follow-up
+   (owner, 2026-11-01 late): the picker now expands IN PLACE directly
+   beneath the summary row inside the same card — it used to sit
+   below the text input, disconnected from the Change tap. ──────── */
 .voice-selected-row {
     display: flex; align-items: center; gap: 8px;
     margin-top: 10px; padding: 9px 12px;
@@ -2627,16 +2629,14 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .vsr-change { flex-shrink: 0; }
-.persona-picker-card { padding-top: 6px; }
-.picker-toggle-row {
-    display: flex; align-items: center; justify-content: space-between;
-    width: 100%; border: none; background: transparent; cursor: pointer;
-    padding: 10px 4px 12px; font: inherit; color: inherit; text-align: left;
+/* In-place picker: no card chrome of its own (it lives inside the
+   mode card); when open it separates from the summary row with a
+   hairline, when collapsed it occupies no space at all. */
+.persona-picker-card:not(.picker-collapsed) {
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
 }
-.picker-toggle-title { font-size: 14.5px; font-weight: 700; }
-.picker-chevron { font-size: 15px; color: var(--text-2); transition: transform .18s ease; }
 .persona-picker-card.picker-collapsed #curated-personas-card { display: none; }
-.persona-picker-card:not(.picker-collapsed) .picker-chevron { transform: rotate(180deg); }
 
 /* ════════════════════════════════════════════════════════════════════
    RECAP TAB TIDY (2026-11-01 — owner's premium/hierarchy directive)

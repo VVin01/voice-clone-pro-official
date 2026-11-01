@@ -6238,6 +6238,44 @@ async def adjust_user_status(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
+    # Demote durability (owner hit this 2026-11-01: "Free ပြန်ချ Crd
+    # နှုတ်တာမှာ VIP ကကျန်ခဲ့တယ်"): account_category is entitlement-derived
+    # in the ledger — consume_seconds re-asserts PURCHASED on EVERY job
+    # while purchased_seconds > 0, and a PURCHASE-source refund does the
+    # same. Setting the field alone therefore does not stick: a demoted
+    # user who still holds purchased seconds silently re-promotes to
+    # VIP on their next job. Admin intent must win: on a PURCHASED ->
+    # FREE change, drain the purchased bucket to zero through the same
+    # audited ledger path (which itself flips the category to FREE at
+    # exactly zero) BEFORE the category assignment below, so no
+    # entitlement fuel remains. Ordering: this runs AFTER the
+    # same-request seconds delta, so the zeroing targets the post-delta
+    # balance — an explicit delta keeps its existing guard behaviour
+    # (an over-large debit still 400s as before), and a same-request
+    # credit is drained too, leaving the demote absolute. A zero
+    # outstanding balance needs no ledger call (admin_adjust_balance
+    # rejects non-positive seconds).
+    purchased_seconds_zeroed = 0
+    if category_change and req.account_category == AccountCategory.FREE.value:
+        from app.services.ledger import admin_adjust_balance, get_minute_balance
+        from app.models.enums import LedgerDirection, LedgerSource
+        balance_now = await get_minute_balance(db, target_user.id)
+        outstanding = int(balance_now.purchased_seconds or 0)
+        if outstanding > 0:
+            try:
+                await admin_adjust_balance(
+                    session=db,
+                    user_id=target_user.id,
+                    admin_id=admin.id,
+                    seconds=outstanding,
+                    source=LedgerSource.PURCHASE,
+                    direction=LedgerDirection.DEBIT,
+                    reason=reason,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            purchased_seconds_zeroed = outstanding
+
     if category_change:
         target_user.account_category = req.account_category
 
@@ -6269,10 +6307,15 @@ async def adjust_user_status(
             "seconds_delta": seconds_delta,
             "recap_credits_delta": credits_delta,
             "account_category": req.account_category if category_change else None,
+            "purchased_seconds_zeroed": purchased_seconds_zeroed,
         }),
     ))
     await db.commit()
-    return {"success": True, "message": f"အသုံးပြုသူ {req.user_id} ကို ပြင်ဆင်ပြီးပါပြီ"}
+    return {
+        "success": True,
+        "message": f"အသုံးပြုသူ {req.user_id} ကို ပြင်ဆင်ပြီးပါပြီ",
+        "purchased_seconds_zeroed": purchased_seconds_zeroed,
+    }
 
 
 class BroadcastRequest(BaseModel):
