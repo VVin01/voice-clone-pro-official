@@ -1690,6 +1690,12 @@ async def extract_media_info(
             "title": f"{platform} Content",
             "uploader": "Online Creator",
             "thumbnail": "",
+            # Shape parity with the verified payload above: dimensions
+            # unknown (None) and duration unverified (0) are explicit,
+            # so the client never has to guess at missing keys.
+            "width": None,
+            "height": None,
+            "duration_seconds": 0,
             "estimated_duration": "03:30",
             "has_subtitles": False,
             # metadata_verified=False: the payload above is a graceful

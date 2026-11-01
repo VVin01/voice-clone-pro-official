@@ -2860,7 +2860,12 @@ function setupRecapVisualEditor() {
     function updateSeekTimeDisplay(currentSec, totalSec) {
         if (!seekBadge) return;
         const curStr = formatSecToMMSS(currentSec);
-        const totStr = formatSecToMMSS(totalSec || state.recapSourceDuration || 60);
+        // state.recapSourceDuration is only ever set from REAL metadata
+        // (verified extract, upload probe, or the <video> element). When
+        // it is 0 the source's length is unknown — show "--:--" instead
+        // of the old fabricated 60s default total (RS-4).
+        const knownTotal = state.recapSourceDuration > 0 ? (totalSec || state.recapSourceDuration) : 0;
+        const totStr = knownTotal > 0 ? formatSecToMMSS(knownTotal) : "--:--";
         seekBadge.innerText = `⏱️ ${curStr}s / ${totStr}s`;
     }
 
@@ -3187,7 +3192,11 @@ function setupRecapVisualEditor() {
             let ratioClass = "ratio-9-16";
             if (state.recapRatio === "16:9") ratioClass = "ratio-16-9";
             else if (state.recapRatio === "1:1") ratioClass = "ratio-1-1";
-            else if (state.recapRatio === "Original") ratioClass = "ratio-16-9";
+            // "Original" gets NO class claim here: step 4 below applies
+            // the source's real aspect once dimensions are known; while
+            // they are unknown the frame keeps this neutral default
+            // instead of silently asserting 16:9 (owner-found bug: a
+            // vertical TikTok source was framed as YouTube landscape).
             mockupFrame.className = `mockup-screen ${ratioClass}`;
             mockupFrame.style.aspectRatio = "";
         }
@@ -3257,9 +3266,11 @@ function setupRecapVisualEditor() {
                             mockupFrame.style.aspectRatio = `${state.recapSourceWidth} / ${state.recapSourceHeight}`;
                         }
                     }
-                } else {
-                    rCanvas = 16 / 9;
                 }
+                // No source dimensions known: rCanvas keeps its neutral
+                // 9/16 default (matching the frame class in step 1)
+                // rather than asserting a landscape canvas we cannot
+                // know — the unverified state is the info card's job.
             }
 
             // Fallback source ratio if media not yet analyzed
@@ -3989,11 +4000,38 @@ function setupRecapVisualEditor() {
                     sliderSeek.value = Math.min(5, data.duration_seconds || 5);
                 }
                 if (seekBadge) {
-                    seekBadge.innerText = `⏱️ 00:05s / ${data.estimated_duration || "00:00"}s`;
+                    // Unverified payloads carry an invented placeholder
+                    // duration ("03:30") — never paint it as the source's
+                    // length; the total stays unknown until verified.
+                    seekBadge.innerText = data.duration_seconds
+                        ? `⏱️ 00:05s / ${data.estimated_duration || "00:00"}s`
+                        : "⏱️ 00:05s / --:--";
                 }
                 setRecapPreviewState("ready");
             } catch (err) {
                 setRecapPreviewState(recapHasSource() ? "ready" : "empty");
+                // The extract returned nothing at all (timeout / network):
+                // a source URL is present but its metadata is unverified.
+                // Show the info card in the same honest unverified state
+                // a fallback payload gets, instead of leaving it hidden
+                // behind its static placeholders (RS-4).
+                if (url) {
+                    if (recapInfoBox) recapInfoBox.classList.remove("hidden");
+                    const tSpan = document.getElementById("recap-info-title");
+                    if (tSpan) tSpan.innerText = "Video";
+                    const pSpan = document.getElementById("recap-info-platform");
+                    if (pSpan) {
+                        pSpan.innerText = /tiktok\.com/i.test(url) ? "TikTok"
+                            : /youtu/i.test(url) ? "YouTube"
+                            : /facebook\.com|fb\.watch/i.test(url) ? "Facebook" : "Video";
+                    }
+                    state.recapVideoTitle = "Movie Recap Video";
+                    state.recapSourceDuration = 0;
+                    state.lastRecapInfo = { metadata_verified: false, duration_seconds: 0, has_subtitles: false, estimated_duration: "00:00" };
+                    paintRecapInfoMeta(state.lastRecapInfo, false, recapNormalMaxSeconds());
+                    const sb = document.getElementById("canvas-seek-time-badge");
+                    if (sb) sb.innerText = "⏱️ 00:05s / --:--";
+                }
                 const msg = err.message || "";
                 if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
                     showStudioToast(t("toast_douyin_blocked"), 'warning', 6000);
