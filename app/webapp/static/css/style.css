@@ -2928,8 +2928,13 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .control-row .ctrl-title { flex: none; white-space: nowrap; }
 
 /* V-3 — persona preview button: icon + label stay on one line as one
-   centred group; descriptions balance instead of orphaning a syllable. */
-.voice-preview-btn { flex-wrap: nowrap; }
+   centred group; descriptions balance instead of orphaning a syllable.
+   Sizes trimmed to the measured budget: at the base 12.5px the
+   icon+label group (132px) exceeds the card's content room (114px);
+   at 11.5px with an 18px icon and 5px gap it lands inside the pill
+   with clear margins, still one line, still centred. */
+.voice-preview-btn { flex-wrap: nowrap; padding: 5px 8px; gap: 5px; font-size: 11.5px; }
+.voice-preview-btn .preview-btn-icon { width: 18px; height: 18px; }
 .voice-preview-btn .preview-btn-label { white-space: nowrap; }
 .persona-desc { text-wrap: balance; }
 
@@ -2995,6 +3000,23 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     white-space: normal; overflow: visible; text-overflow: clip;
     overflow-wrap: anywhere; line-height: 1.55;
 }
+/* Segments are atomic inline-blocks: a plain inline span can
+   fragment at the wrap point and strand its ::before separator at
+   the line end (seen in the first after-capture); an atomic box
+   always travels with its separator. Long single segments can
+   still break internally via overflow-wrap. */
+.adm-user-sub .adm-sub-seg { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.adm-user-sub .adm-sub-seg + .adm-sub-seg::before {
+    content: "•"; margin: 0 5px; color: var(--text-3);
+}
+
+/* A-5 — the Users search row: the shared .admin-action-row gives the
+   button flex:1, which starved the input (measured room 128px for a
+   165px placeholder — even the shortened string clipped). Inside the
+   Users main view only, the button keeps its natural width and the
+   input takes the rest (room ~190px). The detail screen's action
+   rows are outside #adm-users-main and keep the equal-flex design. */
+#adm-users-main .admin-action-row .btn { flex: none; }
 
 /* A-6 — category filter chips + Load-more for the Users list (the
    filter itself is server-side; see api.py / app.js). */

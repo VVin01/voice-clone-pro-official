@@ -150,6 +150,10 @@ def test_user_row_two_lines_with_vip_badge():
     # username moved to line 2; grapheme-safe avatar initial
     assert '(@${escapeHtml(u.username)})' not in body
     assert "Array.from((u.first_name" in body
+    # sub-line separators are CSS-generated between segments (no
+    # dangling "•" when the line wraps)
+    assert "adm-sub-seg" in body
+    assert ".adm-sub-seg::before" in POLISH_CSS
     rule = POLISH_CSS.split(".adm-user-line1 .badge-status {", 1)[1].split("}", 1)[0]
     assert "flex: none" in rule
     vip = POLISH_CSS.split(".badge-vip {", 1)[1].split("}", 1)[0]
@@ -178,6 +182,11 @@ def test_search_placeholder_shortened():
     assert tr["my"]["admin_user_search_ph"] == "ID / @username / နာမည်"
     assert tr["en"]["admin_user_search_ph"] == "ID / @username / name"
     assert 'placeholder="ID / @username / နာမည်"' in HTML
+    # …and the input actually gets room for it: the search button loses
+    # its equal flex-grow inside the Users main view (the shared
+    # .admin-action-row rule left the input narrower than the string).
+    rule = POLISH_CSS.split("#adm-users-main .admin-action-row .btn {", 1)[1].split("}", 1)[0]
+    assert "flex: none" in rule
 
 
 # ── 6 · Refer card ───────────────────────────────────────────────────

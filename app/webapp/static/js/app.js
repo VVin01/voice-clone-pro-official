@@ -5716,6 +5716,17 @@ function admUserRowHtml(u) {
     // combining stack otherwise render a blank/broken avatar initial.
     const initial = escapeHtml((Array.from((u.first_name || "?").trim())[0] || "?").toUpperCase());
     const balFmt = Math.floor((u.balance_seconds || 0) / 60) + "m";
+    // Sub-line as segments (same pattern as D-1): the "•" separators
+    // are CSS-generated between segments, so a wrapped line never
+    // strands one at a line end.
+    const segs = [];
+    if (u.username) segs.push(`@${escapeHtml(u.username)}`);
+    segs.push(`ID: ${u.id}`);
+    segs.push(escapeHtml(u.account_category || "FREE"));
+    segs.push(`\u23f1 ${balFmt}`);
+    segs.push(`\ud83c\udfac ${u.recap_credits ?? 0}`);
+    if (u.is_banned) segs.push("\ud83d\udeab");
+    const subHtml = segs.map(s => `<span class="adm-sub-seg">${s}</span>`).join("");
     // Two-line row (full-app audit A-3/A-4/A-6): line 1 is the name
     // (the only part allowed to ellipsize) beside badges that always
     // render in full; line 2 carries @username + the ID/usage sub-line.
@@ -5727,7 +5738,7 @@ function admUserRowHtml(u) {
                 ${u.account_category === "PURCHASED" ? `<span class="badge-vip">👑 VIP</span>` : ""}
                 <span class="badge-status ${u.is_banned ? "blocked" : "active"}">${u.is_banned ? "BLOCKED" : "ACTIVE"}</span>
             </div>
-            <div class="adm-user-sub">${u.username ? `@${escapeHtml(u.username)} \u2022 ` : ""}ID: ${u.id} \u2022 ${escapeHtml(u.account_category || "FREE")} \u2022 \u23f1 ${balFmt} \u2022 \ud83c\udfac ${u.recap_credits ?? 0}${u.is_banned ? " \u2022 \ud83d\udeab" : ""}</div>
+            <div class="adm-user-sub">${subHtml}</div>
         </div>
         <span class="adm-row-chev">\u203a</span>
     </div>`;
