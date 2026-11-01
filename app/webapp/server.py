@@ -21,9 +21,18 @@ from app.webapp.api import api_router
 from app.webapp.rate_limit import RateLimitMiddleware
 
 
+# Wall-clock moment this process booted (set by the lifespan). The
+# periodic orphan sweep uses it as an absolute cutoff: a RUNNING recap
+# row whose started_at predates this process cannot be rendering
+# anywhere once this process has outlived the deploy-overlap window,
+# and a row this process claimed itself always has a later started_at.
+_SERVER_BOOT_AT = None
+
+
 async def reset_stale_running_recap_jobs(
     session: AsyncSession | None = None,
     cutoff_minutes: int = 10,
+    absolute_cutoff=None,
 ) -> int:
     """Reset orphaned RUNNING recap jobs older than cutoff_minutes to QUEUED.
 
@@ -34,6 +43,17 @@ async def reset_stale_running_recap_jobs(
     (started_at, falling back to created_at) is older than 10 minutes ensures
     freshly-running jobs on the active instance survive without double-rendering
     or duplicate top-up charges.
+
+    Hunt #7: the startup call alone left a hole — a job that was
+    YOUNGER than the cutoff when the old instance died (the normal
+    deploy case for any render that outlives the overlap) was skipped
+    at boot and then never re-checked, so it sat RUNNING forever:
+    the status endpoint kept answering "Processing in background...",
+    /user/me kept returning it as the active job, and the Mini App
+    blocked the user from starting any new recap. The queue worker
+    therefore re-runs this reset periodically with
+    ``absolute_cutoff`` = this process's boot time once the process
+    has been up past the overlap window.
     """
     from datetime import timedelta
     from sqlalchemy import update
@@ -41,7 +61,7 @@ async def reset_stale_running_recap_jobs(
     from app.models.enums import JobStatus, JobType
     from app.models.schema import Job, utc_now
 
-    cutoff = utc_now() - timedelta(minutes=cutoff_minutes)
+    cutoff = absolute_cutoff if absolute_cutoff is not None else utc_now() - timedelta(minutes=cutoff_minutes)
     stmt = (
         update(Job)
         .where(
@@ -155,6 +175,10 @@ async def _dispatch_oldest_queued_recap() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _SERVER_BOOT_AT
+    from app.models.schema import utc_now as _utc_now
+
+    _SERVER_BOOT_AT = _utc_now()
     # Initialize authentic Myanmar fonts for recap engine subtitle rendering
     try:
         from app.services.recap_engine.core import ensure_system_myanmar_fonts
@@ -218,11 +242,33 @@ async def lifespan(app: FastAPI):
     async def _recap_queue_worker():
         """Continuously check for any QUEUED Movie Recap jobs in DB and auto-process them."""
         import logging
+        import time as _time
 
         _log = logging.getLogger("RecapWorker")
+        _worker_started = _time.monotonic()
+        _last_orphan_check = 0.0
         while True:
             try:
                 await _dispatch_oldest_queued_recap()
+                # Orphan sweep (hunt #7): once this process has been up
+                # 10 minutes — past any deploy overlap, so the old
+                # instance is certainly gone — a RUNNING row started
+                # BEFORE this process booted cannot be rendering
+                # anywhere; reset it to QUEUED so the dispatcher above
+                # re-runs it with its persisted config/credit state.
+                # Rows this process claimed have a post-boot
+                # started_at and are never touched. Checked once a
+                # minute; the UPDATE matches nothing in steady state.
+                _now_m = _time.monotonic()
+                if (
+                    _SERVER_BOOT_AT is not None
+                    and _now_m - _worker_started >= 600
+                    and _now_m - _last_orphan_check >= 60
+                ):
+                    _last_orphan_check = _now_m
+                    orphans = await reset_stale_running_recap_jobs(absolute_cutoff=_SERVER_BOOT_AT)
+                    if orphans:
+                        _log.info("Periodic orphan sweep reset %d stranded RUNNING recap jobs", orphans)
             except Exception:
                 # Keep the loop alive, but never silently (hunt #5):
                 # a swallowed cycle error here used to be invisible.
@@ -347,7 +393,7 @@ async def add_no_cache_headers(request: Request, call_next):
     - ``/static/*``: no-cache (revalidate, never blind-store). The
       blanket no-store previously forced every Mini App open to
       re-download ~670 KB of JS/CSS. Asset URLs are versioned per
-      release in index.html (e.g. ``app.js?v=20261101_jr1``),
+      release in index.html (e.g. ``app.js?v=20261101_h7``),
       so a deploy that changes an asset also changes its URL; and
       Starlette StaticFiles answers the revalidation with ETag /
       Last-Modified 304s, so even an unversioned edit is never

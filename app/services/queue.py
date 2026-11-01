@@ -112,6 +112,19 @@ async def create_voice_clone_job(
     # 2. Check concurrency and daily job limits (admins exempt)
     is_admin = settings.is_admin(user_id)
     if not is_admin:
+        # Serialize per-user job creation (hunt #7): both limit checks
+        # below are count-then-insert, so two simultaneous submits
+        # (bot + Mini App, or a double-tap) could each count the
+        # pre-insert state and both create a job — defeating the
+        # concurrent-job limit and the FREE daily cap at once. Locking
+        # the creator's own User row makes concurrent creators queue
+        # up on Postgres; whoever loses the race then counts the
+        # winner's committed job and is rejected properly. The lock is
+        # held until the caller's transaction commits (the job insert
+        # below is part of the same transaction).
+        await session.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
         # Concurrent job limit (1 job)
         concurrent_stmt = (
             select(func.count())

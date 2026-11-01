@@ -955,9 +955,12 @@ async function loadUserProfile() {
         const res = await fetchWithTimeout("/api/user/me", { headers: getAuthHeaders() });
         if (isAuthFailure(res)) return;
         if (!res.ok) {
-            // Server-side failure: surface the Home error + Retry strip
-            // (401/403 stay with the auth/ban flows that own them).
-            if (res.status >= 500) setHomeLoadErrorVisible(true);
+            // Failure: surface the Home error + Retry strip. 401 stays
+            // with the auth flow above and 403 with the membership
+            // gate/ban interceptor; every OTHER failure — sub-500
+            // included — must not silently leave the placeholder
+            // balances on screen with no error and no retry (hunt #7).
+            if (res.status !== 403) setHomeLoadErrorVisible(true);
             return;
         }
         const data = await res.json();
@@ -1011,7 +1014,7 @@ async function loadUserProfile() {
 
         if (charCount) {
             const limit = data.character_limit || (data.is_vip ? 5000 : 1000);
-            charCount.innerText = `0 / ${limit} chars`;
+            charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
         }
 
         const recapLimitText = document.getElementById("recap-tier-limit-text");
@@ -1314,7 +1317,7 @@ function setupVoiceStudio() {
         textInput.addEventListener("input", () => {
             const len = textInput.value.length;
             const max = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
-            charCount.innerText = `${len} / ${max} chars`;
+            charCount.innerText = `${len} / ${max} ${t("char_counter_unit")}`;
             charCount.style.color = len > max ? "#ef4444" : "var(--text-muted)";
             updateVoicePreflight();
         });
@@ -1483,7 +1486,10 @@ async function verifyMembershipFromBanner() {
     if (btn) btn.disabled = true;
     if (status) status.innerText = t("gate_checking");
     try {
-        const res = await fetch("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() });
+        // fetchWithTimeout, not raw fetch (hunt #7): a HUNG (not
+        // failed) verify request never settled, leaving this button
+        // disabled and the status on "checking" for the whole session.
+        const res = await fetchWithTimeout("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() });
         const data = await res.json();
         // The endpoint returns fresh LIVE per-chat flags: repaint the
         // chips either way so a still-missing chat is obvious at a glance.
@@ -1617,7 +1623,12 @@ async function runEntryGateCheck(reason) {
     if (entryGate.locked && checkingEl) checkingEl.innerText = t("gate_checking");
     if (reason === "manual" && btn) btn.disabled = true;
     try {
-        const res = await fetch("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() });
+        // fetchWithTimeout, not raw fetch (hunt #7): a HUNG (not failed)
+        // verify request never settles, so the finally below never runs
+        // and entryGate.checking stays true forever — every later
+        // check, including the user's own Verify tap, early-returns
+        // and the gate can never recover for the whole session.
+        const res = await fetchWithTimeout("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() });
         if (isAuthFailure(res)) {
             // 401: the "open via Telegram" modal explains; stay locked.
             const status = document.getElementById("gate-lock-status");
@@ -3929,14 +3940,62 @@ function startRecapJobPolling(jobId) {
     if (progressBox) progressBox.classList.remove("hidden");
     if (btn) btn.disabled = true;
 
+    // Poll health bookkeeping (hunt #7): this loop used to swallow
+    // every failure silently (non-OK -> return, throw -> console.warn)
+    // and had NO cap, so a dead connection or a long server outage
+    // left a frozen progress box for the whole session — and via
+    // recapJobIsActive() it blocked every future recap submit too.
+    // Now: consecutive failures surface a "reconnecting" cue on the
+    // status line after 3 strikes; a job the server no longer knows
+    // (404 three polls in a row — purged, or never persisted) stops
+    // the loop and releases the UI; and a hard cap stops the loop
+    // after 60 minutes while the job itself keeps running
+    // server-side (the bot notifies on completion, /user/me resumes
+    // this poller on the next profile load, History has the result).
+    let recapPollFailures = 0;
+    let recapPollNotFound = 0;
+    let recapPollTicks = 0;
+    const RECAP_POLL_MAX_TICKS = 1800; // 60 min at the 2s interval
+
+    function noteRecapPollFailure() {
+        recapPollFailures++;
+        if (recapPollFailures === 3 && statusMsg) {
+            statusMsg.innerText = t("poll_reconnecting");
+        }
+    }
+
+    function stopRecapPollingJobGone() {
+        clearInterval(state.recapPollTimer);
+        state.recapPollTimer = null;
+        try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
+        if (btn) btn.disabled = false;
+        if (progressBox) progressBox.classList.add("hidden");
+        showStudioToast(t("poll_job_gone"), 'error', 6000);
+    }
+
     state.recapPollTimer = setInterval(async () => {
+        recapPollTicks++;
+        if (recapPollTicks > RECAP_POLL_MAX_TICKS) {
+            clearInterval(state.recapPollTimer);
+            state.recapPollTimer = null;
+            if (statusMsg) statusMsg.innerText = t("poll_background_notice");
+            showStudioToast(t("poll_background_notice"), 'info', 6000);
+            return;
+        }
         try {
             const res = await fetch(`/api/recap/${jobId}/status`, {
                 headers: getAuthHeaders(),
             });
-            if (!res.ok) return;
+            if (res.status === 404) {
+                recapPollNotFound++;
+                if (recapPollNotFound >= 3) stopRecapPollingJobGone();
+                return;
+            }
+            if (!res.ok) { noteRecapPollFailure(); return; }
 
             const data = await res.json();
+            recapPollFailures = 0;
+            recapPollNotFound = 0;
             if (progressFill && data.progress_percent) {
                 progressFill.style.width = `${Math.min(100, Math.max(10, data.progress_percent))}%`;
             }
@@ -4080,6 +4139,7 @@ function startRecapJobPolling(jobId) {
             }
         } catch (err) {
             console.warn("Recap polling error:", err);
+            noteRecapPollFailure();
         }
     }, 2000);
 }

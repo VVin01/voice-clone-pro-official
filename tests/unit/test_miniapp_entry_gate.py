@@ -69,7 +69,9 @@ def test_startup_calls_live_verify_membership():
     assert "initEntryGate();" in js
     assert 'runEntryGateCheck("startup")' in js
     # ...and the check itself is the LIVE endpoint, not /api/user/me.
-    assert 'fetch("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() })' in js
+    # (hunt #7: the call goes through fetchWithTimeout — a hung verify
+    # request used to wedge the gate in "checking" for the session.)
+    assert 'fetchWithTimeout("/api/user/verify-membership", { method: "POST", headers: getAuthHeaders() })' in js
 
 
 def test_unlock_only_on_verified_true():

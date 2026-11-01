@@ -514,6 +514,29 @@ async def claim_and_process_next_job(
     return await process_single_job(session=session, job=job, bot=bot)
 
 
+def _boot_cutoff_sweep_due(
+    started_monotonic: float,
+    last_sweep_monotonic: float,
+    now_monotonic: float,
+    *,
+    grace_seconds: float = 600.0,
+    interval_seconds: float = 300.0,
+) -> bool:
+    """Whether the periodic orphan sweep should run now (hunt #7).
+
+    The sweep must not run during the first `grace_seconds` of
+    uptime: during a deploy overlap the previous instance may still
+    be legitimately finishing a job it started before this process
+    booted. After the grace window the old instance is certainly
+    gone, so any RUNNING row started before this process booted is
+    orphaned. Thereafter the sweep repeats every `interval_seconds`.
+    """
+    return (
+        now_monotonic - started_monotonic >= grace_seconds
+        and now_monotonic - last_sweep_monotonic >= interval_seconds
+    )
+
+
 async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, engine_filter: str = "voxcpm") -> None:
     """Continuously poll for QUEUED jobs (defaulting to VoxCPM cloud engine) and process them."""
     logger.info("Starting background audio processing worker loop (engine_filter=%s)...", engine_filter)
@@ -528,8 +551,36 @@ async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, en
     except Exception as e:
         logger.warning("Error during initial stale job recovery sweep: %s", e)
 
+    # Periodic orphan sweep (hunt #7): the startup sweep alone uses
+    # the fixed stale timeout, so a job that was mid-flight when the
+    # previous process died — younger than the timeout at this boot —
+    # was skipped and then never re-checked: it sat RUNNING (and its
+    # owner saw "processing" forever) until the NEXT restart. Once
+    # this loop has outlived the deploy-overlap grace window, re-run
+    # recovery with a boot-relative timeout, whose cutoff is this
+    # loop's own start: rows started before it are orphaned, rows
+    # this loop claimed have a later started_at and are untouched.
+    import time as _time
+
+    _loop_started = _time.monotonic()
+    _last_stale_sweep = 0.0
+
     while True:
         try:
+            _now_m = _time.monotonic()
+            if _boot_cutoff_sweep_due(_loop_started, _last_stale_sweep, _now_m):
+                _last_stale_sweep = _now_m
+                try:
+                    async with AsyncSessionLocal() as session:
+                        recovered = await recover_stale_running_jobs(
+                            session=session,
+                            bot=bot,
+                            stale_timeout_seconds=int(_now_m - _loop_started),
+                        )
+                        if recovered:
+                            logger.info("Periodic sweep recovered %d stranded jobs: %s", len(recovered), recovered)
+                except Exception as e:
+                    logger.warning("Error during periodic stale job recovery sweep: %s", e)
             async with AsyncSessionLocal() as session:
                 processed = await claim_and_process_next_job(session, bot=bot, engine_filter=engine_filter)
                 if processed:
