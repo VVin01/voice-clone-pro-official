@@ -547,7 +547,20 @@ select.studio-input { min-height: 50px; }
     height: 100%; border-radius: 999px;
     background: linear-gradient(90deg, var(--gold-deep), var(--gold-2));
     transition: width 0.45s ease;
+    position: relative; overflow: hidden;
 }
+/* Upload motion states (upload-ux pass): while work is in flight the
+   fill must never look frozen — an animated sheen runs while bytes
+   move (busy) and while the server prepares the file (indeterminate). */
+.progress-bar-fill.busy::after,
+.progress-bar-fill.indeterminate::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.45) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: uploadSheen 1.4s linear infinite;
+}
+@keyframes uploadSheen { from { background-position: 180% 0; } to { background-position: -80% 0; } }
+.progress-bar-fill.error { background: linear-gradient(90deg, #b91c1c, #ef4444); }
 .eta-tag { font-size: 12.5px; color: var(--text-3); line-height: 1.55; }
 .progress-label { font-size: 12.5px; color: var(--text-2); }
 .telegram-leave-hint {
@@ -721,6 +734,14 @@ select.studio-input { min-height: 50px; }
 .drop-text { font-size: 14.5px; font-weight: 600; line-height: 1.6; }
 .drop-subtext { font-size: 12.5px; color: var(--text-3); line-height: 1.55; }
 .upload-progress-wrap { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s1); }
+.upload-progress-row { display: flex; align-items: center; gap: var(--s2); }
+.upload-progress-row .progress-label { flex: 1; min-width: 0; }
+.upload-elapsed { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.upload-cancel-btn { flex-shrink: 0; }
+.upload-hint { font-size: 12px; color: var(--text-3); line-height: 1.55; }
+.upload-error-box { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s2) var(--s3); border-radius: var(--r-md); background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); }
+.upload-error-box .mini-chip { align-self: flex-start; }
+.upload-error-text { font-size: 13px; font-weight: 600; color: #f87171; line-height: 1.55; }
 .video-info-card {
     display: flex; gap: var(--s3); align-items: center;
     background: var(--surface-2); border: 1px solid var(--border);

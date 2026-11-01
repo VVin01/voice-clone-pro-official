@@ -152,13 +152,17 @@ def test_submit_and_io_catches_route_through_mapper():
     for call in (
         "showErrorToast(err, 'voice')",
         "showErrorToast(err, 'recap')",
-        "showErrorToast(err, 'upload')",
         "showErrorToast(err, 'download')",
         "showErrorToast(err, 'send')",
         "showErrorToast(err, 'generic')",
         "showErrorToast(e, 'generic')",
     ):
         assert call in APP_JS, call
+    # Upload failures now surface in the persistent inline error box (with
+    # retry) instead of a toast, but the shown message still routes through
+    # the same mapper with the 'upload' context — never raw server text
+    # (upload-ux pass, branch fix-upload-ux-2026-10-31).
+    assert re.search(r"mapErrorToToast\(.*?,\s*\"upload\"\)", APP_JS, re.S)
     # no catch anywhere still toasts a raw .message directly
     assert not re.search(r"showStudioToast\((?:err|e)\.message", APP_JS)
 
