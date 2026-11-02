@@ -150,6 +150,14 @@ async def handle_group_message(
         if decision != gai.DECISION_REPLY or not reply_text:
             return
 
+        # Owner rule (2026-11-02): zero emoji in group replies. The
+        # service sanitises parsed AI output already; strip again here
+        # so the send path itself is guaranteed clean. A reply that is
+        # only emoji becomes empty and is treated as silence.
+        reply_text = gai.strip_emoji(reply_text)
+        if not reply_text:
+            return
+
         # Re-check the cap at send time (another reply may have landed
         # while the AI was thinking), then answer as a threaded reply.
         if not gai.rate_limiter.can_reply(user.id, message.message_id):

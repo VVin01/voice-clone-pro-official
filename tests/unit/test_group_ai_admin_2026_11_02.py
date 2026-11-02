@@ -481,7 +481,9 @@ def _emoji_count(text: str) -> int:
 def test_welcome_and_pointer_copy_tone():
     for copy in (gai.WELCOME_TEXT, gai.STARTER_POINTER_TEXT):
         assert copy.count("ခင်ဗျာ") == 0  # no stiff formality pile-up
-        assert _emoji_count(copy) <= 1  # at most one emoji
+        # REVISION 2 (owner 2026-11-02): was "at most one emoji" (<= 1);
+        # the rule is now ZERO emoji.
+        assert _emoji_count(copy) == 0
         assert "!!" not in copy
         assert "@voiceclonepro_bot" in copy  # always points at the bot
     assert "အခမဲ့" in gai.STARTER_POINTER_TEXT  # mentions the free trial
@@ -491,7 +493,8 @@ def test_welcome_and_pointer_copy_tone():
 def test_deferral_copy_tone():
     for copy in (gai.DEFERRAL_TEXT_SENSITIVE, gai.DEFERRAL_TEXT_UNSURE):
         assert copy.count("ခင်ဗျာ") == 0
-        assert _emoji_count(copy) <= 1
+        # REVISION 2 (owner 2026-11-02): was <= 1 emoji; now zero.
+        assert _emoji_count(copy) == 0
 
 
 def test_prompt_tone_and_decision_spec():
@@ -559,3 +562,69 @@ async def test_handler_greeting_silent_when_switch_off(db_session, monkeypatch):
     await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
     msg.reply.assert_not_called()
     ai.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# No-emoji rule (owner revision 2, 2026-11-02 ~11:03: "emoji မထည့်နဲ့")
+# ---------------------------------------------------------------------------
+
+
+def test_strip_emoji_removes_emoji_keeps_burmese():
+    sample = "ရပါတယ်နော် 🙂👍 တစ်ခုခု သိချင်ရင် ဒီမှာပဲ မေးလို့ ရပါတယ် ❤️"
+    assert gai.strip_emoji(sample) == "ရပါတယ်နော် တစ်ခုခု သိချင်ရင် ဒီမှာပဲ မေးလို့ ရပါတယ်"
+    # ZWJ sequence (family) collapses fully, incl. the joiners.
+    assert gai.strip_emoji("မင်္ဂလာပါ 👨‍👩‍👧") == "မင်္ဂလာပါ"
+    # Keycap sequence: the digit survives, the emoji presentation does not.
+    assert gai.strip_emoji("အဆင့် 1️⃣") == "အဆင့် 1"
+    # Burmese letters, combining marks and ၊/။ punctuation pass through.
+    plain = "ကျေးဇူးတင်ပါတယ်။ စမ်းကြည့်ပါ၊ ရပါတယ်"
+    assert gai.strip_emoji(plain) == plain
+    # Emoji-only / empty input strips to empty.
+    assert gai.strip_emoji("🙂🙏❤️") == ""
+    assert gai.strip_emoji("") == ""
+    assert gai.strip_emoji(None) == ""
+
+
+def test_no_emoji_in_any_group_facing_copy():
+    for copy in (
+        gai.WELCOME_TEXT,
+        gai.STARTER_POINTER_TEXT,
+        gai.DEFERRAL_TEXT_SENSITIVE,
+        gai.DEFERRAL_TEXT_UNSURE,
+    ):
+        assert _emoji_count(copy) == 0
+        assert gai.strip_emoji(copy) == copy  # constants already clean
+
+
+def test_prompt_forbids_emoji_outright():
+    prompt = gai.SYSTEM_INSTRUCTIONS
+    assert "Emoji လုံးဝ မထည့်ရပါ" in prompt
+    assert "Emoji အများဆုံး" not in prompt  # the old ≤1 allowance is gone
+
+
+def test_parse_ai_decision_strips_emoji_from_reply():
+    decision, reply = gai.parse_ai_decision("REPLY: ရပါတယ်နော် 🙂")
+    assert decision == gai.DECISION_REPLY
+    assert reply == "ရပါတယ်နော်"
+    # An emoji-only REPLY is void → silence.
+    assert gai.parse_ai_decision("REPLY: 🙂🙏") == (gai.DECISION_NO_REPLY, None)
+
+
+@pytest.mark.asyncio
+async def test_handler_strips_emoji_from_ai_reply_before_send(db_session, monkeypatch):
+    await _set_kill_switch(db_session, "true")
+    ai = AsyncMock(return_value=(gai.DECISION_REPLY, "ရပါတယ်နော် 🙂👍"))
+    monkeypatch.setattr(gai, "ask_group_admin_ai", ai)
+    msg = _fake_message("Recap က ဘယ်လို လုပ်ရတာလဲ")
+    await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
+    msg.reply.assert_called_once_with("ရပါတယ်နော်")
+
+
+@pytest.mark.asyncio
+async def test_handler_emoji_only_ai_reply_stays_silent(db_session, monkeypatch):
+    await _set_kill_switch(db_session, "true")
+    ai = AsyncMock(return_value=(gai.DECISION_REPLY, "🙂🙏"))
+    monkeypatch.setattr(gai, "ask_group_admin_ai", ai)
+    msg = _fake_message("Recap က ဘယ်လို လုပ်ရတာလဲ")
+    await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
+    msg.reply.assert_not_called()

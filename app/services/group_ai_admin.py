@@ -314,17 +314,18 @@ def is_starter_fragment(text: str | None) -> bool:
 
 
 # Welcome / pointer copy — the owner's requested voice: sweet and
-# gentle, never over-the-top. At most one emoji, no ခင်ဗျာ pile-up.
+# gentle, never over-the-top. No emoji at all (owner rule 2026-11-02),
+# no ခင်ဗျာ pile-up.
 WELCOME_TEXT = (
     "မင်္ဂလာပါ၊ ကြိုဆိုပါတယ်နော်။ စမ်းကြည့်ချင်ရင် @voiceclonepro_bot ကို "
     "ဖွင့်ပြီး Mini App ထဲကနေ စလို့ ရပါတယ်။ သုံးနည်း ဗီဒီယိုတွေကို Channel "
-    "@VoiceClonePro မှာ pin ထိုးထားတယ် — တစ်ခုခု သိချင်ရင် ဒီမှာပဲ မေးလို့ ရပါတယ် 🙂"
+    "@VoiceClonePro မှာ pin ထိုးထားတယ် — တစ်ခုခု သိချင်ရင် ဒီမှာပဲ မေးလို့ ရပါတယ်"
 )
 
 STARTER_POINTER_TEXT = (
     "စမ်းကြည့်လို့ ရပါတယ်နော်။ @voiceclonepro_bot ကို ဖွင့်လိုက်ပါ — channel နဲ့ "
     "ဒီ group ကို join ပြီးရင် Mini App ပွင့်လာမယ်။ အဲဒီထဲမှာ အသံပြောင်းတာနဲ့ "
-    "ဗီဒီယို recap လုပ်တာတွေ စမ်းလို့ ရတယ်၊ အခမဲ့ စမ်းခွင့်လည်း ရှိပါတယ် 🙂"
+    "ဗီဒီယို recap လုပ်တာတွေ စမ်းလို့ ရတယ်၊ အခမဲ့ စမ်းခွင့်လည်း ရှိပါတယ်"
 )
 
 
@@ -524,7 +525,7 @@ SYSTEM_INSTRUCTIONS = """သင်သည် "Voice Clone Pro Community" Telegram
 အကူအညီ စားပွဲမှာ ထိုင်နေတဲ့ ကြင်နာတဲ့ အစ်မ/အစ်ကို တစ်ယောက် လေသံမျိုးနဲ့ ပြောပါ — ချိုချိုသာသာ၊ နူးညံ့ပြီး ရင်းနှီးပေမယ့် အိုဗာ မဖြစ်ရပါ။
 - စကားပြောဟန် မြန်မာဘာသာ (စာလုံးပေါင်း အမှန်)၊ ဝါကျ တိုတို ရှင်းရှင်း ရေးပါ။
 - "ခင်ဗျာ" ကို အဖြေ တစ်ခုမှာ အများဆုံး တစ်ကြိမ်ပဲ သုံးပါ — များသောအားဖြင့် မသုံးဘဲ နေတာက ပို သဘာဝကျပါတယ်။
-- Emoji အများဆုံး တစ်ခု၊ သဘာဝ ကျတဲ့ နေရာမှာပဲ — အဖြေ အများစုမှာ မပါလည်း ရပါတယ်။
+- Emoji လုံးဝ မထည့်ရပါ — အဖြေထဲမှာ Emoji တစ်လုံးမှ မပါရပါ။ မြန်မာ/အင်္ဂလိပ် စာသားနဲ့ ပုံမှန် ပုဒ်ဖြတ် အမှတ်အသားတွေပဲ သုံးပါ။
 - အာမေဋိတ် (!) တစ်ခုထက် ပို မသုံးရပါ။ အရောင်း ဖိအား၊ အတင်း ချီးကျူး၊ ဝယ်ဖို့ တိုက်တွန်း လုံးဝ မလုပ်ရပါ။
 - အဖြေ တိုင်းကို ပုံစံ တူတူ နဲ့ မစရပါ — "ရပါတယ်နော်"၊ "ဟုတ်ကဲ့"၊ "အော် ဟုတ်" စသည်ဖြင့် သဘာဝ အတိုင်း လှည့်ပြောပါ။
 
@@ -570,6 +571,57 @@ def build_prompt(*, author_name: str, text: str, bot_mentioned: bool, is_reply_t
     )
 
 
+# ---------------------------------------------------------------------------
+# Emoji sanitizer (owner rule 2026-11-02: ZERO emoji in group replies)
+#
+# The prompt forbids emoji outright; this is the code-level backstop so
+# a model slip can never reach the group. It strips the pictograph /
+# symbol ranges, variation selectors (U+FE0E/U+FE0F), the combining
+# keycap and ZWJ (so multi-codepoint sequences collapse fully). The
+# Burmese block (U+1000–U+109F — Lo/Mn/Mc letters and marks) is not in
+# any stripped range and passes through untouched.
+# ---------------------------------------------------------------------------
+
+_EMOJI_STRIP_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"  # emoji, pictographs, flags, skin tones
+    "\U00002600-\U000027BF"  # misc symbols & dingbats (☀ ❤ ➿ …)
+    "\U00002B00-\U00002BFF"  # ⭐ ⬛ and friends
+    "\U00002194-\U00002199"  # ↔–↙ arrows
+    "\U000021A9-\U000021AA"  # ↩ ↪
+    "\U0000231A-\U0000231B"  # ⌚ ⌛
+    "\U00002328\U000023CF"  # ⌨ ⏏
+    "\U000023E9-\U000023F3"  # ⏩–⏳ media/time symbols
+    "\U000023F8-\U000023FA"  # ⏸–⏺
+    "\U000024C2"  # Ⓜ
+    "\U000025AA-\U000025AB\U000025B6\U000025C0"  # ▪ ▫ ▶ ◀
+    "\U000025FB-\U000025FE"  # ◻–◾
+    "\U00002934-\U00002935"  # ⤴ ⤵
+    "\U00003030\U0000303D"  # 〰 〽
+    "\U00003297\U00003299"  # ㊗ ㊙
+    "\U0000203C\U00002049"  # ‼ ⁉
+    "\U00002122\U00002139"  # ™ ℹ
+    "\U0000FE0E\U0000FE0F"  # variation selectors (text/emoji presentation)
+    "\u200d"  # ZWJ — joins emoji sequences; removing it collapses them
+    "\U000020E3"  # combining enclosing keycap
+    "]+",
+    re.UNICODE,
+)
+
+
+def strip_emoji(text: Any) -> str:
+    """Remove every emoji/pictograph from *text*.
+
+    Collapses the horizontal gaps a stripped emoji leaves behind and
+    trims the result; Burmese script is never touched. Returns "" for
+    empty/emoji-only input.
+    """
+    cleaned = _EMOJI_STRIP_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"[^\S\n]{2,}", " ", cleaned)
+    cleaned = re.sub(r" *\n *", "\n", cleaned)
+    return cleaned.strip()
+
+
 def parse_ai_decision(raw: Any) -> tuple[str, str | None]:
     """Parse the model's protocol output. Anything unparseable = silence."""
     text = str(raw or "").strip()
@@ -586,6 +638,11 @@ def parse_ai_decision(raw: Any) -> tuple[str, str | None]:
         reply = text[len("REPLY:"):].strip()
         # A REPLY that smuggles a second protocol token or is empty is void.
         if not reply or reply.upper().startswith(("NO_REPLY", "ESCALATE", "REPLY:")):
+            return DECISION_NO_REPLY, None
+        # Owner rule: zero emoji — strip any the model slipped in; a
+        # reply that is ONLY emoji becomes empty and counts as silence.
+        reply = strip_emoji(reply)
+        if not reply:
             return DECISION_NO_REPLY, None
         return DECISION_REPLY, reply
     # Off-protocol output (bare prose, partial tokens): fail silent.
@@ -791,12 +848,12 @@ rate_limiter = GroupReplyRateLimiter()
 
 DEFERRAL_TEXT_SENSITIVE = (
     "ဒီကိစ္စလေးက အကောင့်နဲ့ ဆိုင်နေလို့ group ထဲမှာ တန်းမဖြေပေးနိုင်တာပါနော်။ "
-    "admin ကို အသိပေးထားပါတယ် — စစ်ဆေးပြီး ပြန်ဆက်သွယ်ပေးပါမယ် 🙏"
+    "admin ကို အသိပေးထားပါတယ် — စစ်ဆေးပြီး ပြန်ဆက်သွယ်ပေးပါမယ်"
 )
 
 DEFERRAL_TEXT_UNSURE = (
     "ဒါလေးကိုတော့ သေချာအောင် admin ကို မေးထားပေးပါတယ်။ "
-    "အဖြေ ရတာနဲ့ ပြန်ပြောပေးမယ်နော် 🙏"
+    "အဖြေ ရတာနဲ့ ပြန်ပြောပေးမယ်နော်"
 )
 
 
