@@ -7,6 +7,7 @@ from aiogram.types import ErrorEvent
 from app.db.session import AsyncSessionLocal
 from app.handlers.admin import admin_router
 from app.handlers.clone import clone_router
+from app.handlers.group_admin import group_admin_router
 from app.handlers.custom_voice import custom_voice_router
 from app.handlers.menu import menu_router
 from app.handlers.payment import payment_router
@@ -117,7 +118,9 @@ def setup_handlers(dp: Dispatcher, session_factory: Any = None) -> None:
             pass
         return True
 
-    for router in (start_router, menu_router, clone_router, payment_router, custom_voice_router, admin_router):
+    # group_admin_router is LAST on purpose: it is a catch-all for group
+    # text messages, and every command/FSM router must win before it.
+    for router in (start_router, menu_router, clone_router, payment_router, custom_voice_router, admin_router, group_admin_router):
         if router.parent_router is not dp:
             router._parent_router = None
             dp.include_router(router)

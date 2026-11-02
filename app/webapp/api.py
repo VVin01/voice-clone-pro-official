@@ -5891,6 +5891,7 @@ class AdminSettingsPayload(BaseModel):
     tutorial_refer_link: Optional[str] = None
     tutorial_support_link: Optional[str] = None
     maintenance_mode: Optional[bool] = None
+    group_ai_admin_enabled: Optional[bool] = None
     character_limit_free: Optional[int] = None
     gemini_primary_model: Optional[str] = None
     gemini_fallback_1: Optional[str] = None
@@ -5924,6 +5925,7 @@ async def get_admin_settings(
             for key, default in TUTORIAL_EXTRA_LINKS.items()
         },
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
+        "group_ai_admin_enabled": getattr(settings, "group_ai_admin_enabled", False),
         "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
         "gemini_primary_model": getattr(settings, "gemini_primary_model", "gemini-3.6-flash"),
         "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),

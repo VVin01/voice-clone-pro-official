@@ -237,7 +237,7 @@ def test_cache_buster_bumped_for_tidy():
     # rt4 = full-app polish batch (2026-11-01) superseding rt3.
     # fp1 = admin-demote + voice-picker batch (2026-11-01 late)
     # superseding rt4 (index.html / app.js / style.css changed again).
-    assert HTML.count("?v=20261102_tb1") == 3
+    assert HTML.count("?v=20261102_ga1") == 3
     assert "?v=20261101_rt4" not in HTML
     assert "?v=20261101_rt3" not in HTML
     assert "?v=20261101_rt2" not in HTML
