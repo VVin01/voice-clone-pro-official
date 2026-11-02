@@ -414,6 +414,19 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS)
 }
 window.fetchWithTimeout = fetchWithTimeout;
 
+// True when a fetch died before ANY response arrived — connection
+// closed/reset, DNS failure, or our own timeout abort (AbortError).
+// An HTTP error status is NOT a network-level error: fetch resolves
+// and the caller throws Error(detail) instead. (Q2, QA cycle
+// 2026-11-02: the Recap Analyze extract call for a Short died this
+// way — ERR_CONNECTION_CLOSED after ~26s, no response at all.)
+function isNetworkLevelError(err) {
+    if (!err) return false;
+    if (err.name === "AbortError") return true;
+    return err instanceof TypeError
+        && /failed to fetch|networkerror|load failed/i.test(err.message || "");
+}
+
 // ── Home load error strip (premium polish) ─────────────────────────────
 function setHomeLoadErrorVisible(visible) {
     const strip = document.getElementById("home-load-error");
@@ -3003,6 +3016,38 @@ function setupRecapVisualEditor() {
         previewBlur.style.top = `${y}%`;
         previewBlur.style.height = `${h}%`;
         previewBlur.style.bottom = "auto";
+        fitBlurPlateToCaption();
+    }
+
+    // Q1 (QA cycle 2026-11-02): the dashed band plate is sized from
+    // the blur-band % alone (default 7% — 22px at 16:9 once the CSS
+    // min-height clamps it), while the two-line subtitle sample that
+    // shares its centre anchor is ~47px tall — so the caption
+    // straddled the plate at EVERY ratio (measured 12.4px spill top
+    // and bottom at 16:9 / 1:1 / Original, 4.8px at 9:16). Whenever
+    // the caption overlaps the plate, the plate grows — preview only;
+    // the blur_h % sent to the render is untouched — until it fully
+    // contains the caption (text height + breathing room + twice the
+    // centre offset, since the plate stays centred on its anchor).
+    // A caption dragged fully away from the band leaves the plate at
+    // its slider height.
+    function fitBlurPlateToCaption() {
+        if (!previewBlur || !previewSub || !canvas) return;
+        if (getComputedStyle(previewSub).display === "none") return;
+        const canvasH = canvas.clientHeight;
+        if (!canvasH) return;
+        const textEl = document.getElementById("preview-sub-text-el");
+        if (!textEl) return;
+        const plate = previewBlur.getBoundingClientRect();
+        const text = textEl.getBoundingClientRect();
+        if (!plate.height || !text.height) return;
+        const overlaps = text.bottom > plate.top && text.top < plate.bottom;
+        if (!overlaps) return;
+        const centreDelta = Math.abs((text.top + text.bottom) / 2 - (plate.top + plate.bottom) / 2);
+        const neededPx = text.height + 8 + 2 * centreDelta;
+        if (plate.height < neededPx) {
+            previewBlur.style.height = `${(neededPx / canvasH) * 100}%`;
+        }
     }
 
     function syncSubBoxVisual() {
@@ -3012,6 +3057,8 @@ function setupRecapVisualEditor() {
         // Anchored at top: y% with translateY(-50%) places subtitle center exactly at y% (1:1 with ASS subtitle baseline offset)
         previewSub.style.top = `${y}%`;
         previewSub.style.bottom = "auto";
+        // The band plate tracks the caption (Q1): re-fit after a move.
+        syncBlurBoxVisual();
     }
 
     if (sliderBlurY && previewBlur && valBlurY) {
@@ -3793,6 +3840,9 @@ function setupRecapVisualEditor() {
             const tVal = btnToggleSubs.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapBurnSubs ? t("toggle_on") : t("toggle_off");
             if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
+            // The band plate tracks the caption (Q1): grow when the
+            // caption returns, relax to the slider height when hidden.
+            syncBlurBoxVisual();
         });
     }
 
@@ -3874,6 +3924,9 @@ function setupRecapVisualEditor() {
             previewText.style.whiteSpace = "normal";
             previewText.style.lineHeight = "1.8";
         }
+        // Font size / line count change the caption's height — the
+        // band plate re-fits around it (Q1).
+        syncBlurBoxVisual();
     }
 
     // 11. Font Size Picker (Synchronized across toolbar & advanced settings)
@@ -4083,6 +4136,18 @@ function setupRecapVisualEditor() {
                     showErrorToast(err, 'recap');
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
+                } else if (isNetworkLevelError(err) && recapHasSource()) {
+                    // Q2 (QA cycle 2026-11-02): the extract request
+                    // died at the network level (connection closed /
+                    // timeout — no response at all) while a preview
+                    // frame is already on the canvas (the paste-time
+                    // source thumbnail). The info card painted just
+                    // above already shows the honest "metadata
+                    // unverified" state; a generic error toast on top
+                    // reads as "the frame you can see failed", which
+                    // is false. Failures with no preview on the canvas
+                    // still toast in the branch below.
+                    console.warn('Analyze: extract unreachable, preview-only state kept:', err);
                 } else {
                     showErrorToast(err, 'generic');
                 }
