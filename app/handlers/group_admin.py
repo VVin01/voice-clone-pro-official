@@ -109,6 +109,21 @@ async def handle_group_message(
         if not gai.rate_limiter.can_reply(user.id, message.message_id):
             return
 
+        # Social fast paths (owner revision 2026-11-02): a pure
+        # greeting or a short "want to try" starter fragment gets a
+        # warm deterministic welcome/pointer — no AI call needed, and
+        # the tone stays exactly as approved. Join service notices
+        # never arrive here (they carry no user text).
+        fast_path_text = None
+        if gai.is_greeting_only(message.text):
+            fast_path_text = gai.WELCOME_TEXT
+        elif gai.is_starter_fragment(message.text):
+            fast_path_text = gai.STARTER_POINTER_TEXT
+        if fast_path_text is not None:
+            await message.reply(fast_path_text)
+            gai.rate_limiter.record_reply(user.id, message.message_id)
+            return
+
         reply_to = message.reply_to_message
         is_reply_to_bot = bool(
             reply_to

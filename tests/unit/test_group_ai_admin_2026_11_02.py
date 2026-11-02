@@ -319,11 +319,11 @@ async def test_handler_silent_when_kill_switch_off(db_session, monkeypatch):
 @pytest.mark.asyncio
 async def test_handler_replies_when_enabled(db_session, monkeypatch):
     await _set_kill_switch(db_session, "true")
-    ai = AsyncMock(return_value=(gai.DECISION_REPLY, "Bot ကို ဖွင့်ပြီး စလို့ ရပါတယ် ခင်ဗျာ။"))
+    ai = AsyncMock(return_value=(gai.DECISION_REPLY, "Bot ကို ဖွင့်ပြီး စလို့ ရပါတယ်။"))
     monkeypatch.setattr(gai, "ask_group_admin_ai", ai)
-    msg = _fake_message("ဘယ်လို စသုံးရမလဲ ခင်ဗျာ")
+    msg = _fake_message("Recap က ဘယ်လို လုပ်ရတာလဲ")
     await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
-    msg.reply.assert_called_once_with("Bot ကို ဖွင့်ပြီး စလို့ ရပါတယ် ခင်ဗျာ။")
+    msg.reply.assert_called_once_with("Bot ကို ဖွင့်ပြီး စလို့ ရပါတယ်။")
 
 
 @pytest.mark.asyncio
@@ -410,3 +410,152 @@ def test_kill_switch_registered_as_dynamic_setting():
     assert SETTING_TYPES[gai.KILL_SWITCH_KEY] is bool
     assert gai.KILL_SWITCH_KEY in DYNAMIC_SETTING_KEYS
     assert settings.group_ai_admin_enabled is False  # ships OFF
+
+
+# ---------------------------------------------------------------------------
+# Social fast paths + tone (owner revision 2026-11-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["မင်္ဂလာပါ", "မင်္ဂလာပါ ❤️", "Hi", "hello", "Hey", "မင်္ဂလာပါ မင်္ဂလာပါ"],
+)
+def test_greeting_only_detected(text):
+    assert gai.is_greeting_only(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "မင်္ဂလာပါ၊ စျေး ဘယ်လောက် လဲ",  # greeting + real question → AI path
+        "စျေး ဘယ်လောက် လဲ",
+        "😂😂",
+        "",
+        "hi guys, recap ဘယ်လို လုပ်လဲ",
+    ],
+)
+def test_greeting_only_rejects_non_greetings(text):
+    assert not gai.is_greeting_only(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Want to try first par.",
+        "want to try ❤️",
+        "စမ်းချင်တယ်",
+        "စမ်းကြည့်ချင်ပါတယ်",
+        "သုံးချင်လို့ပါ",
+        "how to start",
+        "recap",
+        "အသံပြောင်း",
+        "just joined",
+    ],
+)
+def test_starter_fragment_detected(text):
+    assert gai.is_starter_fragment(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "download မရဘူး",  # a problem report, not a starter fragment
+        "စမ်းကြည့်တာ မရဘူး ဖြစ်နေတယ်",
+        "စျေး ဘယ်လောက် လဲ",
+        "want to try but it is not working",
+        "ဒီ bot က ဘာတွေ လုပ်လို့ရလဲ၊ ဘာတွေ ရှိလဲ၊ သတ်မှတ်ချက်တွေ က ဘာတွေလဲ အကုန် သိချင်ပါတယ် ခင်ဗျာ ရှင်းပြပေးပါ",  # long real question
+        "",
+    ],
+)
+def test_starter_fragment_rejects_questions_and_problems(text):
+    assert not gai.is_starter_fragment(text)
+
+
+def _emoji_count(text: str) -> int:
+    import re as _re
+
+    return len(_re.findall("[\U0001F000-\U0001FAFF☀-➿]", text))
+
+
+def test_welcome_and_pointer_copy_tone():
+    for copy in (gai.WELCOME_TEXT, gai.STARTER_POINTER_TEXT):
+        assert copy.count("ခင်ဗျာ") == 0  # no stiff formality pile-up
+        assert _emoji_count(copy) <= 1  # at most one emoji
+        assert "!!" not in copy
+        assert "@voiceclonepro_bot" in copy  # always points at the bot
+    assert "အခမဲ့" in gai.STARTER_POINTER_TEXT  # mentions the free trial
+    assert "pin ထိုးထား" in gai.WELCOME_TEXT  # points at pinned tutorials
+
+
+def test_deferral_copy_tone():
+    for copy in (gai.DEFERRAL_TEXT_SENSITIVE, gai.DEFERRAL_TEXT_UNSURE):
+        assert copy.count("ခင်ဗျာ") == 0
+        assert _emoji_count(copy) <= 1
+
+
+def test_prompt_tone_and_decision_spec():
+    prompt = gai.SYSTEM_INSTRUCTIONS
+    # New voice spec: sweet/gentle, ခင်ဗျာ capped, no over-the-top.
+    assert "ချိုချိုသာသာ" in prompt
+    assert "အများဆုံး တစ်ကြိမ်" in prompt  # the ခင်ဗျာ cap
+    assert "အိုဗာ မဖြစ်ရပါ" in prompt
+    # New decision spec: member-to-member chat is the silence case,
+    # NOT "everything by default".
+    assert "အဖွဲ့ဝင် အချင်းချင်း" in prompt
+    assert "စကားဝိုင်း အားလုံးကို မဖြေရပါ" not in prompt
+    # Hard rules survive the rewrite.
+    assert "ESCALATE" in prompt
+    assert "ထွင်မပြောရပါ" in prompt
+
+
+def test_fact_sheet_knowledge_coverage():
+    sheet = gai.build_fact_sheet()
+    # Product map: tabs + downloader + custom voice.
+    assert "Voice Studio" in sheet and "VIP" in sheet
+    assert "Custom Voice" in sheet
+    assert "Instagram" in sheet and "Douyin" in sheet
+    # Personas derived from the curated catalogue + Gemini voices.
+    assert "ကိုမင်း" in sheet and "မနှင်း" in sheet
+    assert "ကိုသီဟ" in sheet and "မသွန်းရည်" in sheet
+    # Recap knowledge: styles, engines, split rule, watermark rule.
+    assert "POV" in sheet and "Funny" in sheet
+    assert "Split" in sheet and "Credit 1 ခု စီ" in sheet
+    assert "Watermark" in sheet
+    # Refer programme constants from the ledger.
+    assert "30 စက္ကန့်" in sheet and "20 ယောက်" in sheet
+    # Membership gate + tutorial pointer.
+    assert "Join" in sheet and "@VoiceClonePro" in sheet
+
+
+@pytest.mark.asyncio
+async def test_handler_greeting_gets_welcome_without_ai(db_session, monkeypatch):
+    await _set_kill_switch(db_session, "true")
+    ai = AsyncMock(return_value=(gai.DECISION_REPLY, "AI မဖြေသင့်"))
+    monkeypatch.setattr(gai, "ask_group_admin_ai", ai)
+    msg = _fake_message("မင်္ဂလာပါ")
+    await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
+    ai.assert_not_called()
+    msg.reply.assert_called_once_with(gai.WELCOME_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_handler_fragment_gets_pointer_without_ai(db_session, monkeypatch):
+    await _set_kill_switch(db_session, "true")
+    ai = AsyncMock(return_value=(gai.DECISION_REPLY, "AI မဖြေသင့်"))
+    monkeypatch.setattr(gai, "ask_group_admin_ai", ai)
+    msg = _fake_message("Want to try first par. ❤️")
+    await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
+    ai.assert_not_called()
+    msg.reply.assert_called_once_with(gai.STARTER_POINTER_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_handler_greeting_silent_when_switch_off(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "group_ai_admin_enabled", False)
+    ai = AsyncMock(return_value=(gai.DECISION_REPLY, "..."))
+    monkeypatch.setattr(gai, "ask_group_admin_ai", ai)
+    msg = _fake_message("မင်္ဂလာပါ")
+    await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
+    msg.reply.assert_not_called()
+    ai.assert_not_called()
