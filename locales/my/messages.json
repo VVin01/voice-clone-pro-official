@@ -20,6 +20,7 @@
   "membership_not_verified": "❌ စစ်ဆေးမှု မအောင်မြင်ပါ။ Channel နှင့် Group နှစ်ခုလုံး Join ထားကြောင်း သေချာပါစေ။",
   "menu_title": "🎛️ <b>ပင်မမီနူး (Studio Ultra)</b>",
   "menu_account_info": "━━━━━━━━━━━━━━━━━━━━━━━━\n👤 အကောင့်: <b>{category}</b>\n🎙️ Voice လက်ကျန်: <b>{total_min:.1f} မိနစ်</b>\n🎬 Recap လက်ကျန်: <b>{recap_credits} Credits</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n🚀 <b>စွမ်းဆောင်ချက်များ:</b>\n• 🎙️ <b>Voice Studio:</b> VoxCPM AI ဖြင့် သဘာဝကျ မြန်မာအသံ ဖန်တီးမှု\n• 🎬 <b>Recap Maker:</b> 9:16 Full HD (1080p) + Dynamic Blur + စိတ်ကြိုက် စာတန်းထိုး\n• 📥 <b>Downloader:</b> TikTok, YouTube, Douyin မှ Video/Audio အခမဲ့ ဒေါင်းလုဒ်\n━━━━━━━━━━━━━━━━━━━━━━━━\n👇 <i>စတင်ရန် အောက်ပါ ခလုတ်ကို နှိပ်ပါ:</i>",
+  "menu_account_info_admin": "━━━━━━━━━━━━━━━━━━━━━━━━\n👤 အကောင့်: <b>{category}</b>\n🎙️ Voice လက်ကျန်: <b>∞ (အကန့်အသတ်မဲ့)</b>\n🎬 Recap လက်ကျန်: <b>∞ (အကန့်အသတ်မဲ့)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n🚀 <b>စွမ်းဆောင်ချက်များ:</b>\n• 🎙️ <b>Voice Studio:</b> VoxCPM AI ဖြင့် သဘာဝကျ မြန်မာအသံ ဖန်တီးမှု\n• 🎬 <b>Recap Maker:</b> 9:16 Full HD (1080p) + Dynamic Blur + စိတ်ကြိုက် စာတန်းထိုး\n• 📥 <b>Downloader:</b> TikTok, YouTube, Douyin မှ Video/Audio အခမဲ့ ဒေါင်းလုဒ်\n━━━━━━━━━━━━━━━━━━━━━━━━\n👇 <i>စတင်ရန် အောက်ပါ ခလုတ်ကို နှိပ်ပါ:</i>",
   "btn_menu_start": "🚀 စတင်ရန်",
   "btn_menu_voice_clone": "🎙️ စာသား → အသံ (Voice Clone)",
   "btn_menu_buy_minutes": "💳 မိနစ် ဝယ်မည်",

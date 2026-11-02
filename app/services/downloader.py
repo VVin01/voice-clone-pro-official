@@ -306,6 +306,16 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
             "ဖြစ်နေခြင်း ဖြစ်နိုင်ပါသည်။ လင့်ခ် မှန်မမှန် ပြန်စစ်ပါ။ "
             "ဗီဒီယို ရှိနေသေးရင် ဖိုင်ကို တိုက်ရိုက် တင်၍ စမ်းကြည့်ပါ ခင်ဗျာ။"
         )
+    if "failed to extract" in low:
+        # Generic yt-dlp extraction failure — canonically YouTube's
+        # "Failed to extract any player response; please report this
+        # issue on https://github.com/yt-dlp/yt-dlp/issues …". The raw
+        # string (GitHub-issues tail included) reached the user
+        # verbatim in the bot-chat recap failure notice (journey audit
+        # 2026-11-02). The user meaning is the blocked family's: the
+        # source would not let our server extract this item, so it
+        # shares that copy (and its upload guidance) exactly.
+        return f"⚠️ {subj} က ကျွန်တော်တို့ ဆာဗာမှ ဗီဒီယို ဆွဲယူခြင်းကို ပိတ်ထားပါသည်။ " + upload_hint
     if (
         "timed out" in low
         or "timeout" in low
@@ -320,6 +330,19 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
         return (
             "⚠️ ကွန်ရက် ချိတ်ဆက်မှု ယာယီ ပြဿနာ ဖြစ်သွားပါသည်။ "
             "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
+    if low.startswith("error: ["):
+        # Last-resort catch for any other raw yt-dlp "ERROR:
+        # [extractor] …" string. This classifier is only invoked for
+        # source-extraction failures, so an unrecognised extractor
+        # error still maps to the generic extraction message instead
+        # of leaking raw English (and repo URLs) to the user. Scoped
+        # to yt-dlp's bracketed shape on purpose: a bare "ERROR: …"
+        # string is not necessarily a source error and must stay
+        # unclassified (hunt-6 / TikTok-block no-overreach pins).
+        return (
+            f"⚠️ ဒီ {video_ref} ကို ဆာဗာမှ ထုတ်ယူ၍ မရပါ။ လင့်ခ် မှန်မမှန် "
+            "ပြန်စစ်ပြီး ထပ်စမ်းကြည့်ပါ။ " + upload_hint
         )
     return None
 

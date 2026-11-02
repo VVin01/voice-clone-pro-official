@@ -99,7 +99,7 @@ const translations = {
         ref_file_btn: "📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်",
         btn_clear_file: "✕ ရှင်းမည်",
         voxcpm_status_waiting: "🟡 VoxCPM2 Queue စောင့်ဆိုင်းနေသည်",
-        queue_notice_voxcpm: "⚡ ခန့်မှန်းကြာချိန် ၅–၁၅ စက္ကန့် • Live Cloud AI",
+        queue_notice_voxcpm: "⚡ ပုံမှန်အားဖြင့် ၁–၂ မိနစ် ခန့် ကြာနိုင်ပါတယ် • Live Cloud AI",
         text_input_label: "အသံထွက်မည့် စာသား",
         text_placeholder: "မြန်မာစာသား ရိုက်ထည့်ပါ / ကူးထည့်ပါ…",
         sample_greeting: "💡 မင်္ဂလာပါ",
@@ -112,6 +112,7 @@ const translations = {
         btn_generate: "🚀 အသံ ထုတ်မည်",
         preparing_msg: "ပြင်ဆင်နေသည်…",
         calculating_eta: "စောင့်ဆိုင်းချိန် ခန့်မှန်းနေသည်…",
+        voice_elapsed: "⏱️ စောင့်ဆိုင်းနေချိန်: {sec} စက္ကန့်",
         result_title: "🎉 အသံ အဆင်သင့်ဖြစ်ပါပြီ",
         btn_download_wav: "📥 WAV ဒေါင်းလုဒ်",
         // Tab 2: Recap Maker
@@ -345,6 +346,7 @@ const translations = {
         btn_buy_combined_starter: "✨ Combined Starter ဝယ်မည်",
         // Recap Duration Limit UI
         recap_limit_notice: "🎬 Free: အများဆုံး ၂ မိနစ် (Watermark ပါမည်) • VIP: ၁၀ မိနစ်အထိ (Watermark မပါ)",
+        recap_free_terms_note: "🎬 အခမဲ့ အသုံးပြုသူ: အများဆုံး ၂ မိနစ် • Watermark ပါဝင်မည်",
         recap_duration_warning: "⚠️ ကြာချိန် ကန့်သတ်ချက် ကျော်နေပါသည် (VIP ရယူပါ)",
         recap_duration_valid: "✅ ကြာချိန် သတ်မှတ်ချက်အတွင်း ဝင်ပါသည်",
         btn_buy_voice: "💎 Voice Plan ဝယ်မည်",
@@ -818,7 +820,7 @@ const translations = {
         ref_file_btn: "📁 Choose Reference Audio",
         btn_clear_file: "✕ Clear",
         voxcpm_status_waiting: "🟡 In the VoxCPM2 queue",
-        queue_notice_voxcpm: "⚡ Typical render: 5–15 seconds • Live Cloud AI",
+        queue_notice_voxcpm: "⚡ Usually takes about 1–2 minutes • Live Cloud AI",
         text_input_label: "Script Text",
         text_placeholder: "Type or paste Myanmar text…",
         sample_greeting: "💡 Greetings",
@@ -831,6 +833,7 @@ const translations = {
         btn_generate: "🚀 Generate Voice",
         preparing_msg: "Preparing…",
         calculating_eta: "Estimating wait time…",
+        voice_elapsed: "⏱️ Waiting: {sec}s",
         result_title: "🎉 Your Voice Is Ready",
         btn_download_wav: "📥 Download WAV",
         // Tab 2: Recap Maker
@@ -1064,6 +1067,7 @@ const translations = {
         btn_buy_combined_starter: "✨ Buy Combined Starter",
         // Recap Duration Limit UI
         recap_limit_notice: "🎬 Free: up to 2 min (watermark included) • VIP: up to 10 min (no watermark)",
+        recap_free_terms_note: "🎬 Free plan: up to 2 minutes • Watermark included",
         recap_duration_warning: "⚠️ This video exceeds your tier limit (upgrade to VIP)",
         recap_duration_valid: "✅ Within your duration limit",
         btn_buy_voice: "💎 Buy Voice Plan",
