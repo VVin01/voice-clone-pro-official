@@ -9,7 +9,7 @@ answer at a 360p ceiling. Antigravity second-opinion applied:
 web_embedded is PRIMARY (default/cookies second), android/mweb are
 low-res last resorts flagged low_res, tikwm is failure-triggered
 only behind a 2.5s timeout + MIME/size assertions + a circuit
-breaker, yt-dlp is pinned to the deployed 2026.10.26.
+breaker, yt-dlp is pinned to the deployed 2026.10.21.
 
 Geometry base (blur-sub-inspect-2026-11-02): the subtitle blur plate
 was a 90%-wide hard-edged box and letterboxed renders floated the
@@ -781,4 +781,4 @@ def test_analyze_honesty_wiring_present():
 
 def test_yt_dlp_pinned_to_deployed_version():
     lines = [l.strip() for l in REQUIREMENTS.splitlines() if l.strip().startswith("yt-dlp")]
-    assert lines == ["yt-dlp==2026.10.26"]
+    assert lines == ["yt-dlp==2026.10.21"]
