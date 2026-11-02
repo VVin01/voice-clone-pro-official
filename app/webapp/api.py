@@ -2706,6 +2706,18 @@ def _recap_submit_duration_decision(
     "reject" (over the cap with no sanctioned path).
     """
     cap = _recap_max_duration_allowed(is_vip, is_admin)
+    if is_admin and split_video and not script_review:
+        # Owner ruling 2026-11-02: admin is exempt from ALL limits —
+        # the cap never REJECTS an admin (the branches below), but a
+        # VIP-only feature gate must not exclude admin either. With
+        # split ON, segmentation engages on the same over-cap trigger
+        # a VIP faces (the standard recap cap), using the admin's
+        # chosen part length; under that trigger the job stays a
+        # single job. Admin is never charged for the parts (the
+        # worker skips the per-part top-up — see the split path).
+        if duration_seconds and duration_seconds > _recap_max_duration_allowed(True):
+            return "segment"
+        return "ok"
     if not duration_seconds or duration_seconds <= cap:
         return "ok"
     if is_vip and split_video and not script_review:
@@ -2724,8 +2736,17 @@ def _recap_should_segment(
 ) -> bool:
     """Worker-side: should this job's source be cut into ≤cap segments
     and processed part by part? Mirrors the submit decision."""
-    if is_admin or not split_video or not is_vip:
+    if not split_video or not (is_vip or is_admin):
         return False
+    if is_admin:
+        # Owner ruling 2026-11-02: admin engages segmentation on the
+        # same over-cap trigger as a VIP (the standard recap cap).
+        # The admin cap (86400 s) is only the single-job LIMIT
+        # exemption — it must never act as a feature gate. The part
+        # length still comes from the admin's own split_minutes via
+        # _recap_segment_target_seconds against the admin cap, i.e.
+        # the chosen length itself, unclamped by the VIP cap.
+        return duration_seconds > _recap_max_duration_allowed(True)
     return duration_seconds > _recap_max_duration_allowed(is_vip, is_admin)
 
 
@@ -3233,13 +3254,15 @@ async def _execute_recap_background_job(
         # the source is over the cap, the source is downloaded first and
         # cut into ≤cap segments at narration pauses; each segment is
         # then processed by the normal pipeline and becomes one
-        # deliverable part. Admins are exempt (single job, no cutting);
-        # script-review jobs never get here over-cap (script phase
-        # blocks them), and phase "render" always works from a reviewed
-        # whole-video script, so it is never segmented.
+        # deliverable part. Admins engage the same path on the same
+        # trigger (owner ruling 2026-11-02 — the admin cap exemption is
+        # a limit exemption, not a feature gate) but are never charged
+        # per part; script-review jobs never get here over-cap (script
+        # phase blocks them), and phase "render" always works from a
+        # reviewed whole-video script, so it is never segmented.
         segmented_mode = False
         segment_files: list[dict] = []
-        if phase == "full" and req.split_video and not is_admin_user:
+        if phase == "full" and req.split_video:
             if is_local_media(canonical_source_url):
                 local_source = str(Path(canonical_source_url).resolve())
             else:
@@ -3292,21 +3315,38 @@ async def _execute_recap_background_job(
                 )
                 segmented_mode = len(segment_files) >= 2
                 if segmented_mode:
-                    # Per-part charging (owner decision 2026-10-30):
-                    # the job costs 1 credit PER PART. The exact total
-                    # is charged NOW — one top-up ledger action over
-                    # the submit-time single credit — BEFORE any part
-                    # renders. If the balance cannot cover it, the job
-                    # fails here and the failure path refunds the
-                    # submit credit, leaving the user exactly whole.
                     total_parts = len(segment_files)
-                    await _top_up_recap_segment_charge(user_id, entry, total_parts)
-                    credit_deducted = True
-                    _recap_set_entry_label(
-                        entry,
-                        f"💳 အပိုင်း {total_parts} ပိုင်း × 1 Credit = {total_parts} Credits "
-                        "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
-                    )
+                    if is_admin_user:
+                        # Owner ruling 2026-11-02: admin segments like
+                        # a VIP but is NEVER charged — the per-part
+                        # top-up is skipped entirely, so the job's
+                        # credit bookkeeping stays at 0 (the ledger
+                        # helper would no-op the deduction, but the
+                        # top-up would still stamp credits_charged = N
+                        # onto the entry and the Job row). Only the
+                        # part count is recorded, so status/history
+                        # show the parts exactly as for a VIP.
+                        entry["parts_count"] = total_parts
+                        _recap_set_entry_label(
+                            entry,
+                            f"✂️ အပိုင်း {total_parts} ပိုင်း ခွဲပြီးပါပြီ — "
+                            "အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
+                        )
+                    else:
+                        # Per-part charging (owner decision 2026-10-30):
+                        # the job costs 1 credit PER PART. The exact total
+                        # is charged NOW — one top-up ledger action over
+                        # the submit-time single credit — BEFORE any part
+                        # renders. If the balance cannot cover it, the job
+                        # fails here and the failure path refunds the
+                        # submit credit, leaving the user exactly whole.
+                        await _top_up_recap_segment_charge(user_id, entry, total_parts)
+                        credit_deducted = True
+                        _recap_set_entry_label(
+                            entry,
+                            f"💳 အပိုင်း {total_parts} ပိုင်း × 1 Credit = {total_parts} Credits "
+                            "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
+                        )
             canonical_source_url = local_source
 
         def _make_recap_fn(source, target_dir):
@@ -3424,10 +3464,17 @@ async def _execute_recap_background_job(
             entry["segmented"] = True
             entry["parts"] = part_urls
             entry["download_urls"]["parts"] = part_urls
+            _seg_charged = int(entry.get("credits_charged") or 0)
             entry["split_note"] = (
                 f"မူရင်းဗီဒီယို ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်း {len(part_urls)} ပိုင်း "
                 "ခွဲပြီး လုပ်ပေးထားပါတယ် — အပိုင်းအားလုံး ဒေါင်းလုဒ်ရယူနိုင်ပါတယ်။ "
-                f"(အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {int(entry.get('credits_charged') or len(part_urls))} Credits သုံးခဲ့ပါတယ်။)"
+                + (
+                    f"(အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {_seg_charged} Credits သုံးခဲ့ပါတယ်။)"
+                    if _seg_charged > 0
+                    # Admin segmented run (owner ruling 2026-11-02):
+                    # never charged — the note must not claim a cost.
+                    else "(Admin — Credit မကောက်ခံထားပါ။)"
+                )
             )
 
         # Optional Video Splitter post-process (Recapter parity): cut the

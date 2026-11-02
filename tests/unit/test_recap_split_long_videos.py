@@ -99,7 +99,13 @@ def test_should_segment_matrix():
     assert _recap_should_segment(is_vip=True, is_admin=False, split_video=True, duration_seconds=754.0) is True
     assert _recap_should_segment(is_vip=True, is_admin=False, split_video=True, duration_seconds=500.0) is False
     assert _recap_should_segment(is_vip=True, is_admin=False, split_video=False, duration_seconds=754.0) is False
-    assert _recap_should_segment(is_vip=True, is_admin=True, split_video=True, duration_seconds=754.0) is False
+    # Owner ruling 2026-11-02 (admin exempt from ALL limits — a VIP-only
+    # feature gate must not exclude admin): admin + split + over the
+    # standard cap now segments, exactly like a VIP. This assertion was
+    # `is False` before the ruling and was changed DELIBERATELY for it;
+    # the full admin matrix is pinned in
+    # tests/unit/test_recap_admin_segmentation_2026_11_02.py.
+    assert _recap_should_segment(is_vip=True, is_admin=True, split_video=True, duration_seconds=754.0) is True
     assert _recap_should_segment(is_vip=False, is_admin=False, split_video=True, duration_seconds=754.0) is False
 
 
