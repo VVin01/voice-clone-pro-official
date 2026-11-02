@@ -72,10 +72,34 @@ RUN curl -fsSL -o /tmp/bgutil.tar.gz "https://github.com/Brainicism/bgutil-ytdlp
     && npm prune --omit=dev --no-audit --no-fund \
     && test -f build/main.js
 
+# Cloudflare WARP egress sidecar client — usque (pinned release,
+# checksum-verified). YouTube walls Render's own egress IP (R39/
+# R39.1 + POT proofs), while WARP's free egress passes (feasibility
+# proof with the app's own extraction code, 2026-11-02). usque runs
+# in MASQUE-over-HTTP/2 mode (TCP — Render restricts UDP egress) as
+# a loopback SOCKS5 proxy started by docker-entrypoint.sh; only
+# YouTube attempts route through it (app/services/downloader.py).
+# Fetched at image-build time only. The anonymous device config is
+# registered at container start and kept on the persistent disk —
+# NEVER baked into the image (this repo is public, and the config
+# holds the device private key).
+ARG USQUE_VERSION=4.2.1
+ARG USQUE_SHA256=4117e20695078af9c11edecd1a826c009bbc7ea0b7f64458612b4198910bc313
+RUN curl -fsSL -o /tmp/usque.zip "https://github.com/Diniboy1123/usque/releases/download/v${USQUE_VERSION}/usque_${USQUE_VERSION}_linux_amd64.zip" \
+    && echo "${USQUE_SHA256}  /tmp/usque.zip" | sha256sum -c - \
+    && mkdir -p /opt/usque \
+    && python3 -c "import zipfile; zipfile.ZipFile('/tmp/usque.zip').extract('usque', '/opt/usque')" \
+    && chmod +x /opt/usque/usque \
+    && rm /tmp/usque.zip \
+    && /opt/usque/usque version
+
 # Run Voice Clone Pro Official Bot & Worker.
 # The entrypoint starts the POT provider server first (bounded wait,
-# app still starts if it fails), then execs this CMD. /health
-# behaviour is unchanged — it is served by the app as before.
+# app still starts if it fails), then the WARP egress sidecar
+# (registers a fresh anonymous device on first boot if the
+# persistent disk has no config; bounded wait, app still starts if
+# it fails), then execs this CMD. /health behaviour is unchanged —
+# it is served by the app as before.
 RUN chmod +x /app/docker-entrypoint.sh
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python", "main.py", "--mode", "all"]

@@ -503,6 +503,45 @@ class _PotLogShim:
 
 _POT_LOG_SHIM = _PotLogShim()
 
+# ── WARP egress sidecar (Cloudflare WARP via usque) ────────────────
+#
+# The POT sidecar alone did NOT pass the wall on prod (forced-mint
+# proof, 2026-11-02): tokens minted and attached, YouTube still
+# refused the player response — the wall keys on the egress IP
+# itself. The owner-approved free-egress route is Cloudflare WARP:
+# feasibility-proven with this app's own extraction code (Shorts 153
+# formats/3840p, Watch 38 formats/1080p, on two WARP egress IPs,
+# POT minting at the same time — see warp-test/REPORT.md). The usque
+# client runs inside the same container (Dockerfile +
+# docker-entrypoint.sh) in MASQUE-over-HTTP/2 mode (TCP — Render
+# restricts UDP egress) and exposes SOCKS5 on loopback; its anonymous
+# device config is registered at first boot and kept on the
+# persistent disk, never in the image (the repo is public).
+#
+# Wiring lives in the SAME place as POT (_with_pot below): every
+# YouTube attempt additionally carries this proxy; non-YouTube plans
+# never do (direct TikTok extraction is healthy, and TikTok's web
+# front door dislikes the WARP egress). Graceful by design: if the
+# tunnel is down the loopback connection is refused, the attempt
+# fails fast, and the chain/app carry on exactly as a walled
+# attempt does today — a dead WARP can never take the bot down.
+WARP_PROXY_DEFAULT_URL = "socks5h://127.0.0.1:18080"
+
+
+def _warp_proxy_url() -> Optional[str]:
+    """Proxy URL routed to YouTube attempts (WARP sidecar egress).
+
+    Env WARP_PROXY_URL overrides the loopback default; an explicitly
+    EMPTY value disables the proxy entirely (attempts then carry no
+    'proxy' key, byte-identical to the pre-WARP wiring). 'socks5h'
+    (remote DNS) so name lookups also egress through the tunnel.
+    """
+    raw = os.getenv("WARP_PROXY_URL")
+    if raw is None:
+        return WARP_PROXY_DEFAULT_URL
+    raw = raw.strip()
+    return raw or None
+
 # tikwm resolver guardrails (failure-triggered only): hard timeouts,
 # response validation, and an in-memory circuit breaker so a sick or
 # hostile resolver can never stall or poison the extraction path.
@@ -916,7 +955,8 @@ class MediaDownloader:
         Every YouTube attempt additionally carries the bgutil PO
         Token provider args (see _with_pot / _pot_extractor_args):
         the provider base_url, fetch_pot='always' (forced-mint
-        experiment), and the scoped POT log shim.
+        experiment), and the scoped POT log shim — plus the WARP
+        egress proxy (see _warp_proxy_url) when not disabled.
         """
         if not _is_youtube_url(expanded_url):
             yield "default", base_opts
@@ -943,13 +983,17 @@ class MediaDownloader:
             return o
 
         def _with_pot(opts: Dict[str, Any]) -> Dict[str, Any]:
-            # ONE wiring point for the PO Token sidecar: every YouTube
-            # attempt (any client, any stage) points the bgutil plugin
-            # at the in-container provider server, forces the POT
-            # fetch policy to 'always', and attaches the scoped POT
-            # log shim. Dict-valued args merge per-key alongside the
-            # 'youtube' extractor args (player_client) instead of
-            # clobbering them.
+            # ONE wiring point for both YouTube sidecars: every
+            # YouTube attempt (any client, any stage) points the
+            # bgutil plugin at the in-container POT provider server,
+            # forces the POT fetch policy to 'always', attaches the
+            # scoped POT log shim, AND routes the attempt through the
+            # WARP egress proxy (see _warp_proxy_url — the wall keys
+            # on egress IP, so the proxy is the load-bearing half;
+            # an empty WARP_PROXY_URL disables it and the attempt
+            # carries no 'proxy' key). Dict-valued args merge per-key
+            # alongside the 'youtube' extractor args (player_client)
+            # instead of clobbering them.
             o = dict(opts)
             ea = dict(o.get('extractor_args') or {})
             for key, value in _pot_extractor_args().items():
@@ -961,6 +1005,9 @@ class MediaDownloader:
                     ea[key] = value
             o['extractor_args'] = ea
             o.setdefault('logger', _POT_LOG_SHIM)
+            proxy = _warp_proxy_url()
+            if proxy:
+                o['proxy'] = proxy
             return o
 
         yield "web_embedded", _with_pot(_staged(_with_client(base_opts, "web_embedded")))
