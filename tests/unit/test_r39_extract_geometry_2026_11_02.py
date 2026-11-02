@@ -165,13 +165,15 @@ def test_chain_rotates_in_order_and_flags_low_res(monkeypatch, tmp_path):
     # The cookie'd default attempt carries no player_client override.
     # (POT sidecar, 2026-11-02: it DOES now carry the bgutil provider
     # args — that is the one sanctioned extractor_args addition; see
-    # test_pot_sidecar_2026_11_02.py. Forced-mint experiment, same day:
-    # its 'youtube' args additionally hold fetch_pot=['always'] — the
-    # pin's original intent, no player_client override, is asserted
+    # test_pot_sidecar_2026_11_02.py. The forced-mint experiment
+    # (PR #51) briefly added fetch_pot=['always'] to its 'youtube'
+    # args; the R40 release merge reverted the policy to yt-dlp's
+    # default 'auto', so no fetch_pot arg is present — the pin's
+    # original intent, no player_client override, is asserted
     # directly.)
     default_ea = _ChainYDL.calls[1].get("extractor_args") or {}
     assert "player_client" not in (default_ea.get("youtube") or {})
-    assert default_ea["youtube"]["fetch_pot"] == ["always"]
+    assert "fetch_pot" not in (default_ea.get("youtube") or {})
     assert default_ea["youtubepot-bgutilhttp"]["base_url"] == ["http://127.0.0.1:4416"]
 
 
@@ -264,7 +266,10 @@ def test_download_video_all_clients_fail_then_format_fallback(monkeypatch, tmp_p
     fb = _ChainYDL.calls[-1]
     assert fb["format"] == "bestvideo+bestaudio/best"
     assert _client_of(fb) == "mweb"
-    assert "Anti-Bot" in str(ei.value)  # legacy sign-in copy, unchanged
+    # R40 §K2 supersedes the legacy "Anti-Bot" copy: the raise now
+    # carries the classified, user-safe Burmese sign-in message.
+    assert "အကောင့် ဝင်ရန် တောင်းဆိုနေပါသည်" in str(ei.value)
+    assert "Anti-Bot" not in str(ei.value)
 
 
 def test_download_audio_chain(monkeypatch, tmp_path):

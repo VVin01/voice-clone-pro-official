@@ -23,6 +23,8 @@ from app.services.history import (
 )
 from app.services.i18n import t
 from app.services.ledger import (
+    MAX_REFERRALS_REWARDED,
+    REFERRAL_REWARD_SECONDS,
     get_minute_balance,
     get_or_create_user,
     get_referral_stats,
@@ -68,7 +70,7 @@ async def render_main_menu(
     if is_admin:
         category_badge = f"👑 SYSTEM ADMIN ({category_raw})"
     elif category_raw == "PURCHASED":
-        category_badge = "⭐ VIP PURCHASED"
+        category_badge = "⭐ VIP"  # R40 canon: user-facing name is VIP
     else:
         category_badge = t("hist_tier_free", active_lang)
 
@@ -145,7 +147,7 @@ async def handle_menu_refer_earn(callback: CallbackQuery):
 
     text = (
         f"{t('referral_title', lang)}\n\n"
-        f"{t('referral_desc', lang, referral_link=ref_link, rewarded=stats['rewarded_referrals'], max_referrals=stats['max_referrals'], earned_min=stats['earned_minutes'], earned_sec=stats['earned_seconds'], remaining_slots=stats['remaining_slots'], remaining_min=stats['remaining_minutes'])}"
+        f"{t('referral_desc', lang, referral_link=ref_link, rewarded=stats['rewarded_referrals'], max_referrals=stats['max_referrals'], earned_min=stats['earned_minutes'], earned_sec=stats['earned_seconds'], remaining_slots=stats['remaining_slots'], remaining_min=stats['remaining_minutes'], referral_seconds=REFERRAL_REWARD_SECONDS, referral_cap_min=(MAX_REFERRALS_REWARDED * REFERRAL_REWARD_SECONDS) // 60)}"
     )
 
     await safe_edit_message(callback, text, reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
@@ -182,6 +184,10 @@ async def render_help_settings_content(session: AsyncSession, user_id: int) -> t
         char_free=f"{settings.character_limit_free:,}",
         char_purchased=f"{settings.character_limit_purchased:,}",
         daily_limit=settings.free_daily_job_limit,
+        vip_recap_min=int(getattr(settings, "recap_max_duration_seconds", 600) or 600) // 60,
+        retention_days=settings.media_retention_days,
+        referral_seconds=REFERRAL_REWARD_SECONDS,
+        referral_cap_min=(MAX_REFERRALS_REWARDED * REFERRAL_REWARD_SECONDS) // 60,
     )
 
     text = f"{t('help_settings_title', lang)}\n━━━━━━━━━━━━━━━━━━━\n\n{guide_text}{video_status_note}"
@@ -275,7 +281,7 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
     user_display = f"{u_name} ({u_handle})" if u_name else u_handle
 
     cat_raw = getattr(user.account_category, "value", str(user.account_category)).upper()
-    tier_badge = "⭐ VIP PURCHASED" if cat_raw == "PURCHASED" else t("hist_tier_free", lang)
+    tier_badge = "⭐ VIP" if cat_raw == "PURCHASED" else t("hist_tier_free", lang)
 
     total_usable_min = balance.total_usable_minutes
     total_usable_sec = balance.total_usable_seconds
@@ -389,7 +395,7 @@ async def render_history_jobs_content(session: AsyncSession, user_id: int) -> tu
             item_text = t(
                 "hist_job_item",
                 lang,
-                job_id=j.id[:8],
+                job_id=j.id,
                 model_name=m_name,
                 st_icon=st_icon,
                 dur_sec=dur_sec,

@@ -101,20 +101,34 @@ function mapErrorToToast(raw, flow = 'generic') {
     if (flow === 'recap' && has('စုစုပေါင်း') && has('credits လိုအပ်ပါတယ်')) {
         return rawStr;
     }
+    // (c) Recap SUBMIT-time rejections that happen BEFORE any charge
+    // (R40 item 11): the no-credit gate, the duration-cap message and
+    // the concurrency rejection are all raised by /recap/generate
+    // before the deduction — none of them may wear err_recap_failed's
+    // "Credit refunded" copy (a 2026-11-02 session showed exactly
+    // that false refund toast with no job and no credit movement).
+    if (flow === 'recap' && has(
+        'credit မလုံလောက်တော့ပါ',
+        'ကန့်သတ်ချက် (အများဆုံး',
+        'already running for your account',
+    )) {
+        return rawStr;
+    }
     // (b) Voice submit rejections that happen BEFORE any charge
     // (_voice_job_error_detail's closed Burmese set: balance, daily
     // limit, concurrency, character limit, model/file problems). None
     // of them may wear err_voice_failed's "balance was refunded" copy.
-    if (flow === 'voice' && has(
-        'လက်ကျန်မိနစ် မလုံလောက်ပါ',
-        'ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ',
-        'တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်',
-        'စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်',
-        'အသံမော်ဒယ် မတွေ့ရှိပါ',
-        'အသံဖိုင် မတွေ့ရှိပါ',
-        'ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ',
-        'အလုပ်ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်ပါသည်',
-    )) {
+    // R40 deck M1: the client used to hardcode a COPY of those
+    // sentences as match markers — a twin that drifts from the API.
+    // Now the API is the single source: pass through any detail that
+    // is verifiably our localized copy (Burmese script present, no
+    // technical-error markers) and let everything else fall through
+    // to the generics below, unchanged. The flow gate still binds:
+    // recap-shaped texts (parts/credits phrasing) are NOT voice copy
+    // and must never pass on the voice flow.
+    if (flow === 'voice'
+        && /[\u1000-\u109F]/.test(rawStr)
+        && !has('http', 'traceback', '.py', 'yt-dlp', 'exception', 'recap', 'အပိုင်း', 'စုစုပေါင်း')) {
         return rawStr;
     }
     // Suspended account (api.py require gate raises USER_BANNED: …).
@@ -314,7 +328,7 @@ window.showStudioInputModal = showStudioInputModal;
 
 /**
  * app.js - Unified Telegram Mini App Client Controller
- * Voice Clone Pro & AI Movie Recap Studio — Studio Ultra Suite
+ * Voice Clone Pro & AI Movie Recap Studio
  */
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -347,6 +361,12 @@ const state = {
     recapBlurSubs: true,
     recapLogo: true,
     recapLogoPos: "top-right",
+    // Custom channel logo (paid-only, owner decision 2026-11-02):
+    // canUse/has come from /api/user/me; logoUrl (signed preview URL)
+    // comes from GET /api/user/logo.
+    logoCanUse: false,
+    logoHas: false,
+    logoUrl: null,
     recapSubStyle: "yellow",
     recapSubFont: "default",
     recapFontSize: 16,
@@ -719,6 +739,23 @@ async function setAuthMediaSource(el, url) {
     if (objUrl.startsWith("blob:")) _authMediaObjectUrls.set(el, objUrl);
     if (prev && prev !== objUrl) URL.revokeObjectURL(prev);
     return true;
+}
+
+// R40 (ii): recap VIDEO prefers the signed stream URL — the player
+// streams it progressively with HTTP Range instead of holding the
+// whole render in memory as a blob (the blob path is what produced
+// "Unable to play media" in the Telegram WebView on large renders).
+// Falls back to the authenticated blob path when no stream URL was
+// issued. Returns a promise like setAuthMediaSource.
+function setRecapPlayerSource(player, urls) {
+    if (!player || !urls) return Promise.resolve(false);
+    if (urls.stream_url) {
+        clearAuthMediaSource(player);
+        player.src = urls.stream_url;
+        player.load();
+        return Promise.resolve(true);
+    }
+    return setAuthMediaSource(player, urls.video);
 }
 
 function clearAuthMediaSource(el) {
@@ -1231,10 +1268,17 @@ async function loadUserProfile() {
         }
         const data = await res.json();
         state.user = data;
+        paintPlanHowText();
+        // Custom logo (paid-only): profile flags drive the settings
+        // UI; the signed thumbnail URL comes from the logo endpoint.
+        state.logoCanUse = !!data.can_use_logo;
+        state.logoHas = !!data.has_custom_logo;
+        refreshLogoUi();
+        if (data.can_use_logo || data.has_custom_logo) fetchLogoState();
         // Cache the last good profile so the NEXT open paints real
         // balances instantly instead of flashing the gate + 0.0m/0c
         // while revalidating (journey audit 2026-11-02, item 6).
-        try { localStorage.setItem(USER_ME_CACHE_KEY, JSON.stringify(data)); } catch (e) {}
+        try { writeCachedUserProfile(data); } catch (e) {}
         // Admins are never entry-gate locked (see entry-gate section).
         if (data.is_admin) unlockEntryGate();
         updateRecapSplitCostHint();
@@ -1263,7 +1307,7 @@ async function loadUserProfile() {
 
         if (vipBadge) {
             vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
-            vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 PRO" : "FREE");
+            vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 VIP" : "FREE");
         }
         if (voiceBalChip) {
             voiceBalChip.innerText = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
@@ -1284,7 +1328,7 @@ async function loadUserProfile() {
         }
 
         if (charCount) {
-            const limit = data.character_limit || (data.is_vip ? 5000 : 1000);
+            const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
             charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
         }
 
@@ -1408,7 +1452,7 @@ function renderCuratedVoices() {
 // ── Compact Voice UX: selected-voice summary chip + collapsible picker ────
 function personaShortName(name) {
     // The picker label carries a parenthetical descriptor
-    // ("မင်းမင်း (ရုပ်ရှင်ဇာတ်လမ်းပြောသူ)") that truncates mid-parenthesis at summary
+    // ("ကိုမင်း (ရုပ်ရှင်ဇာတ်လမ်းပြောသူ)") that truncates mid-parenthesis at summary
     // chip width; the chip shows the persona's SHORT name only. The
     // picker itself keeps the full label.
     return String(name || "").replace(/\s*[\(（][^\)）]*[\)）]\s*$/, "").trim();
@@ -1731,7 +1775,7 @@ function setupVoiceStudio() {
     if (textInput && charCount) {
         textInput.addEventListener("input", () => {
             const len = textInput.value.length;
-            const max = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
+            const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
             charCount.innerText = `${len} / ${max} ${t("char_counter_unit")}`;
             charCount.style.color = len > max ? "#ef4444" : "var(--text-muted)";
             updateVoicePreflight();
@@ -2080,10 +2124,43 @@ window.verifyEntryGate = verifyEntryGate;
 // fail-closed locked start below.
 const USER_ME_CACHE_KEY = "vcp_user_me_cache";
 
+// R40 item 8: the profile cache must be keyed to the Telegram user
+// who owns it. Telegram Web keeps ONE localStorage across account
+// switches, so an unkeyed cache painted the previous account's
+// profile at boot — an admin's cache flashed "∞ / ∞" balances to a
+// finite user (and vice versa). The envelope records the owner's id
+// from initData; a cache whose owner differs (or a legacy unkeyed
+// cache) is ignored, leaving the neutral static placeholders until
+// the live profile lands.
+function currentTelegramUserId() {
+    try {
+        const u = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe
+            ? window.Telegram.WebApp.initDataUnsafe.user : null;
+        return u && u.id ? String(u.id) : null;
+    } catch (e) { return null; }
+}
+
+function writeCachedUserProfile(data) {
+    try {
+        localStorage.setItem(USER_ME_CACHE_KEY, JSON.stringify({
+            owner_id: currentTelegramUserId(),
+            profile: data,
+        }));
+    } catch (e) {}
+}
+
 function readCachedUserProfile() {
     try {
         const raw = localStorage.getItem(USER_ME_CACHE_KEY);
-        return raw ? JSON.parse(raw) : null;
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || !("profile" in parsed)) return null;
+        const me = currentTelegramUserId();
+        // When initData names a user, the cache must belong to them.
+        // When it doesn't (non-Telegram dev context), accept the cache.
+        if (me && parsed.owner_id && String(parsed.owner_id) !== me) return null;
+        if (me && !parsed.owner_id) return null;
+        return parsed.profile;
     } catch (e) { return null; }
 }
 
@@ -2099,7 +2176,7 @@ function paintCachedUserHeader(data) {
     const charCount = document.getElementById("char-count");
     if (vipBadge) {
         vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
-        vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 PRO" : "FREE");
+        vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 VIP" : "FREE");
     }
     if (voiceBalChip) voiceBalChip.innerText = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
     if (recapBalChip) recapBalChip.innerText = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits || 0}c`;
@@ -2110,10 +2187,107 @@ function paintCachedUserHeader(data) {
     if (balMin) balMin.innerText = data.is_admin ? t("unlimited") : `${data.balance_minutes} mins`;
     if (balCredits) balCredits.innerText = data.is_admin ? t("unlimited") : `${data.recap_credits || 0} credits`;
     if (charCount) {
-        const limit = data.character_limit || (data.is_vip ? 5000 : 1000);
+        const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
         charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
     }
+    // Logo flags ride the same cached payload (older caches simply
+    // lack the keys → treated as Free until the fresh profile lands).
+    state.logoCanUse = !!data.can_use_logo;
+    state.logoHas = !!data.has_custom_logo;
+    refreshLogoUi();
 }
+
+// Custom channel logo (paid-only, owner decision 2026-11-02): the
+// single painter for every logo UI surface — canvas preview chip,
+// toggle/position lock state, upload controls, VIP hint and the
+// status line. Free users see the toggle + position picker locked
+// with a VIP hint and NO upload controls; paid users get upload /
+// replace / remove plus a thumbnail of their stored logo. The chip
+// shows only when a logo will actually render (paid + uploaded +
+// toggle on), so its state can never promise a stamp that the
+// server will not draw. The server enforces the same gate on upload
+// and on the generate path regardless of what the client sends.
+function refreshLogoUi() {
+    const u = state.user || {};
+    const canUse = !!(u.is_admin || u.is_vip || state.logoCanUse);
+    const has = !!state.logoHas;
+    state.logoCanUse = canUse;
+
+    const previewLogo = document.getElementById("preview-logo");
+    if (previewLogo) {
+        previewLogo.style.display = (canUse && has && state.recapLogo !== false) ? "block" : "none";
+    }
+    const toggleBtn = document.getElementById("btn-toggle-logo");
+    if (toggleBtn) {
+        toggleBtn.disabled = !canUse;
+        toggleBtn.classList.toggle("logo-locked", !canUse);
+    }
+    const posPicker = document.getElementById("recap-logo-pos-picker");
+    if (posPicker) posPicker.classList.toggle("logo-locked", !canUse);
+
+    const controls = document.getElementById("recap-logo-controls");
+    if (controls) controls.classList.toggle("hidden", !canUse);
+    const hint = document.getElementById("recap-logo-vip-hint");
+    if (hint) hint.classList.toggle("hidden", canUse);
+
+    const thumb = document.getElementById("recap-logo-thumb");
+    if (thumb) {
+        if (has && state.logoUrl) {
+            thumb.src = state.logoUrl;
+            thumb.classList.remove("hidden");
+        } else {
+            thumb.removeAttribute("src");
+            thumb.classList.add("hidden");
+        }
+    }
+    const uploadBtn = document.getElementById("btn-logo-upload");
+    if (uploadBtn) {
+        const span = uploadBtn.querySelector("span");
+        const key = has ? "btn_logo_replace" : "btn_logo_upload";
+        if (span) {
+            span.setAttribute("data-i18n", key);
+            span.innerText = t(key);
+        }
+    }
+    const removeBtn = document.getElementById("btn-logo-remove");
+    if (removeBtn) removeBtn.classList.toggle("hidden", !has);
+    const status = document.getElementById("recap-logo-status");
+    if (status) {
+        status.innerText = !canUse ? "" : (has ? t("recap_logo_ready") : t("recap_logo_none"));
+    }
+}
+
+// Fetch the authoritative logo state (the profile payload carries
+// the flags but not the signed preview URL).
+async function fetchLogoState() {
+    try {
+        const res = await fetchWithTimeout("/api/user/logo", { headers: getAuthHeaders(false) });
+        if (!res.ok) return;
+        const data = await res.json();
+        state.logoCanUse = !!data.can_use_logo;
+        state.logoHas = !!data.has_logo;
+        state.logoUrl = data.logo_url || null;
+        refreshLogoUi();
+    } catch (e) { /* non-fatal: profile flags already painted the UI */ }
+}
+window.refreshLogoUi = refreshLogoUi;
+
+// R40 deck I4: the plan "how it works" line states both character
+// limits via placeholders, painted from the profile payload's live
+// values (never hardcoded in copy). Repainted on profile load and on
+// every language switch (setLanguage calls the window hook).
+function paintPlanHowText() {
+    const el = document.querySelector('[data-i18n="plan_how_text1"]');
+    if (!el) return;
+    const u = state.user || {};
+    const free = u.character_limit_free ?? 1000;
+    const paid = u.character_limit_purchased ?? 5000;
+    el.innerText = tf("plan_how_text1", {
+        free_chars: Number(free).toLocaleString("en-US"),
+        paid_chars: Number(paid).toLocaleString("en-US"),
+    });
+}
+window.paintPlanHowText = paintPlanHowText;
 
 // Returns true when the cached profile is a known verified member
 // (or admin) who may start unlocked pending the live check.
@@ -2145,7 +2319,7 @@ function updateVoicePreflight() {
     if (!box || !input) return;
     const u = state.user || {};
     const len = input.value.length;
-    const max = u.character_limit || (u.is_vip ? 5000 : 1000);
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
     const bal = u.is_admin ? "∞" : `${u.balance_minutes ?? 0}`;
     let line = tf("preflight_line", { len, max, bal });
     if (len > max) line += t("preflight_over_limit");
@@ -2163,7 +2337,7 @@ async function handleVoiceGenerate() {
         return;
     }
 
-    const maxChars = state.user?.character_limit || (state.user?.is_vip ? 5000 : 1000);
+    const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
     if (text.length > maxChars) {
         showStudioToast(tf("text_too_long", {
             len: text.length,
@@ -2340,12 +2514,12 @@ function startJobPolling(jobId) {
                 loadUserHistory();
 
                 showFloatingAlert(
-                    t("alert_voice_ready") || "🎉 AI Voice ဖန်တီးမှု ပြီးစီးပါပြီ!",
-                    currentLang === "my" ? "အသံဖိုင် ပြင်ဆင်ပြီးစီးပါပြီ။ ဖွင့်နားထောင်နိုင်ပါပြီ။" : "Your AI voice is ready to listen or send to Telegram.",
+                    t("alert_voice_ready"),
+                    t("alert_voice_ready_body1"),
                     () => {
                         if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
                     },
-                    currentLang === "my" ? "🎧 နားထောင်မည်" : "🎧 Listen"
+                    t("alert_btn_listen")
                 );
 
             } else if (data.status === "FAILED") {
@@ -2465,20 +2639,33 @@ function setRecapPreviewState(mode) {
         }
     }
     if (hint) hint.classList.toggle("hidden", !ready);
-    if (controlsGroup) controlsGroup.classList.toggle("hidden", !ready);
+    // R40 item 5 (complaint diagnosis D): the Style/Subtitle/Blur
+    // controls group was gated on Analyze SUCCESS, so a user whose
+    // link failed verification (or who never pressed Analyze) could
+    // not reach the subtitle/blur controls at all — and stale saved
+    // positions (e.g. sub_y=67) stayed invisible and unfixable. The
+    // controls now follow SOURCE PRESENCE; the canvas mockup above
+    // stays preview-gated.
+    if (controlsGroup) controlsGroup.classList.toggle("hidden", !(ready || recapHasSource()));
     if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
     if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
     if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
 }
 window.setRecapPreviewState = setRecapPreviewState;
 
-// True when some usable source preview exists (link thumbnail, an
-// uploaded file, or a live local <video> preview in the canvas).
+// True when a source is present in any form: a typed URL, a picked or
+// uploaded file, a link thumbnail, or a live local <video> preview.
+// (R40 item 5: widened from preview-only signals — the controls group
+// keys off presence, not off a successful Analyze.)
 function recapHasSource() {
     const cv = document.getElementById("canvas-video-player");
+    const urlInput = document.getElementById("recap-url-input");
+    const fileInput = document.getElementById("recap-video-file-input");
     return Boolean(
         state.recapThumbnailUrl ||
         state.uploadedVideoPath ||
+        (urlInput && urlInput.value.trim()) ||
+        (fileInput && fileInput.files && fileInput.files.length > 0) ||
         (cv && cv.src && !cv.classList.contains("hidden"))
     );
 }
@@ -2881,6 +3068,11 @@ function setupRecapVisualEditor() {
 
     async function onRecapUploadSuccess(data, file) {
         state.uploadedVideoPath = data.local_path;
+        // R40 item 9: an upload supersedes any link source — drop the
+        // link's verified URL and its server frame (the local <video>
+        // element is the frame source for uploads).
+        state.recapVerifiedSourceUrl = null;
+        if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
         state.recapUploadPending = false;
         // R39: an uploaded file's duration is server-measured — the
         // unverified-link warning by the CTA never applies to it.
@@ -3057,6 +3249,11 @@ function setupRecapVisualEditor() {
                     }).catch(() => {});
                 }
             }
+        } else {
+            // R40 item 9: no local video (link source) — ask the
+            // server for the REAL frame at this position instead of
+            // leaving the static thumbnail on screen.
+            scheduleRecapFrameRefresh(clamped);
         }
 
         seekPills.forEach(pill => {
@@ -3064,6 +3261,44 @@ function setupRecapVisualEditor() {
             pill.classList.toggle("active", Math.abs(pSec - clamped) < 1.0);
         });
     }
+
+    // ── R40 item 9: server-grabbed preview frames for link sources ──
+    // The endpoint downloads the verified source once (server-side
+    // cache) and returns a real frame at the requested second. The
+    // frame then flows through the SAME canvas treatment as the
+    // thumbnail (ratio fit, mirror class, backdrop blur, CSS blur /
+    // subtitle boxes on top), so Mirror/Ratio/Style/Blur changes keep
+    // reflecting live. Failures are silent on purpose: the thumbnail
+    // or mockup stays, and we do not retry in a loop.
+    let recapFrameTimer = null;
+    let recapFrameSeq = 0;
+    function scheduleRecapFrameRefresh(sec) {
+        if (!state.recapVerifiedSourceUrl || state.uploadedVideoPath) return;
+        if (recapFrameTimer) clearTimeout(recapFrameTimer);
+        recapFrameTimer = setTimeout(() => refreshRecapFramePreview(sec), 450);
+    }
+    window.scheduleRecapFrameRefresh = scheduleRecapFrameRefresh;
+
+    async function refreshRecapFramePreview(sec) {
+        const url = state.recapVerifiedSourceUrl;
+        if (!url || state.uploadedVideoPath) return;
+        const mySeq = ++recapFrameSeq;
+        try {
+            const res = await fetch("/api/recap/preview-frame", {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ url, t: Math.max(0.5, sec || 5) }),
+            });
+            if (!res.ok) return;
+            const blob = await res.blob();
+            if (mySeq !== recapFrameSeq) return; // a newer seek won
+            const objUrl = URL.createObjectURL(blob);
+            if (state.recapFrameUrl) URL.revokeObjectURL(state.recapFrameUrl);
+            state.recapFrameUrl = objUrl;
+            updateCanvasMockupVisuals();
+        } catch (e) { /* keep the existing canvas visuals */ }
+    }
+    window.refreshRecapFramePreview = refreshRecapFramePreview;
 
     if (sliderSeek) {
         sliderSeek.addEventListener("input", (e) => {
@@ -3093,14 +3328,14 @@ function setupRecapVisualEditor() {
             if (canvasVideo.src && !canvasVideo.classList.contains("hidden")) {
                 if (canvasVideo.paused) {
                     canvasVideo.play().then(() => {
-                        btnPlayToggle.innerText = "⏸️ ရပ်မည် (Pause)";
+                        btnPlayToggle.innerText = `⏸️ ${t("pause_audio")}`;
                         btnPlayToggle.classList.add("active");
                     }).catch(err => {
                         console.warn("Play error:", err);
                     });
                 } else {
                     canvasVideo.pause();
-                    btnPlayToggle.innerText = "⏯️ နမူနာကြည့် (Play)";
+                    btnPlayToggle.innerText = `⏯️ ${t("play_audio")}`;
                     btnPlayToggle.classList.remove("active");
                 }
             } else {
@@ -3115,7 +3350,7 @@ function setupRecapVisualEditor() {
             }
         });
         canvasVideo.addEventListener("ended", () => {
-            btnPlayToggle.innerText = "⏯️ နမူနာကြည့် (Play)";
+            btnPlayToggle.innerText = `⏯️ ${t("play_audio")}`;
             btnPlayToggle.classList.remove("active");
         });
     }
@@ -3265,8 +3500,18 @@ function setupRecapVisualEditor() {
             window.addEventListener("mouseup", onMouseUp);
         });
 
-        // Mobile Touch Drag
-        boxElement.addEventListener("touchstart", (e) => {
+        // Mobile Touch Drag — R40 item 5: DELIBERATE grabs only. The
+        // drag used to start on ANY touch landing on the (very wide)
+        // box: a page scroll that happened to begin on the subtitle
+        // silently dragged sub_y with it, and the change was then
+        // persisted by the settings snapshot — the exact mechanism
+        // behind a real user's sub_y=67 mystery. Now a touch drag can
+        // only start on the box's ⠿ grip handle; touches elsewhere on
+        // the box body fall through to normal page scrolling (the CSS
+        // gives the box touch-action: pan-y and the grip none).
+        const grip = boxElement.querySelector(".drag-grip-icon");
+        const touchTarget = grip || boxElement;
+        touchTarget.addEventListener("touchstart", (e) => {
             if (e.touches && e.touches.length > 0) {
                 e.stopPropagation();
                 startDrag(e.touches[0].clientY);
@@ -3425,7 +3670,7 @@ function setupRecapVisualEditor() {
         const innerMovie = document.getElementById("mockup-inner-movie");
         const fillBadge = document.getElementById("mockup-fill-badge");
         const origSub = document.getElementById("mockup-orig-sub");
-        const hasActiveMedia = Boolean(state.recapThumbnailUrl || state.uploadedVideoPath || (canvasVideo && !canvasVideo.classList.contains("hidden")));
+        const hasActiveMedia = Boolean(state.recapThumbnailUrl || state.recapFrameUrl || state.uploadedVideoPath || (canvasVideo && !canvasVideo.classList.contains("hidden")));
         
         // Hide mock English subtitles if user has loaded a video/thumbnail
         if (origSub) {
@@ -3565,8 +3810,7 @@ function setupRecapVisualEditor() {
                 thumbImg = document.createElement("img");
                 thumbImg.id = "canvas-thumb-img";
                 thumbImg.className = "canvas-video-player hidden";
-                thumbImg.alt = "";
-                // A dead thumbnail URL must hide the element, never show
+                thumbImg.alt = "";                // A dead thumbnail URL must hide the element, never show
                 // the browser's broken-image glyph inside the canvas.
                 thumbImg.onerror = () => {
                     thumbImg.dataset.failed = "1";
@@ -3586,6 +3830,17 @@ function setupRecapVisualEditor() {
                     }
                 };
                 innerMovie.insertBefore(thumbImg, innerMovie.firstChild);
+            }
+
+            // R40 item 9: the server-grabbed real-frame element,
+            // created the same lazy way as the thumbnail image.
+            let frameImg = document.getElementById("canvas-frame-img");
+            if (!frameImg && innerMovie) {
+                frameImg = document.createElement("img");
+                frameImg.id = "canvas-frame-img";
+                frameImg.className = "canvas-video-player hidden";
+                frameImg.alt = "";
+                innerMovie.insertBefore(frameImg, innerMovie.firstChild);
             }
 
             const backdropEl = document.getElementById("video-backdrop-blur");
@@ -3608,6 +3863,7 @@ function setupRecapVisualEditor() {
                     }
                 }
                 if (thumbImg) thumbImg.classList.add("hidden");
+                if (frameImg) frameImg.classList.add("hidden");
                 canvasVideo.style.display = "block";
                 canvasVideo.style.opacity = "1";
                 canvasVideo.style.objectFit = "fill";
@@ -3616,6 +3872,39 @@ function setupRecapVisualEditor() {
                 canvasVideo.style.height = `${vidH.toFixed(3)}%`;
                 canvasVideo.style.left = `${vidLeft.toFixed(3)}%`;
                 canvasVideo.style.top = `${vidTop.toFixed(3)}%`;
+                if (fillBadge) fillBadge.style.display = "none";
+            } else if (state.recapFrameUrl) {
+                // R40 item 9: a REAL server-grabbed frame at the seek
+                // position wins over the static thumbnail. Same fit
+                // geometry + backdrop treatment as the thumbnail
+                // branch; the CSS blur/subtitle boxes stay on top, so
+                // Mirror/Ratio/Style/Blur edits keep reflecting live.
+                mediaVisible = true;
+                if (noThumbEl) noThumbEl.classList.add("hidden");
+                if (backdropEl) {
+                    if (fillMode === "blur") {
+                        backdropEl.style.backgroundImage = `url('${state.recapFrameUrl}')`;
+                        backdropEl.classList.add("on");
+                    } else {
+                        backdropEl.style.backgroundImage = "";
+                        backdropEl.classList.remove("on");
+                    }
+                }
+                canvas.style.backgroundImage = "";
+                canvas.style.backgroundSize = "";
+                canvas.style.backgroundPosition = "";
+                innerMovie.style.backgroundImage = "none";
+                if (thumbImg) thumbImg.classList.add("hidden");
+                if (frameImg) {
+                    if (frameImg.getAttribute("src") !== state.recapFrameUrl) frameImg.src = state.recapFrameUrl;
+                    frameImg.classList.remove("hidden");
+                    frameImg.style.display = "block";
+                    frameImg.style.objectFit = "fill";
+                    frameImg.style.width = `${vidW.toFixed(3)}%`;
+                    frameImg.style.height = `${vidH.toFixed(3)}%`;
+                    frameImg.style.left = `${vidLeft.toFixed(3)}%`;
+                    frameImg.style.top = `${vidTop.toFixed(3)}%`;
+                }
                 if (fillBadge) fillBadge.style.display = "none";
             } else if (state.recapThumbnailUrl && !(thumbImg && thumbImg.dataset.failed === "1")) {
                 mediaVisible = true;
@@ -3639,6 +3928,7 @@ function setupRecapVisualEditor() {
                 canvas.style.backgroundSize = "";
                 canvas.style.backgroundPosition = "";
                 innerMovie.style.backgroundImage = "none";
+                if (frameImg) frameImg.classList.add("hidden");
                 if (thumbImg) {
                     if (thumbImg.getAttribute("src") !== state.recapThumbnailUrl) delete thumbImg.dataset.failed;
                     thumbImg.src = state.recapThumbnailUrl;
@@ -3656,6 +3946,7 @@ function setupRecapVisualEditor() {
                 canvas.style.backgroundImage = "";
                 innerMovie.style.backgroundImage = "";
                 if (thumbImg) thumbImg.classList.add("hidden");
+                if (frameImg) frameImg.classList.add("hidden");
                 // No media at all: collapse the letterbox strip geometry
                 // (its box-shadow drew seam/edge lines on the empty
                 // canvas in every ratio) and show the designed
@@ -3999,7 +4290,7 @@ function setupRecapVisualEditor() {
             btnToggleLogo.classList.toggle("active", state.recapLogo);
             const tVal = btnToggleLogo.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapLogo ? t("toggle_on") : t("toggle_off");
-            if (previewLogo) previewLogo.style.display = state.recapLogo ? "block" : "none";
+            refreshLogoUi();
         });
     }
 
@@ -4121,6 +4412,63 @@ function setupRecapVisualEditor() {
         });
     });
 
+    // 12b. Custom Logo Upload / Remove (paid-only — the server
+    // enforces the tier gate; these handlers only wire the controls
+    // that refreshLogoUi shows to paid users).
+    const btnLogoUpload = document.getElementById("btn-logo-upload");
+    const inputLogoFile = document.getElementById("input-logo-file");
+    if (btnLogoUpload && inputLogoFile) {
+        btnLogoUpload.addEventListener("click", () => inputLogoFile.click());
+        inputLogoFile.addEventListener("change", async () => {
+            const file = inputLogoFile.files ? inputLogoFile.files[0] : null;
+            inputLogoFile.value = "";
+            if (!file) return;
+            btnLogoUpload.disabled = true;
+            try {
+                const formData = new FormData();
+                formData.append("logo_file", file);
+                const res = await fetchWithTimeout("/api/user/logo", {
+                    method: "POST",
+                    headers: getAuthHeaders(false),
+                    body: formData,
+                }, 60000);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Upload failed");
+                state.logoCanUse = !!data.can_use_logo;
+                state.logoHas = !!data.has_logo;
+                state.logoUrl = data.logo_url || null;
+                refreshLogoUi();
+                showStudioToast(t("toast_logo_uploaded"), 'success');
+            } catch (e) {
+                showErrorToast(e, 'generic');
+            } finally {
+                btnLogoUpload.disabled = false;
+            }
+        });
+    }
+    const btnLogoRemove = document.getElementById("btn-logo-remove");
+    if (btnLogoRemove) {
+        btnLogoRemove.addEventListener("click", async () => {
+            btnLogoRemove.disabled = true;
+            try {
+                const res = await fetchWithTimeout("/api/user/logo", {
+                    method: "DELETE",
+                    headers: getAuthHeaders(false),
+                }, 30000);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Remove failed");
+                state.logoHas = !!data.has_logo;
+                state.logoUrl = null;
+                refreshLogoUi();
+                showStudioToast(t("toast_logo_removed"), 'success');
+            } catch (e) {
+                showErrorToast(e, 'generic');
+            } finally {
+                btnLogoRemove.disabled = false;
+            }
+        });
+    }
+
     // 14. Analyze / Video Info Check Button
     const btnAnalyze = document.getElementById("btn-fetch-recap-info");
     const recapInfoBox = document.getElementById("recap-video-info-box");
@@ -4222,6 +4570,17 @@ function setupRecapVisualEditor() {
 
                 state.uploadedVideoPath = null;
                 state.recapUploadPending = false;
+                // R40 item 9: remember the VERIFIED source URL so the
+                // canvas can pull real frames from /recap/preview-frame
+                // at the seek position. Unverified payloads get none —
+                // the server could not read the source either.
+                if (data.metadata_verified && data.url) {
+                    state.recapVerifiedSourceUrl = data.url;
+                    if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
+                    if (window.scheduleRecapFrameRefresh) window.scheduleRecapFrameRefresh(Math.min(5, data.duration_seconds || 5));
+                } else {
+                    state.recapVerifiedSourceUrl = null;
+                }
                 const sliderSeek = document.getElementById("slider-canvas-seek");
                 const seekBadge = document.getElementById("canvas-seek-time-badge");
                 if (sliderSeek) {
@@ -4309,8 +4668,17 @@ function setupRecapVisualEditor() {
     if (urlInput) {
         urlInput.addEventListener("input", () => {
             const val = urlInput.value.trim();
+            // R40 item 5: a typed URL is a present source — reveal the
+            // Style/Subtitle/Blur controls immediately, without waiting
+            // for Analyze to succeed (recompute visibility only; the
+            // preview mode itself is untouched).
+            if (val && state.recapPreviewState !== "ready") {
+                setRecapPreviewState(state.recapPreviewState || "empty");
+            }
             if (!val) {
                 state.recapThumbnailUrl = null;
+                state.recapVerifiedSourceUrl = null;
+                if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
                 updateCanvasMockupVisuals();
                 if (recapInfoBox) recapInfoBox.classList.add("hidden");
                 const warnEl = document.getElementById("recap-unverified-warning");
@@ -4616,12 +4984,14 @@ function setupRecapVisualEditor() {
         syncToggleBtn("btn-toggle-logo", state.recapLogo);
         if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
         if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
-        if (previewLogo) previewLogo.style.display = state.recapLogo ? "block" : "none";
         syncPillGroup("#sub-style-picker .style-chip", "data-style", state.recapSubStyle);
         if (previewSub) previewSub.className = `preview-sub-box ${state.recapSubStyle}`;
         syncPillGroup("#recap-sub-font-picker .pill-btn", "data-font", state.recapSubFont);
         syncPillGroup("#recap-logo-pos-picker .pill-btn", "data-pos", state.recapLogoPos);
         if (previewLogo) previewLogo.className = `preview-logo-watermark ${state.recapLogoPos}`;
+        // Logo chip visibility follows the central rule (paid +
+        // uploaded + toggle on), not the persisted toggle alone.
+        refreshLogoUi();
         const by = document.getElementById("slider-blur-y");
         const bh = document.getElementById("slider-blur-h");
         const sy = document.getElementById("slider-sub-y");
@@ -4752,6 +5122,25 @@ async function handleStartRecap() {
         return;
     }
 
+    // R40 item 10: a segmented recap charges 1 credit PER PART — show
+    // the estimated parts × cost in a pre-start confirmation so the
+    // total is never a surprise (the same estimate as the split-cost
+    // hint by the toggle). One-shot flag: the confirm's callback
+    // re-enters this function and proceeds.
+    const splitToggleEl = document.getElementById("recap-split-toggle");
+    if (!state._splitCostConfirmed
+        && splitToggleEl && splitToggleEl.checked
+        && state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
+        && state.user?.is_vip && !state.user?.is_admin) {
+        const est = estimateRecapSegmentParts(state.recapSourceDuration, state.recapSplitMinutes || 3);
+        showStudioConfirm(tf("recap_split_cost_estimate", { parts: est, credits: est }), () => {
+            state._splitCostConfirmed = true;
+            handleStartRecap();
+        });
+        return;
+    }
+    state._splitCostConfirmed = false;
+
     if (btn) btn.disabled = true;
 
     const progressBox = document.getElementById("recap-progress-box");
@@ -4767,18 +5156,21 @@ async function handleStartRecap() {
     }
     if (progressFill) progressFill.style.width = "10%";
     setRecapStage("1/4", null);
+    // R40 deck F-1/F-2: the first status/ETA lines named the vendor
+    // engine ("Groq Cloud Whisper Turbo", "Groq Turbo Engine + 1080p
+    // Cinema Compositing") — vendor names out, structure kept.
     if (statusMsg) statusMsg.innerText = (state.lang === "my"
-        ? "⚡ [1/4] Groq Cloud Whisper Turbo Audio Ingestion စတင်နေပါသည်..."
-        : "⚡ [1/4] Groq Cloud Whisper Turbo Audio Ingestion starting...");
+        ? "🎙️ [1/4] မူရင်း အသံကို စာသား ပြောင်းနေပါသည်…"
+        : "🎙️ [1/4] Converting the original audio to text…");
 
-    let estMinutes = "၁.၅ - ၂.၅ မိနစ်";
+    let estMinutes = "၁.၅ - ၂.၅";
     if (state.recapSourceDuration && state.recapSourceDuration > 180) {
-        estMinutes = "၃ - ၄ မိနစ်";
+        estMinutes = "၃ - ၄";
     }
     if (stepText) {
         stepText.innerText = (state.lang === "my"
-            ? `⚡ ခန့်မှန်းကြာချိန်: ~${estMinutes} (Groq Turbo Engine + 1080p Cinema Compositing)`
-            : `⚡ Estimated time: ~${estMinutes} (Groq Turbo Engine + 1080p Cinema Compositing)`);
+            ? `⏳ ခန့်မှန်းကြာချိန်: ~${estMinutes} မိနစ်`
+            : `⏳ Estimated time: ~${estMinutes.replace("၁.၅ - ၂.၅", "1.5 - 2.5").replace("၃ - ၄", "3 - 4")} min`);
     }
 
     try {
@@ -4836,7 +5228,14 @@ async function handleStartRecap() {
         startRecapJobPolling(data.recap_id);
 
     } catch (err) {
-        showErrorToast(err, 'recap');
+        // R40 item 11: this catch only sees SUBMIT-time failures — the
+        // server rejected /recap/generate before any charge (or the
+        // request never landed), so the generic recap failure copy
+        // (which speaks of a refund) would be false. Keep the mapper's
+        // specific pass-through messages; swap only its generic
+        // fallthrough for the pre-charge text.
+        const mapped = mapErrorToToast(err && err.message ? err.message : err, 'recap');
+        showStudioToast(mapped === t('err_recap_failed') ? t('err_recap_rejected') : mapped, 'error');
         if (progressBox) progressBox.classList.add("hidden");
         if (btn) btn.disabled = false;
     }
@@ -4962,10 +5361,12 @@ function startRecapJobPolling(jobId) {
                 }
 
                 // Setup video player (round-6 P1: blob URL — a raw
-                // API src cannot carry the init-data header and 401s)
+                // API src cannot carry the init-data header and 401s;
+                // R40: the signed stream URL solves that properly for
+                // video — see setRecapPlayerSource)
                 const player = document.getElementById("recap-result-player");
                 if (player && data.download_urls?.video) {
-                    setAuthMediaSource(player, data.download_urls.video);
+                    setRecapPlayerSource(player, data.download_urls);
                     player.classList.remove("hidden");
                 }
 
@@ -5014,7 +5415,7 @@ function startRecapJobPolling(jobId) {
                     const noteEl = document.getElementById("recap-split-note");
                     if (noteEl) {
                         let note = "";
-                        if (data.split_error) note = (t("recap_split_failed") || "Part ခွဲတာ မအောင်မြင်ပါ — အပြည့်အစုံ ဗီဒီယို အပေါ်မှာ ရပါတယ်။");
+                        if (data.split_error) note = t("recap_split_failed");
                         else if (data.split_note) note = data.split_note;
                         // Segmented jobs: show the exact parts count and
                         // the credits the job actually used (1 per part).
@@ -5695,7 +6096,12 @@ async function submitPaymentSlip() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Submission failed");
 
-        showStudioToast(t("toast_success_slip"), 'success');
+        // R40 item 6 / deck A10: the confirmation must carry the
+        // request ID + pending status — the API's message already
+        // includes both ("တောင်းဆိုမှု နံပါတ်: #… — Admin မှ
+        // စစ်ဆေးပြီးပါက Bot မှ အသိပေးပါမည်"); the old static toast
+        // showed neither, so buyers had no reference at all.
+        showStudioToast(data.message || t("toast_success_slip"), 'success', 7000);
         closePaymentDrawer();
         if (fileInput) fileInput.value = "";
         const previewBox = document.getElementById("slip-preview-box");
@@ -7602,6 +8008,23 @@ function hubHistoryDetailHtml(j) {
     if (isRecap && j.parts_count && j.parts_count > 1) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>`;
     }
+    if (isRecap && j.recap_settings) {
+        // R40 item 13: compact settings summary from the persisted
+        // recap_config (engine / voice / subtitle position / style /
+        // font) so the user — and support — can see what a render used.
+        const s = j.recap_settings;
+        const parts = [];
+        if (s.engine) parts.push(s.engine === "gemini" ? "Gemini" : "Smart Sync");
+        if (s.gemini_voice || s.voice) parts.push(s.gemini_voice || s.voice);
+        if (s.story_style) parts.push(s.story_style);
+        if (s.sub_style) parts.push(s.sub_style);
+        if (s.sub_font) parts.push(s.sub_font);
+        if (typeof s.sub_y === "number") parts.push(`Sub ${Math.round(s.sub_y * 100)}%`);
+        if (typeof s.blur_y === "number") parts.push(`Blur ${Math.round(s.blur_y * 100)}%`);
+        if (parts.length) {
+            inner += `<div class="history-item-body hub-settings-summary">⚙️ ${escapeHtml(parts.join(" · "))}</div>`;
+        }
+    }
     let actions = "";
     if (j.status === "FAILED") {
         actions = `<span class="badge-expired text-xs" style="color:#f87171;">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
@@ -7751,7 +8174,7 @@ async function openRecapInPlayer(recapJobId) {
                 resultBox.scrollIntoView({ behavior: "smooth" });
             }
             if (player && data.download_urls?.video) {
-                setAuthMediaSource(player, data.download_urls.video).then((ok) => {
+                setRecapPlayerSource(player, data.download_urls).then((ok) => {
                     if (ok) player.play().catch(() => {});
                 });
                 player.classList.remove("hidden");
@@ -7840,12 +8263,12 @@ async function checkStartupDeepLinks() {
                         btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_voice_telegram")}</span>`;
                     }
                     showFloatingAlert(
-                        t("alert_voice_ready") || "🎉 AI Voice အဆင်သင့်ဖြစ်ပါပြီ!",
-                        currentLang === "my" ? "အသံဖိုင်ကို တိုက်ရိုက်ဖွင့်နားထောင်နိုင်ပါပြီ။" : "Your generated voice is ready to play.",
+                        t("alert_voice_ready"),
+                        t("alert_voice_ready_body2"),
                         () => {
                             if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
                         },
-                        currentLang === "my" ? "🎧 နားထောင်မည်" : "🎧 Listen"
+                        t("alert_btn_listen")
                     );
                 } else if (data.status === "RUNNING" || data.status === "QUEUED") {
                     const progressBox = document.getElementById("voice-progress-box");
@@ -7878,7 +8301,7 @@ async function checkStartupDeepLinks() {
                         }
                     }
                     if (player && data.download_urls?.video) {
-                        setAuthMediaSource(player, data.download_urls.video);
+                        setRecapPlayerSource(player, data.download_urls);
                         player.classList.remove("hidden");
                     }
                     if (btnVideo && data.download_urls?.video) {
@@ -7905,13 +8328,13 @@ async function checkStartupDeepLinks() {
                     // (round-4 F-E), where the user is already watching
                     // the result card appear.
                     showFloatingAlert(
-                        t("alert_recap_ready") || "🎉 Pro Movie Recap အဆင်သင့်ဖြစ်ပါပြီ!",
-                        currentLang === "my" ? "Full HD Video ကို တိုက်ရိုက်ဖွင့်ကြည့်နိုင်ပါပြီ။" : "Your recap video is ready to watch.",
+                        t("alert_recap_ready"),
+                        t("alert_recap_ready_body"),
                         () => {
                             switchTab("tab-recap");
                             if (resultBox) resultBox.scrollIntoView({ behavior: "smooth" });
                         },
-                        currentLang === "my" ? "🎬 ကြည့်ရှုမည်" : "🎬 View Video"
+                        t("alert_btn_watch")
                     );
                 } else if (data.status === "RUNNING" || data.status === "QUEUED") {
                     state.recapJobId = recapJobId;

@@ -200,10 +200,27 @@ def test_e2_raw_strings_still_never_pass():
 
 
 def test_e2_mapper_markers_match_api_py_source():
-    # Drift guard: every marker phrase the JS mapper matches on must
-    # exist in the Python strings it is meant to recognize.
+    # Drift guard, R40 form (deck M1): the recap families still match
+    # on marker phrases, and those phrases must exist in the Python
+    # strings they recognize. The VOICE family no longer carries a
+    # hardcoded copy of the API's sentences at all — api.py is the
+    # single source and the mapper passes through any verifiably
+    # localized detail (Burmese script, no technical markers, no
+    # recap-shaped phrasing) — so for voice the guard asserts the
+    # closed set still exists in api.py and the structural rule is
+    # what app.js carries.
     for marker in (
         "စုစုပေါင်း", "Credits လိုအပ်ပါတယ်",
+    ):
+        # The phrases live in the RENDERED message (the builder's
+        # f-string interpolates the count inside the second phrase).
+        from app.webapp.api import _segmented_credits_message
+
+        rendered = _segmented_credits_message(4, balance=2)
+        assert marker in rendered, marker
+        assert marker.lower() in APP_JS, marker
+    assert "စုစုပေါင်း" in API_PY
+    for marker in (
         "လက်ကျန်မိနစ် မလုံလောက်ပါ",
         "ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ",
         "တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်",
@@ -214,10 +231,8 @@ def test_e2_mapper_markers_match_api_py_source():
         "အလုပ်ဖန်တီးရာတွင် အမှားဖြစ်ပေါ်ပါသည်",
     ):
         assert marker in API_PY, marker
-        # The JS needles sit in the lowercased matching space (the
-        # mapper lowercases its input first; Burmese is caseless, so
-        # only the Latin fragments differ in case).
-        assert marker.lower() in APP_JS, marker
+        assert marker not in APP_JS, marker  # twin deleted (M1)
+    assert "[\\u1000-\\u109F]" in APP_JS  # the structural pass-through rule
 
 
 # ── E1: session-expired 401 handling (node, real i18n) ────────────────

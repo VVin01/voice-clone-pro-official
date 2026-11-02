@@ -794,7 +794,7 @@ async def test_unauthorized_admin_user_management(db_session):
 async def test_localization_parity_and_terminology():
     # Verify terminology in en and my messages.json
     en_desc = t("buy_minutes_desc", "en")
-    assert "PURCHASED" in en_desc
+    assert "VIP" in en_desc  # R40 canon: user-facing paid status is VIP
 
     long_err_en = t("tts_text_too_long", "en", max_chars=500, curr_chars=600)
     assert "account type" in long_err_en
@@ -804,8 +804,11 @@ async def test_localization_parity_and_terminology():
     assert "User account" in admin_tts_en
     assert "tier" not in admin_tts_en
 
-    pay_approve_en = t("payment_approved_user_notify", "en", minutes=10)
-    assert "Account Status: <b>PURCHASED</b>" in pay_approve_en
+    pay_approve_en = t("payment_approved_user_notify", "en", minutes=10, recap_credits=5)
+    # R40: user-facing paid status is "VIP" (PURCHASED is admin/DB only)
+    # and the notice states BOTH minutes and recap credits.
+    assert "Account status: <b>VIP</b>" in pay_approve_en
+    assert "Recap Credits: <b>5</b>" in pay_approve_en
     assert "tier" not in pay_approve_en.lower()
 
     pricing_title_en = t("admin_pricing_title", "en")

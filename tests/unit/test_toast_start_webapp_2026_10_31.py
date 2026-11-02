@@ -124,16 +124,19 @@ def test_mapper_and_helpers_defined_and_exported():
     assert "window.mapErrorToToast = mapErrorToToast" in APP_JS
     assert "window.showErrorToast = showErrorToast" in APP_JS
     # mapper never returns the raw input — with ONE sanctioned
-    # exception (E2, pre-deploy mini-fix 2026-10-31): the two
-    # marker-gated pass-through families return our own closed-set
-    # localized Burmese details unchanged. Exactly two such returns
-    # exist, each behind a flow + marker-phrase gate; behaviour tests
-    # in test_predeploy_minifix_2026_10_31.py prove raw/technical
-    # strings still never pass.
+    # exception (E2, pre-deploy mini-fix 2026-10-31): the marker-gated
+    # pass-through families return our own closed-set localized
+    # Burmese details unchanged. R40 (item 11 + deck M1) added the
+    # recap pre-charge family and replaced the voice family's
+    # hardcoded sentence copies with a structural rule (Burmese
+    # script + no technical markers + no recap phrasing), so THREE
+    # such returns exist now, each behind a flow gate; behaviour
+    # tests in test_predeploy_minifix_2026_10_31.py prove
+    # raw/technical strings still never pass.
     body = APP_JS.split("function mapErrorToToast")[1].split("function showErrorToast")[0]
-    assert body.count("return rawStr;") == 2
+    assert body.count("return rawStr;") == 3
     assert "if (flow === 'recap' && has(" in body
-    assert "if (flow === 'voice' && has(" in body
+    assert "if (flow === 'voice'" in body and "[\\u1000-\\u109F]" in body
     assert "return msg" not in body
 
 
@@ -260,7 +263,9 @@ def test_api_upload_error_no_longer_leaks_exception():
 
 def test_api_url_block_detail_user_safe():
     assert "This URL is not allowed" not in API_PY
-    assert API_PY.count('detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ"') == 3
+    # R40: the preview-frame endpoint reuses the same user-safe detail
+    # (4 sites now: extract, upload-url, script-phase, preview-frame).
+    assert API_PY.count('detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ"') == 4
     # coded gate details are untouched (client gate logic depends on them)
     for code in ("USER_BANNED:", "GATE_NOT_CONFIGURED:", "MEMBERSHIP_REQUIRED:"):
         assert code in API_PY

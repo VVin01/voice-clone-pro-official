@@ -80,7 +80,9 @@ def test_state_machine_toggles_all_preview_surfaces():
     for el in ("recap-preview-empty", "recap-mockup-wrap",
                "preview-hint-tag", "recap-preview-controls-group"):
         assert f'getElementById("{el}")' in js
-    assert 'controlsGroup.classList.toggle("hidden", !ready)' in js
+    # R40 item 5: the controls group follows SOURCE PRESENCE, not the
+    # Analyze outcome — the canvas surfaces below stay ready-gated.
+    assert 'controlsGroup.classList.toggle("hidden", !(ready || recapHasSource()))' in js
     assert 'mockupWrap.classList.toggle("hidden", !ready)' in js
     # Setup initialises the machine in the empty state.
     assert 'setRecapPreviewState("empty");' in js

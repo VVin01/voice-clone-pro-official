@@ -18,7 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from recap_planner import RecapPlanBuilder
-from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box
+from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, ensure_plate_contains_anchor
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,8 @@ def run_recap_pipeline(
     except Exception as layout_err:
         _log(f"⚠️ Layout probe skipped ({layout_err}); subtitle plate keeps the legacy box")
     blur_boxes = []
+    _plate = None
+    _plate_idx = None
     if blur_subtitles:
         # R39 plate: fixed ~92%-wide centred band, height fitted to
         # the wrapped subtitle lines (never below the caller's
@@ -189,17 +191,27 @@ def run_recap_pipeline(
         # layouts. blur_x/blur_w no longer shape the plate (kept as
         # parameters for caller compatibility); blur-strength
         # semantics are unchanged (overlays["blur_strength"] below).
+        # R40 item 3: the plate is fed the SUBTITLE's sub_y — before,
+        # it was fed blur_y, so a job with sub_y=67/blur_y=85 shipped
+        # its subtitle floating on sharp picture at 67% while the
+        # plate blurred an empty strip at 85%. blur_y/blur_h keep
+        # their documented UI meaning: the user's hint for where the
+        # SOURCE caption sits (fallback box below).
+        _anchor_sub_y = float(sub_y) if sub_y is not None else float(blur_y)
         if _layout is not None:
-            blur_boxes.append(subtitle_plate_box(
+            _plate = subtitle_plate_box(
                 _layout["cw"], _layout["ch"], _layout,
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
-                sub_y=blur_y, min_h=blur_h,
-            ))
+                sub_y=_anchor_sub_y, min_h=blur_h,
+            )
         else:
-            blur_boxes.append({"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)})
+            _plate = {"x": float(blur_x), "y": _anchor_sub_y, "w": float(blur_w), "h": float(blur_h)}
+        _plate_idx = len(blur_boxes)
+        blur_boxes.append(_plate)
     if blur_watermark:
         # Standard top-right watermark
         blur_boxes.append({"x": 0.74, "y": 0.03, "w": 0.24, "h": 0.12})
+    _bands_detected = False
     if burn_subtitles:
         # Auto-cover the SOURCE video's own burned-in subtitle band. The preset box
         # above only covers the Myanmar subtitle position (y≈0.85); source dialogue
@@ -209,10 +221,8 @@ def run_recap_pipeline(
             # Detected bands are SOURCE-frame fractions; the preset
             # boxes above and every blur-box consumer use CANVAS
             # fractions. Convert through the render layout first so
-            # the dedupe comparison below and the overlay pass place
-            # the box on the picture area it actually describes
-            # (round-4 tear fix: unconverted bands landed mid-picture
-            # on blur-fill layouts and blurred a strip across the movie).
+            # the overlay pass places the box on the picture area it
+            # actually describes (round-4 tear fix).
             _band_layout = _layout
             if _band_layout is None:
                 _src_w, _src_h = probe_video_size(ffprobe_bin, source)
@@ -221,22 +231,47 @@ def run_recap_pipeline(
                     crop_top=crop_top, crop_bottom=crop_bottom,
                     crop_left=crop_left, crop_right=crop_right,
                 )
-            for band in detect_source_subtitle_bands(ffmpeg_bin, ffprobe_bin, source, target_job_dir, log=_log):
-                band = source_band_to_canvas_box(band, _band_layout)
-                top = band["y"] - band["h"] / 2.0
-                bot = band["y"] + band["h"] / 2.0
-                covered = False
-                for eb in blur_boxes:
-                    e_top = eb["y"] - eb["h"] / 2.0
-                    e_bot = eb["y"] + eb["h"] / 2.0
-                    overlap = max(0.0, min(bot, e_bot) - max(top, e_top))
-                    if overlap >= 0.5 * band["h"]:
-                        covered = True
-                        break
-                if not covered:
-                    blur_boxes.append(band)
+            _canvas_bands = [
+                source_band_to_canvas_box(band, _band_layout)
+                for band in detect_source_subtitle_bands(ffmpeg_bin, ffprobe_bin, source, target_job_dir, log=_log)
+            ]
+            _bands_detected = bool(_canvas_bands)
+            if _plate is not None:
+                # R40 item 3: reconcile each detected band against
+                # the plate — merge into one union band when close,
+                # drop when it sits in the letterbox padding, keep as
+                # the sole extra box otherwise. Never two stacked
+                # frosted bands.
+                _plate, _extras = reconcile_source_bands(
+                    _plate, _canvas_bands, _band_layout,
+                    int(_band_layout["cw"]), int(_band_layout["ch"]),
+                )
+                blur_boxes[_plate_idx] = _plate
+                blur_boxes.extend(_extras)
+            else:
+                blur_boxes.extend(_canvas_bands)
         except Exception as det_err:
             _log(f"⚠️ Source subtitle band auto-blur skipped: {det_err}")
+    if blur_subtitles and _plate is not None and not _bands_detected:
+        # Detection found no source band: fall back to the user's own
+        # blur_y hint as the source-band box (its original purpose) —
+        # but only when they actually moved it away from the subtitle
+        # position, so the default state gains no second band.
+        if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
+            blur_boxes.append({"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)})
+    if _plate is not None and _layout is not None:
+        # Belt-and-braces (item 3): before the boxes reach the overlay
+        # pass, the plate must contain the subtitle anchor — re-anchor
+        # it to the subtitle if geometry ever diverges again.
+        _anchor = subtitle_anchor_y(
+            _layout["cw"], _layout["ch"], _layout,
+            sub_y=float(sub_y) if sub_y is not None else float(blur_y),
+            raw_font_size=sub_font_size, sub_lines=sub_lines,
+        )
+        _fixed_plate = ensure_plate_contains_anchor(_plate, _anchor)
+        if _fixed_plate != _plate:
+            _plate = _fixed_plate
+            blur_boxes[_plate_idx] = _plate
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
         overlays["blur_strength"] = 18
@@ -464,6 +499,7 @@ def generate_recap_preview(
     if blur_subtitles:
         # R39: same plate geometry as the render path, so the preview
         # frame shows the plate the finished video will carry.
+        # R40 item 3: anchored to the subtitle's sub_y, like the render.
         try:
             _p_src_w, _p_src_h = probe_video_size(ffprobe_bin, src)
             _p_layout = frame_layout(
@@ -474,10 +510,10 @@ def generate_recap_preview(
             blur_boxes.append(subtitle_plate_box(
                 _p_layout["cw"], _p_layout["ch"], _p_layout,
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
-                sub_y=blur_y, min_h=blur_h,
+                sub_y=float(sub_y) if sub_y is not None else float(blur_y), min_h=blur_h,
             ))
         except Exception:
-            blur_boxes.append({"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)})
+            blur_boxes.append({"x": float(blur_x), "y": float(sub_y) if sub_y is not None else float(blur_y), "w": float(blur_w), "h": float(blur_h)})
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
         overlays["blur_strength"] = 18

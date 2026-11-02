@@ -382,7 +382,7 @@ class VoxCPMEngine:
                 )
                 if progress_cb:
                     try:
-                        progress_cb(f"🎙️ VoxCPM 2 AI ဖြင့် အသံဖန်တီးနေပါသည် (Key: {tok_masked})...")
+                        progress_cb(f"🎙️ အသံ ဖန်တီးနေပါသည်…")
                     except Exception:
                         pass
 
@@ -470,8 +470,12 @@ class VoxCPMEngine:
                         pos_val = getattr(st, "queue_position", None) or getattr(st, "position", None)
                         if eta_val is not None and float(eta_val) > 0:
                             eta_sec = int(round(float(eta_val)))
-                            pos_str = f" (အဆင့်: {pos_val})" if pos_val is not None else ""
-                            msg = f"⏳ VoxCPM 2 Queue စောင့်ဆိုင်းနေပါသည်{pos_str} — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
+                            # R40 deck F-3: no engine name in user-facing
+                            # progress text — queue rank only.
+                            if pos_val is not None:
+                                msg = f"⏳ စောင့်ဆိုင်းစာရင်းတွင် နံပါတ် {pos_val} — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
+                            else:
+                                msg = f"⏳ စောင့်ဆိုင်းစာရင်းတွင် စောင့်ဆိုင်းနေပါသည် — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
                             self._log(msg)
                             if progress_cb:
                                 try:

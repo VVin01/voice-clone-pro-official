@@ -67,7 +67,7 @@ from app.services.models import (
     set_model_free_permission,
     set_model_purchased_permission,
 )
-from app.services.payments import approve_payment_request, reject_payment_request
+from app.services.payments import approve_payment_request, package_recap_credits, reject_payment_request
 from app.services.custom_voice import (
     assign_model_to_request,
     get_custom_voice_request_by_id,
@@ -113,6 +113,49 @@ from app.ui.helpers import safe_edit_message
 
 logger = logging.getLogger(__name__)
 admin_router = Router(name="admin")
+
+
+def _model_file_ready(model) -> bool:
+    """Whether a voice model's engine payload is usable.
+
+    Cloud models store the engine marker ``"voxcpm"`` in pth_path
+    instead of a filesystem path (see services/queue.py) — they need
+    no local file. Local models are ready only when the file exists.
+    """
+    if not model.pth_path:
+        return False
+    if model.pth_path == "voxcpm":
+        return True
+    return Path(model.pth_path).is_file()
+
+
+def _wrap_admin_value(raw: str, width: int = 56, max_chars: int = 400) -> str:
+    """Render a long admin value (error text, JSON, URL) wrapped.
+
+    R40 item 15e: Telegram clients do not wrap unbroken tokens, so
+    long values ran off the message edge, and the old ``[:60]`` /
+    ``[:120]`` slices cut content mid-word. Wrap word-aware (long
+    tokens broken), shorten only at a word boundary when the value is
+    very long, escape AFTER wrapping so entities stay intact.
+    """
+    import textwrap
+
+    text = str(raw or "")
+    if len(text) > max_chars:
+        text = textwrap.shorten(text, width=max_chars, placeholder=" …")
+    wrapped_lines = []
+    for line in text.split("\n"):
+        wrapped_lines.append(
+            textwrap.fill(
+                line,
+                width=width,
+                break_long_words=True,
+                break_on_hyphens=False,
+            )
+            if line
+            else ""
+        )
+    return html.escape("\n".join(wrapped_lines))
 
 
 class AdminModelSampleFSM(StatesGroup):
@@ -242,7 +285,7 @@ async def render_admin_dashboard(
 
     failed_count = data["failed_jobs"]
     if failed_count > 0:
-        safe_err = html.escape(str(data["last_failed_error"] or "Error")[:60])
+        safe_err = _wrap_admin_value(data["last_failed_error"] or "Error", width=52, max_chars=180)
         issues_text = t("admin_issues_failed", lang, count=failed_count, error=safe_err)
     else:
         issues_text = t("admin_issues_clean", lang)
@@ -342,7 +385,12 @@ async def handle_admin_voices(callback: CallbackQuery):
         )).scalars().all()
 
     def badge(m: VoiceModel) -> str:
-        pth_exists = Path(m.pth_path).is_file() if m.pth_path else False
+        # R40 item 15b: the icon must agree with the legend in the
+        # title (🟢 ACTIVE / 🟡 READY / ⚪ DISABLED / 🔴 BROKEN). Cloud
+        # models carry pth_path="voxcpm" — an engine marker, not a
+        # file — so a naive is_file() check painted every ACTIVE cloud
+        # model 🔴 ("broken") in this list.
+        pth_exists = _model_file_ready(m)
         if m.status == VoiceModelStatus.ACTIVE.value and pth_exists:
             return "🟢"
         if m.status == VoiceModelStatus.READY.value and pth_exists:
@@ -515,7 +563,7 @@ async def render_admin_model_detail(
         await callback.answer(t("admin_alert_model_not_found", lang), show_alert=True)
         return
 
-    pth_ok = Path(model.pth_path).is_file() if model.pth_path else False
+    pth_ok = _model_file_ready(model)
     idx_ok = Path(model.index_path).is_file() if model.index_path else False
 
     safe_pth_path = html.escape(str(model.pth_path or ""))
@@ -1020,6 +1068,7 @@ async def handle_admin_pay_detail(callback: CallbackQuery, session: AsyncSession
         user_id=payment.user_id,
         package_code=payment.package_code,
         minutes=payment.minutes,
+        recap_credits=package_recap_credits(payment.package_code),
         amount_mmk=payment.amount_mmk,
         status=payment.status,
         created_at=payment.created_at,
@@ -1041,8 +1090,17 @@ async def handle_admin_pay_detail(callback: CallbackQuery, session: AsyncSession
     except Exception:
         pass
 
-
-@admin_router.callback_query(F.data.startswith("admin:pay_receipt:"))
+    # R40 item 7: the receipt image is part of the order detail — send
+    # it right here with the detail, not only behind the separate
+    # "view receipt" tap or in the original notification message.
+    if payment.receipt_file_id:
+        try:
+            await callback.message.answer_photo(
+                photo=payment.receipt_file_id,
+                caption=f"🧾 Payment #{payment.id} receipt (User {payment.user_id})",
+            )
+        except Exception as e:
+            logger.warning("Could not attach receipt photo to payment detail: %s", e)
 async def handle_admin_pay_receipt(callback: CallbackQuery, session: AsyncSession | None = None):
     if not await is_authorized_admin(callback):
         return
@@ -1101,9 +1159,9 @@ async def handle_admin_pay_approve_prompt(callback: CallbackQuery, session: Asyn
         f"⚠️ <b>Confirm Payment Approval</b>\n\n"
         f"• Payment ID: <code>{payment.id}</code>\n"
         f"• Target User: <code>{payment.user_id}</code>\n"
-        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} minutes)\n"
+        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} minutes + {package_recap_credits(payment.package_code)} recap credits)\n"
         f"• Amount: <b>{payment.amount_mmk:,} MMK</b>\n\n"
-        f"<i>Are you sure you want to approve this payment and credit {payment.minutes} minutes?</i>"
+        f"<i>Are you sure you want to approve this payment and credit {payment.minutes} minutes + {package_recap_credits(payment.package_code)} recap credits?</i>"
     )
     kb = admin_pay_approve_confirm_kb(payment.id, lang=lang)
     await safe_edit_message(callback, confirm_text, reply_markup=kb, parse_mode="HTML")
@@ -1130,7 +1188,7 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
                 target_lang = target_user.language_code if target_user else "my"
                 await callback.bot.send_message(
                     chat_id=payment.user_id,
-                    text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes),
+                    text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes, recap_credits=package_recap_credits(payment.package_code)),
                     parse_mode="HTML",
                 )
             except Exception as e:
@@ -1147,7 +1205,7 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
                     target_lang = target_user.language_code if target_user else "my"
                     await callback.bot.send_message(
                         chat_id=payment.user_id,
-                        text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes),
+                        text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes, recap_credits=package_recap_credits(payment.package_code)),
                         parse_mode="HTML",
                     )
                 except Exception as e:
@@ -1161,12 +1219,12 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
         f"✅ <b>Payment Approved (#{payment.id})</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• User ID: <code>{payment.user_id}</code>\n"
-        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} mins)\n"
+        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} mins + {package_recap_credits(payment.package_code)} recap credits)\n"
         f"• Amount: <b>{payment.amount_mmk:,} MMK</b>\n"
         f"• Status: 🟢 <b>APPROVED</b>\n"
         f"• Approved by Admin: <code>{callback.from_user.id}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>Minutes credited to user account successfully!</i>"
+        f"<i>Minutes and recap credits credited to user account successfully!</i>"
     )
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1404,7 +1462,7 @@ async def handle_admin_queue(callback: CallbackQuery, session: AsyncSession | No
             clean_text = (j.input_text or "").replace("\n", " ").strip()
             preview = html.escape(clean_text[:35] + ("..." if len(clean_text) > 35 else ""))
 
-            job_entry = f"• <b>{st_icon}</b> <code>#{j.id[:8]}</code> · {user_label}\n  🎙 <code>{model_name}</code> ({dur}) | 🕒 <code>{ts_str}</code>\n  💬 <i>\"{preview}\"</i>"
+            job_entry = f"• <b>{st_icon}</b> <code>#{j.id}</code> · {user_label}\n  🎙 <code>{model_name}</code> ({dur}) | 🕒 <code>{ts_str}</code>\n  💬 <i>\"{preview}\"</i>"
             if st == JobStatus.FAILED.value and j.error_message:
                 brief_err = html.escape(str(j.error_message)[:60])
                 job_entry += f"\n  ⚠️ <i>{brief_err}</i>"
@@ -1491,7 +1549,7 @@ async def handle_admin_queue_view(callback: CallbackQuery, session: AsyncSession
             preview = html.escape(clean_text[:40] + ("..." if len(clean_text) > 40 else ""))
 
             lines.append(
-                f"• Job <code>#{j.id[:8]}</code> · {user_label}\n"
+                f"• Job <code>#{j.id}</code> · {user_label}\n"
                 f"  🎙 <code>{model_name}</code> ({dur}) | 🕒 <code>{ts_str}</code>\n"
                 f"  💬 <i>\"{preview}\"</i>\n"
             )
@@ -1531,8 +1589,8 @@ async def handle_admin_queue_failures(callback: CallbackQuery, session: AsyncSes
         lines = [t("admin_queue_failures_title", lang, count=len(failed_jobs))]
         for j in failed_jobs:
             ts_str = j.created_at.strftime("%Y-%m-%d %H:%M UTC") if j.created_at else "Unknown"
-            safe_err = html.escape(str(j.error_message or "Unknown error")[:120])
-            lines.append(f"• Job <code>#{j.id[:8]}</code> (User <code>{j.user_id}</code>) at <code>{ts_str}</code>\n  <i>{safe_err}</i>\n")
+            safe_err = _wrap_admin_value(j.error_message or "Unknown error", width=56, max_chars=220)
+            lines.append(f"• Job <code>#{j.id}</code> (User <code>{j.user_id}</code>) at <code>{ts_str}</code>\n  <i>{safe_err}</i>\n")
         lines.append("<i>Click a job button below to inspect failure details or retry:</i>")
         text = "\n".join(lines)
 
@@ -1581,7 +1639,7 @@ async def handle_admin_job_detail(callback: CallbackQuery, session: AsyncSession
     created_str = job.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if job.created_at else "Unknown"
     started_str = job.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") if job.started_at else "Not started"
     finished_str = job.finished_at.strftime("%Y-%m-%d %H:%M:%S UTC") if job.finished_at else "Not finished"
-    safe_err = html.escape(str(job.error_message or "None"))
+    safe_err = _wrap_admin_value(job.error_message or "None", width=56, max_chars=600)
     text_preview = html.escape(str(job.input_text or "")[:250])
     model_name = html.escape(model.name if model else (job.edge_voice or "Custom"))
 
@@ -1789,7 +1847,7 @@ async def handle_admin_job_retry_confirm(callback: CallbackQuery, session: Async
         await callback.answer(f"Retry failed: {msg}", show_alert=True)
         return
 
-    await callback.answer(f"✅ Job #{job_id[:8]} re-queued for processing!", show_alert=False)
+    await callback.answer(f"✅ Job #{job_id} re-queued for processing!", show_alert=False)
     await handle_admin_queue(callback, session=session)
 
 
@@ -2645,6 +2703,24 @@ async def handle_admin_pricing(callback: CallbackQuery, session: AsyncSession | 
             )
         ])
 
+    # R40 item 15d: Recap / Combined / Voice Pro plans live in the code
+    # catalogue, not the pricing_plans table — the screen previously
+    # showed only MIN_10/30/60. List the rest (display-only; their
+    # prices are code constants).
+    from app.services.payments import PLAN_CATALOGUE as _CATALOGUE
+
+    _db_codes = {p.code for p in plans}
+    _extra = [e for e in _CATALOGUE if e["code"] not in _db_codes]
+    if _extra:
+        lines.append("\n📦 <b>Catalogue Plans (code-priced):</b>")
+        for e in _extra:
+            _parts = []
+            if e["minutes"]:
+                _parts.append(f"{e['minutes']} mins")
+            if e["recap_credits"]:
+                _parts.append(f"{e['recap_credits']} recap credits")
+            lines.append(f"• <b>{e['code']}</b>: {' + '.join(_parts)} — <b>{e['price_mmk']:,} MMK</b>")
+
     lines.append(
         "\n🏦 <b>Configured Payment Accounts:</b>\n"
         f"• <b>KBZPay:</b> <code>{acc_info['kpay_number']}</code> ({acc_info['kpay_name']})\n"
@@ -2835,7 +2911,8 @@ async def handle_admin_settings(callback: CallbackQuery, session: AsyncSession |
         "💳 <b>Minute Packages:</b>\n"
         f"{minute_packages_display}\n\n"
         "⚖️ <b>Deduction & Billing Rules:</b>\n"
-        "• Order: <code>monthly_free_seconds</code> ➔ <code>purchased_seconds</code>\n"
+        "• Order: <code>monthly_free_seconds</code>\n"
+        "  ➔ <code>purchased_seconds</code>\n"
         "• Idempotent post-generation deduction per job ID\n"
         "• Failed or cancelled jobs are never deducted (auto-refunded)\n"
         "• Admin Bypass: Unlimited generations without balance deduction"
@@ -3179,8 +3256,10 @@ async def handle_admin_tutorial(callback: CallbackQuery, session: AsyncSession |
     v_badge = "🟢 <b>Enabled (ဖွင့်ထားသည်)</b>" if state_data["voice_enabled"] else "🔴 <b>Disabled (ပိတ်ထားသည်)</b>"
     r_badge = "🟢 <b>Enabled (ဖွင့်ထားသည်)</b>" if state_data["recap_enabled"] else "🔴 <b>Disabled (ပိတ်ထားသည်)</b>"
 
-    v_link_disp = f"<code>{html.escape(state_data['voice_link'])}</code>" if state_data['voice_link'] else "<i>Not set</i>"
-    r_link_disp = f"<code>{html.escape(state_data['recap_link'])}</code>" if state_data['recap_link'] else "<i>Not set</i>"
+    # R40 item 15e: long guide URLs inside <code> never wrapped and
+    # ran off the message edge — wrap them.
+    v_link_disp = f"<code>{_wrap_admin_value(state_data['voice_link'], width=44)}</code>" if state_data['voice_link'] else "<i>Not set</i>"
+    r_link_disp = f"<code>{_wrap_admin_value(state_data['recap_link'], width=44)}</code>" if state_data['recap_link'] else "<i>Not set</i>"
 
     text = (
         f"📺 <b>Tutorial Video Manager (Guide Controls)</b>\n\n"
@@ -3425,7 +3504,16 @@ async def handle_admin_audit_logs(callback: CallbackQuery, session: AsyncSession
             ts_str = log.created_at.strftime("%Y-%m-%d %H:%M UTC") if log.created_at else "Unknown"
             safe_action = html.escape(log.action)
             safe_target = f"{log.target_type}:{log.target_id}" if log.target_type else "system"
-            safe_details = html.escape((log.details_json or "")[:60])
+            # R40 item 15e: full details, pretty-printed + wrapped —
+            # the old [:60] slice cut the JSON mid-content.
+            _raw_details = log.details_json or ""
+            try:
+                import json as _json
+
+                _pretty = _json.dumps(_json.loads(_raw_details), ensure_ascii=False, indent=1)
+            except Exception:
+                _pretty = _raw_details
+            safe_details = _wrap_admin_value(_pretty, width=56, max_chars=500)
             text += f"• <code>{ts_str}</code> | Admin <code>{log.admin_id}</code>\n  <b>{safe_action}</b> on <code>{safe_target}</code>\n  <i>{safe_details}</i>\n\n"
     else:
         text += "<i>No audit logs recorded yet.</i>\n"

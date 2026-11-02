@@ -274,7 +274,7 @@ async def process_single_job(
                     used_fallback = True
                     logger.warning("VoxCPM 2 primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", e_vox)
                     try:
-                        tracker.set_custom_note("⚠️ VoxCPM ZeroGPU Quota ပြည့်သွားသဖြင့် အရန် Neural Audio ဖြင့် ထုတ်ပေးနေပါသည်...")
+                        tracker.set_custom_note("⚠️ မူရင်း အသံ Engine အလုပ်များနေသဖြင့် အရန် အသံဖြင့် ထုတ်ပေးနေပါသည်…")
                     except Exception:
                         pass
 
@@ -398,7 +398,7 @@ async def process_single_job(
                         ])
                         await bot.send_message(
                             chat_id=target_chat_id,
-                            text=t("clone_audio_too_large_text", lang, job_id=job.id[:8]) + fallback_note,
+                            text=t("clone_audio_too_large_text", lang, job_id=job.id) + fallback_note,
                             reply_markup=kb,
                             parse_mode="HTML",
                         )
@@ -443,7 +443,7 @@ async def process_single_job(
                         lang,
                         model_name=html.escape(str(caption_model_name)),
                         duration=duration_seconds,
-                        job_id=job.id[:8],
+                        job_id=job.id,
                     ) + fallback_note
                     await bot.send_message(
                         chat_id=target_chat_id,
