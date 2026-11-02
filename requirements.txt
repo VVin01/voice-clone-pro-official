@@ -1,5 +1,5 @@
 # Voice Clone Pro Official - Production & Testing Dependencies
-# Python Target: 3.10.x
+# Python Target: 3.12.x
 
 # Telegram Bot Framework
 aiogram==3.31.0
@@ -27,7 +27,7 @@ python-multipart>=0.0.9,<1.0.0
 aiofiles>=24.0.0,<25.0.0
 
 # Downloader, Transcription & Media Processing
-yt-dlp==2026.10.21
+yt-dlp==2026.10.26
 nodejs-wheel-binaries>=22.20.0,<23.0.0
 requests>=2.31.0,<3.0.0
 Pillow>=10.0.0,<12.0.0

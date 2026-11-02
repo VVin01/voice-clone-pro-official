@@ -392,8 +392,20 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
 # chain second for cookie-rescuable (age/region) videos; android/mweb
 # are low-res last resorts and their results are flagged low_res.
 
-YOUTUBE_ATTEMPT_SOCKET_TIMEOUT = 20   # bounded per-attempt socket timeout
-INFO_STAGE_RETRIES = 2                # info extraction fails fast; retries:10 stays for media bytes
+YOUTUBE_ATTEMPT_SOCKET_TIMEOUT = 20   # bounded per-attempt socket timeout (media stage)
+# R39.1 info-stage latency trim: R39 shipped retries=2 with a 20s
+# socket cap at the info stage, and a fully-walled YouTube URL took
+# ~68–78s to fail on prod (~17–19s per client). The per-client cost
+# is multiplicative: the outer `retries` wraps the whole extract_info
+# call while `extractor_retries` re-fetches inside the extractor, so
+# 2/2 allowed up to (2+1)x(2+1)=9 fetch rounds per client, each
+# round's sockets capped at 20s. The info stage now runs retries=1
+# (≤2x2=4 rounds) under a 10s socket cap: the observed fast-fail mode
+# ("Failed to extract any player response", ~2s/round) lands at
+# ~7–9s per client, ≤ ~40s for the full 4-client chain. Media-byte
+# budgets are untouched (retries:10, socket_timeout 20).
+INFO_STAGE_RETRIES = 1                # info extraction fails fast; retries:10 stays for media bytes
+INFO_STAGE_SOCKET_TIMEOUT = 10        # info-stage socket cap; media keeps YOUTUBE_ATTEMPT_SOCKET_TIMEOUT
 
 # tikwm resolver guardrails (failure-triggered only): hard timeouts,
 # response validation, and an in-memory circuit breaker so a sick or
@@ -801,8 +813,9 @@ class MediaDownloader:
         HD ladder from datacenter IPs), then the cookie'd default
         chain (age/region rescues), then the 360p rescues android and
         mweb. Info-stage attempts fail fast (retries/fragment_retries
-        2 — the retries:10 policy is for media bytes only); every
-        attempt carries a bounded socket timeout. Every other host
+        1 under a 10s socket cap — the retries:10 policy and the 20s
+        cap are for media bytes only); every attempt carries a
+        bounded socket timeout. Every other host
         yields exactly one attempt: the base opts, unchanged.
         """
         if not _is_youtube_url(expanded_url):
@@ -815,7 +828,9 @@ class MediaDownloader:
                 o['retries'] = INFO_STAGE_RETRIES
                 o['fragment_retries'] = INFO_STAGE_RETRIES
                 o['extractor_retries'] = INFO_STAGE_RETRIES
-            o['socket_timeout'] = YOUTUBE_ATTEMPT_SOCKET_TIMEOUT
+                o['socket_timeout'] = INFO_STAGE_SOCKET_TIMEOUT
+            else:
+                o['socket_timeout'] = YOUTUBE_ATTEMPT_SOCKET_TIMEOUT
             return o
 
         def _with_client(opts: Dict[str, Any], client: str) -> Dict[str, Any]:

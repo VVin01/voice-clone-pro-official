@@ -9,7 +9,7 @@ answer at a 360p ceiling. Antigravity second-opinion applied:
 web_embedded is PRIMARY (default/cookies second), android/mweb are
 low-res last resorts flagged low_res, tikwm is failure-triggered
 only behind a 2.5s timeout + MIME/size assertions + a circuit
-breaker, yt-dlp is pinned to the deployed 2026.10.21.
+breaker, yt-dlp is pinned to the deployed 2026.10.26.
 
 Geometry base (blur-sub-inspect-2026-11-02): the subtitle blur plate
 was a 90%-wide hard-edged box and letterboxed renders floated the
@@ -137,10 +137,11 @@ def test_chain_web_embedded_is_primary_and_wins(monkeypatch, tmp_path):
     assert out["low_res"] is False
     assert len(_ChainYDL.calls) == 1
     opts = _ChainYDL.calls[0]
-    # Fail-fast info stage + bounded per-attempt timeout.
-    assert opts["retries"] == 2
-    assert opts["fragment_retries"] == 2
-    assert opts["socket_timeout"] == 20
+    # Fail-fast info stage (R39.1 trim) + bounded per-attempt timeout.
+    assert opts["retries"] == 1
+    assert opts["fragment_retries"] == 1
+    assert opts["extractor_retries"] == 1
+    assert opts["socket_timeout"] == 10
 
 
 def test_chain_rotates_in_order_and_flags_low_res(monkeypatch, tmp_path):
@@ -781,4 +782,35 @@ def test_analyze_honesty_wiring_present():
 
 def test_yt_dlp_pinned_to_deployed_version():
     lines = [l.strip() for l in REQUIREMENTS.splitlines() if l.strip().startswith("yt-dlp")]
-    assert lines == ["yt-dlp==2026.10.21"]
+    assert lines == ["yt-dlp==2026.10.26"]
+
+
+# ── 9. R39.1 info-stage latency budget ──────────────────────────────
+
+def test_info_stage_budget_all_clients_and_media_unchanged(tmp_path):
+    """R39.1 trim: EVERY info-stage plan carries the bounded budget
+    (retries/fragment/extractor 1, socket cap 10s) so a fully-walled
+    YouTube URL fails the whole 4-client chain in ≤ ~40s; the media
+    stage keeps the byte budgets (retries 10, socket cap 20s)
+    exactly as R39 left them."""
+    dl = MediaDownloader(download_dir=str(tmp_path))
+    base = dl._get_base_opts(YOUTUBE_URL)
+
+    info_plans = list(dl._attempt_plans(base, YOUTUBE_URL, stage="info"))
+    assert [label for label, _ in info_plans] == ["web_embedded", "default", "android", "mweb"]
+    for _label, opts in info_plans:
+        assert opts["retries"] == 1
+        assert opts["fragment_retries"] == 1
+        assert opts["extractor_retries"] == 1
+        assert opts["socket_timeout"] == 10
+
+    media_plans = list(dl._attempt_plans(base, YOUTUBE_URL, stage="media"))
+    assert [label for label, _ in media_plans] == ["web_embedded", "default", "android", "mweb"]
+    for _label, opts in media_plans:
+        assert opts["retries"] == 10
+        assert opts["socket_timeout"] == 20
+
+    # The budget constants themselves are the contract.
+    assert dl_mod.INFO_STAGE_RETRIES == 1
+    assert dl_mod.INFO_STAGE_SOCKET_TIMEOUT == 10
+    assert dl_mod.YOUTUBE_ATTEMPT_SOCKET_TIMEOUT == 20
