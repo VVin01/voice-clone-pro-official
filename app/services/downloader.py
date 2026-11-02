@@ -11,6 +11,8 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+import time
 import logging
 import subprocess
 import json
@@ -18,6 +20,7 @@ import uuid
 import requests
 import yt_dlp
 from typing import Dict, Any, Optional, List, Tuple, Callable
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +234,16 @@ def detect_platform(url: str) -> str:
     else:
         return "Web Media"
 
+def _is_direct_media_url(url: str) -> bool:
+    """True when the URL itself points at a media file (direct-host
+    link), as opposed to a platform page/share link."""
+    try:
+        path = urlparse(str(url or "")).path.lower()
+    except Exception:
+        return False
+    return os.path.splitext(path)[1] in MEDIA_EXTS
+
+
 def classify_source_error(err_msg: str, url: str) -> Optional[str]:
     """Map a raw yt-dlp / extractor error to a curated user-facing message.
 
@@ -263,6 +276,25 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
         return (
             "⚠️ ဒီ လင့်ခ် အမျိုးအစား ကို မထောက်ပံ့သေးပါ။ "
             "YouTube၊ TikTok၊ Facebook လင့်ခ်များဖြင့် စမ်းကြည့်ပါ။ " + upload_hint
+        )
+    if (
+        ("http error 403" in low or "http error 401" in low
+         or ("403" in low and "forbidden" in low)
+         or ("401" in low and "unauthorized" in low))
+        and _is_direct_media_url(url or "")
+    ):
+        # Direct-host refusal (R39): the URL is a media FILE and its
+        # host answered 403/401 — e.g. Google's GTV sample bucket now
+        # refuses datacenter egress wholesale (measured 2026-11-02:
+        # bare curl gets the same 403 from every datacenter IP). That
+        # is NOT an "invalid link" and NOT a platform block: the file
+        # exists, its host will not serve OUR server. Distinct copy:
+        # name the host refusal and point at a different source or a
+        # direct upload. (The client recognises this sentence as a
+        # blocked-source marker — see blockedLinkInfo in app.js.)
+        return (
+            "⚠️ ဒီ ဗီဒီယိုဖိုင်၏ မူရင်း ဆာဗာ (host) က ကျွန်တော်တို့ ဆာဗာမှ ဆွဲယူခြင်းကို "
+            "ငြင်းပယ်ထားပါသည်။ အခြား အရင်းအမြစ် လင့်ခ် ဖြင့် စမ်းကြည့်ပါ။ " + upload_hint
         )
     if (
         ("403" in low and ("forbidden" in low or "http error" in low))
@@ -345,6 +377,157 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
             "ပြန်စစ်ပြီး ထပ်စမ်းကြည့်ပါ။ " + upload_hint
         )
     return None
+
+
+# ── R39: extraction-boost chain + guarded tikwm fallback ────────────
+#
+# Measured 2026-11-02 (extract-boost-2026-11-02/REPORT.md): from
+# datacenter IPs, YouTube's default yt-dlp client chain is walled
+# (sign-in challenge cookieless; player-less / format-stripped
+# responses even with the prod cookie session), while
+# player_client=web_embedded returns the full HD ladder and
+# android/mweb answer at a 360p ceiling. Antigravity second-opinion:
+# web_embedded goes FIRST (the default chain burns time and bot-score
+# when it always fails first); the cookie'd default stays in the
+# chain second for cookie-rescuable (age/region) videos; android/mweb
+# are low-res last resorts and their results are flagged low_res.
+
+YOUTUBE_ATTEMPT_SOCKET_TIMEOUT = 20   # bounded per-attempt socket timeout
+INFO_STAGE_RETRIES = 2                # info extraction fails fast; retries:10 stays for media bytes
+
+# tikwm resolver guardrails (failure-triggered only): hard timeouts,
+# response validation, and an in-memory circuit breaker so a sick or
+# hostile resolver can never stall or poison the extraction path.
+TIKWM_API_URL = "https://www.tikwm.com/api/"
+TIKWM_TIMEOUT = 2.5                   # seconds — API call AND validation probe
+TIKWM_MEDIA_READ_TIMEOUT = 30         # seconds — streaming the CDN bytes after validation
+TIKWM_BREAKER_THRESHOLD = 3           # consecutive resolver failures that open the breaker
+TIKWM_BREAKER_OPEN_SECONDS = 30 * 60  # breaker stays open 30 minutes
+TIKWM_MIN_MEDIA_BYTES = 10_000        # a real TikTok mp4 is never this small
+_TIKWM_CDN_HOST_RE = re.compile(r"(^|\.)(tiktokcdn(-[a-z0-9]+)?|tiktokv)\.com$", re.IGNORECASE)
+
+
+def _is_youtube_url(url: str) -> bool:
+    u = str(url or "").lower()
+    return "youtube.com" in u or "youtu.be" in u
+
+
+def _is_tiktok_url(url: str) -> bool:
+    return "tiktok.com" in str(url or "").lower()
+
+
+def _is_blocked_family_error(err_msg: str) -> bool:
+    """True when a raw extractor error belongs to the blocked/failed
+    family — the same needles classify_source_error() maps to its
+    blocked copy (403 wall, per-item IP block, failed-to-extract)."""
+    low = str(err_msg or "").lower()
+    return (
+        ("403" in low and ("forbidden" in low or "http error" in low))
+        or "ip address is blocked" in low
+        or "ip is blocked" in low
+        or "blocked from accessing" in low
+        or "failed to extract" in low
+    )
+
+
+# Definitive content truths: rotating to another player client can
+# never resurrect a private/deleted/removed video or make an
+# unsupported URL supported, so the chain stops at the first attempt.
+_NON_ROTATABLE_NEEDLES = (
+    "unsupported url",
+    "private video",
+    "video is private",
+    "video unavailable",
+    "no longer available",
+    "has been removed",
+)
+
+
+def _is_rotation_worthy_error(err_msg: str) -> bool:
+    """Only extraction-class failures (sign-in wall, player response,
+    no formats, format unavailable, network) are worth another client."""
+    low = str(err_msg or "").lower()
+    return not any(n in low for n in _NON_ROTATABLE_NEEDLES)
+
+
+def _best_format_height(info: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Highest video format height in an info dict (None when unknown)."""
+    if not isinstance(info, dict):
+        return None
+    heights = []
+    top_h = info.get("height")
+    if isinstance(top_h, (int, float)) and top_h:
+        heights.append(int(top_h))
+    for fmt in info.get("formats") or []:
+        if not isinstance(fmt, dict):
+            continue
+        if fmt.get("vcodec") in (None, "none"):
+            continue
+        fh = fmt.get("height")
+        if isinstance(fh, (int, float)) and fh:
+            heights.append(int(fh))
+    return max(heights) if heights else None
+
+
+def _flag_low_res(info: Dict[str, Any], url: str, client_label: str) -> bool:
+    """Record low_res on an info dict when the best format is ≤360p
+    (the android/mweb rescue ceiling) and log it loudly."""
+    best_h = _best_format_height(info)
+    if best_h is not None and best_h <= 360:
+        info["low_res"] = True
+        logger.warning(
+            f"LOW_RES source via client '{client_label}': best format height "
+            f"{best_h}p (<=360p) for {url}"
+        )
+        return True
+    info.setdefault("low_res", False)
+    return False
+
+
+def _valid_tikwm_play_url(play_url: Any) -> bool:
+    """A tikwm play URL is accepted only as an https URL on a TikTok
+    CDN host (tiktokcdn*.com / tiktokv.com)."""
+    if not isinstance(play_url, str) or not play_url.startswith("https://"):
+        return False
+    try:
+        host = urlparse(play_url).hostname or ""
+    except Exception:
+        return False
+    return bool(_TIKWM_CDN_HOST_RE.search(host))
+
+
+class _TikwmCircuitBreaker:
+    """In-memory breaker for the tikwm resolver: after
+    TIKWM_BREAKER_THRESHOLD consecutive failures it opens for
+    TIKWM_BREAKER_OPEN_SECONDS and the fallback is skipped entirely."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._consecutive_failures = 0
+        self._opened_until = 0.0
+
+    def allow(self) -> bool:
+        with self._lock:
+            return time.monotonic() >= self._opened_until
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._consecutive_failures = 0
+            self._opened_until = 0.0
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= TIKWM_BREAKER_THRESHOLD:
+                self._opened_until = time.monotonic() + TIKWM_BREAKER_OPEN_SECONDS
+
+    def reset(self) -> None:
+        with self._lock:
+            self._consecutive_failures = 0
+            self._opened_until = 0.0
+
+
+_TIKWM_BREAKER = _TikwmCircuitBreaker()
 
 
 def format_duration(seconds: Optional[int]) -> str:
@@ -611,6 +794,233 @@ class MediaDownloader:
 
         return opts
 
+    def _attempt_plans(self, base_opts: Dict[str, Any], expanded_url: str, *, stage: str):
+        """Ordered (label, opts) extraction attempts for a URL.
+
+        YouTube gets the R39 client chain — web_embedded first (full
+        HD ladder from datacenter IPs), then the cookie'd default
+        chain (age/region rescues), then the 360p rescues android and
+        mweb. Info-stage attempts fail fast (retries/fragment_retries
+        2 — the retries:10 policy is for media bytes only); every
+        attempt carries a bounded socket timeout. Every other host
+        yields exactly one attempt: the base opts, unchanged.
+        """
+        if not _is_youtube_url(expanded_url):
+            yield "default", base_opts
+            return
+
+        def _staged(opts: Dict[str, Any]) -> Dict[str, Any]:
+            o = dict(opts)
+            if stage == "info":
+                o['retries'] = INFO_STAGE_RETRIES
+                o['fragment_retries'] = INFO_STAGE_RETRIES
+                o['extractor_retries'] = INFO_STAGE_RETRIES
+            o['socket_timeout'] = YOUTUBE_ATTEMPT_SOCKET_TIMEOUT
+            return o
+
+        def _with_client(opts: Dict[str, Any], client: str) -> Dict[str, Any]:
+            o = dict(opts)
+            ea = dict(o.get('extractor_args') or {})
+            yt_args = dict(ea.get('youtube') or {})
+            yt_args['player_client'] = [client]
+            ea['youtube'] = yt_args
+            o['extractor_args'] = ea
+            return o
+
+        yield "web_embedded", _staged(_with_client(base_opts, "web_embedded"))
+        yield "default", _staged(dict(base_opts))
+        yield "android", _staged(_with_client(base_opts, "android"))
+        yield "mweb", _staged(_with_client(base_opts, "mweb"))
+
+    def _tikwm_resolve(self, page_url: str) -> Optional[Dict[str, Any]]:
+        """Guarded tikwm resolver lookup for a TikTok page URL.
+
+        Returns {'id', 'title', 'author', 'duration', 'cover',
+        'play_url', 'play_size'} on success, None on any failure.
+        Guardrails: circuit breaker, a hard TIKWM_TIMEOUT on both the
+        API call and the media validation probe, JSON shape checks,
+        https TikTok-CDN host validation, and a content-type/size
+        assertion on the play URL itself. Never raises.
+        """
+        if not _TIKWM_BREAKER.allow():
+            logger.warning("tikwm fallback skipped: circuit breaker open")
+            return None
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
+        try:
+            resp = requests.get(
+                TIKWM_API_URL,
+                params={'url': page_url, 'hd': 1},
+                timeout=TIKWM_TIMEOUT,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as e:
+            _TIKWM_BREAKER.record_failure()
+            logger.warning(f"tikwm resolver call failed for {page_url}: {e}")
+            return None
+
+        data = payload.get('data') if isinstance(payload, dict) else None
+        code = payload.get('code') if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or code not in (0, "0", None):
+            _TIKWM_BREAKER.record_failure()
+            logger.warning(f"tikwm resolver returned an unusable payload for {page_url}: code={code!r}")
+            return None
+
+        play_url = data.get('hdplay') or data.get('play') or data.get('wmplay')
+        if not _valid_tikwm_play_url(play_url):
+            _TIKWM_BREAKER.record_failure()
+            logger.warning(f"tikwm play URL failed validation for {page_url}: {play_url!r}")
+            return None
+
+        # Assert the play URL really serves an mp4 of plausible size
+        # before anyone trusts it (reject HTML error pages / stubs).
+        play_size: Optional[int] = None
+        try:
+            with requests.get(
+                play_url,
+                headers={**headers, 'Range': 'bytes=0-0'},
+                timeout=TIKWM_TIMEOUT,
+                stream=True,
+            ) as probe:
+                ctype = (probe.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+                if probe.status_code not in (200, 206) or ctype != 'video/mp4':
+                    _TIKWM_BREAKER.record_failure()
+                    logger.warning(
+                        f"tikwm play URL probe failed for {page_url}: "
+                        f"status={probe.status_code} content-type={ctype!r}"
+                    )
+                    return None
+                crange = probe.headers.get('Content-Range') or ''
+                if '/' in crange:
+                    try:
+                        play_size = int(crange.rsplit('/', 1)[1])
+                    except (ValueError, IndexError):
+                        play_size = None
+                if play_size is None:
+                    try:
+                        play_size = int(probe.headers.get('Content-Length') or 0) or None
+                    except (TypeError, ValueError):
+                        play_size = None
+                if play_size is not None and play_size < TIKWM_MIN_MEDIA_BYTES:
+                    _TIKWM_BREAKER.record_failure()
+                    logger.warning(f"tikwm play URL implausibly small ({play_size}B) for {page_url}")
+                    return None
+        except Exception as e:
+            _TIKWM_BREAKER.record_failure()
+            logger.warning(f"tikwm play URL probe errored for {page_url}: {e}")
+            return None
+
+        _TIKWM_BREAKER.record_success()
+        author = data.get('author') or {}
+        return {
+            'id': str(data.get('id') or ''),
+            'title': str(data.get('title') or 'tiktok_video'),
+            'author': str(author.get('nickname') or author.get('unique_id') or 'TikTok') if isinstance(author, dict) else 'TikTok',
+            'duration': data.get('duration'),
+            'cover': data.get('cover') or data.get('origin_cover'),
+            'play_url': play_url,
+            'play_size': play_size,
+        }
+
+    def _tikwm_get_info(self, url: str, expanded_url: str) -> Optional[Dict[str, Any]]:
+        """get_info()-shaped metadata from the tikwm fallback."""
+        data = self._tikwm_resolve(expanded_url)
+        if data is None:
+            return None
+        duration = data.get('duration')
+        try:
+            duration = int(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            duration = None
+        filesize = data.get('play_size')
+        logger.info(f"get_info: tikwm fallback resolved TikTok metadata for {expanded_url}")
+        return {
+            "id": data['id'] or None,
+            "title": data['title'],
+            "duration": duration,
+            "duration_formatted": format_duration(duration),
+            "uploader": data['author'],
+            "thumbnail": data.get('cover'),
+            "platform": "TikTok",
+            "original_url": url,
+            "expanded_url": expanded_url,
+            "filesize": filesize,
+            "filesize_formatted": format_filesize(filesize),
+            "available_subs": [],
+            "has_subtitles": False,
+            "width": None,
+            "height": None,
+            "low_res": False,
+            "tikwm_fallback": True,
+            "raw_info": {"id": data['id'], "tikwm_fallback": True, "play_url": data['play_url']},
+        }
+
+    def _tikwm_download_video(self, url: str, expanded_url: str, dest_dir: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """Download a TikTok video's bytes via the tikwm fallback.
+
+        The play URL is re-validated by _tikwm_resolve (the probe
+        asserts video/mp4 + size); the streaming fetch re-asserts the
+        content type and the final file size before the file is
+        trusted. Returns (file_path, info) or None. Never raises.
+        """
+        data = self._tikwm_resolve(expanded_url)
+        if data is None:
+            return None
+        play_url = data['play_url']
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
+        safe_id = re.sub(r'[^A-Za-z0-9_-]', '_', data['id'] or 'tiktok')[:40] or 'tiktok'
+        file_path = os.path.join(dest_dir, f"{safe_id}_tikwm.mp4")
+        try:
+            with requests.get(
+                play_url,
+                headers=headers,
+                timeout=(TIKWM_TIMEOUT, TIKWM_MEDIA_READ_TIMEOUT),
+                stream=True,
+            ) as resp:
+                resp.raise_for_status()
+                ctype = (resp.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+                if ctype != 'video/mp4':
+                    logger.warning(f"tikwm download refused: content-type {ctype!r} for {expanded_url}")
+                    return None
+                with open(file_path, 'wb') as fh:
+                    for chunk in resp.iter_content(chunk_size=256 * 1024):
+                        if chunk:
+                            fh.write(chunk)
+        except Exception as e:
+            logger.warning(f"tikwm download failed for {expanded_url}: {e}")
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except Exception:
+                pass
+            return None
+        size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+        if size < TIKWM_MIN_MEDIA_BYTES:
+            logger.warning(f"tikwm download implausibly small ({size}B) for {expanded_url}")
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+            return None
+        logger.info(f"download_video: tikwm fallback fetched {size}B for {expanded_url}")
+        duration = data.get('duration')
+        try:
+            duration = int(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            duration = None
+        info = {
+            "id": data['id'] or safe_id,
+            "title": data['title'],
+            "duration": duration,
+            "uploader": data['author'],
+            "thumbnail": data.get('cover'),
+            "webpage_url": expanded_url,
+            "tikwm_fallback": True,
+            "low_res": False,
+        }
+        return file_path, info
+
     def get_local_info(self, file_path: str) -> Dict[str, Any]:
         """Inspect and return metadata dictionary for a local or uploaded video/audio file."""
         file_path = os.path.abspath(str(file_path).strip('\'"'))
@@ -671,12 +1081,32 @@ class MediaDownloader:
         opts = self._get_base_opts(expanded_url)
         opts['extract_flat'] = False
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(expanded_url, download=False)
-                if not info:
-                    raise ValueError("Could not extract media info from the provided URL.")
-        except Exception as e:
+        info = None
+        last_exc: Optional[Exception] = None
+        for client_label, attempt_opts in self._attempt_plans(opts, expanded_url, stage="info"):
+            try:
+                with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                    info = ydl.extract_info(expanded_url, download=False)
+                    if not info:
+                        raise ValueError("Could not extract media info from the provided URL.")
+                logger.info(f"get_info: extraction succeeded via client '{client_label}' for {expanded_url}")
+                _flag_low_res(info, expanded_url, client_label)
+                break
+            except Exception as e:
+                last_exc = e
+                info = None
+                if not _is_rotation_worthy_error(str(e)):
+                    break
+                logger.warning(f"get_info: client '{client_label}' failed for {expanded_url}: {e}")
+
+        if info is None:
+            e = last_exc if last_exc is not None else RuntimeError("Could not extract media info from the provided URL.")
+            # TikTok per-post block family: one guarded resolver try
+            # before surfacing the (already classified) failure.
+            if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+                tw_info = self._tikwm_get_info(url, expanded_url)
+                if tw_info is not None:
+                    return tw_info
             err_msg = str(e)
             if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
                 if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
@@ -697,7 +1127,7 @@ class MediaDownloader:
             if classified:
                 logger.warning(f"Classified source error in get_info for {expanded_url}: {err_msg}")
                 raise RuntimeError(classified) from e
-            raise
+            raise e
 
         # Subtitles inspection
         subtitles = info.get('subtitles', {})
@@ -744,6 +1174,7 @@ class MediaDownloader:
             "has_subtitles": len(available_subs) > 0,
             "width": width,
             "height": height,
+            "low_res": bool(info.get("low_res")),
             "raw_info": info
         }
 
@@ -800,48 +1231,67 @@ class MediaDownloader:
             ]
         })
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(expanded_url, download=True)
+        def _download_once(attempt_opts: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                info_dl = ydl.extract_info(expanded_url, download=True)
                 # Find the downloaded mp4 file
-                file_path = ydl.prepare_filename(info)
-                if not file_path.endswith('.mp4'):
-                    base, _ = os.path.splitext(file_path)
-                    file_path = f"{base}.mp4"
+                fp = ydl.prepare_filename(info_dl)
+                if not fp.endswith('.mp4'):
+                    base, _ = os.path.splitext(fp)
+                    fp = f"{base}.mp4"
 
-                if not os.path.exists(file_path):
+                if not os.path.exists(fp):
                     # Search directory for file with id
-                    media_id = info.get("id")
+                    media_id = info_dl.get("id")
                     for fname in os.listdir(dest_dir):
                         if media_id in fname and fname.endswith(('.mp4', '.mkv', '.webm')):
-                            file_path = os.path.join(dest_dir, fname)
+                            fp = os.path.join(dest_dir, fname)
                             break
 
+                return fp, info_dl
+
+        # R39: run the extraction chain (YouTube client rotation;
+        # single attempt for other hosts). The last attempt's opts
+        # seed the resilient format fallback below, exactly as the
+        # single primary attempt's opts used to.
+        last_opts = opts
+        primary_exc: Optional[Exception] = None
+        for client_label, attempt_opts in self._attempt_plans(opts, expanded_url, stage="media"):
+            last_opts = attempt_opts
+            try:
+                file_path, info = _download_once(attempt_opts)
+                _flag_low_res(info, expanded_url, client_label)
                 return file_path, info
+            except Exception as exc:
+                primary_exc = exc
+                if not _is_rotation_worthy_error(str(exc)):
+                    break
+                logger.warning(f"download_video: client '{client_label}' failed for {expanded_url} ({exc}). Trying next client...")
+
+        e = primary_exc if primary_exc is not None else RuntimeError("Download failed")
+        # TikTok per-post block family: guarded resolver byte fetch
+        # before the format fallback / classified failure below.
+        if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+            tw_dl = self._tikwm_download_video(url, expanded_url, dest_dir)
+            if tw_dl is not None:
+                return tw_dl
+
+        try:
+            raise e
         except Exception as e:
             err_msg = str(e)
             logger.warning(f"Primary download_video failed ({err_msg}). Attempting resilient format fallback...")
             fb_exc = None
             try:
-                fallback_opts = dict(opts)
+                fallback_opts = dict(last_opts)
                 fallback_opts['format'] = 'bestvideo+bestaudio/best'
                 fallback_opts['ignoreerrors'] = False
                 # If cookies caused invalid session / reload error, drop cookiefile for clean fallback
                 if "page needs to be reloaded" in err_msg or "Requested format is not available" in err_msg:
                     fallback_opts.pop('cookiefile', None)
-                with yt_dlp.YoutubeDL(fallback_opts) as ydl:
-                    info = ydl.extract_info(expanded_url, download=True)
-                    file_path = ydl.prepare_filename(info)
-                    if not file_path.endswith('.mp4'):
-                        base, _ = os.path.splitext(file_path)
-                        file_path = f"{base}.mp4"
-                    if not os.path.exists(file_path):
-                        media_id = info.get("id")
-                        for fname in os.listdir(dest_dir):
-                            if media_id in fname and fname.endswith(('.mp4', '.mkv', '.webm')):
-                                file_path = os.path.join(dest_dir, fname)
-                                break
-                    return file_path, info
+                file_path, info = _download_once(fallback_opts)
+                _flag_low_res(info, expanded_url, "format-fallback")
+                return file_path, info
             except Exception as fb_err:
                 logger.warning(f"Fallback download also failed: {fb_err}")
                 # Keep the fallback failure past the except block (the
@@ -908,22 +1358,48 @@ class MediaDownloader:
             ]
         })
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(expanded_url, download=True)
+        def _download_audio_once(attempt_opts: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                info_dl = ydl.extract_info(expanded_url, download=True)
                 # Filename after audio extraction is .mp3
-                base_filename = ydl.prepare_filename(info)
+                base_filename = ydl.prepare_filename(info_dl)
                 base_name, _ = os.path.splitext(base_filename)
-                mp3_path = f"{base_name}.mp3"
+                mp3 = f"{base_name}.mp3"
 
-                if not os.path.exists(mp3_path):
-                    media_id = info.get("id")
+                if not os.path.exists(mp3):
+                    media_id = info_dl.get("id")
                     for fname in os.listdir(dest_dir):
                         if media_id in fname and fname.endswith('.mp3'):
-                            mp3_path = os.path.join(dest_dir, fname)
+                            mp3 = os.path.join(dest_dir, fname)
                             break
 
+                return mp3, info_dl
+
+        primary_exc: Optional[Exception] = None
+        for client_label, attempt_opts in self._attempt_plans(opts, expanded_url, stage="media"):
+            try:
+                mp3_path, info = _download_audio_once(attempt_opts)
+                _flag_low_res(info, expanded_url, client_label)
                 return mp3_path, info
+            except Exception as exc:
+                primary_exc = exc
+                if not _is_rotation_worthy_error(str(exc)):
+                    break
+                logger.warning(f"download_audio: client '{client_label}' failed for {expanded_url} ({exc}). Trying next client...")
+
+        e = primary_exc if primary_exc is not None else RuntimeError("Audio download failed")
+        # TikTok per-post block family: fetch the video via the
+        # guarded resolver, then extract its audio locally.
+        if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+            tw_dl = self._tikwm_download_video(url, expanded_url, dest_dir)
+            if tw_dl is not None:
+                tw_path, _tw_info = tw_dl
+                mp3_path, local_info = self.extract_local_audio(tw_path, target_dir=dest_dir)
+                local_info["tikwm_fallback"] = True
+                return mp3_path, local_info
+
+        try:
+            raise e
         except Exception as e:
             err_msg = str(e)
             if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
@@ -963,16 +1439,42 @@ class MediaDownloader:
             'writethumbnail': False,
         })
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(expanded_url, download=True)
-                fname = ydl.prepare_filename(info)
-        except Exception as e:
-            classified = classify_source_error(str(e), expanded_url)
-            if classified:
-                logger.warning(f"Classified source error in download_audio_for_transcription for {expanded_url}: {e}")
-                raise RuntimeError(classified) from e
-            raise
+        info = None
+        fname = None
+        primary_exc: Optional[Exception] = None
+        for client_label, attempt_opts in self._attempt_plans(opts, expanded_url, stage="media"):
+            try:
+                with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                    info = ydl.extract_info(expanded_url, download=True)
+                    fname = ydl.prepare_filename(info)
+                _flag_low_res(info, expanded_url, client_label)
+                break
+            except Exception as exc:
+                primary_exc = exc
+                info = None
+                fname = None
+                if not _is_rotation_worthy_error(str(exc)):
+                    break
+                logger.warning(f"download_audio_for_transcription: client '{client_label}' failed for {expanded_url} ({exc}). Trying next client...")
+
+        if info is None:
+            e = primary_exc if primary_exc is not None else RuntimeError("Audio download failed")
+            # TikTok per-post block family: guarded resolver fetch,
+            # then pull the audio track out of the video locally.
+            if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+                tw_dl = self._tikwm_download_video(url, expanded_url, dest_dir)
+                if tw_dl is not None:
+                    tw_path, _tw_info = tw_dl
+                    mp3_path, _local_info = self.extract_local_audio(tw_path, target_dir=dest_dir)
+                    return mp3_path
+            try:
+                raise e
+            except Exception as e:
+                classified = classify_source_error(str(e), expanded_url)
+                if classified:
+                    logger.warning(f"Classified source error in download_audio_for_transcription for {expanded_url}: {e}")
+                    raise RuntimeError(classified) from e
+                raise
         if os.path.exists(fname):
             return fname
 
@@ -1039,16 +1541,22 @@ class MediaDownloader:
             }]
         })
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([expanded_url])
-
-        # Collect generated .srt files in destination
+        # R39: same client chain as the other extraction paths
+        # (ignoreerrors means a walled client simply yields no files,
+        # so rotate until subtitle files actually appear).
         media_id = str(info.get("id", ""))
-        srt_files = []
-        for fname in os.listdir(dest_dir):
-            if fname.endswith('.srt'):
-                if not media_id or media_id in fname:
-                    srt_files.append(os.path.join(dest_dir, fname))
+        srt_files: List[str] = []
+        for _client_label, attempt_opts in self._attempt_plans(opts, expanded_url, stage="media"):
+            with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                ydl.download([expanded_url])
+            # Collect generated .srt files in destination
+            srt_files = []
+            for fname in os.listdir(dest_dir):
+                if fname.endswith('.srt'):
+                    if not media_id or media_id in fname:
+                        srt_files.append(os.path.join(dest_dir, fname))
+            if srt_files:
+                break
 
         if srt_files:
             info["is_ai_generated"] = False

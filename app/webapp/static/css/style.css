@@ -2871,6 +2871,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     opacity: 0.85; text-align: left; margin-top: var(--s3);
 }
 .recap-cost-hint { font-size: 12px; opacity: 0.9; }
+.recap-unverified-warning { font-size: 12.5px; line-height: 1.55; color: #d97706; font-weight: 600; }
 
 /* Subtitle sample on the canvas: soft shadow, no hard black quad. */
 .preview-sub-box .preview-sub-text { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55); }
