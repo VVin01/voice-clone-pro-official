@@ -264,7 +264,23 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
             "⚠️ ဒီ လင့်ခ် အမျိုးအစား ကို မထောက်ပံ့သေးပါ။ "
             "YouTube၊ TikTok၊ Facebook လင့်ခ်များဖြင့် စမ်းကြည့်ပါ။ " + upload_hint
         )
-    if "403" in low and ("forbidden" in low or "http error" in low):
+    if (
+        ("403" in low and ("forbidden" in low or "http error" in low))
+        # Per-item IP block (TikTok: "Your IP address is blocked from
+        # accessing this post"). The wording carries no 403/forbidden,
+        # so this branch used to miss it and the raw yt-dlp string was
+        # stored on the job and rendered verbatim in History (jobs
+        # rc_1793505308_08cd6b and rc_1793511624_d4c5a1, 2026-11-01 —
+        # the same post, refused identically on every attempt while
+        # neighbouring TikTok posts extracted fine from the same
+        # server). The user meaning is the same as a 403 wall — the
+        # source refuses OUR server's fetch of this item — so it
+        # shares this branch's copy (the client recognises that exact
+        # sentence as the blocked-source marker, see blockedLinkInfo).
+        or "ip address is blocked" in low
+        or "ip is blocked" in low
+        or "blocked from accessing" in low
+    ):
         return f"⚠️ {subj} က ကျွန်တော်တို့ ဆာဗာမှ ဗီဒီယို ဆွဲယူခြင်းကို ပိတ်ထားပါသည်။ " + upload_hint
     if (
         "sign in" in low

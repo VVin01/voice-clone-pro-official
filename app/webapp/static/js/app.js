@@ -183,6 +183,14 @@ function blockedLinkInfo(raw) {
         // post" and fell through to the generic copy because none of
         // the needles above matched it).
         'ip address is blocked', 'ip is blocked', 'blocked from accessing',
+        // Our own server-classified blocked-fetch copy (downloader.py
+        // classify_source_error, the 403 / IP-block branch): once the
+        // server stores that clean Burmese sentence on the job, none
+        // of the raw extractor needles above exist in the string any
+        // more. This marker keeps the stored form recognised, so the
+        // recap poll keeps the named toast + upload-tab auto-switch
+        // it already had for the raw form.
+        'ဆာဗာမှ ဗီဒီယို ဆွဲယူခြင်းကို ပိတ်ထားပါသည်',
         // Login walls.
         'login required', 'log in to', 'sign in to', 'please log in',
         // Age gates.
@@ -201,6 +209,34 @@ function blockedLinkInfo(raw) {
     return { blocked: !!blocked, source: hit ? hit[1] : null };
 }
 window.blockedLinkInfo = blockedLinkInfo;
+
+// displayJobError(raw): the ONLY way a STORED job error becomes card
+// text (admin queue card, admin history card, retry status box).
+// Stored errors are technical text — a raw yt-dlp dump must never
+// reach the card (owner screenshot 2026-11-02: two History rows
+// showing "ERROR: [TikTok] … Your IP address is blocked from
+// accessing this post" verbatim). Three cases:
+//   1. our own server-classified copy (⚠️ prefix — downloader.py
+//      classify_source_error) is already user-safe: show it, minus
+//      the prefix (the cards add their own ⚠️);
+//   2. a raw error from the blocked-source family maps to the same
+//      named blocked message + upload advice the toast mapper
+//      composes for this family;
+//   3. anything else stays raw — admin detail keeps the technical
+//      text for non-source errors, as before.
+// Returns '' for empty input.
+function displayJobError(raw) {
+    const s = (raw == null ? '' : String(raw)).trim();
+    if (!s) return '';
+    if (s.startsWith('⚠️')) return s.replace(/^⚠️\s*/, '');
+    const info = blockedLinkInfo(s);
+    if (info.blocked) {
+        const head = info.source ? tf('err_link_blocked_named', { source: info.source }) : t('err_link_blocked');
+        return head + ' ' + t('err_link_advice_upload');
+    }
+    return s;
+}
+window.displayJobError = displayJobError;
 
 // setCardThumb(img, url): the one way info-card thumbnails are set.
 // An <img> left with an empty/removed source renders the browser's
@@ -6444,7 +6480,7 @@ async function loadAdminQueue(isSilent = false) {
                         <span>#${j.id.slice(0, 8)}</span>
                     </div>
                     <div class="queue-item-body">${escapeHtml(j.input_snippet || "Task Content")}</div>
-                    ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(j.error_message)}</div>` : ""}
+                    ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(displayJobError(j.error_message))}</div>` : ""}
                     <div class="queue-item-footer">
                         <span class="queue-timing">${escapeHtml(j.created_ago)}</span>
                         <div class="queue-actions-row">${actionsHtml}</div>
@@ -6570,6 +6606,7 @@ async function loadAdminHistory() {
         }
         container.innerHTML = history.map(j => {
             const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`;
+            const errText = displayJobError(j.error_message);
             const isFailed = (j.status === "FAILED");
             const isSuccess = (j.status === "SUCCESS");
             const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
@@ -6588,9 +6625,9 @@ async function loadAdminHistory() {
                 </div>
                 <div class="history-item-body">
                     <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
-                    ${j.error_message ? `
+                    ${errText ? `
                         <div class="history-error-snippet text-xs text-danger mt-1 p-2 glass-inset">
-                            ⚠️ <strong>Error:</strong> ${escapeHtml(j.error_message.slice(0, 180))}${j.error_message.length > 180 ? '...' : ''}
+                            ⚠️ <strong>Error:</strong> ${escapeHtml(errText.slice(0, 180))}${errText.length > 180 ? '...' : ''}
                         </div>` : ''}
                     <div id="retry-status-box-${j.id}"></div>
                 </div>
@@ -6767,7 +6804,7 @@ function pollAdminJobProgress(jobId) {
                 if (statusBox) {
                     statusBox.innerHTML = `
                         <div class="text-xs mt-1 p-2" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
-                            ⚠️ <strong>Error:</strong> ${escapeHtml(data.error_message || "Execution failed")}
+                            ⚠️ <strong>Error:</strong> ${escapeHtml(displayJobError(data.error_message) || "Execution failed")}
                         </div>
                     `;
                 }
