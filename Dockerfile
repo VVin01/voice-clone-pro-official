@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     curl \
+    xz-utils \
     ca-certificates \
     fontconfig \
     fonts-sil-padauk \
