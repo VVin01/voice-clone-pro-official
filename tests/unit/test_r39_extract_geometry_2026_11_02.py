@@ -165,9 +165,13 @@ def test_chain_rotates_in_order_and_flags_low_res(monkeypatch, tmp_path):
     # The cookie'd default attempt carries no player_client override.
     # (POT sidecar, 2026-11-02: it DOES now carry the bgutil provider
     # args — that is the one sanctioned extractor_args addition; see
-    # test_pot_sidecar_2026_11_02.py.)
+    # test_pot_sidecar_2026_11_02.py. Forced-mint experiment, same day:
+    # its 'youtube' args additionally hold fetch_pot=['always'] — the
+    # pin's original intent, no player_client override, is asserted
+    # directly.)
     default_ea = _ChainYDL.calls[1].get("extractor_args") or {}
-    assert "youtube" not in default_ea
+    assert "player_client" not in (default_ea.get("youtube") or {})
+    assert default_ea["youtube"]["fetch_pot"] == ["always"]
     assert default_ea["youtubepot-bgutilhttp"]["base_url"] == ["http://127.0.0.1:4416"]
 
 

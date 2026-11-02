@@ -422,14 +422,86 @@ INFO_STAGE_SOCKET_TIMEOUT = 10        # info-stage socket cap; media keeps YOUTU
 # are untouched. Degradation is graceful by design — when the server
 # is unreachable the plugin warns and extraction continues exactly as
 # before (proven locally with the server stopped).
+#
+# FORCED-MINT EXPERIMENT (owner-approved 2026-11-02, one round): the
+# first sidecar prod proof failed on all 3 attempts with NO /get_pot
+# activity visible — under yt-dlp's default fetch_pot='auto' policy a
+# token is minted only when a request is pre-marked required, which
+# never happened on the walled path. _pot_extractor_args therefore
+# also sets the 'youtube' extractor arg fetch_pot='always', so a
+# token is requested on every YouTube attempt. Accepted trade:
+# unwalled YouTube extractions may pay a mint (server-cached
+# afterwards) on paths that previously skipped it. Non-YouTube paths
+# remain untouched. _with_pot also attaches _PotLogShim so provider
+# fetches are visible in the app logs (see its docstring).
 POT_SERVER_DEFAULT_URL = "http://127.0.0.1:4416"
 
 
 def _pot_extractor_args() -> Dict[str, Any]:
-    """Extractor args pointing yt-dlp's POT framework at the local
-    bgutil provider server (env-overridable for local testing)."""
+    """Extractor args wiring yt-dlp's POT framework to the local
+    bgutil provider server (env-overridable for local testing) AND
+    forcing the fetch policy to 'always'.
+
+    The policy is yt-dlp core's, not the plugin's: in
+    yt_dlp/extractor/youtube/_video.py, YoutubeIE._fetch_po_token()
+    reads the 'youtube' extractor arg 'fetch_pot'
+    ('never' | 'auto' | 'always'); under the default 'auto' it
+    returns None unless the request is marked required, so on the
+    walled prod path no token was ever requested. 'always' makes
+    every _fetch_po_token call (player / GVS / subs contexts, every
+    client attempt) go through the POT director to the bgutil
+    provider. Clients the provider does not support (android / mweb
+    are not WEBPO clients) simply receive no token, as before.
+    """
     base_url = os.getenv("POT_SERVER_URL") or POT_SERVER_DEFAULT_URL
-    return {'youtubepot-bgutilhttp': {'base_url': [base_url]}}
+    return {
+        'youtubepot-bgutilhttp': {'base_url': [base_url]},
+        'youtube': {'fetch_pot': ['always']},
+    }
+
+
+class _PotLogShim:
+    """Scoped yt-dlp logger for YouTube attempts (observability).
+
+    yt-dlp routes ALL of its screen output through params['logger']
+    when one is set (to_screen → logger.debug, report_warning →
+    logger.warning, to_stderr → logger.error). Without a logger the
+    app runs yt-dlp quiet and the PO Token provider's fetch line —
+    '[pot:bgutil:http] Generating a <context> PO Token for <client>
+    client via bgutil HTTP server', emitted at provider-info level —
+    never reaches the app logs, which is why the first prod proof
+    could not tell whether a token was ever requested. This shim is
+    attached ONLY to YouTube attempts (in _with_pot): debug/info
+    chatter is forwarded to the app logger only when it concerns the
+    POT provider, warnings/errors are forwarded whole (the container
+    captured them on stderr before), and everything else is dropped,
+    preserving the quiet behaviour. Grep the app logs for
+    'PO Token' / '[pot:' to see provider fetch activity.
+    """
+
+    _POT_MARKERS = ("[pot:", "PO Token", "get_pot", "bgutil")
+
+    @classmethod
+    def _is_pot(cls, message: Any) -> bool:
+        text = str(message)
+        return any(marker in text for marker in cls._POT_MARKERS)
+
+    def debug(self, message: Any) -> None:
+        if self._is_pot(message):
+            logger.info("yt-dlp: %s", message)
+
+    def info(self, message: Any) -> None:
+        if self._is_pot(message):
+            logger.info("yt-dlp: %s", message)
+
+    def warning(self, message: Any) -> None:
+        logger.warning("yt-dlp: %s", message)
+
+    def error(self, message: Any) -> None:
+        logger.error("yt-dlp: %s", message)
+
+
+_POT_LOG_SHIM = _PotLogShim()
 
 # tikwm resolver guardrails (failure-triggered only): hard timeouts,
 # response validation, and an in-memory circuit breaker so a sick or
@@ -842,7 +914,9 @@ class MediaDownloader:
         bounded socket timeout. Every other host
         yields exactly one attempt: the base opts, unchanged.
         Every YouTube attempt additionally carries the bgutil PO
-        Token provider args (see _with_pot / _pot_extractor_args).
+        Token provider args (see _with_pot / _pot_extractor_args):
+        the provider base_url, fetch_pot='always' (forced-mint
+        experiment), and the scoped POT log shim.
         """
         if not _is_youtube_url(expanded_url):
             yield "default", base_opts
@@ -871,12 +945,22 @@ class MediaDownloader:
         def _with_pot(opts: Dict[str, Any]) -> Dict[str, Any]:
             # ONE wiring point for the PO Token sidecar: every YouTube
             # attempt (any client, any stage) points the bgutil plugin
-            # at the in-container provider server. Merges alongside the
-            # 'youtube' extractor args without disturbing them.
+            # at the in-container provider server, forces the POT
+            # fetch policy to 'always', and attaches the scoped POT
+            # log shim. Dict-valued args merge per-key alongside the
+            # 'youtube' extractor args (player_client) instead of
+            # clobbering them.
             o = dict(opts)
             ea = dict(o.get('extractor_args') or {})
-            ea.update(_pot_extractor_args())
+            for key, value in _pot_extractor_args().items():
+                if isinstance(value, dict) and isinstance(ea.get(key), dict):
+                    merged = dict(ea[key])
+                    merged.update(value)
+                    ea[key] = merged
+                else:
+                    ea[key] = value
             o['extractor_args'] = ea
+            o.setdefault('logger', _POT_LOG_SHIM)
             return o
 
         yield "web_embedded", _with_pot(_staged(_with_client(base_opts, "web_embedded")))

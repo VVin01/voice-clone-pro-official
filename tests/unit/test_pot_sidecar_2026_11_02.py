@@ -12,6 +12,14 @@ host keeps exactly one untouched attempt.
 These tests pin the wiring shape (no network): attempt plans, the
 env override, plugin presence in requirements, and the Dockerfile /
 entrypoint contract.
+
+UPDATE (forced-mint experiment, owner-approved 2026-11-02): the
+provider args now also carry youtube fetch_pot='always' and every
+YouTube attempt carries the scoped POT log shim — the experiment's
+own pins live in test_pot_forced_mint_2026_11_02.py; the arg-shape
+and player-client pins below were adjusted accordingly (the default
+attempt's 'youtube' args now legitimately hold fetch_pot only —
+still NO player_client override there).
 """
 
 from __future__ import annotations
@@ -41,14 +49,16 @@ def _plans(dl, url, stage="info"):
 def test_pot_args_default_url(monkeypatch):
     monkeypatch.delenv("POT_SERVER_URL", raising=False)
     assert _pot_extractor_args() == {
-        "youtubepot-bgutilhttp": {"base_url": [DEFAULT_POT_URL]}
+        "youtubepot-bgutilhttp": {"base_url": [DEFAULT_POT_URL]},
+        "youtube": {"fetch_pot": ["always"]},
     }
 
 
 def test_pot_args_env_override(monkeypatch):
     monkeypatch.setenv("POT_SERVER_URL", "http://127.0.0.1:9999")
     assert _pot_extractor_args() == {
-        "youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:9999"]}
+        "youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:9999"]},
+        "youtube": {"fetch_pot": ["always"]},
     }
 
 
@@ -78,8 +88,10 @@ def test_pot_args_do_not_disturb_player_clients(monkeypatch, tmp_path):
     assert plans["android"]["extractor_args"]["youtube"]["player_client"] == ["android"]
     assert plans["mweb"]["extractor_args"]["youtube"]["player_client"] == ["mweb"]
     # The cookie'd default attempt keeps NO player_client override —
-    # only the POT args are added.
-    assert "youtube" not in plans["default"]["extractor_args"]
+    # its 'youtube' args hold only the forced fetch_pot policy.
+    assert plans["default"]["extractor_args"]["youtube"] == {
+        "fetch_pot": ["always"]
+    }
 
 
 def test_non_youtube_attempts_untouched(monkeypatch, tmp_path):
@@ -90,6 +102,7 @@ def test_non_youtube_attempts_untouched(monkeypatch, tmp_path):
     assert [label for label, _ in plans] == ["default"]
     assert plans[0][1] is base
     assert "youtubepot-bgutilhttp" not in (plans[0][1].get("extractor_args") or {})
+    assert "logger" not in plans[0][1]
 
 
 def test_plugin_pinned_in_requirements():
