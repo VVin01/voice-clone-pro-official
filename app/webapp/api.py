@@ -5500,6 +5500,7 @@ async def list_admin_users(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
     category: str = "",
+    search: str = "",
 ):
     """Most recently joined users (admin only) — the Users screen landing list.
 
@@ -5510,6 +5511,15 @@ async def list_admin_users(
     limit/offset, so filtering must happen here, not over one page);
     ``total`` reports the filtered row count so the client knows when
     "Load more" has reached the end.
+
+    The optional ``search`` narrows the browse list with the SAME
+    matching semantics as /admin/users/search (username or first name
+    contains the query, a leading "@" is stripped, a numeric query
+    also matches the exact Telegram ID) and composes with ``category``.
+    Unlike the dedicated search route it never hard-errors: an absent
+    or blank ``search`` is simply "no filter", so a client paging the
+    browse list can pass the box's contents verbatim. (F4, QA cycle
+    2026-11-02: this parameter used to be silently ignored.)
     """
     limit = max(1, min(int(limit or 30), 100))
     offset = max(0, int(offset or 0))
@@ -5519,6 +5529,16 @@ async def list_admin_users(
     if cat:
         stmt = stmt.where(User.account_category == cat)
         count_stmt = count_stmt.where(User.account_category == cat)
+    query = (search or "").strip().lstrip("@")
+    if query:
+        conds = [
+            User.username.ilike(f"%{query}%"),
+            User.first_name.ilike(f"%{query}%"),
+        ]
+        if query.isdigit():
+            conds.append(User.id == int(query))
+        stmt = stmt.where(or_(*conds))
+        count_stmt = count_stmt.where(or_(*conds))
     total = (await db.execute(count_stmt)).scalar() or 0
     rows = (await db.execute(
         stmt.order_by(User.created_at.desc()).limit(limit).offset(offset)
