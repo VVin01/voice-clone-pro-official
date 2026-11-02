@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     purchased_daily_job_limit: int = Field(default=0, alias="PURCHASED_DAILY_JOB_LIMIT")  # 0 = unlimited
     max_concurrent_jobs_per_user: int = Field(default=1, alias="MAX_CONCURRENT_JOBS_PER_USER")
     maintenance_mode: bool = Field(default=False, alias="MAINTENANCE_MODE")
+    # AI group-admin auto-reply kill switch (BotSetting-backed; the
+    # handler re-reads the DB row per message, so Admin toggles apply
+    # instantly). Default OFF — see app/services/group_ai_admin.py.
+    group_ai_admin_enabled: bool = Field(default=False, alias="GROUP_AI_ADMIN_ENABLED")
 
     # Infrastructure Safety Limit (independent of user account tiers, protects Edge TTS & VoxCPM memory)
     infrastructure_safety_character_limit: int = Field(
