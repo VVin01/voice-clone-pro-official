@@ -5913,6 +5913,15 @@ class AdminSettingsPayload(BaseModel):
     maintenance_mode: Optional[bool] = None
     group_ai_admin_enabled: Optional[bool] = None
     character_limit_free: Optional[int] = None
+    character_limit_purchased: Optional[int] = None
+    free_monthly_allowance_seconds: Optional[int] = None
+    free_daily_job_limit: Optional[int] = None
+    recap_free_max_duration_seconds: Optional[int] = None
+    recap_max_duration_seconds: Optional[int] = None
+    required_channel_id: Optional[str] = None
+    required_group_id: Optional[str] = None
+    channel_invite_link: Optional[str] = None
+    group_invite_link: Optional[str] = None
     gemini_primary_model: Optional[str] = None
     gemini_fallback_1: Optional[str] = None
     gemini_fallback_2: Optional[str] = None
@@ -5947,6 +5956,15 @@ async def get_admin_settings(
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
         "group_ai_admin_enabled": getattr(settings, "group_ai_admin_enabled", False),
         "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
+        "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
+        "free_monthly_allowance_seconds": int(getattr(settings, "free_monthly_allowance_seconds", 180)),
+        "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
+        "recap_free_max_duration_seconds": int(getattr(settings, "recap_free_max_duration_seconds", 120)),
+        "recap_max_duration_seconds": int(getattr(settings, "recap_max_duration_seconds", 600)),
+        "required_channel_id": str(getattr(settings, "required_channel_id", "") or ""),
+        "required_group_id": str(getattr(settings, "required_group_id", "") or ""),
+        "channel_invite_link": str(getattr(settings, "channel_invite_link", "https://t.me/voiceclonepro") or ""),
+        "group_invite_link": str(getattr(settings, "group_invite_link", "https://t.me/voiceclonepro_chat") or ""),
         "gemini_primary_model": getattr(settings, "gemini_primary_model", "gemini-3.6-flash"),
         "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),
         "gemini_fallback_2": getattr(settings, "gemini_fallback_2", "gemini-3.5-flash-lite"),
@@ -6015,6 +6033,26 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     status_code=400,
                     detail=(
                         "အခမဲ့ စာလုံးရေ ကန့်သတ်ချက် (character_limit_free) သည် "
+                        "100 မှ 10000 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = limit_val
+        elif key == "character_limit_purchased":
+            # Mini App Admin settings fill (2026-11-02): the purchased
+            # character limit joins the payload next to its free sibling
+            # (before this it silently no-opped — the key was not on the
+            # payload model at all); keep the same sane bounds so a typo
+            # can neither brick the paid tier nor hand out the farm.
+            try:
+                limit_val = int(value)
+            except (TypeError, ValueError):
+                limit_val = -1
+            if limit_val < 100 or limit_val > 10000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "ဝယ်ယူ စာလုံးရေ ကန့်သတ်ချက် (character_limit_purchased) သည် "
                         "100 မှ 10000 အတွင်း ဖြစ်ရပါမည်။ "
                         "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
                     ),
