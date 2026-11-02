@@ -7070,6 +7070,15 @@ async function loadAdminSettings() {
         const elMaint = document.getElementById("adm-set-maintenance");
         const elGroupAi = document.getElementById("adm-set-group-ai");
         const elCharLimitFree = document.getElementById("adm-set-char-limit-free");
+        const elCharLimitPurchased = document.getElementById("adm-set-char-limit-purchased");
+        const elFreeAllowance = document.getElementById("adm-set-free-allowance");
+        const elDailyJobLimit = document.getElementById("adm-set-daily-job-limit");
+        const elRecapFreeMax = document.getElementById("adm-set-recap-free-max");
+        const elRecapMax = document.getElementById("adm-set-recap-max");
+        const elReqChannelId = document.getElementById("adm-set-required-channel-id");
+        const elReqGroupId = document.getElementById("adm-set-required-group-id");
+        const elChannelInvite = document.getElementById("adm-set-channel-invite-link");
+        const elGroupInvite = document.getElementById("adm-set-group-invite-link");
 
         const elTutVoiceEn = document.getElementById("adm-tut-voice-enabled");
         const elTutVoiceTitle = document.getElementById("adm-tut-voice-title");
@@ -7087,6 +7096,15 @@ async function loadAdminSettings() {
         if (elMaint) elMaint.checked = !!s.maintenance_mode;
         if (elGroupAi) elGroupAi.checked = !!s.group_ai_admin_enabled;
         if (elCharLimitFree && s.character_limit_free != null) elCharLimitFree.value = s.character_limit_free;
+        if (elCharLimitPurchased && s.character_limit_purchased != null) elCharLimitPurchased.value = s.character_limit_purchased;
+        if (elFreeAllowance && s.free_monthly_allowance_seconds != null) elFreeAllowance.value = s.free_monthly_allowance_seconds;
+        if (elDailyJobLimit && s.free_daily_job_limit != null) elDailyJobLimit.value = s.free_daily_job_limit;
+        if (elRecapFreeMax && s.recap_free_max_duration_seconds != null) elRecapFreeMax.value = s.recap_free_max_duration_seconds;
+        if (elRecapMax && s.recap_max_duration_seconds != null) elRecapMax.value = s.recap_max_duration_seconds;
+        if (elReqChannelId) elReqChannelId.value = s.required_channel_id || "";
+        if (elReqGroupId) elReqGroupId.value = s.required_group_id || "";
+        if (elChannelInvite) elChannelInvite.value = s.channel_invite_link || "";
+        if (elGroupInvite) elGroupInvite.value = s.group_invite_link || "";
 
         if (elTutVoiceEn) elTutVoiceEn.checked = String(s.tutorial_voice_enabled).toLowerCase() !== "false" && s.tutorial_voice_enabled !== false;
         if (elTutVoiceTitle) elTutVoiceTitle.value = s.tutorial_voice_title || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
@@ -7202,6 +7220,20 @@ async function saveAdminSettings() {
     const groupAi = !!document.getElementById("adm-set-group-ai")?.checked;
     const charLimitFreeRaw = document.getElementById("adm-set-char-limit-free")?.value?.trim();
     const charLimitFree = charLimitFreeRaw === "" || charLimitFreeRaw == null ? null : parseInt(charLimitFreeRaw, 10);
+    const charLimitPurchasedRaw = document.getElementById("adm-set-char-limit-purchased")?.value?.trim();
+    const charLimitPurchased = charLimitPurchasedRaw === "" || charLimitPurchasedRaw == null ? null : parseInt(charLimitPurchasedRaw, 10);
+    const freeAllowanceRaw = document.getElementById("adm-set-free-allowance")?.value?.trim();
+    const freeAllowance = freeAllowanceRaw === "" || freeAllowanceRaw == null ? null : parseInt(freeAllowanceRaw, 10);
+    const dailyJobLimitRaw = document.getElementById("adm-set-daily-job-limit")?.value?.trim();
+    const dailyJobLimit = dailyJobLimitRaw === "" || dailyJobLimitRaw == null ? null : parseInt(dailyJobLimitRaw, 10);
+    const recapFreeMaxRaw = document.getElementById("adm-set-recap-free-max")?.value?.trim();
+    const recapFreeMax = recapFreeMaxRaw === "" || recapFreeMaxRaw == null ? null : parseInt(recapFreeMaxRaw, 10);
+    const recapMaxRaw = document.getElementById("adm-set-recap-max")?.value?.trim();
+    const recapMax = recapMaxRaw === "" || recapMaxRaw == null ? null : parseInt(recapMaxRaw, 10);
+    const reqChannelId = document.getElementById("adm-set-required-channel-id")?.value?.trim();
+    const reqGroupId = document.getElementById("adm-set-required-group-id")?.value?.trim();
+    const channelInvite = document.getElementById("adm-set-channel-invite-link")?.value?.trim();
+    const groupInvite = document.getElementById("adm-set-group-invite-link")?.value?.trim();
 
     const tutVoiceEn = !!document.getElementById("adm-tut-voice-enabled")?.checked;
     const tutVoiceTitle = document.getElementById("adm-tut-voice-title")?.value?.trim() || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
@@ -7232,6 +7264,15 @@ async function saveAdminSettings() {
         maintenance_mode: maint,
         group_ai_admin_enabled: groupAi,
         ...(Number.isFinite(charLimitFree) ? { character_limit_free: charLimitFree } : {}),
+        ...(Number.isFinite(charLimitPurchased) ? { character_limit_purchased: charLimitPurchased } : {}),
+        ...(Number.isFinite(freeAllowance) ? { free_monthly_allowance_seconds: freeAllowance } : {}),
+        ...(Number.isFinite(dailyJobLimit) ? { free_daily_job_limit: dailyJobLimit } : {}),
+        ...(Number.isFinite(recapFreeMax) ? { recap_free_max_duration_seconds: recapFreeMax } : {}),
+        ...(Number.isFinite(recapMax) ? { recap_max_duration_seconds: recapMax } : {}),
+        ...(reqChannelId ? { required_channel_id: reqChannelId } : {}),
+        ...(reqGroupId ? { required_group_id: reqGroupId } : {}),
+        ...(channelInvite ? { channel_invite_link: channelInvite } : {}),
+        ...(groupInvite ? { group_invite_link: groupInvite } : {}),
     };
     updateTutorialUI(payload);
 

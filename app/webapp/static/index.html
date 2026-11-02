@@ -6,7 +6,7 @@
     <title>Voice Clone Pro — Studio Ultra Suite</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261102_ga1">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261102_ma1">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -1880,6 +1880,60 @@
                                     <p class="text-xs text-muted" data-i18n="settings_group_ai_admin_hint">Community Group ထဲက ပစ္စည်း မေးခွန်းတွေကို AI က Admin လို အလိုအလျောက် ဖြေပေးမယ်</p>
                                 </div>
                             </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_char_limit_purchased">ဝယ်ယူ စာလုံးရေ ကန့်သတ်ချက် (Purchased Character Limit)</label>
+                                    <input type="number" id="adm-set-char-limit-purchased" class="studio-input" min="100" max="10000" step="50" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_char_limit_purchased_hint">ဝယ်ယူထားသော အသုံးပြုသူများ တစ်ကြိမ်လျှင် ထုတ်လုပ်နိုင်သော စာလုံးရေ အများဆုံး</p>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_free_allowance">အခမဲ့ လစဉ် အချိန် ပမာဏ (Free Monthly Allowance)</label>
+                                    <input type="number" id="adm-set-free-allowance" class="studio-input" min="60" max="600" step="60" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_free_allowance_hint">အခမဲ့ အသုံးပြုသူများ တစ်လလျှင် ရသော အသံ ထုတ်လုပ်ချိန် (စက္ကန့်)</p>
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_daily_job_limit">အခမဲ့ နေ့စဉ် အလုပ် ကန့်သတ်ချက် (Free Daily Job Limit)</label>
+                                    <input type="number" id="adm-set-daily-job-limit" class="studio-input" min="0" max="100" step="1" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_daily_job_limit_hint">အခမဲ့ အသုံးပြုသူ တစ်ဦး တစ်နေ့လျှင် လုပ်နိုင်သော အလုပ် အရေအတွက် (0 = အကန့်အသတ် မရှိ)</p>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_recap_free_max">အခမဲ့ Recap အများဆုံး ကြာချိန် (Free Recap Max Duration)</label>
+                                    <input type="number" id="adm-set-recap-free-max" class="studio-input" min="30" max="1800" step="30" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_recap_free_max_hint">အခမဲ့ အသုံးပြုသူများ Recap လုပ်နိုင်သော ဗီဒီယို အရှည် အများဆုံး (စက္ကန့်)</p>
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_recap_max">Recap အများဆုံး ကြာချိန် (Recap Max Duration)</label>
+                                    <input type="number" id="adm-set-recap-max" class="studio-input" min="60" max="3600" step="30" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_recap_max_hint">ဝယ်ယူထားသော အသုံးပြုသူများ Recap လုပ်နိုင်သော ဗီဒီယို အရှည် အများဆုံး (စက္ကန့်)</p>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_required_channel_id">မဖြစ်မနေ ဝင်ရမည့် Channel ID (Required Channel ID)</label>
+                                    <input type="text" id="adm-set-required-channel-id" class="studio-input" placeholder="-100xxxxxxxxxx">
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_required_group_id">မဖြစ်မနေ ဝင်ရမည့် Group ID (Required Group ID)</label>
+                                    <input type="text" id="adm-set-required-group-id" class="studio-input" placeholder="-100xxxxxxxxxx">
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_channel_invite_link">Channel ဖိတ်ခေါ် လင့်ခ် (Channel Invite Link)</label>
+                                    <input type="text" id="adm-set-channel-invite-link" class="studio-input" placeholder="https://t.me/VoiceClonePro">
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_group_invite_link">Group ဖိတ်ခေါ် လင့်ခ် (Group Invite Link)</label>
+                                    <input type="text" id="adm-set-group-invite-link" class="studio-input" placeholder="https://t.me/+xxxxxxxxxxxx">
+                                </div>
+                                <div>
+                                    <p class="text-xs text-muted" data-i18n="settings_gates_hint">သတိ — Channel/Group ID များ ပြောင်းလဲလိုက်ပါက အဖွဲ့ဝင် ဖြစ်မှု စစ်ဆေးသည့် တံခါးစနစ်လည်း ပြောင်းလဲသွားပါမည်။ ID အမှား ထည့်သွင်းမိပါက အသုံးပြုသူများ ဝင်ရောက်၍ မရ ဖြစ်နိုင်ပါသည်။</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -2164,7 +2218,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261102_ga1"></script>
-    <script src="/static/js/app.js?v=20261102_ga1"></script>
+    <script src="/static/js/i18n.js?v=20261102_ma1"></script>
+    <script src="/static/js/app.js?v=20261102_ma1"></script>
 </body>
 </html>
