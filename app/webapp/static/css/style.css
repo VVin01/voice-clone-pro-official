@@ -783,7 +783,7 @@ select.studio-input { min-height: 50px; }
 }
 .recap-info-thumb { width: 96px; height: 54px; object-fit: cover; border-radius: var(--r-sm); background: var(--inset); flex-shrink: 0; }
 .recap-info-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.recap-info-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recap-info-title { font-size: 14px; font-weight: 700; line-height: 1.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recap-info-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .mini-tag {
     font-size: 11px; font-weight: 600; color: var(--text-2);
@@ -983,7 +983,7 @@ select.studio-input { min-height: 50px; }
 .voice-card.active { border-color: var(--gold-border); background: var(--gold-soft); }
 .voice-card .v-avatar { font-size: 22px; flex-shrink: 0; }
 .voice-card .v-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.voice-card .v-name { font-size: 13.5px; font-weight: 700; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-card .v-name { font-size: 13.5px; font-weight: 700; line-height: 1.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .voice-card .v-desc { font-size: 11.5px; color: var(--text-2); line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .v-preview-btn {
     width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%;
@@ -1765,7 +1765,7 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 .plan-tabs .seg-btn { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
 .plan-tabs .seg-title {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    font-size: 13px; max-width: 100%;
+    font-size: 13px; max-width: 100%; line-height: 1.8;
 }
 
 /* ── 5 · LIVE dot in the brand bar (folded from the removed pane header) ── */
@@ -2292,6 +2292,7 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-row-chev { color: var(--text-3); font-size: 20px; line-height: 1; }
 .badge-status.active { background: var(--green-soft); color: var(--green); }
 .badge-status.blocked { background: var(--red-soft); color: var(--red); }
+.badge-status.botblocked { background: var(--gold-soft); color: var(--gold-2); }
 .badge-status.cancelled { background: var(--surface-3); color: var(--text-2); }
 
 .adm-back-btn {
@@ -2609,6 +2610,16 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     color: var(--text-2); font-size: 14px; line-height: 1; padding: 8px 6px;
 }
 .link-source-help { margin: 8px 2px 0; font-size: 12px; line-height: 1.65; color: var(--text-2); }
+/* P1 (premium round 2026-11-02): persistent Downloader extract
+   failure state — a toast alone fades and leaves the tab looking
+   idle/ambiguous after a timeout or failure. */
+.dl-error-box {
+    margin-top: 12px; padding: 12px 14px;
+    border-radius: var(--r-md); background: var(--red-soft);
+    border: 1px solid var(--red);
+}
+.dl-error-title { font-size: 13.5px; font-weight: 700; color: var(--red); line-height: 1.6; }
+.dl-error-hint { margin: 4px 0 0; font-size: 12.5px; line-height: 1.65; color: var(--text-2); }
 
 /* ── Voice compact UX 2026-11-01: text input first, persona picker
    collapsed. The selected-voice summary row lives under the mode
@@ -2625,7 +2636,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .vsr-label { font-size: 12px; color: var(--text-2); font-weight: 600; white-space: nowrap; }
 .vsr-avatar { font-size: 17px; line-height: 1; }
 .vsr-name {
-    flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700;
+    flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700; line-height: 1.8;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .vsr-change { flex-shrink: 0; }
@@ -2913,7 +2924,11 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .ref-link-row { display: block; }
 .ref-link-text {
     display: block; white-space: normal; overflow: visible; text-overflow: clip;
-    word-break: break-all; font-size: 12px; line-height: 1.6;
+    word-break: break-all; font-size: 11.5px; line-height: 1.6;
+    /* P3 (premium round 2026-11-02): balance the wrapped lines so a
+       lone orphan character never lands on line 2; the full link
+       stays visible and copyable (R29 intent). */
+    text-wrap: balance;
     background: var(--inset); border: 1px solid var(--border);
     border-radius: var(--r-sm); padding: 8px 10px;
 }
@@ -2963,6 +2978,10 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     white-space: normal; overflow: visible; text-overflow: clip;
     overflow-wrap: anywhere;
 }
+/* P2 (premium round 2026-11-02): the relative-time phrase ("45h
+   ago") is one token — it must never split across lines when the
+   meta row wraps on badge-carrying cards. */
+.hub-time-ago { white-space: nowrap; }
 
 /* A-1 — admin sub-nav: every section visible at once as a wrapped
    chip row; the scroll-strip fade mask goes with the scrolling. */

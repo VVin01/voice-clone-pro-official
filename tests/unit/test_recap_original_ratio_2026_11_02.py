@@ -180,4 +180,4 @@ def test_analyze_catch_paints_unverified_info_card():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261102_ma1") == 3
+    assert INDEX_HTML.count("?v=20261102_r37") == 3

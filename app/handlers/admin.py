@@ -198,8 +198,13 @@ async def _fetch_dashboard_metrics(session: AsyncSession) -> dict:
         select(Job).where(Job.status == JobStatus.FAILED.value).order_by(Job.created_at.desc()).limit(1)
     )).scalar_one_or_none()
 
-    purchased_sec = (await session.execute(select(func.sum(MinuteBalance.purchased_seconds)))).scalar() or 0
-    consumed_sec = (await session.execute(select(func.sum(MinuteBalance.consumed_seconds)))).scalar() or 0
+    # Postgres SUM() over a NUMERIC-backed column returns
+    # decimal.Decimal, and Decimal / float raises TypeError — the
+    # dialect gap that killed the bot-chat /admin dashboard in prod
+    # (2026-11-02, traceback_admin_085023) while SQLite tests returned
+    # ints and stayed green. Coerce both sums to int at the source.
+    purchased_sec = int((await session.execute(select(func.sum(MinuteBalance.purchased_seconds)))).scalar() or 0)
+    consumed_sec = int((await session.execute(select(func.sum(MinuteBalance.consumed_seconds)))).scalar() or 0)
 
     pending_payments = (await session.execute(select(func.count()).where(PaymentRequest.status == PaymentStatus.PENDING.value))).scalar() or 0
     active_models = (await session.execute(select(func.count()).where(VoiceModel.status == VoiceModelStatus.ACTIVE.value))).scalar() or 0

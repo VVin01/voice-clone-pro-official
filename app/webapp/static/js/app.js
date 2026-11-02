@@ -2840,6 +2840,9 @@ function setupRecapVisualEditor() {
         setRecapInfoUploadState("ready");
         if (els.label) els.label.innerText = t("upload_ready_label");
         setRecapPreviewState("ready");
+        // D2: same settle re-fit as the Analyze path — the plate was
+        // last fitted (if at all) while the wrap was hidden.
+        refitBlurPlateAfterSettle();
         if (els.cancelBtn) els.cancelBtn.classList.add("hidden");
         if (els.hint) els.hint.classList.add("hidden");
         setTimeout(() => { if (els.wrap) els.wrap.classList.add("hidden"); }, 1500);
@@ -3048,6 +3051,16 @@ function setupRecapVisualEditor() {
         if (plate.height < neededPx) {
             previewBlur.style.height = `${(neededPx / canvasH) * 100}%`;
         }
+    }
+
+    // D2 (premium round 2026-11-02): the fit measures live geometry,
+    // so a fit attempted while the preview wrap is still hidden
+    // (loading state) measures 0 and silently no-ops — which is why
+    // the post-Analyze default state kept the slider-sized plate.
+    // Settle points (Analyze completion, source load) re-run the fit
+    // on the next frame, once the wrap is visible and laid out.
+    function refitBlurPlateAfterSettle() {
+        requestAnimationFrame(() => { fitBlurPlateToCaption(); });
     }
 
     function syncSubBoxVisual() {
@@ -3882,6 +3895,9 @@ function setupRecapVisualEditor() {
             if (previewSub) {
                 previewSub.className = `preview-sub-box ${style}`;
             }
+            // Style presets change the caption box's padding/height —
+            // the band plate re-fits around it (D2).
+            fitBlurPlateToCaption();
         });
     });
 
@@ -4154,6 +4170,10 @@ function setupRecapVisualEditor() {
             } finally {
                 btnAnalyze.disabled = false;
                 btnAnalyze.innerText = originalText;
+                // D2: the preview wrap only becomes visible at the
+                // "ready" settle above — re-fit the caption plate now
+                // that it can actually be measured.
+                refitBlurPlateAfterSettle();
             }
         });
     }
@@ -5014,6 +5034,20 @@ async function renderRecapScript(jobId) {
 // ── Downloader Tab ─────────────────────────────────────────────────────────
 let dlCurrent = null; // { url, has_subtitles } from the last extract
 
+// P1 (premium round 2026-11-02): the Downloader extract failure
+// state is PERSISTENT — the error toast fades after a few seconds
+// and the tab used to settle back to a silent idle that reads as
+// "still working". The box stays until the next attempt or success.
+function dlShowExtractError() {
+    const box = document.getElementById("dl-error-box");
+    if (box) box.classList.remove("hidden");
+}
+
+function dlHideExtractError() {
+    const box = document.getElementById("dl-error-box");
+    if (box) box.classList.add("hidden");
+}
+
 function dlSetSrtCardState(hasSubtitles) {
     const card = document.getElementById("btn-dl-fmt-srt");
     const desc = document.getElementById("dl-fmt-srt-desc");
@@ -5164,6 +5198,7 @@ function setupDownloader() {
             }
             haptic("medium");
             btnDl.disabled = true;
+            dlHideExtractError();
             const dlBtnSpan = btnDl.querySelector("span");
             const dlBtnOriginal = dlBtnSpan ? dlBtnSpan.innerText : "";
             if (dlBtnSpan) dlBtnSpan.innerText = t("recap_preview_loading");
@@ -5206,7 +5241,12 @@ function setupDownloader() {
                 if (dlActions) dlActions.innerHTML = "";
 
                 resultCard.classList.remove("hidden");
+                dlHideExtractError();
             } catch (err) {
+                // Includes the client-side timeout (fetchWithTimeout
+                // abort): the extract did not complete — say so, and
+                // keep saying it after the toast fades (P1).
+                dlShowExtractError();
                 showErrorToast(err, 'download');
             } finally {
                 btnDl.disabled = false;
@@ -6036,7 +6076,7 @@ function admUserRowHtml(u) {
             <div class="adm-user-line1">
                 <span class="adm-user-name">${escapeHtml(u.first_name || "-")}</span>
                 ${u.account_category === "PURCHASED" ? `<span class="badge-vip">👑 VIP</span>` : ""}
-                <span class="badge-status ${u.is_banned ? "blocked" : "active"}">${u.is_banned ? "BLOCKED" : "ACTIVE"}</span>
+                <span class="badge-status ${u.is_banned ? "blocked" : (u.bot_blocked ? "botblocked" : "active")}">${u.is_banned ? "BLOCKED" : (u.bot_blocked ? "BOT BLOCKED" : "ACTIVE")}</span>
             </div>
             <div class="adm-user-sub">${subHtml}</div>
         </div>
@@ -6169,8 +6209,8 @@ function renderAdminUserDetail(u) {
     set("adm-detail-sub", (u.username ? "@" + u.username + " • " : "") + "ID: " + u.id);
     const st = document.getElementById("adm-detail-status");
     if (st) {
-        st.className = "badge-status " + (u.is_banned ? "failed" : "success");
-        st.innerText = u.is_banned ? t("admin_status_banned") : t("admin_status_active");
+        st.className = "badge-status " + (u.is_banned ? "failed" : (u.bot_blocked ? "botblocked" : "success"));
+        st.innerText = u.is_banned ? t("admin_status_banned") : (u.bot_blocked ? t("admin_status_bot_blocked") : t("admin_status_active"));
     }
     const meta = document.getElementById("adm-detail-meta");
     if (meta) {
@@ -7394,7 +7434,7 @@ function hubHistoryRowHtml(j) {
             <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
             <span class="hub-row-text">
                 <span class="hub-row-title">${title}</span>
-                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : ""}${escapeHtml(j.preset_voice || "")} · ⏱️ ${escapeHtml(j.time_ago || "")}</span>
+                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : ""}${escapeHtml(j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span></span>
             </span>
             ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
             <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
