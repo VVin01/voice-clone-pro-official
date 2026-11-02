@@ -266,15 +266,12 @@ def test_douyin_blocked_message_single_constant():
 
 # ── Item 15: bot-UI defects ─────────────────────────────────────────
 
-def test_model_file_ready_cloud_marker():
-    from types import SimpleNamespace
-
-    from app.handlers.admin import _model_file_ready
-
-    assert _model_file_ready(SimpleNamespace(pth_path="voxcpm")) is True
-    assert _model_file_ready(SimpleNamespace(pth_path="/nonexistent/model.pth")) is False
-    assert _model_file_ready(SimpleNamespace(pth_path="")) is False
-    assert _model_file_ready(SimpleNamespace(pth_path=None)) is False
+# NOTE (bot-chat cleanup, 2026-11-03): test_model_file_ready_cloud_marker
+# was removed deliberately — it pinned _model_file_ready(), a helper that
+# existed only for the retired admin Voice Models screens. Its semantics
+# (cloud marker = ready, legacy .pth = not) are superseded by
+# is_legacy_local_model()/is_displayable_model() in
+# tests/unit/test_bot_cleanup_2026_11_03.py.
 
 
 def test_wrap_admin_value_wraps_and_escapes():

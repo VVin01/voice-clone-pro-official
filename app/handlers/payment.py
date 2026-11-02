@@ -12,7 +12,7 @@ from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.schema import PricingPlan
 from app.services.i18n import t
-from app.services.ledger import get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.payments import (
     clear_payment_intent,
     create_payment_request,
@@ -44,6 +44,9 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
         plans = await get_active_pricing_plans(session)
+        balance = await get_minute_balance(session, callback.from_user.id)
+        user_category = getattr(user.account_category, "value", str(user.account_category)).upper()
+        user_recap_credits = getattr(user, "recap_credits", None)
         # Re-entering the buy menu abandons the flow — the persisted
         # selection goes with the FSM state (hunt B2).
         await clear_payment_intent(session, callback.from_user.id)
@@ -110,7 +113,29 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
             ])
     buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:home")])
 
-    text = t("pay_store_text", lang)
+    # Bot cleanup 2026-11-03 (audit item 4): the store header states
+    # the buyer's OWN tier and balances. PURCHASED users get the
+    # top-up framing (packages add onto the current balance) instead
+    # of the Free→VIP pitch, which was a dead end for them; every pack
+    # stays buyable either way. Prices are untouched — buttons above
+    # are built from the same catalogue/DB rows as before.
+    if settings.is_admin(callback.from_user.id):
+        text = t("pay_store_text", lang)
+    else:
+        if user_category == "PURCHASED":
+            category_badge = "⭐ VIP"
+            store_body = t("pay_store_text_vip", lang)
+        else:
+            category_badge = t("hist_tier_free", lang)
+            store_body = t("pay_store_text", lang)
+        balance_line = t(
+            "pay_store_balance_line",
+            lang,
+            category=category_badge,
+            total_min=balance.total_usable_minutes,
+            recap_credits=3 if user_recap_credits is None else user_recap_credits,
+        )
+        text = f"{balance_line}\n\n{store_body}"
 
     await safe_edit_message(callback, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
     try:
@@ -384,4 +409,26 @@ async def handle_receipt_wrong_content(message: Message, state: FSMContext):
     """
     data = await state.get_data()
     lang = data.get("lang", "my")
+    await message.answer(t("pay_receipt_wrong_content", lang), parse_mode="HTML")
+
+
+@payment_router.message(StateFilter(None), F.chat.type == "private", F.text, ~F.text.startswith("/"))
+async def handle_receipt_hint_after_restart(message: Message):
+    """Text with NO live FSM state but a persisted payment intent.
+
+    The media twin of this edge (handle_receipt_after_restart) resumes
+    the slip flow after a bot restart, but TEXT met silence: the
+    in-state wrong-content handler above cannot fire without the FSM
+    state. When a recent (<24h) persisted intent exists, the user is
+    mid-purchase — answer with the same polite screenshot request.
+    With no intent, stay silent: this catch-all must never answer
+    ordinary chat text. Commands are excluded at the filter level so
+    later routers keep owning them.
+    """
+    async with AsyncSessionLocal() as session:
+        intent = await get_recent_payment_intent(session, message.from_user.id)
+        if intent is None:
+            return
+        user, _ = await get_or_create_user(session, message.from_user.id)
+        lang = user.language_code or "my"
     await message.answer(t("pay_receipt_wrong_content", lang), parse_mode="HTML")

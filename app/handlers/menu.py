@@ -30,7 +30,7 @@ from app.services.ledger import (
     get_referral_stats,
     grant_monthly_free_allowance,
 )
-from app.services.models import get_available_models_for_user
+from app.services.models import get_displayable_models_for_user
 from app.ui.helpers import safe_answer_callback, safe_edit_message
 from app.ui.keyboards import (
     back_to_menu_kb,
@@ -96,7 +96,16 @@ async def render_main_menu(
             recap_credits=3 if _recap_credits is None else _recap_credits,
         )
     text = info_text
-    kb = main_menu_kb(is_admin=is_admin, lang=active_lang)
+    # Bot cleanup 2026-11-03: the membership button renders ONLY while
+    # the user is unverified, from the persisted gate flags — the same
+    # state verify_user_membership maintains and the Mini App gate
+    # reads (no parallel state). Once verified it disappears; if the
+    # flags lapse (join-then-leave recheck), it reappears.
+    membership_pending = not (
+        getattr(user, "channel_verified", False)
+        and getattr(user, "group_verified", False)
+    )
+    kb = main_menu_kb(is_admin=is_admin, lang=active_lang, membership_pending=membership_pending)
     return text, kb
 
 
@@ -113,12 +122,19 @@ async def handle_menu_home(callback: CallbackQuery, state: FSMContext | None = N
 
 
 @menu_router.callback_query(F.data == "menu:change_lang")
-async def handle_change_language(callback: CallbackQuery):
+async def handle_change_language(callback: CallbackQuery, session: AsyncSession | None = None):
     from app.ui.keyboards import language_selection_kb
+    if session is not None:
+        user, _ = await get_or_create_user(session, callback.from_user.id)
+        active_lang = user.language_code
+    else:
+        async with AsyncSessionLocal() as s:
+            user, _ = await get_or_create_user(s, callback.from_user.id)
+            active_lang = user.language_code
     await safe_edit_message(
         callback,
         "🌐 ကျေးဇူးပြု၍ အသုံးပြုလိုသော ဘာသာစကားကို ရွေးချယ်ပါ / Please select your preferred language:",
-        reply_markup=language_selection_kb(),
+        reply_markup=language_selection_kb(active_lang=active_lang, show_back=True, lang=active_lang),
         parse_mode="HTML",
     )
     try:
@@ -571,12 +587,12 @@ async def handle_voice_samples_catalog(callback: CallbackQuery, session: AsyncSe
     if session is not None:
         user, _ = await get_or_create_user(session, user_id)
         lang = user.language_code
-        models = await get_available_models_for_user(session, user_id)
+        models = await get_displayable_models_for_user(session, user_id)
     else:
         async with AsyncSessionLocal() as s:
             user, _ = await get_or_create_user(s, user_id)
             lang = user.language_code
-            models = await get_available_models_for_user(s, user_id)
+            models = await get_displayable_models_for_user(s, user_id)
 
     title = t("voice_samples_title", lang)
     kb = voice_samples_catalog_kb(models, lang=lang, current_user_id=user_id)
@@ -590,12 +606,12 @@ async def handle_samples_command(message: Message, session: AsyncSession | None 
     if session is not None:
         user, _ = await get_or_create_user(session, user_id)
         lang = user.language_code
-        models = await get_available_models_for_user(session, user_id)
+        models = await get_displayable_models_for_user(session, user_id)
     else:
         async with AsyncSessionLocal() as s:
             user, _ = await get_or_create_user(s, user_id)
             lang = user.language_code
-            models = await get_available_models_for_user(s, user_id)
+            models = await get_displayable_models_for_user(s, user_id)
 
     title = t("voice_samples_title", lang)
     kb = voice_samples_catalog_kb(models, lang=lang, current_user_id=user_id)

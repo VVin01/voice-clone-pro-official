@@ -40,7 +40,7 @@ from app.db.session import get_db_session
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
 from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, PaymentRequest, AuditLog, utc_now
 from app.services.i18n import t
-from app.services.models import get_authorized_model, get_available_models_for_user
+from app.services.models import get_authorized_model, get_available_models_for_user, is_displayable_model
 from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.curated_voices import list_curated_voices, get_curated_voice
 from app.webapp.auth import parse_and_verify_init_data
@@ -1335,9 +1335,15 @@ async def list_voice_models(
     authorized_ids = {m.id for m in await get_available_models_for_user(db, user.id)}
     models = [
         m for m in models
-        if m.type != VoiceModelType.PERSONAL.value
-        or m.owner_user_id == user.id
-        or m.id in authorized_ids
+        # Bot cleanup 2026-11-03: legacy .pth SYSTEM rows (display-only
+        # zombies — queue.py maps their jobs onto VoxCPM) are hidden
+        # from this catalogue too, same rule as the bot surfaces.
+        if is_displayable_model(m)
+        and (
+            m.type != VoiceModelType.PERSONAL.value
+            or m.owner_user_id == user.id
+            or m.id in authorized_ids
+        )
     ]
 
     model_list = []

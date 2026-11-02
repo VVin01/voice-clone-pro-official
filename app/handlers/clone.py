@@ -15,7 +15,7 @@ from app.services.audio import CURATED_TTS_VOICES, SPEED_RATES
 from app.services.gate import build_gate_reminder_text, is_gate_configured, verify_user_membership
 from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
-from app.services.models import get_available_models_for_user
+from app.services.models import get_displayable_models_for_user
 from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.queue import create_voice_clone_job, get_queue_position
 from app.ui.helpers import safe_edit_message
@@ -321,7 +321,7 @@ async def handle_clone_gender_selected(callback: CallbackQuery, state: FSMContex
 
     # Prompt voice model selection (VoxCPM2 only for new jobs)
     async with AsyncSessionLocal() as session:
-        models = await get_available_models_for_user(session, callback.from_user.id)
+        models = await get_displayable_models_for_user(session, callback.from_user.id)
 
     if not models:
         await safe_edit_message(
@@ -774,9 +774,13 @@ async def handle_send_audio_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error handling send_audio callback for job {job_id}: {e}", exc_info=True)
         try:
+            # Bot cleanup 2026-11-03: the raw exception text (Telegram
+            # API errors, file paths) used to be interpolated into the
+            # user message. Users get one sanitized line; the detail
+            # stays in the server log line above.
             await callback.bot.send_message(
                 chat_id=callback.from_user.id,
-                text=t("clone_audio_send_failed", lang, error=str(e)),
+                text=t("clone_audio_send_failed", lang),
             )
         except Exception:
             pass
@@ -917,9 +921,11 @@ async def handle_send_recap_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error handling send_recap callback for job {job_id}: {e}", exc_info=True)
         try:
+            # Bot cleanup 2026-11-03: sanitized user line only — the
+            # raw exception stays in the server log above.
             await callback.bot.send_message(
                 chat_id=callback.from_user.id,
-    text=t("clone_recap_send_failed", lang, error=str(e)),
+                text=t("clone_recap_send_failed", lang),
             )
         except Exception:
             pass

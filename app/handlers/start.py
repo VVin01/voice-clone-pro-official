@@ -95,6 +95,8 @@ async def handle_start(message: Message, command: CommandObject):
                 channel_link=settings.channel_invite_link,
                 group_link=settings.group_invite_link,
                 lang=lang,
+                channel_ok=user.channel_verified,
+                group_ok=user.group_verified,
             )
             try:
                 await message.answer(text, reply_markup=kb, parse_mode="HTML")
@@ -146,6 +148,8 @@ async def handle_set_language(callback: CallbackQuery):
                 channel_link=settings.channel_invite_link,
                 group_link=settings.group_invite_link,
                 lang=lang_code,
+                channel_ok=user.channel_verified,
+                group_ok=user.group_verified,
             )
             await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
             try:
@@ -163,6 +167,58 @@ async def handle_set_language(callback: CallbackQuery):
         await callback.answer()
     except Exception:
         pass
+
+
+@start_router.callback_query(F.data == "menu:membership")
+async def handle_membership_card(callback: CallbackQuery):
+    """Main-menu membership button (bot cleanup 2026-11-03).
+
+    The button exists only while the user is unverified, and tapping it
+    opens the membership STATUS CARD — per-chat ✅/❌ lines, Join
+    buttons for the chats still missing, and the recheck button —
+    instead of the old bare toast that said nothing about which chat
+    was missing. A live verify runs first: if the user has meanwhile
+    joined both chats, the card is skipped, the verified toast shows,
+    and the re-rendered main menu no longer carries the button.
+    """
+    async with AsyncSessionLocal() as session:
+        user, _ = await get_or_create_user(session, callback.from_user.id)
+        lang = user.language_code
+
+        if _is_banned_user(user, callback.from_user.id):
+            await session.commit()
+            try:
+                await callback.answer(t("user_account_suspended", lang), show_alert=True)
+            except Exception:
+                pass
+            return
+
+        is_verified, _ = await verify_user_membership(session, user, callback.bot)
+
+        if is_verified:
+            await session.commit()
+            try:
+                await callback.answer(t("membership_verified", lang))
+            except Exception:
+                pass
+            text, kb = await render_main_menu(callback.from_user.id, lang, session=session)
+            await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
+            return
+
+        await session.commit()
+        text = build_gate_reminder_text(lang, user.channel_verified, user.group_verified)
+        kb = membership_gate_kb(
+            channel_link=settings.channel_invite_link,
+            group_link=settings.group_invite_link,
+            lang=lang,
+            channel_ok=user.channel_verified,
+            group_ok=user.group_verified,
+        )
+        await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
+        try:
+            await callback.answer()
+        except Exception:
+            pass
 
 
 @start_router.callback_query(F.data == "gate:verify")
@@ -191,6 +247,8 @@ async def handle_gate_verify(callback: CallbackQuery):
                 channel_link=settings.channel_invite_link,
                 group_link=settings.group_invite_link,
                 lang=lang,
+                channel_ok=user.channel_verified,
+                group_ok=user.group_verified,
             )
             await safe_edit_message(callback, reminder, reply_markup=kb, parse_mode="HTML")
             try:
@@ -226,7 +284,7 @@ async def handle_language_command(message: Message, session: AsyncSession | None
     try:
         await message.answer(
             t("welcome_choose_lang", lang),
-            reply_markup=language_selection_kb(),
+            reply_markup=language_selection_kb(active_lang=lang, show_back=True, lang=lang),
         )
     except TelegramForbiddenError:
         logger.info("handle_language_command: Bot blocked by user %s", telegram_id)
