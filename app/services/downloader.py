@@ -407,6 +407,30 @@ YOUTUBE_ATTEMPT_SOCKET_TIMEOUT = 20   # bounded per-attempt socket timeout (medi
 INFO_STAGE_RETRIES = 1                # info extraction fails fast; retries:10 stays for media bytes
 INFO_STAGE_SOCKET_TIMEOUT = 10        # info-stage socket cap; media keeps YOUTUBE_ATTEMPT_SOCKET_TIMEOUT
 
+# ── PO Token sidecar (bgutil-ytdlp-pot-provider) ────────────────────
+#
+# R39/R39.1 proved YouTube's datacenter bot wall is Render egress-IP
+# reputation: every client fails "Failed to extract any player
+# response" from prod while the identical code succeeds elsewhere.
+# The owner-approved route (2026-11-02) is a proof-of-origin token
+# provider: the bgutil server runs inside the same container on
+# loopback (see Dockerfile + docker-entrypoint.sh) and the pip plugin
+# bgutil-ytdlp-pot-provider feeds its tokens to yt-dlp's POT
+# framework, making the web clients' requests look legitimate despite
+# the IP reputation. Wiring lives ONLY in _attempt_plans below: every
+# YouTube attempt carries the provider base_url; non-YouTube paths
+# are untouched. Degradation is graceful by design — when the server
+# is unreachable the plugin warns and extraction continues exactly as
+# before (proven locally with the server stopped).
+POT_SERVER_DEFAULT_URL = "http://127.0.0.1:4416"
+
+
+def _pot_extractor_args() -> Dict[str, Any]:
+    """Extractor args pointing yt-dlp's POT framework at the local
+    bgutil provider server (env-overridable for local testing)."""
+    base_url = os.getenv("POT_SERVER_URL") or POT_SERVER_DEFAULT_URL
+    return {'youtubepot-bgutilhttp': {'base_url': [base_url]}}
+
 # tikwm resolver guardrails (failure-triggered only): hard timeouts,
 # response validation, and an in-memory circuit breaker so a sick or
 # hostile resolver can never stall or poison the extraction path.
@@ -817,6 +841,8 @@ class MediaDownloader:
         cap are for media bytes only); every attempt carries a
         bounded socket timeout. Every other host
         yields exactly one attempt: the base opts, unchanged.
+        Every YouTube attempt additionally carries the bgutil PO
+        Token provider args (see _with_pot / _pot_extractor_args).
         """
         if not _is_youtube_url(expanded_url):
             yield "default", base_opts
@@ -842,10 +868,21 @@ class MediaDownloader:
             o['extractor_args'] = ea
             return o
 
-        yield "web_embedded", _staged(_with_client(base_opts, "web_embedded"))
-        yield "default", _staged(dict(base_opts))
-        yield "android", _staged(_with_client(base_opts, "android"))
-        yield "mweb", _staged(_with_client(base_opts, "mweb"))
+        def _with_pot(opts: Dict[str, Any]) -> Dict[str, Any]:
+            # ONE wiring point for the PO Token sidecar: every YouTube
+            # attempt (any client, any stage) points the bgutil plugin
+            # at the in-container provider server. Merges alongside the
+            # 'youtube' extractor args without disturbing them.
+            o = dict(opts)
+            ea = dict(o.get('extractor_args') or {})
+            ea.update(_pot_extractor_args())
+            o['extractor_args'] = ea
+            return o
+
+        yield "web_embedded", _with_pot(_staged(_with_client(base_opts, "web_embedded")))
+        yield "default", _with_pot(_staged(dict(base_opts)))
+        yield "android", _with_pot(_staged(_with_client(base_opts, "android")))
+        yield "mweb", _with_pot(_staged(_with_client(base_opts, "mweb")))
 
     def _tikwm_resolve(self, page_url: str) -> Optional[Dict[str, Any]]:
         """Guarded tikwm resolver lookup for a TikTok page URL.
