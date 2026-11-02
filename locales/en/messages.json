@@ -20,6 +20,7 @@
   "membership_not_verified": "❌ Verification failed. Please make sure you have joined both the Channel and the Group.",
   "menu_title": "🎛️ <b>Main Menu (Studio Ultra)</b>",
   "menu_account_info": "━━━━━━━━━━━━━━━━━━━━━━━━\n👤 Account: <b>{category}</b>\n🎙️ Voice Balance: <b>{total_min:.1f} min</b>\n🎬 Recap Balance: <b>{recap_credits} credits</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n🚀 <b>What you can do:</b>\n• 🎙️ <b>Voice Studio:</b> Natural Myanmar voices with VoxCPM AI\n• 🎬 <b>Recap Maker:</b> 9:16 Full HD (1080p) + dynamic blur + custom subtitles\n• 📥 <b>Downloader:</b> Free Video/Audio downloads from TikTok, YouTube & Douyin\n━━━━━━━━━━━━━━━━━━━━━━━━\n👇 <i>Tap a button below to start:</i>",
+  "menu_account_info_admin": "━━━━━━━━━━━━━━━━━━━━━━━━\n👤 Account: <b>{category}</b>\n🎙️ Voice Balance: <b>∞ (Unlimited)</b>\n🎬 Recap Balance: <b>∞ (Unlimited)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n🚀 <b>What you can do:</b>\n• 🎙️ <b>Voice Studio:</b> Natural Myanmar voices with VoxCPM AI\n• 🎬 <b>Recap Maker:</b> 9:16 Full HD (1080p) + dynamic blur + custom subtitles\n• 📥 <b>Downloader:</b> Free Video/Audio downloads from TikTok, YouTube & Douyin\n━━━━━━━━━━━━━━━━━━━━━━━━\n👇 <i>Tap a button below to start:</i>",
   "btn_menu_start": "🚀 Start",
   "btn_menu_voice_clone": "🎙️ Text → Voice → Clone",
   "btn_menu_buy_minutes": "💳 Buy Minutes",

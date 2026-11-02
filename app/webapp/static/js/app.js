@@ -1227,6 +1227,10 @@ async function loadUserProfile() {
         }
         const data = await res.json();
         state.user = data;
+        // Cache the last good profile so the NEXT open paints real
+        // balances instantly instead of flashing the gate + 0.0m/0c
+        // while revalidating (journey audit 2026-11-02, item 6).
+        try { localStorage.setItem(USER_ME_CACHE_KEY, JSON.stringify(data)); } catch (e) {}
         // Admins are never entry-gate locked (see entry-gate section).
         if (data.is_admin) unlockEntryGate();
         updateRecapSplitCostHint();
@@ -1295,6 +1299,13 @@ async function loadUserProfile() {
 
         updateGateBanner(data);
         refreshWelcomeStrip();
+        const freeTermsNote = document.getElementById("recap-free-terms-note");
+        if (freeTermsNote) {
+            // Up-front free terms under the Recap source input
+            // (journey audit item 8): FREE users only — VIP/admin
+            // never see the 2-minute/watermark note.
+            freeTermsNote.classList.toggle("hidden", !!(data.is_admin || data.is_vip));
+        }
         if (data.is_banned) { setEntryGateMode("banned", data); lockEntryGate(); }
         updateVoicePreflight();
 
@@ -2055,8 +2066,64 @@ async function verifyEntryGate() {
 }
 window.verifyEntryGate = verifyEntryGate;
 
+// ── Cached profile boot paint (journey audit 2026-11-02, item 6) ────
+// Every successful /api/user/me is cached (see loadUserProfile). On
+// the next open the cached payload paints the header instantly and a
+// known verified member starts UNLOCKED — no join-gate flash, no
+// 0.0m/0c flash. The live startup verify still runs and locks ONLY
+// on a confirmed non-member verdict; a network failure changes
+// nothing either way. First-ever opens (no cache) keep the
+// fail-closed locked start below.
+const USER_ME_CACHE_KEY = "vcp_user_me_cache";
+
+function readCachedUserProfile() {
+    try {
+        const raw = localStorage.getItem(USER_ME_CACHE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+
+// Mirrors the header/profile paint in loadUserProfile for the same
+// payload shape — keep the two in step when the header changes.
+function paintCachedUserHeader(data) {
+    const vipBadge = document.getElementById("vip-status-badge");
+    const voiceBalChip = document.getElementById("user-voice-bal");
+    const recapBalChip = document.getElementById("user-recap-bal");
+    const catTag = document.getElementById("profile-category-tag");
+    const balMin = document.getElementById("profile-balance-min");
+    const balCredits = document.getElementById("profile-balance-credits");
+    const charCount = document.getElementById("char-count");
+    if (vipBadge) {
+        vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
+        vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 PRO" : "FREE");
+    }
+    if (voiceBalChip) voiceBalChip.innerText = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
+    if (recapBalChip) recapBalChip.innerText = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits || 0}c`;
+    if (catTag) {
+        catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
+        catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
+    }
+    if (balMin) balMin.innerText = data.is_admin ? t("unlimited") : `${data.balance_minutes} mins`;
+    if (balCredits) balCredits.innerText = data.is_admin ? t("unlimited") : `${data.recap_credits || 0} credits`;
+    if (charCount) {
+        const limit = data.character_limit || (data.is_vip ? 5000 : 1000);
+        charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
+    }
+}
+
+// Returns true when the cached profile is a known verified member
+// (or admin) who may start unlocked pending the live check.
+function bootFromCachedProfile() {
+    const data = readCachedUserProfile();
+    if (!data) return false;
+    state.user = data;
+    paintCachedUserHeader(data);
+    if (data.is_banned) return false;
+    return !!(data.is_admin || data.membership_verified);
+}
+
 function initEntryGate() {
-    lockEntryGate();
+    if (bootFromCachedProfile()) unlockEntryGate(); else lockEntryGate();
     runEntryGateCheck("startup");
     document.addEventListener("visibilitychange", () => {
         if (!document.hidden) runEntryGateCheck("visibility");
@@ -2183,6 +2250,7 @@ function startJobPolling(jobId) {
 
     let tick = 0;
     let failStreak = 0;
+    const pollStartedAt = Date.now();
     // Poll-death honesty (upload-ux pass): the old loop swallowed every
     // failure and, at its 4-minute cap, stopped silently — leaving a
     // frozen progress box that looked exactly like a stuck job. Now
@@ -2230,10 +2298,12 @@ function startJobPolling(jobId) {
                 setVoiceStage("working");
                 if (progressFill) progressFill.style.width = "45%";
                 if (statusMsg) statusMsg.innerText = t("cloud_queue_waiting");
+                if (etaText) etaText.innerText = tf("voice_elapsed", { sec: Math.max(0, Math.round((Date.now() - pollStartedAt) / 1000)) });
             } else if (data.status === "RUNNING") {
                 setVoiceStage("working");
                 if (progressFill) progressFill.style.width = "80%";
                 if (statusMsg) statusMsg.innerText = t("voice_synthesizing");
+                if (etaText) etaText.innerText = tf("voice_elapsed", { sec: Math.max(0, Math.round((Date.now() - pollStartedAt) / 1000)) });
             } else if (data.status === "SUCCESS") {
                 clearInterval(state.pollTimer);
                 setVoiceStage("success");
@@ -5048,6 +5118,18 @@ function dlHideExtractError() {
     if (box) box.classList.add("hidden");
 }
 
+// Journey audit 2026-11-02: the result card outlived its link —
+// clearing the input left a stale card (with live download buttons)
+// on screen. One helper clears card + delivery rows + state; it runs
+// when a new extraction starts and whenever the input is emptied.
+function dlClearResult() {
+    const card = document.getElementById("dl-result-card");
+    if (card) card.classList.add("hidden");
+    const actions = document.getElementById("dl-delivery-actions");
+    if (actions) actions.innerHTML = "";
+    dlCurrent = null;
+}
+
 function dlSetSrtCardState(hasSubtitles) {
     const card = document.getElementById("btn-dl-fmt-srt");
     const desc = document.getElementById("dl-fmt-srt-desc");
@@ -5199,6 +5281,7 @@ function setupDownloader() {
             haptic("medium");
             btnDl.disabled = true;
             dlHideExtractError();
+            dlClearResult();
             const dlBtnSpan = btnDl.querySelector("span");
             const dlBtnOriginal = dlBtnSpan ? dlBtnSpan.innerText : "";
             if (dlBtnSpan) dlBtnSpan.innerText = t("recap_preview_loading");
@@ -5210,6 +5293,19 @@ function setupDownloader() {
                 }, 60000);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || "Extraction failed");
+
+                // Honesty gate (journey audit 2026-11-02): an
+                // unverified payload — or one with NO real formats —
+                // must never render a result card with download
+                // buttons (a generic web page used to get a plausible
+                // "Web Media" card + working buttons). Route it to the
+                // persistent error box, exactly like a failed extract.
+                if (data.metadata_verified === false || !(data.formats_available || []).length) {
+                    dlClearResult();
+                    dlShowExtractError();
+                    showStudioToast(t("dl_extract_failed_title"), 'error');
+                    return;
+                }
 
                 // Populate result info header
                 const dlThumb = document.getElementById("dl-result-thumb");
@@ -5253,6 +5349,14 @@ function setupDownloader() {
                 if (dlBtnSpan) dlBtnSpan.innerText = dlBtnOriginal;
             }
         });
+
+        const dlUrlInput = document.getElementById("dl-url-input");
+        if (dlUrlInput && !dlUrlInput.dataset.dlClearBound) {
+            dlUrlInput.dataset.dlClearBound = "1";
+            dlUrlInput.addEventListener("input", () => {
+                if (!dlUrlInput.value.trim()) dlClearResult();
+            });
+        }
 
         const fmtButtons = { video: "btn-dl-fmt-video", mp3: "btn-dl-fmt-mp3", srt: "btn-dl-fmt-srt" };
         Object.entries(fmtButtons).forEach(([fmt, id]) => {
@@ -5632,9 +5736,23 @@ window.showAdminJobsTab = showAdminJobsTab;
 
 async function loadAdminData() {
     if (!state.user?.is_admin) return;
+    // Journey audit 2026-11-02: the stat cards ship "—" placeholders,
+    // and a failed/slow overview fetch must say so — the old code left
+    // literal "0" defaults standing, so the live Overview read as an
+    // empty product (0 users / 0 VIP / 0 queue) while the bot-chat
+    // dashboard showed 199 users / 146 jobs.
+    const admOverviewError = () => {
+        const host = document.getElementById("adm-overview-error");
+        if (host) admStateError(host, "loadAdminData()");
+    };
+    const admOverviewClear = () => {
+        const host = document.getElementById("adm-overview-error");
+        if (host) host.innerHTML = "";
+    };
     try {
         const resStats = await fetchWithTimeout("/api/admin/overview", { headers: getAuthHeaders() });
         if (resStats.ok) {
+            admOverviewClear();
             const stats = await resStats.json();
             const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
             set("adm-total-users", stats.total_users ?? 0);
@@ -5676,9 +5794,12 @@ async function loadAdminData() {
                         </div>`).join("");
                 }
             }
+        } else {
+            admOverviewError();
         }
     } catch (e) {
         console.warn("Error loading admin overview:", e);
+        admOverviewError();
         // Not silent: the recent-actions card shows error + Retry.
         const actionsBox = document.getElementById("admin-recent-actions");
         if (actionsBox && !actionsBox.children.length) admStateError(actionsBox, loadAdminData);
@@ -7368,9 +7489,23 @@ function toggleHistoryDetail(jobId) {
         if (det) det.classList.toggle("hidden", !open);
         const chev = row.querySelector(".hub-chevron");
         if (chev) chev.textContent = open ? "⌃" : "›";
+        if (open) wireHubDetailAudio(row);
     });
 }
 window.toggleHistoryDetail = toggleHistoryDetail;
+
+// Wire the History detail's inline voice player (item 7): the audio
+// element renders with data-auth-src and no src; the authenticated
+// blob URL is attached lazily, only for the row being opened, so a
+// long history list never fetches every job's audio up front.
+function wireHubDetailAudio(scope) {
+    if (!scope) return;
+    scope.querySelectorAll("audio[data-auth-src]").forEach(audio => {
+        if (!audio.getAttribute("src")) {
+            setAuthMediaSource(audio, audio.getAttribute("data-auth-src"));
+        }
+    });
+}
 
 function hubStatusBorder(status) {
     switch ((status || "").toUpperCase()) {
@@ -7418,6 +7553,14 @@ function hubHistoryDetailHtml(j) {
         if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>`;
     } else if (j.download_url) {
         actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+    }
+    if (!isRecap && j.status === "SUCCESS" && !j.is_expired && j.download_url) {
+        // Journey audit 2026-11-02: a finished voice job opened from
+        // History offered only Download/Telegram — the player existed
+        // solely on the Voice result view. Same auth-blob player
+        // pattern (data-auth-src + setAuthMediaSource), wired when
+        // the detail opens (see wireHubDetailAudio).
+        inner += `<div class="hub-detail-player"><audio class="hub-detail-audio" controls preload="none" data-auth-src="${j.download_url}"></audio></div>`;
     }
     if (actions) inner += `<div class="history-btn-row hub-detail-actions">${actions}</div>`;
     return inner;
@@ -7485,6 +7628,10 @@ function renderHistoryHub() {
     }
 
     container.innerHTML = jobs.map(hubHistoryRowHtml).join("");
+    // A re-render can restore an open detail (hubOpenDetailId) — wire
+    // its player too, not just fresh toggle clicks.
+    const openRow = container.querySelector(".hub-row.open");
+    if (openRow) wireHubDetailAudio(openRow);
 }
 
 async function loadUserHistory() {

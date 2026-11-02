@@ -1661,6 +1661,25 @@ async def extract_media_info(
         mins, secs = divmod(int(duration_sec), 60)
         duration_str = f"{mins:02d}:{secs:02d}"
 
+        # Real downloadable formats only (journey audit 2026-11-02):
+        # the payload used to claim a fixed MP4/MP3/SRT list for EVERY
+        # result, so a generic page with no media formats at all (the
+        # audit's example.com case) still rendered working download
+        # buttons. The fetch cards are offered only when yt-dlp's own
+        # format list carries at least one audio/video stream; the
+        # SRT card only when subtitles actually exist.
+        raw_formats = (info.get("raw_info") or {}).get("formats") or []
+        has_media_formats = any(
+            (f.get("vcodec") not in (None, "none"))
+            or (f.get("acodec") not in (None, "none"))
+            for f in raw_formats
+        ) or bool((info.get("raw_info") or {}).get("url"))
+        formats_available: list[str] = []
+        if has_media_formats:
+            formats_available = ["MP4 (Full HD Video)", "MP3 (192kbps Audio)"]
+            if info.get("has_subtitles"):
+                formats_available.append("SRT (Subtitles)")
+
         return {
             "success": True,
             "url": canonical_url,
@@ -1674,7 +1693,7 @@ async def extract_media_info(
             "duration_seconds": duration_sec,
             "has_subtitles": info.get("has_subtitles", False),
             "metadata_verified": True,
-            "formats_available": ["MP4 (Full HD Video)", "MP3 (192kbps Audio)", "SRT (Subtitles)"],
+            "formats_available": formats_available,
         }
     except Exception as e:
         logger.warning(f"yt-dlp extract error for {canonical_url}: {e}")
@@ -1704,7 +1723,12 @@ async def extract_media_info(
             # 2026-10-31 — the "✅ Ready" + fake 03:30 card sent users
             # into jobs pre-doomed at sources that block downloads).
             "metadata_verified": False,
-            "formats_available": ["MP4 (Video)", "MP3 (Audio 192k)", "SRT (Subtitles)"],
+            # No formats were extracted, so none may be offered: the
+            # old invented MP4/MP3/SRT list made the Downloader render
+            # working download buttons for unverifiable links (journey
+            # audit 2026-11-02). The client routes an empty list (or
+            # metadata_verified=False) to the persistent error box.
+            "formats_available": [],
         }
 
 
@@ -3633,14 +3657,24 @@ async def _execute_recap_background_job(
     except Exception as e:
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
         entry["status"] = "FAILED"
-        entry["error_message"] = str(e)
+        # Journey audit 2026-11-02: the raw exception was stored
+        # verbatim AND quoted to the user in the failure notice below —
+        # a yt-dlp "Failed to extract any player response; please
+        # report this issue on https://github.com/yt-dlp/…" string
+        # reached a user raw. Classify source errors to the curated
+        # Burmese copy before storing/sending; the raw text stays in
+        # the log line above. Non-source errors keep their text.
+        from app.services.downloader import classify_source_error
+
+        display_err = classify_source_error(str(e), req.url) or str(e)
+        entry["error_message"] = display_err
         try:
             from app.db.session import AsyncSessionLocal
             async with AsyncSessionLocal() as session:
                 await session.execute(
                     update(Job).where(Job.id == job_id).values(
                         status=JobStatus.FAILED.value,
-                        error_message=str(e),
+                        error_message=display_err,
                         finished_at=func.now(),
                     )
                 )
@@ -3662,7 +3696,7 @@ async def _execute_recap_background_job(
                 from aiogram.enums import ParseMode
                 bot_err = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
-                    err_short = html.escape(str(e)[:180])
+                    err_short = html.escape(display_err[:180])
                     refund_note = f"✅ သင့် Recap Credit ({int(entry.get('credits_refunded') or 1)}c) ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။" if credit_deducted else ""
                     await bot_err.send_message(
                         chat_id=chat_id,

@@ -712,6 +712,7 @@ select.studio-input { min-height: 50px; }
     background: var(--inset);
 }
 .hub-detail-actions { margin-top: 2px; }
+.hub-detail-audio { width: 100%; margin: 2px 0; }
 .hub-state { text-align: center; padding: var(--s5, 28px) var(--s3); display: flex; flex-direction: column; align-items: center; gap: var(--s2); }
 .hub-state-emoji { font-size: 34px; line-height: 1.2; }
 .hub-state-text { font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif; font-size: 14.5px; font-weight: 600; color: var(--text); line-height: 1.6; }
@@ -2610,6 +2611,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     color: var(--text-2); font-size: 14px; line-height: 1; padding: 8px 6px;
 }
 .link-source-help { margin: 8px 2px 0; font-size: 12px; line-height: 1.65; color: var(--text-2); }
+.recap-free-terms { margin: 10px 2px 0; font-size: 12.5px; line-height: 1.65; color: var(--text-2); font-weight: 600; }
 /* P1 (premium round 2026-11-02): persistent Downloader extract
    failure state — a toast alone fades and leaves the tab looking
    idle/ambiguous after a timeout or failure. */

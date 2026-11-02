@@ -73,14 +73,26 @@ async def render_main_menu(
         category_badge = t("hist_tier_free", active_lang)
 
     _recap_credits = getattr(user, "recap_credits", None)
-    info_text = t(
-        "menu_account_info",
-        active_lang,
-        category=category_badge,
-        total_min=balance.total_usable_minutes,
-        purchased_min=balance.purchased_minutes,
-        recap_credits=3 if _recap_credits is None else _recap_credits,
-    )
+    if is_admin:
+        # Admin parity (journey audit 2026-11-02): the Mini App header
+        # shows ADMIN ∞, but this bot-chat header rendered the admin's
+        # underlying FREE grants (3.0 min / 3 credits) — the account
+        # line already said SYSTEM ADMIN while the balances disagreed.
+        # Admins render the ∞ variant; free/purchased are untouched.
+        info_text = t(
+            "menu_account_info_admin",
+            active_lang,
+            category=category_badge,
+        )
+    else:
+        info_text = t(
+            "menu_account_info",
+            active_lang,
+            category=category_badge,
+            total_min=balance.total_usable_minutes,
+            purchased_min=balance.purchased_minutes,
+            recap_credits=3 if _recap_credits is None else _recap_credits,
+        )
     text = info_text
     kb = main_menu_kb(is_admin=is_admin, lang=active_lang)
     return text, kb

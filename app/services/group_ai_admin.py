@@ -481,9 +481,15 @@ def build_fact_sheet() -> str:
         "• YouTube, TikTok, Facebook, Instagram, Douyin, X လင့်ခ် ကူးထည့်ရင် ဗီဒီယို "
         "(သို့) အသံဖိုင် အဖြစ် ဆွဲယူပေးပါတယ်။",
         "【စျေးနှုန်း နဲ့ Free】",
+        # One fact per line: the old single packed sentence put
+        # "Recap Credit 3" immediately before the daily job limit and
+        # the live AI answered "တစ်နေ့ Job ၃ ခု" (journey audit
+        # 2026-11-02) — the plumbing was already dynamic
+        # (settings.free_daily_job_limit), the SENTENCE was the bug.
         f"• အခမဲ့ (Free): အသံ {free_seconds} စက္ကန့် ({free_minutes} မိနစ်) တစ်လ၊ "
-        f"Recap Credit 3 ခု (ပထမဆုံး တစ်ကြိမ်သာ)၊ တစ်နေ့ Job {daily_limit} ခုအထိ၊ "
-        f"Voice တစ်ကြိမ် စာလုံး {free_chars} လုံးအထိ။",
+        "Recap Credit 3 ခု (ပထမဆုံး တစ်ကြိမ်သာ)။",
+        f"• တစ်နေ့ Job {daily_limit} ခုအထိ (Free အကောင့် တစ်နေ့တာ အလုပ် အရေအတွက်)။",
+        f"• Voice တစ်ကြိမ် စာလုံး {free_chars} လုံးအထိ (Free အကောင့်)။",
         "• အသံ (Voice) Plan များ:",
         *[price_line(e) for e in voice if e["code"].startswith("MIN_")],
         named(voice[-1]),
