@@ -115,11 +115,12 @@ def test_rs7_mirror_single_label():
     # The row label above the toggle names the control; the toggle's
     # own status text now carries only the state (no second "Mirror").
     assert 'data-i18n="recap_mirror_label"' in HTML
-    assert 'data-i18n="mirror_on">ON ✅</span>' in HTML
-    assert 'mirror_on: "ဖွင့် ✅"' in I18N_JS
-    assert 'mirror_off: "ပိတ် ❌"' in I18N_JS
-    assert 'mirror_on: "ON ✅"' in I18N_JS
-    assert 'mirror_off: "OFF ❌"' in I18N_JS
+    assert 'data-i18n="mirror_on">ဖွင့်</span>' in HTML
+    # R40 deck (labels): the ✅/❌ are gone from the toggle states.
+    assert 'mirror_on: "ဖွင့်"' in I18N_JS
+    assert 'mirror_off: "ပိတ်"' in I18N_JS
+    assert 'mirror_on: "ON"' in I18N_JS
+    assert 'mirror_off: "OFF"' in I18N_JS
     assert "Mirror: ON" not in I18N_JS
     assert "Mirror: ဖွင့်" not in I18N_JS
 

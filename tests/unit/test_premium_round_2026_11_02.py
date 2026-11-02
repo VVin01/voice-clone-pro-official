@@ -237,8 +237,8 @@ def test_d3_ui_labels_bot_blocked_distinctly():
     )
     assert 't("admin_status_bot_blocked")' in detail_body
     # Burmese label, proofread: "Bot က ပိတ်ထားသည်" (blocked by the bot).
-    assert 'admin_status_bot_blocked: "Bot က ပိတ်ထားသည်"' in I18N_JS
-    assert 'admin_status_bot_blocked: "BOT BLOCKED"' in I18N_JS
+    assert 'admin_status_bot_blocked: "Bot ကို Block ထားသည်"' in I18N_JS
+    assert 'admin_status_bot_blocked: "BLOCKED THE BOT"' in I18N_JS
     assert "background: var(--gold-soft)" in _css_rule(".badge-status.botblocked")
 
 

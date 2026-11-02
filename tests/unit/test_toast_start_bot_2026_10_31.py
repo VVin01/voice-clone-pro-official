@@ -161,7 +161,7 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
                 "<b>၄။ လက်ကျန်မိနစ်နှင့် အကောင့်အဆင့်များ</b>",
                 "<b>၅။ အခမဲ့မိနစ် ရယူနည်း (Refer & Earn)</b>",
                 "<b>၆။ ဘာသာစကား (Language)</b>",
-                "• ဖန်တီးထားသော ဖိုင်များကို မှတ်တမ်း (History) မှာ ၇ ရက်အထိ ပြန်ဒေါင်းနိုင်ပါသည်။",
+                "• ဖန်တီးထားသော ဖိုင်များကို မှတ်တမ်း (History) မှာ 7 ရက်အထိ ပြန်ဒေါင်းနိုင်ပါသည်။",
                 "• 🚀 <b>Studio ဖွင့်မည်</b> ခလုတ်မှ Voice Tab ကို ဖွင့်ပါ (သို့မဟုတ် ဒီ Chat ထဲမှာပဲ စာသား ပို့လည်း ရပါသည်)။",
                 "အပိုင်းတစ်ခုလျှင် 1 Credit",
             ],
@@ -183,7 +183,12 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
 )
 def test_help_guide_new_sections_and_formatting(lang, markers):
     raw = t("help_settings_guide", lang)
+    # R40: the retention line is dynamic ({retention_days}, a setting)
+    # — its marker is only meaningful in the rendered text below.
+    dynamic = ("ပြန်ဒေါင်းနိုင်ပါသည်", "stay downloadable")
     for m in markers:
+        if any(d in m for d in dynamic):
+            continue
         assert m in raw
     # All live placeholders still format without error / leftovers.
     rendered = t(
@@ -194,10 +199,17 @@ def test_help_guide_new_sections_and_formatting(lang, markers):
         char_free="1,000",
         char_purchased="5,000",
         daily_limit=5,
+        vip_recap_min=10,
+        retention_days=7,
+        referral_seconds=30,
+        referral_cap_min=10,
     )
     assert "{free_min}" not in rendered
     assert "{char_free}" not in rendered
     assert "{daily_limit}" not in rendered
+    assert "{retention_days}" not in rendered
+    assert "{vip_recap_min}" not in rendered
+    assert "{referral_seconds}" not in rendered
     for m in markers:
         assert m in rendered
 

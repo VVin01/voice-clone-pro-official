@@ -31,7 +31,7 @@ async def test_four_item_user_menu_and_admin_button():
 
     kb_user_en = main_menu_kb(is_admin=False, lang="en")
     flat_en = [btn for row in kb_user_en.inline_keyboard for btn in row]
-    assert "Launch Studio" in flat_en[0].text
+    assert "Open Mini App" in flat_en[0].text  # R40 deck H2 renamed menu_launch_text
     assert "Recap" in flat_en[1].text
     assert "Downloader" in flat_en[2].text
     assert "Tutorial" in flat_en[3].text

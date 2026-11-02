@@ -383,7 +383,7 @@ def admin_queue_list_kb(jobs: list | None = None, category: str = "running", lan
     rows = []
     if jobs:
         for j in jobs:
-            j_short = str(j.id)[:8]
+            j_short = str(j.id)
             st = str(getattr(j, "status", "")).upper()
             st_icon = "⚙️" if st == "RUNNING" else ("⏳" if st == "QUEUED" else ("✅" if st == "SUCCESS" else "❌"))
             btn_label = f"{st_icon} #{j_short} · User {j.user_id}"
@@ -401,7 +401,7 @@ def admin_queue_failures_kb(jobs: list | None = None, lang: str = "my") -> Inlin
     buttons = []
     if jobs:
         for j in jobs:
-            j_short = str(j.id)[:8]
+            j_short = str(j.id)
             btn_label = f"❌ #{j_short} · User {j.user_id}"
             buttons.append([InlineKeyboardButton(text=btn_label, callback_data=f"admin:job_detail:{j.id}")])
     buttons.append([
@@ -720,7 +720,10 @@ def voice_samples_catalog_kb(
             else ("⭐" if getattr(m, "is_default_free", False) else "🎙️")
         )
         has_sample = bool(getattr(m, "sample_audio_path", None))
-        status_icon = "▶️" if has_sample else "⏳"
+        # R40 item 15f: ⏳ read as "still loading" on a static catalogue
+        # button. ▶️ = tap to play the sample; 🎙️ = voice with no
+        # sample uploaded yet (no time/loading semantics).
+        status_icon = "▶️" if has_sample else "🎙️"
         row.append(
             InlineKeyboardButton(
                 text=f"{status_icon} {prefix} {m.name}",

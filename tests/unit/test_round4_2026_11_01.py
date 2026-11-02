@@ -288,7 +288,9 @@ def test_fe_recap_success_has_no_floating_alert():
     # The one surviving alert_recap_ready use is the cold-start
     # restore path, where the alert is the only completion signal
     # (the user may be on any tab) — not a duplicate of a visible card.
-    assert APP_JS.count("alert_recap_ready") == 1
+    # (R40 M2 added the sibling key alert_recap_ready_body, so count
+    # the exact call, not the shared prefix.)
+    assert APP_JS.count('t("alert_recap_ready")') == 1
     # Voice completion alerts are a different flow — untouched.
     assert APP_JS.count("showFloatingAlert(") >= 3
 

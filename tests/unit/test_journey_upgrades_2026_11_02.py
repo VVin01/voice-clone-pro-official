@@ -367,7 +367,14 @@ def test_voice_eta_copy_and_elapsed():
 def test_reopen_cache_boot_paint_and_gate():
     assert 'const USER_ME_CACHE_KEY = "vcp_user_me_cache";' in APP_JS
     body = _js_slice("async function loadUserProfile()", "// ── API: Curated Voices")
-    assert "localStorage.setItem(USER_ME_CACHE_KEY, JSON.stringify(data))" in body
+    # R40 item 8: the cache write goes through the per-user wrapper
+    # (the stored record carries the owner's id so a foreign cached
+    # profile can never paint — e.g. an admin's ∞/∞ flashing for a
+    # finite user in the same Web client).
+    assert "writeCachedUserProfile(data)" in body
+    wrapper = _js_slice("function writeCachedUserProfile(data)", "function readCachedUserProfile()")
+    assert "owner_id: currentTelegramUserId()" in wrapper
+    assert "profile: data" in wrapper
     assert "function paintCachedUserHeader(data)" in APP_JS
     assert "function bootFromCachedProfile()" in APP_JS
     gate = _js_slice("function initEntryGate()", "window.initEntryGate = initEntryGate;")

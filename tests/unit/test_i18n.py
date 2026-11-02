@@ -16,11 +16,11 @@ def test_i18n_myanmar_and_english():
     assert "Text → Voice → Clone" in en_btn
 
     # Test formatting with variables
-    formatted_my = t("referral_desc", lang="my", referral_link="https://t.me/bot?start=ref_123", rewarded=5, max_referrals=20, earned_min=2.5, earned_sec=150, remaining_slots=15, remaining_min=7.5)
+    formatted_my = t("referral_desc", lang="my", referral_link="https://t.me/bot?start=ref_123", rewarded=5, max_referrals=20, earned_min=2.5, earned_sec=150, remaining_slots=15, remaining_min=7.5, referral_seconds=30, referral_cap_min=10)
     assert "ref_123" in formatted_my
     assert "5/20" in formatted_my
 
-    formatted_en = t("referral_desc", lang="en", referral_link="https://t.me/bot?start=ref_123", rewarded=5, max_referrals=20, earned_min=2.5, earned_sec=150, remaining_slots=15, remaining_min=7.5)
+    formatted_en = t("referral_desc", lang="en", referral_link="https://t.me/bot?start=ref_123", rewarded=5, max_referrals=20, earned_min=2.5, earned_sec=150, remaining_slots=15, remaining_min=7.5, referral_seconds=30, referral_cap_min=10)
     assert "ref_123" in formatted_en
     assert "5/20" in formatted_en
 

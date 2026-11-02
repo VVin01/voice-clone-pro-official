@@ -19,6 +19,7 @@ from app.services.payments import (
     get_active_pricing_plans,
     get_payment_account_info,
     get_recent_payment_intent,
+    package_recap_credits,
     save_payment_intent,
 )
 from app.ui.helpers import safe_edit_message
@@ -84,6 +85,18 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
             buttons.append([
                 InlineKeyboardButton(
                     text=t("pay_package_recap_btn", lang, credits=entry["recap_credits"], price=f"{entry['price_mmk']:,}"),
+                    callback_data=f"buy_pkg:{entry['code']}",
+                )
+            ])
+    # R40 item 15a: catalogue voice plans that are NOT DB minute packs
+    # (Voice Pro, 250 min) previously had NO buy button anywhere in bot
+    # chat — the plan was advertised in the header text but unbuyable.
+    _db_codes = {p.code for p in plans}
+    for entry in PLAN_CATALOGUE:
+        if entry["category"] == "voice" and entry["code"] not in _db_codes:
+            buttons.append([
+                InlineKeyboardButton(
+                    text=t("pay_package_btn", lang, badge="👑", minutes=entry["minutes"], price=f"{entry['price_mmk']:,}", tag=""),
                     callback_data=f"buy_pkg:{entry['code']}",
                 )
             ])
@@ -218,6 +231,7 @@ async def _finalize_receipt_submission(message: Message, payment, file_id, lang:
         payment_id=payment.id,
         package_code=payment.package_code,
         minutes=payment.minutes,
+        recap_credits=package_recap_credits(payment.package_code),
         amount=f"{payment.amount_mmk:,}",
     )
 
@@ -238,6 +252,7 @@ async def _finalize_receipt_submission(message: Message, payment, file_id, lang:
                 username=message.from_user.username or "none",
                 package_code=payment.package_code,
                 minutes=payment.minutes,
+                recap_credits=package_recap_credits(payment.package_code),
                 amount_mmk=payment.amount_mmk,
             )
             admin_kb = InlineKeyboardMarkup(

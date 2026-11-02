@@ -244,6 +244,39 @@ def _is_direct_media_url(url: str) -> bool:
     return os.path.splitext(path)[1] in MEDIA_EXTS
 
 
+
+# R40 deck K1: ONE shared Douyin message (was three near-identical
+# copies in get_info / download_video / download_audio).
+DOUYIN_BLOCKED_MESSAGE = (
+    "⚠️ Douyin လင့်ခ်များကို တိုက်ရိုက် ဒေါင်းလုဒ် လုပ်၍ မရပါ — Douyin က ပြင်ပ ဒေါင်းလုဒ်ကို ပိတ်ထားပါသည်။ "
+    "ဗီဒီယိုဖိုင်ကို ဖုန်း/ကွန်ပျူတာမှ တိုက်ရိုက် တင်၍ အသုံးပြုနိုင်ပါသည်။"
+)
+
+# R40 deck K2 fallback (used only if classify_source_error has no
+# branch for the error): the classified message is the primary path.
+YOUTUBE_BOT_WALL_MESSAGE = (
+    "⚠️ YouTube က ကျွန်တော်တို့ ဆာဗာမှ ဗီဒီယို ဆွဲယူခြင်းကို ပိတ်ထားပါသည်။ "
+    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်၍ သုံးနိုင်ပါသည်၊ သို့မဟုတ် TikTok / Facebook လင့်ခ်ဖြင့် စမ်းကြည့်ပါ။"
+)
+
+
+def recap_over_limit_message(duration_sec: float, max_duration_sec: float, is_vip: bool) -> str:
+    """R40 deck K3: the ONE shared recap over-duration message.
+
+    Was implemented three times (downloader recap path, api.py script
+    phase, api.py generate) with drifting wording. Callers append
+    their own context suffix (split hint / VIP upsell) as needed.
+    """
+    m = int(float(duration_sec) // 60)
+    sec = int(float(duration_sec) % 60)
+    max_m = int(float(max_duration_sec) // 60)
+    tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
+    return (
+        f"ဗီဒီယို ကြာချိန် ({m:02d}:{sec:02d}) သည် {tier_label} အသုံးပြုသူ "
+        f"ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။"
+    )
+
+
 def classify_source_error(err_msg: str, url: str) -> Optional[str]:
     """Map a raw yt-dlp / extractor error to a curated user-facing message.
 
@@ -423,40 +456,36 @@ INFO_STAGE_SOCKET_TIMEOUT = 10        # info-stage socket cap; media keeps YOUTU
 # is unreachable the plugin warns and extraction continues exactly as
 # before (proven locally with the server stopped).
 #
-# FORCED-MINT EXPERIMENT (owner-approved 2026-11-02, one round): the
-# first sidecar prod proof failed on all 3 attempts with NO /get_pot
-# activity visible — under yt-dlp's default fetch_pot='auto' policy a
-# token is minted only when a request is pre-marked required, which
-# never happened on the walled path. _pot_extractor_args therefore
-# also sets the 'youtube' extractor arg fetch_pot='always', so a
-# token is requested on every YouTube attempt. Accepted trade:
-# unwalled YouTube extractions may pay a mint (server-cached
-# afterwards) on paths that previously skipped it. Non-YouTube paths
-# remain untouched. _with_pot also attaches _PotLogShim so provider
-# fetches are visible in the app logs (see its docstring).
+# FORCED-MINT EXPERIMENT — CONCLUDED 2026-11-02: the first sidecar
+# prod proof failed on all 3 attempts with NO /get_pot activity
+# visible, so PR #51 forced the 'youtube' extractor arg
+# fetch_pot='always' for one prod round. On prod the fetches then
+# fired and the mints completed (zero fetch errors in the proof
+# window) — and YouTube still refused this egress IP at the
+# player-response stage on every attempt. The PO-token route is
+# exhausted; 'always' only added latency to walled failures, so the
+# R40 release merge reverts the fetch policy to yt-dlp's default
+# 'auto' (no fetch_pot arg is set anywhere). The provider base_url
+# wiring below and _PotLogShim (log observability, see its
+# docstring) are kept exactly as-is.
 POT_SERVER_DEFAULT_URL = "http://127.0.0.1:4416"
 
 
 def _pot_extractor_args() -> Dict[str, Any]:
     """Extractor args wiring yt-dlp's POT framework to the local
-    bgutil provider server (env-overridable for local testing) AND
-    forcing the fetch policy to 'always'.
+    bgutil provider server (env-overridable for local testing).
 
-    The policy is yt-dlp core's, not the plugin's: in
-    yt_dlp/extractor/youtube/_video.py, YoutubeIE._fetch_po_token()
-    reads the 'youtube' extractor arg 'fetch_pot'
-    ('never' | 'auto' | 'always'); under the default 'auto' it
-    returns None unless the request is marked required, so on the
-    walled prod path no token was ever requested. 'always' makes
-    every _fetch_po_token call (player / GVS / subs contexts, every
-    client attempt) go through the POT director to the bgutil
-    provider. Clients the provider does not support (android / mweb
-    are not WEBPO clients) simply receive no token, as before.
+    ONLY the provider base_url is set. The POT fetch policy
+    ('youtube' extractor arg 'fetch_pot', read by yt-dlp core's
+    YoutubeIE._fetch_po_token) is deliberately left unset, i.e. at
+    core's default 'auto': a token is fetched only when a request
+    is pre-marked required. The one prod round that forced
+    'always' (PR #51, 2026-11-02) proved tokens mint fine yet do
+    not pass this egress IP's wall — see the block comment above.
     """
     base_url = os.getenv("POT_SERVER_URL") or POT_SERVER_DEFAULT_URL
     return {
         'youtubepot-bgutilhttp': {'base_url': [base_url]},
-        'youtube': {'fetch_pot': ['always']},
     }
 
 
@@ -954,9 +983,8 @@ class MediaDownloader:
         yields exactly one attempt: the base opts, unchanged.
         Every YouTube attempt additionally carries the bgutil PO
         Token provider args (see _with_pot / _pot_extractor_args):
-        the provider base_url, fetch_pot='always' (forced-mint
-        experiment), and the scoped POT log shim — plus the WARP
-        egress proxy (see _warp_proxy_url) when not disabled.
+        the provider base_url and the scoped POT log shim — plus the
+        WARP egress proxy (see _warp_proxy_url) when not disabled.
         """
         if not _is_youtube_url(expanded_url):
             yield "default", base_opts
@@ -986,12 +1014,14 @@ class MediaDownloader:
             # ONE wiring point for both YouTube sidecars: every
             # YouTube attempt (any client, any stage) points the
             # bgutil plugin at the in-container POT provider server,
-            # forces the POT fetch policy to 'always', attaches the
-            # scoped POT log shim, AND routes the attempt through the
-            # WARP egress proxy (see _warp_proxy_url — the wall keys
-            # on egress IP, so the proxy is the load-bearing half;
-            # an empty WARP_PROXY_URL disables it and the attempt
-            # carries no 'proxy' key). Dict-valued args merge per-key
+            # attaches the scoped POT log shim, AND routes the
+            # attempt through the WARP egress proxy (see
+            # _warp_proxy_url — the wall keys on egress IP, so the
+            # proxy is the load-bearing half; an empty WARP_PROXY_URL
+            # disables it and the attempt carries no 'proxy' key).
+            # No fetch policy is forced (the forced-mint experiment
+            # concluded — see the block comment at
+            # _pot_extractor_args). Dict-valued args merge per-key
             # alongside the 'youtube' extractor args (player_client)
             # instead of clobbering them.
             o = dict(opts)
@@ -1294,18 +1324,11 @@ class MediaDownloader:
             if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
                 if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
                     logger.warning(f"Douyin anti-bot cookie verification needed: {err_msg}")
-                    raise RuntimeError(
-                        "⚠️ Douyin (တရုတ်ပြည်တွင်း TikTok) သည် ဒေသတွင်း Anti-Bot Cookie အကာအကွယ် စစ်ဆေးနေပါသဖြင့် လင့်ခ်ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                        "ဖုန်း/ကွန်ပျူတာထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို '📁 Video Upload' ခလုတ်ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍သော်လည်းကောင်း၊ "
-                        "TikTok (International) / YouTube / Facebook Video Link များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
-                    ) from e
+                    raise RuntimeError(DOUYIN_BLOCKED_MESSAGE) from e
 
             if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
                 logger.warning(f"YouTube anti-bot challenge encountered in get_info: {err_msg}")
-                raise RuntimeError(
-                    "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည်။"
-                ) from e
+                raise RuntimeError(classify_source_error(err_msg, expanded_url) or YOUTUBE_BOT_WALL_MESSAGE) from e
             classified = classify_source_error(err_msg, expanded_url)
             if classified:
                 logger.warning(f"Classified source error in get_info for {expanded_url}: {err_msg}")
@@ -1484,18 +1507,11 @@ class MediaDownloader:
             if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
                 if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
                     logger.warning(f"Douyin anti-bot cookie verification needed in download_video: {err_msg}")
-                    raise RuntimeError(
-                        "⚠️ Douyin (တရုတ်ပြည်တွင်း TikTok) သည် ဒေသတွင်း Anti-Bot Cookie အကာအကွယ် စစ်ဆေးနေပါသဖြင့် လင့်ခ်ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                        "ဖုန်း/ကွန်ပျူတာထဲရှိ ဒေါင်းလုဒ်ဆွဲထားသော Douyin ဗီဒီယိုဖိုင်ကို Step 1 ရှိ '📁 Video Upload' ခလုတ်ဖြင့် စက္ကန့်ပိုင်းအတွင်း တိုက်ရိုက်တင်သွင်း၍သော်လည်းကောင်း၊ "
-                        "TikTok (International) / YouTube / Facebook Video Link များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ဆက်လက်အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
-                    ) from e
+                    raise RuntimeError(DOUYIN_BLOCKED_MESSAGE) from e
 
             if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
                 logger.warning(f"YouTube anti-bot challenge encountered in download_video: {err_msg}")
-                raise RuntimeError(
-                    "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                    "ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / Facebook / Reels လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည်။"
-                ) from e
+                raise RuntimeError(classify_source_error(err_msg, expanded_url) or YOUTUBE_BOT_WALL_MESSAGE) from e
             # Classify the FINAL failure (the resilient fallback's error
             # is the one that actually decided the outcome).
             classified = None
@@ -1588,17 +1604,11 @@ class MediaDownloader:
             if "Douyin" in err_msg or "douyin.com" in expanded_url.lower() or "iesdouyin.com" in expanded_url.lower():
                 if "Fresh cookies" in err_msg or "403" in err_msg or "login" in err_msg.lower():
                     logger.warning(f"Douyin anti-bot cookie verification needed in download_audio: {err_msg}")
-                    raise RuntimeError(
-                        "⚠️ Douyin (တရုတ်ပြည်တွင်း TikTok) သည် ဒေသတွင်း Anti-Bot Cookie အကာအကွယ် စစ်ဆေးနေပါသဖြင့် လင့်ခ်ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                        "ဖုန်း/ကွန်ပျူတာထဲရှိ အသံ/ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ TikTok / YouTube လင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ အသုံးပြုနိုင်ပါသည်ခင်ဗျာ။"
-                    ) from e
+                    raise RuntimeError(DOUYIN_BLOCKED_MESSAGE) from e
 
             if "Sign in to confirm you" in err_msg or "confirm you're not a bot" in err_msg or "Please sign in" in err_msg:
                 logger.warning(f"YouTube anti-bot challenge encountered in download_audio: {err_msg}")
-                raise RuntimeError(
-                    "⚠️ YouTube မှ Cloud Server ကို Anti-Bot စစ်ဆေးမှု (Sign in challenge) ပြုလုပ်နေပါသဖြင့် URL တိုက်ရိုက်ဒေါင်းလုဒ်မအောင်မြင်ပါ။ "
-                    "အသံဖိုင်ကို တိုက်ရိုက် Upload ပြုလုပ်၍သော်လည်းကောင်း၊ အခြားလင့်ခ်များဖြင့်သော်လည်းကောင်း အလွယ်တကူ ပြုလုပ်နိုင်ပါသည်။"
-                ) from e
+                raise RuntimeError(classify_source_error(err_msg, expanded_url) or YOUTUBE_BOT_WALL_MESSAGE) from e
             classified = classify_source_error(err_msg, expanded_url)
             if classified:
                 logger.warning(f"Classified source error in download_audio for {expanded_url}: {err_msg}")
@@ -2087,13 +2097,9 @@ class MediaDownloader:
             meta = probe_local_media(source_video_path)
             actual_dur = float(meta.get("duration", 0.0) or 0.0)
             if actual_dur > max_dur:
-                m = int(actual_dur // 60)
-                s = int(actual_dur % 60)
-                max_m = int(max_dur // 60)
-                tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
                 raise ValueError(
-                    f"ဗီဒီယို ကြာချိန် ({m:02d}:{s:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ "
-                    + ("ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else "")
+                    recap_over_limit_message(actual_dur, max_dur, is_vip)
+                    + (" ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else "")
                 )
         except ValueError:
             raise
