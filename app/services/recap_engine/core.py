@@ -639,6 +639,116 @@ def source_band_to_canvas_box(band: dict[str, Any], layout: dict[str, Any]) -> d
     }
 
 
+# ── R39: subtitle plate + letterbox geometry ────────────────────────
+#
+# Two geometry defects from the 2026-11-02 blur/subtitle inspection
+# of real production renders:
+#  1. The blur plate behind the burned subtitles was a 90%-wide box
+#     whose hard vertical edges sat inside the frame; a wider original
+#     caption could leak past it. The plate is now a fixed 92%-wide
+#     centred band whose height fits the wrapped subtitle lines.
+#  2. On letterboxed layouts (blur/black fill — e.g. a 16:9 picture
+#     centred in a 9:16 canvas) the subtitle was sized from the
+#     CANVAS and anchored at 85% of the canvas height, so it floated
+#     small and disconnected in the bottom padding. Font size now
+#     scales with the CONTENT box and both plate and subtitle anchor
+#     at the content box's lower rim, overlapping it.
+
+SUBTITLE_PLATE_WIDTH_FRACTION = 0.92
+SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION = 0.92  # full-frame plate bottom keeps an ~8% canvas margin
+
+
+def _layout_content_box(layout: dict[str, Any] | None, cw: int, ch: int) -> tuple[int, int, int, int]:
+    """(pw, ph, ox, oy) of the picture inside the canvas."""
+    lay = layout or {}
+    pw = int(lay.get("pw") or cw)
+    ph = int(lay.get("ph") or ch)
+    ox = int(lay.get("ox") or 0)
+    oy = int(lay.get("oy") or 0)
+    return pw, ph, ox, oy
+
+
+def content_rim_y(layout: dict[str, Any] | None, cw: int, ch: int) -> int | None:
+    """Y (px, from canvas top) of the content box's lower rim when the
+    layout leaves padding BELOW the picture (letterbox); else None."""
+    pw, ph, ox, oy = _layout_content_box(layout, cw, ch)
+    rim = oy + ph
+    return rim if rim < ch - 4 else None
+
+
+def subtitle_font_px(cw: int, ch: int, raw_font_size: int = 16, sub_lines: int = 1,
+                     layout: dict[str, Any] | None = None) -> int:
+    """ASS font size in px for a canvas, optionally content-scaled.
+
+    With no layout (or content filling the canvas) this reproduces
+    the historical canvas formula exactly — same scale factors, same
+    clamps. For letterboxed content the UNCLAMPED canvas size is
+    scaled by min(contentW, contentH) / min(canvasW, canvasH) — the
+    same effective scale factor the full-frame path uses, applied to
+    the content box — and clamped to [18, full-frame size].
+    """
+    cw = max(320, int(cw))
+    ch = max(240, int(ch))
+    is_vert = ch > cw
+    scale_factor = (int(raw_font_size or 16) / 288.0)
+    if is_vert:
+        target = ch * scale_factor * (0.42 if sub_lines == 1 else 0.62)
+        lo, hi = 22, (44 if sub_lines == 1 else 56)
+    else:
+        target = ch * scale_factor * (0.60 if sub_lines == 1 else 0.80)
+        lo, hi = 26, (48 if sub_lines == 1 else 62)
+    full_frame = max(lo, min(hi, int(round(target))))
+    if layout:
+        pw, ph, _ox, _oy = _layout_content_box(layout, cw, ch)
+        if pw < cw - 4 or ph < ch - 4:
+            ratio = min(pw, ph) / float(min(cw, ch))
+            if ratio < 1.0:
+                return max(18, min(full_frame, int(round(target * ratio))))
+    return full_frame
+
+
+def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
+                       raw_font_size: int = 16, sub_lines: int = 1,
+                       sub_y: float = 0.85, min_h: float | None = None) -> dict[str, float]:
+    """Canvas-fraction blur plate behind the burned subtitles.
+
+    Fixed ~92%-of-frame-width band, horizontally centred; height fits
+    the wrapped subtitle lines (text height + padding) and never
+    shrinks below the caller's blur_h (the R37 settle-fit contract —
+    the plate grows when the lines need more room). Full-frame plates
+    keep the caller's centre, clamped so the plate bottom respects
+    an ~8% canvas-height safe margin. Letterboxed plates anchor at
+    the content box's lower rim, overlapping it (plate centre a
+    quarter plate-height above the rim: ~75% of the plate over the
+    picture, ~25% over the padding below).
+    """
+    cw = max(320, int(cw))
+    ch = max(240, int(ch))
+    font_px = subtitle_font_px(cw, ch, raw_font_size, sub_lines, layout)
+    text_h_px = font_px * (1.15 if sub_lines == 1 else 2.3)
+    pad_px = max(10.0, font_px * 0.40)
+    h_frac = (text_h_px + 2.0 * pad_px) / ch
+    if min_h:
+        h_frac = max(h_frac, float(min_h))
+    h_frac = max(0.01, min(0.50, h_frac))
+    w_frac = SUBTITLE_PLATE_WIDTH_FRACTION
+    x_frac = (1.0 - w_frac) / 2.0
+    rim = content_rim_y(layout, cw, ch)
+    if rim is not None:
+        centre_px = rim - (h_frac * ch) / 4.0
+        y_frac = centre_px / ch
+    else:
+        y_frac = _clamp01(sub_y, 0.85)
+        if y_frac + h_frac / 2.0 > SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION:
+            y_frac = SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION - h_frac / 2.0
+    return {
+        "x": round(x_frac, 4),
+        "y": round(y_frac, 4),
+        "w": round(w_frac, 4),
+        "h": round(h_frac, 4),
+    }
+
+
 def _visual_filters(mirror_video: bool, zoom_factor: float,
                     layout: dict[str, Any] | None = None) -> tuple[str, float]:
     """Flip + zoom + placement on the output frame, as one filtergraph string.
@@ -1694,6 +1804,7 @@ def write_synced_ass_file(
     sub_y: float | None = None,
     subtitles_margin_v: float | None = None,
     boxes: list[dict[str, Any]] | None = None,
+    layout: dict[str, Any] | None = None,
 ) -> Path:
     """Generate a pixel-accurate ASS subtitle file with complex Myanmar script text shaping."""
     cw = max(320, int(cw))
@@ -1703,21 +1814,24 @@ def write_synced_ass_file(
     # bundled family name for libass HarfBuzz mym2 shaping.
     _, font_name = resolve_subtitle_font(font_name)
 
-    # Canvas-scaled font size based on height
-    scale_factor = (raw_font_size / 288.0)
-    if is_vert:
-        target_size = int(round(ch * scale_factor * 0.42)) if sub_lines == 1 else int(round(ch * scale_factor * 0.62))
-        font_size = max(22, min(44 if sub_lines == 1 else 56, target_size))
-    else:
-        target_size = int(round(ch * scale_factor * 0.60)) if sub_lines == 1 else int(round(ch * scale_factor * 0.80))
-        font_size = max(26, min(48 if sub_lines == 1 else 62, target_size))
+    # Font size: canvas formula, scaled to the CONTENT box when the
+    # layout letterboxes the picture (R39 — see subtitle_font_px).
+    font_size = subtitle_font_px(cw, ch, raw_font_size, sub_lines, layout)
 
     # Canvas-normalized subtitle positioning
     # sy is the center of the subtitle line as a fraction from top (0.0 to 1.0).
     # ASS Alignment 2 (bottom-center) positions text baseline at margin_v.
     # To place the subtitle center exactly at sy*ch, subtract half the rendered text height:
     text_half_height = (font_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
-    if sub_y is not None:
+    rim = content_rim_y(layout, cw, ch)
+    if rim is not None:
+        # Letterboxed (R39): anchor at the content box's lower rim,
+        # overlapping it — subtitle centre a quarter text-height
+        # above the rim, so the text rides the picture's bottom edge
+        # instead of floating at 85% of the padded canvas.
+        centre_px = rim - text_half_height / 2.0
+        pixels_from_bottom = ch - (centre_px + text_half_height)
+    elif sub_y is not None:
         sy = _clamp01(float(sub_y), 0.85)
         pixels_from_bottom = (ch * (1.0 - sy)) - text_half_height
     elif subtitles_margin_v is not None:
@@ -2347,7 +2461,12 @@ def apply_production_overlays(
                 sub_size = max(11, min(26, raw_size))
             # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
             text_half_h = (sub_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
-            if "sub_y" in overlays and overlays["sub_y"] is not None:
+            rim = content_rim_y({"pw": pw, "ph": ph, "ox": ox, "oy": oy}, cw, ch)
+            if rim is not None:
+                # Letterboxed (R39): anchor at the content box's lower
+                # rim, overlapping it — same rule as the ASS path.
+                pixels_from_bottom = max(10.0, ch - rim - (text_half_h * 2.0) / 4.0)
+            elif "sub_y" in overlays and overlays["sub_y"] is not None:
                 sy = _clamp01(float(overlays["sub_y"]), 0.85)
                 pixels_from_bottom = max(10.0, (ch * (1.0 - sy)) - text_half_h)
             elif "subtitles_margin_v" in overlays:
@@ -2580,6 +2699,7 @@ def extract_preview_with_overlays(
             sub_y=overlays.get("sub_y"),
             subtitles_margin_v=overlays.get("subtitles_margin_v"),
             boxes=boxes,
+            layout=layout,
         )
         sub_esc = ass_temp.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
         fonts_dir = bundled_fonts_dir()
@@ -3292,6 +3412,7 @@ class EdgeSmartSync:
                 sub_y=self.overlays.get("sub_y"),
                 subtitles_margin_v=self.overlays.get("subtitles_margin_v"),
                 boxes=self.overlays.get("boxes"),
+                layout=layout,
             )
             self.log(f"📝 Synced Myanmar ASS saved: {ass_file.name} (font={active_font})")
         except Exception as srt_err:

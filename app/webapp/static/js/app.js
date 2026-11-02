@@ -191,6 +191,10 @@ function blockedLinkInfo(raw) {
         // recap poll keeps the named toast + upload-tab auto-switch
         // it already had for the raw form.
         'ဆာဗာမှ ဗီဒီယို ဆွဲယူခြင်းကို ပိတ်ထားပါသည်',
+        // Same treatment for the R39 direct-host refusal copy
+        // (classify_source_error's host-refusal branch): a media
+        // file's host refused our server's fetch of it.
+        'ဆွဲယူခြင်းကို ငြင်းပယ်ထားပါသည်',
         // Login walls.
         'login required', 'log in to', 'sign in to', 'please log in',
         // Age gates.
@@ -2648,6 +2652,48 @@ function setupRecapVisualEditor() {
         if (subSpan) subSpan.innerText = data.has_subtitles ? t("recap_sub_ready") : t("recap_sub_ai");
     }
 
+    // R39 (Analyze honesty, mirroring the R38 Downloader fix): when
+    // the current URL source's duration could NOT be verified, a
+    // warning line sits by the 1-Click CTA — the job may fail or
+    // turn out to exceed the duration cap, and direct upload is the
+    // reliable route. Advisory only: the CTA is never blocked by it.
+    // Verified durations (and uploaded files, whose duration the
+    // server measured itself) never show it.
+    function paintRecapUnverifiedWarning() {
+        const el = document.getElementById("recap-unverified-warning");
+        if (!el) return;
+        const data = state.lastRecapInfo;
+        const show = !!data && data.metadata_verified === false && !state.uploadedVideoPath;
+        el.classList.toggle("hidden", !show);
+        if (show) el.innerText = t("recap_unverified_warning");
+    }
+    window.paintRecapUnverifiedWarning = paintRecapUnverifiedWarning;
+
+    // R39: clear the analyze info card + cached payload at Analyze
+    // start, so the PREVIOUS source's title/duration never stands in
+    // for the new one while the new Analyze is still running (the
+    // stale-card half of the same honesty fix). The settle paths
+    // repaint from the new payload only.
+    function clearRecapInfoCard() {
+        const box = document.getElementById("recap-video-info-box");
+        if (box) box.classList.add("hidden");
+        const tSpan = document.getElementById("recap-info-title");
+        if (tSpan) tSpan.innerText = "";
+        const dSpan = document.getElementById("recap-info-dur");
+        if (dSpan) { dSpan.className = "mini-tag"; dSpan.innerText = "⏱️ —"; }
+        const pSpan = document.getElementById("recap-info-platform");
+        if (pSpan) pSpan.innerText = "";
+        const sSpan = document.getElementById("recap-info-sub");
+        if (sSpan) sSpan.innerText = "";
+        setCardThumb(document.getElementById("recap-info-thumb"), null);
+        state.lastRecapInfo = null;
+        state.recapSourceDuration = 0;
+        state.recapVideoTitle = "";
+        updateRecapSplitCostHint();
+        paintRecapUnverifiedWarning();
+    }
+    window.clearRecapInfoCard = clearRecapInfoCard;
+
     // Repaint the cached analyze result after a language change.
     function refreshRecapInfoMetaLanguage() {
         const data = state.lastRecapInfo;
@@ -2658,6 +2704,7 @@ function setupRecapVisualEditor() {
         let isOverLimit = !!(data.duration_seconds && data.duration_seconds > maxAllowed);
         if (isOverLimit && (state.user?.is_admin || state.user?.is_vip)) isOverLimit = false;
         paintRecapInfoMeta(data, isOverLimit, maxAllowed);
+        paintRecapUnverifiedWarning();
     }
     window.refreshRecapInfoMetaLanguage = refreshRecapInfoMetaLanguage;
 
@@ -2835,6 +2882,9 @@ function setupRecapVisualEditor() {
     async function onRecapUploadSuccess(data, file) {
         state.uploadedVideoPath = data.local_path;
         state.recapUploadPending = false;
+        // R39: an uploaded file's duration is server-measured — the
+        // unverified-link warning by the CTA never applies to it.
+        paintRecapUnverifiedWarning();
         state.recapVideoTitle = data.title || file.name;
         state.recapSourceDuration = data.duration_seconds;
         updateRecapSplitCostHint();
@@ -4093,6 +4143,9 @@ function setupRecapVisualEditor() {
             const originalText = btnAnalyze.innerText;
             btnAnalyze.innerText = "⏳...";
             setRecapPreviewState("loading");
+            // R39: the previous source's card must not stand in for
+            // this one while the new Analyze runs.
+            clearRecapInfoCard();
 
             try {
                 const res = await fetchWithTimeout("/api/downloader/extract", {
@@ -4131,6 +4184,7 @@ function setupRecapVisualEditor() {
                 }
                 const btnStartRecap = document.getElementById("btn-start-recap");
                 paintRecapInfoMeta(data, isOverLimit, maxAllowed);
+                paintRecapUnverifiedWarning();
                 if (isOverLimit) {
                     if (btnStartRecap) {
                         btnStartRecap.disabled = true;
@@ -4204,6 +4258,7 @@ function setupRecapVisualEditor() {
                     state.recapSourceDuration = 0;
                     state.lastRecapInfo = { metadata_verified: false, duration_seconds: 0, has_subtitles: false, estimated_duration: "00:00" };
                     paintRecapInfoMeta(state.lastRecapInfo, false, recapNormalMaxSeconds());
+                    paintRecapUnverifiedWarning();
                     const sb = document.getElementById("canvas-seek-time-badge");
                     if (sb) sb.innerText = "⏱️ 00:05s / --:--";
                 }
@@ -4258,6 +4313,8 @@ function setupRecapVisualEditor() {
                 state.recapThumbnailUrl = null;
                 updateCanvasMockupVisuals();
                 if (recapInfoBox) recapInfoBox.classList.add("hidden");
+                const warnEl = document.getElementById("recap-unverified-warning");
+                if (warnEl) warnEl.classList.add("hidden");
                 setRecapPreviewState(recapHasSource() ? "ready" : "empty");
                 return;
             }
@@ -5188,20 +5245,30 @@ async function dlSendTelegram(downloadId, btn) {
     }
 }
 
+function formatDlSize(bytes) {
+    // R39: prepared-file cards showed "0.0 MB" for small files
+    // (32768 B rendered through (b/1048576).toFixed(1)). Proper
+    // units: <1 MB in whole KB, MB/GB with 1–2 decimals above that.
+    if (bytes == null || isNaN(bytes)) return "?";
+    if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+    if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    if (bytes >= 1024) return Math.round(bytes / 1024) + " KB";
+    return bytes + " B";
+}
+
 function dlRenderDeliveryRow(data) {
     const box = document.getElementById("dl-delivery-actions");
     if (!box) return;
     const rowId = `dl-delivery-${data.format}`;
     const old = document.getElementById(rowId);
     if (old) old.remove();
-    const sizeMb = data.size_bytes ? (data.size_bytes / (1024 * 1024)).toFixed(1) : "?";
     const icon = data.format === "video" ? "🎬" : (data.format === "mp3" ? "🎵" : "📝");
     const row = document.createElement("div");
     row.className = "dl-delivery-row";
     row.id = rowId;
     const label = document.createElement("span");
     label.className = "dl-delivery-label";
-    label.innerText = `${icon} ${data.filename} · ${sizeMb} MB`;
+    label.innerText = `${icon} ${data.filename} · ${formatDlSize(data.size_bytes)}`;
     const btnDlFile = document.createElement("button");
     btnDlFile.type = "button";
     btnDlFile.className = "btn mini-btn secondary-btn";
