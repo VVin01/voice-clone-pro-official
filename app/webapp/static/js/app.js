@@ -7068,6 +7068,7 @@ async function loadAdminSettings() {
         const elWaveName = document.getElementById("adm-set-wave-name");
         const elTutLink = document.getElementById("adm-set-tutorial-link");
         const elMaint = document.getElementById("adm-set-maintenance");
+        const elGroupAi = document.getElementById("adm-set-group-ai");
         const elCharLimitFree = document.getElementById("adm-set-char-limit-free");
 
         const elTutVoiceEn = document.getElementById("adm-tut-voice-enabled");
@@ -7084,6 +7085,7 @@ async function loadAdminSettings() {
         if (elWaveName) elWaveName.value = s.payment_wave_name || "";
         if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
         if (elMaint) elMaint.checked = !!s.maintenance_mode;
+        if (elGroupAi) elGroupAi.checked = !!s.group_ai_admin_enabled;
         if (elCharLimitFree && s.character_limit_free != null) elCharLimitFree.value = s.character_limit_free;
 
         if (elTutVoiceEn) elTutVoiceEn.checked = String(s.tutorial_voice_enabled).toLowerCase() !== "false" && s.tutorial_voice_enabled !== false;
@@ -7197,6 +7199,7 @@ async function saveAdminSettings() {
     const waveName = document.getElementById("adm-set-wave-name")?.value?.trim();
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
+    const groupAi = !!document.getElementById("adm-set-group-ai")?.checked;
     const charLimitFreeRaw = document.getElementById("adm-set-char-limit-free")?.value?.trim();
     const charLimitFree = charLimitFreeRaw === "" || charLimitFreeRaw == null ? null : parseInt(charLimitFreeRaw, 10);
 
@@ -7227,6 +7230,7 @@ async function saveAdminSettings() {
         tutorial_recap_link: tutRecapLink,
         ...tutExtraLinks,
         maintenance_mode: maint,
+        group_ai_admin_enabled: groupAi,
         ...(Number.isFinite(charLimitFree) ? { character_limit_free: charLimitFree } : {}),
     };
     updateTutorialUI(payload);
