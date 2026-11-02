@@ -510,7 +510,7 @@ async def handle_voxcpm_reference_audio(message: Message, state: FSMContext):
 
     confirm_msg = await message.answer(
         f"✅ Reference Audio ရရှိပါပြီ <code>{clean_name}</code>\n"
-        "🚀 VoxCPM 2 Cloud AI ဖြင့် အသံ Clone ပြုလုပ်ရန် Queue ထဲသို့ ထည့်နေပါသည်...",
+        "⏳ အသံ Clone ပြုလုပ်ရန် စောင့်ဆိုင်းစာရင်းသို့ ထည့်နေပါသည်…",
         parse_mode="HTML",
     )
 
@@ -736,7 +736,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 ])
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
-                    text=t("clone_audio_too_large_text", lang, job_id=job_id[:8]),
+                    text=t("clone_audio_too_large_text", lang, job_id=job_id),
                     reply_markup=kb,
                     parse_mode="HTML",
                 )
@@ -744,7 +744,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 await callback.bot.send_audio(
                     chat_id=target_chat_id,
                     audio=FSInputFile(str(res_path)),
-                    caption=t("clone_caption_voice", lang, job_id=job_id[:8]),
+                    caption=t("clone_caption_voice", lang, job_id=job_id),
                     parse_mode="HTML",
                 )
             else:
@@ -767,7 +767,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 ])
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
-                    text=t("clone_audio_file_missing_text", lang, job_id=job_id[:8]),
+                    text=t("clone_audio_file_missing_text", lang, job_id=job_id),
                     reply_markup=kb,
                     parse_mode="HTML",
                 )
@@ -847,7 +847,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     await callback.bot.send_video(
                         chat_id=target_chat_id,
                         video=FSInputFile(str(video_path), filename=f"recap_{job_id[:8]}.mp4"),
-                        caption=t("clone_caption_recap", lang, job_id=job_id[:8]),
+                        caption=t("clone_caption_recap", lang, job_id=job_id),
                         parse_mode="HTML",
                     )
                 else:
@@ -868,7 +868,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     ])
                     await callback.bot.send_message(
                         chat_id=target_chat_id,
-                        text=t("clone_recap_large_app_text", lang, job_id=job_id[:8]),
+                        text=t("clone_recap_large_app_text", lang, job_id=job_id),
                         reply_markup=kb,
                         parse_mode="HTML",
                     )
@@ -910,7 +910,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                 ])
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
-                    text=t("clone_recap_file_missing_text", lang, job_id=job_id[:8]),
+                    text=t("clone_recap_file_missing_text", lang, job_id=job_id),
                     reply_markup=kb,
                     parse_mode="HTML",
                 )

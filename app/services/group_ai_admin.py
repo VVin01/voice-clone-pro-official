@@ -404,6 +404,16 @@ def build_fact_sheet() -> str:
     free_chars = int(getattr(settings, "character_limit_free", 1000) or 1000)
     free_recap_max = int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120)
     vip_recap_max = int(getattr(settings, "recap_max_duration_seconds", 600) or 600)
+    # Referral numbers come from the ledger constants, not literals
+    # (R40 deck Part 3 — the sheet was the fourth hardcoded copy).
+    try:
+        from app.services.ledger import MAX_REFERRALS_REWARDED, REFERRAL_REWARD_SECONDS
+
+        referral_seconds = int(REFERRAL_REWARD_SECONDS)
+        referral_max = int(MAX_REFERRALS_REWARDED)
+    except Exception:
+        referral_seconds, referral_max = 30, 20
+    referral_cap_min = (referral_seconds * referral_max) // 60
 
     # The 12 preset personas, derived live from the curated catalogue.
     persona_names = ""
@@ -460,7 +470,7 @@ def build_fact_sheet() -> str:
         "• ကိုယ်ပိုင် အသံ Clone: ကိုယ့်အသံ (သို့) ခွင့်ပြုချက် ရှိတဲ့ အသံ နမူနာဖိုင် တင်ပြီး "
         "ကိုယ်ပိုင် အသံ မော်ဒယ် လုပ်လို့ ရပါတယ် (Voice Studio ထဲက Custom Voice)။",
         "【Recap — ဗီဒီယို ပြန်ပြောပြချက်】",
-        "• လင့်ခ် ရတဲ့ နေရာတွေ: YouTube, TikTok, Facebook, Instagram, Douyin, X (Twitter) "
+        "• လင့်ခ် ရတဲ့ နေရာတွေ: YouTube, TikTok, Facebook, Douyin "
         "လင့်ခ်တွေ ထည့်လို့ ရသလို၊ ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်ပြီးလည်း လုပ်လို့ ရပါတယ်။",
         "• ဇာတ်လမ်း စတိုင် ၆ မျိုး: Viral (ဆွဲဆောင်မှု), Dramatic (သည်းထိတ်), Funny (ဟာသ), "
         "POV (ဇာတ်ကောင် ကိုယ်တိုင် ပြောသလို), Standard, Narrator (ရိုးရိုး ပြောပြသူ)။",
@@ -469,7 +479,7 @@ def build_fact_sheet() -> str:
         "မမေသူ, မသီရိ, မသွန်းရည်။ Gemini အသံ ဆိုရင် Auto ထား၊ Persona ရဲ့ ကျား/မ အလိုက် "
         "အလိုက်ဖက်ဆုံး အသံ သုံးပေးပါတယ်။ နမူနာ အသံတွေကို Recap Tab မှာ နားထောင်ကြည့်လို့ ရပါတယ်။",
         "• စာတန်း (Subtitle) ပြင်လို့ ရတာတွေ: Font (မူရင်း Noto Sans Myanmar အပါအဝင်), "
-        "စာလုံး အရွယ်, Mask/Blur နောက်ခံ, အချိုး (မူရင်း အချိုး အပါအဝင် 9:16, 16:9, 1:1), "
+        "စာလုံး အရွယ်, Blur နောက်ခံ, အချိုး (မူရင်း အချိုး အပါအဝင် 9:16, 16:9, 1:1), "
         "Mirror နဲ့ အမြန်နှုန်း ရွေးချယ်ခွင့်တွေ ရှိပါတယ်။",
         f"• Recap ကုန်ကျစရိတ်: ၁ ကြိမ်ကို Recap Credit 1 ခု။ Free အတွက် မူရင်း ဗီဒီယို "
         f"အများဆုံး {free_recap_max} စက္ကန့် ({free_recap_max // 60} မိနစ်)၊ Plan ဝယ်ထားသူတွေ "
@@ -478,7 +488,7 @@ def build_fact_sheet() -> str:
         "ဖြစ်ပြီး၊ Plan ဝယ်ထားသူတွေ အတွက် အပိုင်း ၁ ပိုင်းကို Credit 1 ခု စီ ကျပါတယ်။",
         "• Free Recap ဗီဒီယိုမှာ Watermark ပါပါတယ်၊ Plan ဝယ်ထားသူတွေရဲ့ ဗီဒီယိုမှာ မပါပါဘူး။",
         "【Downloader】",
-        "• YouTube, TikTok, Facebook, Instagram, Douyin, X လင့်ခ် ကူးထည့်ရင် ဗီဒီယို "
+        "• YouTube, TikTok, Facebook, Douyin လင့်ခ် ကူးထည့်ရင် ဗီဒီယို "
         "(သို့) အသံဖိုင် အဖြစ် ဆွဲယူပေးပါတယ်။",
         "【စျေးနှုန်း နဲ့ Free】",
         # One fact per line: the old single packed sentence put
@@ -501,9 +511,9 @@ def build_fact_sheet() -> str:
         "WavePay နံပါတ်ကို ငွေလွှဲ → ပြေစာ (Slip) ပုံ ပို့ → Admin အတည်ပြုပြီးတာနဲ့ "
         "မိနစ်/Credit ဝင်ပါတယ်။ (ငွေလွှဲ နံပါတ်တွေကို Group ထဲမှာ မပြောရပါ — Bot ထဲက "
         "VIP နေရာမှာ ကြည့်ခိုင်းပါ။)",
-        "• Refer & Earn: ကိုယ့် Refer လင့်ခ်နဲ့ သူငယ်ချင်း ဖိတ်ခေါ်ပြီး သူငယ်ချင်း က "
-        "အဖွဲ့ဝင် ဖြစ်လာရင် တစ်ယောက်ကို အသံ 30 စက္ကန့် ဆု ရပါတယ် (အများဆုံး 20 ယောက် "
-        "အထိ = 10 မိနစ်)။ Refer လင့်ခ်ကို Home Tab မှာ ယူလို့ ရပါတယ်။",
+        f"• Refer & Earn: ကိုယ့် Refer လင့်ခ်နဲ့ သူငယ်ချင်း ဖိတ်ခေါ်ပြီး သူငယ်ချင်း က "
+        f"အဖွဲ့ဝင် ဖြစ်လာရင် တစ်ယောက်ကို အသံ {referral_seconds} စက္ကန့် ဆု ရပါတယ် (အများဆုံး {referral_max} ယောက် "
+        f"အထိ = {referral_cap_min} မိနစ်)။ Refer လင့်ခ်ကို Home Tab မှာ ယူလို့ ရပါတယ်။",
         "【မကြာခဏ ဖြစ်တတ်တာတွေ】",
         "• Link ထည့်တာ မရဘူး ဆိုရင်: TikTok Post တချို့ကို TikTok ကိုယ်တိုင်က ကျွန်တော်တို့ "
         "ဆာဗာမှ ဆွဲယူခွင့် ပိတ်ထားတတ်ပါတယ် — အဲဒါဆိုရင် ဗီဒီယိုဖိုင်ကို ကိုယ်တိုင် Download "

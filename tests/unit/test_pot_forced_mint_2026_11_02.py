@@ -1,21 +1,27 @@
-"""PO Token forced-mint experiment (owner-approved 2026-11-02).
+"""PO Token forced-mint experiment (owner-approved 2026-11-02) —
+CONCLUDED and REVERTED in the R40 release merge.
 
-The sidecar's first prod proof failed on all 3 attempts with NO
-/get_pot or mint activity visible in the app logs. Root mechanism:
-the fetch policy is yt-dlp core's — YoutubeIE._fetch_po_token()
+History: the sidecar's first prod proof failed on all 3 attempts
+with NO /get_pot or mint activity visible in the app logs. The
+fetch policy is yt-dlp core's — YoutubeIE._fetch_po_token()
 (yt_dlp/extractor/youtube/_video.py) reads the 'youtube' extractor
 arg 'fetch_pot'; under the default 'auto' it fetches only when the
 request is pre-marked required, which never happened on the walled
-path. This experiment sets fetch_pot='always' on every YouTube
+path. PR #51 therefore set fetch_pot='always' on every YouTube
 attempt (via _pot_extractor_args / _with_pot, the ONE wiring point)
-and attaches _PotLogShim so provider fetches surface in the app logs.
+and attached _PotLogShim so provider fetches surface in the app
+logs. Hammock's prod proof of that build: fetches fired, mints
+completed (zero fetch errors), and YouTube STILL refused Render's
+egress IP at the player-response stage on every attempt — the
+PO-token route is exhausted and 'always' only added latency to
+walled failures.
 
-These tests pin (no network): the policy on all 4 attempts in both
-stages, its merge alongside player_client, the shim's attachment and
-filtering, non-YouTube plans staying untouched, and — behaviourally —
-that yt-dlp core actually resolves 'always' from the exact opts dict
-the app hands to YoutubeDL, through the same _configuration_arg call
-_fetch_po_token makes.
+Disposition (this file's current pins): the fetch policy is
+REVERTED — no fetch_pot arg is set anywhere, so core's default
+'auto' applies — while _PotLogShim and the provider base_url
+wiring are kept exactly as-is. The policy tests below now pin the
+REVERTED state (their names are kept from the experiment for
+continuity); the shim tests are unchanged from the experiment.
 """
 
 from __future__ import annotations
@@ -43,6 +49,9 @@ def _plans(dl, url, stage="info"):
 
 
 def test_fetch_pot_always_on_every_youtube_attempt(monkeypatch, tmp_path):
+    # Name kept from the experiment; the pin is now the REVERTED
+    # state: NO fetch_pot arg on any YouTube attempt, either stage —
+    # yt-dlp core's default 'auto' policy applies.
     monkeypatch.delenv("POT_SERVER_URL", raising=False)
     dl = MediaDownloader(download_dir=str(tmp_path))
     for stage in ("info", "media"):
@@ -54,27 +63,25 @@ def test_fetch_pot_always_on_every_youtube_attempt(monkeypatch, tmp_path):
             "mweb",
         ]
         for _label, opts in plans:
-            yt_args = opts["extractor_args"]["youtube"]
-            assert yt_args["fetch_pot"] == ["always"]
+            yt_args = opts["extractor_args"].get("youtube") or {}
+            assert "fetch_pot" not in yt_args
 
 
 def test_fetch_pot_merges_with_player_client(monkeypatch, tmp_path):
     monkeypatch.delenv("POT_SERVER_URL", raising=False)
     dl = MediaDownloader(download_dir=str(tmp_path))
     plans = dict(_plans(dl, SHORTS_URL))
-    # _with_pot must merge into the 'youtube' args _with_client set,
-    # not clobber them (the pre-experiment ea.update() would have).
+    # _with_pot must not disturb the 'youtube' args _with_client
+    # set: after the revert they hold player_client ONLY (during
+    # the experiment they additionally held fetch_pot=['always']).
     assert plans["web_embedded"]["extractor_args"]["youtube"] == {
         "player_client": ["web_embedded"],
-        "fetch_pot": ["always"],
     }
     assert plans["android"]["extractor_args"]["youtube"] == {
         "player_client": ["android"],
-        "fetch_pot": ["always"],
     }
     assert plans["mweb"]["extractor_args"]["youtube"] == {
         "player_client": ["mweb"],
-        "fetch_pot": ["always"],
     }
 
 
@@ -93,7 +100,10 @@ def test_ytdlp_core_resolves_always_from_attempt_opts(monkeypatch, tmp_path):
     """Behavioural consumption pin: build the exact opts the app
     hands YoutubeDL, then resolve fetch_pot through the same
     _configuration_arg('fetch_pot', [''], ie_key=YoutubeIE) call that
-    YoutubeIE._fetch_po_token makes in yt-dlp 2026.10.26."""
+    YoutubeIE._fetch_po_token makes in yt-dlp 2026.10.26. Name kept
+    from the experiment; the pin is now the REVERTED state: the arg
+    is unset (''), which _fetch_po_token coerces to the default
+    'auto' policy."""
     import yt_dlp
     from yt_dlp.extractor.youtube._video import YoutubeIE
 
@@ -104,7 +114,7 @@ def test_ytdlp_core_resolves_always_from_attempt_opts(monkeypatch, tmp_path):
         ie = YoutubeIE(ydl)
         assert (
             ie._configuration_arg("fetch_pot", [""], ie_key=YoutubeIE)[0]
-            == "always"
+            == ""
         )
 
 

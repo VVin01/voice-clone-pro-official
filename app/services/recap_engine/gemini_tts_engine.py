@@ -48,6 +48,23 @@ VOICES = [("Charon", "male"), ("Algenib", "male"), ("Orus", "male"), ("Iapetus",
           ("Gacrux", "female"), ("Sulafat", "female"), ("Kore", "female"), ("Achernar", "female"), ("Leda", "female")]
 GEMINI_VOICE_NAMES: tuple[str, ...] = tuple(name for name, _ in VOICES)
 GEMINI_VOICE_GENDER: dict[str, str] = dict(VOICES)
+# Burmese display names for the Gemini voices — the canonical map.
+# These are the names users see in the Mini App Gemini voice picker
+# (static/index.html <option> labels) and hear in the Group AI Admin
+# knowledge sheet; user-facing job messages must name a Gemini-voiced
+# recap with THESE names, never the raw engine slug (R40 item 1).
+GEMINI_VOICE_DISPLAY_MY: dict[str, str] = {
+    "Charon": "ကိုသီဟ",
+    "Algenib": "ကိုအာကာ",
+    "Orus": "ကိုမင်းခန့်",
+    "Iapetus": "ကိုလင်းခန့်",
+    "Puck": "ကိုသော်တာ",
+    "Kore": "မစန္ဒာ",
+    "Leda": "မနှင်းဆီ",
+    "Sulafat": "မမေသူ",
+    "Gacrux": "မသီရိ",
+    "Achernar": "မသွန်းရည်",
+}
 TTS_MODELS = ("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
 PROFILE_VERSION = "single_narrator_v3"
 DEFAULT_DIRECTION = ("An energetic, ALIVE Burmese storyteller PERFORMING the story for listeners — warm, vivid and "

@@ -517,7 +517,9 @@ def test_fact_sheet_knowledge_coverage():
     # Product map: tabs + downloader + custom voice.
     assert "Voice Studio" in sheet and "VIP" in sheet
     assert "Custom Voice" in sheet
-    assert "Instagram" in sheet and "Douyin" in sheet
+    # R40 deck D4: only platforms the product actually supports are
+    # listed (Instagram / X were stated as fact but are not supported).
+    assert "Instagram" not in sheet and "Douyin" in sheet
     # Personas derived from the curated catalogue + Gemini voices.
     assert "ကိုမင်း" in sheet and "မနှင်း" in sheet
     assert "ကိုသီဟ" in sheet and "မသွန်းရည်" in sheet

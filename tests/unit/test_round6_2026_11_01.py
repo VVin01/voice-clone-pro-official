@@ -309,9 +309,13 @@ def test_e2_price_word_spelling():
 
 def test_e3_e4_index_fallbacks():
     assert "စာတန်းဖုံး" not in INDEX_HTML
-    assert "စာတန်းထိုး အနေအထားချိန်ရန်" in INDEX_HTML
+    # R40: index.html defaults are REGENERATED from the dictionary
+    # (drift 0), so the old drifted static phrases are gone; the
+    # dictionary's own preview label is the static paint now.
+    assert "အစမ်းကြည့်ရှုမှု (Preview)" in INDEX_HTML
+    assert "စာတန်းထိုး အနေအထားချိန်ရန်" not in INDEX_HTML
     assert "စကွဲယား" not in INDEX_HTML
-    assert "📐 1:1 (Square)" in INDEX_HTML
+    assert "1:1 (Square)" in INDEX_HTML
 
 
 def test_e9_persona_display_names_unified():
@@ -338,13 +342,16 @@ def test_e10_burmese_table_translated():
         "vip_title", "mirror_on", "mirror_off", "preview_label",
         "recap_engine_label", "recap_sub_band", "recap_sub_heavy",
         "recap_sub_soft", "recap_quality_standard", "recap_quality_high",
-        "recap_quality_max", "plan_voice_f4", "plan_recap_f2",
+        "recap_quality_max", "plan_recap_f2",
         "plan_recap_f5", "plan_master_f4", "plan_master_f5",
         "plan_recap_starter_f2",
     )
     for key in keys:
         val = tr["my"][key]
         assert _has_myanmar(val), (key, val)
+    # R40 deck I3: plan_voice_f4 (the priority-queue feature line) is
+    # DELETED — no priority queue exists in the product.
+    assert "plan_voice_f4" not in tr["my"] and "plan_voice_f4" not in tr["en"]
 
 
 def test_e11_cancel_label_formal():
@@ -363,8 +370,12 @@ def test_e16_laptop_worker_copy_removed():
 def test_e17_no_ops_text_in_user_errors():
     assert "Render Dashboard" not in DOWNLOADER_PY
     assert "YOUTUBE_COOKIES ထည့်သွင်း" not in DOWNLOADER_PY
-    # The user-safe guidance itself is still there.
-    assert DOWNLOADER_PY.count("Anti-Bot စစ်ဆေးမှု") == 3
+    # R40 §K2: the three anti-bot raise sites no longer carry the old
+    # hand-written copy at all — they raise the classified user-safe
+    # message (or the shared wall constant), so the ops-flavoured
+    # phrase is gone entirely and the guidance lives in the classifier.
+    assert DOWNLOADER_PY.count("Anti-Bot စစ်ဆေးမှု") == 0
+    assert DOWNLOADER_PY.count("classify_source_error(err_msg, expanded_url) or YOUTUBE_BOT_WALL_MESSAGE") == 3
     assert "တိုက်ရိုက် Upload" in DOWNLOADER_PY
 
 

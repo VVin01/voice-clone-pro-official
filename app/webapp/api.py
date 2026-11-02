@@ -22,6 +22,8 @@ import shutil
 import logging
 import asyncio
 import functools
+import hashlib
+import hmac
 import html
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
@@ -87,6 +89,61 @@ async def get_current_user(
         await db.commit()
 
     return user
+
+
+# ── Signed stream tokens (R40 verify-first (ii)) ─────────────────────
+# The recap player used to fetch the ENTIRE video through
+# fetch()+blob just to attach the initData header — a 100MB+ render
+# held fully in WebView memory, which is what surfaced as the native
+# "Unable to play media" in the Telegram client. The file itself is
+# WebView-safe (libx264/yuv420p + AAC + faststart) and Starlette's
+# FileResponse serves HTTP Range, so the player only needs a URL it
+# can load directly. A <video> element cannot send the initData
+# header, so status payloads carry a short-lived HMAC token scoped to
+# exactly one (job, file, user); the stream/download endpoint accepts
+# it in place of the header and STILL runs the normal ownership
+# checks against the token's user.
+_STREAM_TOKEN_TTL_SECONDS = 2 * 3600
+
+
+def _make_stream_token(job_id: str, user_id: int, file_type: str) -> Optional[str]:
+    secret = (settings.bot_token or "").encode("utf-8")
+    if not secret:
+        return None
+    exp = int(time.time()) + _STREAM_TOKEN_TTL_SECONDS
+    msg = f"stream:{job_id}:{int(user_id)}:{file_type}:{exp}".encode("utf-8")
+    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return f"{int(user_id)}.{exp}.{sig}"
+
+
+def _verify_stream_token(token: str, job_id: str, file_type: str) -> Optional[int]:
+    secret = (settings.bot_token or "").encode("utf-8")
+    if not secret or not token:
+        return None
+    try:
+        uid_s, exp_s, sig = token.split(".", 2)
+        uid, exp = int(uid_s), int(exp_s)
+    except (ValueError, AttributeError):
+        return None
+    if exp < int(time.time()):
+        return None
+    msg = f"stream:{job_id}:{uid}:{file_type}:{exp}".encode("utf-8")
+    expected = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return None
+    return uid
+
+
+def _with_stream_url(urls: Dict[str, Any], job_id: str, user_id: int) -> Dict[str, Any]:
+    """Copy a download_urls dict and add a signed direct stream URL
+    for the video entry (video only — audio/SRT stay on the blob path,
+    they are small)."""
+    out = dict(urls or {})
+    if out.get("video"):
+        token = _make_stream_token(job_id, user_id, "video")
+        if token:
+            out["stream_url"] = f"/api/recap/stream/{job_id}/video?t={token}"
+    return out
 
 
 async def get_optional_user(
@@ -247,6 +304,7 @@ def _recap_registry_owner_ok(job_id: str, user: User) -> bool:
 # ── Security audit round 2: upload / recap helpers ─────────────────────────
 MAX_RECAP_UPLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB, same as polish reference cap
 MAX_SLIP_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB, same as polish reference cap
+MAX_LOGO_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB cap for a user's own channel logo
 _UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks: never buffer a whole upload
 
 
@@ -283,6 +341,100 @@ async def _save_upload_streaming(upload_file, dest_path, max_bytes: int) -> int:
         logger.warning("Failed to save uploaded file %s: %s", dest_path, exc)
         raise HTTPException(status_code=500, detail="ဖိုင် သိမ်းဆည်းရာတွင် အဆင်မပြေ ဖြစ်သွားပါသည် — ခဏနေ ပြန်ကြိုးစားပါ")
     return total
+
+
+# ── Custom channel logo (owner decision 2026-11-02) ─────────────────
+# The Recap logo overlay is a PAID feature and stamps the user's OWN
+# uploaded channel logo — there is no bundled brand logo. Free users
+# get no logo at all: uploads are rejected and the generate path
+# ignores logo settings for them, even if a stale client still sends
+# include_logo=true. Admins are allowed (standing exemption).
+LOGO_IMAGE_FORMATS = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
+LOGO_FILE_EXTS = (".png", ".jpg", ".webp")
+LOGO_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}
+LOGO_VIP_ONLY_DETAIL = (
+    "ကိုယ်ပိုင် Logo ထည့်ခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်။ "
+    "VIP tab တွင် Plan ဝယ်ယူနိုင်ပါသည်။"
+)
+
+
+def _can_use_custom_logo(user: User) -> bool:
+    """Paid tier (PURCHASED) or admin — the same test the recap
+    duration/watermark benefits use."""
+    return (
+        user.account_category == AccountCategory.PURCHASED.value
+        or settings.is_admin(user.id)
+    )
+
+
+def _user_logo_dir(user_id: int) -> Path:
+    return settings.storage_root / "user_logos" / str(int(user_id))
+
+
+def _find_user_logo(user_id: int) -> Optional[Path]:
+    logo_dir = _user_logo_dir(user_id)
+    for ext in LOGO_FILE_EXTS:
+        candidate = logo_dir / f"logo{ext}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _resolve_recap_logo_path(
+    user_id: int, include_logo: bool, is_vip: bool
+) -> Optional[str]:
+    """The ONLY logo path the recap generate path may render with.
+
+    Returns the user's own stored logo when (and only when) the
+    toggle is on, the job owner is paid/admin (is_vip already carries
+    the admin exemption), and a logo file actually exists. Toggle on
+    with nothing uploaded renders no logo; free users never resolve.
+    """
+    if not include_logo or not is_vip:
+        return None
+    found = _find_user_logo(user_id)
+    return str(found) if found is not None else None
+
+
+def _validate_logo_image(path: Path, expected_format: str) -> None:
+    """Decode-check a saved upload with Pillow: the file must really be
+    the image format its extension claims (an extension is not proof),
+    with sane dimensions."""
+    from PIL import Image
+
+    try:
+        with Image.open(path) as im:
+            fmt = im.format
+            width, height = im.size
+            im.verify()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="တင်လိုက်သော ဖိုင်သည် မှန်ကန်သော ပုံဖိုင် မဟုတ်ပါ — PNG, JPG သို့မဟုတ် WEBP ပုံ ပြန်ရွေးပေးပါ",
+        )
+    if fmt != expected_format or not (1 <= width <= 4096 and 1 <= height <= 4096):
+        raise HTTPException(
+            status_code=400,
+            detail="တင်လိုက်သော ဖိုင်သည် မှန်ကန်သော ပုံဖိုင် မဟုတ်ပါ — PNG, JPG သို့မဟုတ် WEBP ပုံ ပြန်ရွေးပေးပါ",
+        )
+
+
+def _logo_state_payload(user: User) -> Dict[str, Any]:
+    found = _find_user_logo(user.id)
+    logo_url = None
+    if found is not None:
+        # An <img> tag cannot send the initData header, so the preview
+        # URL carries a signed token scoped to exactly this user's
+        # logo (same HMAC scheme as the recap stream tokens). The file
+        # endpoint serves ONLY the resolved user's own logo, so a
+        # token can never reach another user's file.
+        token = _make_stream_token("userlogo", user.id, "logo")
+        logo_url = f"/api/user/logo/file?t={token}" if token else "/api/user/logo/file"
+    return {
+        "can_use_logo": _can_use_custom_logo(user),
+        "has_logo": found is not None,
+        "logo_url": logo_url,
+    }
 
 
 async def _recap_active_job_count(db, user_id: int) -> int:
@@ -389,6 +541,28 @@ async def _charge_recap_credits(user_id: int, count: int) -> bool:
         return False
 
 
+def _segmented_credits_message(total_parts: int, balance: int | None = None) -> str:
+    """R40 deck M6: ONE builder for the segmented insufficient-credits
+    message — the worker exception and the submit-time pre-check used
+    to carry near-identical copies that could drift apart."""
+    base = (
+        f"ဒီဗီဒီယိုရှည်ကို အပိုင်း {int(total_parts)} ပိုင်း "
+        f"ခွဲထုတ်ရမှာဖြစ်ပြီး အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {int(total_parts)} Credits "
+        "လိုအပ်ပါတယ်။ "
+    )
+    if balance is not None:
+        return f"💳 {base}လက်ကျန် Credit ({balance}c) မလုံလောက်ပါ — Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
+    return f"💳 Recap Credit မလုံလောက်ပါ — {base}Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
+
+
+# R40 deck M6: one canonical script-review + split hint (the submit
+# path and the background-job path worded the same rule two ways).
+_SCRIPT_REVIEW_SPLIT_HINT = (
+    "📝 Script ကို အရင်စစ်မယ် ရွေးထားရင် ၁၀ မိနစ်အထိပဲ ရပါတယ် — "
+    "အပိုင်းခွဲပြီး လုပ်ချင်ရင် Script review ကို ပိတ်ပြီး ပြန်စမ်းပါခင်ဗျာ။"
+)
+
+
 class _RecapInsufficientCreditsError(Exception):
     """A segmented recap job whose exact per-part charge the user's
     balance cannot cover. Raised in the worker BEFORE any part renders;
@@ -398,11 +572,7 @@ class _RecapInsufficientCreditsError(Exception):
 
     def __init__(self, total_parts: int):
         self.total_parts = int(total_parts)
-        super().__init__(
-            f"💳 Recap Credit မလုံလောက်ပါ — ဒီဗီဒီယိုရှည်ကို အပိုင်း {self.total_parts} ပိုင်း "
-            f"ခွဲထုတ်ရမှာဖြစ်ပြီး အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {self.total_parts} Credits "
-            "လိုအပ်ပါတယ်။ Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
-        )
+        super().__init__(_segmented_credits_message(self.total_parts))
 
 
 def _persisted_recap_state(
@@ -640,7 +810,7 @@ def _voice_job_error_status(reason: str) -> int:
 def _voice_job_error_detail(reason: str) -> str:
     return {
         "MODEL_NOT_AUTHORIZED": "အသံမော်ဒယ် မတွေ့ရှိပါ",
-    "LEGACY_MODEL_ENGINE_REMOVED": "ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။",
+    "LEGACY_MODEL_ENGINE_REMOVED": "ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃–၃၀ စက္ကန့်) အသစ် ပို့ပေးပါ။",
         "CONCURRENT_JOB_LIMIT_EXCEEDED": "တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။",
         "DAILY_JOB_LIMIT_EXCEEDED": "ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ။",
         "INSUFFICIENT_BALANCE": "လက်ကျန်မိနစ် မလုံလောက်ပါ။",
@@ -868,9 +1038,18 @@ async def get_user_profile(
         "balance_minutes": round(seconds_left / 60, 1),
         "recap_credits": getattr(user, "recap_credits", 3),
         "character_limit": char_limit,
+        # R40 deck I4: the plan "how it works" copy states BOTH limits
+        # via placeholders — expose the pair so the client never
+        # hardcodes them.
+        "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
+        "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
         "recap_max_duration_seconds": 600 if is_vip else 120,
         "recap_max_duration_minutes": 10 if is_vip else 2,
         "has_recap_watermark": not is_vip,
+        # Custom channel logo (owner decision 2026-11-02): paid-only,
+        # the user's own upload — see /api/user/logo endpoints.
+        "can_use_logo": bool(is_vip),
+        "has_custom_logo": _find_user_logo(user.id) is not None,
         "active_recap_job_id": active_recap_job_id,
         "active_voice_job_id": active_voice_job_id,
         "completed_jobs": completed_jobs,
@@ -1035,6 +1214,94 @@ async def update_user_language(
     return {"success": True, "language": user.language_code}
 
 
+# ── 1b. Custom channel logo (paid feature, owner decision 2026-11-02) ─────
+@api_router.get("/user/logo")
+async def get_user_logo_state(
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Logo state for the Recap settings UI: whether this user may use
+    the feature at all (paid/admin) and whether a logo is stored."""
+    return _logo_state_payload(user)
+
+
+@api_router.get("/user/logo/file")
+async def get_user_logo_file(
+    user: Optional[User] = Depends(get_optional_user),
+    t: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Serve the caller's OWN stored logo (settings preview thumbnail).
+
+    Auth mirrors the recap stream endpoint: the initData header OR a
+    signed token scoped to ("userlogo", user, "logo") — an <img> tag
+    cannot send headers. The file served is always the resolved
+    user's own logo; a token never widens access beyond its owner.
+    """
+    if user is None and t:
+        token_uid = _verify_stream_token(t, "userlogo", "logo")
+        if token_uid is not None:
+            user = await db.get(User, token_uid)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Telegram authentication required")
+    found = _find_user_logo(user.id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Logo မတင်ရသေးပါ")
+    return FileResponse(
+        path=str(found),
+        media_type=LOGO_MEDIA_TYPES.get(found.suffix.lower(), "application/octet-stream"),
+        content_disposition_type="inline",
+    )
+
+
+@api_router.post("/user/logo")
+async def upload_user_logo(
+    logo_file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Upload (or replace) the caller's own channel logo. Paid/admin
+    only — free users are rejected with the VIP upsell, and nothing is
+    stored for them."""
+    if not _can_use_custom_logo(user):
+        raise HTTPException(status_code=403, detail=LOGO_VIP_ONLY_DETAIL)
+    ext = Path(logo_file.filename or "").suffix.lower()
+    if ext not in LOGO_IMAGE_FORMATS:
+        raise HTTPException(
+            status_code=400, detail="Logo ပုံသည် PNG, JPG သို့မဟုတ် WEBP ဖြစ်ရပါမည်"
+        )
+    logo_dir = _user_logo_dir(user.id)
+    logo_dir.mkdir(parents=True, exist_ok=True)
+    # Save to a temp name first: a failed validation must never
+    # clobber the previously stored (working) logo.
+    tmp_path = logo_dir / f".uploading-{uuid.uuid4().hex[:8]}{ext}"
+    await _save_upload_streaming(logo_file, tmp_path, MAX_LOGO_UPLOAD_BYTES)
+    try:
+        _validate_logo_image(tmp_path, LOGO_IMAGE_FORMATS[ext])
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    for old_ext in LOGO_FILE_EXTS:
+        (logo_dir / f"logo{old_ext}").unlink(missing_ok=True)
+    canonical_ext = ".jpg" if ext == ".jpeg" else ext
+    tmp_path.replace(logo_dir / f"logo{canonical_ext}")
+    return _logo_state_payload(user)
+
+
+@api_router.delete("/user/logo")
+async def delete_user_logo(
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Remove the caller's stored logo. Not tier-gated: a user who was
+    demoted to Free can still delete their file (the generate path
+    ignores it while they are Free either way)."""
+    logo_dir = _user_logo_dir(user.id)
+    for ext in LOGO_FILE_EXTS:
+        (logo_dir / f"logo{ext}").unlink(missing_ok=True)
+    return _logo_state_payload(user)
+
+
 # ── 2. Voice Models & Curated Personas ─────────────────────────────────────
 @api_router.get("/voices/curated")
 async def get_curated_personas(user: User | None = Depends(get_optional_user)):
@@ -1125,7 +1392,7 @@ async def create_voice_job(
         raise HTTPException(
             status_code=400,
             detail=f"စာသား စာလုံးရေ ({len(clean_text)}) သည် ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါသည်။ "
-                   + ("အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ ၁၀၀၀ အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ ၅၀၀၀ အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
+                   + (f"အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ {settings.character_limit_purchased:,} အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
         )
 
     # Determine engine & resolve authorized model
@@ -1252,7 +1519,7 @@ async def create_voice_job_with_audio(
         raise HTTPException(
             status_code=400,
             detail=f"စာသား စာလုံးရေ ({len(clean_text)}) သည် ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါသည်။ "
-                   + ("အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ ၁၀၀၀ အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ ၅၀၀၀ အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
+                   + (f"အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ {settings.character_limit_purchased:,} အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
         )
 
     # Determine engine & resolve authorized model
@@ -2142,6 +2409,94 @@ async def get_recap_frame(
     raise HTTPException(status_code=404, detail="Frame not found")
 
 
+# ── 4.05. Recap Live Canvas — server-grabbed frames for URL sources ──
+# R40 item 9: for link sources the Live Canvas could only ever show
+# the remote thumbnail — no real frame, and nothing at the seek
+# position (a 2026-11-02 hands-on audit found the canvas blank in
+# every URL case). This endpoint downloads the source ONCE into a
+# per-URL preview cache (the same MediaDownloader the render itself
+# uses, capped at 720p) and serves real frames at arbitrary
+# timestamps through the same extractor as the upload flow. Blocked
+# sources fail honestly with the classified message — the client
+# then keeps its CSS mockup instead of faking a frame.
+_PREVIEW_SOURCE_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+class RecapPreviewFrameRequest(BaseModel):
+    url: str
+    t: float = 5.0
+
+
+@api_router.post("/recap/preview-frame")
+async def recap_preview_frame(
+    req: RecapPreviewFrameRequest,
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    from app.services.downloader import (
+        MediaDownloader,
+        classify_source_error,
+        extract_first_url,
+        extract_thumbnail_from_media,
+        unshorten_url,
+    )
+
+    raw_url = (req.url or "").strip()
+    url = extract_first_url(raw_url) or raw_url
+    if not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+    try:
+        canonical_url = await asyncio.to_thread(unshorten_url, url)
+        from app.services.url_safety import validate_public_url
+
+        canonical_url = validate_public_url(canonical_url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ")
+
+    import hashlib
+
+    url_key = hashlib.md5(canonical_url.encode("utf-8")).hexdigest()[:16]
+    cache_dir = settings.storage_root / "temp" / "recap_preview_src" / url_key
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    seek_sec = max(0.1, min(float(req.t or 5.0), 3600.0))
+    frame_path = cache_dir / f"frame_{seek_sec:.1f}.jpg"
+    if frame_path.is_file() and frame_path.stat().st_size > 500:
+        return FileResponse(frame_path, media_type="image/jpeg")
+
+    lock = _PREVIEW_SOURCE_LOCKS.setdefault(url_key, asyncio.Lock())
+    async with lock:
+        # Re-check inside the lock: a concurrent request may have
+        # produced this exact frame while we waited.
+        if frame_path.is_file() and frame_path.stat().st_size > 500:
+            return FileResponse(frame_path, media_type="image/jpeg")
+        source_files = [
+            p for p in cache_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {".mp4", ".mkv", ".mov", ".webm", ".m4v", ".ts"}
+        ]
+        source_path = source_files[0] if source_files else None
+        if source_path is None:
+            downloader = MediaDownloader()
+            try:
+                downloaded, _info = await asyncio.to_thread(
+                    downloader.download_video,
+                    canonical_url,
+                    target_dir=str(cache_dir),
+                    max_height=720,
+                )
+            except Exception as e:
+                logger.warning(f"preview-frame download failed for {canonical_url}: {e}")
+                detail = classify_source_error(str(e), canonical_url) or (
+                    "⚠️ ဒီ လင့်ခ်မှ နမူနာပုံ မရယူနိုင်ပါ။ ဗီဒီယိုဖိုင်ကို Mini App ရှိ "
+                    "'📁 Video Upload' မှ တိုက်ရိုက် တင်၍ ပြုလုပ်နိုင်ပါသည် ခင်ဗျာ။"
+                )
+                raise HTTPException(status_code=422, detail=detail)
+            source_path = Path(downloaded)
+        res = await asyncio.to_thread(
+            extract_thumbnail_from_media, str(source_path), str(frame_path), timestamp_sec=seek_sec
+        )
+        if res and Path(res).is_file():
+            return FileResponse(res, media_type="image/jpeg")
+    raise HTTPException(status_code=404, detail="Frame not found")
 # ── 5. Recap Studio Configuration & Background Pipeline ─────────────────────
 RECAP_JOBS_REGISTRY: Dict[str, Dict[str, Any]] = {}
 # Global recap execution cap (deep-hunt #4 D2): the per-user cap (1
@@ -2234,7 +2589,7 @@ def _build_clean_recap_script_file(
 
         header = (
             f"🎬 Pro Movie Recap Script ({story_style.upper()})\n"
-            f"🆔 Task: #{job_id[:8]}\n"
+            f"🆔 Task: #{job_id}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         )
         full_paragraph = " ".join(plain_sentences)
@@ -2960,7 +3315,7 @@ async def _send_recap_telegram_delivery(
                 over_caption = t(
                     "recap_over_app_caption",
                     lang,
-                    jid=jid[:8],
+                    jid=jid,
                     size_formatted=size_formatted,
                 )
                 await bot.send_message(chat_id=chat_id, text=over_caption, reply_markup=kb, parse_mode="HTML")
@@ -3183,6 +3538,13 @@ async def _execute_recap_background_job(
             "top-center": [0.42, 0.04],
         }
         logo_pos_coords = logo_pos_map.get(req.logo_pos, [0.82, 0.04])
+        # Owner decision 2026-11-02 (supersedes the R40 verify-first
+        # (i) interim fix): the logo overlay is a PAID feature and
+        # stamps the user's OWN uploaded channel logo — the bundled
+        # brand asset wiring is removed. _resolve_recap_logo_path
+        # returns None for free users (even with include_logo=true),
+        # for toggle-off, and for paid users who uploaded nothing.
+        logo_path_arg = _resolve_recap_logo_path(user_id, req.include_logo, is_vip)
 
         loop = asyncio.get_running_loop()
         from app.services.downloader import extract_first_url, unshorten_url, is_local_media
@@ -3207,7 +3569,7 @@ async def _execute_recap_background_job(
         # Free tier watermark branding vs VIP clean output
         watermark_text = None
         if not is_vip:
-            watermark_text = "✨ Voice Clone Pro - Recap Studio Ultra Suite တွင် ပြုလုပ်သည်"
+            watermark_text = "Voice Clone Pro ဖြင့် ပြုလုပ်သည်"
 
         # Admin exemption: settings.is_admin is the same identity check
         # /api/user/me uses; admins are exempt from the 10-minute cap.
@@ -3239,10 +3601,11 @@ async def _execute_recap_background_job(
             _meta = probe_local_media(script_source)
             _dur = float(_meta.get("duration", 0.0) or 0.0)
             if _dur > max_dur_limit:
-                _m, _s = int(_dur // 60), int(_dur % 60)
+                from app.services.downloader import recap_over_limit_message
+
                 raise ValueError(
-                    f"ဗီဒီယို ကြာချိန် ({_m:02d}:{_s:02d}) သည် {'VIP' if is_vip else 'အခမဲ့ (Free)'} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {int(max_dur_limit // 60)} မိနစ်) ထက် ကျော်လွန်နေပါသည်။"
-                    + (" 📝 Script review နဲ့ ၁၀ မိနစ်ကျော် အပိုင်းခွဲ တွဲသုံးလို့မရပါ — Script review ကို ပိတ်ပြီး ပြန်စမ်းပါခင်ဗျာ။" if getattr(req, "split_video", False) else "")
+                    recap_over_limit_message(_dur, max_dur_limit, is_vip)
+                    + (f" {_SCRIPT_REVIEW_SPLIT_HINT}" if getattr(req, "split_video", False) else "")
                 )
 
             from app.services.recap_engine.recap_pipeline import build_recap_script_plan
@@ -3405,7 +3768,8 @@ async def _execute_recap_background_job(
             sub_font_size=req.sub_font_size,
             sub_style=req.sub_style,
             sub_font=req.sub_font,
-            logo_position=logo_pos_coords if req.include_logo else None,
+            logo_path=logo_path_arg,
+            logo_position=logo_pos_coords if logo_path_arg else None,
             extra_text=watermark_text,
             is_vip=is_vip,
             max_duration_seconds=max_dur_limit,
@@ -3563,12 +3927,22 @@ async def _execute_recap_background_job(
 
         # Update Job in database
         try:
+            # R40 item 15c: record the REAL output duration so history
+            # rows show actual seconds instead of the creation estimate.
+            _real_seconds = 0
+            try:
+                from app.services.downloader import probe_local_media as _plm
+
+                _real_seconds = int(round(float(_plm(video_path).get("duration", 0.0) or 0.0)))
+            except Exception:
+                _real_seconds = 0
             async with AsyncSessionLocal() as session:
                 await session.execute(
                     update(Job).where(Job.id == job_id).values(
                         status=JobStatus.SUCCESS.value,
                         result_path=video_path,
                         finished_at=func.now(),
+                        **({"seconds_consumed": _real_seconds} if _real_seconds > 0 else {}),
                     )
                 )
                 await session.commit()
@@ -3606,12 +3980,16 @@ async def _execute_recap_background_job(
                         )
                     ]
                 ])
+                from app.services.voice_display import recap_voice_display_name
+
                 notify_text = t(
                     "recap_notify_text",
                     _recap_notify_lang,
                     clean_title=html.escape(str(clean_title[:60])),
-                    voice_slug=html.escape(str(req.voice_slug.capitalize())),
-                    job_id=job_id[:8],
+                    voice_name=html.escape(
+                        recap_voice_display_name(tts_engine, gemini_voice, req.voice_slug)
+                    ),
+                    job_id=job_id,
                 )
                 if entry.get("fallback_used"):
                     notify_text += t(
@@ -3702,7 +4080,7 @@ async def _execute_recap_background_job(
                         chat_id=chat_id,
                         text=(
                             f"⚠️ <b>Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်</b>\n"
-                            f"🆔 <b>Task:</b> <code>#{job_id[:8]}</code>\n"
+                            f"🆔 <b>Task:</b> <code>#{job_id}</code>\n"
                             f"📋 <b>အကြောင်းရင်း:</b> <i>{err_short}</i>\n\n"
                             f"{refund_note}\n"
                             f"💡 <i>လင့်ခ် အကာအကွယ်ရှိနေပါက ဗီဒီယိုဖိုင်ကို ဒေါင်းလုဒ်ဆွဲ၍ Mini App ရှိ '📁 Video Upload' မှ တိုက်ရိုက်တင်သွင်းကာ ပြုလုပ်နိုင်ပါသည်ခင်ဗျာ။</i>"
@@ -3922,7 +4300,7 @@ async def create_recap_job(
     if not settings.is_admin(user.id) and credits <= 0:
         raise HTTPException(
             status_code=403,
-            detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
+            detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
         )
 
     # Duration cap (owner's design): 10 min per job for everyone,
@@ -3965,19 +4343,17 @@ async def create_recap_job(
         )
         decision = submit_decision
         if decision != "segment":
-            dur_mins = int(checked_duration) // 60
-            dur_secs = int(checked_duration) % 60
-            max_m = max_duration_allowed // 60
-            tier_label = "VIP" if is_vip else "အခမဲ့ (Free)"
             if is_vip and req.split_video and req.script_review:
-                hint = "📝 Script ကို အရင်စစ်မယ် ရွေးထားရင် ၁၀ မိနစ်အထိပဲ ရပါတယ် — အပိုင်းခွဲပြီး လုပ်ချင်ရင် Script review ကို ပိတ်ပြီး ပြန်စမ်းပါခင်ဗျာ။"
+                hint = _SCRIPT_REVIEW_SPLIT_HINT
             elif is_vip:
                 hint = "✂️ ၁၀ မိနစ်ထက် ရှည်သော ဗီဒီယိုများကို 'အပိုင်းခွဲ ထုတ်မယ်' ကို ဖွင့်ပြီး အပိုင်းလိုက် ထုတ်နိုင်ပါသည်ခင်ဗျာ။"
             else:
                 hint = "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။"
+            from app.services.downloader import recap_over_limit_message
+
             raise HTTPException(
                 status_code=400,
-                detail=f"ဗီဒီယို ကြာချိန် ({dur_mins:02d}:{dur_secs:02d}) သည် {tier_label} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max_m} မိနစ်) ထက် ကျော်လွန်နေပါသည်။ " + hint,
+                detail=recap_over_limit_message(float(checked_duration), float(max_duration_allowed), is_vip) + " " + hint,
             )
         # Segmented path (owner decision 2026-10-30): 1 credit PER
         # PART. Estimate the part count from the duration and the
@@ -3999,11 +4375,7 @@ async def create_recap_job(
         ):
             raise HTTPException(
                 status_code=403,
-                detail=(
-                    f"💳 ဒီဗီဒီယိုရှည်ကို အပိုင်း {estimated_parts} ပိုင်း ခွဲထုတ်ရမှာဖြစ်ပြီး "
-                    f"အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {estimated_parts} Credits လိုအပ်ပါတယ်။ "
-                    f"လက်ကျန် Credit ({credits}c) မလုံလောက်ပါ — Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
-                ),
+                detail=_segmented_credits_message(estimated_parts, balance=credits),
             )
 
     # Concurrency: at most settings.max_concurrent_jobs_per_user (default
@@ -4035,7 +4407,7 @@ async def create_recap_job(
             await db.rollback()
             raise HTTPException(
                 status_code=403,
-                detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ ကျေးဇူးပြု၍ Movie Recap Plan ရယူပါရန်။",
+                detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
             )
         await db.commit()
         # The bulk UPDATE does not sync the in-memory instance; reload
@@ -4052,7 +4424,7 @@ async def create_recap_job(
         "status": "QUEUED",
         "progress_percent": 5,
         "progress_step": "0/4",
-        "progress_label": "⏳ Cloud Queue ပြင်ဆင်နေပါသည်...",
+        "progress_label": "⏳ ပြင်ဆင်နေပါသည်…",
         "created_at": time.time(),
         "video_path": None,
         "audio_path": None,
@@ -4087,7 +4459,11 @@ async def create_recap_job(
             preset_voice=req.voice_slug,
             input_text=clean_display_title,
             source_audio_path=req.url,
-            seconds_estimated=120,
+            # R40 item 15c: the old hardcoded 120 made EVERY recap row
+            # in /history display "120s" forever. Estimate from the
+            # source duration verified above; the real output duration
+            # replaces it in seconds_consumed on completion.
+            seconds_estimated=int(checked_duration) if checked_duration else 0,
             # Full config + credit state, so a restart/deploy
             # re-dispatch restores THIS job instead of a default one.
             recap_config=_persisted_recap_state(
@@ -4152,7 +4528,7 @@ async def get_recap_status(
             "error_message": entry.get("error_message"),
             "fallback_used": bool(entry.get("fallback_used")),
             "fallback_segments": entry.get("fallback_segments", []),
-            "download_urls": entry.get("download_urls", {}),
+            "download_urls": _with_stream_url(entry.get("download_urls", {}), job_id, user.id),
             "script_review": bool(entry.get("script_review")),
             "segments_count": entry.get("segments_count"),
             "parts": entry.get("parts", []),
@@ -4204,13 +4580,13 @@ async def get_recap_status(
         "parts_count": len(_db_parts) or None,
         "credits_charged": None,
         "is_expired": is_expired,
-        "download_urls": {
+        "download_urls": _with_stream_url({
             "video": f"/api/recap/download/{job_id}/video" if media_available else None,
             "audio": f"/api/recap/download/{job_id}/audio" if media_available else None,
             "srt": f"/api/recap/download/{job_id}/srt" if media_available else None,
             "script": f"/api/recap/download/{job_id}/script" if media_available else None,
             "parts": _db_parts,
-        },
+        }, job_id, user.id),
     }
 
 
@@ -4336,10 +4712,23 @@ async def download_recap_file(
     job_id: str,
     file_type: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: Optional[User] = Depends(get_optional_user),
+    t: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Download or stream generated recap MP4 video, WAV/MP3 audio, SRT subtitles, or TXT script."""
+    # Auth: the initData header (normal API calls, resolved by
+    # get_optional_user) OR a signed stream token (R40 (ii)) minted
+    # for this exact job/file/user — a <video> element cannot send
+    # headers. Either way the resolved user goes through the same
+    # ownership checks below; a token never creates a user and never
+    # widens access beyond its own job+file scope.
+    if user is None and t:
+        token_uid = _verify_stream_token(t, job_id, file_type)
+        if token_uid is not None:
+            user = await db.get(User, token_uid)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Telegram authentication required")
     # Ownership first, before any file is resolved from disk: a registry
     # entry or a DB job must belong to the requester (or the requester
     # must be an admin). Files on disk with no job record are not served.
@@ -4415,7 +4804,18 @@ async def send_recap_to_telegram(
 
     entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
     clean_title = _clean_recap_display_title(entry.get("title"), db_job.input_text if db_job else None)
-    voice_label = (db_job.preset_voice.capitalize() if (db_job and db_job.preset_voice) else "Smart Sync AI")
+    # R40 item 1: the caption must name the voice the user actually hears.
+    # A Gemini-engine job is voiced by its Gemini voice, not by the
+    # persona slug stored on the row — the engine/voice live in the
+    # persisted recap_config on the same row.
+    from app.services.voice_display import recap_voice_display_name
+
+    _cfg = (_load_persisted_recap_state(db_job) or {}).get("config", {}) if db_job else {}
+    voice_label = recap_voice_display_name(
+        _cfg.get("tts_engine"),
+        _cfg.get("gemini_voice"),
+        db_job.preset_voice if db_job else None,
+    ) or "Smart Sync AI"
 
     await _send_recap_telegram_delivery(
         chat_id=user.id,
@@ -4647,12 +5047,35 @@ async def get_user_history(
                 _fb_used, _fb_segs = False, []
         else:
             _fb_used, _fb_segs = j.engine == "edge_fallback", []
+        # R40 item 13: surface the persisted recap settings so the
+        # history detail can show WHAT the job was made with (engine,
+        # Gemini voice, subtitle position/style) — previously a user
+        # (or support) could not tell why a render looked the way it
+        # did (see the 2026-11-02 complaint diagnosis).
+        _recap_settings = None
+        if is_recap:
+            try:
+                _cfg = (_load_persisted_recap_state(j) or {}).get("config") or {}
+                if _cfg:
+                    _recap_settings = {
+                        "engine": _cfg.get("tts_engine"),
+                        "gemini_voice": _cfg.get("gemini_voice"),
+                        "voice": _cfg.get("voice_slug"),
+                        "story_style": _cfg.get("story_style"),
+                        "sub_y": _cfg.get("sub_y"),
+                        "blur_y": _cfg.get("blur_y"),
+                        "sub_style": _cfg.get("sub_style"),
+                        "sub_font": _cfg.get("sub_font"),
+                    }
+            except Exception:
+                _recap_settings = None
         out.append({
             "id": j.id,
             "job_type": "RECAP" if is_recap else "VOICE_CLONE",
             "parts_count": (len(_hist_parts) or None) if is_recap else None,
             "credits_charged": (_hist_entry or {}).get("credits_charged") if is_recap else None,
             "engine": j.engine,
+            "recap_settings": _recap_settings,
             "fallback_used": _fb_used,
             "fallback_segments": _fb_segs,
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
@@ -4939,7 +5362,7 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
             },
             {
                 "id": "voice_studio_pro",
-                "name": "🎙️ Voice Clone Studio Pro" if is_my else "🎙️ Voice Clone Studio Pro",
+                "name": "🎙️ Voice Pro" if is_my else "🎙️ Voice Pro",
                 "category": "voice",
                 "allocation": "250 Usable Minutes (4 Hours+)" if is_my else "250 Usable Minutes (4 Hours+)",
                 "minutes": 250,
@@ -4950,15 +5373,14 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                     "VoxCPM Cloud AI မြန်မာအသံ ၁၂ မျိုး (၆ ကျား / ၆ မ) အပြည့်အဝ အသုံးပြုခွင့်" if is_my else "12 VoxCPM Cloud AI Personas (6M / 6F)",
                     "Custom Voice Clone (မိမိနှစ်သက်ရာ အသံဖိုင် တင်၍ အသံတူပွားယူခွင့်)" if is_my else "Custom Voice Clone (Audio Sample Upload)",
                     "VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်" if is_my else "VoxCPM2 Reference Audio Cloning (3-30s sample)",
-                    "High-Speed Priority Cloud Processing Queue (စောင့်ဆိုင်းစရာမလို)" if is_my else "High-Speed Priority Cloud Processing Queue",
-                    "အရည်အသွေးမြင့် 24kHz PCM Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct 24kHz PCM Lossless WAV Audio Downloads",
-                    "တစ်ကြိမ်လျှင် စာလုံးရေ ၅၀၀၀ အထိ အကန့်အသတ်မရှိ ထုတ်လုပ်နိုင်ခွင့်" if is_my else "5,000 Chars per Generation with Unlimited Daily Quota",
+                    "အရည်အသွေးမြင့် Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct Lossless WAV Audio Downloads",
+                    "တစ်ကြိမ်လျှင် စာလုံးရေ ၅,၀၀၀ အထိ ထုတ်လုပ်နိုင်ခွင့်" if is_my else "Up to 5,000 characters per generation",
                 ],
-                "badge": "Voice Creators 🔥",
+                "badge": "Voice Pro",
             },
             {
                 "id": "recap_starter",
-                "name": "🎬 Movie Recap Starter" if is_my else "🎬 Movie Recap Starter",
+                "name": "🎬 Recap Starter" if is_my else "🎬 Recap Starter",
                 "category": "recap",
                 "allocation": "5 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "5 Movie Recap Credits (Max 10 mins/video)",
                 "minutes": 0,
@@ -4970,11 +5392,11 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                     "🎬 Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)",
                     "Watermark လုံးဝမပါ (Clean 1080p)" if is_my else "Zero Watermark (Clean 1080p)",
                 ],
-                "badge": "Recap Starter 🎬",
+                "badge": "Recap Starter",
             },
             {
                 "id": "recap_studio_pro",
-                "name": "🎬 Movie Recap Studio Pro" if is_my else "🎬 Movie Recap Studio Pro",
+                "name": "🎬 Recap Pro" if is_my else "🎬 Recap Pro",
                 "category": "recap",
                 "allocation": "25 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "25 Movie Recap Credits (Max 10 mins/video)",
                 "minutes": 0,
@@ -4984,15 +5406,15 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "features": [
                     "Full HD 1080p Movie Recap ဗီဒီယို (၂၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
                     "🎬 Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)",
-                    "ဇာတ်လမ်းစတိုင် ၅ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်) & ရွှေရောင်စာတန်းထိုး ၄ မျိုး" if is_my else "5 Narration Styles (Viral Hook, Dramatic, POV) & 4 Subtitle Presets",
+                    "ဇာတ်လမ်းစတိုင် ၆ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်) & စာတန်းစတိုင် ၇ မျိုး" if is_my else "6 Narration Styles (Viral Hook, Dramatic, POV) & 7 Subtitle Styles",
                     "Watermark လုံးဝမပါ (Clean 1080p) & Channel Logo သီးသန့်ထည့်ခွင့်" if is_my else "Zero Watermark (Clean 1080p) & Custom Channel Logo Branding",
-                    "Multi-Threaded High-Speed Video Rendering Node" if is_my else "Multi-Threaded High-Speed Video Rendering Node",
+                    "ရှည်လျားသော ဗီဒီယိုများ အပိုင်းခွဲ ထုတ်နိုင်ခြင်း (Split)" if is_my else "Split long videos into parts",
                 ],
-                "badge": "Cinema Suite 🎬",
+                "badge": "Recap Pro",
             },
             {
                 "id": "combined_starter",
-                "name": "🎙️🎬 Voice + Recap Starter" if is_my else "🎙️🎬 Voice + Recap Starter",
+                "name": "🎙️🎬 Combined Starter" if is_my else "🎙️🎬 Combined Starter",
                 "category": "combined",
                 "allocation": "30 Mins + 5 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "30 Mins + 5 Recap Credits (Max 10 mins/video)",
                 "minutes": 30,
@@ -5004,11 +5426,11 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                     "VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်" if is_my else "VoxCPM2 Reference Audio Cloning (3-30s sample)",
                     "🎬 Smart Video Transform & Watermark လုံးဝမပါ" if is_my else "Smart Video Transform & Zero Watermark",
                 ],
-                "badge": "Combined Starter ✨",
+                "badge": "Combined Starter",
             },
             {
                 "id": "all_in_one_master",
-                "name": "👑 All-in-One Master Suite" if is_my else "👑 All-in-One Master Suite",
+                "name": "👑 Master" if is_my else "👑 Master",
                 "category": "combined",
                 "allocation": "500 Mins + 60 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "500 Mins + 60 Recap Credits (Max 10 mins/video)",
                 "minutes": 500,
@@ -5016,13 +5438,13 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
                 "price": "180,000",
                 "currency": "MMK",
                 "features": [
-                    "Voice Clone Studio Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော် အသံသွင်းခွင့်)" if is_my else "Full Voice Clone Studio Pro (500 Mins - 8+ Hours)",
-                    "Movie Recap Studio Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Movie Recap Studio Pro (60 Full HD Videos - Max 10 mins/video)",
+                    "Voice Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော် အသံသွင်းခွင့်)" if is_my else "Full Voice Pro (500 Mins - 8+ Hours)",
+                    "Recap Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Recap Pro (60 Full HD Videos - Max 10 mins/video)",
                     "👑 VoxCPM2 Reference Audio အသံတူပွားမှု (Custom Clone) အပြည့်အစုံ" if is_my else "Full VoxCPM2 Reference Audio Custom Cloning",
                     "🎬 Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)" if is_my else "Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)",
-                    "Dedicated High-Speed Node Priority & 24/7 VIP Direct 1-on-1 Support" if is_my else "Dedicated High-Speed Cloud Node & 24/7 VIP Direct 1-on-1 Support",
+                    "Admin ထံ တိုက်ရိုက် VIP Support" if is_my else "Direct VIP support from the admin",
                 ],
-                "badge": "Agency Master Suite 👑" if is_my else "Agency Master Suite 👑",
+                "badge": "Master",
             },
         ],
         "categories": [
@@ -5188,7 +5610,9 @@ async def submit_payment_slip(
     return {
         "success": True,
         "request_id": pay_req.id,
-        "message": "ငွေလွှဲပြေစာကို အောင်မြင်စွာ တင်သွင်းပြီးပါပြီ။ Admin မှ မကြာမီ စစ်ဆေးပေးပါမည်။",
+        # R40 item 6 / deck A10: the buyer confirmation carries the
+        # request ID and the pending state, in the message itself.
+        "message": f"ငွေလွှဲပြေစာကို တင်သွင်းပြီးပါပြီ။ တောင်းဆိုမှု နံပါတ်: #{pay_req.id} — Admin မှ စစ်ဆေးပြီးပါက Bot မှ အသိပေးပါမည်။",
     }
 
 
@@ -5821,7 +6245,7 @@ async def retry_queued_job(
         except Exception as e:
             logger.warning(f"Could not re-dispatch recap job background task: {e}")
 
-    return {"success": True, "message": f"အလုပ် {job_id[:8]} ကို တန်းစီထဲ ပြန်ထည့်ပြီးပါပြီ"}
+    return {"success": True, "message": f"အလုပ် {job_id} ကို တန်းစီထဲ ပြန်ထည့်ပြီးပါပြီ"}
 
 
 @api_router.post("/admin/queue/{job_id}/cancel")
@@ -5922,7 +6346,7 @@ async def cancel_queued_job(
         details_json=json.dumps({"refund": refund_info, "job_type": "recap" if is_recap else "voice"}),
     ))
     await db.commit()
-    return {"success": True, "message": f"အလုပ် {job_id[:8]} ကို ပယ်ဖျက်ပြီးပါပြီ", "refund": refund_info}
+    return {"success": True, "message": f"အလုပ် {job_id} ကို ပယ်ဖျက်ပြီးပါပြီ", "refund": refund_info}
 
 
 class AdminSettingsPayload(BaseModel):
@@ -6253,13 +6677,16 @@ async def approve_payment_slip(
             from app.ui.keyboards import main_menu_kb
             bot = Bot(token=settings.bot_token)
             try:
-                user_notice = (
-                    f"🎉 <b>ဂုဏ်ယူပါသည်! သင်၏ VIP ဝယ်ယူမှု အတည်ပြုပြီးပါပြီ</b> ✨\n\n"
-                    f"📦 <b>Package:</b> <code>{p_req.package_code}</code>\n"
-                    f"🎙️ <b>Voice မိနစ်:</b> <b>+{p_req.minutes} မိနစ်</b>\n"
-                    f"🎬 <b>Recap Credits:</b> <b>+{recap_added} Credits</b>\n"
-                    f"👑 <b>Status:</b> <b>VIP PURCHASED ⭐</b>\n\n"
-                    f"💡 <i>အောက်ပါခလုတ်ကို နှိပ်၍ Studio Pro (Mini App) ကို ချက်ချင်း အသုံးပြုနိုင်ပါပြီခင်ဗျာ။</i>"
+                # R40 deck A9: single source — the approval notice is
+                # the bot locale string (dual minutes + credits, VIP
+                # status), not a second hardcoded implementation.
+                from app.services.i18n import t as _t
+
+                user_notice = _t(
+                    "payment_approved_user_notify",
+                    target_user.language_code if target_user else "my",
+                    minutes=p_req.minutes,
+                    recap_credits=recap_added,
                 )
                 await bot.send_message(
                     chat_id=p_req.user_id,
@@ -6310,7 +6737,7 @@ async def reject_payment_slip(
             try:
                 reject_notice = (
                     f"⚠️ <b>ငွေလွှဲပြေစာ အတည်မပြုနိုင်ကြောင်း အသိပေးချက်</b>\n\n"
-                    f"သင် တင်သွင်းခဲ့သော ငွေလွှဲပြေစာ (ID: <code>{p_req.id[:8]}</code>) အား စစ်ဆေးချက်အရ အတည်မပြုနိုင်သေးပါခင်ဗျာ။\n\n"
+                    f"သင် တင်သွင်းခဲ့သော ငွေလွှဲပြေစာ (ID: <code>{p_req.id}</code>) အား စစ်ဆေးချက်အရ အတည်မပြုနိုင်သေးပါခင်ဗျာ။\n\n"
                     f"📌 <b>အကြောင်းပြချက်:</b> <i>{html.escape(req.reason)}</i>\n\n"
                     f"💡 <i>အချက်အလက် မှန်ကန်စွာဖြင့် ထပ်မံတင်သွင်းနိုင်သလို အခက်အခဲရှိပါက Support သို့ ဆက်သွယ်မေးမြန်းနိုင်ပါသည်။</i>"
                 )

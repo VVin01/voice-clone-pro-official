@@ -749,6 +749,104 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
     }
 
 
+# ── R40 item 3: one blur band, anchored to the subtitle ─────────────
+#
+# The complaint job (rc_1793619536_beee63) shipped with sub_y=67 and
+# blur_y=85: the subtitle floated at 67% on sharp picture while its
+# plate blurred an empty strip at 85%, and the auto-detected source
+# band drew a SECOND frosted rectangle. The plate now anchors to the
+# subtitle's sub_y (callers pass it into subtitle_plate_box), detected
+# bands are reconciled against the plate here, and the pipeline
+# asserts the plate contains the subtitle anchor before rendering.
+
+
+def subtitle_anchor_y(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
+                      sub_y: float | None = 0.85, raw_font_size: int = 16,
+                      sub_lines: int = 1) -> float:
+    """Canvas-fraction centre Y where the burned subtitle will sit.
+
+    Mirrors write_synced_ass_file: on letterboxed layouts the subtitle
+    anchors at the content box's lower rim (centre a quarter
+    text-height above the rim); otherwise it sits at the caller's
+    sub_y (85% default).
+    """
+    cw = max(320, int(cw))
+    ch = max(240, int(ch))
+    rim = content_rim_y(layout, cw, ch)
+    if rim is not None:
+        font_px = subtitle_font_px(cw, ch, raw_font_size, sub_lines, layout)
+        text_half = (font_px * (1.15 if sub_lines == 1 else 2.3)) / 2.0
+        return (rim - text_half / 2.0) / ch
+    return _clamp01(sub_y if sub_y is not None else 0.85, 0.85)
+
+
+def reconcile_source_bands(plate: dict[str, float] | None,
+                           bands: list[dict[str, Any]],
+                           layout: dict[str, Any] | None,
+                           cw: int, ch: int) -> tuple[dict[str, float] | None, list[dict[str, float]]]:
+    """Fold auto-detected source-caption bands into the subtitle plate.
+
+    Boxes are canvas fractions with centre-based ``y`` (the blur-box
+    convention used by every consumer). Returns ``(plate, extras)``:
+
+    * band centre within (plate_h/2 + band_h/2 + 0.02) of the plate
+      centre -> merge: the plate grows to the union rectangle and the
+      band is dropped (one frosted band, never two stacked ones);
+    * band lying fully inside the letterbox padding (above the
+      content box or below its lower rim) -> dropped: that padding is
+      already blurred fill, so only the band's hard edge would show;
+    * anything else -> kept as the sole extra box.
+    """
+    extras: list[dict[str, float]] = []
+    if plate is None:
+        return None, [dict(b) for b in bands]
+    plate = dict(plate)
+    _pw, _ph, _ox, oy = _layout_content_box(layout, cw, ch)
+    content_top = oy / float(ch)
+    content_bottom = (oy + _ph) / float(ch)
+    for band in bands:
+        b = {k: float(band.get(k, 0.0)) for k in ("x", "y", "w", "h")}
+        b_top = b["y"] - b["h"] / 2.0
+        b_bot = b["y"] + b["h"] / 2.0
+        if b_bot <= content_top + 0.002 or b_top >= content_bottom - 0.002:
+            continue  # inside the letterbox padding — invisible anyway
+        p_top = plate["y"] - plate["h"] / 2.0
+        p_bot = plate["y"] + plate["h"] / 2.0
+        centre_gap = abs(b["y"] - plate["y"])
+        merge_reach = plate["h"] / 2.0 + b["h"] / 2.0 + 0.02
+        if centre_gap <= merge_reach:
+            new_top = min(p_top, b_top)
+            new_bot = max(p_bot, b_bot)
+            new_left = min(plate["x"], b["x"])
+            new_right = max(plate["x"] + plate["w"], b["x"] + b["w"])
+            plate = {
+                "x": round(new_left, 4),
+                "y": round((new_top + new_bot) / 2.0, 4),
+                "w": round(new_right - new_left, 4),
+                "h": round(new_bot - new_top, 4),
+            }
+        else:
+            extras.append({k: round(v, 4) for k, v in b.items()})
+    return plate, extras
+
+
+def ensure_plate_contains_anchor(plate: dict[str, float], anchor_y: float) -> dict[str, float]:
+    """Shift the plate (height unchanged) until it contains the
+    subtitle anchor centre. Belt-and-braces for item 3: even if a
+    future client sends divergent geometry again, the subtitle can
+    never ship floating off its plate."""
+    plate = dict(plate)
+    top = plate["y"] - plate["h"] / 2.0
+    bot = plate["y"] + plate["h"] / 2.0
+    if anchor_y < top:
+        plate["y"] = anchor_y + plate["h"] / 2.0
+    elif anchor_y > bot:
+        plate["y"] = anchor_y - plate["h"] / 2.0
+    half = plate["h"] / 2.0
+    plate["y"] = round(max(half, min(1.0 - half, plate["y"])), 4)
+    return plate
+
+
 def _visual_filters(mirror_video: bool, zoom_factor: float,
                     layout: dict[str, Any] | None = None) -> tuple[str, float]:
     """Flip + zoom + placement on the output frame, as one filtergraph string.
@@ -1390,8 +1488,8 @@ SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = {
         "outline_col": "&H00000000",
         "back_col": "&H80000000",
         "border_style": 1,
-        "outline": 2.4,
-        "shadow": 1.4,
+        "outline": 1.3,
+        "shadow": 0.8,
     },
     "white": {
         "name": "Clean White",
@@ -1854,6 +1952,13 @@ def write_synced_ass_file(
     b_style = st["border_style"]
     outl = max(1.5, float(st["outline"]) * (ch / 720.0))
     shad = max(1.0, float(st["shadow"]) * (ch / 720.0))
+    # R40 item 4: size-relative guard — no preset may let the outline
+    # exceed 8% of the rendered font size per side. The old Classic
+    # Gold scaling reached 6.4px on a 44px font (14.5%), strangling
+    # Myanmar glyph counters into black knots; the cap keeps every
+    # preset at caption-practice weight at every canvas/font size.
+    outl = min(outl, max(1.5, 0.08 * font_size))
+    shad = min(shad, max(1.0, 0.05 * font_size))
     wrap_style = 2 if sub_lines == 1 else 0
     margin_h = max(20, int(round(cw * 0.04)))
 

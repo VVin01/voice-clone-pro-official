@@ -94,8 +94,12 @@ def test_proxy_disabled_attempts_carry_no_proxy_key(monkeypatch, tmp_path):
 def test_pot_wiring_unchanged_alongside_proxy(monkeypatch, tmp_path):
     # The WARP proxy rides the SAME wiring point as POT: provider
     # args and the log shim must be exactly as the POT builds left
-    # them (fetch_pot stays 'always' on this base — its revert
-    # rides R40, a different branch).
+    # them. PIN UPDATED at the R40-final reconciliation: this test
+    # originally also pinned fetch_pot='always' (its comment noted
+    # "its revert rides R40, a different branch") — R40 has now
+    # landed in this tree, so the default attempt carries NO
+    # 'youtube' extractor args at all (no fetch_pot; core default
+    # 'auto'), exactly as the R40 test_pot_sidecar pins require.
     monkeypatch.delenv("WARP_PROXY_URL", raising=False)
     monkeypatch.delenv("POT_SERVER_URL", raising=False)
     dl = MediaDownloader(download_dir=str(tmp_path))
@@ -105,9 +109,7 @@ def test_pot_wiring_unchanged_alongside_proxy(monkeypatch, tmp_path):
         assert ea["youtubepot-bgutilhttp"] == {"base_url": [DEFAULT_POT_URL]}
         assert "logger" in opts
         assert opts.get("proxy") == DEFAULT_WARP_PROXY
-    assert plans["default"]["extractor_args"]["youtube"] == {
-        "fetch_pot": ["always"]
-    }
+    assert "youtube" not in plans["default"]["extractor_args"]
 
 
 def test_non_youtube_attempts_have_no_proxy(monkeypatch, tmp_path):

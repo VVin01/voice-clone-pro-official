@@ -46,6 +46,18 @@ def get_plan_by_code(code: str) -> dict | None:
     return None
 
 
+def package_recap_credits(package_code: str | None) -> int:
+    """Recap credits granted by a package code (0 for voice-only packs).
+
+    PaymentRequest rows store minutes only, so every payment message
+    that states what the buyer received must resolve the credit side
+    from the catalogue — printing minutes alone told recap-pack buyers
+    "0 minutes credited" for a 5-credit purchase (R40 item 2).
+    """
+    cat = get_plan_by_code(package_code or "")
+    return int(cat["recap_credits"]) if cat else 0
+
+
 DEFAULT_PRICING_PLANS = [
     {"code": p["code"], "minutes": p["minutes"], "price_mmk": p["price_mmk"], "sort_order": i + 1}
     for i, p in enumerate([e for e in PLAN_CATALOGUE if e["code"].startswith("MIN_")])

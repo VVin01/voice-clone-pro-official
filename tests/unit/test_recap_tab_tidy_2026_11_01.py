@@ -249,8 +249,9 @@ def test_cache_buster_bumped_for_tidy():
 
 def test_no_media_blur_box_is_label_less():
     # updateCanvasMockupVisuals tracks whether real media is actually
-    # displayed; only the video and live-thumbnail branches count.
-    assert APP_JS.count("mediaVisible = true;") == 2
+    # displayed; the video, live-thumbnail and (R40 item 9) real-frame
+    # branches count.
+    assert APP_JS.count("mediaVisible = true;") == 3
     # In no-media states (empty preview / dead thumbnail) the blur box
     # renders as a slim, dimmed outline (the F1 scheme below hides its
     # label by default in every state): at the shared default Y=85%
