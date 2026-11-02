@@ -4236,6 +4236,164 @@ function setupRecapVisualEditor() {
     }
     setupInteractiveCropHandles();
 
+    // ── Recap settings persistence (overnight hands-on fix, 2026-11-02) ──
+    // Every Recap setting used to live only in `state`, so closing and
+    // reopening the Mini App silently reset the whole panel (ratio, fill,
+    // subtitle style, voice, engine, split…) to defaults — verified live:
+    // ratio 16:9 + fill crop reverted to 9:16 + blur after one reload.
+    // Persist the settings slice to localStorage (same pattern as
+    // vcp_active_recap_job_id / vcp_welcome_dismissed) and restore it
+    // here, after every control handler above has been registered.
+    // Restore is defensive: only known enum values, booleans and ranged
+    // integers are accepted; anything else keeps the shipped default.
+    const RECAP_SETTINGS_KEY = "vcp_recap_settings";
+    const RECAP_SETTING_ENUMS = {
+        recapRatio: ["9:16", "16:9", "1:1", "Original"],
+        recapRatioFill: ["blur", "crop", "black"],
+        recapSpeed: ["+0%", "+8%", "+12%", "+18%", "+22%"],
+        recapStoryStyle: ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
+        recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"],
+        recapSubFont: ["default", "serif", "padauk"],
+        recapLogoPos: ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
+        recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja"],
+        recapRenderQuality: ["standard", "high", "max"],
+        recapTtsEngine: ["voxcpm", "gemini"],
+    };
+    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapLogo"];
+    const RECAP_SETTING_INTS = {
+        recapCropTop: [0, 35], recapCropBottom: [0, 35],
+        recapCropLeft: [0, 35], recapCropRight: [0, 35],
+        recapFontSize: [12, 30], recapLines: [1, 2], recapSplitMinutes: [1, 10],
+        recapBlurY: [0, 100], recapBlurH: [1, 50], recapSubY: [0, 100],
+    };
+
+    function snapshotRecapSettings() {
+        const snap = {};
+        Object.keys(RECAP_SETTING_ENUMS).forEach(k => { snap[k] = state[k]; });
+        RECAP_SETTING_BOOLS.forEach(k => { snap[k] = !!state[k]; });
+        Object.keys(RECAP_SETTING_INTS).forEach(k => { snap[k] = state[k]; });
+        snap.recapZoom = state.recapZoom;
+        snap.recapVoice = state.recapVoice;
+        snap.recapGeminiVoice = state.recapGeminiVoice || "";
+        const st = document.getElementById("recap-split-toggle");
+        snap.recapSplitEnabled = !!(st && st.checked);
+        const by = document.getElementById("slider-blur-y");
+        const bh = document.getElementById("slider-blur-h");
+        const sy = document.getElementById("slider-sub-y");
+        snap.recapBlurY = by ? parseInt(by.value) : 85;
+        snap.recapBlurH = bh ? parseInt(bh.value) : 7;
+        snap.recapSubY = sy ? parseInt(sy.value) : 85;
+        return snap;
+    }
+
+    function saveRecapSettings() {
+        try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snapshotRecapSettings())); } catch (e) {}
+    }
+    let recapSaveTimer = null;
+    function saveRecapSettingsSoon() {
+        if (recapSaveTimer) clearTimeout(recapSaveTimer);
+        recapSaveTimer = setTimeout(saveRecapSettings, 250);
+    }
+
+    function syncPillGroup(selector, attr, value) {
+        document.querySelectorAll(selector).forEach(b => {
+            b.classList.toggle("active", b.getAttribute(attr) === String(value));
+        });
+    }
+    function syncToggleBtn(id, on) {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.classList.toggle("active", !!on);
+        const val = btn.querySelector(".t-val");
+        if (val) val.innerText = on ? t("toggle_on") : t("toggle_off");
+    }
+
+    function restoreRecapSettings() {
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem(RECAP_SETTINGS_KEY) || "null"); } catch (e) {}
+        if (!saved || typeof saved !== "object") return;
+        Object.entries(RECAP_SETTING_ENUMS).forEach(([k, allowed]) => {
+            if (allowed.includes(saved[k])) state[k] = saved[k];
+        });
+        RECAP_SETTING_BOOLS.forEach(k => { if (typeof saved[k] === "boolean") state[k] = saved[k]; });
+        Object.entries(RECAP_SETTING_INTS).forEach(([k, range]) => {
+            const v = parseInt(saved[k]);
+            if (Number.isFinite(v) && v >= range[0] && v <= range[1]) state[k] = v;
+        });
+        const zoom = parseFloat(saved.recapZoom);
+        if (Number.isFinite(zoom) && zoom >= 1 && zoom <= 1.2) state.recapZoom = zoom;
+        if (typeof saved.recapVoice === "string" && saved.recapVoice) state.recapVoice = saved.recapVoice;
+        if (typeof saved.recapGeminiVoice === "string") state.recapGeminiVoice = saved.recapGeminiVoice;
+
+        // ── Re-sync every control so the UI shows the restored state ──
+        syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio);
+        syncPillGroup("#recap-fill-picker .pill-btn", "data-fill", state.recapRatioFill);
+        applyCropValues(state.recapCropTop || 0, state.recapCropBottom || 0,
+                        state.recapCropLeft || 0, state.recapCropRight || 0);
+        if (btnSyncCrop) btnSyncCrop.classList.toggle("active", !!state.recapSyncCrop);
+        const btnMirrorEl = document.getElementById("btn-toggle-mirror");
+        if (btnMirrorEl) {
+            btnMirrorEl.classList.toggle("active", !!state.recapMirror);
+            const ms = btnMirrorEl.querySelector(".toggle-status");
+            if (ms) ms.innerText = state.recapMirror ? t("mirror_on") : t("mirror_off");
+        }
+        if (canvas) canvas.classList.toggle("mirrored", !!state.recapMirror);
+        document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
+            b.classList.toggle("active", parseFloat(b.getAttribute("data-zoom")) === state.recapZoom);
+        });
+        syncPillGroup("#recap-speed-picker .pill-btn", "data-speed", state.recapSpeed);
+        syncPillGroup("#recap-split-minutes-picker .pill-btn", "data-split-min", state.recapSplitMinutes);
+        const splitToggleEl = document.getElementById("recap-split-toggle");
+        if (splitToggleEl) {
+            splitToggleEl.checked = !!saved.recapSplitEnabled;
+            const wrap = document.getElementById("recap-split-minutes-wrap");
+            if (wrap) wrap.classList.toggle("hidden", !splitToggleEl.checked);
+        }
+        syncPillGroup("#recap-lang-picker .pill-btn", "data-lang", state.recapSourceLanguage);
+        syncPillGroup("#recap-quality-picker .pill-btn", "data-quality", state.recapRenderQuality);
+        syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine);
+        const gv = document.getElementById("recap-gemini-voice-wrap");
+        if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
+        const pa = document.getElementById("recap-persona-area");
+        if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
+        if (geminiVoiceSel) geminiVoiceSel.value = state.recapGeminiVoice || "";
+        document.querySelectorAll("#story-style-picker-quick .style-select-pill").forEach(p => {
+            p.classList.toggle("active", p.getAttribute("data-story") === state.recapStoryStyle);
+        });
+        document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card").forEach(c => {
+            c.classList.toggle("active", c.getAttribute("data-voice") === state.recapVoice);
+        });
+        syncToggleBtn("btn-toggle-subs", state.recapBurnSubs);
+        syncToggleBtn("btn-toggle-blur", state.recapBlurSubs);
+        syncToggleBtn("btn-toggle-logo", state.recapLogo);
+        if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
+        if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
+        if (previewLogo) previewLogo.style.display = state.recapLogo ? "block" : "none";
+        syncPillGroup("#sub-style-picker .style-chip", "data-style", state.recapSubStyle);
+        if (previewSub) previewSub.className = `preview-sub-box ${state.recapSubStyle}`;
+        syncPillGroup("#recap-sub-font-picker .pill-btn", "data-font", state.recapSubFont);
+        syncPillGroup("#recap-logo-pos-picker .pill-btn", "data-pos", state.recapLogoPos);
+        if (previewLogo) previewLogo.className = `preview-logo-watermark ${state.recapLogoPos}`;
+        const by = document.getElementById("slider-blur-y");
+        const bh = document.getElementById("slider-blur-h");
+        const sy = document.getElementById("slider-sub-y");
+        if (by && Number.isFinite(state.recapBlurY)) by.value = state.recapBlurY;
+        if (bh && Number.isFinite(state.recapBlurH)) bh.value = state.recapBlurH;
+        if (sy && Number.isFinite(state.recapSubY)) sy.value = state.recapSubY;
+        syncSubtitleFontSize(state.recapFontSize || 16);
+        syncSubtitleLines(state.recapLines || 1);
+        syncBlurBoxVisual();
+        syncSubBoxVisual();
+        if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
+    }
+
+    const recapTabEl = document.getElementById("tab-recap");
+    if (recapTabEl) {
+        ["click", "change", "input", "pointerup"].forEach(evt =>
+            recapTabEl.addEventListener(evt, saveRecapSettingsSoon));
+    }
+    restoreRecapSettings();
+
     // Initial canvas mockup sync
     updateCanvasMockupVisuals();
     updateSubtitleVisualPreview();
