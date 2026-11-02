@@ -28,6 +28,10 @@ aiofiles>=24.0.0,<25.0.0
 
 # Downloader, Transcription & Media Processing
 yt-dlp==2026.10.26
+# PO Token provider plugin for YouTube extraction — pairs with the
+# bgutil server built into the image (see Dockerfile); without it the
+# provider args in downloader.py are inert.
+bgutil-ytdlp-pot-provider==2.0.2
 nodejs-wheel-binaries>=22.20.0,<23.0.0
 requests>=2.31.0,<3.0.0
 Pillow>=10.0.0,<12.0.0

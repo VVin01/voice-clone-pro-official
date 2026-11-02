@@ -163,7 +163,12 @@ def test_chain_rotates_in_order_and_flags_low_res(monkeypatch, tmp_path):
     assert seen == ["web_embedded", "default", "android"]
     assert out["low_res"] is True
     # The cookie'd default attempt carries no player_client override.
-    assert "extractor_args" not in _ChainYDL.calls[1]
+    # (POT sidecar, 2026-11-02: it DOES now carry the bgutil provider
+    # args — that is the one sanctioned extractor_args addition; see
+    # test_pot_sidecar_2026_11_02.py.)
+    default_ea = _ChainYDL.calls[1].get("extractor_args") or {}
+    assert "youtube" not in default_ea
+    assert default_ea["youtubepot-bgutilhttp"]["base_url"] == ["http://127.0.0.1:4416"]
 
 
 def test_chain_stops_on_private_video(monkeypatch, tmp_path):
