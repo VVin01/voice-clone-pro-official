@@ -26,6 +26,14 @@ import threading
 from pathlib import Path
 from typing import Optional, Any, Callable, List, Tuple
 
+try:
+    from app.services.key_rotation import key_id as _key_id
+except Exception:  # pragma: no cover - standalone module load fallback
+
+    def _key_id(key: str) -> str:
+        return hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:12]
+
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOXCPM_SPACES = [
@@ -115,13 +123,18 @@ def _is_hf_token_auth_failure(error_text: str) -> bool:
 
 
 def mask_hf_token(tok: Optional[str]) -> str:
-    """Safely format HF token for logging."""
+    """Non-reversible HF token identifier for logging.
+
+    Audit fix G: this used to return first-7/last-4 fragments of the
+    token itself; it now returns the shared key_rotation digest so no
+    part of a real token ever reaches the logs.
+    """
     if not tok:
         return "anonymous"
     t = tok.strip()
-    if len(t) > 10:
-        return f"{t[:7]}...{t[-4:]}"
-    return "hf_***"
+    if not t:
+        return "anonymous"
+    return f"hf#{_key_id(t)}"
 
 
 def _resolve_result_path(result: Any) -> Optional[str]:

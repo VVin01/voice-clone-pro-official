@@ -529,9 +529,11 @@ class WhisperTimestampService:
 
         groq_model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
         for idx, key in enumerate(api_keys, 1):
-            key_masked = f"{key[:7]}...{key[-4:]}" if len(key) > 12 else "key"
+            # Audit fix G: log only the non-reversible key digest —
+            # first-7/last-4 fragments of a real key must never reach logs.
+            key_label = f"key #{_key_rotation.key_id(key)}" if _key_rotation is not None else "key"
             try:
-                self._log_msg(f"⚡ [1/4] Groq Cloud Whisper Turbo active ({key_masked}, model={groq_model})...")
+                self._log_msg(f"⚡ [1/4] Groq Cloud Whisper Turbo active ({key_label}, model={groq_model})...")
                 t0 = time.time()
                 with open(upload_path, "rb") as f:
                     files = {"file": (upload_path.name, f, "audio/mpeg" if upload_path.suffix == ".mp3" else "audio/wav")}
@@ -616,7 +618,11 @@ class WhisperTimestampService:
                         "compression_ratio": round(float(sum(s.get("compression_ratio", 0.0) for s in segments) / max(1, len(segments))), 3),
                     }
                 else:
-                    if resp.status_code == 429 and groq_health is not None:
+                    # Audit fix G: auth failures (401/403 — revoked or
+                    # invalid key) cool the key down too, mirroring the
+                    # HF triggers from audit fix E; otherwise a dead key
+                    # stays in rotation and burns an attempt on every call.
+                    if resp.status_code in (429, 401, 403) and groq_health is not None:
                         groq_health.mark_failure(key)
                     self._log_msg(f"⚠️ Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
             except Exception as exc:

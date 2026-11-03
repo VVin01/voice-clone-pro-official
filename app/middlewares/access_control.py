@@ -23,8 +23,12 @@ class AccessControlMiddleware(BaseMiddleware):
     - If user is an admin: bypasses immediately with zero DB lookup.
     - If user is not yet in the database: allows through (for initial registration / /start).
     - If user has status BLOCKED (admin ban):
-        * Message: responds with account suspension notice.
-        * CallbackQuery: answers callback query with account suspension notice as an alert.
+        * Message: responds with account suspension notice in private chats;
+          in group/supergroup chats the message is dropped silently instead
+          (a per-message public notice could flood the group and discloses
+          the ban publicly — audit fix G).
+        * CallbackQuery: answers callback query with account suspension notice as an alert
+          (callback answers are only shown to the clicker, never posted to a chat).
         * Drops the event immediately (does not invoke downstream handler).
     - If the user carries the bot_blocked flag (they once blocked the bot on a
       send), any inbound event proves they can reach the bot again, so the
@@ -93,9 +97,19 @@ class AccessControlMiddleware(BaseMiddleware):
                 user_id,
                 type(event).__name__,
             )
+            # Audit fix G: never post the suspension notice into a group
+            # chat. A banned user could otherwise make the bot spam a
+            # public notice on every message they send, and the ban itself
+            # is disclosed to the whole group. Group messages from banned
+            # users are still dropped — just silently. Private chats keep
+            # the notice so the user learns why they are being dropped.
+            chat_type = getattr(getattr(event, "chat", None), "type", None)
+            chat_type_value = getattr(chat_type, "value", None) or str(chat_type or "")
+            in_group_chat = chat_type_value in ("group", "supergroup")
             try:
                 if isinstance(event, Message):
-                    await event.answer(notice)
+                    if not in_group_chat:
+                        await event.answer(notice)
                 elif isinstance(event, CallbackQuery):
                     await event.answer(notice, show_alert=True)
             except Exception as send_err:
