@@ -365,5 +365,7 @@
   "legacy_model_disabled": "⚠️ This old voice model can no longer be used.\n\nTo re-clone with VoxCPM2, choose the <b>VoxCPM (Cloud AI)</b> model and send a reference audio (3-30 seconds).",
   "pay_package_recap_btn": "🎬 {credits} Recap Videos — {price} MMK",
   "pay_package_combined_btn": "🎙️🎬 {minutes} Min + {credits} Recap — {price} MMK",
-  "bot_generic_error": "⚠️ Something went wrong. Please wait a moment and try again."
+  "bot_generic_error": "⚠️ Something went wrong. Please wait a moment and try again.",
+  "note_over_50mb_download": "📥 This file is larger than 50 MB, so it can't be sent via Telegram — please download it.",
+  "upload_too_large_1gb": "Video is larger than 1 GB — please choose a file under 1 GB."
 }
