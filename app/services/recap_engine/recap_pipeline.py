@@ -18,7 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from recap_planner import RecapPlanBuilder
-from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, ensure_plate_contains_anchor
+from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, ensure_plate_contains_anchor, _layout_content_box
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,173 @@ def find_binary(name: str) -> str:
         if cand and Path(cand).is_file():
             return str(Path(cand).resolve())
     return name
+
+
+# ── Blur-box assembly (blur safefix 2026-11-03) ─────────────────────
+#
+# core.apply_production_overlays blurs ONCE PER BOX, sequentially —
+# each box consumes the previous box's output — so any two boxes that
+# overlap double-blur their intersection. Box assembly therefore ends
+# with a canonical merge pass, and every box source (plate, detected
+# bands, the user's fallback hint, the watermark box) flows through
+# the one helper below, shared by the render and the preview.
+
+_WATERMARK_BLUR_BOX = {"x": 0.74, "y": 0.03, "w": 0.24, "h": 0.12}
+
+
+def _boxes_near_or_overlapping(a: dict, b: dict) -> bool:
+    """Merge predicate for the final pass, mirroring the centre-gap
+    convention reconcile_source_bands uses against the plate
+    (half-extents + 0.02 of slack), applied on both axes."""
+    v_gap = abs(float(a["y"]) - float(b["y"]))
+    v_reach = float(a["h"]) / 2.0 + float(b["h"]) / 2.0 + 0.02
+    a_cx = float(a["x"]) + float(a["w"]) / 2.0
+    b_cx = float(b["x"]) + float(b["w"]) / 2.0
+    h_gap = abs(a_cx - b_cx)
+    h_reach = float(a["w"]) / 2.0 + float(b["w"]) / 2.0 + 0.02
+    return v_gap <= v_reach and h_gap <= h_reach
+
+
+def _union_blur_box(a: dict, b: dict) -> dict:
+    left = min(float(a["x"]), float(b["x"]))
+    right = max(float(a["x"]) + float(a["w"]), float(b["x"]) + float(b["w"]))
+    top = min(float(a["y"]) - float(a["h"]) / 2.0, float(b["y"]) - float(b["h"]) / 2.0)
+    bot = max(float(a["y"]) + float(a["h"]) / 2.0, float(b["y"]) + float(b["h"]) / 2.0)
+    return {
+        "x": round(left, 4),
+        "y": round((top + bot) / 2.0, 4),
+        "w": round(right - left, 4),
+        "h": round(bot - top, 4),
+    }
+
+
+def merge_overlapping_blur_boxes(boxes: list[dict]) -> list[dict]:
+    """Merge ANY two overlapping (or near-touching) boxes into their
+    bounding union, until the list is pairwise disjoint. Earlier
+    boxes absorb later ones, so the caller's ordering (plate first)
+    wins."""
+    merged: list[dict] = [dict(b) for b in boxes]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(merged)):
+            hit = None
+            for j in range(i + 1, len(merged)):
+                if _boxes_near_or_overlapping(merged[i], merged[j]):
+                    hit = j
+                    break
+            if hit is not None:
+                merged[i] = _union_blur_box(merged[i], merged[hit])
+                del merged[hit]
+                changed = True
+                break
+    return merged
+
+
+def assemble_blur_boxes(
+    *,
+    blur_subtitles: bool,
+    burn_subtitles: bool,
+    plate: Optional[dict],
+    detected_bands: Optional[list[dict]] = None,
+    fallback_box: Optional[dict] = None,
+    blur_watermark: bool = False,
+    layout: Optional[dict] = None,
+    canvas_w: int = 1920,
+    canvas_h: int = 1080,
+    anchor_y: Optional[float] = None,
+) -> tuple[list[dict], bool]:
+    """One canonical blur-box assembly for the render AND the preview.
+
+    ``detected_bands`` are CANVAS-fraction boxes (already mapped via
+    source_band_to_canvas_box); ``None`` means detection did not run
+    or failed. ``fallback_box`` is the user's blur_y hint box, built
+    by the caller only when the hint was moved away from sub_y.
+
+    Returns ``(boxes, source_band_covered)``:
+
+    * ``blur_subtitles`` is the master gate — OFF means ZERO boxes.
+      (Before, detection was gated on ``burn_subtitles``, so Blur OFF
+      still blurred every detected band, and Burn OFF + Blur ON still
+      shipped a frosted plate strip under no text.)
+    * Detected bands are reconciled against the plate (the existing
+      merge/drop rules); the fallback hint — consulted only when
+      detection found nothing — now goes through the SAME reconcile
+      instead of being appended raw, so a small slider nudge can no
+      longer double-blur the plate's edge strip.
+    * With ``burn_subtitles`` OFF the plate is not emitted as a
+      standalone strip: it ships only when a detected band or the
+      fallback merged into it (a real source band lives there).
+    * The assembled list ends with merge_overlapping_blur_boxes(), so
+      extras are also checked against EACH OTHER and against the
+      watermark box — no pair of shipped boxes can overlap.
+    * ``source_band_covered`` is True when a detected band was folded
+      in (merged into the plate, kept as an extra, or dropped into
+      the already-blurred letterbox fill) or the fallback hint covers
+      an area — callers warn the user when blur was requested without
+      any source-band coverage.
+    """
+    if not blur_subtitles:
+        return [], False
+
+    covered = False
+    extras: list[dict] = []
+    plate_out = dict(plate) if plate is not None else None
+    plate_merged = False
+
+    if detected_bands:
+        covered = True
+        if plate_out is not None:
+            new_plate, extras = reconcile_source_bands(
+                plate_out, detected_bands, layout, canvas_w, canvas_h
+            )
+            plate_merged = bool(new_plate is not None and new_plate != plate)
+            plate_out = new_plate
+        else:
+            extras = [dict(b) for b in detected_bands]
+    elif fallback_box is not None:
+        # Detection found nothing (or never ran): the user's own
+        # blur_y hint is the source-band box — reconciled against the
+        # plate exactly like a detected band.
+        if plate_out is not None:
+            # Reconcile drops a band ONLY when it lies fully inside
+            # the letterbox padding; a hint that merges (even one
+            # fully contained in the plate, which leaves the plate's
+            # values unchanged) or survives as an extra covers its
+            # area. Detect the drop with the same content-box rule
+            # reconcile uses, not by comparing plate values.
+            _pw, _ph, _ox, _oy = _layout_content_box(layout, canvas_w, canvas_h)
+            _c_top = _oy / float(canvas_h)
+            _c_bot = (_oy + _ph) / float(canvas_h)
+            _fb_top = float(fallback_box["y"]) - float(fallback_box["h"]) / 2.0
+            _fb_bot = float(fallback_box["y"]) + float(fallback_box["h"]) / 2.0
+            if not (_fb_bot <= _c_top + 0.002 or _fb_top >= _c_bot - 0.002):
+                covered = True
+            new_plate, fb_extras = reconcile_source_bands(
+                plate_out, [fallback_box], layout, canvas_w, canvas_h
+            )
+            plate_merged = bool(new_plate is not None and new_plate != plate)
+            plate_out = new_plate
+            extras.extend(fb_extras)
+        else:
+            extras.append(dict(fallback_box))
+            covered = True
+
+    include_plate = plate_out is not None and (burn_subtitles or plate_merged)
+    if include_plate and burn_subtitles and anchor_y is not None:
+        # Belt-and-braces (R40 item 3): the shipped plate must contain
+        # the subtitle anchor. Applied to the reconciled plate,
+        # before the final merge pass, exactly where the render path
+        # always applied it.
+        plate_out = ensure_plate_contains_anchor(plate_out, anchor_y)
+
+    boxes: list[dict] = []
+    if include_plate:
+        boxes.append(plate_out)
+    if blur_watermark:
+        boxes.append(dict(_WATERMARK_BLUR_BOX))
+    boxes.extend(extras)
+    return merge_overlapping_blur_boxes(boxes), covered
 
 
 def run_recap_pipeline(
@@ -181,9 +348,7 @@ def run_recap_pipeline(
         )
     except Exception as layout_err:
         _log(f"⚠️ Layout probe skipped ({layout_err}); subtitle plate keeps the legacy box")
-    blur_boxes = []
     _plate = None
-    _plate_idx = None
     if blur_subtitles:
         # R39 plate: fixed ~92%-wide centred band, height fitted to
         # the wrapped subtitle lines (never below the caller's
@@ -196,7 +361,7 @@ def run_recap_pipeline(
         # its subtitle floating on sharp picture at 67% while the
         # plate blurred an empty strip at 85%. blur_y/blur_h keep
         # their documented UI meaning: the user's hint for where the
-        # SOURCE caption sits (fallback box below).
+        # SOURCE caption sits (fallback box in assemble_blur_boxes).
         _anchor_sub_y = float(sub_y) if sub_y is not None else float(blur_y)
         if _layout is not None:
             _plate = subtitle_plate_box(
@@ -206,17 +371,20 @@ def run_recap_pipeline(
             )
         else:
             _plate = {"x": float(blur_x), "y": _anchor_sub_y, "w": float(blur_w), "h": float(blur_h)}
-        _plate_idx = len(blur_boxes)
-        blur_boxes.append(_plate)
-    if blur_watermark:
-        # Standard top-right watermark
-        blur_boxes.append({"x": 0.74, "y": 0.03, "w": 0.24, "h": 0.12})
-    _bands_detected = False
-    if burn_subtitles:
-        # Auto-cover the SOURCE video's own burned-in subtitle band. The preset box
-        # above only covers the Myanmar subtitle position (y≈0.85); source dialogue
-        # subs usually sit higher (≈0.70) and would otherwise survive — mirrored into
-        # unreadable mirror-writing by the default mirror pass.
+    # Auto-cover the SOURCE video's own burned-in subtitle band. The
+    # plate only covers the Myanmar subtitle position (y≈0.85); source
+    # dialogue subs usually sit higher (≈0.70) and would otherwise
+    # survive — mirrored into unreadable mirror-writing by the
+    # default mirror pass.
+    # Blur safefix (2026-11-03): detection is gated on
+    # blur_subtitles — the master Blur toggle — not on burn_subtitles:
+    # with Blur OFF the old gate still blurred every detected band,
+    # and with Burn OFF + Blur ON it shipped a frosted plate strip
+    # under no text.
+    _canvas_bands: Optional[list[dict]] = None
+    _detection_failed = False
+    _band_layout = None
+    if blur_subtitles:
         try:
             # Detected bands are SOURCE-frame fractions; the preset
             # boxes above and every blur-box consumer use CANVAS
@@ -235,43 +403,45 @@ def run_recap_pipeline(
                 source_band_to_canvas_box(band, _band_layout)
                 for band in detect_source_subtitle_bands(ffmpeg_bin, ffprobe_bin, source, target_job_dir, log=_log)
             ]
-            _bands_detected = bool(_canvas_bands)
-            if _plate is not None:
-                # R40 item 3: reconcile each detected band against
-                # the plate — merge into one union band when close,
-                # drop when it sits in the letterbox padding, keep as
-                # the sole extra box otherwise. Never two stacked
-                # frosted bands.
-                _plate, _extras = reconcile_source_bands(
-                    _plate, _canvas_bands, _band_layout,
-                    int(_band_layout["cw"]), int(_band_layout["ch"]),
-                )
-                blur_boxes[_plate_idx] = _plate
-                blur_boxes.extend(_extras)
-            else:
-                blur_boxes.extend(_canvas_bands)
         except Exception as det_err:
+            _detection_failed = True
             _log(f"⚠️ Source subtitle band auto-blur skipped: {det_err}")
-    if blur_subtitles and _plate is not None and not _bands_detected:
-        # Detection found no source band: fall back to the user's own
-        # blur_y hint as the source-band box (its original purpose) —
-        # but only when they actually moved it away from the subtitle
-        # position, so the default state gains no second band.
-        if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
-            blur_boxes.append({"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)})
-    if _plate is not None and _layout is not None:
-        # Belt-and-braces (item 3): before the boxes reach the overlay
-        # pass, the plate must contain the subtitle anchor — re-anchor
-        # it to the subtitle if geometry ever diverges again.
+    # The user's blur_y hint becomes the source-band box only when
+    # they actually moved it away from the subtitle position, so the
+    # default state gains no second band. assemble_blur_boxes
+    # consults it solely when detection found nothing, and reconciles
+    # it against the plate like a detected band.
+    _fallback_box = None
+    if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
+        _fallback_box = {"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)}
+    _anchor = None
+    if _layout is not None:
         _anchor = subtitle_anchor_y(
             _layout["cw"], _layout["ch"], _layout,
             sub_y=float(sub_y) if sub_y is not None else float(blur_y),
             raw_font_size=sub_font_size, sub_lines=sub_lines,
         )
-        _fixed_plate = ensure_plate_contains_anchor(_plate, _anchor)
-        if _fixed_plate != _plate:
-            _plate = _fixed_plate
-            blur_boxes[_plate_idx] = _plate
+    _asm_layout = _band_layout or _layout or {}
+    blur_boxes, _band_covered = assemble_blur_boxes(
+        blur_subtitles=blur_subtitles,
+        burn_subtitles=burn_subtitles,
+        plate=_plate,
+        detected_bands=_canvas_bands,
+        fallback_box=_fallback_box,
+        blur_watermark=blur_watermark,
+        layout=_band_layout,
+        canvas_w=int(_asm_layout.get("cw") or 1920),
+        canvas_h=int(_asm_layout.get("ch") or 1080),
+        anchor_y=_anchor,
+    )
+    # No-coverage warning (blur safefix item 6): blur was requested
+    # but nothing covers a source band — detection found no band and
+    # the user's hint coincides with the subtitle position (or was
+    # dropped), or detection itself failed. Surfaced on the job
+    # result via the return dict; the render is unaffected.
+    _job_warnings: list[str] = []
+    if blur_subtitles and (_detection_failed or not _band_covered):
+        _job_warnings.append("blur_no_source_band")
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
         overlays["blur_strength"] = 18
@@ -371,6 +541,7 @@ def run_recap_pipeline(
         "job_dir": str(target_job_dir),
         "segments": result.get("segments", len(plan.get("segments", []))),
         "duration": result.get("duration", 0.0),
+        "warnings": _job_warnings,
     }
 
 
@@ -495,11 +666,18 @@ def generate_recap_preview(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     overlays: dict[str, Any] = {}
-    blur_boxes = []
+    blur_boxes: list[dict] = []
     if blur_subtitles:
         # R39: same plate geometry as the render path, so the preview
         # frame shows the plate the finished video will carry.
         # R40 item 3: anchored to the subtitle's sub_y, like the render.
+        # Blur safefix (2026-11-03): the preview now builds its boxes
+        # through the SAME assembly as the render — plate + source-band
+        # detection + reconcile + fallback hint + overlap merge — so
+        # the frame shows every band the finished video will blur,
+        # not just the plate.
+        _p_layout = None
+        _p_plate = None
         try:
             _p_src_w, _p_src_h = probe_video_size(ffprobe_bin, src)
             _p_layout = frame_layout(
@@ -507,13 +685,56 @@ def generate_recap_preview(
                 crop_top=crop_top, crop_bottom=crop_bottom,
                 crop_left=crop_left, crop_right=crop_right,
             )
-            blur_boxes.append(subtitle_plate_box(
+            _p_plate = subtitle_plate_box(
                 _p_layout["cw"], _p_layout["ch"], _p_layout,
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
                 sub_y=float(sub_y) if sub_y is not None else float(blur_y), min_h=blur_h,
-            ))
+            )
         except Exception:
-            blur_boxes.append({"x": float(blur_x), "y": float(sub_y) if sub_y is not None else float(blur_y), "w": float(blur_w), "h": float(blur_h)})
+            _p_plate = {"x": float(blur_x), "y": float(sub_y) if sub_y is not None else float(blur_y), "w": float(blur_w), "h": float(blur_h)}
+        _p_bands: Optional[list[dict]] = None
+        _p_band_layout = _p_layout
+        try:
+            if _p_band_layout is None:
+                _p_src_w2, _p_src_h2 = probe_video_size(ffprobe_bin, src)
+                _p_band_layout = frame_layout(
+                    output_ratio, frame_fill, _p_src_w2, _p_src_h2,
+                    crop_top=crop_top, crop_bottom=crop_bottom,
+                    crop_left=crop_left, crop_right=crop_right,
+                )
+            _p_bands = [
+                source_band_to_canvas_box(band, _p_band_layout)
+                for band in detect_source_subtitle_bands(
+                    ffmpeg_bin, ffprobe_bin, src,
+                    out_path.parent / f"preview_subband_{src.stem}",
+                    log=lambda _m: None,
+                )
+            ]
+        except Exception:
+            _p_bands = None
+        _p_fallback = None
+        if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
+            _p_fallback = {"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)}
+        _p_anchor = None
+        if _p_layout is not None:
+            _p_anchor = subtitle_anchor_y(
+                _p_layout["cw"], _p_layout["ch"], _p_layout,
+                sub_y=float(sub_y) if sub_y is not None else float(blur_y),
+                raw_font_size=sub_font_size, sub_lines=sub_lines,
+            )
+        _p_asm_layout = _p_band_layout or _p_layout or {}
+        blur_boxes, _p_covered = assemble_blur_boxes(
+            blur_subtitles=blur_subtitles,
+            burn_subtitles=burn_subtitles,
+            plate=_p_plate,
+            detected_bands=_p_bands,
+            fallback_box=_p_fallback,
+            blur_watermark=False,
+            layout=_p_band_layout,
+            canvas_w=int(_p_asm_layout.get("cw") or 1920),
+            canvas_h=int(_p_asm_layout.get("ch") or 1080),
+            anchor_y=_p_anchor,
+        )
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
         overlays["blur_strength"] = 18

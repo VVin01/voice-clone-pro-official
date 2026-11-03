@@ -771,6 +771,35 @@ async def _persist_recap_script_ready(entry: dict) -> None:
         logger.warning(f"Could not persist script-ready state for {job_id}: {exc}")
 
 
+async def _persist_recap_warnings(entry: dict) -> None:
+    """Persist a finished job's result warnings onto its Job row.
+
+    The registry entry carries the pipeline's warnings (e.g.
+    ``blur_no_source_band`` — blur safefix 2026-11-03) for the live
+    result screen; merging them into the same persisted recap_config
+    blob as the credit/script state lets the DB branch of the status
+    endpoint keep showing the warning after a restart. Best-effort,
+    like the other _persist_recap_* helpers: the registry entry
+    remains authoritative for the live process.
+    """
+    job_id = entry.get("id")
+    if not job_id:
+        return
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            state = _load_persisted_recap_state(job) if job is not None else None
+            if state is None:
+                return
+            state["warnings"] = list(entry.get("warnings") or [])
+            job.recap_config = json.dumps(state, ensure_ascii=False)
+            await session.commit()
+    except Exception as exc:
+        logger.warning(f"Could not persist recap warnings for {job_id}: {exc}")
+
+
 def _restore_script_ready_from_db(job, user=None) -> Optional[dict]:
     """Build a parked SCRIPT_READY registry entry from a Job row.
 
@@ -4223,6 +4252,7 @@ async def _execute_recap_background_job(
             parts_dir.mkdir(parents=True, exist_ok=True)
             total_segs = len(segment_files)
             recap_res = None
+            seg_warnings: list[str] = []
             for seg in segment_files:
                 _recap_set_entry_label(
                     entry, f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
@@ -4231,6 +4261,9 @@ async def _execute_recap_background_job(
                     None,
                     _make_recap_fn(seg["path"], str(job_dir / f"seg{seg['n']:02d}")),
                 )
+                for _w in (seg_res.get("warnings") or []):
+                    if _w not in seg_warnings:
+                        seg_warnings.append(_w)
                 seg_video = seg_res.get("final_video") or seg_res.get("final_video_path")
                 if not seg_video or not Path(seg_video).is_file():
                     raise RuntimeError(
@@ -4267,6 +4300,12 @@ async def _execute_recap_background_job(
         _fb_used, _fb_segs = _recap_fallback_info(job_dir)
         entry["fallback_used"] = _fb_used
         entry["fallback_segments"] = _fb_segs
+        # Result warnings from the pipeline (blur safefix 2026-11-03):
+        # segmented jobs union the warnings of every segment render.
+        if segmented_mode:
+            entry["warnings"] = seg_warnings
+        else:
+            entry["warnings"] = list(recap_res.get("warnings") or [])
 
         entry["status"] = "SUCCESS"
         entry["progress_percent"] = 100
@@ -4381,6 +4420,8 @@ async def _execute_recap_background_job(
                 await session.commit()
         except Exception as db_succ_err:
             logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
+
+        await _persist_recap_warnings(entry)
 
         # Deliverables are stored and ready in Mini App
         # Send Telegram notification alert to user even if they closed the Mini App
@@ -5044,6 +5085,7 @@ async def get_recap_status(
             "error_message": entry.get("error_message"),
             "fallback_used": bool(entry.get("fallback_used")),
             "fallback_segments": entry.get("fallback_segments", []),
+            "warnings": list(entry.get("warnings") or []),
             "output_size_bytes": _e_size,
             "telegram_sendable": _e_sendable,
             "download_urls": _with_stream_url(entry.get("download_urls", {}), job_id, user.id),
@@ -5071,6 +5113,10 @@ async def get_recap_status(
 
     is_success = (job.status == JobStatus.SUCCESS.value)
     is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
+    # Result warnings persisted on the Job row at completion (blur
+    # safefix 2026-11-03); rows that predate persistence have none.
+    _db_state = _load_persisted_recap_state(job)
+    _db_warnings = list((_db_state or {}).get("warnings") or [])
     # Same single availability check as every other serializer: a SUCCESS
     # record alone does not make the media downloadable (e.g. after the
     # retention sweep removed the files).
@@ -5103,6 +5149,7 @@ async def get_recap_status(
         "status": job.status,
         "fallback_used": _fb_used,
         "fallback_segments": _fb_segs,
+        "warnings": _db_warnings,
         "output_size_bytes": _r_size,
         "telegram_sendable": _r_sendable,
         "progress_percent": 100 if is_success else (15 if is_active else 0),

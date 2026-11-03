@@ -2239,9 +2239,12 @@ class MediaDownloader:
                 raise FileNotFoundError(f"Source video not found: {source_video_path}")
         else:
             recap_max_height = 1080 if is_vip else 720
-            source_video_path, info = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
-            if not title_text and isinstance(info, dict) and info.get("title"):
-                title_text = str(info["title"]).strip()
+            # Blur safefix (2026-11-03): this branch used to capture
+            # the download's title into a `title_text` variable that
+            # does not exist in this method — a NameError on every
+            # URL preview. The engine preview takes no title, so the
+            # dead capture is gone; the info dict is not needed here.
+            source_video_path, _info = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
 
         if at_seconds is None or float(at_seconds) <= 0:
             at_seconds = find_best_preview_timestamp(source_video_path, target_dir=dest_dir)
