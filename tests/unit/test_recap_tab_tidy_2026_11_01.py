@@ -237,7 +237,7 @@ def test_cache_buster_bumped_for_tidy():
     # rt4 = full-app polish batch (2026-11-01) superseding rt3.
     # fp1 = admin-demote + voice-picker batch (2026-11-01 late)
     # superseding rt4 (index.html / app.js / style.css changed again).
-    assert HTML.count("?v=20261103_r41") == 3
+    assert HTML.count("?v=20261103_r42") == 3
     assert "?v=20261101_rt4" not in HTML
     assert "?v=20261101_rt3" not in HTML
     assert "?v=20261101_rt2" not in HTML
@@ -329,5 +329,5 @@ def test_toolbar_tabs_single_line_equal_height():
     assert btn and "align-items: center" in btn.group(1)
     # Mask label shortened so all three tabs fit one line at 390px
     # (no ellipsis-clipped Burmese anywhere).
-    assert "<span>🌫️ Blur စာတန်း</span>" in HTML
+    assert '<span data-i18n="tb_tab_mask">🌫️ Blur စာတန်း</span>' in HTML
     assert "Blur & စာတန်း" not in HTML

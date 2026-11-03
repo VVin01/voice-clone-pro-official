@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261103_r41">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261103_r42">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -38,7 +38,7 @@
             </div>
 
             <div class="top-actions">
-                <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်">
+                <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်" data-i18n-title="tut_guide_title">
                     <span class="btn-icon">📚</span>
                     <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
                 </button>
@@ -395,7 +395,7 @@
                     <div class="result-title" data-i18n="result_title">🎉 အသံ အဆင်သင့်ဖြစ်ပါပြီ</div>
                     <button id="btn-voice-play-toggle" class="btn gold-gradient-btn mb-2 w-100" onclick="toggleResultAudioPlay()">
                         <span class="btn-icon" id="play-toggle-icon">▶️</span>
-                        <span id="play-toggle-text">အသံဖွင့်နားထောင်မည် (Play Audio)</span>
+                        <span id="play-toggle-text" data-i18n="btn_play_audio_long">အသံဖွင့်နားထောင်မည် (Play Audio)</span>
                     </button>
                     <audio id="result-audio-player" controls class="custom-audio-player" preload="auto"></audio>
                     <div class="result-actions">
@@ -434,7 +434,7 @@
                             <span class="step-title" data-i18n="recap_step1_title">ဗီဒီယိုလင့်ခ် ထည့်သွင်းပါ</span>
                         </div>
                         <div class="step1-tut-row">
-                            <button type="button" class="tutorial-mini-btn" id="recap-step1-tut-btn" onclick="openTutorialVideo('recap')">ကြည့်ရှုရန် ▶️</button>
+                            <button type="button" class="tutorial-mini-btn" id="recap-step1-tut-btn" onclick="openTutorialVideo('recap')" data-i18n="tut_btn_watch">ကြည့်ရှုရန် ▶️</button>
                         </div>
 
                         <!-- Mode Selector: URL Link vs Direct File Upload -->
@@ -609,13 +609,13 @@
                                             <span data-i18n="logo_label">⭐ LOGO</span>
                                         </div>
                                     </div>
-                                    <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 85%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ">
+                                    <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 85%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
                                         <div class="box-resize-handle top"></div>
                                         <span class="drag-grip-icon">⠿</span>
                                         <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
                                         <div class="box-resize-handle bottom"></div>
                                     </div>
-                                    <div class="preview-sub-box yellow draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ">
+                                    <div class="preview-sub-box yellow draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
                                         <span class="drag-grip-icon sub-grip">⠿</span>
                                         <span class="preview-sub-text" id="preview-sub-text-el" data-i18n="sub_sample_text">ဒီတစ်ခါမှာတော့ ဘယ်သူမှ မထင်မှတ်ထားတဲ့ အဖြစ်အပျက် ဖြစ်လာပါတယ်</span>
                                     </div>
@@ -632,26 +632,26 @@
                                             <span>⏱️ Frame Seek</span>
                                         </button>
                                         <button type="button" class="tb-tab-btn" data-tb-tab="mask" id="tab-btn-mask">
-                                            <span>🌫️ Blur စာတန်း</span>
+                                            <span data-i18n="tb_tab_mask">🌫️ Blur စာတန်း</span>
                                         </button>
                                         <button type="button" class="tb-tab-btn" data-tb-tab="style" id="tab-btn-style">
-                                            <span>🎨 စတိုင်လ်</span>
+                                            <span data-i18n="tb_tab_style">🎨 စတိုင်လ်</span>
                                         </button>
                                     </div>
 
                                     <!-- Tab Panel 1: Frame Seeker Timeline Bar -->
                                     <div class="tb-tab-panel active" id="tb-panel-seek">
                                         <div class="seek-info-header">
-                                            <span class="seek-title">⏱️ စက္ကန့်ကျော်၍ စာတန်းနေရာ စစ်ဆေးပါ:</span>
+                                            <span class="seek-title" data-i18n="sub_seek_check_label">⏱️ စက္ကန့်ကျော်၍ စာတန်းနေရာ စစ်ဆေးပါ:</span>
                                             <span class="seek-time-badge" id="canvas-seek-time-badge">⏱️ 00:05s / 00:00s</span>
                                         </div>
                                         <div class="seek-slider-wrap mt-1">
                                             <input type="range" id="slider-canvas-seek" min="0" max="60" value="5" step="0.5" class="studio-slider seek-slider">
                                         </div>
                                         <div class="seek-actions-row mt-2">
-                                            <button type="button" class="mini-btn-seek" id="btn-seek-prev-5" title="5 စက္ကန့် နောက်ဆုတ်မည်">⏪ -5s</button>
-                                            <button type="button" class="mini-btn-seek active" id="btn-canvas-play-toggle" title="Play/Pause Frame">⏯️ နမူနာကြည့်</button>
-                                            <button type="button" class="mini-btn-seek" id="btn-seek-next-5" title="5 စက္ကန့် ရှေ့တိုးမည်">⏩ +5s</button>
+                                            <button type="button" class="mini-btn-seek" id="btn-seek-prev-5" title="5 စက္ကန့် နောက်ဆုတ်မည်" data-i18n-title="btn_seek_back_5">⏪ -5s</button>
+                                            <button type="button" class="mini-btn-seek active" id="btn-canvas-play-toggle" title="Play/Pause Frame" data-i18n="btn_canvas_preview">⏯️ နမူနာကြည့်</button>
+                                            <button type="button" class="mini-btn-seek" id="btn-seek-next-5" title="5 စက္ကန့် ရှေ့တိုးမည်" data-i18n-title="btn_seek_fwd_5">⏩ +5s</button>
                                             <div class="seek-presets-pills">
                                                 <button type="button" class="seek-pill-btn" data-sec="0">0s</button>
                                                 <button type="button" class="seek-pill-btn active" data-sec="5">5s</button>
@@ -706,7 +706,7 @@
                                                 <input type="range" min="10" max="95" value="85" class="studio-slider" id="slider-sub-y">
                                             </div>
                                             <div class="reset-row mt-2">
-                                                <button type="button" class="mini-btn-seek sm" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်">
+                                                <button type="button" class="mini-btn-seek sm" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title" data-i18n="btn_reset_layout">
                                                     🔄 မူလနေရာ ပြန်ထားမည် (Reset Layout)
                                                 </button>
                                             </div>
@@ -759,9 +759,9 @@
                                         <div class="style-selector-row mt-2">
                                             <span class="style-lbl" data-i18n="recap_crop_presets_label">ဘောင်ဖြတ်ခြင်း (Framing Crop Presets):</span>
                                             <div class="pill-group sm" id="recap-crop-presets-toolbar">
-                                                <button class="pill-btn active" data-crop="full">📐 မူရင်း (0%)</button>
-                                                <button class="pill-btn" data-crop="cinema">🎞️ CinemaScope (12%)</button>
-                                                <button class="pill-btn" data-crop="side">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
+                                                <button class="pill-btn active" data-crop="full" data-i18n="crop_preset_full">📐 မူရင်း (0%)</button>
+                                                <button class="pill-btn" data-crop="cinema" data-i18n="crop_preset_cinema">🎞️ CinemaScope (12%)</button>
+                                                <button class="pill-btn" data-crop="side" data-i18n="crop_preset_side_toolbar">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
                                             </div>
                                         </div>
 
@@ -818,16 +818,16 @@
                                         <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
                                         <select id="recap-gemini-voice-select" class="studio-select recap-gemini-select">
                                             <option value="">Auto</option>
-                                            <option value="Charon">ကိုသီဟ (ကျား)</option>
-                                            <option value="Algenib">ကိုအာကာ (ကျား)</option>
-                                            <option value="Orus">ကိုမင်းခန့် (ကျား)</option>
-                                            <option value="Iapetus">ကိုလင်းခန့် (ကျား)</option>
-                                            <option value="Puck">ကိုသော်တာ (ကျား)</option>
-                                            <option value="Kore">မစန္ဒာ (မ)</option>
-                                            <option value="Leda">မနှင်းဆီ (မ)</option>
-                                            <option value="Sulafat">မမေသူ (မ)</option>
-                                            <option value="Gacrux">မသီရိ (မ)</option>
-                                            <option value="Achernar">မသွန်းရည် (မ)</option>
+                                            <option value="Charon" data-i18n="gem_voice_charon">ကိုသီဟ (ကျား)</option>
+                                            <option value="Algenib" data-i18n="gem_voice_algenib">ကိုအာကာ (ကျား)</option>
+                                            <option value="Orus" data-i18n="gem_voice_orus">ကိုမင်းခန့် (ကျား)</option>
+                                            <option value="Iapetus" data-i18n="gem_voice_iapetus">ကိုလင်းခန့် (ကျား)</option>
+                                            <option value="Puck" data-i18n="gem_voice_puck">ကိုသော်တာ (ကျား)</option>
+                                            <option value="Kore" data-i18n="gem_voice_kore">မစန္ဒာ (မ)</option>
+                                            <option value="Leda" data-i18n="gem_voice_leda">မနှင်းဆီ (မ)</option>
+                                            <option value="Sulafat" data-i18n="gem_voice_sulafat">မမေသူ (မ)</option>
+                                            <option value="Gacrux" data-i18n="gem_voice_gacrux">မသီရိ (မ)</option>
+                                            <option value="Achernar" data-i18n="gem_voice_achernar">မသွန်းရည် (မ)</option>
                                         </select>
                                         <p class="recap-auto-hint" data-i18n="recap_gemini_auto_hint">Auto ဆိုရင် ရွေးထားတဲ့ Persona အသံရဲ့ ကျား/မ အလိုက် အလိုက်ဖက်ဆုံး Gemini အသံကို သုံးပါမယ်</p>
                                         <button type="button" class="preview-recap-voice-btn" id="btn-preview-gemini-voice" onclick="previewSelectedGeminiVoice()">
@@ -842,34 +842,34 @@
                             <div class="voice-card active" data-voice="komin">
                                 <div class="v-avatar">👨‍💼</div>
                                 <div class="v-info">
-                                    <span class="v-name">ကိုမင်း (Ko Min) 🔥</span>
-                                    <span class="v-desc">ရုပ်ရှင်ဇာတ်လမ်းပြော အသံနက် (Cinema Classic)</span>
+                                    <span class="v-name" data-i18n="voice_komin_name">ကိုမင်း (Ko Min) 🔥</span>
+                                    <span class="v-desc" data-i18n="voice_komin_desc">ရုပ်ရှင်ဇာတ်လမ်းပြော အသံနက် (Cinema Classic)</span>
                                 </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komin', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                             </div>
                             <div class="voice-card" data-voice="kozayar">
                                 <div class="v-avatar">🎬</div>
                                 <div class="v-info">
-                                    <span class="v-name">ကိုဇေယျာ (Ko Zayar)</span>
-                                    <span class="v-desc">သည်းထိတ်ရင်ဖို Trailer အသံ (Thriller / Action)</span>
+                                    <span class="v-name" data-i18n="voice_kozayar_name">ကိုဇေယျာ (Ko Zayar)</span>
+                                    <span class="v-desc" data-i18n="voice_kozayar_desc">သည်းထိတ်ရင်ဖို Trailer အသံ (Thriller / Action)</span>
                                 </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kozayar', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kozayar', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                             </div>
                             <div class="voice-card" data-voice="koaung">
                                 <div class="v-avatar">⚡</div>
                                 <div class="v-info">
-                                    <span class="v-name">ကိုအောင် (Ko Aung)</span>
-                                    <span class="v-desc">သွက်လက်မြန်ဆန် (Viral Shorts & Reels)</span>
+                                    <span class="v-name" data-i18n="voice_koaung_name">ကိုအောင် (Ko Aung)</span>
+                                    <span class="v-desc" data-i18n="voice_koaung_desc">သွက်လက်မြန်ဆန် (Viral Shorts & Reels)</span>
                                 </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('koaung', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('koaung', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                             </div>
                             <div class="voice-card" data-voice="mahnin">
                                 <div class="v-avatar">👩‍🦰</div>
                                 <div class="v-info">
-                                    <span class="v-name">မနှင်း (Ma Hnin)</span>
-                                    <span class="v-desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
+                                    <span class="v-name" data-i18n="voice_mahnin_name">မနှင်း (Ma Hnin)</span>
+                                    <span class="v-desc" data-i18n="voice_mahnin_desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
                                 </div>
-                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                             </div>
                         </div>
 
@@ -883,98 +883,98 @@
                                 <div class="voice-card active" data-voice="komin">
                                     <div class="v-avatar">👨‍💼</div>
                                     <div class="v-info">
-                                        <span class="v-name">ကိုမင်း (Ko Min) 🔥</span>
-                                        <span class="v-desc">ရုပ်ရှင်ဇာတ်လမ်းပြော အသံနက် (Cinema Classic)</span>
+                                        <span class="v-name" data-i18n="voice_komin_name">ကိုမင်း (Ko Min) 🔥</span>
+                                        <span class="v-desc" data-i18n="voice_komin_desc">ရုပ်ရှင်ဇာတ်လမ်းပြော အသံနက် (Cinema Classic)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komin', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="kozayar">
                                     <div class="v-avatar">🎬</div>
                                     <div class="v-info">
-                                        <span class="v-name">ကိုဇေယျာ (Ko Zayar)</span>
-                                        <span class="v-desc">သည်းထိတ်ရင်ဖို Trailer အသံ (Thriller / Action)</span>
+                                        <span class="v-name" data-i18n="voice_kozayar_name">ကိုဇေယျာ (Ko Zayar)</span>
+                                        <span class="v-desc" data-i18n="voice_kozayar_desc">သည်းထိတ်ရင်ဖို Trailer အသံ (Thriller / Action)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kozayar', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kozayar', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="koaung">
                                     <div class="v-avatar">⚡</div>
                                     <div class="v-info">
-                                        <span class="v-name">ကိုအောင် (Ko Aung)</span>
-                                        <span class="v-desc">သွက်လက်မြန်ဆန် (Viral Shorts & Reels)</span>
+                                        <span class="v-name" data-i18n="voice_koaung_name">ကိုအောင် (Ko Aung)</span>
+                                        <span class="v-desc" data-i18n="voice_koaung_desc">သွက်လက်မြန်ဆန် (Viral Shorts & Reels)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('koaung', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('koaung', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="mahnin">
                                     <div class="v-avatar">👩‍🦰</div>
                                     <div class="v-info">
-                                        <span class="v-name">မနှင်း (Ma Hnin)</span>
-                                        <span class="v-desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
+                                        <span class="v-name" data-i18n="voice_mahnin_name">မနှင်း (Ma Hnin)</span>
+                                        <span class="v-desc" data-i18n="voice_mahnin_desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="kothura">
                                     <div class="v-avatar">🎙️</div>
                                     <div class="v-info">
-                                        <span class="v-name">ကိုသူရ (Ko Thura)</span>
-                                        <span class="v-desc">သတင်းနှင့် မှတ်တမ်း (News & Docu)</span>
+                                        <span class="v-name" data-i18n="voice_kothura_name">ကိုသူရ (Ko Thura)</span>
+                                        <span class="v-desc" data-i18n="voice_kothura_desc">သတင်းနှင့် မှတ်တမ်း (News & Docu)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kothura', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kothura', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="komyat">
                                     <div class="v-avatar">🎙️</div>
                                     <div class="v-info">
-                                        <span class="v-name">ကိုမြတ် (Ko Myat)</span>
-                                        <span class="v-desc">လူ့ဘဝဇာတ်လမ်း ပြောပြသူ (Human Storyteller)</span>
+                                        <span class="v-name" data-i18n="voice_komyat_name">ကိုမြတ် (Ko Myat)</span>
+                                        <span class="v-desc" data-i18n="voice_komyat_desc">လူ့ဘဝဇာတ်လမ်း ပြောပြသူ (Human Storyteller)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komyat', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('komyat', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="kophone">
                                     <div class="v-avatar">💡</div>
                                     <div class="v-info">
-                                        <span class="v-name">ကိုဘုန်း (Ko Phone)</span>
-                                        <span class="v-desc">နည်းပညာနှင့် ရှင်းလင်းပြောပြသူ (Tech & Explainer)</span>
+                                        <span class="v-name" data-i18n="voice_kophone_name">ကိုဘုန်း (Ko Phone)</span>
+                                        <span class="v-desc" data-i18n="voice_kophone_desc">နည်းပညာနှင့် ရှင်းလင်းပြောပြသူ (Tech & Explainer)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kophone', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('kophone', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="manadi">
                                     <div class="v-avatar">🎭</div>
                                     <div class="v-info">
-                                        <span class="v-name">မနဒီ (Ma Nadi)</span>
-                                        <span class="v-desc">သည်းထိတ်ရင်ဖို ဒရာမာ (Thriller Drama)</span>
+                                        <span class="v-name" data-i18n="voice_manadi_name">မနဒီ (Ma Nadi)</span>
+                                        <span class="v-desc" data-i18n="voice_manadi_desc">သည်းထိတ်ရင်ဖို ဒရာမာ (Thriller Drama)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('manadi', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('manadi', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="mamay">
                                     <div class="v-avatar">🌟</div>
                                     <div class="v-info">
-                                        <span class="v-name">မမေ (Ma May)</span>
-                                        <span class="v-desc">ရင်းနှီးပျော်ရွှင်သော လမ်းညွှန် (Friendly Guide)</span>
+                                        <span class="v-name" data-i18n="voice_mamay_name">မမေ (Ma May)</span>
+                                        <span class="v-desc" data-i18n="voice_mamay_desc">ရင်းနှီးပျော်ရွှင်သော လမ်းညွှန် (Friendly Guide)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mamay', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mamay', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="mayoon">
                                     <div class="v-avatar">🧘</div>
                                     <div class="v-info">
-                                        <span class="v-name">မယွန်း (Ma Yoon)</span>
-                                        <span class="v-desc">တည်ငြိမ်နူးညံ့ (Calm ASMR & Meditation)</span>
+                                        <span class="v-name" data-i18n="voice_mayoon_name">မယွန်း (Ma Yoon)</span>
+                                        <span class="v-desc" data-i18n="voice_mayoon_desc">တည်ငြိမ်နူးညံ့ (Calm ASMR & Meditation)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mayoon', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mayoon', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="machaw">
                                     <div class="v-avatar">🌟</div>
                                     <div class="v-info">
-                                        <span class="v-name">မချော (Ma Chaw)</span>
-                                        <span class="v-desc">ဖန်တီးသူ လမ်းညွှန် (Human Creator & Guide)</span>
+                                        <span class="v-name" data-i18n="voice_machaw_name">မချော (Ma Chaw)</span>
+                                        <span class="v-desc" data-i18n="voice_machaw_desc">ဖန်တီးသူ လမ်းညွှန် (Human Creator & Guide)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('machaw', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('machaw', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                                 <div class="voice-card" data-voice="mathiri">
                                     <div class="v-avatar">💎</div>
                                     <div class="v-info">
-                                        <span class="v-name">မသီရိ (Ma Thiri)</span>
-                                        <span class="v-desc">အဆင့်မြင့် လူနေမှုပုံစံ (Luxury Lifestyle)</span>
+                                        <span class="v-name" data-i18n="voice_mathiri_name">မသီရိ (Ma Thiri)</span>
+                                        <span class="v-desc" data-i18n="voice_mathiri_desc">အဆင့်မြင့် လူနေမှုပုံစံ (Luxury Lifestyle)</span>
                                     </div>
-                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mathiri', event)" title="နမူနာနားထောင်မည်">🔊</button>
+                                    <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mathiri', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
                                 </div>
                             </div>
                         </div>
@@ -1047,7 +1047,7 @@
                                         <span data-i18n="recap_crop_label">ဘောင် စိတ်ကြိုက်ဖြတ်ခြင်း:</span>
                                         <span class="recap-detail-chevron" id="crop-detail-chevron">▼</span>
                                     </button>
-                                    <button class="chip-toggle active" id="btn-sync-crop" title="အပေါ်နှင့်အောက် တပြိုင်နက်ညှိမည်">
+                                    <button class="chip-toggle active" id="btn-sync-crop" title="အပေါ်နှင့်အောက် တပြိုင်နက်ညှိမည်" data-i18n-title="btn_sync_crop_title">
                                         <span class="chip-icon">🔗</span>
                                         <span class="chip-lbl" data-i18n="crop_sync_label">အပေါ်/အောက် တပြိုင်နက်</span>
                                     </button>
@@ -1277,7 +1277,7 @@
                     </div>
                     <div id="dl-delivery-actions"></div>
                     <button class="btn primary-btn mt-3" id="btn-dl-use-in-recap">
-                        <span>🎬 Movie Recap Studio တွင် အသုံးပြုမည်</span>
+                        <span data-i18n="btn_use_in_recap">🎬 Movie Recap Studio တွင် အသုံးပြုမည်</span>
                     </button>
                 </div>
             </section>
@@ -2213,16 +2213,16 @@
         <div class="floating-alert-card" id="floating-alert-card">
             <div class="floating-alert-icon">🔔</div>
             <div class="floating-alert-body">
-                <div class="floating-alert-title" id="floating-alert-title">အသိပေးချက်</div>
-                <div class="floating-alert-desc" id="floating-alert-desc">လုပ်ဆောင်ချက် အောင်မြင်စွာ ပြီးစီးပါပြီ!</div>
+                <div class="floating-alert-title" id="floating-alert-title" data-i18n="alert_default_title">အသိပေးချက်</div>
+                <div class="floating-alert-desc" id="floating-alert-desc" data-i18n="alert_default_desc">လုပ်ဆောင်ချက် အောင်မြင်စွာ ပြီးစီးပါပြီ!</div>
             </div>
-            <button class="floating-alert-action" id="floating-alert-btn">ကြည့်မည်</button>
+            <button class="floating-alert-action" id="floating-alert-btn" data-i18n="alert_btn_view">ကြည့်မည်</button>
             <button class="floating-alert-close" onclick="closeFloatingAlert()">✕</button>
         </div>
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261103_r41"></script>
-    <script src="/static/js/app.js?v=20261103_r41"></script>
+    <script src="/static/js/i18n.js?v=20261103_r42"></script>
+    <script src="/static/js/app.js?v=20261103_r42"></script>
 </body>
 </html>

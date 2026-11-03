@@ -1040,7 +1040,7 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         "status": "QUEUED",
         "progress_percent": 5,
         "progress_step": "0/4",
-        "progress_label": "⏳ Picking up from queue...",
+        "progress_label": t("recap_progress_picking_up", getattr(user, "language_code", None) or "my"),
         "created_at": time.time(),
         "video_path": None,
         "audio_path": None,
@@ -4914,7 +4914,7 @@ async def create_recap_job(
         "status": "QUEUED",
         "progress_percent": 5,
         "progress_step": "0/4",
-        "progress_label": "⏳ ပြင်ဆင်နေပါသည်…",
+        "progress_label": t("recap_progress_preparing", user.language_code or "my"),
         "created_at": time.time(),
         "video_path": None,
         "audio_path": None,
@@ -5107,7 +5107,7 @@ async def get_recap_status(
         "telegram_sendable": _r_sendable,
         "progress_percent": 100 if is_success else (15 if is_active else 0),
         "progress_step": "4/4" if is_success else ("1/4" if is_active else ""),
-        "progress_label": "Completed" if is_success else ("Processing in background..." if is_active else (job.error_message or "Failed")),
+        "progress_label": t("webapp_status_completed", user.language_code or "my") if is_success else (t("webapp_status_processing", user.language_code or "my") if is_active else (job.error_message or t("webapp_status_failed", user.language_code or "my"))),
         "error_message": job.error_message,
         "parts": _db_parts,
         "segmented": len(_db_parts) >= 2,
@@ -5546,6 +5546,19 @@ def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str
         return False
 
 
+def _time_ago_str(mins_ago: int, lang: str) -> str:
+    """Localized relative-time label for history / queue payloads.
+
+    Batch F (i18n completion): this was a hardcoded English f-string
+    ("5m ago" / "2h ago") duplicated at three call sites. It now goes
+    through the bot-side locales like every other user-visible string.
+    ``lang`` is the viewer's stored ``language_code``.
+    """
+    if mins_ago < 60:
+        return t("time_ago_minutes", lang, count=mins_ago)
+    return t("time_ago_hours", lang, count=mins_ago // 60)
+
+
 @api_router.get("/history")
 async def get_user_history(
     user: User = Depends(get_current_user),
@@ -5570,7 +5583,7 @@ async def get_user_history(
     for j in jobs:
         created_ts = j.created_at.timestamp() if j.created_at else time.time()
         mins_ago = int((time.time() - created_ts) // 60)
-        time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
+        time_ago = _time_ago_str(mins_ago, user.language_code or "my")
 
         is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_"))
 
@@ -5761,7 +5774,7 @@ async def get_admin_global_history(
 
         created_ts = job.created_at.timestamp() if job.created_at else time.time()
         mins_ago = int((time.time() - created_ts) // 60)
-        time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
+        time_ago = _time_ago_str(mins_ago, user.language_code or "my")
 
         # Verify whether the output file actually exists on the persistent
         # disk — the single availability check every serializer shares.
@@ -6732,7 +6745,7 @@ async def get_admin_queue(
     for j, u in rows:
         created_ts = j.created_at.timestamp() if j.created_at else time.time()
         mins_ago = int((time.time() - created_ts) // 60)
-        time_ago = f"{mins_ago}m ago" if mins_ago < 60 else f"{mins_ago // 60}h ago"
+        time_ago = _time_ago_str(mins_ago, admin.language_code or "my")
 
         duration_sec = None
         if j.started_at and j.finished_at:
@@ -6828,7 +6841,7 @@ async def retry_queued_job(
             # job's charge was already refunded by the failure/cancel
             # paths, so the retry runs uncharged (historical behaviour).
             plan = _recap_redispatch_plan(job, u, restore_credit_state=False)
-            plan["entry"]["progress_label"] = "🔄 Re-queued by Administrator..."
+            plan["entry"]["progress_label"] = t("recap_progress_requeued", getattr(u, "language_code", None) or "my")
             RECAP_JOBS_REGISTRY[job_id] = plan["entry"]
             asyncio.create_task(_run_recap_background_job(
                 job_id, plan["cfg"], job.user_id, job.chat_id or job.user_id,
