@@ -106,7 +106,9 @@ async def _dispatch_oldest_queued_recap() -> bool:
     from app.services.queue import claim_job_for_running
     from app.webapp.api import (
         RECAP_JOBS_REGISTRY,
+        _load_persisted_recap_state,
         _recap_redispatch_plan,
+        _restore_script_ready_from_db,
         _run_recap_background_job,
     )
 
@@ -133,6 +135,21 @@ async def _dispatch_oldest_queued_recap() -> bool:
             # cross-instance guard during deploy overlaps.
             return False
         user = await session.get(User, queued_recap.user_id)
+        # SCRIPT_READY restore: a job that parked for script review
+        # before a restart must come back as a parked registry entry,
+        # not be re-run from the script phase — re-running would
+        # re-transcribe and re-translate and overwrite the plan file
+        # holding the user's edits. The claim still applies (it is
+        # the cross-instance guard); only the background run is skipped.
+        _persisted_state = _load_persisted_recap_state(queued_recap)
+        if _persisted_state is not None and _persisted_state.get("script_ready"):
+            restored_entry = _restore_script_ready_from_db(queued_recap)
+            if restored_entry is not None:
+                if not await claim_job_for_running(session, jid):
+                    return False
+                RECAP_JOBS_REGISTRY[jid] = restored_entry
+                _log.info(f"Restored parked SCRIPT_READY recap job {jid} (no re-run).")
+                return True
         # Restore the job's persisted submit-time config + credit state
         # (jobs.recap_config); legacy rows fall back to reconstruction.
         # This used to rebuild a DEFAULT config here, silently changing
@@ -228,6 +245,17 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Error resetting stale recap jobs on startup: %s", rec_err)
 
+    # Restore recap jobs that parked at SCRIPT_READY before this
+    # process started, and expire any that have already waited past
+    # the 24h script-review TTL while the service was down.
+    try:
+        from app.webapp.api import expire_abandoned_script_ready_jobs, restore_script_ready_jobs
+        await restore_script_ready_jobs()
+        await expire_abandoned_script_ready_jobs()
+    except Exception as sr_err:
+        import logging
+        logging.getLogger(__name__).warning("Error restoring script-ready recap jobs on startup: %s", sr_err)
+
     # Periodic background task every 30 minutes
     async def _periodic_cleanup():
         while True:
@@ -235,6 +263,11 @@ async def lifespan(app: FastAPI):
             try:
                 from app.webapp.api import cleanup_expired_jobs
                 await cleanup_expired_jobs()
+            except Exception:
+                pass
+            try:
+                from app.webapp.api import expire_abandoned_script_ready_jobs
+                await expire_abandoned_script_ready_jobs()
             except Exception:
                 pass
 

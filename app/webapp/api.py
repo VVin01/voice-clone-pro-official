@@ -661,6 +661,264 @@ async def _persist_recap_credits_charged(entry: dict) -> None:
         logger.warning(f"Could not persist recap charge state for {job_id}: {exc}")
 
 
+SCRIPT_READY_TTL_SECONDS = 24 * 3600
+
+_SCRIPT_READY_EXPIRED_MESSAGE = (
+    "Script review expired: the script was not rendered within 24 hours, "
+    "so the job was closed and its recap credit was refunded."
+)
+
+
+async def _persist_recap_script_ready(entry: dict) -> None:
+    """Persist the SCRIPT_READY parking state onto the Job row.
+
+    Until now a parked script-review job existed only in the in-memory
+    registry: a restart lost the parked state, and the queue worker
+    re-dispatched the job from the script phase — re-running
+    transcription + translation and overwriting the plan file the user
+    had already edited. Recording the parking facts (phase ``render``,
+    ``script_ready``, the downloaded ``source_path``, the segment count
+    and the parking timestamp) in the same persisted blob as the credit
+    state lets a restart restore the job exactly where it parked.
+    Best-effort, like _persist_recap_credits_charged: the registry
+    entry remains authoritative for the live process.
+    """
+    job_id = entry.get("id")
+    if not job_id:
+        return
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            state = _load_persisted_recap_state(job) if job is not None else None
+            if state is None:
+                return
+            state["phase"] = "render"
+            state["script_ready"] = True
+            state["source_path"] = entry.get("source_path")
+            state["segments_count"] = int(entry.get("segments_count") or 0)
+            state["script_ready_at"] = entry.get("script_ready_at")
+            job.recap_config = json.dumps(state, ensure_ascii=False)
+            await session.commit()
+    except Exception as exc:
+        logger.warning(f"Could not persist script-ready state for {job_id}: {exc}")
+
+
+def _restore_script_ready_from_db(job, user=None) -> Optional[dict]:
+    """Build a parked SCRIPT_READY registry entry from a Job row.
+
+    Returns None when the row carries no usable script_ready state.
+    The user's script edits live in the workspace plan file on disk
+    (the script endpoints read and write that file, not the registry),
+    so rebuilding the entry is all a restart needs: no transcription
+    or translation is re-run and the edits survive untouched. The
+    ``user`` argument is accepted for symmetry with the re-dispatch
+    plan builder; the parked state restores entirely from the row.
+    """
+    state = _load_persisted_recap_state(job)
+    if state is None or not state.get("script_ready"):
+        return None
+    try:
+        cfg = RecapConfigRequest(**state["config"])
+    except Exception:
+        return None
+    source_url = getattr(job, "source_audio_path", None) or job.input_text or ""
+    clean_title = _clean_recap_display_title(
+        convert_zawgyi_to_unicode(job.input_text or ""), source_url
+    ) or "Movie Recap Video"
+    entry = {
+        "id": job.id,
+        "user_id": job.user_id,
+        "title": clean_title,
+        "status": "SCRIPT_READY",
+        "progress_percent": 100,
+        "progress_step": "2/4",
+        "created_at": time.time(),
+        "video_path": None,
+        "audio_path": None,
+        "srt_path": None,
+        "script_path": None,
+        "download_urls": {},
+        "error_message": None,
+        "script_review": True,
+        "segments_count": state.get("segments_count"),
+        "split_video": bool(cfg.split_video),
+        "parts": [],
+        "split_error": None,
+        "split_note": None,
+        "credit_deducted": bool(state.get("credit_deducted")),
+        "credits_charged": int(state.get("credits_charged") or 0),
+        "credit_refunded": bool(state.get("credit_refunded")),
+        "credits_refunded": int(state.get("credits_refunded") or 0),
+        "credits_estimated": state.get("credits_estimated"),
+        "parts_count": None,
+        "source_path": state.get("source_path"),
+        "req_snapshot": state["config"],
+        "is_vip": bool(state.get("is_vip")),
+        "script_ready_at": state.get("script_ready_at"),
+    }
+    _recap_set_entry_label(
+        entry, "📝 Script ready — review & edit before rendering", stage="script_ready"
+    )
+    return entry
+
+
+async def restore_script_ready_jobs() -> int:
+    """Restore every parked SCRIPT_READY recap job into the registry.
+
+    Runs at startup (and is safe to re-run): any recap row still in a
+    live status whose persisted state says it parked for script review
+    gets its registry entry rebuilt from the row, unless this process
+    already tracks the job. Returns how many entries were restored.
+    """
+    restored = 0
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(Job).where(
+                    Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                    (Job.job_type == JobType.RECAP.value)
+                    | (Job.id.startswith("rc_"))
+                    | (Job.engine == "recap"),
+                )
+            )
+            for job in res.scalars().all():
+                existing = RECAP_JOBS_REGISTRY.get(str(job.id))
+                if existing and existing.get("status") in (
+                    "QUEUED",
+                    "RUNNING",
+                    "SCRIPT_READY",
+                ):
+                    continue
+                entry = _restore_script_ready_from_db(job)
+                if entry is None:
+                    continue
+                RECAP_JOBS_REGISTRY[str(job.id)] = entry
+                restored += 1
+    except Exception as exc:
+        logger.warning(f"Could not restore script-ready recap jobs: {exc}")
+    if restored:
+        logger.info(f"Restored {restored} parked SCRIPT_READY recap job(s) from DB")
+    return restored
+
+
+def _parse_script_ready_at(value) -> Optional[datetime]:
+    """Parse the persisted script_ready_at ISO timestamp (UTC)."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+async def expire_abandoned_script_ready_jobs() -> int:
+    """Expire SCRIPT_READY jobs parked longer than the TTL.
+
+    A parked job holds the user's concurrency slot and keeps its recap
+    credit captured. Once it has waited longer than
+    SCRIPT_READY_TTL_SECONDS (24h) it is marked FAILED, its charged
+    credits are refunded exactly once through the existing refund path
+    (the persisted credit_refunded flag makes a second run a no-op),
+    and its persisted script_ready flag is cleared so it is never
+    restored or expired twice. Jobs younger than the TTL — and rows
+    without a parking timestamp — are left untouched. Returns how
+    many jobs were expired.
+    """
+    now = datetime.now(timezone.utc)
+    candidates: list[tuple[str, int, dict]] = []
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(Job).where(
+                    Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                    (Job.job_type == JobType.RECAP.value)
+                    | (Job.id.startswith("rc_"))
+                    | (Job.engine == "recap"),
+                )
+            )
+            for job in res.scalars().all():
+                state = _load_persisted_recap_state(job)
+                if state is None or not state.get("script_ready"):
+                    continue
+                parked_at = _parse_script_ready_at(state.get("script_ready_at"))
+                if parked_at is None:
+                    continue
+                if (now - parked_at).total_seconds() <= SCRIPT_READY_TTL_SECONDS:
+                    continue
+                candidates.append((str(job.id), int(job.user_id), state))
+    except Exception as exc:
+        logger.warning(f"Could not scan for abandoned script-ready jobs: {exc}")
+        return 0
+
+    expired = 0
+    for job_id, user_id, state in candidates:
+        live_entry = RECAP_JOBS_REGISTRY.get(job_id)
+        refund_entry = {
+            "id": job_id,
+            "user_id": user_id,
+            "credits_charged": int(
+                (live_entry or state).get("credits_charged") or 0
+            ),
+            "credit_deducted": bool(
+                (live_entry or state).get("credit_deducted")
+            ),
+            "credit_refunded": bool(
+                (live_entry or state).get("credit_refunded")
+            ),
+            "credits_refunded": int(
+                (live_entry or state).get("credits_refunded") or 0
+            ),
+        }
+        # Refund first (idempotent via the persisted flag): if the
+        # process dies after this, the next run sees credit_refunded
+        # and only repeats the status write below.
+        await _refund_recap_job_charge(user_id, refund_entry)
+        try:
+            from app.db.session import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Job, job_id)
+                if job is None:
+                    continue
+                fresh_state = _load_persisted_recap_state(job)
+                if fresh_state is not None:
+                    fresh_state["script_ready"] = False
+                    fresh_state["script_ready_expired"] = True
+                    fresh_state["credit_refunded"] = bool(
+                        refund_entry.get("credit_refunded")
+                    )
+                    fresh_state["credits_refunded"] = int(
+                        refund_entry.get("credits_refunded") or 0
+                    )
+                    job.recap_config = json.dumps(fresh_state, ensure_ascii=False)
+                job.status = JobStatus.FAILED.value
+                job.error_message = _SCRIPT_READY_EXPIRED_MESSAGE
+                job.finished_at = now
+                await session.commit()
+        except Exception as exc:
+            logger.warning(f"Could not mark script-ready job {job_id} expired: {exc}")
+            continue
+        if live_entry is not None:
+            live_entry["status"] = "FAILED"
+            live_entry["error_message"] = _SCRIPT_READY_EXPIRED_MESSAGE
+            live_entry["credit_refunded"] = bool(refund_entry.get("credit_refunded"))
+            live_entry["credits_refunded"] = int(
+                refund_entry.get("credits_refunded") or 0
+            )
+        expired += 1
+        logger.info(f"Recap job {job_id}: script review expired after 24h; closed and refunded.")
+    return expired
+
+
 def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> dict:
     """Build the config, registry entry and run kwargs needed to
     (re-)dispatch a persisted recap job — shared by the server queue
@@ -3639,6 +3897,13 @@ async def _execute_recap_background_job(
             entry["progress_percent"] = 100
             entry["progress_step"] = "2/4"
             _recap_set_entry_label(entry, "📝 Script ready — review & edit before rendering", stage="script_ready")
+            # Persist the parking state on the Job row so a restart
+            # restores this exact parked job (source + segment count +
+            # parking time) instead of re-running the script phase and
+            # overwriting the user's edits; the timestamp also drives
+            # the 24h abandoned-job expiry.
+            entry["script_ready_at"] = datetime.now(timezone.utc).isoformat()
+            await _persist_recap_script_ready(entry)
             logger.info(f"Recap job {job_id}: script ready ({entry['segments_count']} segments), awaiting user review.")
             return
 
@@ -5113,7 +5378,7 @@ async def get_admin_global_history(
     limit: int = 150,
     user_id: Optional[int] = None,
     job_id: Optional[str] = None,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -5124,6 +5389,9 @@ async def get_admin_global_history(
     prefix (the UI displays short 8-char IDs, so admins can search by those).
     Both are purely additive filters — existing callers are unaffected.
     """
+    # require_admin (route dependency) is the gate; this in-body check
+    # is kept as defence in depth for direct (non-HTTP) callers, which
+    # the unit tests exercise — it evaluates the same settings.is_admin.
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -5235,10 +5503,13 @@ class AdminPurgeHistoryRequest(BaseModel):
 @api_router.post("/admin/history/purge")
 async def purge_admin_history(
     req: AdminPurgeHistoryRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Admin Only: Selectively purge jobs, physical media files, and DB records by criteria."""
+    # Same defence-in-depth note as get_admin_global_history: the
+    # require_admin dependency gates HTTP callers; this keeps direct
+    # callers (tests, internal tooling) behind the identical check.
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin access required")
 
