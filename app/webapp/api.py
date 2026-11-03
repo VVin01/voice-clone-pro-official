@@ -1968,6 +1968,16 @@ async def get_job_status(
 
     is_waiting_laptop = False  # Voice v2: no laptop engine; all jobs run on VoxCPM2 cloud.
 
+    # Over-50MB rule (2026-11-03): when the result WAV exceeds the
+    # Telegram bot send cap, the Mini App hides "Send to Telegram" and
+    # offers Download only — same telegram_sendable pattern as the
+    # downloader. Only computed for SUCCESS jobs (the only state whose
+    # result screen shows the button).
+    if job.status == JobStatus.SUCCESS.value:
+        _voice_size, _voice_sendable = _voice_output_size_and_sendable(job)
+    else:
+        _voice_size, _voice_sendable = None, True
+
     return {
         "id": job.id,
         "status": job.status,
@@ -1979,6 +1989,8 @@ async def get_job_status(
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "error_message": job.error_message,
         "output_audio_url": f"/api/audio/download/{job.id}" if job.status == JobStatus.SUCCESS.value else None,
+        "output_size_bytes": _voice_size,
+        "telegram_sendable": _voice_sendable,
     }
 
 
@@ -3486,6 +3498,67 @@ def resolve_recap_part_paths(job_id: str) -> list[dict]:
     return out
 
 
+def _file_size_or_none(path) -> Optional[int]:
+    """Size of an existing file in bytes, else None (never raises)."""
+    try:
+        if path and Path(path).is_file():
+            return Path(path).stat().st_size
+    except OSError:
+        pass
+    return None
+
+
+def _recap_output_size_and_sendable(job_id: str, result_path: Optional[str] = None):
+    """(output_size_bytes, telegram_sendable) for a recap job's video.
+
+    Mirrors the downloader's ``telegram_sendable`` flag: the Mini App
+    hides its "Send to Telegram" action entirely when delivery through
+    the bot cannot succeed, leaving Download as the only action.
+
+    Sendable when the full video fits Telegram's 50 MB bot cap, or the
+    job is segmented and EVERY split part fits (parts delivery is how
+    segmented jobs reach Telegram — see _deliver_recap_parts). Unknown
+    size keeps the button (True): only a KNOWN oversize hides it.
+    """
+    video_path = resolve_recap_deliverable_path(job_id, "video", result_path=result_path)
+    size = _file_size_or_none(video_path)
+    if size is not None and size <= _DL_TELEGRAM_LIMIT:
+        return size, True
+    entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
+    parts = resolve_recap_part_paths(job_id)
+    if parts and (entry.get("segmented") or len(parts) >= 2):
+        part_sizes = [_file_size_or_none(p.get("path")) for p in parts]
+        if all(s is not None and s <= _DL_TELEGRAM_LIMIT for s in part_sizes):
+            return size, True
+    if size is not None:
+        return size, False
+    return None, True
+
+
+def _voice_output_size_and_sendable(job) -> tuple:
+    """(output_size_bytes, telegram_sendable) for a voice job's audio.
+
+    Resolution mirrors send_voice_to_telegram: result_path first, then
+    the outputs-dir glob, then the canonical audio_out path. Unknown
+    size keeps the send button (True), same rule as recap.
+    """
+    size = _file_size_or_none(getattr(job, "result_path", None))
+    if size is None:
+        try:
+            outputs_dir = settings.storage_root / "outputs"
+            if outputs_dir.is_dir():
+                matches = [m for m in outputs_dir.glob(f"{job.id}*") if m.is_file()]
+                if matches:
+                    size = _file_size_or_none(matches[0])
+            if size is None:
+                size = _file_size_or_none(settings.storage_root / "audio_out" / f"{job.id}.wav")
+        except Exception:
+            size = None
+    if size is None:
+        return None, True
+    return size, size <= _DL_TELEGRAM_LIMIT
+
+
 async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my", title: Optional[str] = None) -> int:
     """Send every split part of a recap job to a Telegram chat.
 
@@ -4850,6 +4923,15 @@ async def get_recap_status(
     if entry:
         if not _recap_registry_owner_ok(job_id, user):
             raise HTTPException(status_code=404, detail="Recap job not found")
+        # Same over-50MB rule as the DB branch below: only a completed
+        # job's result screen shows the send button, so only then is
+        # the size worth stating.
+        if entry.get("status") == "SUCCESS":
+            _e_size, _e_sendable = _recap_output_size_and_sendable(
+                job_id, entry.get("video_path")
+            )
+        else:
+            _e_size, _e_sendable = None, True
         return {
             "id": job_id,
             "status": entry.get("status", "PENDING"),
@@ -4861,6 +4943,8 @@ async def get_recap_status(
             "error_message": entry.get("error_message"),
             "fallback_used": bool(entry.get("fallback_used")),
             "fallback_segments": entry.get("fallback_segments", []),
+            "output_size_bytes": _e_size,
+            "telegram_sendable": _e_sendable,
             "download_urls": _with_stream_url(entry.get("download_urls", {}), job_id, user.id),
             "script_review": bool(entry.get("script_review")),
             "segments_count": entry.get("segments_count"),
@@ -4899,11 +4983,18 @@ async def get_recap_status(
                     "label": "",
                     "url": f"/api/recap/download/{job_id}/part{_pn}",
                 })
+    # Over-50MB rule (2026-11-03): see _recap_output_size_and_sendable.
+    if is_success:
+        _r_size, _r_sendable = _recap_output_size_and_sendable(job_id, job.result_path)
+    else:
+        _r_size, _r_sendable = None, True
     return {
         "id": job_id,
         "status": job.status,
         "fallback_used": _fb_used,
         "fallback_segments": _fb_segs,
+        "output_size_bytes": _r_size,
+        "telegram_sendable": _r_sendable,
         "progress_percent": 100 if is_success else (15 if is_active else 0),
         "progress_step": "4/4" if is_success else ("1/4" if is_active else ""),
         "progress_label": "Completed" if is_success else ("Processing in background..." if is_active else (job.error_message or "Failed")),
@@ -5380,6 +5471,18 @@ async def get_user_history(
             file_exists = check_job_file_exists(j.id, is_recap, j.result_path)
         is_expired = bool(j.status == JobStatus.SUCCESS.value and not file_exists)
 
+        # Over-50MB rule (2026-11-03): history items carry the same
+        # telegram_sendable flag as the status payloads, so an oversize
+        # output's history entry offers Download only (no tg-btn).
+        # Unknown size (incl. non-SUCCESS rows) keeps the button.
+        if j.status == JobStatus.SUCCESS.value and file_exists:
+            if is_recap:
+                _h_size, _h_sendable = _recap_output_size_and_sendable(j.id, j.result_path)
+            else:
+                _h_size, _h_sendable = _voice_output_size_and_sendable(j)
+        else:
+            _h_size, _h_sendable = None, True
+
         download_url, deliverables = _job_deliverables(j, is_recap, file_exists)
         if is_recap and download_url:
             # A live registry entry carries the job's own download URLs
@@ -5456,6 +5559,8 @@ async def get_user_history(
             "time_ago": time_ago,
             "download_url": download_url,
             "deliverables": deliverables,
+            "output_size_bytes": _h_size,
+            "telegram_sendable": _h_sendable,
             "error_message": j.error_message,
             "file_exists": file_exists,
             "is_expired": is_expired,

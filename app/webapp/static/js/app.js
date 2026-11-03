@@ -792,6 +792,34 @@ function brandedDlName(kind, ext, label, jobId, part) {
     return `VoiceClonePro_${kind}_${clean}${partSuffix}.${ext}`;
 }
 
+// Over-50MB delivery rule (2026-11-03): when the server reports the
+// output cannot ride the Telegram bot (telegram_sendable === false in
+// the status payload), the result screens do not offer "Send to
+// Telegram" at all — the premium Download action stands alone, with a
+// short note in the send button's place. Any other value (true, or
+// the flag absent) restores the normal two-action layout. For voice,
+// the Download button is promoted to the premium gold style while it
+// is the only delivery action and restored afterwards.
+function applyTelegramSendable(kind, sendable) {
+    const isRecap = kind === "recap";
+    const btnTg = document.getElementById(isRecap ? "btn-recap-send-telegram" : "btn-voice-send-telegram");
+    const note = document.getElementById(isRecap ? "recap-oversize-note" : "voice-oversize-note");
+    const oversize = sendable === false;
+    if (btnTg) btnTg.classList.toggle("hidden", oversize);
+    if (note) {
+        note.classList.toggle("hidden", !oversize);
+        if (oversize) note.innerText = t("note_over_50mb_download");
+    }
+    if (!isRecap) {
+        const btnDl = document.getElementById("btn-download-audio");
+        if (btnDl) {
+            btnDl.classList.toggle("gold-gradient-btn", oversize);
+            btnDl.classList.toggle("secondary-btn", !oversize);
+        }
+    }
+}
+window.applyTelegramSendable = applyTelegramSendable;
+
 function dlJobIdFromUrl(url) {
     const m = String(url || "").match(/\/download\/([^/]+)\//);
     return m ? m[1] : "";
@@ -2531,6 +2559,7 @@ function startJobPolling(jobId) {
                     btnTg.classList.remove("sent");
                     btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_voice_telegram")}</span>`;
                 }
+                applyTelegramSendable("voice", data.telegram_sendable);
 
                 if (audioPlayer && data.output_audio_url) {
                     setAuthMediaSource(audioPlayer, data.output_audio_url).then((ok) => {
@@ -2987,6 +3016,20 @@ function setupRecapVisualEditor() {
     function startRecapUpload(file) {
         const els = recapUploadEls();
         if (recapUploadXhr) { try { recapUploadXhr.abort(); } catch (e) { /* noop */ } }
+        // Client-side size cap (2026-11-03): the server aborts uploads
+        // over MAX_RECAP_UPLOAD_BYTES (1 GB) mid-transfer with a 413 —
+        // don't burn the user's bandwidth finding that out. Surface the
+        // same upload error box the server-failure path uses and never
+        // start the XHR.
+        if (file && file.size > 1024 * 1024 * 1024) {
+            stopRecapUploadChrome();
+            state.recapUploadFile = file;
+            setRecapInfoUploadState("pending");
+            setRecapStartEnabled(false);
+            if (els.wrap) els.wrap.classList.remove("hidden");
+            onRecapUploadError(t("upload_too_large_1gb"));
+            return;
+        }
         stopRecapUploadChrome();
         state.recapUploadFile = file;
         // Every (re)start drops the card to the honest pending state
@@ -5390,6 +5433,7 @@ function startRecapJobPolling(jobId) {
                     btnTg.classList.remove("sent");
                     btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
                 }
+                applyTelegramSendable("recap", data.telegram_sendable);
 
                 // Setup video player (round-6 P1: blob URL — a raw
                 // API src cannot carry the init-data header and 401s;
@@ -8067,13 +8111,21 @@ function hubHistoryDetailHtml(j) {
         actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
     } else if (isRecap) {
         if (j.deliverables?.video) {
-            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="history-dl-link">🎬 Video</a>`;
+            // Over-50MB rule: no Telegram action at all for outputs the
+            // bot cannot send — Download is the only delivery action.
+            if (j.telegram_sendable !== false) {
+                actions += ` <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+            }
         }
         if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "wav", j.input_snippet, j.id)}" class="history-dl-link">🎙️ Audio</a>`;
         if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">📝 SRT</a>`;
         if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">📜 TXT</a>`;
     } else if (j.download_url) {
-        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">📥 Download</a>`;
+        if (j.telegram_sendable !== false) {
+            actions += ` <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+        }
     }
     if (!isRecap && j.status === "SUCCESS" && !j.is_expired && j.download_url) {
         // Journey audit 2026-11-02: a finished voice job opened from
@@ -8227,6 +8279,7 @@ async function openRecapInPlayer(recapJobId) {
                 btnTg.classList.remove("sent");
                 btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
             }
+            applyTelegramSendable("recap", data.telegram_sendable);
         } else if (data.status === "RUNNING" || data.status === "QUEUED") {
             state.recapJobId = recapJobId;
             startRecapJobPolling(recapJobId);
@@ -8293,6 +8346,7 @@ async function checkStartupDeepLinks() {
                         btnTg.classList.remove("sent");
                         btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_voice_telegram")}</span>`;
                     }
+                    applyTelegramSendable("voice", data.telegram_sendable);
                     showFloatingAlert(
                         t("alert_voice_ready"),
                         t("alert_voice_ready_body2"),
@@ -8352,6 +8406,7 @@ async function checkStartupDeepLinks() {
                         btnTg.classList.remove("sent");
                         btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_recap_telegram")}</span>`;
                     }
+                    applyTelegramSendable("recap", data.telegram_sendable);
                     // Cold-start restore: this alert is the ONLY
                     // completion signal here (the user may be on any
                     // tab when a previous session's job is restored),
