@@ -20,6 +20,14 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+try:
+    from app.services.myanmar_text import repair_burmese_mark_order
+except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
+    _ROOT = _HERE.parents[2]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+    from app.services.myanmar_text import repair_burmese_mark_order
+
 
 LogFn = Callable[[str], None]
 def _noop(_: str) -> None:
@@ -296,8 +304,12 @@ _LATIN_RUN_RE = re.compile(r"[A-Za-z][A-Za-z'\u2019\-]*")
 
 
 def spoken_text(text: str) -> str:
-    """The narration as the voice should say it: Latin-letter glosses in ( ) dropped."""
-    value = str(text or "")
+    """The narration as the voice should say it: Latin-letter glosses in ( ) dropped.
+
+    The line is canonicalized first (mark order, orthography) so every
+    TTS engine -- Edge, Gemini, VoxCPM -- speaks the corrected text,
+    not the raw planner output."""
+    value = canonicalize_burmese_text(str(text or ""))
     bare = _GLOSS_RE.sub("", value)
     if bare != value and any(ch.isalpha() for ch in bare):
         return re.sub(r"\s+", " ", bare).strip()
@@ -2106,26 +2118,31 @@ def canonicalize_burmese_text(text: str) -> str:
     """Fix common typing inversions, redundant spaces, and normalize Myanmar Unicode."""
     if not text:
         return ""
-    # 0. Normalize foreign homoglyphs and standard Myanmar orthography / spelling
-    t = normalize_burmese_orthography(text)
-    # 1. Visual-order 'ေ' typed BEFORE its consonant (e.g. "ေမ" at a word start -> "မေ").
-    #    ONLY when the ေ is not attached to a preceding Myanmar letter/mark — in correct Unicode
-    #    "ေ" always follows its consonant, and the next syllable's consonant must never be swapped
-    #    (the old unconditional swap turned "မေမေ"->"မမေေ", "တွေကို"->"တွကေို", "နေတယ်"->"နတေယ်").
-    t = re.sub(r'(?<![\u1000-\u103F\u1050-\u109F])\u1031([\u1000-\u1021][\u103B-\u103E]*)', '\\1\u1031', t)
-    # 2. Fix medial order if reversed (e.g. ွ before ျ/ြ)
-    t = re.sub(r'(\u103D)(\u103B|\u103C)', r'\2\1', t)
-    # 3. Fix ေ before medials (e.g. က + ေ + ျ -> က + ျ + ေ)
-    t = re.sub(r'([\u1000-\u1021])(\u1031)([\u103B-\u103E]+)', r'\1\3\2', t)
-    # 4. Remove unwanted spaces before punctuation or dependent vowels
+    # 0. Strip zero-width characters FIRST: they hide inside syllables and
+    #    would defeat both the mark-order repair below and the renderer's
+    #    shaping. (The old pipeline removed only U+200B..U+200D, at the end.)
+    t = re.sub(r'[\u200B-\u200F\uFEFF]', '', text)
+    # 0b. A space can never sit between a base consonant and its combining
+    #     marks; drop spaces immediately before a combining mark so each
+    #     syllable is whole again before it is repaired.
+    t = re.sub(r' +(?=[\u102B-\u103E])', '', t)
+    # 1. Full syllabic mark-order repair (app.services.myanmar_text). This
+    #    subsumes the old piecemeal swaps -- pre-posed 'ေ', reversed medials,
+    #    'ေ' before medials, ျ/ြ order -- by re-sorting every syllable's
+    #    marks into UTN #11 storage order. Correctly-written text passes
+    #    through byte-identical: the guard that protected "မေမေ" / "တွေကို" /
+    #    "နေတယ်" from the old unconditional 'ေ' swap lives on inside the
+    #    repair, which moves a 'ေ' only when it cannot belong to the
+    #    syllable in front of it.
+    t = repair_burmese_mark_order(t)
+    # 2. Normalize foreign homoglyphs and standard Myanmar orthography / spelling.
+    #    Runs after the repair so the spelling tables see canonical storage
+    #    order and match mis-typed input as well as clean input.
+    t = normalize_burmese_orthography(t)
+    # 3. Remove unwanted spaces before punctuation or dependent vowels
     t = re.sub(r'\s+([\u102B-\u103E\u104A\u104B])', r'\1', t)
-    # 5. Clean up multiple spaces
+    # 4. Clean up multiple spaces
     t = re.sub(r'[ \t]+', ' ', t).strip()
-    # 6. Fix common Myanmar spelling/Unicode stacking errors
-    # ြ (U+103C) must come before ျ (U+103B) if both present after same base
-    t = re.sub(r'(\u103B)(\u103C)', r'\2\1', t)
-    # Remove stray zero-width joiners/non-joiners that garble rendering
-    t = t.replace('\u200B', '').replace('\u200C', '').replace('\u200D', '')
     # Normalize double-Myanmar period (။။) → single (။)
     t = re.sub(r'(။)+', '။', t)
     # Normalize multiple Myanmar comma (၊၊) → single (၊)
@@ -3491,7 +3508,11 @@ class EdgeSmartSync:
                     lines_per_cue=lines_per_cue
                 )
                 if not sub_cues:
-                    sub_cues = [(raw_st, raw_en, txt)]
+                    # Single-cue fallback: the raw line never reached the
+                    # canonicalizing splitter, so canonicalize it here --
+                    # the SRT must not carry un-repaired mark order.
+                    fallback_txt = canonicalize_burmese_text(txt)
+                    sub_cues = [(raw_st, raw_en, fallback_txt)] if fallback_txt else []
                 for c_st, c_en, c_txt in sub_cues:
                     all_sub_cues.append((c_st, c_en, c_txt))
                     st_ms = max(0, int(round(c_st * 1000)))

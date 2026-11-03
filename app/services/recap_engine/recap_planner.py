@@ -18,9 +18,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 try:
-    from app.services.recap_engine.core import normalize_burmese_orthography
+    from app.services.recap_engine.core import (
+        canonicalize_burmese_text,
+        normalize_burmese_orthography,
+    )
 except ImportError:
-    from .core import normalize_burmese_orthography
+    from .core import canonicalize_burmese_text, normalize_burmese_orthography
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
@@ -442,7 +445,10 @@ def _sanitize_translation_text(value: Any) -> str:
     that exact wrapper appears, keep only the faithful translation inside it.
     """
     text = _clean(value)
-    text = normalize_burmese_orthography(text)
+    # Full canonicalization (mark-order repair + orthography), not just
+    # spelling: Gemini output reaches TTS and subtitles from here, and a
+    # mis-ordered syllable must not survive sanitizing.
+    text = canonicalize_burmese_text(text)
     match = re.fullmatch(
         r"\[\s*Unused filler adjustment skipped\s*[-–—:]\s*translated faithfully\s*:\s*(.*?)\s*\]",
         text,
@@ -451,7 +457,7 @@ def _sanitize_translation_text(value: Any) -> str:
     if match:
         inner = _clean(match.group(1))
         if inner:
-            return normalize_burmese_orthography(inner)
+            return canonicalize_burmese_text(inner)
     return text
 
 
@@ -1350,11 +1356,13 @@ def _enforce_style_and_gender_particles(text: str, *, style: str, is_female: boo
             cleaned = re.sub(r"ကျွန်တော်", "ကျွန်မ", cleaned)
         else:
             cleaned = re.sub(r"ကျွန်မ", "ကျွန်တော်", cleaned)
-    # Normalize common Myanmar writing errors in TTS text
+    # Normalize common Myanmar writing errors in TTS text. The full
+    # canonicalizer also repairs syllable mark order, so a line that
+    # leaves the planner is storage-ordered as well as spell-checked.
     cleaned = re.sub(r'(။)+', '။', cleaned)  # double-period
     cleaned = re.sub(r'(၊)+', '၊', cleaned)  # double-comma
     cleaned = cleaned.replace('\u200B', '').replace('\u200C', '').replace('\u200D', '')
-    cleaned = normalize_burmese_orthography(cleaned)
+    cleaned = canonicalize_burmese_text(cleaned)
     return _clean(cleaned)
 
 
