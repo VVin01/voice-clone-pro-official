@@ -141,9 +141,14 @@ def test_signed_tokens_fail_out_of_scope():
 
 def test_signed_token_expires():
     # Hand-mint a correctly-signed token whose expiry is in the past.
+    # Signing uses the derived subkey (HMAC of the bot token over the
+    # "stream-token-v1" label), matching _stream_signing_key().
     exp = int(time.time()) - 10
     msg = f"stream:{JOB_ID}:4242:video:{exp}".encode("utf-8")
-    sig = hmac.new(TEST_SECRET.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    signing_key = hmac.new(
+        TEST_SECRET.encode("utf-8"), b"stream-token-v1", hashlib.sha256
+    ).digest()
+    sig = hmac.new(signing_key, msg, hashlib.sha256).hexdigest()
     expired = f"4242.{exp}.{sig}"
     assert api_mod._verify_stream_token(expired, JOB_ID, "video") is None
 

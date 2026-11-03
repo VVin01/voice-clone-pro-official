@@ -116,8 +116,22 @@ async def get_current_user(
 _STREAM_TOKEN_TTL_SECONDS = 2 * 3600
 
 
+def _stream_signing_key() -> bytes:
+    """Dedicated signing key for stream tokens: HMAC-SHA256 with the
+    bot token as key over a fixed domain-separation label, so the raw
+    bot token itself is never the HMAC key of tokens handed out in
+    URLs. Returns b"" when no bot token is configured (signing off).
+    Deriving the key invalidated all previously minted tokens when
+    this shipped; their TTL is at most _STREAM_TOKEN_TTL_SECONDS, so
+    no migration was needed."""
+    bot_token = (settings.bot_token or "").encode("utf-8")
+    if not bot_token:
+        return b""
+    return hmac.new(bot_token, b"stream-token-v1", hashlib.sha256).digest()
+
+
 def _make_stream_token(job_id: str, user_id: int, file_type: str) -> Optional[str]:
-    secret = (settings.bot_token or "").encode("utf-8")
+    secret = _stream_signing_key()
     if not secret:
         return None
     exp = int(time.time()) + _STREAM_TOKEN_TTL_SECONDS
@@ -127,7 +141,7 @@ def _make_stream_token(job_id: str, user_id: int, file_type: str) -> Optional[st
 
 
 def _verify_stream_token(token: str, job_id: str, file_type: str) -> Optional[int]:
-    secret = (settings.bot_token or "").encode("utf-8")
+    secret = _stream_signing_key()
     if not secret or not token:
         return None
     try:
@@ -3703,7 +3717,7 @@ async def _send_recap_telegram_delivery(
                 await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
             else:
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                app_url = settings.mini_app_url
                 v_parent = Path(video_path).parent.name
                 v_grand = Path(video_path).parent.parent.name
                 jid = v_parent if v_parent.startswith("rc_") else (v_grand if v_grand.startswith("rc_") else Path(video_path).stem)
@@ -4385,7 +4399,7 @@ async def _execute_recap_background_job(
                 from aiogram.client.default import DefaultBotProperties
                 from aiogram.enums import ParseMode
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                app_url = settings.mini_app_url
                 clean_title = _clean_recap_display_title(entry.get("title"), req.url)
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
