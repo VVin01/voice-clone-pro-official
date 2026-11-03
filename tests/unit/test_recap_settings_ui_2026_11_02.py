@@ -126,5 +126,5 @@ def test_rs7_mirror_single_label():
 
 
 def test_cache_buster_bumped_for_settings_ui():
-    assert HTML.count("?v=20261103_r41") == 3
+    assert HTML.count("?v=20261103_r42") == 3
     assert "?v=20261102_rr1" not in HTML

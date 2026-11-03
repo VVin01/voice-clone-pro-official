@@ -46,7 +46,7 @@ def _gemini_select_options() -> list[tuple[str, str]]:
     m = re.search(r'<select id="recap-gemini-voice-select"[^>]*>(.*?)</select>', html, re.S)
     assert m, "recap-gemini-voice-select not found in index.html"
     return [(value, label.strip()) for value, label in
-            re.findall(r'<option value="([^"]*)">([^<]*)</option>', m.group(1))]
+            re.findall(r'<option value="([^"]*)"[^>]*>([^<]*)</option>', m.group(1))]
 
 
 # ── 1. Dropdown completeness + labels ────────────────────────────────

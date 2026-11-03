@@ -1156,7 +1156,7 @@ function showFloatingAlert(title, message, actionCallback, actionText) {
     if (descEl) descEl.innerText = message;
 
     if (actionCallback && actionBtn) {
-        actionBtn.innerText = actionText || (currentLang === "my" ? "ကြည့်ရှုမည်" : "View Result");
+        actionBtn.innerText = actionText || t("alert_btn_view_result");
         actionBtn.style.display = "inline-flex";
         actionBtn.onclick = () => {
             closeFloatingAlert();
@@ -1390,13 +1390,9 @@ async function loadUserProfile() {
         const recapLimitText = document.getElementById("recap-tier-limit-text");
         if (recapLimitText) {
             if (data.is_vip) {
-                recapLimitText.innerText = (currentLang === "my")
-                    ? "🎬 VIP အဖွဲ့ဝင်: ဗီဒီယိုကြာချိန် ၁၀ မိနစ်အထိ • Watermark ကင်းလွတ်ခွင့် ရရှိထားပါသည် ✨"
-                    : "🎬 VIP Member: Up to 10 Minutes per Recap • Watermark-Free Output ✨";
+                recapLimitText.innerText = t("recap_tier_vip_text");
             } else {
-                recapLimitText.innerText = (currentLang === "my")
-                    ? "🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP ရယူပါက Watermark မပါဝင်ပါ"
-                    : "🎬 Free Creator: Max 2 Minutes (Watermark Included) • Upgrade to VIP for Watermark-Free";
+                recapLimitText.innerText = t("recap_tier_free_text");
             }
         }
 
@@ -1479,7 +1475,7 @@ function renderCuratedVoices() {
             <div class="persona-footer-row">
                 <button type="button" class="voice-preview-btn" onclick="event.stopPropagation(); playVoicePreview('${v.id}', this)">
                     <span class="preview-btn-icon">▶️</span>
-                    <span class="preview-btn-label">${t("preview_voice") || "နမူနာ နားထောင်မည်"}</span>
+                    <span class="preview-btn-label">${t("preview_voice")}</span>
                 </button>
             </div>
         `;
@@ -1587,7 +1583,7 @@ function stopCurrentVoicePreview() {
         if (icon) icon.innerText = currentPreviewButton.classList.contains("preview-recap-voice-btn") ? "🔊" : "▶️";
         const label = currentPreviewButton.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
         if (label) {
-            label.innerText = currentPreviewButton.classList.contains("mini") ? (t("preview_voice") || "နမူနာ") : (t("btn_preview_voice") || "နမူနာ နားထောင်မည်");
+            label.innerText = currentPreviewButton.classList.contains("mini") ? t("preview_voice") : t("btn_preview_voice");
         }
         currentPreviewButton = null;
     }
@@ -1638,7 +1634,7 @@ async function playVoicePreview(voiceId, buttonEl) {
         const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
         if (icon) icon.innerText = "⏸️";
         const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
-        if (label) label.innerText = t("preview_playing") || "ဖွင့်နေသည်...";
+        if (label) label.innerText = t("preview_playing");
     }
 
     audio.play().catch(e => {
@@ -1717,7 +1713,7 @@ async function playGeminiVoicePreview(voiceName, buttonEl) {
         const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
         if (icon) icon.innerText = "⏸️";
         const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
-        if (label) label.innerText = t("preview_playing") || "ဖွင့်နေသည်...";
+        if (label) label.innerText = t("preview_playing");
     }
 
     audio.play().catch(e => {
@@ -2390,9 +2386,9 @@ async function handleVoiceGenerate() {
     if (text.length > maxChars) {
         showStudioToast(tf("text_too_long", {
             len: text.length,
-            tier: state.user?.is_vip ? "VIP" : (currentLang === "my" ? "အခမဲ့ (Free)" : "Free"),
+            tier: state.user?.is_vip ? "VIP" : t("tier_free_label"),
             max: maxChars,
-            vip_note: state.user?.is_vip ? "" : (currentLang === "my" ? " ကန့်သတ်ချက်မရှိ (စာလုံးရေ ၅၀၀၀ အထိ) အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" : " Upgrade to VIP for up to 5000 characters with no limit."),
+            vip_note: state.user?.is_vip ? "" : t("text_too_long_vip_note"),
         }), 'warning');
         return;
     }
@@ -2877,9 +2873,7 @@ function setupRecapVisualEditor() {
             } else if (isOverLimit) {
                 durSpan.className = "mini-tag text-danger";
                 const maxM = Math.floor(maxAllowed / 60);
-                const msg = (currentLang === "my")
-                    ? (state.user?.is_vip ? `အများဆုံး ${maxM} မိနစ်ထက် ကျော်လွန်နေပါသည်` : `အများဆုံး ၂ မိနစ်ထက် ကျော်လွန်နေပါသည် (VIP ရယူပါ)`)
-                    : (state.user?.is_vip ? `Exceeds max ${maxM}m` : `Exceeds Free 2m limit (Upgrade to VIP)`);
+                const msg = state.user?.is_vip ? tf("recap_over_max_vip", { max: maxM }) : t("recap_over_max_free");
                 durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${msg})</span>`;
             } else {
                 durSpan.className = "mini-tag";
@@ -3190,11 +3184,11 @@ function setupRecapVisualEditor() {
             if (isOverLimit) {
                 durSpan.className = "mini-tag text-danger";
                 const maxM = Math.floor(maxAllowed / 60);
-                const tierLabel = state.user?.is_vip ? "VIP" : "အခမဲ့ (Free)";
+                const tierLabel = state.user?.is_vip ? "VIP" : t("tier_free_label");
                 const durM = Math.floor(data.duration_seconds / 60);
                 const durS = Math.floor(data.duration_seconds % 60);
                 const durStr = `${durM}:${durS < 10 ? '0' : ''}${durS}`;
-                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${tierLabel} ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်)</span>`;
+                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${tf("recap_over_limit_label", { tier: tierLabel })})</span>`;
                 if (btnStartRecap) {
                     btnStartRecap.disabled = true;
                     btnStartRecap.style.opacity = "0.5";
@@ -5179,7 +5173,7 @@ async function handleStartRecap() {
         && !state.user?.is_vip && !state.user?.is_admin) {
         const m = Math.floor(maxRecapSec / 60);
         showStudioToast(tf("toast_recap_over_limit", {
-            tier: state.user?.is_vip ? "VIP" : (currentLang === "my" ? "အခမဲ့ (Free)" : "Free"),
+            tier: state.user?.is_vip ? "VIP" : t("tier_free_label"),
             m,
             hint: t(state.user?.is_vip ? "toast_recap_over_hint_vip" : "toast_recap_over_hint_free"),
         }), 'warning', 6000);
@@ -5223,18 +5217,16 @@ async function handleStartRecap() {
     // R40 deck F-1/F-2: the first status/ETA lines named the vendor
     // engine ("Groq Cloud Whisper Turbo", "Groq Turbo Engine + 1080p
     // Cinema Compositing") — vendor names out, structure kept.
-    if (statusMsg) statusMsg.innerText = (state.lang === "my"
-        ? "🎙️ [1/4] မူရင်း အသံကို စာသား ပြောင်းနေပါသည်…"
-        : "🎙️ [1/4] Converting the original audio to text…");
+    if (statusMsg) statusMsg.innerText = t("recap_stage1_status");
 
     let estMinutes = "၁.၅ - ၂.၅";
     if (state.recapSourceDuration && state.recapSourceDuration > 180) {
         estMinutes = "၃ - ၄";
     }
     if (stepText) {
-        stepText.innerText = (state.lang === "my"
-            ? `⏳ ခန့်မှန်းကြာချိန်: ~${estMinutes} မိနစ်`
-            : `⏳ Estimated time: ~${estMinutes.replace("၁.၅ - ၂.၅", "1.5 - 2.5").replace("၃ - ၄", "3 - 4")} min`);
+        stepText.innerText = tf("recap_eta_estimate", {
+            min: currentLang === "my" ? estMinutes : estMinutes.replace("၁.၅ - ၂.၅", "1.5 - 2.5").replace("၃ - ၄", "3 - 4"),
+        });
     }
 
     try {
@@ -6510,7 +6502,7 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             } else {
                 buttons += dis("📥 Download WAV / MP3");
             }
-            buttons += dis("↗️ Browser Tab တွင်ဖွင့်မည်");
+            buttons += dis(t("dl_open_in_browser_tab"));
         } else if (jobType === "RECAP") {
             if (deliverables.video) {
                 buttons += `<a href="#" data-dl-url="${deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", title, jobId)}" class="mini-chip gold">🎬 Download Video</a>`;
@@ -6531,7 +6523,7 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             }
         }
         if (mediaAvailable && downloadUrl) {
-            buttons += `<a href="#" data-open-url="${downloadUrl}" class="mini-chip" style="opacity: 0.85;">↗️ Browser Tab တွင်ဖွင့်မည်</a>`;
+            buttons += `<a href="#" data-open-url="${downloadUrl}" class="mini-chip" style="opacity: 0.85;">${t("dl_open_in_browser_tab")}</a>`;
         }
         delivEl.innerHTML = buttons;
     }
@@ -6583,13 +6575,13 @@ function mediaGonePanelHtml(jobId) {
     return `
         <div class="admin-media-err-banner mt-3 p-3 text-center" style="border-radius: 12px; border: 1px solid rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08);">
             <div style="font-size: 1.6rem; margin-bottom: 4px;">⌛</div>
-            <strong style="color: #fca5a5; font-size: 13px;">အသံ/ဗီဒီယို ဖိုင် မတွေ့တော့ပါ (File No Longer Available)</strong>
+            <strong style="color: #fca5a5; font-size: 13px;">${t("admin_media_gone_title")}</strong>
             <p class="text-xs text-muted mt-1" style="line-height: 1.5;">
-                ထုတ်လုပ်ထားသော ဖိုင်များကို ဆာဗာပေါ်တွင် ၇ ရက်အထိ သိမ်းဆည်းပေးထားပြီး၊ သက်တမ်းကျော်လွန်ပါက အလိုအလျောက် ဖျက်သိမ်းပါသည်။ ဤဖိုင်ကို ပြန်လိုချင်ပါက Regenerate နှိပ်ပါ — အလုပ်ကို အသစ် ပြန်လည် ထုတ်လုပ်ပေးပါမည်။
+                ${t("admin_media_gone_desc")}
             </p>
             <div class="mt-2" style="display: flex; gap: 8px; justify-content: center;">
                 <button class="btn mini-btn secondary-btn" onclick="closeAdminMediaModal(); adminRetryJob('${jobId}');">
-                    🔄 ပြန်လည် ထုတ်လုပ်မည် (Regenerate / Retry)
+                    ${t("admin_media_gone_regen")}
                 </button>
             </div>
         </div>
@@ -6621,7 +6613,7 @@ function handleAdminMediaLoaded(mediaEl) {
         }
         const m = Math.floor(mediaEl.duration / 60);
         const s = Math.floor(mediaEl.duration % 60);
-        durDiv.innerText = `⏱️ အသံဖိုင် ကြာချိန်: ${m}:${s < 10 ? '0' : ''}${s} (${Math.round(mediaEl.duration)} စက္ကန့်)`;
+        durDiv.innerText = tf("admin_media_duration_badge", { time: `${m}:${s < 10 ? '0' : ''}${s}`, sec: Math.round(mediaEl.duration) });
     }
 }
 
@@ -7447,7 +7439,7 @@ async function adminRetryJob(jobId) {
 
     if (retryBtn) {
         retryBtn.disabled = true;
-        retryBtn.innerText = "⏳ စတင်နေဆဲ...";
+        retryBtn.innerText = t("admin_retry_starting");
     }
     if (itemEl) {
         itemEl.className = "history-item border-running-dim";
@@ -7460,7 +7452,7 @@ async function adminRetryJob(jobId) {
     if (statusBox) {
         statusBox.innerHTML = `
             <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
-                ⏳ <strong>Queue ထဲသို့ ထည့်သွင်းပြီး စတင်လုပ်ဆောင်နေပါပြီ...</strong>
+                ⏳ <strong>${t("admin_retry_queued_note")}</strong>
             </div>
         `;
     }
@@ -7565,7 +7557,7 @@ function pollAdminJobProgress(jobId) {
                     badge.innerText = data.status;
                 }
                 if (statusBox) {
-                    let label = data.progress_label || (data.status === "QUEUED" ? "တန်းစီဇယားထဲတွင် စောင့်ဆိုင်းနေပါသည်..." : "လုပ်ဆောင်နေဆဲ...");
+                    let label = data.progress_label || (data.status === "QUEUED" ? t("admin_retry_status_waiting") : t("admin_retry_status_running"));
                     const step = data.progress_step ? `[${data.progress_step}] ` : '';
                     const pct = data.progress_percent || (data.status === "RUNNING" ? 50 : 10);
                     statusBox.innerHTML = `
@@ -7586,7 +7578,7 @@ function pollAdminJobProgress(jobId) {
                 if (statusBox) {
                     statusBox.innerHTML = `
                         <div class="text-xs mt-1 p-2" style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; color: #34d399;">
-                            🎉 <strong>အလုပ်ပြီးမြောက်ပါပြီ! (100%)</strong>
+                            🎉 <strong>${t("admin_retry_status_done")}</strong>
                         </div>
                     `;
                 }
