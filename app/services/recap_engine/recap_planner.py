@@ -27,6 +27,25 @@ try:
 except ImportError:
     from .core import PROBE_TIMEOUT_SECONDS, canonicalize_burmese_text, ffmpeg_timeout, normalize_burmese_orthography
 
+# Audit fix E: shared Gemini pool construction + cross-job key cooldown
+# memory. Defensive import: this planner is also loaded standalone by
+# recap_pipeline (its own dir on sys.path), where the app package may
+# not resolve — then the pool falls back to the local construction in
+# _collect_gemini_key_pool and no cooldown memory is kept.
+try:
+    from app.services import key_rotation as _key_rotation
+except Exception:  # pragma: no cover - standalone load
+    try:
+        _kr_spec = importlib.util.spec_from_file_location(
+            "key_rotation", Path(__file__).resolve().parents[1] / "key_rotation.py"
+        )
+        if _kr_spec is None or _kr_spec.loader is None:
+            raise ImportError("key_rotation spec unavailable")
+        _key_rotation = importlib.util.module_from_spec(_kr_spec)
+        _kr_spec.loader.exec_module(_key_rotation)
+    except Exception:
+        _key_rotation = None  # type: ignore[assignment]
+
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
 PLANNER_MODE = "timestamp_translation_en_to_mm_narrator_v3"
@@ -146,6 +165,61 @@ def _gemini_key_pool_message(pool_size: int, model_count: int) -> str:
     )
 
 
+def _collect_gemini_key_pool(env: dict) -> list[tuple[str, str]]:
+    """Gemini key pool for one job: the shared UNION of every source
+    (audit fix E — app.services.key_rotation.collect_gemini_key_pool,
+    also used by the Gemini TTS engine and the group admin).
+
+    The local fallback below is this planner's original inline
+    construction, kept for standalone loads where the shared module is
+    unavailable; order and dedupe semantics are identical.
+    """
+    if _key_rotation is not None:
+        return _key_rotation.collect_gemini_key_pool(env)
+
+    key_pool: list[tuple[str, str]] = []
+    seen_keys: set[str] = set()
+
+    # 1. Every GEMINI_IMAGE_PROJECT_<N>_KEY in numeric order
+    numbers = sorted(
+        int(m.group(1)) for m in (re.fullmatch(r"GEMINI_IMAGE_PROJECT_(\d+)_KEY", str(k or "").strip())
+                                  for k in env) if m)
+    for number in numbers:
+        label = f"GEMINI_IMAGE_PROJECT_{number}_KEY"
+        key = str(env.get(label) or "").strip()
+        if key and key not in seen_keys:
+            key_pool.append((label, key))
+            seen_keys.add(key)
+
+    # 2. Every GEMINI_API_KEY_<N> in numeric order
+    key_numbers = sorted(
+        int(m.group(1)) for m in (re.fullmatch(r"GEMINI_API_KEY_(\d+)", str(k or "").strip())
+                              for k in env) if m)
+    for number in key_numbers:
+        label = f"GEMINI_API_KEY_{number}"
+        key = str(env.get(label) or "").strip()
+        if key and key not in seen_keys:
+            key_pool.append((label, key))
+            seen_keys.add(key)
+
+    # 3. Comma-separated GEMINI_API_KEYS
+    csv_keys = str(env.get("GEMINI_API_KEYS") or "").strip()
+    if csv_keys:
+        for idx, raw_k in enumerate(csv_keys.split(",")):
+            k_clean = raw_k.strip()
+            if k_clean and k_clean not in seen_keys:
+                key_pool.append((f"GEMINI_API_KEYS[{idx+1}]", k_clean))
+                seen_keys.add(k_clean)
+
+    # 4. Standard single GEMINI_API_KEY fallback
+    single_key = str(env.get("GEMINI_API_KEY") or "").strip()
+    if single_key and single_key not in seen_keys:
+        key_pool.append(("GEMINI_API_KEY", single_key))
+        seen_keys.add(single_key)
+
+    return key_pool
+
+
 def _configure_gemini_key_pool(
     ai: Any,
     key_pool: list[tuple[str, str]],
@@ -165,6 +239,20 @@ def _configure_gemini_key_pool(
     """
     if not key_pool:
         return
+
+    # Audit fix E: keys cooled down by quota/auth failures in earlier
+    # jobs start LAST for this job. Relative order is preserved and the
+    # pool never shrinks, so the model/key fallback chain below (and
+    # the env sync in activate()) behaves exactly as before — the
+    # cooldown only changes which key a job starts from.
+    if _key_rotation is not None:
+        try:
+            _ordered = _key_rotation.health_for("gemini").prioritized([key for _label, key in key_pool])
+            if _ordered != [key for _label, key in key_pool]:
+                _rank = {key: idx for idx, key in enumerate(_ordered)}
+                key_pool = sorted(key_pool, key=lambda item: _rank[item[1]])
+        except Exception:
+            pass
 
     try:
         from app.config import settings
@@ -240,7 +328,18 @@ def _configure_gemini_key_pool(
     # Replace the AIService client before the first planner request.
     activate(0, 0)
 
+    def _cool_current_key() -> None:
+        # Audit fix E: remember the key being abandoned for a quota/auth
+        # rejection across jobs, so the next job deprioritizes it until
+        # the cooldown expires instead of re-trying it first.
+        if _key_rotation is not None:
+            try:
+                _key_rotation.health_for("gemini").mark_failure(key_pool[key_index][1])
+            except Exception:
+                pass
+
     def rotate_key() -> bool:
+        _cool_current_key()
         next_key = key_index + 1
         if next_key >= len(key_pool):
             return False
@@ -256,6 +355,7 @@ def _configure_gemini_key_pool(
         return True
 
     def advance_after_key_pool() -> bool:
+        _cool_current_key()
         return advance_model("key pool exhausted")
 
     ai._recap_active_key_label = key_pool[0][0]
@@ -2041,45 +2141,10 @@ class RecapPlanBuilder:
             if v and k_clean not in merged_env:
                 merged_env[k_clean] = str(v).strip()
 
-        key_pool: list[tuple[str, str]] = []
-        seen_keys: set[str] = set()
-
-        # 1. Every GEMINI_IMAGE_PROJECT_<N>_KEY in numeric order
-        numbers = sorted(
-            int(m.group(1)) for m in (re.fullmatch(r"GEMINI_IMAGE_PROJECT_(\d+)_KEY", str(k or "").strip())
-                                      for k in merged_env) if m)
-        for number in numbers:
-            label = f"GEMINI_IMAGE_PROJECT_{number}_KEY"
-            key = str(merged_env.get(label) or "").strip()
-            if key and key not in seen_keys:
-                key_pool.append((label, key))
-                seen_keys.add(key)
-
-        # 2. Every GEMINI_API_KEY_<N> in numeric order
-        key_numbers = sorted(
-            int(m.group(1)) for m in (re.fullmatch(r"GEMINI_API_KEY_(\d+)", str(k or "").strip())
-                                      for k in merged_env) if m)
-        for number in key_numbers:
-            label = f"GEMINI_API_KEY_{number}"
-            key = str(merged_env.get(label) or "").strip()
-            if key and key not in seen_keys:
-                key_pool.append((label, key))
-                seen_keys.add(key)
-
-        # 3. Comma-separated GEMINI_API_KEYS
-        csv_keys = str(merged_env.get("GEMINI_API_KEYS") or "").strip()
-        if csv_keys:
-            for idx, raw_k in enumerate(csv_keys.split(",")):
-                k_clean = raw_k.strip()
-                if k_clean and k_clean not in seen_keys:
-                    key_pool.append((f"GEMINI_API_KEYS[{idx+1}]", k_clean))
-                    seen_keys.add(k_clean)
-
-        # 4. Standard single GEMINI_API_KEY fallback
-        single_key = str(merged_env.get("GEMINI_API_KEY") or "").strip()
-        if single_key and single_key not in seen_keys:
-            key_pool.append(("GEMINI_API_KEY", single_key))
-            seen_keys.add(single_key)
+        # Audit fix E: the shared union pool (planner/TTS/group admin
+        # all resolve the same keys now); semantics identical to the
+        # inline construction this replaces.
+        key_pool = _collect_gemini_key_pool(merged_env)
 
         if not key_pool:
             raise RuntimeError(

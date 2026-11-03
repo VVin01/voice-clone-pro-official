@@ -88,6 +88,32 @@ DEFAULT_BURMESE_CONTROL = (
 )
 
 
+# Audit fix E (2026-11-03): markers of an HF/Gradio error that blames
+# the TOKEN itself (revoked, invalid, or lacking access) rather than
+# the space or the account's quota. Quota-class failures already cool a
+# token down for 30 minutes; auth failures previously never did, so a
+# dead token stayed in the healthy rotation and burned one failover
+# attempt on every synthesis forever.
+_HF_TOKEN_AUTH_MARKERS = (
+    "unauthorized",
+    "invalid token",
+    "invalid_token",
+    "token_invalid",
+    "invalid credentials",
+    "authentication failed",
+    "not authorized",
+    "forbidden",
+)
+
+
+def _is_hf_token_auth_failure(error_text: str) -> bool:
+    """True when an error says the HF token itself was rejected (401/403)."""
+    text = str(error_text or "").lower()
+    if any(marker in text for marker in _HF_TOKEN_AUTH_MARKERS):
+        return True
+    return bool(re.search(r"\b(?:401|403)\b", text))
+
+
 def mask_hf_token(tok: Optional[str]) -> str:
     """Safely format HF token for logging."""
     if not tok:
@@ -580,6 +606,13 @@ class VoxCPMEngine:
                     if "180s requested" not in err_lower:
                         self._token_cooldowns[active_token] = time.time() + 1800
                     self._log(f"⚠️ Token {tok_masked} hit ZeroGPU quota on '{space_name}'; rotating...")
+                elif active_token and _is_hf_token_auth_failure(err_lower):
+                    # Audit fix E: a revoked/invalid token gets the same
+                    # 30-minute cooldown as a quota-dead one — otherwise
+                    # it stays in rotation and fails one pair-attempt per
+                    # synthesis indefinitely.
+                    self._token_cooldowns[active_token] = time.time() + 1800
+                    self._log(f"⚠️ Token {tok_masked} rejected as invalid/unauthorized on '{space_name}'; cooling down for 30m...")
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {e_pair}")
                 time.sleep(0.5)
 

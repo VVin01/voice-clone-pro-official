@@ -47,6 +47,11 @@ import time
 from collections import OrderedDict
 from typing import Any, Callable
 
+# Audit fix E: the Gemini pool + its cross-job cooldown memory live in
+# one shared module now (also used by the recap planner and the
+# Gemini TTS engine).
+from app.services import key_rotation as _key_rotation
+
 logger = logging.getLogger(__name__)
 
 # The one and only chat this feature serves ("Voice Clone Pro
@@ -674,37 +679,13 @@ def collect_gemini_key_pool(env: dict | None = None) -> list[tuple[str, str]]:
     3. GEMINI_API_KEYS (comma-separated)
     4. GEMINI_API_KEY
     Deduped; labels never contain key material.
+
+    Audit fix E: delegates to the ONE shared pool builder
+    (app.services.key_rotation) — this module's original implementation
+    moved there so the planner, TTS engine and group admin can never
+    drift apart again.
     """
-    merged = env if env is not None else os.environ
-    pool: list[tuple[str, str]] = []
-    seen: set[str] = set()
-
-    def add(label: str, value: Any) -> None:
-        key = str(value or "").strip()
-        if key and key not in seen:
-            pool.append((label, key))
-            seen.add(key)
-
-    project_nums = sorted(
-        int(m.group(1))
-        for m in (re.fullmatch(r"GEMINI_IMAGE_PROJECT_(\d+)_KEY", str(k or "").strip()) for k in merged)
-        if m
-    )
-    for n in project_nums:
-        add(f"GEMINI_IMAGE_PROJECT_{n}_KEY", merged.get(f"GEMINI_IMAGE_PROJECT_{n}_KEY"))
-    key_nums = sorted(
-        int(m.group(1))
-        for m in (re.fullmatch(r"GEMINI_API_KEY_(\d+)", str(k or "").strip()) for k in merged)
-        if m
-    )
-    for n in key_nums:
-        add(f"GEMINI_API_KEY_{n}", merged.get(f"GEMINI_API_KEY_{n}"))
-    csv_keys = str(merged.get("GEMINI_API_KEYS") or "").strip()
-    if csv_keys:
-        for idx, raw_k in enumerate(csv_keys.split(",")):
-            add(f"GEMINI_API_KEYS[{idx + 1}]", raw_k)
-    add("GEMINI_API_KEY", merged.get("GEMINI_API_KEY"))
-    return pool
+    return _key_rotation.collect_gemini_key_pool(env)
 
 
 def gemini_model_chain() -> list[str]:
@@ -741,6 +722,14 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
     pool = collect_gemini_key_pool()
     if not pool:
         raise RuntimeError("group_ai_admin: no Gemini key configured")
+    # Audit fix E: share the recap planner's cross-job cooldown memory
+    # (same text models, same keys) — cooled keys start last, and a
+    # quota/auth rejection here cools the key for the next caller too.
+    health = _key_rotation.health_for("gemini")
+    ordered = health.prioritized([key for _label, key in pool])
+    if ordered != [key for _label, key in pool]:
+        rank = {key: idx for idx, key in enumerate(ordered)}
+        pool = sorted(pool, key=lambda item: rank[item[1]])
     models = gemini_model_chain()
     last_exc: Exception | None = None
     for label, key in pool:
@@ -754,6 +743,7 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
                 response = client.models.generate_content(model=model, contents=prompt)
                 text = str(getattr(response, "text", "") or "").strip()
                 if text:
+                    health.mark_success(key)
                     return text
                 last_exc = RuntimeError(f"empty response from {model}")
             except Exception as exc:
@@ -761,6 +751,7 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
                 low = str(exc).lower()
                 # Auth/quota rejection: this key is done — next key.
                 if any(marker in low for marker in ("api_key", "api key", "quota", "429", "permission", "unauthenticated")):
+                    health.mark_failure(key)
                     break
                 # Model-level problem: try the next model on this key.
                 continue
