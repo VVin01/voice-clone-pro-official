@@ -540,7 +540,13 @@ async def test_admin_worker_failure_no_refund_event(db_session, tmp_path):
         assert success is False
 
     assert job.status == JobStatus.FAILED.value
-    assert "TTS engine crashed" in job.error_message
+    # Audit fix 2026-11-03: job.error_message stores the curated
+    # user-facing engine-failure message, never the raw exception
+    # text (the raw text stays in the worker logs only).
+    from app.services.i18n import t
+
+    assert "TTS engine crashed" not in job.error_message
+    assert job.error_message == t("worker_error_engine_failure", "my")
 
     # Ensure no ledger events whatsoever
     events = (

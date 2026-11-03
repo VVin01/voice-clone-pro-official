@@ -266,7 +266,11 @@ def test_classifier_non_source_errors_still_none():
 
 
 def test_recap_failure_path_classifies_before_store_and_notify():
-    assert "display_err = classify_source_error(str(e), req.url) or str(e)" in API_PY
+    # Audit fix 2026-11-03: the fallback is default-deny now — an
+    # unclassified error becomes the generic Burmese technical
+    # message, never the raw str(e) this pin used to require.
+    assert "display_err = classify_source_error(str(e), req.url) or (" in API_PY
+    assert "နည်းပညာဆိုင်ရာ အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့ပါသည်" in API_PY
     assert 'entry["error_message"] = display_err' in API_PY
     assert "error_message=display_err" in API_PY
     assert "err_short = html.escape(display_err[:180])" in API_PY

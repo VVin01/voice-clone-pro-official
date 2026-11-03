@@ -12,13 +12,53 @@ from app.services.models import get_authorized_model
 
 logger = logging.getLogger(__name__)
 
-# Deliberately FAST upper-bound speaking rate for the F6 submit
-# pre-check below. Measured Myanmar TTS output runs ~10-14 chars/sec,
-# so 20 chars/sec UNDER-estimates the real duration in virtually every
-# case: a job rejected by the pre-check was guaranteed to fail at
-# post-generation charge time. Borderline jobs still pass, and
-# consume_seconds remains the billing source of truth.
-ESTIMATED_MAX_CHARS_PER_SECOND = 20.0
+# Submit-time duration estimate for the F6 pre-check below.
+#
+# The old version divided by a flat 20 chars/sec and ignored the
+# speed preset entirely. Worker-side production measurements (see
+# _implausible_audio_reason in app/worker.py) put the primary engine
+# at ≈17.6 chars/sec, so the 20 chars/sec divisor UNDER-estimated
+# real durations by ~14% before the preset was even considered:
+# jobs whose text "fit" a 180s balance at submit went on to produce
+# 197s / 209s of audio and failed at post-generation charge time —
+# after a full synthesis, with nothing delivered (production errors
+# "Insufficient balance: requested 197s / 209s, available 180s",
+# 2026-11-03). The estimate now starts from the measured rate,
+# scales it by the job's speed-preset factor, and adds a 15% safety
+# margin, so a job that cannot fit the balance is rejected at submit
+# with the same mapped insufficient-balance detail. consume_seconds
+# remains the billing source of truth.
+MEASURED_CHARS_PER_SECOND = 17.6
+PRE_CHECK_SAFETY_MARGIN = 1.15
+
+
+def speed_preset_factor(speed_preset) -> float:
+    """Pace multiplier for a speed preset (1.0 = normal speed).
+
+    Mirrors the preset semantics the worker already applies when
+    sanity-checking produced audio: "fast" / "1.2x" speaks ~1.2x
+    faster (shorter audio), "slow" / "0.8x" ~0.8x (longer audio); a
+    numeric preset is the factor itself, clamped to the range the
+    engines honour.
+    """
+    if isinstance(speed_preset, (int, float)):
+        return min(1.5, max(0.7, float(speed_preset)))
+    sp = str(speed_preset or "normal").strip().lower()
+    if sp in ("fast", "1.2x", "1.2"):
+        return 1.2
+    if sp in ("slow", "0.8x", "0.8"):
+        return 0.8
+    return 1.0
+
+
+def estimate_voice_job_seconds(text: str, speed_preset="normal") -> float:
+    """Estimated spoken duration (seconds) for a voice job's text,
+    including the pre-check safety margin."""
+    chars = len((text or "").strip())
+    if chars <= 0:
+        return 0.0
+    rate = MEASURED_CHARS_PER_SECOND * speed_preset_factor(speed_preset)
+    return chars / rate * PRE_CHECK_SAFETY_MARGIN
 
 
 async def get_queue_position(session: AsyncSession, job_id: str) -> int:
@@ -183,11 +223,13 @@ async def create_voice_clone_job(
         # whose text plainly cannot fit the balance therefore burned a
         # full GPU generation, produced unusable output, and failed
         # with nothing delivered. Reject those up front with the same
-        # mapped insufficient-balance detail; the estimate uses the
-        # deliberately-fast rate above so only guaranteed-waste jobs
-        # are stopped.
+        # mapped insufficient-balance detail. The estimate uses the
+        # production-measured speaking rate scaled by the job's speed
+        # preset plus a safety margin (see estimate_voice_job_seconds),
+        # so the jobs stopped here are the ones that would actually
+        # have failed at charge time.
         if valid_text:
-            estimated_seconds = len(valid_text) / ESTIMATED_MAX_CHARS_PER_SECOND
+            estimated_seconds = estimate_voice_job_seconds(valid_text, speed_preset)
             if estimated_seconds > balance.total_usable_seconds:
                 logger.info(
                     "Voice job pre-check rejected for user %s: ~%ss estimated vs %ss usable",

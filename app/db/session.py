@@ -24,11 +24,31 @@ def set_sqlite_pragma(dbapi_connection, connection_record=None) -> None:
     cursor.close()
 
 
+# Explicit pool sizing (audit fix 2026-11-03): the SQLAlchemy
+# defaults (pool_size=5, max_overflow=10) exhausted in production —
+# "QueuePool limit of size 5 overflow 10 reached" timeouts turned
+# status polls into 30s hangs and 500s. pool_pre_ping discards
+# connections the server already closed (Supabase/PgBouncer idle
+# drops) instead of failing the first query that reuses them, and
+# pool_recycle bounds connection age. In-memory SQLite uses a
+# singleton StaticPool that rejects these arguments, hence the
+# carve-out; file SQLite and Postgres both take the QueuePool path.
+_pool_kwargs: dict = {}
+if ":memory:" not in settings.database_url:
+    _pool_kwargs = {
+        "pool_size": settings.db_pool_size,
+        "max_overflow": settings.db_max_overflow,
+        "pool_timeout": settings.db_pool_timeout,
+        "pool_recycle": settings.db_pool_recycle,
+        "pool_pre_ping": True,
+    }
+
 engine = create_async_engine(
     settings.database_url,
     echo=False,
     connect_args=connect_args,
     future=True,
+    **_pool_kwargs,
 )
 
 if settings.database_url.startswith("sqlite"):

@@ -60,7 +60,7 @@ def probe_local_media(file_path: str) -> Dict[str, Any]:
             "-show_format", "-show_streams",
             file_path
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
         if res.returncode == 0 and res.stdout:
             data = json.loads(res.stdout)
             fmt = data.get("format", {})
@@ -371,7 +371,7 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
             "ဖြစ်နေခြင်း ဖြစ်နိုင်ပါသည်။ လင့်ခ် မှန်မမှန် ပြန်စစ်ပါ။ "
             "ဗီဒီယို ရှိနေသေးရင် ဖိုင်ကို တိုက်ရိုက် တင်၍ စမ်းကြည့်ပါ ခင်ဗျာ။"
         )
-    if "failed to extract" in low:
+    if "failed to extract" in low or "unable to extract" in low:
         # Generic yt-dlp extraction failure — canonically YouTube's
         # "Failed to extract any player response; please report this
         # issue on https://github.com/yt-dlp/yt-dlp/issues …". The raw
@@ -380,7 +380,18 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
         # 2026-11-02). The user meaning is the blocked family's: the
         # source would not let our server extract this item, so it
         # shares that copy (and its upload guidance) exactly.
+        # "Unable to extract …" is the same failure in the wording
+        # other extractors use (audit fix 2026-11-03).
         return f"⚠️ {subj} က ကျွန်တော်တို့ ဆာဗာမှ ဗီဒီယို ဆွဲယူခြင်းကို ပိတ်ထားပါသည်။ " + upload_hint
+    if "http error 429" in low or "too many requests" in low:
+        # Rate limited by the source (audit fix 2026-11-03): this
+        # class matched no needle, so the raw yt-dlp string reached
+        # the user. The remedy is simply to wait and retry, and the
+        # copy says exactly that.
+        return (
+            f"⚠️ {subj} က တောင်းဆိုမှု များလွန်းသဖြင့် ယာယီ ကန့်သတ်"
+            "ထားပါသည်။ ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
     if (
         "timed out" in low
         or "timeout" in low
@@ -808,7 +819,7 @@ def find_best_preview_timestamp(video_path: str, target_dir: Optional[str] = Non
                 "-of", "csv=p=0",
                 video_path
             ]
-            res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
             if res.returncode == 0 and res.stdout.strip():
                 cmd2 = [
                     "ffprobe", "-v", "error",
@@ -818,7 +829,7 @@ def find_best_preview_timestamp(video_path: str, target_dir: Optional[str] = Non
                     "-read_intervals", "0%+120",
                     video_path
                 ]
-                res2 = subprocess.run(cmd2, capture_output=True, text=True, check=False)
+                res2 = subprocess.run(cmd2, capture_output=True, text=True, check=False, timeout=30)
                 if res2.returncode == 0 and res2.stdout.strip():
                     for line in res2.stdout.strip().splitlines():
                         try:
