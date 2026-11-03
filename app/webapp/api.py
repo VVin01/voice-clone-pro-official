@@ -42,6 +42,7 @@ from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedger
 from app.services.i18n import t
 from app.services.models import get_authorized_model, get_available_models_for_user, is_displayable_model
 from app.services.myanmar_text import convert_zawgyi_to_unicode
+from app.services.download_names import branded_download_filename
 from app.services.curated_voices import list_curated_voices, get_curated_voice
 from app.webapp.auth import parse_and_verify_init_data
 
@@ -134,11 +135,53 @@ def _verify_stream_token(token: str, job_id: str, file_type: str) -> Optional[in
     return uid
 
 
+def _append_stream_token(url: Optional[str], token: Optional[str]) -> Optional[str]:
+    """Append a scoped stream token to a media URL as ?t= (or &t= when
+    the URL already carries a query string). Empty URLs, a missing
+    token (no bot token configured) and URLs that already carry a t=
+    parameter pass through unchanged, so re-running the signing wrapper
+    over an already-signed dict never stacks tokens."""
+    if not url or not token:
+        return url
+    if "?" in url:
+        query = url.split("?", 1)[1]
+        if any(p.startswith("t=") for p in query.split("&")):
+            return url
+        return f"{url}&t={token}"
+    return f"{url}?t={token}"
+
+
 def _with_stream_url(urls: Dict[str, Any], job_id: str, user_id: int) -> Dict[str, Any]:
-    """Copy a download_urls dict and add a signed direct stream URL
-    for the video entry (video only — audio/SRT stay on the blob path,
-    they are small)."""
+    """Copy a download_urls dict and sign its media URLs.
+
+    Adds the signed direct "stream_url" for the <video> player AND
+    appends each entry's own scoped token (?t=) to the video, audio,
+    srt and script download URLs and to every split-part URL. The
+    result-screen download buttons open those URLs in the device
+    browser via Telegram openLink, where no initData header exists —
+    the scoped token is what authenticates those opens (the endpoint
+    still runs its ownership checks against the token's user). In-app
+    blob downloads are unaffected: when both are sent, the header user
+    wins. Stored registry URLs are never mutated — parts entries are
+    copied before signing."""
     out = dict(urls or {})
+    for key in ("video", "audio", "srt", "script"):
+        if out.get(key):
+            out[key] = _append_stream_token(
+                out[key], _make_stream_token(job_id, user_id, key)
+            )
+    parts = out.get("parts")
+    if isinstance(parts, list) and parts:
+        signed_parts = []
+        for part in parts:
+            if isinstance(part, dict) and part.get("url") and part.get("n") is not None:
+                part = dict(part)
+                part["url"] = _append_stream_token(
+                    part["url"],
+                    _make_stream_token(job_id, user_id, f"part{part['n']}"),
+                )
+            signed_parts.append(part)
+        out["parts"] = signed_parts
     if out.get("video"):
         token = _make_stream_token(job_id, user_id, "video")
         if token:
@@ -1987,7 +2030,9 @@ async def download_job_audio(
     return FileResponse(
         path=str(target_path),
         media_type=media_type,
-        filename=f"voice_clone_{job.id[:8]}{ext or '.wav'}",
+        filename=branded_download_filename(
+            "Voice", (ext or ".wav").lstrip("."), title=job.preset_voice, job_id=job.id
+        ),
         content_disposition_type=disposition,
     )
 
@@ -3441,7 +3486,7 @@ def resolve_recap_part_paths(job_id: str) -> list[dict]:
     return out
 
 
-async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my") -> int:
+async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my", title: Optional[str] = None) -> int:
     """Send every split part of a recap job to a Telegram chat.
 
     Parts up to Telegram's 50 MB bot limit go as videos with their part
@@ -3461,7 +3506,13 @@ async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my")
         try:
             size = os.path.getsize(part["path"]) if os.path.isfile(part["path"]) else 0
             if 0 < size <= 50 * 1024 * 1024:
-                vf = FSInputFile(part["path"], filename=Path(part["path"]).name)
+                vf = FSInputFile(
+                    part["path"],
+                    filename=branded_download_filename(
+                        "Recap", Path(part["path"]).suffix.lstrip(".") or "mp4",
+                        title=title, job_id=job_id, part=part["n"],
+                    ),
+                )
                 caption = t(
                     "recap_part_caption",
                     lang,
@@ -3550,14 +3601,20 @@ async def _send_recap_telegram_delivery(
             if is_segmented:
                 # Segmented job: the registered video is only part 1 —
                 # the parts together are the whole delivery.
-                await _deliver_recap_parts(bot, chat_id, job_id, lang)
+                await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
             elif file_size <= 50 * 1024 * 1024:
-                vf = FSInputFile(video_path, filename=Path(video_path).name)
+                vf = FSInputFile(
+                    video_path,
+                    filename=branded_download_filename(
+                        "Recap", Path(video_path).suffix.lstrip(".") or "mp4",
+                        title=title, job_id=job_id,
+                    ),
+                )
                 await bot.send_video(chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML")
             elif parts_available:
                 # Full render exceeds Telegram's 50 MB bot limit, but the
                 # job was split: the parts ARE the Telegram delivery.
-                await _deliver_recap_parts(bot, chat_id, job_id, lang)
+                await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
             else:
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
                 app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
@@ -3585,14 +3642,19 @@ async def _send_recap_telegram_delivery(
                 await bot.send_message(chat_id=chat_id, text=over_caption, reply_markup=kb, parse_mode="HTML")
 
             if srt_path and os.path.isfile(srt_path):
-                sf = FSInputFile(srt_path, filename=f"subtitles_{Path(srt_path).name}")
+                sf = FSInputFile(
+                    srt_path,
+                    filename=branded_download_filename(
+                        "Subtitles", "srt", title=title, job_id=job_id
+                    ),
+                )
                 await bot.send_document(chat_id=chat_id, document=sf, caption=t("clone_caption_subtitles", lang), parse_mode="HTML")
 
             # Split jobs: every part is delivered too (when the full video
             # was oversized, or the job is segmented, the parts already
             # went out above as the main delivery — don't send twice).
             if parts_available and not is_segmented and file_size <= 50 * 1024 * 1024:
-                await _deliver_recap_parts(bot, chat_id, job_id, lang)
+                await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
 
         finally:
             await bot.session.close()
@@ -5005,8 +5067,9 @@ async def download_recap_file(
     # must be an admin). Files on disk with no job record are not served.
     if not _recap_registry_owner_ok(job_id, user):
         raise HTTPException(status_code=404, detail="Recap file not found")
+    job_row = None
     if job_id not in RECAP_JOBS_REGISTRY:
-        await _require_job_owner(db, job_id, user)
+        job_row = await _require_job_owner(db, job_id, user)
     db_result_path = None
     if file_type == "video":
         try:
@@ -5015,8 +5078,27 @@ async def download_recap_file(
                 j = await session.get(Job, job_id)
                 if j and j.result_path and Path(j.result_path).is_file():
                     db_result_path = j.result_path
+                if job_row is None:
+                    job_row = j
         except Exception:
             pass
+
+    # Premium branded download name (2026-11-03): label = the job's
+    # title when one is resolvable (registry entry first, then the
+    # persisted recap config), else the helper falls back to the job
+    # tag. URL-ish leftovers and the title cleaner's generic default
+    # are not usable labels.
+    _dl_title = None
+    _entry_title = (RECAP_JOBS_REGISTRY.get(job_id) or {}).get("title")
+    if _entry_title:
+        _dl_title = _clean_recap_display_title(_entry_title)
+    elif job_row is not None:
+        _persisted_cfg = (_load_persisted_recap_state(job_row) or {}).get("config") or {}
+        _dl_title = _clean_recap_display_title(
+            _persisted_cfg.get("title"), getattr(job_row, "input_text", None)
+        )
+    if _dl_title and (_dl_title.startswith("http") or _dl_title == "Movie Recap Video"):
+        _dl_title = None
 
     file_path = resolve_recap_deliverable_path(job_id, file_type, result_path=db_result_path)
     if not file_path or not Path(file_path).is_file():
@@ -5027,14 +5109,16 @@ async def download_recap_file(
     audio_ext = ".wav" if actual_ext == ".wav" else ".mp3"
 
     mime_map = {
-        "video": ("video/mp4", f"recap_{job_id[:8]}.mp4"),
-        "audio": (audio_mime, f"voiceover_{job_id[:8]}{audio_ext}"),
-        "srt": ("text/plain; charset=utf-8", f"subtitles_{job_id[:8]}.srt"),
-        "script": ("text/plain; charset=utf-8", f"script_{job_id[:8]}.txt"),
+        "video": ("video/mp4", branded_download_filename("Recap", "mp4", title=_dl_title, job_id=job_id)),
+        "audio": (audio_mime, branded_download_filename("RecapAudio", audio_ext.lstrip("."), title=_dl_title, job_id=job_id)),
+        "srt": ("text/plain; charset=utf-8", branded_download_filename("Subtitles", "srt", title=_dl_title, job_id=job_id)),
+        "script": ("text/plain; charset=utf-8", branded_download_filename("Script", "txt", title=_dl_title, job_id=job_id)),
     }
     _part_dl = re.fullmatch(r"part([1-9][0-9]?)", file_type or "")
     if _part_dl:
-        media_type, filename = "video/mp4", f"recap_part_{int(_part_dl.group(1)):02d}_{job_id[:8]}.mp4"
+        media_type, filename = "video/mp4", branded_download_filename(
+            "Recap", "mp4", title=_dl_title, job_id=job_id, part=int(_part_dl.group(1))
+        )
     else:
         media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
 
@@ -5140,7 +5224,13 @@ async def send_voice_to_telegram(
     from aiogram.types import FSInputFile
     bot = Bot(token=settings.bot_token)
     try:
-        af = FSInputFile(str(audio_path), filename=f"voice_{job_id[:8]}.wav")
+        af = FSInputFile(
+            str(audio_path),
+            filename=branded_download_filename(
+                "Voice", audio_path.suffix.lstrip(".") or "wav",
+                title=db_job.preset_voice, job_id=job_id,
+            ),
+        )
         caption = (
             f"🎙️ <b>AI Myanmar Voice Clone</b>\n"
             f"✨ <i>Mini App မှ တောင်းဆိုချက်အရ သင့်ထံ ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
@@ -5298,6 +5388,16 @@ async def get_user_history(
             if recap_entry and recap_entry.get("download_urls"):
                 deliverables = recap_entry["download_urls"]
                 download_url = deliverables.get("video") or download_url
+        if is_recap and deliverables:
+            # Sign the recap URLs for their owner: a history download
+            # can end up opened in the device browser, where no
+            # initData header exists, and the scoped token is what
+            # authenticates those opens (same fix as the recap status
+            # payloads). Voice URLs are NOT signed — the audio
+            # endpoint does not verify stream tokens and keeps
+            # header-only auth.
+            deliverables = _with_stream_url(deliverables, j.id, user.id)
+            download_url = deliverables.get("video") or download_url
 
         raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
         _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None

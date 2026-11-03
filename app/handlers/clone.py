@@ -12,6 +12,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.enums import AccountCategory, JobStatus
 from app.models.schema import Job, VoiceModel
 from app.services.audio import CURATED_TTS_VOICES, SPEED_RATES
+from app.services.download_names import branded_download_filename
 from app.services.gate import build_gate_reminder_text, is_gate_configured, verify_user_membership
 from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
@@ -743,7 +744,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
             elif res_path and res_path.is_file():
                 await callback.bot.send_audio(
                     chat_id=target_chat_id,
-                    audio=FSInputFile(str(res_path)),
+                    audio=FSInputFile(str(res_path), filename=branded_download_filename("Voice", res_path.suffix.lstrip(".") or "wav", title=getattr(job, "preset_voice", None), job_id=job_id)),
                     caption=t("clone_caption_voice", lang, job_id=job_id),
                     parse_mode="HTML",
                 )
@@ -819,7 +820,18 @@ async def handle_send_recap_callback(callback: CallbackQuery):
             srt_path = Path(resolved_srt) if resolved_srt and Path(resolved_srt).is_file() else None
 
             has_parts = bool(resolve_recap_part_paths(job_id))
-            from app.webapp.api import RECAP_JOBS_REGISTRY
+            from app.webapp.api import RECAP_JOBS_REGISTRY, _clean_recap_display_title
+
+            _recap_entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
+            recap_title = (
+                _clean_recap_display_title(_recap_entry.get("title"))
+                if _recap_entry.get("title")
+                else None
+            )
+            if recap_title and (
+                recap_title.startswith("http") or recap_title == "Movie Recap Video"
+            ):
+                recap_title = None
 
             is_segmented = bool(
                 (RECAP_JOBS_REGISTRY.get(job_id) or {}).get("segmented")
@@ -831,7 +843,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     try:
                         await callback.bot.send_document(
                             chat_id=target_chat_id,
-                            document=FSInputFile(str(srt_path), filename=f"subtitles_{job_id[:8]}.srt"),
+                            document=FSInputFile(str(srt_path), filename=branded_download_filename("Subtitles", "srt", title=recap_title, job_id=job_id)),
                             caption=t("clone_caption_subtitles", lang),
                             parse_mode="HTML",
                         )
@@ -841,7 +853,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     from app.webapp.api import _deliver_recap_parts
 
                     await _deliver_recap_parts(
-                        callback.bot, target_chat_id, job_id, lang
+                        callback.bot, target_chat_id, job_id, lang, title=recap_title
                     )
                 except Exception:
                     pass
@@ -850,7 +862,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                 if file_size <= 50 * 1024 * 1024:
                     await callback.bot.send_video(
                         chat_id=target_chat_id,
-                        video=FSInputFile(str(video_path), filename=f"recap_{job_id[:8]}.mp4"),
+                        video=FSInputFile(str(video_path), filename=branded_download_filename("Recap", "mp4", title=recap_title, job_id=job_id)),
                         caption=t("clone_caption_recap", lang, job_id=job_id),
                         parse_mode="HTML",
                     )
@@ -880,7 +892,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     try:
                         await callback.bot.send_document(
                             chat_id=target_chat_id,
-                            document=FSInputFile(str(srt_path), filename=f"subtitles_{job_id[:8]}.srt"),
+                            document=FSInputFile(str(srt_path), filename=branded_download_filename("Subtitles", "srt", title=recap_title, job_id=job_id)),
                             caption=t("clone_caption_subtitles", lang),
                             parse_mode="HTML",
                         )
@@ -893,7 +905,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     from app.webapp.api import _deliver_recap_parts
 
                     await _deliver_recap_parts(
-                        callback.bot, target_chat_id, job_id, lang
+                        callback.bot, target_chat_id, job_id, lang, title=recap_title
                     )
                 except Exception:
                     pass

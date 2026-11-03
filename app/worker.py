@@ -21,6 +21,7 @@ from app.services.audio import (
     get_wav_duration_seconds,
     normalize_audio_to_wav,
 )
+from app.services.download_names import branded_download_filename
 from app.services.i18n import t
 from app.services.ledger import consume_seconds
 from app.services.models import get_authorized_model
@@ -403,7 +404,17 @@ async def process_single_job(
                             parse_mode="HTML",
                         )
                     else:
-                        audio_file = FSInputFile(str(audio_source_path), filename=out_filename)
+                        # Branded delivery name only — the file on disk
+                        # keeps out_filename (2026-11-03 naming scheme).
+                        audio_file = FSInputFile(
+                            str(audio_source_path),
+                            filename=branded_download_filename(
+                                "Voice",
+                                Path(audio_source_path).suffix.lstrip(".") or "wav",
+                                title=caption_model_name,
+                                job_id=job.id,
+                            ),
+                        )
                         caption = t(
                             "status_completed_caption",
                             lang,

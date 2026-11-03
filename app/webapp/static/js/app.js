@@ -766,6 +766,37 @@ function clearAuthMediaSource(el) {
     try { el.load(); } catch (e) {}
 }
 
+// Premium branded download names (2026-11-03): mirrors the server-side
+// scheme in app/services/download_names.py —
+// VoiceClonePro_<Kind>_<Label>.<ext>, where Label is the sanitized
+// content title when the item carries one, else the job tag (last 6
+// alphanumeric chars of the job id). Used as the save-as fallback name;
+// the server's Content-Disposition carries the same branded name.
+function brandedDlName(kind, ext, label, jobId, part) {
+    let clean = String(label || "").normalize("NFC").trim();
+    if (/^https?:\/\//i.test(clean)) clean = "";
+    clean = clean
+        .replace(/[^\p{L}\p{M}\p{N}\s_-]/gu, " ")
+        .replace(/\s+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    if (!clean) {
+        const tag = String(jobId || "").replace(/[^A-Za-z0-9]/g, "");
+        clean = tag ? tag.slice(-6) : "File";
+    }
+    const partSuffix = part ? `_Part${String(part).padStart(2, "0")}` : "";
+    const fixedLen = "VoiceClonePro_".length + kind.length + 1 + partSuffix.length + 1 + ext.length;
+    if (clean.length + fixedLen > 90) {
+        clean = clean.slice(0, Math.max(0, 90 - fixedLen)).replace(/_+$/g, "") || clean.slice(0, Math.max(0, 90 - fixedLen));
+    }
+    return `VoiceClonePro_${kind}_${clean}${partSuffix}.${ext}`;
+}
+
+function dlJobIdFromUrl(url) {
+    const m = String(url || "").match(/\/download\/([^/]+)\//);
+    return m ? m[1] : "";
+}
+
 async function downloadAuthFile(url, filename) {
     if (!url) return;
     try {
@@ -2508,7 +2539,7 @@ function startJobPolling(jobId) {
                 }
                 if (btnDl && data.output_audio_url) {
                     btnDl.setAttribute("data-dl-url", data.output_audio_url);
-                    btnDl.setAttribute("data-dl-name", "voice_clone.wav");
+                    btnDl.setAttribute("data-dl-name", brandedDlName("Voice", "wav", null, jobId));
                 }
                 loadUserProfile();
                 loadUserHistory();
@@ -5403,7 +5434,7 @@ function startRecapJobPolling(jobId) {
                             const a = document.createElement("a");
                             a.href = "#";
                             a.setAttribute("data-dl-url", p.url);
-                            if (p.n) a.setAttribute("data-dl-name", `recap_part_${p.n}.mp4`);
+                            if (p.n) a.setAttribute("data-dl-name", brandedDlName("Recap", "mp4", null, jobId, p.n));
                             a.className = "btn mini-btn secondary-btn";
                             a.setAttribute("download", "");
                             a.textContent = "🎬 " + (p.label || ("Part " + p.n));
@@ -6429,21 +6460,21 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             buttons += dis("↗️ Browser Tab တွင်ဖွင့်မည်");
         } else if (jobType === "RECAP") {
             if (deliverables.video) {
-                buttons += `<a href="#" data-dl-url="${deliverables.video}" data-dl-name="recap_video.mp4" class="mini-chip gold">🎬 Download Video</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", title, jobId)}" class="mini-chip gold">🎬 Download Video</a>`;
             }
             if (deliverables.audio) {
-                buttons += `<a href="#" data-dl-url="${deliverables.audio}" data-dl-name="voiceover.mp3" class="mini-chip">🎙️ Download Audio</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", title, jobId)}" class="mini-chip">🎙️ Download Audio</a>`;
             }
             if (deliverables.srt) {
-                buttons += `<a href="#" data-dl-url="${deliverables.srt}" data-dl-name="subtitles.srt" class="mini-chip">📝 Subtitles (SRT)</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", title, jobId)}" class="mini-chip">📝 Subtitles (SRT)</a>`;
             }
             if (deliverables.script) {
-                buttons += `<a href="#" data-dl-url="${deliverables.script}" data-dl-name="script.txt" class="mini-chip">📄 Script (TXT)</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", title, jobId)}" class="mini-chip">📄 Script (TXT)</a>`;
             }
         } else {
             const dlUrl = deliverables.download || downloadUrl;
             if (dlUrl) {
-                buttons += `<a href="#" data-dl-url="${dlUrl}" data-dl-name="voice.wav" class="mini-chip gold">📥 Download WAV / MP3</a>`;
+                buttons += `<a href="#" data-dl-url="${dlUrl}" data-dl-name="${brandedDlName("Voice", "wav", null, jobId)}" class="mini-chip gold">📥 Download WAV / MP3</a>`;
             }
         }
         if (mediaAvailable && downloadUrl) {
@@ -8036,13 +8067,13 @@ function hubHistoryDetailHtml(j) {
         actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
     } else if (isRecap) {
         if (j.deliverables?.video) {
-            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="recap_${j.id.slice(0,8)}.mp4" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="history-dl-link">🎬 Video</a> <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
         }
-        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="audio_${j.id.slice(0,8)}.wav" class="history-dl-link">🎙️ Audio</a>`;
-        if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="sub_${j.id.slice(0,8)}.srt" class="history-dl-link">📝 SRT</a>`;
-        if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="script_${j.id.slice(0,8)}.txt" class="history-dl-link">📜 TXT</a>`;
+        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "wav", j.input_snippet, j.id)}" class="history-dl-link">🎙️ Audio</a>`;
+        if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">📝 SRT</a>`;
+        if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">📜 TXT</a>`;
     } else if (j.download_url) {
-        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="voice_${j.id.slice(0,8)}.wav" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
+        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">📥 Download</a> <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
     }
     if (!isRecap && j.status === "SUCCESS" && !j.is_expired && j.download_url) {
         // Journey audit 2026-11-02: a finished voice job opened from
@@ -8255,7 +8286,7 @@ async function checkStartupDeepLinks() {
                     }
                     if (btnDl && data.output_audio_url) {
                         btnDl.setAttribute("data-dl-url", data.output_audio_url);
-                        btnDl.setAttribute("data-dl-name", "voice_clone.wav");
+                        btnDl.setAttribute("data-dl-name", brandedDlName("Voice", "wav", null, jobId));
                     }
                     if (btnTg) {
                         btnTg.disabled = false;
@@ -8389,7 +8420,7 @@ function setupDeliverablesDownloads() {
             const url = btnVideo.getAttribute("data-dl-url") || btnVideo.href;
             if (url && url !== "#") {
                 e.preventDefault();
-                downloadDeliverable(url, "recap_video.mp4");
+                downloadDeliverable(url, brandedDlName("Recap", "mp4", null, dlJobIdFromUrl(url)));
             }
         });
     }
@@ -8398,7 +8429,7 @@ function setupDeliverablesDownloads() {
             const url = btnAudio.getAttribute("data-dl-url") || btnAudio.href;
             if (url && url !== "#") {
                 e.preventDefault();
-                downloadDeliverable(url, "voiceover.mp3");
+                downloadDeliverable(url, brandedDlName("RecapAudio", "mp3", null, dlJobIdFromUrl(url)));
             }
         });
     }
@@ -8407,7 +8438,7 @@ function setupDeliverablesDownloads() {
             const url = btnSrt.getAttribute("data-dl-url") || btnSrt.href;
             if (url && url !== "#") {
                 e.preventDefault();
-                downloadDeliverable(url, "subtitles.srt");
+                downloadDeliverable(url, brandedDlName("Subtitles", "srt", null, dlJobIdFromUrl(url)));
             }
         });
     }
@@ -8416,7 +8447,7 @@ function setupDeliverablesDownloads() {
             const url = btnScript.getAttribute("data-dl-url") || btnScript.href;
             if (url && url !== "#") {
                 e.preventDefault();
-                downloadDeliverable(url, "script.txt");
+                downloadDeliverable(url, brandedDlName("Script", "txt", null, dlJobIdFromUrl(url)));
             }
         });
     }
