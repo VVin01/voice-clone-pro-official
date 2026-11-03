@@ -37,8 +37,10 @@ class Settings(BaseSettings):
     # Telegram Bot
     bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     # Internal worker token, separate from the Telegram bot token.
-    # Env-only and rotatable. When empty, callers fall back to the bot
-    # token with a warning so existing deployments do not break at once.
+    # Env-only and rotatable. When empty, the internal worker-upload
+    # endpoint fails closed (404 — it is effectively absent) and the
+    # co-located worker skips cloud sync; there is NO fallback to the
+    # bot token.
     worker_token: str = Field(default="", alias="WORKER_TOKEN")
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
@@ -50,6 +52,14 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
     bot_webhook_path: str = Field(default="/telegram/webhook", alias="BOT_WEBHOOK_PATH")
     public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
+    # Public URL of the Mini App itself, used for WebAppInfo buttons.
+    # A real field (not a getattr fallback) so MINI_APP_URL in the
+    # environment actually takes effect — Settings ignores unknown
+    # env names, which silently pinned every button to the default.
+    mini_app_url: str = Field(
+        default="https://voice-clone-studio-c1er.onrender.com",
+        alias="MINI_APP_URL",
+    )
 
     # Membership Gate (Channel and Group)
     required_channel_id: str = Field(default="", alias="REQUIRED_CHANNEL_ID")

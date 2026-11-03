@@ -726,7 +726,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 # send would fail inside Telegram. Same honest routing
                 # as the missing-file branch below — a Mini App button,
                 # never a dead link; the file stays downloadable there.
-                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                app_url = settings.mini_app_url
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -757,7 +757,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 # then showed the same URL as a "direct download" link,
                 # which only returned 401 in a browser. Be honest instead
                 # and route the user into the Mini App.
-                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                app_url = settings.mini_app_url
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -873,7 +873,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     # init-data auth and only returned 401 in a browser.
                     # Route through the Mini App instead, which downloads
                     # with proper auth.
-                    app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                    app_url = settings.mini_app_url
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
                             InlineKeyboardButton(
@@ -915,7 +915,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                 # old message embedded the raw /api/recap/download URL,
                 # which requires Telegram init-data auth and only
                 # returned 401 in a browser — say so honestly instead.
-                app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                app_url = settings.mini_app_url
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(

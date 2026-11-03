@@ -4,13 +4,19 @@ This module is intentionally small and in-memory only. It is a first
 layer of abuse protection, not a replacement for the queue, balance,
 and ownership checks in app/services/queue.py and app/webapp/api.py.
 
-Why per-user, not per-IP alone:
+Why IP + user id combined, not either alone:
     The Mini App runs behind Render's proxy, so many users can share
-    one proxy IP. The limiter therefore keys on the Telegram user id
-    parsed (without verification, for limiting only) from the
-    X-Telegram-Init-Data header when present, and falls back to the
-    client IP otherwise. Authentication is still done separately by
-    get_current_user(); this limiter never grants access.
+    one proxy IP — keying on IP alone would throttle innocents
+    together. Keying on the Telegram user id alone is worse: the id
+    is parsed (without verification, for limiting only) from the
+    X-Telegram-Init-Data header, so anyone who knew a victim's id
+    could spend that victim's quota from anywhere. The limiter
+    therefore keys on the pair (client IP, parsed user id when
+    present): a forged id only ever lands in buckets namespaced by
+    the forger's own address, never the real owner's, and distinct
+    users behind one proxy IP still get separate buckets.
+    Authentication is still done separately by get_current_user();
+    this limiter never grants access.
 
 What is limited, and what is deliberately NOT limited:
     Limited (POST only): voice generation, recap generation, media
@@ -60,8 +66,22 @@ TOO_MANY_DETAIL = "တောင်းဆိုမှု များနေပါ
 TOO_LARGE_DETAIL = "ဖိုင်အရွယ်အစား ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်။"
 
 
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP: first X-Forwarded-For hop (the address
+    Render's proxy reports), else the direct peer address."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else ""
+    if not ip and request.client is not None:
+        ip = request.client.host or ""
+    return ip or "unknown"
+
+
 def _rate_key(request: Request) -> str:
-    """Best-effort limiter key: Telegram user id, else client IP."""
+    """Limiter key: client IP combined with the Telegram user id
+    parsed (UNVERIFIED, for limiting only) from the init-data header
+    when present; the IP alone otherwise. See the module docstring
+    for why neither half is trusted on its own."""
+    ip = _client_ip(request)
     init_data = request.headers.get("X-Telegram-Init-Data", "")
     if init_data:
         # parse_qs gives a JSON string for the user field; extract id safely.
@@ -72,14 +92,10 @@ def _rate_key(request: Request) -> str:
             user_obj = _json.loads(parsed.get("user", ["{}"])[0])
             user_id = user_obj.get("id")
             if user_id:
-                return f"user:{user_id}"
+                return f"ipuser:{ip}:{user_id}"
         except Exception:
             pass
-    forwarded = request.headers.get("x-forwarded-for", "")
-    ip = forwarded.split(",")[0].strip() if forwarded else ""
-    if not ip and request.client is not None:
-        ip = request.client.host or ""
-    return f"ip:{ip or 'unknown'}"
+    return f"ip:{ip}"
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

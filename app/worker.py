@@ -457,7 +457,7 @@ async def process_single_job(
                         # plainly and route to the Mini App, where the
                         # file stays downloadable; job still SUCCESS.
                         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-                        app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                        app_url = settings.mini_app_url
                         kb = InlineKeyboardMarkup(inline_keyboard=[
                             [
                                 InlineKeyboardButton(
@@ -505,7 +505,7 @@ async def process_single_job(
                 # Mini App Job: Send push notification alert with inline action buttons
                 try:
                     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-                    app_url = getattr(settings, "mini_app_url", "https://voice-clone-studio-c1er.onrender.com")
+                    app_url = settings.mini_app_url
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
                             InlineKeyboardButton(
