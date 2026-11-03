@@ -270,6 +270,14 @@ async def lifespan(app: FastAPI):
                 await expire_abandoned_script_ready_jobs()
             except Exception:
                 pass
+            try:
+                # Group-AI escalation hygiene: pending admin-approval
+                # records older than 24h expire (lazy checks on tap
+                # cover the rest; this keeps the table clean).
+                from app.services.group_ai_admin import sweep_stale_escalations
+                await sweep_stale_escalations()
+            except Exception:
+                pass
 
     # Background Movie Recap queue processor loop
     async def _recap_queue_worker():
