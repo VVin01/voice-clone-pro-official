@@ -21,6 +21,11 @@ except Exception:  # pragma: no cover - app package unavailable
 _whisper_model = None
 _current_model_size = None
 
+# Final-audit batch M: bound the Groq pre-compression ffmpeg pass
+# (16 kHz mono is many-times-realtime; a wedged encode must fail
+# through the surrounding try/except, never hang the transcription).
+GROQ_PRECOMPRESS_TIMEOUT_SECONDS = 300
+
 
 def format_srt_timestamp(seconds: float) -> str:
     """Convert float seconds to standard SRT timestamp format: HH:MM:SS,mmm"""
@@ -75,7 +80,7 @@ def _transcribe_with_groq_srt(
                     "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
                     str(temp_mp3)
                 ]
-                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=GROQ_PRECOMPRESS_TIMEOUT_SECONDS)
                 if proc.returncode == 0 and temp_mp3.is_file() and temp_mp3.stat().st_size > 0:
                     upload_path = temp_mp3
             except Exception as comp_err:

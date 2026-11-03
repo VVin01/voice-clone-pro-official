@@ -1110,6 +1110,62 @@ def _parse_script_ready_at(value) -> Optional[datetime]:
     return parsed
 
 
+async def _claim_persisted_recap_refund(job_id: str, amount: int) -> tuple[str, int]:
+    """Claim a recap refund in the persisted Job-row state (batch M).
+
+    The SCRIPT_READY expiry sweep refunds through a synthetic entry
+    built from the persisted blob, so the in-memory claim flag in
+    _refund_recap_job_charge cannot coordinate it. Claiming in the
+    blob itself — re-read fresh, skip when it already records the
+    refund, otherwise write the claim BEFORE the balance refund is
+    issued — closes that gap. Returns ("claimed", amount),
+    ("already", recorded_amount) or ("error", 0).
+    """
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            if job is None:
+                return ("error", 0)
+            state = _load_persisted_recap_state(job)
+            if state is None:
+                return ("error", 0)
+            if state.get("credit_refunded"):
+                return ("already", int(state.get("credits_refunded") or 0))
+            state["credit_refunded"] = True
+            state["credits_refunded"] = int(amount)
+            job.recap_config = json.dumps(state, ensure_ascii=False)
+            await session.commit()
+            return ("claimed", int(amount))
+    except Exception as exc:
+        logger.warning(f"Could not claim persisted recap refund for {job_id}: {exc}")
+        return ("error", 0)
+
+
+async def _release_persisted_recap_refund_claim(job_id: str) -> None:
+    """Undo a _claim_persisted_recap_refund claim whose refund failed,
+    so a later sweep run can retry it."""
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            if job is None:
+                return
+            state = _load_persisted_recap_state(job)
+            if state is None:
+                return
+            state["credit_refunded"] = False
+            state["credits_refunded"] = 0
+            job.recap_config = json.dumps(state, ensure_ascii=False)
+            await session.commit()
+    except Exception as exc:
+        logger.warning(
+            f"Could not release persisted recap refund claim for {job_id}: {exc}"
+        )
+
+
 async def expire_abandoned_script_ready_jobs() -> int:
     """Expire SCRIPT_READY jobs parked longer than the TTL.
 
@@ -1173,7 +1229,30 @@ async def expire_abandoned_script_ready_jobs() -> int:
         # Refund first (idempotent via the persisted flag): if the
         # process dies after this, the next run sees credit_refunded
         # and only repeats the status write below.
-        await _refund_recap_job_charge(user_id, refund_entry)
+        if live_entry is not None:
+            # Refund through the live registry entry itself, so the
+            # claim-before-await flag in _refund_recap_job_charge
+            # coordinates with a racing runner/cancel refund of the
+            # same job (batch M).
+            refund_entry = live_entry
+            await _refund_recap_job_charge(user_id, refund_entry)
+        elif not refund_entry.get("credit_refunded"):
+            _amount = int(refund_entry.get("credits_charged") or 0)
+            if _amount <= 0 and refund_entry.get("credit_deducted"):
+                _amount = 1
+            if _amount > 0:
+                # No live entry: claim through the persisted blob
+                # BEFORE issuing the balance refund (batch M), so a
+                # racing refund that persists first is never doubled.
+                _claim, _recorded = await _claim_persisted_recap_refund(
+                    job_id, _amount
+                )
+                if _claim == "claimed":
+                    if not await _refund_recap_job_charge(user_id, refund_entry):
+                        await _release_persisted_recap_refund_claim(job_id)
+                elif _claim == "already":
+                    refund_entry["credit_refunded"] = True
+                    refund_entry["credits_refunded"] = _recorded
         try:
             from app.db.session import AsyncSessionLocal
 
@@ -1360,15 +1439,24 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
         amount = 1
     if amount <= 0:
         return False
+    # Claim BEFORE the first await (final-audit batch M): the old
+    # check-then-await-then-set let two concurrent callers sharing
+    # this entry (double-tap cancel, cancel racing the runner's
+    # failure tail) both pass the check and refund twice. Setting the
+    # flag synchronously makes the second caller a no-op; the claim
+    # is rolled back if the refund itself fails so a later retry can
+    # still refund.
+    entry["credit_refunded"] = True
+    entry["credits_refunded"] = amount
     if await _refund_recap_credits(user_id, amount):
-        entry["credit_refunded"] = True
-        entry["credits_refunded"] = amount
         # Persist the refund on the Job row too (hunt #5): if the
         # process restarts now, the re-dispatch plan restores the flag
         # and a second failure cannot refund the same charge again;
         # a registry-less admin cancel likewise sees it was refunded.
         await _persist_recap_credits_charged(entry)
         return True
+    entry["credit_refunded"] = False
+    entry["credits_refunded"] = 0
     return False
 
 
@@ -5478,6 +5566,15 @@ async def get_recap_status(
     db: Optional[AsyncSession] = Depends(_deferred_db_session),
 ):
     """Poll recap job status, progress percentage, and deliverables."""
+    # The session factory is imported HERE, unconditionally
+    # (final-audit batch M): it used to be imported inside the FAILED
+    # registry branch below, which made the name function-local and
+    # crashed the cold path with UnboundLocalError for every job
+    # missing from the registry (i.e. every job after a restart).
+    # Importing at call time also keeps the factory redirectable,
+    # like every other helper in this module.
+    from app.db.session import AsyncSessionLocal
+
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if entry:
         if not _recap_registry_owner_ok(job_id, user):
@@ -5511,8 +5608,6 @@ async def get_recap_status(
         _e_can_retry = None
         if _e_status == "FAILED":
             try:
-                from app.db.session import AsyncSessionLocal
-
                 async with AsyncSessionLocal() as _session:
                     _e_job = await _session.get(Job, job_id)
                 _e_can_retry = (
@@ -7826,6 +7921,12 @@ class AdminSettingsPayload(BaseModel):
     tutorial_support_link: Optional[str] = None
     maintenance_mode: Optional[bool] = None
     group_ai_admin_enabled: Optional[bool] = None
+    # Final-audit batch M: the group-AI anti-spam limits join the
+    # payload — they were registered dynamic settings read per
+    # message, but no admin surface could write them.
+    group_ai_user_cooldown_seconds: Optional[int] = None
+    group_ai_hourly_budget: Optional[int] = None
+    group_ai_daily_budget: Optional[int] = None
     character_limit_free: Optional[int] = None
     character_limit_purchased: Optional[int] = None
     free_monthly_allowance_seconds: Optional[int] = None
@@ -7870,6 +7971,9 @@ async def get_admin_settings(
         },
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
         "group_ai_admin_enabled": getattr(settings, "group_ai_admin_enabled", False),
+        "group_ai_user_cooldown_seconds": int(getattr(settings, "group_ai_user_cooldown_seconds", 60) or 0),
+        "group_ai_hourly_budget": int(getattr(settings, "group_ai_hourly_budget", 40) or 40),
+        "group_ai_daily_budget": int(getattr(settings, "group_ai_daily_budget", 300) or 300),
         "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
         "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
         "free_monthly_allowance_seconds": int(getattr(settings, "free_monthly_allowance_seconds", 180)),
@@ -7969,6 +8073,42 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     detail=(
                         "ဝယ်ယူ စာလုံးရေ ကန့်သတ်ချက် (character_limit_purchased) သည် "
                         "100 မှ 10000 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = limit_val
+        elif key == "group_ai_user_cooldown_seconds":
+            # Final-audit batch M: 0 is a real choice (no per-user
+            # cooldown); the cap keeps a typo from parking users for
+            # a year. get_limits reads this back as a non-negative int.
+            try:
+                limit_val = int(value)
+            except (TypeError, ValueError):
+                limit_val = -1
+            if limit_val < 0 or limit_val > 86400:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Group AI အသုံးပြုသူ Cooldown (group_ai_user_cooldown_seconds) သည် "
+                        "0 မှ 86400 စက္ကန့် အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = limit_val
+        elif key in ("group_ai_hourly_budget", "group_ai_daily_budget"):
+            # Final-audit batch M: budgets gate real AI spend, so 0
+            # (which would silently disable group answers) is rejected
+            # here even though the reader would fall back to defaults.
+            try:
+                limit_val = int(value)
+            except (TypeError, ValueError):
+                limit_val = -1
+            if limit_val < 1 or limit_val > 100000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Group AI Budget ({key}) သည် "
+                        "1 မှ 100000 အတွင်း ဖြစ်ရပါမည်။ "
                         "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
                     ),
                 )

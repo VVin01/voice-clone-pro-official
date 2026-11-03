@@ -193,6 +193,14 @@ def _positive_int(value: Any, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _non_negative_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
 async def get_limits(session: Any) -> GroupAiLimits:
     """Per-message limits read (BotSettings + settings fallback).
 
@@ -212,7 +220,7 @@ async def get_limits(session: Any) -> GroupAiLimits:
         logger.warning("group_ai_admin: limits read failed: %s", exc)
         return defaults
     return GroupAiLimits(
-        user_cooldown_seconds=_positive_int(cooldown, defaults.user_cooldown_seconds),
+        user_cooldown_seconds=_non_negative_int(cooldown, defaults.user_cooldown_seconds),
         hourly_budget=_positive_int(hourly, defaults.hourly_budget),
         daily_budget=_positive_int(daily, defaults.daily_budget),
     )

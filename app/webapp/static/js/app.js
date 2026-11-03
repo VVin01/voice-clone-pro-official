@@ -2583,6 +2583,16 @@ function startJobPolling(jobId) {
                 showStudioToast(mapErrorToToast(data.error_message, 'voice'), 'error');
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
+            } else if (data.status === "CANCELLED") {
+                // Final-audit batch M: cancelled on another surface
+                // (admin console) — stop instead of polling to the
+                // timeout with a stale progress card.
+                clearInterval(state.pollTimer);
+                if (progressBox) progressBox.classList.add("hidden");
+                if (btnGen) btnGen.disabled = false;
+                showStudioToast(t("voice_cancelled_toast"), 'info', 5000);
+                loadUserProfile();
+                loadUserHistory();
             }
 
             if (tick > 120 && data.status !== "SUCCESS" && data.status !== "FAILED") { // 4 minutes timeout
@@ -5516,7 +5526,7 @@ function startRecapJobPolling(jobId) {
                 // from real completed-job durations — and degrade to
                 // the old boilerplate line when the server has no
                 // honest estimate for this job.
-                const stepBits = [`Step ${data.progress_step}`];
+                const stepBits = [`${t("recap_step_label")} ${data.progress_step}`];
                 if (typeof data.queue_position === "number" && data.queue_position > 0) {
                     stepBits.push(tf("recap_queue_ahead", { count: data.queue_position }));
                 }
@@ -5729,6 +5739,26 @@ function startRecapJobPolling(jobId) {
                 }
                 loadUserProfile();
                 loadUserHistory();
+            } else if (data.status === "CANCELLED") {
+                // Final-audit batch M: the job was cancelled on
+                // another surface (admin console, or the user in a
+                // second session) — this client never learns it from
+                // its own cancel helper, so the poller must stop here
+                // instead of polling a dead job to the 60-minute cap.
+                // The refund line is shown only when the payload
+                // proves the refund.
+                clearInterval(state.recapPollTimer);
+                state.recapPollTimer = null;
+                try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
+                if (btn) btn.disabled = false;
+                if (progressBox) progressBox.classList.add("hidden");
+                let cancelToast = t("recap_cancelled_toast");
+                if (data.credit_refunded) {
+                    cancelToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
+                }
+                showStudioToast(cancelToast, 'info', 5000);
+                loadUserProfile();
+                loadUserHistory();
             }
         } catch (err) {
             console.warn("Recap polling error:", err);
@@ -5751,7 +5781,7 @@ async function cancelRecapJobById(jobId) {
                 headers: getAuthHeaders(),
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.detail || "Cancel failed");
+            if (!res.ok) throw new Error(data.detail || t("err_generic"));
             if (state.recapPollTimer) {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
@@ -5792,7 +5822,7 @@ async function retryRecapJobById(jobId) {
                 headers: getAuthHeaders(),
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.detail || "Retry failed");
+            if (!res.ok) throw new Error(data.detail || t("err_generic"));
             const failedBox = document.getElementById("recap-failed-box");
             if (failedBox) failedBox.classList.add("hidden");
             state.recapJobId = data.recap_id;
@@ -5828,7 +5858,7 @@ window.watchRecapDemo = async function() {
             headers: getAuthHeaders(),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || "Demo failed");
+        if (!res.ok) throw new Error(data.detail || t("err_generic"));
         if (data.url) {
             if (window.Telegram?.WebApp?.openLink) window.Telegram.WebApp.openLink(data.url);
             else window.open(data.url, "_blank");
@@ -8142,6 +8172,12 @@ async function loadAdminSettings() {
         if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
         if (elMaint) elMaint.checked = !!s.maintenance_mode;
         if (elGroupAi) elGroupAi.checked = !!s.group_ai_admin_enabled;
+        const elGroupAiCooldown = document.getElementById("adm-set-group-ai-cooldown");
+        const elGroupAiHourly = document.getElementById("adm-set-group-ai-hourly");
+        const elGroupAiDaily = document.getElementById("adm-set-group-ai-daily");
+        if (elGroupAiCooldown && s.group_ai_user_cooldown_seconds != null) elGroupAiCooldown.value = s.group_ai_user_cooldown_seconds;
+        if (elGroupAiHourly && s.group_ai_hourly_budget != null) elGroupAiHourly.value = s.group_ai_hourly_budget;
+        if (elGroupAiDaily && s.group_ai_daily_budget != null) elGroupAiDaily.value = s.group_ai_daily_budget;
         if (elCharLimitFree && s.character_limit_free != null) elCharLimitFree.value = s.character_limit_free;
         if (elCharLimitPurchased && s.character_limit_purchased != null) elCharLimitPurchased.value = s.character_limit_purchased;
         if (elFreeAllowance && s.free_monthly_allowance_seconds != null) elFreeAllowance.value = s.free_monthly_allowance_seconds;
@@ -8266,6 +8302,12 @@ async function saveAdminSettings() {
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
     const groupAi = !!document.getElementById("adm-set-group-ai")?.checked;
+    const groupAiCooldownRaw = document.getElementById("adm-set-group-ai-cooldown")?.value?.trim();
+    const groupAiCooldown = groupAiCooldownRaw === "" || groupAiCooldownRaw == null ? null : parseInt(groupAiCooldownRaw, 10);
+    const groupAiHourlyRaw = document.getElementById("adm-set-group-ai-hourly")?.value?.trim();
+    const groupAiHourly = groupAiHourlyRaw === "" || groupAiHourlyRaw == null ? null : parseInt(groupAiHourlyRaw, 10);
+    const groupAiDailyRaw = document.getElementById("adm-set-group-ai-daily")?.value?.trim();
+    const groupAiDaily = groupAiDailyRaw === "" || groupAiDailyRaw == null ? null : parseInt(groupAiDailyRaw, 10);
     const charLimitFreeRaw = document.getElementById("adm-set-char-limit-free")?.value?.trim();
     const charLimitFree = charLimitFreeRaw === "" || charLimitFreeRaw == null ? null : parseInt(charLimitFreeRaw, 10);
     const charLimitPurchasedRaw = document.getElementById("adm-set-char-limit-purchased")?.value?.trim();
@@ -8314,6 +8356,9 @@ async function saveAdminSettings() {
         ...tutExtraLinks,
         maintenance_mode: maint,
         group_ai_admin_enabled: groupAi,
+        ...(Number.isFinite(groupAiCooldown) ? { group_ai_user_cooldown_seconds: groupAiCooldown } : {}),
+        ...(Number.isFinite(groupAiHourly) ? { group_ai_hourly_budget: groupAiHourly } : {}),
+        ...(Number.isFinite(groupAiDaily) ? { group_ai_daily_budget: groupAiDaily } : {}),
         ...(Number.isFinite(charLimitFree) ? { character_limit_free: charLimitFree } : {}),
         ...(Number.isFinite(charLimitPurchased) ? { character_limit_purchased: charLimitPurchased } : {}),
         ...(Number.isFinite(freeAllowance) ? { free_monthly_allowance_seconds: freeAllowance } : {}),
@@ -8447,8 +8492,14 @@ function hubHistoryDetailHtml(j) {
         if (s.story_style) parts.push(s.story_style);
         if (s.sub_style) parts.push(s.sub_style);
         if (s.sub_font) parts.push(s.sub_font);
-        if (typeof s.sub_y === "number") parts.push(`Sub ${Math.round(s.sub_y * 100)}%`);
-        if (typeof s.blur_y === "number") parts.push(`Blur ${Math.round(s.blur_y * 100)}%`);
+        // Final-audit batch M: the persisted config stores sub_y /
+        // blur_y as INTEGER percents (85 — the recap form's sliders
+        // are 0-100), so multiplying by 100 rendered "8500%". Show
+        // the stored percent as-is; a legacy fraction (0.85) is
+        // still handled defensively.
+        const pctOf = (v) => Math.round(v <= 1 ? v * 100 : v);
+        if (typeof s.sub_y === "number") parts.push(`Sub ${pctOf(s.sub_y)}%`);
+        if (typeof s.blur_y === "number") parts.push(`Blur ${pctOf(s.blur_y)}%`);
         if (parts.length) {
             inner += `<div class="history-item-body hub-settings-summary">⚙️ ${escapeHtml(parts.join(" · "))}</div>`;
         }
@@ -8539,7 +8590,7 @@ window.deleteHistoryItem = function(jobId) {
                 headers: getAuthHeaders(),
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.detail || "Delete failed");
+            if (!res.ok) throw new Error(data.detail || t("err_generic"));
             if (Array.isArray(hubHistoryCache)) {
                 hubHistoryCache = hubHistoryCache.filter(h => h.id !== jobId);
             }

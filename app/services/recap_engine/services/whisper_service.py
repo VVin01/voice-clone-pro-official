@@ -45,6 +45,11 @@ try:
 except Exception:  # pragma: no cover - standalone load
     _key_rotation = None
 
+# Final-audit batch M: bound the Groq pre-compression ffmpeg pass
+# (16 kHz mono is many-times-realtime; a wedged encode must fail
+# through the surrounding try/except, never hang the transcription).
+GROQ_PRECOMPRESS_TIMEOUT_SECONDS = 300
+
 
 class NoUsableSpeechError(RuntimeError):
     """Source downloaded correctly, but Recap cannot obtain usable speech."""
@@ -521,7 +526,7 @@ class WhisperTimestampService:
                     "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
                     str(temp_audio)
                 ]
-                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=GROQ_PRECOMPRESS_TIMEOUT_SECONDS)
                 if proc.returncode == 0 and temp_audio.is_file() and temp_audio.stat().st_size > 0:
                     upload_path = temp_audio
             except Exception as comp_err:

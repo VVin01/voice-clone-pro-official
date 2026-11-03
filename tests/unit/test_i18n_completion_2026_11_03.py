@@ -26,7 +26,7 @@ These tests pin the completed state:
 (e) index.html carries no unwired Myanmar text outside the
     documented exceptions;
 (f) the server-side relative-time helper returns localized strings;
-(g) the static-asset cache-bust version is the current r44.
+(g) the static-asset cache-bust version is the current r45.
 
 The allowlist in (c) is deliberate and each entry is a NON-UI string:
 
@@ -440,6 +440,6 @@ def test_server_progress_labels_use_locales():
 
 # ── (g) cache-bust version ───────────────────────────────────────────
 
-def test_cache_bust_version_is_r44():
-    assert INDEX_HTML.count("?v=20261103_r44") == 3
+def test_cache_bust_version_is_r45():
+    assert INDEX_HTML.count("?v=20261104_r45") == 3
     assert "20261103_r41" not in INDEX_HTML

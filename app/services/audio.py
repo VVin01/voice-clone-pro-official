@@ -13,6 +13,10 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Final-audit batch M: bound the ffmpeg normalization below (short
+# voice samples; same 120s scale as recap_engine.core's probe cap).
+NORMALIZE_TIMEOUT_SECONDS = 120
+
 CURATED_TTS_VOICES = {
     "my-MM-ThihaNeural": {"name": "Thiha (မြန်မာ)", "gender": "male", "lang": "my"},
     "my-MM-NilarNeural": {"name": "Nilar (မြန်မာ)", "gender": "female", "lang": "my"},
@@ -116,7 +120,18 @@ async def normalize_audio_to_wav(
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, stderr = await proc.communicate()
+    try:
+        _, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=NORMALIZE_TIMEOUT_SECONDS
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"FFmpeg normalization timed out after {NORMALIZE_TIMEOUT_SECONDS}s"
+        )
 
     if proc.returncode != 0:
         err_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
