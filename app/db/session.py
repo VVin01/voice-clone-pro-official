@@ -109,6 +109,11 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_config TEXT"))
                 connection.execute(text("ALTER TABLE voice_models ADD COLUMN IF NOT EXISTS sample_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS admin_notify_copies TEXT"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS review_claimed_by BIGINT"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS review_claimed_at TIMESTAMP WITH TIME ZONE"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS original_minutes INTEGER"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS edited_by BIGINT"))
             elif dialect_name == "sqlite":
                 # SQLite PRAGMA check
                 res_users = connection.execute(text("PRAGMA table_info(users)"))
@@ -138,6 +143,16 @@ async def init_db() -> None:
                 cols_pay = [row[1] for row in res_pay.fetchall()]
                 if "slip_url" not in cols_pay:
                     connection.execute(text("ALTER TABLE payment_requests ADD COLUMN slip_url TEXT"))
+                if "admin_notify_copies" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN admin_notify_copies TEXT"))
+                if "review_claimed_by" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN review_claimed_by BIGINT"))
+                if "review_claimed_at" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN review_claimed_at TIMESTAMP"))
+                if "original_minutes" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN original_minutes INTEGER"))
+                if "edited_by" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN edited_by BIGINT"))
 
         await conn.run_sync(_add_missing_cols)
 
