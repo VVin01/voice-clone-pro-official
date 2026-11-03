@@ -640,7 +640,7 @@ select.studio-input { min-height: 50px; }
 .history-btn-row { display: flex; gap: var(--s1); flex-wrap: wrap; }
 .history-dl-link {
     display: inline-flex; align-items: center; gap: 4px;
-    min-height: 36px; padding: 4px 11px;
+    min-height: 44px; padding: 4px 11px;
     background: var(--gold-soft); color: var(--gold-2);
     border: 1px solid var(--gold-border); border-radius: 999px;
     font-size: 12.5px; font-weight: 700; text-decoration: none; line-height: 1.4;
@@ -1422,7 +1422,7 @@ select.studio-input { min-height: 50px; }
 .queue-item-footer { display: flex; justify-content: flex-end; }
 .queue-actions-row { display: flex; gap: var(--s1); flex-wrap: wrap; }
 .queue-act-btn {
-    min-height: 36px; padding: 4px 11px;
+    min-height: 44px; padding: 4px 11px;
     background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: 999px;
     color: var(--text-2); font-size: 12px; font-weight: 700; line-height: 1.4;
 }
