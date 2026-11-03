@@ -533,6 +533,203 @@ async def _recap_active_job_count(db, user_id: int) -> int:
     return len(ids)
 
 
+def _recap_job_config(job) -> Optional["RecapConfigRequest"]:
+    """Rebuild the submit-time config for a recap Job row.
+
+    Used by user retry (batch L) and the History re-run prefill: the
+    persisted blob (jobs.recap_config) wins; legacy rows without one
+    fall back to the same reconstruction _recap_redispatch_plan uses
+    (source/title/voice from the row, defaults for everything else).
+    Returns None when no usable config can be built.
+    """
+    state = _load_persisted_recap_state(job)
+    if state is not None:
+        try:
+            return RecapConfigRequest(**state["config"])
+        except Exception:
+            return None
+    source_url = getattr(job, "source_audio_path", None) or job.input_text or ""
+    if not source_url:
+        return None
+    clean_title = _clean_recap_display_title(
+        convert_zawgyi_to_unicode(job.input_text or ""), source_url
+    ) or "Movie Recap Video"
+    try:
+        return RecapConfigRequest(
+            url=source_url,
+            title=clean_title,
+            voice_slug=job.preset_voice or "komin",
+        )
+    except Exception:
+        return None
+
+
+def _recap_source_available(url) -> bool:
+    """Can this recap source still be fetched for a retry / re-run?
+
+    URL sources are always re-downloadable. Upload sources are local
+    files under storage/temp/recap_uploads: the runner uses them in
+    place and never deletes them, and the retention sweep only purges
+    them together with the (terminal) job row that references them —
+    so while the failed job's History row exists, its upload normally
+    still exists too. It CAN be gone early (e.g. the same upload was
+    shared with an older job whose retention purge took the file), so
+    availability is always checked live, never assumed.
+    """
+    u = (url or "").strip()
+    if u.startswith(("http://", "https://")):
+        return True
+    if not u:
+        return False
+    try:
+        return Path(u.strip("'\"")).is_file()
+    except Exception:
+        return False
+
+
+def _recap_can_retry(job) -> bool:
+    """True when a FAILED recap job can be retried right now: it has a
+    rebuildable config and its source is still available."""
+    if job is None or job.status != JobStatus.FAILED.value:
+        return False
+    cfg = _recap_job_config(job)
+    return bool(cfg is not None and _recap_source_available(cfg.url))
+
+
+# ── Queue position / ETA (batch L) ───────────────────────────────────
+# Recap execution is one FIFO path: submissions dispatch immediately
+# and wait on RECAP_EXECUTION_SEMAPHORE (2 concurrent renders), and
+# the server queue worker claims the oldest QUEUED row first. A job's
+# queue position is therefore honestly countable: how many active
+# recap jobs were created before it. The ETA derives from the median
+# processing time (started_at → finished_at) of recently completed
+# recap jobs — a real signal recorded on every Job row — and is only
+# reported when at least 3 samples exist; otherwise the payload
+# carries the position alone rather than an invented number.
+_RECAP_ETA_MEDIAN_CACHE: dict = {"at": 0.0, "seconds": None}
+
+
+async def _recap_recent_median_seconds() -> Optional[float]:
+    """Median render duration of the last ~25 completed recap jobs.
+
+    Cached for 60 s: the recap status endpoint is polled every 2 s,
+    and this aggregate changes slowly. Returns None when fewer than 3
+    usable samples exist (no honest estimate possible).
+    """
+    now = time.time()
+    if now - float(_RECAP_ETA_MEDIAN_CACHE.get("at") or 0.0) < 60:
+        return _RECAP_ETA_MEDIAN_CACHE.get("seconds")
+    median: Optional[float] = None
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(Job.started_at, Job.finished_at)
+                .where(
+                    (Job.job_type == JobType.RECAP.value)
+                    | (Job.id.startswith("rc_"))
+                    | (Job.engine == "recap"),
+                    Job.status == JobStatus.SUCCESS.value,
+                    Job.started_at.is_not(None),
+                    Job.finished_at.is_not(None),
+                )
+                .order_by(Job.finished_at.desc())
+                .limit(25)
+            )
+            durations = sorted(
+                d
+                for started, finished in res.all()
+                for d in [(finished - started).total_seconds()]
+                if 30 <= d <= 6 * 3600
+            )
+        if len(durations) >= 3:
+            median = float(durations[len(durations) // 2])
+    except Exception as exc:
+        logger.warning(f"Could not compute recap duration median: {exc}")
+        median = None
+    _RECAP_ETA_MEDIAN_CACHE.update({"at": now, "seconds": median})
+    return median
+
+
+def _recap_registry_queue_position(job_id: str, entry: dict) -> Optional[int]:
+    """Active recap jobs ahead of this one, from the live registry.
+
+    Counts QUEUED/RUNNING entries created earlier than this job — the
+    jobs that must finish (or start) before it on the shared FIFO
+    execution path. Registry-only: the hot status path opens no DB
+    session (see _deferred_db_session).
+    """
+    created = entry.get("created_at")
+    if not isinstance(created, (int, float)):
+        return None
+    ahead = 0
+    for other_id, other in RECAP_JOBS_REGISTRY.items():
+        if other_id == job_id:
+            continue
+        if other.get("status") not in ("QUEUED", "RUNNING"):
+            continue
+        other_created = other.get("created_at")
+        if isinstance(other_created, (int, float)) and other_created < created:
+            ahead += 1
+    return ahead
+
+
+async def _recap_db_queue_position(job) -> Optional[int]:
+    """Active recap jobs ahead of this one, counted on the Job table
+    (cold path: the registry has no entry for this job)."""
+    if job is None or job.created_at is None:
+        return None
+    try:
+        from sqlalchemy import func as _func
+
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(_func.count(Job.id)).where(
+                    Job.id != job.id,
+                    (Job.job_type == JobType.RECAP.value)
+                    | (Job.id.startswith("rc_"))
+                    | (Job.engine == "recap"),
+                    Job.status.in_(
+                        [JobStatus.QUEUED.value, JobStatus.RUNNING.value]
+                    ),
+                    Job.created_at < job.created_at,
+                )
+            )
+            return int(res.scalar() or 0)
+    except Exception as exc:
+        logger.warning(f"Could not compute recap queue position for {job.id}: {exc}")
+        return None
+
+
+def _recap_eta_seconds(
+    position: Optional[int],
+    status: str,
+    progress_percent,
+    median_seconds: Optional[float],
+) -> Optional[int]:
+    """ETA in seconds from the queue position + real median duration.
+
+    QUEUED: the jobs ahead drain two at a time (the execution
+    semaphore), so the wait is ceil((ahead + 1) / 2) median-length
+    waves including this job's own render. RUNNING: the median scaled
+    by the engine's own remaining progress fraction. Anything else —
+    or no median sample — yields None (no fabricated numbers).
+    """
+    if median_seconds is None:
+        return None
+    if status == "QUEUED":
+        waves = ((position or 0) + 2) // 2
+        return int(round(waves * median_seconds))
+    if status == "RUNNING":
+        pct = progress_percent if isinstance(progress_percent, (int, float)) else 0
+        pct = min(95.0, max(0.0, float(pct)))
+        return max(20, int(round(median_seconds * (1.0 - pct / 100.0))))
+    return None
+
+
 async def _refund_recap_credits(user_id: int, count: int) -> bool:
     """Refund `count` recap credits in its own session/commit.
 
@@ -1175,6 +1372,81 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     return False
 
 
+async def _cancel_recap_job_core(
+    db: AsyncSession,
+    job: Job,
+    *,
+    db_error_message: str,
+    registry_error_message: str,
+) -> dict:
+    """Cancel a recap job and refund its charge — the ONE machinery.
+
+    Shared by the admin console endpoint and the Mini App user cancel
+    (batch L) so both surfaces have identical semantics (2026-10-31
+    admin-cancel rules): the Job row flips to CANCELLED first (the
+    runner's cancel re-checks read it), the registry entry gets the
+    FAILED + "Cancelled…" marker those same re-checks recognise, and
+    the refund goes through _refund_recap_job_charge when a registry
+    entry exists, or the persisted-state fallback when a restart lost
+    the entry (proven charge only; an already-refunded blob is never
+    refunded twice). Admin-owned jobs were never charged, so their
+    refunds are no-ops. Returns the refund_info dict the admin
+    endpoint has always reported.
+    """
+    refund_info: dict = {"refunded": False}
+
+    job.status = JobStatus.CANCELLED.value
+    job.finished_at = utc_now()
+    job.error_message = db_error_message
+    await db.commit()
+
+    try:
+        entry = RECAP_JOBS_REGISTRY.get(job.id)
+        if entry is not None:
+            if job.id in RECAP_JOBS_REGISTRY:
+                RECAP_JOBS_REGISTRY[job.id]["status"] = "FAILED"
+                RECAP_JOBS_REGISTRY[job.id]["error_message"] = registry_error_message
+            if await _refund_recap_job_charge(job.user_id, entry):
+                refund_info = {"refunded": True, "recap_credits": int(entry.get("credits_refunded") or 0)}
+        else:
+            # Registry lost (server restart): read the charge from
+            # the persisted blob on the Job row (hunt #5) -- a
+            # segmented job may have been charged N credits, not
+            # the submit-time 1 this fallback used to assume, and
+            # a blob that already records the refund must not be
+            # refunded a second time. Legacy rows without a blob
+            # keep the historical behaviour: the submit-time base
+            # credit is the only provable charge. A second cancel
+            # is impossible (status is now CANCELLED).
+            persisted = _load_persisted_recap_state(job)
+            proven_credits = 1
+            already_refunded = False
+            if persisted is not None:
+                already_refunded = bool(persisted.get("credit_refunded"))
+                if persisted.get("credit_deducted"):
+                    proven_credits = max(1, int(persisted.get("credits_charged") or 1))
+            if already_refunded:
+                refund_info = {
+                    "refunded": True,
+                    "recap_credits": int(persisted.get("credits_refunded") or proven_credits),
+                    "note": "charge already refunded before the restart (persisted state)",
+                }
+            elif not settings.is_admin(job.user_id) and await _refund_recap_credits(job.user_id, proven_credits):
+                refund_info = {
+                    "refunded": True,
+                    "recap_credits": proven_credits,
+                    "note": (
+                        "registry unavailable; amount restored from persisted recap state"
+                        if persisted is not None
+                        else "base credit only (registry unavailable)"
+                    ),
+                }
+    except Exception as exc:
+        logger.warning(f"Cancel refund failed for job {job.id}: {exc}")
+        refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
+    return refund_info
+
+
 def _voice_job_error_status(reason: str) -> int:
     return {
         "MODEL_NOT_AUTHORIZED": 404,
@@ -1338,6 +1610,13 @@ async def get_user_profile(
         "tutorial_recap_enabled",
         default="true",
     )
+    # Batch L: the recap demo sample reference (Telegram file_id or
+    # URL) — empty means the recap tab's demo slot stays hidden.
+    recap_demo_asset = await get_dynamic_setting(
+        db,
+        "recap_demo_asset",
+        default=getattr(settings, "recap_demo_asset", ""),
+    )
     tut_extra_links = {
         key: await get_dynamic_setting(
             db,
@@ -1447,6 +1726,7 @@ async def get_user_profile(
         "tutorial_recap_title": tut_recap_title,
         "tutorial_recap_link": tut_recap_link,
         "tutorial_recap_enabled": str(tut_recap_enabled).lower() != "false",
+        "recap_demo_asset": recap_demo_asset or "",
         **tut_extra_links,
         # Gate status for the Mini App join-and-verify UX (2026-10-29).
         # This is the CACHED flag state only; a live check happens on
@@ -1554,6 +1834,12 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         "tutorial_recap_enabled",
         default="true",
     )
+    # Batch L: recap demo sample reference (see /api/user/me).
+    recap_demo_asset = await get_dynamic_setting(
+        db,
+        "recap_demo_asset",
+        default=getattr(settings, "recap_demo_asset", ""),
+    )
     maintenance_raw = await get_dynamic_setting(
         db,
         "maintenance_mode",
@@ -1568,6 +1854,7 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         "tutorial_recap_title": tut_recap_title,
         "tutorial_recap_link": tut_recap_link,
         "tutorial_recap_enabled": str(tut_recap_enabled).lower() != "false",
+        "recap_demo_asset": recap_demo_asset or "",
         "channel_invite_link": getattr(settings, "channel_invite_link", "https://t.me/VoiceCloneProChannel"),
         "group_invite_link": getattr(settings, "group_invite_link", "https://t.me/VoiceCloneProGroup"),
         # So the Mini App can show its maintenance state instead of
@@ -5204,9 +5491,43 @@ async def get_recap_status(
             )
         else:
             _e_size, _e_sendable = None, True
+        # Batch L: job-aware progress info. Queue position is counted
+        # from the registry alone (no DB session on this hot path);
+        # the ETA median is a 60 s-cached aggregate. FAILED is
+        # terminal, so its single status read may open one session to
+        # answer can_retry exactly (persisted config + live source
+        # check) — every earlier poll stays session-free.
+        _e_status = entry.get("status")
+        if _e_status in ("QUEUED", "RUNNING"):
+            _e_position = _recap_registry_queue_position(job_id, entry)
+            _e_eta = _recap_eta_seconds(
+                _e_position,
+                _e_status,
+                entry.get("progress_percent"),
+                await _recap_recent_median_seconds(),
+            )
+        else:
+            _e_position, _e_eta = None, None
+        _e_can_retry = None
+        if _e_status == "FAILED":
+            try:
+                from app.db.session import AsyncSessionLocal
+
+                async with AsyncSessionLocal() as _session:
+                    _e_job = await _session.get(Job, job_id)
+                _e_can_retry = (
+                    bool(_e_job is not None and _recap_can_retry(_e_job))
+                    if _e_job is not None
+                    else None
+                )
+            except Exception:
+                _e_can_retry = None
         return {
             "id": job_id,
             "status": entry.get("status", "PENDING"),
+            "queue_position": _e_position,
+            "eta_seconds": _e_eta,
+            "can_retry": _e_can_retry,
             "progress_percent": entry.get("progress_percent", 0),
             "progress_step": entry.get("progress_step", ""),
             "progress_label": entry.get("progress_label", ""),
@@ -5280,9 +5601,28 @@ async def get_recap_status(
     # the receipt fields — charged credits plus the refund proof the
     # refund path wrote back into recap_config.
     _db_state = _load_persisted_recap_state(job) or {}
+    # Batch L: same queue/ETA/retry fields as the registry branch,
+    # computed from the Job table on this cold path.
+    if job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+        _d_position = await _recap_db_queue_position(job)
+        _d_eta = _recap_eta_seconds(
+            _d_position,
+            job.status,
+            15 if job.status == JobStatus.RUNNING.value else 0,
+            await _recap_recent_median_seconds(),
+        )
+    else:
+        _d_position, _d_eta = None, None
     return {
         "id": job_id,
         "status": job.status,
+        "queue_position": _d_position,
+        "eta_seconds": _d_eta,
+        "can_retry": (
+            _recap_can_retry(job)
+            if job.status == JobStatus.FAILED.value
+            else None
+        ),
         "fallback_used": _fb_used,
         "fallback_segments": _fb_segs,
         "warnings": _db_warnings,
@@ -5427,6 +5767,222 @@ async def render_recap_job(
         resume_source=str(source_path),
     ))
     return {"success": True, "status": "RUNNING"}
+
+
+@api_router.post("/recap/{job_id}/retry")
+async def retry_recap_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    """One-tap retry of a FAILED recap job (batch L).
+
+    Creates a NEW job from the failed job's stored configuration and
+    runs it through the normal submission path (create_recap_job):
+    same balance gate, same atomic charge, same refund-on-failure.
+    A retry is a NEW charge at the normal price — the failed job's
+    charge was already refunded by the failure path, which the UI
+    copy states honestly. (The admin queue retry is a different,
+    deliberately uncharged re-dispatch; this endpoint never uses it.)
+
+    Owner-only: _require_job_owner admits admins for reads, but a
+    retry acts (and charges) as the job's owner, so ownership must be
+    exact — anyone else gets the same 404 as a missing job.
+
+    Source availability: URL sources are always retryable. Upload
+    sources live in storage/temp/recap_uploads and are used in place;
+    they survive while the failed job's row does (see
+    _recap_source_available), but when the file is already gone the
+    retry is refused with the honest re-upload explanation instead of
+    charging for a job that cannot run.
+    """
+    job = await _require_job_owner(db, job_id, user)
+    if job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    if not (
+        job.job_type == JobType.RECAP.value
+        or job.id.startswith("rc_")
+        or job.engine == "recap"
+    ):
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    if job.status != JobStatus.FAILED.value:
+        raise HTTPException(
+            status_code=409,
+            detail="မအောင်မြင်တဲ့ Recap အလုပ်ကိုသာ ပြန်စမ်းနိုင်ပါတယ်။",
+        )
+    cfg = _recap_job_config(job)
+    if cfg is None:
+        raise HTTPException(
+            status_code=409,
+            detail="ဒီ အလုပ်ရဲ့ ဆက်တင်များကို ပြန်ရှာမရပါ — Recap အသစ် ပြန်ဖန်တီးပေးပါ။",
+        )
+    if not _recap_source_available(cfg.url):
+        raise HTTPException(
+            status_code=409,
+            detail="မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
+        )
+    result = await create_recap_job(cfg, user=user, db=db, _gate=user)
+    result["retried_from"] = job_id
+    return result
+
+
+@api_router.post("/recap/{job_id}/cancel")
+async def cancel_recap_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """User cancel for their OWN queued / processing recap job (batch L).
+
+    Runs the same cancel machinery as the admin console
+    (_cancel_recap_job_core): the row flips to CANCELLED, the registry
+    entry gets the marker the runner's re-checks recognise (a queued
+    job then never starts; a rendering job stops at the delivery
+    boundary), and the exact charged credits are refunded through the
+    failure paths' helper. SCRIPT_READY counts as processing: the
+    job's row is RUNNING while parked, and cancelling discards the
+    held script state (the persisted script_ready flag is cleared,
+    like the 24 h expiry sweep does) and refunds by the same rules.
+
+    Deliberately NOT membership-gated: stopping a job and recovering
+    your own refund must never be blocked. Owner-only, with the same
+    404 discipline as every other recap endpoint.
+    """
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if entry is not None and entry.get("user_id") != user.id:
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    job = await db.get(Job, job_id)
+    if job is not None:
+        if job.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Recap job not found")
+        if not (
+            job.job_type == JobType.RECAP.value
+            or job.id.startswith("rc_")
+            or job.engine == "recap"
+        ):
+            raise HTTPException(status_code=404, detail="Recap job not found")
+    if job is None and entry is None:
+        raise HTTPException(status_code=404, detail="Recap job not found")
+
+    entry_status = str((entry or {}).get("status") or "")
+    state = _load_persisted_recap_state(job) if job is not None else None
+    parked = bool(state and state.get("script_ready"))
+    cancellable = entry_status in ("QUEUED", "RUNNING", "SCRIPT_READY") or (
+        job is not None
+        and job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
+    )
+    if not cancellable:
+        raise HTTPException(
+            status_code=409,
+            detail="လုပ်ဆောင်နေဆဲ Recap အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
+        )
+
+    if job is not None:
+        refund_info = await _cancel_recap_job_core(
+            db,
+            job,
+            db_error_message="Cancelled by user via Mini App",
+            registry_error_message="Cancelled by user",
+        )
+        if parked:
+            # Discard the held script state (expiry-sweep hygiene):
+            # the parking flag comes off the persisted blob so the
+            # cancelled job can never be restored as SCRIPT_READY.
+            try:
+                from app.db.session import AsyncSessionLocal
+
+                async with AsyncSessionLocal() as session:
+                    fresh = await session.get(Job, job_id)
+                    fresh_state = (
+                        _load_persisted_recap_state(fresh)
+                        if fresh is not None
+                        else None
+                    )
+                    if fresh_state is not None and fresh_state.get("script_ready"):
+                        fresh_state["script_ready"] = False
+                        fresh.recap_config = json.dumps(
+                            fresh_state, ensure_ascii=False
+                        )
+                        await session.commit()
+            except Exception as exc:
+                logger.warning(
+                    f"Could not clear script_ready state for cancelled job {job_id}: {exc}"
+                )
+    else:
+        # Registry-only job (its DB insert failed at submit): the same
+        # marker + refund helpers, minus the row write.
+        entry["status"] = "FAILED"
+        entry["error_message"] = "Cancelled by user"
+        refunded = await _refund_recap_job_charge(user.id, entry)
+        refund_info = {
+            "refunded": bool(refunded),
+            "recap_credits": int(entry.get("credits_refunded") or 0),
+        }
+
+    return {
+        "success": True,
+        "status": "CANCELLED",
+        "refund": refund_info,
+        "credit_refunded": bool(refund_info.get("refunded")),
+        "credits_refunded": int(refund_info.get("recap_credits") or 0),
+    }
+
+
+@api_router.post("/recap/demo/send")
+async def send_recap_demo(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Deliver the admin-configured recap demo sample (batch L).
+
+    The demo asset reference lives in the ``recap_demo_asset`` dynamic
+    setting (Telegram file_id or URL). A URL is handed back for the
+    Mini App to open; a file_id can only be viewed via the bot, so it
+    is sent to the user's own chat — the same Bot pattern the failure
+    DM uses. Unset means the demo slot is hidden in the UI and this
+    endpoint refuses.
+    """
+    from app.services.dynamic_settings import get_dynamic_setting
+
+    asset = (
+        await get_dynamic_setting(
+            db,
+            "recap_demo_asset",
+            default=getattr(settings, "recap_demo_asset", ""),
+        )
+        or ""
+    ).strip()
+    if not asset:
+        raise HTTPException(
+            status_code=400,
+            detail="နမူနာ ဗီဒီယို မသတ်မှတ်ရသေးပါ။",
+        )
+    if asset.startswith(("http://", "https://")):
+        return {"success": True, "url": asset}
+    if not settings.bot_token:
+        raise HTTPException(
+            status_code=400,
+            detail="နမူနာ ပို့ရန် Bot မရရှိနိုင်ပါ။",
+        )
+    from aiogram import Bot
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        try:
+            await bot.send_video(chat_id=user.id, video=asset)
+        except Exception:
+            await bot.send_document(chat_id=user.id, document=asset)
+    except Exception as exc:
+        logger.warning(f"Could not send recap demo to user {user.id}: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail="နမူနာ ပို့တာ မအောင်မြင်ပါ — ခဏနေ ပြန်စမ်းပါခင်ဗျာ။",
+        )
+    finally:
+        await bot.session.close()
+    return {"success": True, "sent": True}
 
 
 @api_router.get("/recap/stream/{job_id}/{file_type}")
@@ -5859,6 +6415,24 @@ async def get_user_history(
                     }
             except Exception:
                 _recap_settings = None
+        # Batch L: the full rebuildable config rides along so the
+        # detail view can offer "re-run with these settings" (prefill,
+        # never auto-submit) and an honest retry affordance: a failed
+        # job is retryable only while its source still exists (an
+        # upload whose file is gone must say so, not silently fail).
+        _hist_cfg = None
+        _hist_source_available = None
+        _hist_can_retry = None
+        if is_recap:
+            _cfg_obj = _recap_job_config(j)
+            if _cfg_obj is not None:
+                _hist_cfg = _cfg_obj.model_dump()
+                _hist_source_available = _recap_source_available(_cfg_obj.url)
+            _hist_can_retry = bool(
+                j.status == JobStatus.FAILED.value
+                and _hist_cfg is not None
+                and _hist_source_available
+            )
         out.append({
             "id": j.id,
             "job_type": "RECAP" if is_recap else "VOICE_CLONE",
@@ -5879,6 +6453,9 @@ async def get_user_history(
             ) if is_recap else 0,
             "engine": j.engine,
             "recap_settings": _recap_settings,
+            "recap_config": _hist_cfg,
+            "source_available": _hist_source_available,
+            "can_retry": _hist_can_retry,
             "fallback_used": _fb_used,
             "fallback_segments": _fb_segs,
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
@@ -5902,6 +6479,75 @@ async def get_user_history(
         "ttl_hours": _media_retention_days() * 24,
         "retention_days": _media_retention_days(),
     }
+
+
+@api_router.delete("/history/{job_id}")
+async def delete_history_item(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Delete one of the user's OWN history items (batch L).
+
+    Safe variant, mirroring the retention sweep's semantics and
+    ordering: only TERMINAL jobs can be deleted (an active job's
+    record must never vanish from under its runner); the DB record is
+    deleted and committed FIRST, then the job's own files are removed
+    best-effort — the recap output directory and the result file,
+    which are exclusively this job's. The source upload is NOT
+    deleted: it can be shared with other jobs (the same upload
+    submitted twice), and the retention sweep's orphan pass already
+    reclaims uploads no surviving job row references. Owner-only,
+    with the usual 404 discipline.
+    """
+    job = await db.get(Job, job_id)
+    if job is None or job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="History item not found")
+    if job.status not in (
+        JobStatus.SUCCESS.value,
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="လုပ်ဆောင်နေဆဲ အလုပ်ကို ဖျက်လို့ မရပါ — အရင် ရပ်တန့်ပြီးမှ ဖျက်ပါ။",
+        )
+
+    is_recap = (
+        job.job_type == JobType.RECAP.value
+        or job.id.startswith("rc_")
+        or job.engine == "recap"
+    )
+    targets: list[Path] = []
+    if is_recap:
+        targets.append(settings.storage_root / "recap_output" / job.id)
+    if job.result_path:
+        result_file = Path(job.result_path)
+        try:
+            result_file.resolve().relative_to(settings.storage_root.resolve())
+            targets.append(result_file)
+        except Exception:
+            # A result path outside the storage tree is never deleted
+            # from a user request, however the row came to hold it.
+            logger.warning(
+                f"History delete for job {job.id}: result_path outside storage root; file kept"
+            )
+
+    await db.delete(job)
+    await db.commit()
+    RECAP_JOBS_REGISTRY.pop(job_id, None)
+
+    for target in targets:
+        try:
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            elif target.is_file():
+                target.unlink(missing_ok=True)
+        except Exception as file_err:
+            logger.warning(
+                f"History delete for job {job_id}: could not remove {target}: {file_err}"
+            )
+    return {"success": True}
 
 
 @api_router.get("/admin/history")
@@ -7108,54 +7754,24 @@ async def cancel_queued_job(
     is_recap = (job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap")
     refund_info = {"refunded": False}
 
-    job.status = JobStatus.CANCELLED.value
-    job.finished_at = utc_now()
-    job.error_message = "Cancelled by Administrator via Admin Console"
-    await db.commit()
+    if is_recap:
+        # Batch L: the recap cancel machinery (row flip, registry
+        # marker, refund incl. the registry-less persisted fallback)
+        # lives in _cancel_recap_job_core, shared with the Mini App
+        # user cancel so both surfaces behave identically.
+        refund_info = await _cancel_recap_job_core(
+            db,
+            job,
+            db_error_message="Cancelled by Administrator via Admin Console",
+            registry_error_message="Cancelled by Administrator",
+        )
+    else:
+        job.status = JobStatus.CANCELLED.value
+        job.finished_at = utc_now()
+        job.error_message = "Cancelled by Administrator via Admin Console"
+        await db.commit()
 
-    try:
-        if is_recap:
-            entry = RECAP_JOBS_REGISTRY.get(job_id)
-            if entry is not None:
-                if job_id in RECAP_JOBS_REGISTRY:
-                    RECAP_JOBS_REGISTRY[job_id]["status"] = "FAILED"
-                    RECAP_JOBS_REGISTRY[job_id]["error_message"] = "Cancelled by Administrator"
-                if await _refund_recap_job_charge(job.user_id, entry):
-                    refund_info = {"refunded": True, "recap_credits": int(entry.get("credits_refunded") or 0)}
-            else:
-                # Registry lost (server restart): read the charge from
-                # the persisted blob on the Job row (hunt #5) -- a
-                # segmented job may have been charged N credits, not
-                # the submit-time 1 this fallback used to assume, and
-                # a blob that already records the refund must not be
-                # refunded a second time. Legacy rows without a blob
-                # keep the historical behaviour: the submit-time base
-                # credit is the only provable charge. A second cancel
-                # is impossible (status is now CANCELLED).
-                persisted = _load_persisted_recap_state(job)
-                proven_credits = 1
-                already_refunded = False
-                if persisted is not None:
-                    already_refunded = bool(persisted.get("credit_refunded"))
-                    if persisted.get("credit_deducted"):
-                        proven_credits = max(1, int(persisted.get("credits_charged") or 1))
-                if already_refunded:
-                    refund_info = {
-                        "refunded": True,
-                        "recap_credits": int(persisted.get("credits_refunded") or proven_credits),
-                        "note": "charge already refunded before the restart (persisted state)",
-                    }
-                elif not settings.is_admin(job.user_id) and await _refund_recap_credits(job.user_id, proven_credits):
-                    refund_info = {
-                        "refunded": True,
-                        "recap_credits": proven_credits,
-                        "note": (
-                            "registry unavailable; amount restored from persisted recap state"
-                            if persisted is not None
-                            else "base credit only (registry unavailable)"
-                        ),
-                    }
-        else:
+        try:
             from app.services.ledger import refund_job_seconds
             before = (await db.execute(
                 select(MinuteLedgerEvent).where(
@@ -7167,9 +7783,9 @@ async def cancel_queued_job(
             await db.commit()
             if not before:
                 refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
-    except Exception as exc:
-        logger.warning(f"Cancel refund failed for job {job_id}: {exc}")
-        refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
+        except Exception as exc:
+            logger.warning(f"Cancel refund failed for job {job_id}: {exc}")
+            refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
 
     db.add(AuditLog(
         admin_id=admin.id,
@@ -7195,6 +7811,11 @@ class AdminSettingsPayload(BaseModel):
     tutorial_recap_title: Optional[str] = None
     tutorial_recap_link: Optional[str] = None
     tutorial_recap_enabled: Optional[bool] = None
+    # Batch L: recap demo sample reference — a Telegram file_id OR a
+    # URL. Deliberately NOT named *_link: the settings validator
+    # forces every *_link value to be a t.me URL, which would reject
+    # a file_id outright.
+    recap_demo_asset: Optional[str] = None
     tutorial_index_link: Optional[str] = None
     tutorial_plans_link: Optional[str] = None
     tutorial_customvoice_link: Optional[str] = None
@@ -7242,6 +7863,7 @@ async def get_admin_settings(
         "tutorial_recap_title": getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
         "tutorial_recap_link": getattr(settings, "tutorial_recap_link", "https://t.me/VoiceClonePro/30"),
         "tutorial_recap_enabled": getattr(settings, "tutorial_recap_enabled", True),
+        "recap_demo_asset": getattr(settings, "recap_demo_asset", ""),
         **{
             key: getattr(settings, key, default)
             for key, default in TUTORIAL_EXTRA_LINKS.items()

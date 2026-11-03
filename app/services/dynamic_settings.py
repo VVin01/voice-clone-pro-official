@@ -50,6 +50,7 @@ SETTING_TYPES: dict[str, type] = {
     "tutorial_recap_title": str,
     "tutorial_recap_link": str,
     "tutorial_recap_enabled": bool,
+    "recap_demo_asset": str,
     "tutorial_index_link": str,
     "tutorial_plans_link": str,
     "tutorial_customvoice_link": str,

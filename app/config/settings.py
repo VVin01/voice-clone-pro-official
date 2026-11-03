@@ -170,6 +170,15 @@ class Settings(BaseSettings):
     )
     tutorial_recap_enabled: bool = Field(default=True, alias="TUTORIAL_RECAP_ENABLED")
 
+    # Recap demo sample (batch L): a Telegram file_id or a URL for a
+    # short before/after sample shown on the Recap tab. Empty (the
+    # default) hides the slot — the owner supplies the asset later;
+    # no placeholder media is bundled.
+    recap_demo_asset: str = Field(
+        default="",
+        alias="RECAP_DEMO_ASSET",
+    )
+
     # Remaining tutorial links (premium polish follow-up): every tutorial
     # in the @VoiceClonePro channel is admin-editable from Admin → Settings,
     # not just video/voice/recap above. Defaults match the frontend

@@ -965,6 +965,15 @@ function updateTutorialUI(data) {
         tutorialConfig.recap.enabled = String(data.tutorial_recap_enabled).toLowerCase() !== "false" && data.tutorial_recap_enabled !== false;
     }
 
+    // Batch L: recap demo slot — visible only while the admin has a
+    // demo asset configured (Telegram file_id or URL); the value is
+    // kept on state for the watch handler (watchRecapDemo).
+    if (data.recap_demo_asset !== undefined) {
+        state.recapDemoAsset = data.recap_demo_asset || "";
+        const demoCard = document.getElementById("recap-demo-card");
+        if (demoCard) demoCard.classList.toggle("hidden", !state.recapDemoAsset);
+    }
+
     // Remaining tutorials: admin value wins over the registry default;
     // an empty value clears the override (back to the default).
     for (const [tutKey, settingKey] of Object.entries(TUTORIAL_SETTING_KEYS)) {
@@ -5115,6 +5124,63 @@ function setupRecapVisualEditor() {
     }
     restoreRecapSettings();
 
+    // Batch L: "Re-run with these settings" (History detail) — map a
+    // stored RecapConfigRequest back into the settings-snapshot space
+    // and run it through the SAME restore path as the persisted panel
+    // state (so validation + control sync are shared, not forked),
+    // then restore the source: the URL field for link jobs, or the
+    // uploaded-path state for upload jobs whose file is still on the
+    // server. PREFILL ONLY — nothing is submitted until the user
+    // taps Start themselves.
+    window.prefillRecapFromHistory = function(cfg, item) {
+        if (!cfg || typeof cfg !== "object") return;
+        const snap = {
+            recapRatio: cfg.ratio, recapRatioFill: cfg.ratio_fill,
+            recapSpeed: cfg.voice_speed, recapStoryStyle: cfg.story_style,
+            recapSubStyle: cfg.sub_style, recapSubFont: cfg.sub_font,
+            recapLogoPos: cfg.logo_pos, recapSourceLanguage: cfg.source_language,
+            recapRenderQuality: cfg.render_quality, recapTtsEngine: cfg.tts_engine,
+            recapMirror: cfg.mirror_video !== false,
+            recapBurnSubs: cfg.burn_subtitles !== false,
+            recapBlurSubs: cfg.blur_subtitles !== false,
+            recapLogo: cfg.include_logo !== false,
+            recapCropTop: cfg.crop_top, recapCropBottom: cfg.crop_bottom,
+            recapCropLeft: cfg.crop_left, recapCropRight: cfg.crop_right,
+            recapFontSize: cfg.sub_font_size, recapLines: cfg.sub_lines,
+            recapSplitMinutes: cfg.split_minutes,
+            recapBlurY: cfg.blur_y, recapBlurH: cfg.blur_h, recapSubY: cfg.sub_y,
+            recapZoom: cfg.zoom_factor, recapVoice: cfg.voice_slug,
+            recapGeminiVoice: cfg.gemini_voice || "",
+            recapSplitEnabled: !!cfg.split_video,
+        };
+        try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snap)); } catch (e) {}
+        restoreRecapSettings();
+        const srToggle = document.getElementById("recap-script-review-toggle");
+        const srToggleMain = document.getElementById("recap-script-review-toggle-main");
+        if (srToggle) srToggle.checked = !!cfg.script_review;
+        if (srToggleMain) srToggleMain.checked = !!cfg.script_review;
+        if (cfg.title) state.recapVideoTitle = cfg.title;
+        state.recapSourceDuration = cfg.duration_seconds || null;
+        const srcUrl = (cfg.url || "").trim();
+        if (/^https?:\/\//i.test(srcUrl)) {
+            state.uploadedVideoPath = null;
+            const urlInput = document.getElementById("recap-url-input");
+            if (urlInput) urlInput.value = srcUrl;
+            const btnUrlMode = document.getElementById("btn-source-mode-url");
+            if (btnUrlMode) btnUrlMode.click();
+        } else if (srcUrl && item && item.source_available) {
+            state.uploadedVideoPath = srcUrl;
+            const btnFileMode = document.getElementById("btn-source-mode-file");
+            if (btnFileMode) btnFileMode.click();
+        } else {
+            // Upload source is gone: settings are filled, the user
+            // picks a source again (the toast explains prefill).
+            state.uploadedVideoPath = null;
+        }
+        const ctaBtn = document.getElementById("btn-start-recap");
+        if (ctaBtn) ctaBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+
     // Initial canvas mockup sync
     updateCanvasMockupVisuals();
     updateSubtitleVisualPreview();
@@ -5253,6 +5319,8 @@ async function handleStartRecap() {
     const stepText = document.getElementById("recap-step-text");
 
     if (resultBox) resultBox.classList.add("hidden");
+    const failedBoxOnStart = document.getElementById("recap-failed-box");
+    if (failedBoxOnStart) failedBoxOnStart.classList.add("hidden");
     if (progressBox) {
         progressBox.classList.remove("hidden");
         progressBox.scrollIntoView({ behavior: "smooth" });
@@ -5354,6 +5422,8 @@ function startRecapJobPolling(jobId) {
 
     if (progressBox) progressBox.classList.remove("hidden");
     if (btn) btn.disabled = true;
+    const failedBoxOnPoll = document.getElementById("recap-failed-box");
+    if (failedBoxOnPoll) failedBoxOnPoll.classList.add("hidden");
 
     // Poll health bookkeeping (hunt #7): this loop used to swallow
     // every failure silently (non-OK -> return, throw -> console.warn)
@@ -5441,7 +5511,20 @@ function startRecapJobPolling(jobId) {
                 }
             }
             if (stepText && data.progress_step) {
-                stepText.innerText = `Step ${data.progress_step} • ${t("queue_notice_recap")}`;
+                // Batch L: prefer the server's job-aware queue/ETA —
+                // position counted from the live queue, ETA derived
+                // from real completed-job durations — and degrade to
+                // the old boilerplate line when the server has no
+                // honest estimate for this job.
+                const stepBits = [`Step ${data.progress_step}`];
+                if (typeof data.queue_position === "number" && data.queue_position > 0) {
+                    stepBits.push(tf("recap_queue_ahead", { count: data.queue_position }));
+                }
+                if (typeof data.eta_seconds === "number" && data.eta_seconds > 0) {
+                    stepBits.push(tf("recap_eta_dynamic", { min: Math.max(1, Math.round(data.eta_seconds / 60)) }));
+                }
+                if (stepBits.length === 1) stepBits.push(t("queue_notice_recap"));
+                stepText.innerText = stepBits.join(" • ");
             }
             setRecapStage(data.progress_step, data.status);
 
@@ -5603,6 +5686,43 @@ function startRecapJobPolling(jobId) {
                     failToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
                 }
                 showStudioToast(failToast, 'error', 6000);
+                // Batch L: the failed card is the retry surface —
+                // the same curated error text as the toast (mapped,
+                // never raw), the refund confirmation when proven,
+                // and a one-tap retry (a NEW charged job built from
+                // the stored config; the server enforces it). When
+                // the server reports the source is gone
+                // (can_retry === false — an upload whose file was
+                // purged), the button is disabled and the honest
+                // re-upload note shows instead of the charge note.
+                const failedBox = document.getElementById("recap-failed-box");
+                if (failedBox) {
+                    failedBox.classList.remove("hidden");
+                    const ferrEl = document.getElementById("recap-failed-error");
+                    if (ferrEl) ferrEl.innerText = mapErrorToToast(errMsg, 'recap');
+                    const frefEl = document.getElementById("recap-failed-refund");
+                    if (frefEl) {
+                        if (data.credit_refunded) {
+                            frefEl.innerText = tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
+                            frefEl.classList.remove("hidden");
+                        } else {
+                            frefEl.classList.add("hidden");
+                        }
+                    }
+                    const retryBtn = document.getElementById("btn-recap-retry");
+                    const missNote = document.getElementById("recap-retry-upload-missing");
+                    const chargeNote = document.getElementById("recap-retry-note");
+                    if (data.can_retry === false) {
+                        if (retryBtn) retryBtn.disabled = true;
+                        if (missNote) missNote.classList.remove("hidden");
+                        if (chargeNote) chargeNote.classList.add("hidden");
+                    } else {
+                        if (retryBtn) retryBtn.disabled = false;
+                        if (missNote) missNote.classList.add("hidden");
+                        if (chargeNote) chargeNote.classList.remove("hidden");
+                    }
+                    state.recapFailedJobId = jobId;
+                }
                 if (errMsg.includes("Douyin") || errMsg.includes("Fresh cookies") || blockedLinkInfo(errMsg).blocked) {
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
@@ -5617,6 +5737,108 @@ function startRecapJobPolling(jobId) {
     };
     state.recapPollTimer = setInterval(recapPollTick, 2000);
 }
+
+// ── Recap job actions (batch L): cancel / retry / demo ───────────────
+// All three are thin clients over owner-only server endpoints; the
+// server re-checks ownership, state and source availability, so these
+// helpers only confirm, call, and refresh the surfaces.
+async function cancelRecapJobById(jobId) {
+    if (!jobId) return;
+    showStudioConfirm(t("recap_cancel_confirm"), async () => {
+        try {
+            const res = await fetch(`/api/recap/${jobId}/cancel`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || "Cancel failed");
+            if (state.recapPollTimer) {
+                clearInterval(state.recapPollTimer);
+                state.recapPollTimer = null;
+            }
+            if (state.recapJobId === jobId) {
+                try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
+            }
+            if (state.recapScriptReadyJobId === jobId) state.recapScriptReadyJobId = null;
+            const pBox = document.getElementById("recap-progress-box");
+            if (pBox) pBox.classList.add("hidden");
+            const sBox = document.getElementById("recap-script-box");
+            if (sBox) sBox.classList.add("hidden");
+            const startBtn = document.getElementById("btn-start-recap");
+            if (startBtn) startBtn.disabled = false;
+            let msg = t("recap_cancelled_toast");
+            if (data.credit_refunded) {
+                msg += " " + tf("recap_refunded_line", { credits: data.credits_refunded || 1 });
+            }
+            showStudioToast(msg, 'info', 5000);
+            loadUserProfile();
+            loadUserHistory();
+        } catch (err) {
+            showStudioToast((err && err.message) ? err.message : t("err_recap_failed"), 'error');
+        }
+    });
+}
+window.cancelRecapJob = function(jobId) { cancelRecapJobById(jobId); };
+window.cancelCurrentRecapJob = function() {
+    cancelRecapJobById(state.recapScriptReadyJobId || state.recapJobId);
+};
+
+async function retryRecapJobById(jobId) {
+    if (!jobId) return;
+    showStudioConfirm(t("recap_retry_confirm"), async () => {
+        try {
+            const res = await fetch(`/api/recap/${jobId}/retry`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || "Retry failed");
+            const failedBox = document.getElementById("recap-failed-box");
+            if (failedBox) failedBox.classList.add("hidden");
+            state.recapJobId = data.recap_id;
+            try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
+            showStudioToast(t("recap_retry_started_toast"), 'success');
+            loadUserProfile();
+            switchTab("tab-recap");
+            startRecapJobPolling(data.recap_id);
+        } catch (err) {
+            showStudioToast((err && err.message) ? err.message : t("err_recap_failed"), 'error');
+        }
+    });
+}
+window.retryRecapJob = function(jobId) { retryRecapJobById(jobId); };
+window.retryCurrentRecapJob = function() {
+    retryRecapJobById(state.recapFailedJobId || state.recapJobId);
+};
+
+window.watchRecapDemo = async function() {
+    const asset = state.recapDemoAsset || "";
+    if (!asset) return;
+    haptic("light");
+    if (/^https?:\/\//i.test(asset)) {
+        if (window.Telegram?.WebApp?.openLink) window.Telegram.WebApp.openLink(asset);
+        else window.open(asset, "_blank");
+        return;
+    }
+    // A Telegram file_id cannot play inline in the Mini App — the
+    // server asks the bot to send it to the user's own chat instead.
+    try {
+        const res = await fetch("/api/recap/demo/send", {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "Demo failed");
+        if (data.url) {
+            if (window.Telegram?.WebApp?.openLink) window.Telegram.WebApp.openLink(data.url);
+            else window.open(data.url, "_blank");
+        } else {
+            showStudioToast(t("recap_demo_sent_toast"), 'info', 5000);
+        }
+    } catch (err) {
+        showStudioToast((err && err.message) ? err.message : t("err_recap_failed"), 'error');
+    }
+};
 
 // ── Recap Script Review / Edit (two-phase flow) ─────────────────────────
 async function openRecapScriptEditor(jobId) {
@@ -7911,6 +8133,7 @@ async function loadAdminSettings() {
         const elTutRecapEn = document.getElementById("adm-tut-recap-enabled");
         const elTutRecapTitle = document.getElementById("adm-tut-recap-title");
         const elTutRecapLink = document.getElementById("adm-tut-recap-link");
+        const elRecapDemoAsset = document.getElementById("adm-recap-demo-asset");
 
         if (elKpayNum) elKpayNum.value = s.payment_kpay_number || "";
         if (elKpayName) elKpayName.value = s.payment_kpay_name || "";
@@ -7937,6 +8160,7 @@ async function loadAdminSettings() {
         if (elTutRecapEn) elTutRecapEn.checked = String(s.tutorial_recap_enabled).toLowerCase() !== "false" && s.tutorial_recap_enabled !== false;
         if (elTutRecapTitle) elTutRecapTitle.value = s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
         if (elTutRecapLink) elTutRecapLink.value = s.tutorial_recap_link || s.tutorial_video_link || "";
+        if (elRecapDemoAsset) elRecapDemoAsset.value = s.recap_demo_asset || "";
 
         for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
             const el = document.getElementById(elId);
@@ -8066,6 +8290,7 @@ async function saveAdminSettings() {
     const tutRecapEn = !!document.getElementById("adm-tut-recap-enabled")?.checked;
     const tutRecapTitle = document.getElementById("adm-tut-recap-title")?.value?.trim() || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
     const tutRecapLink = document.getElementById("adm-tut-recap-link")?.value?.trim() || "";
+    const recapDemoAsset = document.getElementById("adm-recap-demo-asset")?.value?.trim() || "";
 
     const tutExtraLinks = {};
     for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
@@ -8084,6 +8309,8 @@ async function saveAdminSettings() {
         tutorial_recap_enabled: tutRecapEn,
         tutorial_recap_title: tutRecapTitle,
         tutorial_recap_link: tutRecapLink,
+        // Batch L demo slot asset (file_id or URL; "" hides the slot).
+        recap_demo_asset: recapDemoAsset,
         ...tutExtraLinks,
         maintenance_mode: maint,
         group_ai_admin_enabled: groupAi,
@@ -8229,9 +8456,23 @@ function hubHistoryDetailHtml(j) {
     let actions = "";
     if (j.status === "FAILED") {
         actions = `<span class="badge-expired text-xs" style="color:#f87171;">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
+        // Batch L: one-tap retry (hidden when the server says the
+        // source is gone — the note explains instead), re-run prefill
+        // and delete for recap items; delete for every terminal item.
+        if (isRecap) {
+            if (j.can_retry !== false) {
+                actions += ` <button type="button" onclick="retryRecapJob('${j.id}')" class="history-dl-link">${t("btn_retry_job")}</button>`;
+            } else {
+                inner += `<div class="history-item-body">${escapeHtml(t("recap_retry_upload_missing"))}</div>`;
+            }
+            if (j.recap_config) {
+                actions += ` <button type="button" onclick="rerunRecapFromHistory('${j.id}')" class="history-dl-link">${t("btn_rerun_recap")}</button>`;
+            }
+        }
+        actions += ` <button type="button" onclick="deleteHistoryItem('${j.id}')" class="history-dl-link">${t("btn_delete_history")}</button>`;
     } else if (j.status === "RUNNING" || j.status === "QUEUED") {
         actions = isRecap
-            ? `<button type="button" onclick="startRecapJobPolling('${j.id}')" class="history-dl-link">${t("hist_track_recap")}</button>`
+            ? `<button type="button" onclick="startRecapJobPolling('${j.id}')" class="history-dl-link">${t("hist_track_recap")}</button> <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`
             : `<button type="button" onclick="startJobPolling('${j.id}')" class="history-dl-link">${t("hist_track_voice")}</button>`;
     } else if (j.is_expired) {
         actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
@@ -8261,9 +8502,55 @@ function hubHistoryDetailHtml(j) {
         // the detail opens (see wireHubDetailAudio).
         inner += `<div class="hub-detail-player"><audio class="hub-detail-audio" controls preload="none" data-auth-src="${j.download_url}"></audio></div>`;
     }
+    // Batch L: terminal SUCCESS/CANCELLED items also get re-run
+    // prefill (recap, when the stored config survived) and delete.
+    if (j.status === "SUCCESS" || j.status === "CANCELLED") {
+        if (isRecap && j.recap_config) {
+            actions += ` <button type="button" onclick="rerunRecapFromHistory('${j.id}')" class="history-dl-link">${t("btn_rerun_recap")}</button>`;
+        }
+        actions += ` <button type="button" onclick="deleteHistoryItem('${j.id}')" class="history-dl-link">${t("btn_delete_history")}</button>`;
+    }
     if (actions) inner += `<div class="history-btn-row hub-detail-actions">${actions}</div>`;
     return inner;
 }
+
+// Batch L history actions: re-run prefill + owner delete. Both are
+// thin clients — the server re-checks ownership on delete, and the
+// prefill only fills the form (never auto-submits).
+window.rerunRecapFromHistory = function(jobId) {
+    const item = (hubHistoryCache || []).find(h => h.id === jobId);
+    if (!item || !item.recap_config) {
+        showStudioToast(t("err_recap_failed"), 'error');
+        return;
+    }
+    haptic("light");
+    switchTab("tab-recap");
+    if (typeof window.prefillRecapFromHistory === "function") {
+        window.prefillRecapFromHistory(item.recap_config, item);
+    }
+    showStudioToast(t("recap_rerun_prefilled_toast"), 'info', 5000);
+};
+
+window.deleteHistoryItem = function(jobId) {
+    showStudioConfirm(t("history_delete_confirm"), async () => {
+        try {
+            const res = await fetch(`/api/history/${jobId}`, {
+                method: "DELETE",
+                headers: getAuthHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || "Delete failed");
+            if (Array.isArray(hubHistoryCache)) {
+                hubHistoryCache = hubHistoryCache.filter(h => h.id !== jobId);
+            }
+            if (hubOpenDetailId === jobId) hubOpenDetailId = null;
+            renderHistoryHub();
+            showStudioToast(t("history_deleted_toast"), 'info');
+        } catch (err) {
+            showStudioToast((err && err.message) ? err.message : t("err_recap_failed"), 'error');
+        }
+    });
+};
 
 function hubHistoryRowHtml(j) {
     const isRecap = j.job_type === "RECAP";

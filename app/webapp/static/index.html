@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261103_r43">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261103_r44">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -423,6 +423,19 @@
                     <p data-i18n="recap_subtitle">မည်သည့်ဗီဒီယိုကိုမဆို မြန်မာအသံ၊ စာတန်းနှင့် စမတ် Blur ပါသော Recap အဖြစ် ပြောင်းပါ</p>
                 </div>
 
+
+                <!-- ════ DEMO SAMPLE SLOT (batch L) ════
+                     Shown only when the admin has configured a demo
+                     asset (recap_demo_asset setting: Telegram file_id
+                     or URL). Hidden by default — no placeholder media
+                     is bundled; the owner supplies the sample. -->
+                <div class="card glass recap-demo-card hidden" id="recap-demo-card">
+                    <div class="card-label" data-i18n="recap_demo_title">🎬 နမူနာ Recap</div>
+                    <p class="mt-2" style="font-size:13px; opacity:0.9;" data-i18n="recap_demo_text">မစမ်းခင် အရင် ကြည့်လိုက်ပါ — မူရင်း ဗီဒီယိုနဲ့ Recap လုပ်ပြီးသား နမူနာ အတို (စက္ကန့် ၃၀ ခန့်) ပါ။</p>
+                    <button type="button" class="btn gold-gradient-btn mt-2" id="btn-recap-demo" onclick="watchRecapDemo()">
+                        <span data-i18n="recap_demo_watch">▶️ နမူနာ ကြည့်မည်</span>
+                    </button>
+                </div>
 
                 <!-- 🎬 STREAMLINED STUDIO UX: 3-STEP PRIMARY FLOW + ADVANCED ACCORDION -->
                 <div class="recap-streamlined-container">
@@ -1164,6 +1177,9 @@
                         </div>
                         <div class="eta-tag" id="recap-step-text" data-i18n="recap_eta_text">ခန့်မှန်းကြာချိန်: ၂–၄ မိနစ်</div>
                         <div class="telegram-leave-hint" data-i18n="telegram_leave_hint">💡 ဒီစာမျက်နှာကို ပိတ်သွားလို့ ရပါတယ်။ ဗီဒီယို အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ ပို့ပေးပါမည်။</div>
+                        <button type="button" class="btn secondary-btn mt-2" id="btn-recap-cancel" onclick="cancelCurrentRecapJob()">
+                            <span data-i18n="btn_cancel_job">⏹️ ပယ်ဖျက်မည်</span>
+                        </button>
                     </div>
 
                     <!-- ════ SCRIPT REVIEW / EDIT CARD ════ -->
@@ -1174,6 +1190,7 @@
                         <div class="script-actions mt-2">
                             <button class="btn secondary-btn" id="btn-script-save"><span data-i18n="btn_script_save">💾 သိမ်းမည်</span></button>
                             <button class="btn gold-gradient-btn" id="btn-script-render"><span data-i18n="btn_script_render">🎬 Render လုပ်မည်</span></button>
+                            <button class="btn secondary-btn" id="btn-script-cancel" onclick="cancelCurrentRecapJob()"><span data-i18n="btn_cancel_job">⏹️ ပယ်ဖျက်မည်</span></button>
                         </div>
                     </div>
 
@@ -1202,6 +1219,18 @@
                             <p id="recap-cost-line" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
                             <p id="recap-expiry-note" class="mt-2" data-i18n="history_expiry_note" style="font-size:12px; opacity:0.85;">⏱️ ဖိုင်များကို ၇ ရက်အထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
                         </div>
+                    </div>
+
+                    <!-- ════ FAILED CARD: one-tap retry (batch L) ════ -->
+                    <div class="card glass result-card hidden mt-3" id="recap-failed-box">
+                        <div class="result-title" data-i18n="recap_failed_title">❌ Recap မအောင်မြင်ပါ</div>
+                        <p id="recap-failed-error" class="mt-2" style="font-size:13px; opacity:0.9;"></p>
+                        <p id="recap-failed-refund" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
+                        <button type="button" class="btn gold-gradient-btn mt-2" id="btn-recap-retry" onclick="retryCurrentRecapJob()">
+                            <span data-i18n="btn_retry_job">🔄 ထပ်ကြိုးစားမည်</span>
+                        </button>
+                        <p id="recap-retry-note" class="mt-2" style="font-size:12px; opacity:0.85;" data-i18n="recap_retry_charge_note">♻️ ပြန်စမ်းခြင်းက အသစ် ဖန်တီးသလိုပဲ ပုံမှန် Credit ထပ် ကောက်ပါမယ် — မအောင်မြင်ခဲ့တဲ့ အလုပ်အတွက် Credit ပြန်အမ်းထားပြီး ဖြစ်ပါတယ်။</p>
+                        <p id="recap-retry-upload-missing" class="hidden mt-2" style="font-size:12px; opacity:0.85;" data-i18n="recap_retry_upload_missing">📁 မူရင်း တင်ထားတဲ့ ဗီဒီယိုဖိုင် မရှိတော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။</p>
                     </div>
 
                 </div>
@@ -1995,6 +2024,15 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="admin-tut-box glass-inset mt-2">
+                            <div class="tut-box-header">
+                                <span class="tut-box-title">🎬 Recap Demo Sample (Batch L)</span>
+                            </div>
+                            <div class="mt-1">
+                                <label class="input-label text-xs">Demo Asset — Telegram file_id or video URL (empty = demo slot hidden)</label>
+                                <input type="text" id="adm-recap-demo-asset" class="studio-input" placeholder="Telegram file_id or https://…">
+                            </div>
+                        </div>
                         <div class="admin-tut-box glass-inset mt-2" id="adm-tut-links-box">
                             <div class="tut-box-header">
                                 <span class="tut-box-title">🔗 Other Tutorial Links</span>
@@ -2236,7 +2274,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261103_r43"></script>
-    <script src="/static/js/app.js?v=20261103_r43"></script>
+    <script src="/static/js/i18n.js?v=20261103_r44"></script>
+    <script src="/static/js/app.js?v=20261103_r44"></script>
 </body>
 </html>
