@@ -28,6 +28,25 @@ MEDIA_VIDEO_EXTS = {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.flv', '.wmv', '.m
 MEDIA_AUDIO_EXTS = {'.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.opus', '.wma'}
 MEDIA_EXTS = MEDIA_VIDEO_EXTS | MEDIA_AUDIO_EXTS
 
+# Final-audit batch M: every local-media ffmpeg call below is bounded.
+# A wedged decoder on a malformed/hostile upload used to hang the
+# calling job forever (these calls run before the recap engine's own
+# per-call timeouts apply). Same scale as recap_engine.core's
+# ffmpeg_timeout: a floor plus wall-clock per second of media; the
+# thumbnail grab is a single frame and gets a short fixed cap.
+LOCAL_MEDIA_TIMEOUT_FLOOR_SECONDS = 600
+LOCAL_MEDIA_TIMEOUT_PER_SECOND = 30.0
+THUMBNAIL_TIMEOUT_SECONDS = 60
+
+
+def _local_media_timeout(duration_seconds) -> int:
+    """Wall-clock timeout (seconds) for an ffmpeg pass over this media."""
+    try:
+        duration = float(duration_seconds or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    return int(max(LOCAL_MEDIA_TIMEOUT_FLOOR_SECONDS, LOCAL_MEDIA_TIMEOUT_PER_SECOND * max(0.0, duration)))
+
 def is_local_media(path_or_url: str) -> bool:
     """Check if the provided string is a path to an existing local media file or media filename."""
     if not path_or_url:
@@ -110,7 +129,7 @@ def extract_thumbnail_from_media(file_path: str, output_path: str, timestamp_sec
             "-q:v", "2",
             output_path
         ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=THUMBNAIL_TIMEOUT_SECONDS)
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return output_path
     except Exception as e:
@@ -1926,8 +1945,13 @@ class MediaDownloader:
             "-movflags", "+faststart",
             out_mp4
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        if res.returncode != 0 or not os.path.exists(out_mp4):
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=_local_media_timeout(info.get("duration")))
+            transcode_ok = res.returncode == 0
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Local transcode timed out for {file_path}; falling back to copy")
+            transcode_ok = False
+        if not transcode_ok or not os.path.exists(out_mp4):
             shutil.copy2(file_path, out_mp4)
 
         return out_mp4, info
@@ -1954,8 +1978,13 @@ class MediaDownloader:
             "-b:a", "192k",
             out_mp3
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        if res.returncode != 0 or not os.path.exists(out_mp3):
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=_local_media_timeout(info.get("duration")))
+            extract_ok = res.returncode == 0
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Local audio extraction timed out for {file_path}; using silent fallback")
+            extract_ok = False
+        if not extract_ok or not os.path.exists(out_mp3):
             # Fallback: Video may have no audio track (silent video)
             # Generate synthetic silent audio so pipeline does not crash
             dur = max(5.0, float(info.get("duration") or 10.0))
@@ -1968,8 +1997,12 @@ class MediaDownloader:
                 "-b:a", "192k",
                 out_mp3
             ]
-            res_sil = subprocess.run(silent_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            if res_sil.returncode != 0 or not os.path.exists(out_mp3):
+            try:
+                res_sil = subprocess.run(silent_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=_local_media_timeout(dur))
+                silent_ok = res_sil.returncode == 0
+            except subprocess.TimeoutExpired:
+                silent_ok = False
+            if not silent_ok or not os.path.exists(out_mp3):
                 raise RuntimeError(f"Audio extraction failed for {file_path}")
 
         return out_mp3, info

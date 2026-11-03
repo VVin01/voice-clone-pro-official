@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.enums import JobStatus, LedgerDirection
+from app.models.enums import JobStatus, JobType, LedgerDirection
 from app.models.schema import AuditLog, Job, MinuteLedgerEvent, User, utc_now
 from app.services.i18n import t
 from app.services.ledger import refund_job_seconds
@@ -47,12 +47,22 @@ async def recover_stale_running_jobs(
     )
     cutoff = utc_now() - timedelta(seconds=timeout)
 
-    # Step 1: Find candidate job IDs
+    # Step 1: Find candidate job IDs.
+    # Recap rows are EXCLUDED (final-audit batch M): recap charges are
+    # credit deductions with no minute-ledger events, so this reaper
+    # would fail the job and silently keep the credit — including
+    # parked SCRIPT_READY rows, which legitimately sit RUNNING for up
+    # to 24h. Recap rows are owned by the recap reset + the
+    # SCRIPT_READY expiry sweep. Same exclusion predicate as the
+    # voice claim query in app/services/queue.py.
     candidate_stmt = (
         select(Job.id)
         .where(
             Job.status == JobStatus.RUNNING.value,
             Job.started_at <= cutoff,
+            Job.job_type != JobType.RECAP.value,
+            Job.engine != "recap",
+            ~Job.id.startswith("rc_"),
         )
         .order_by(Job.started_at)
     )
