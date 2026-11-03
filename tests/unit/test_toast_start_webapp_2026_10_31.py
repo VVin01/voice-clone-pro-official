@@ -142,13 +142,17 @@ def test_mapper_and_helpers_defined_and_exported():
 
 def test_failed_job_toasts_route_through_mapper():
     assert "mapErrorToToast(data.error_message, 'voice')" in APP_JS
-    assert "mapErrorToToast(errMsg, 'recap'), 'error', 6000" in APP_JS
+    # Batch K: the mapped text lands in failToast first (a proven
+    # refund appends its marker line), then the toast fires with the
+    # same 'error' styling and 6000 ms duration as before.
+    assert "let failToast = mapErrorToToast(errMsg, 'recap')" in APP_JS
+    assert "showStudioToast(failToast, 'error', 6000)" in APP_JS
     # the old raw-interpolating recap failure template is gone
     assert "${errMsg}" not in APP_JS
     assert "Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်:" not in APP_JS
     # the recap FAILED toast uses 'error' styling around the mapper call
     idx = APP_JS.index("mapErrorToToast(errMsg, 'recap')")
-    assert ", 'error', 6000)" in APP_JS[idx:idx + 80]
+    assert "showStudioToast(failToast, 'error', 6000)" in APP_JS[idx:idx + 400]
 
 
 def test_submit_and_io_catches_route_through_mapper():
@@ -172,7 +176,8 @@ def test_submit_and_io_catches_route_through_mapper():
 
 def test_long_guidance_toasts_get_6000ms():
     assert 'showStudioToast(t("toast_douyin_blocked"), \'warning\', 6000)' in APP_JS
-    assert "mapErrorToToast(errMsg, 'recap'), 'error', 6000" in APP_JS
+    # Batch K: same 6000 ms recap failure toast, via the failToast var.
+    assert "showStudioToast(failToast, 'error', 6000)" in APP_JS
     over = re.search(r'tf\("toast_recap_over_limit".*?\'warning\', 6000\)', APP_JS, re.S)
     assert over, "over-limit toast must pass 6000ms"
 

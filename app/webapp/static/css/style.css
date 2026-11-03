@@ -440,6 +440,10 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     color: var(--text-2); font-size: 13.5px; font-weight: 600; line-height: 1.45; white-space: nowrap;
 }
 .pill-btn.active { background: var(--gold-soft); color: var(--gold-2); box-shadow: inset 0 0 0 1px var(--gold-border); }
+/* Batch K: recap pill controls meet the 44px touch-target floor.
+   Scoped to the recap tab — .pill-btn is shared with the voice and
+   downloader tabs, whose layouts keep the compact 38px height. */
+#tab-recap .pill-btn { min-height: 44px; }
 
 .filter-chip {
     min-height: 38px; padding: 5px 13px;
@@ -768,6 +772,7 @@ select.studio-input { min-height: 50px; }
 .drop-icon { font-size: 30px; }
 .drop-text { font-size: 14.5px; font-weight: 600; line-height: 1.6; }
 .drop-subtext { font-size: 12.5px; color: var(--text-3); line-height: 1.55; }
+.drop-limits { font-size: 12px; color: var(--text-3); line-height: 1.55; letter-spacing: 0.01em; }
 .upload-progress-wrap { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s1); }
 .upload-progress-row { display: flex; align-items: center; gap: var(--s2); }
 .upload-progress-row .progress-label { flex: 1; min-width: 0; }
@@ -2816,6 +2821,9 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     gap: var(--s3); min-height: 48px; padding: 8px 12px;
 }
 .script-review-row > span { flex: 1; min-width: 0; }
+/* Batch K: the visible main-area script-review toggle carries a
+   one-line helper under its label. */
+.script-review-hint { display: block; font-size: 12px; font-weight: 400; color: var(--text-3); line-height: 1.5; margin-top: 2px; }
 .script-review-row input[type="checkbox"] {
     appearance: none; -webkit-appearance: none;
     width: 40px; height: 22px; flex: 0 0 auto; order: 2;
