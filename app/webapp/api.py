@@ -6220,12 +6220,18 @@ async def submit_payment_slip(
     db.add(pay_req)
     await db.commit()
 
-    # Instant alert to admins via Telegram
+    # Instant alert to admins via Telegram. Batch I: the alert now
+    # carries the same three-action review keyboard as the bot slip
+    # flow (previously it was an info-only photo — "approve from the
+    # Admin Dashboard"), and every sent copy is recorded on the
+    # request row so a terminal action from ANY surface syncs them.
     if settings.bot_token and settings.admin_ids:
         try:
             from aiogram import Bot
             from aiogram.enums import ParseMode
             from aiogram.types import FSInputFile
+            from app.services.payment_review import add_admin_copy
+            from app.ui.keyboards import admin_pay_review_kb
             bot = Bot(token=settings.bot_token)
             try:
                 admin_text = (
@@ -6235,25 +6241,41 @@ async def submit_payment_slip(
                     f"📦 <b>Package:</b> <code>{package_code}</code>\n"
                     f"💰 <b>Amount:</b> <b>{amount_mmk:,} MMK</b>\n"
                     f"🧾 <b>Request ID:</b> <code>{pay_req.id}</code>\n\n"
-                    f"<i>စစ်ဆေးပြီးပါက Admin Dashboard မှ Approve ပြုလုပ်နိုင်ပါသည်။</i>"
+                    f"<i>စစ်ဆေးပြီးပါက အောက်ပါ ခလုတ်များမှ တိုက်ရိုက် အတည်ပြု/ငြင်းပယ်/ပြင်ဆင် နိုင်သလို Admin Dashboard မှလည်း ပြုလုပ်နိုင်ပါသည်။</i>"
                 )
+                review_kb = admin_pay_review_kb(pay_req.id)
+                sent_copies: list[tuple[int, int, str]] = []
                 for admin_id in settings.admin_ids:
                     try:
                         if dest_path.is_file():
-                            await bot.send_photo(
+                            sent = await bot.send_photo(
                                 chat_id=admin_id,
                                 photo=FSInputFile(str(dest_path)),
                                 caption=admin_text,
+                                reply_markup=review_kb,
                                 parse_mode=ParseMode.HTML,
                             )
+                            sent_copies.append((admin_id, sent.message_id, "photo"))
                         else:
-                            await bot.send_message(
+                            sent = await bot.send_message(
                                 chat_id=admin_id,
                                 text=admin_text,
+                                reply_markup=review_kb,
                                 parse_mode=ParseMode.HTML,
                             )
+                            sent_copies.append((admin_id, sent.message_id, "text"))
                     except Exception as send_err:
                         logger.warning(f"Failed to alert admin {admin_id}: {send_err}")
+                if sent_copies:
+                    for chat_id, message_id, kind in sent_copies:
+                        add_admin_copy(
+                            pay_req,
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            kind=kind,
+                            text=admin_text,
+                        )
+                    await db.commit()
             finally:
                 await bot.session.close()
         except Exception as alert_err:
@@ -7346,6 +7368,21 @@ async def approve_payment_slip(
                     reply_markup=main_menu_kb(lang=target_user.language_code if target_user else "my"),
                     parse_mode=ParseMode.HTML,
                 )
+                # Batch I: this Mini App approval also syncs every
+                # admin's Telegram review copy (keyboards cleared +
+                # status line appended), exactly like a Telegram-side
+                # approval. The service already released any claim.
+                try:
+                    from app.services.payment_review import (
+                        approved_status_line,
+                        sync_admin_copies,
+                    )
+
+                    await sync_admin_copies(
+                        bot, p_req, line=approved_status_line(admin.first_name, p_req)
+                    )
+                except Exception as sync_err:
+                    logger.warning(f"Failed to sync admin copies for payment {p_req.id}: {sync_err}")
             finally:
                 await bot.session.close()
         except Exception as notify_err:
@@ -7398,6 +7435,19 @@ async def reject_payment_slip(
                     text=reject_notice,
                     parse_mode=ParseMode.HTML,
                 )
+                # Batch I: sync the Telegram review copies (see the
+                # approve endpoint above).
+                try:
+                    from app.services.payment_review import (
+                        rejected_status_line,
+                        sync_admin_copies,
+                    )
+
+                    await sync_admin_copies(
+                        bot, p_req, line=rejected_status_line(admin.first_name)
+                    )
+                except Exception as sync_err:
+                    logger.warning(f"Failed to sync admin copies for payment {p_req.id}: {sync_err}")
             finally:
                 await bot.session.close()
         except Exception as notify_err:
