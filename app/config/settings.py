@@ -78,6 +78,15 @@ class Settings(BaseSettings):
         default="voice_clone_v2",
         alias="EXPECTED_DB_IDENTITY",
     )
+    # Connection pool sizing (audit fix 2026-11-03): SQLAlchemy's
+    # defaults (pool_size=5, max_overflow=10) exhausted in production
+    # under Mini App polling load — QueuePool timeouts surfaced as
+    # 30-second hangs and 500s on status endpoints. Sized for a single
+    # app instance; raise via env if the deployment shape changes.
+    db_pool_size: int = Field(default=10, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=20, alias="DB_MAX_OVERFLOW")
+    db_pool_timeout: int = Field(default=30, alias="DB_POOL_TIMEOUT")
+    db_pool_recycle: int = Field(default=1800, alias="DB_POOL_RECYCLE")
 
     # Project and storage paths
     root: Path = ROOT

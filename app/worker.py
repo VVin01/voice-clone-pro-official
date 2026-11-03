@@ -4,6 +4,7 @@ import asyncio
 import html
 import logging
 from pathlib import Path
+import re
 import shutil
 from aiogram import Bot
 from aiogram.types import FSInputFile
@@ -67,6 +68,53 @@ def _implausible_audio_reason(text: str, duration_seconds: int, speed_preset) ->
             "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
         )
     return None
+
+
+_INSUFFICIENT_BALANCE_RE = re.compile(
+    r"insufficient balance: requested (\d+)s, available (\d+)s", re.IGNORECASE
+)
+
+
+def _user_facing_worker_error(exc: BaseException, lang: str = "my") -> str:
+    """Map a raw worker exception to the curated user-facing message.
+
+    job.error_message is surfaced verbatim by the Mini App, and the
+    failure path quotes it on the user's Telegram status card — so
+    raw str(exc) (provider internals, local file paths, English
+    library text like the ledger's "Insufficient balance: requested
+    197s, available 180s") must never be stored there (audit fix
+    2026-11-03, mirroring _voice_job_error_detail in the webapp).
+    The raw text stays in the logs; the caller logs the exception
+    before calling this. Messages that are ALREADY curated user copy
+    (the truncation gate's Burmese reason) pass through untouched.
+    """
+    raw = str(exc or "")
+    # Already-curated copy: the implausible-audio gate raises with a
+    # finished Burmese user message — keep it word for word.
+    if "တိုလွန်းနေပါသည်" in raw:
+        return raw
+    m = _INSUFFICIENT_BALANCE_RE.search(raw)
+    if m:
+        return t(
+            "worker_error_insufficient_balance", lang,
+            needed=m.group(1), available=m.group(2),
+        )
+    low = raw.lower()
+    if "legacy trained voice model" in low:
+        return t("queue_failed_legacy_model", lang)
+    if "model is missing" in low or "not authorized" in low:
+        return t("queue_failed_model_not_authorized", lang)
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timed out" in low or "timeout" in low:
+        return t("worker_error_timeout", lang)
+    if any(
+        needle in low
+        for needle in (
+            "voxcpm", "synthes", "edge tts", "tts", "provider",
+            "huggingface", "hugging face",
+        )
+    ):
+        return t("worker_error_engine_failure", lang)
+    return t("worker_error_generic", lang)
 
 
 async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
@@ -218,6 +266,21 @@ async def process_single_job(
         await tracker.update_step(3)
         await tracker.start_ticker(step=3)
         used_fallback = False
+        # Initialized BEFORE the try (audit fix 2026-11-03): both are
+        # read after the try/finally below (the engine fallback flag
+        # and the stage-4 truncation gate), so a failure constructing
+        # them inside the block must never be able to mask the real
+        # error behind a NameError at those reads.
+        engine_inst = None
+        clean_text = job.input_text or "မင်္ဂလာပါခင်ဗျာ"
+        # Release the pooled connection for the synthesis stage
+        # (audit fix 2026-11-03): stage 3 runs for minutes in an
+        # executor and touches no DB state, so any transaction still
+        # open here would pin one pool connection for the whole
+        # generation. The stage-1 commit above already ended the
+        # claim/validation transaction on the happy path — this makes
+        # the release unconditional instead of incidental.
+        await session.commit()
         try:
             if is_voxcpm:
                 logger.info("Starting VoxCPM 2 Cloud AI synthesis for job %s", job.id)
@@ -231,7 +294,6 @@ async def process_single_job(
                 elif getattr(model, "sample_audio_path", None) and Path(model.sample_audio_path).is_file():
                     ref_wav = Path(model.sample_audio_path)
 
-                clean_text = job.input_text or "မင်္ဂလာပါခင်ဗျာ"
                 control_instruction = None
                 if getattr(job, "preset_voice", None):
                     from app.services.curated_voices import get_curated_voice
@@ -374,6 +436,13 @@ async def process_single_job(
             # job status/history can show the fallback notice as well.
             job.engine = "edge_fallback"
 
+        # Persist the billing + result state and end the transaction
+        # BEFORE delivery (audit fix 2026-11-03): the Telegram sends
+        # below are network I/O and must not hold the billing
+        # transaction's pooled connection open. The SUCCESS status
+        # write after delivery gets its own short transaction.
+        await session.commit()
+
         # Send completion audio or notification alert to user via Telegram Bot
         if bot and target_chat_id:
             caption_model_name = display_name or getattr(model, "name", "Standard")
@@ -481,8 +550,13 @@ async def process_single_job(
 
     except Exception as exc:
         logger.exception("Voice job %s failed: %s", job.id, exc)
+        # Store/post only the curated message (audit fix 2026-11-03):
+        # the raw exception text is in the log line above; the stored
+        # error_message is rendered verbatim by the Mini App and the
+        # status card below quotes it to the user.
+        user_error = _user_facing_worker_error(exc, lang)
         job.status = JobStatus.FAILED.value
-        job.error_message = str(exc)
+        job.error_message = user_error
         job.finished_at = utc_now()
 
         # Refund if any debit occurred for this job
@@ -492,7 +566,7 @@ async def process_single_job(
 
         await session.commit()
 
-        safe_exc = html.escape(str(exc))
+        safe_exc = html.escape(user_error)
         await safe_edit_status(bot, target_chat_id, target_msg_id, f"{t('status_failed', lang)}\n<i>({safe_exc})</i>")
         return False
 
@@ -511,18 +585,39 @@ async def process_single_job(
 
 
 async def claim_and_process_next_job(
-    session: AsyncSession,
+    session: AsyncSession | None = None,
     bot: Bot | None = None,
     engine_filter: str | None = "voxcpm",
 ) -> bool:
-    """Atomically claim the oldest QUEUED job matching engine_filter and process it."""
+    """Atomically claim the oldest QUEUED job matching engine_filter and process it.
+
+    Session scoping (audit fix 2026-11-03): with no session passed
+    (the worker loop), the claim runs in its own short-lived session
+    that closes the moment the job is claimed, and processing runs in
+    a FRESH session — the old shape had the poll loop hand ONE
+    session through the claim and the entire minutes-long processing.
+    A caller that passes a session (direct callers, tests) keeps the
+    old single-session behaviour exactly.
+    """
     from app.services.queue import claim_next_queued_job
 
-    job = await claim_next_queued_job(session, engine_filter=engine_filter)
-    if not job:
-        return False
+    if session is not None:
+        job = await claim_next_queued_job(session, engine_filter=engine_filter)
+        if not job:
+            return False
+        return await process_single_job(session=session, job=job, bot=bot)
 
-    return await process_single_job(session=session, job=job, bot=bot)
+    async with AsyncSessionLocal() as claim_session:
+        job = await claim_next_queued_job(claim_session, engine_filter=engine_filter)
+        if not job:
+            return False
+        job_id = job.id
+
+    async with AsyncSessionLocal() as process_session:
+        job = await process_session.get(Job, job_id)
+        if job is None:
+            return False
+        return await process_single_job(session=process_session, job=job, bot=bot)
 
 
 def _boot_cutoff_sweep_due(
@@ -592,12 +687,12 @@ async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, en
                             logger.info("Periodic sweep recovered %d stranded jobs: %s", len(recovered), recovered)
                 except Exception as e:
                     logger.warning("Error during periodic stale job recovery sweep: %s", e)
-            async with AsyncSessionLocal() as session:
-                processed = await claim_and_process_next_job(session, bot=bot, engine_filter=engine_filter)
-                if processed:
-                    await session.commit()
-                else:
-                    await asyncio.sleep(poll_interval)
+            # No loop-owned session (audit fix 2026-11-03):
+            # claim_and_process_next_job scopes its own short-lived
+            # claim session and a fresh processing session.
+            processed = await claim_and_process_next_job(bot=bot, engine_filter=engine_filter)
+            if not processed:
+                await asyncio.sleep(poll_interval)
         except asyncio.CancelledError:
             logger.info("Worker loop cancelled, shutting down.")
             break

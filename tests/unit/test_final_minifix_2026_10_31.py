@@ -310,11 +310,15 @@ async def test_recap_not_cancelled_still_executes(tmp_path, monkeypatch):
         await engine.dispose()
 
     # The guard let it through: the pipeline was constructed and the
-    # job travelled the normal failure path (entry + DB FAILED with
-    # the sentinel error), instead of aborting quietly.
+    # job travelled the normal failure path (entry + DB FAILED),
+    # instead of aborting quietly.
     assert _CountingDownloader.calls == 1
     assert entry["status"] == "FAILED"
-    assert "sentinel-downloader" in (entry["error_message"] or "")
+    # Audit fix 2026-11-03: the failure path is default-deny — the
+    # unclassified sentinel error no longer reaches the user raw;
+    # the stored message is the generic curated one instead.
+    assert "sentinel-downloader" not in (entry["error_message"] or "")
+    assert (entry["error_message"] or "").startswith("⚠️")
     async with maker() as s:
         job = await s.get(Job, jid)
         assert job.status == JobStatus.FAILED.value

@@ -178,13 +178,15 @@ async def test_f6_fitting_job_still_enqueues(db_session):
 
 @pytest.mark.asyncio
 async def test_f6_boundary_estimate_equal_to_balance_passes(db_session):
-    # 3600 chars / 20 chars-per-sec == exactly the 180s allowance:
-    # NOT greater, so the headroom rule lets it through (borderline
-    # jobs are the post-generation charge's business, not the gate's).
+    # Audit fix 2026-11-03: the estimate is no longer chars/20. It is
+    # the production-measured 17.6 chars/sec plus a 15% safety
+    # margin, so against the 180s allowance the boundary now sits at
+    # 2754 chars: the estimate (≈179.9s) is NOT greater than the
+    # balance, so the gate still lets an at-the-boundary job through.
     user = await _purchased_user(db_session, 7603)
     await _seed_voice_model(db_session)
     job, reason = await create_voice_clone_job(
-        db_session, user_id=user.id, text="က" * 3600, preset_voice="komin"
+        db_session, user_id=user.id, text="က" * 2754, preset_voice="komin"
     )
     assert job is not None, reason
 

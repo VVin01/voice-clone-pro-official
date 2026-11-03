@@ -36,7 +36,7 @@ from sqlalchemy import case, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.session import get_db_session
+from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
 from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, PaymentRequest, AuditLog, utc_now
 from app.services.i18n import t
@@ -85,9 +85,18 @@ async def get_current_user(
         await db.commit()
         await db.refresh(user)
     else:
-        user.first_name = telegram_user_data.get("first_name", user.first_name)
-        user.username = telegram_user_data.get("username", user.username)
-        await db.commit()
+        # Profile sync (audit fix 2026-11-03): this used to assign and
+        # COMMIT on every authenticated request — a DB write (and a
+        # pooled-connection checkout held to commit) behind every Mini
+        # App poll, even though the Telegram profile almost never
+        # changes between requests. Only write when a value actually
+        # changed.
+        new_first_name = telegram_user_data.get("first_name", user.first_name)
+        new_username = telegram_user_data.get("username", user.username)
+        if new_first_name != user.first_name or new_username != user.username:
+            user.first_name = new_first_name
+            user.username = new_username
+            await db.commit()
 
     return user
 
@@ -2468,7 +2477,11 @@ async def fetch_downloader_format(
 
     if not file_path or not Path(file_path).is_file():
         shutil.rmtree(dest, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="Download failed")
+        # Localized (audit fix 2026-11-03): was the English string
+        # "Download failed" — the only non-localized detail left in
+        # this endpoint. Same wording as the fetch-failure detail
+        # above so the client renders one consistent message.
+        raise HTTPException(status_code=400, detail="ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။")
 
     meta = {
         "download_id": download_id,
@@ -4447,10 +4460,18 @@ async def _execute_recap_background_job(
         # report this issue on https://github.com/yt-dlp/…" string
         # reached a user raw. Classify source errors to the curated
         # Burmese copy before storing/sending; the raw text stays in
-        # the log line above. Non-source errors keep their text.
+        # the log line above.
+        # Audit fix 2026-11-03: the fallback is now default-deny —
+        # an UNclassified error no longer falls back to str(e) (raw
+        # ffmpeg stderr, local paths and library internals reached
+        # users that way); it becomes the generic technical-problem
+        # message below. The refund wording/flow is unchanged.
         from app.services.downloader import classify_source_error
 
-        display_err = classify_source_error(str(e), req.url) or str(e)
+        display_err = classify_source_error(str(e), req.url) or (
+            "⚠️ နည်းပညာဆိုင်ရာ အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့ပါသည်။ "
+            "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
         entry["error_message"] = display_err
         try:
             from app.db.session import AsyncSessionLocal
@@ -4496,6 +4517,45 @@ async def _execute_recap_background_job(
                     await bot_err.session.close()
             except Exception:
                 pass
+
+
+def _sweep_expired_download_dirs(cutoff: datetime) -> int:
+    """Remove downloader cache dirs older than the retention cutoff.
+
+    storage/downloads/<download_id>/ dirs were only ever pruned by
+    the per-user newest-10 rule at fetch time, so downloads of users
+    who never fetched again stayed on disk forever (audit fix
+    2026-11-03). Age basis matches the job-media sweep: the dir's
+    recorded creation time (meta.json ``created_at``), falling back
+    to the directory mtime when the meta is missing or unreadable.
+    Whole dirs are removed; the per-user newest-10 pruning in
+    _dl_prune_user_downloads is unchanged.
+    """
+    root = _dl_root()
+    if not root.is_dir():
+        return 0
+    removed = 0
+    for d in root.iterdir():
+        try:
+            if not d.is_dir():
+                continue
+            created_ts: Optional[float] = None
+            meta = _dl_read_meta(d.name)
+            if meta and meta.get("created_at"):
+                try:
+                    created_ts = datetime.fromisoformat(
+                        str(meta["created_at"]).replace("Z", "+00:00")
+                    ).timestamp()
+                except (ValueError, TypeError):
+                    created_ts = None
+            if created_ts is None:
+                created_ts = d.stat().st_mtime
+            if created_ts < cutoff.timestamp():
+                shutil.rmtree(d, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
@@ -4628,6 +4688,16 @@ async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
                     pass
     except Exception as e:
         logger.warning(f"Orphan temp cleanup failed: {e}")
+
+    # Downloader cache sweep (audit fix 2026-11-03): same retention
+    # window and age basis as the job media above. Best-effort — a
+    # failure here must not fail the whole cleanup.
+    try:
+        downloads_removed = _sweep_expired_download_dirs(cutoff)
+        if downloads_removed > 0:
+            logger.info(f"Auto-cleaned {downloads_removed} expired downloader caches (>{days}d).")
+    except Exception as e:
+        logger.warning(f"Downloader cache sweep failed: {e}")
 
     if deleted_count > 0:
         logger.info(f"Auto-cleaned {deleted_count} expired (>{days}d) jobs and media files.")
@@ -4912,11 +4982,28 @@ async def create_recap_job(
     }
 
 
+async def _deferred_db_session() -> Optional[AsyncSession]:
+    """Dependency placeholder that deliberately opens NO session.
+
+    Endpoints whose hot path is served from in-memory state (the
+    recap registry) but that fall back to the DB on a cold path used
+    to declare Depends(get_db_session) next to get_current_user —
+    which itself opens a session — so every request checked out TWO
+    pooled connections while using at most one (audit fix
+    2026-11-03; the dual checkout fed the production QueuePool
+    exhaustion). Depend on this instead and open AsyncSessionLocal
+    only inside the branch that actually queries. Direct callers
+    (tests) may still pass a real session as ``db`` and it is used
+    as-is.
+    """
+    return None
+
+
 @api_router.get("/recap/{job_id}/status")
 async def get_recap_status(
     job_id: str,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session),
+    db: Optional[AsyncSession] = Depends(_deferred_db_session),
 ):
     """Poll recap job status, progress percentage, and deliverables."""
     entry = RECAP_JOBS_REGISTRY.get(job_id)
@@ -4957,7 +5044,16 @@ async def get_recap_status(
             "credits_estimated": entry.get("credits_estimated"),
         }
 
-    job = await _require_job_owner(db, job_id, user)
+    # Cold path only (registry miss): open the one DB session this
+    # request actually needs, here, instead of holding a second
+    # dependency session for the registry-hit hot path above. The
+    # job's loaded column attributes stay readable after the session
+    # closes — everything below only reads them.
+    if db is not None:
+        job = await _require_job_owner(db, job_id, user)
+    else:
+        async with AsyncSessionLocal() as _session:
+            job = await _require_job_owner(_session, job_id, user)
 
     is_success = (job.status == JobStatus.SUCCESS.value)
     is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
