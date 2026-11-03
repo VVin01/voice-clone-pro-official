@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     # handler re-reads the DB row per message, so Admin toggles apply
     # instantly). Default OFF — see app/services/group_ai_admin.py.
     group_ai_admin_enabled: bool = Field(default=False, alias="GROUP_AI_ADMIN_ENABLED")
+    # Group-AI anti-spam tuning (BotSetting-backed like the kill
+    # switch: the handler re-reads the DB rows per message via
+    # app/services/group_ai_admin.get_limits, so Admin edits apply
+    # without a deploy). Only real AI calls consume the budgets;
+    # deterministic fast paths, FAQ-cache hits and deferrals are free.
+    group_ai_user_cooldown_seconds: int = Field(default=60, alias="GROUP_AI_USER_COOLDOWN_SECONDS")
+    group_ai_hourly_budget: int = Field(default=40, alias="GROUP_AI_HOURLY_BUDGET")
+    group_ai_daily_budget: int = Field(default=300, alias="GROUP_AI_DAILY_BUDGET")
 
     # Infrastructure Safety Limit (independent of user account tiers, protects Edge TTS & VoxCPM memory)
     infrastructure_safety_character_limit: int = Field(

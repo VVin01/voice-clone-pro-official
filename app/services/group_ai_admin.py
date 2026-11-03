@@ -21,8 +21,23 @@ Safety rails are enforced in CODE, not just in the prompt:
   the admins with the question and a link to the group message. The AI
   can also escalate on its own when the answer is not in its fact
   sheet (low confidence).
-* Anti-spam: per-user cooldown, a global hourly reply cap, and a
-  never-answer-the-same-message-twice set.
+* Anti-spam: per-user cooldown (60s default), rolling hourly/daily
+  AI-call budgets, and a never-answer-the-same-message-twice set.
+  Only real AI calls consume the budgets — deterministic fast paths,
+  FAQ-cache hits and deferral postings are free. All three values
+  are BotSettings (``group_ai_user_cooldown_seconds``,
+  ``group_ai_hourly_budget``, ``group_ai_daily_budget``) re-read per
+  message, so the owner can tune them in Admin without a deploy.
+* Escalations carry one AI-drafted suggested answer; an admin can
+  post it into the group with a single tap ([Post answer] /
+  [Dismiss] buttons on the escalation DM). Approved pairs become
+  the FAQ cache: a later near-identical question is answered from
+  the cache with no AI call. The decision prompt also receives a
+  small in-memory window of recent group messages (never stored,
+  never logged) plus the replied-to message's text when present.
+  The only group text ever persisted is a pending-escalation record
+  (the question admins already receive by DM, plus its draft) and
+  the admin-approved FAQ pairs derived from those records.
 * The AI may only state facts from the embedded fact sheet, which is
   BUILT from the codebase's ground truth (plan catalogue + live
   settings) so it stays correct when prices/limits are edited.
@@ -44,7 +59,8 @@ import logging
 import os
 import re
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from dataclasses import dataclass
 from typing import Any, Callable
 
 # Audit fix E: the Gemini pool + its cross-job cooldown memory live in
@@ -64,14 +80,28 @@ BOT_USERNAME = "voiceclonepro_bot"
 
 KILL_SWITCH_KEY = "group_ai_admin_enabled"
 
-# Anti-spam constants (deliberately conservative; the group is small
-# and a human admin can always answer personally).
-USER_COOLDOWN_SECONDS = 180  # >= 3 minutes between replies to one user
-GLOBAL_REPLY_CAP = 10  # max AI replies per rolling hour, whole group
-GLOBAL_WINDOW_SECONDS = 3600
+# Anti-spam defaults. The live values are BotSettings (keys below),
+# re-read per candidate message exactly like the kill switch; these
+# constants are only the fallback when no DB row / settings value
+# exists. Only real AI calls (decision + escalation drafts) consume
+# the hourly/daily budgets.
+USER_COOLDOWN_KEY = "group_ai_user_cooldown_seconds"
+HOURLY_BUDGET_KEY = "group_ai_hourly_budget"
+DAILY_BUDGET_KEY = "group_ai_daily_budget"
+USER_COOLDOWN_SECONDS = 60  # default: >= 1 minute between replies to one user
+HOURLY_AI_BUDGET = 40  # default: max AI calls per rolling hour, whole group
+DAILY_AI_BUDGET = 300  # default: max AI calls per rolling day, whole group
+HOURLY_WINDOW_SECONDS = 3600
+DAILY_WINDOW_SECONDS = 86400
 ANSWERED_IDS_MAX = 1000  # bound on the never-twice memory
 
 AI_TIMEOUT_SECONDS = 45
+
+# Escalation approval (admin DM buttons) + FAQ cache tuning.
+ESCALATION_CALLBACK_PREFIX = "gai_esc"
+ESCALATION_EXPIRY_SECONDS = 24 * 3600  # pending records die after 24h
+FAQ_MATCH_THRESHOLD = 0.8  # token-set Jaccard for a FAQ cache hit
+FAQ_SCAN_LIMIT = 500  # newest FAQ rows considered per lookup
 
 # ---------------------------------------------------------------------------
 # Chat resolution
@@ -139,6 +169,53 @@ async def is_enabled(session: Any) -> bool:
         except Exception:
             raw = False
     return _truthy(raw)
+
+
+# ---------------------------------------------------------------------------
+# Tunable limits (BotSettings, read like the kill switch)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GroupAiLimits:
+    """The three owner-tunable anti-spam values for this feature."""
+
+    user_cooldown_seconds: int = USER_COOLDOWN_SECONDS
+    hourly_budget: int = HOURLY_AI_BUDGET
+    daily_budget: int = DAILY_AI_BUDGET
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+async def get_limits(session: Any) -> GroupAiLimits:
+    """Per-message limits read (BotSettings + settings fallback).
+
+    Mirrors is_enabled(): a DB row wins, the in-memory settings
+    attribute (kept in sync by load_dynamic_settings) is the
+    fallback, and any failure degrades to the module defaults —
+    a settings read must never break the handler.
+    """
+    defaults = GroupAiLimits()
+    try:
+        from app.services.dynamic_settings import get_dynamic_setting
+
+        cooldown = await get_dynamic_setting(session, USER_COOLDOWN_KEY, None)
+        hourly = await get_dynamic_setting(session, HOURLY_BUDGET_KEY, None)
+        daily = await get_dynamic_setting(session, DAILY_BUDGET_KEY, None)
+    except Exception as exc:  # never let a settings read break the bot
+        logger.warning("group_ai_admin: limits read failed: %s", exc)
+        return defaults
+    return GroupAiLimits(
+        user_cooldown_seconds=_positive_int(cooldown, defaults.user_cooldown_seconds),
+        hourly_budget=_positive_int(hourly, defaults.hourly_budget),
+        daily_budget=_positive_int(daily, defaults.daily_budget),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +464,46 @@ def detect_sensitive_topic(text: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Conversation context (IN-MEMORY ONLY — never stored, never logged)
+#
+# A small per-chat ring of the most recent candidate messages, fed to
+# the decision prompt so follow-ups ("အဲဒါဆို ဘယ်လောက်လဲ") make sense.
+# Consistent with this feature's no-storage stance: the buffer lives
+# only in process memory, is cleared on restart, and its contents are
+# never written to the database or the logs.
+# ---------------------------------------------------------------------------
+
+CONTEXT_BUFFER_MAX = 10  # candidate messages kept per chat
+CONTEXT_TEXT_MAX_CHARS = 300  # per-message truncation for the prompt
+
+
+class GroupContextBuffer:
+    """Per-chat ring buffer of recent candidate messages."""
+
+    def __init__(self, *, max_per_chat: int = CONTEXT_BUFFER_MAX) -> None:
+        self.max_per_chat = max_per_chat
+        self._by_chat: dict[int, deque[tuple[str, str]]] = {}
+
+    def push(self, chat_id: int, author_name: str, text: str) -> None:
+        entries = self._by_chat.get(int(chat_id))
+        if entries is None:
+            entries = deque(maxlen=self.max_per_chat)
+            self._by_chat[int(chat_id)] = entries
+        entries.append((str(author_name or "Member"), str(text or "")[:CONTEXT_TEXT_MAX_CHARS]))
+
+    def snapshot(self, chat_id: int) -> list[str]:
+        """Recent context as prompt lines, oldest first."""
+        entries = self._by_chat.get(int(chat_id))
+        if not entries:
+            return []
+        return [f"{name}: {text}" for name, text in entries]
+
+
+# Process-wide buffer (ephemeral by design, like the rate limiter).
+context_buffer = GroupContextBuffer()
+
+
+# ---------------------------------------------------------------------------
 # Fact sheet — built from codebase ground truth, never hand-maintained
 # ---------------------------------------------------------------------------
 
@@ -578,15 +695,40 @@ DECISION_NO_REPLY = "no_reply"
 DECISION_ESCALATE = "escalate"
 
 
-def build_prompt(*, author_name: str, text: str, bot_mentioned: bool, is_reply_to_bot: bool) -> str:
+def build_prompt(
+    *,
+    author_name: str,
+    text: str,
+    bot_mentioned: bool,
+    is_reply_to_bot: bool,
+    context_lines: list[str] | None = None,
+    replied_to_text: str | None = None,
+) -> str:
     context_bits = []
     if bot_mentioned:
         context_bits.append("ဒီ စာထဲမှာ Bot ကို Mention ခေါ်ထားပါတယ်။")
     if is_reply_to_bot:
         context_bits.append("ဒီ စာက Bot ရဲ့ စာကို Reply လုပ်ထားတာပါ။")
     context = ("\n" + " ".join(context_bits)) if context_bits else ""
+    # Optional conversation context (recent group messages + the
+    # replied-to original). It is background ONLY: the protocol, the
+    # fact sheet and the silence rules are unchanged, and the model
+    # is told explicitly to answer the current message, not these.
+    context_block = ""
+    if context_lines or replied_to_text:
+        parts = [
+            "=== အနီးဆုံး စကားဝိုင်း အခြေအနေ (နောက်ခံ အဖြစ်သာ — ဒီစာတွေကို တိုက်ရိုက် မဖြေရ၊ အောက်က လက်ရှိ စာကိုပဲ အကဲဖြတ်ပါ) ==="
+        ]
+        if context_lines:
+            parts.extend(context_lines)
+        if replied_to_text:
+            parts.append(
+                f"လက်ရှိ စာက Reply လုပ်ထားတဲ့ မူရင်း စာ: {str(replied_to_text)[:CONTEXT_TEXT_MAX_CHARS]}"
+            )
+        context_block = "\n".join(parts) + "\n\n"
     return (
         f"{SYSTEM_INSTRUCTIONS}\n\n{build_fact_sheet()}\n\n"
+        f"{context_block}"
         f"=== Group ထဲက စာ ===\nရေးသူ: {author_name or 'Member'}{context}\nစာ: {text}\n\n"
         "ဆုံးဖြတ်ချက်:"
     )
@@ -764,6 +906,8 @@ async def ask_group_admin_ai(
     author_name: str = "",
     bot_mentioned: bool = False,
     is_reply_to_bot: bool = False,
+    context_lines: list[str] | None = None,
+    replied_to_text: str | None = None,
     client_factory: Callable[[str], Any] | None = None,
 ) -> tuple[str, str | None]:
     """Ask the AI for a decision; ANY failure degrades to silence."""
@@ -772,6 +916,8 @@ async def ask_group_admin_ai(
         text=text,
         bot_mentioned=bot_mentioned,
         is_reply_to_bot=is_reply_to_bot,
+        context_lines=context_lines,
+        replied_to_text=replied_to_text,
     )
     try:
         raw = await asyncio.wait_for(
@@ -785,33 +931,133 @@ async def ask_group_admin_ai(
 
 
 # ---------------------------------------------------------------------------
+# Escalation drafts — one extra AI call, admin-approved before posting
+#
+# When a question escalates, the AI drafts a SUGGESTED public answer
+# for the admins. Nothing is posted automatically: the draft rides
+# along on the admin DM with [Post answer] / [Dismiss] buttons and
+# only reaches the group when a human admin taps Post.
+# ---------------------------------------------------------------------------
+
+DRAFT_INSTRUCTIONS_SENSITIVE = """သင်သည် "Voice Clone Pro Community" Telegram Group ရဲ့ Admin အဖွဲ့ကို ကူညီနေတဲ့ လက်ထောက် ဖြစ်ပါတယ်။
+
+အောက်က အဖွဲ့ဝင် မေးခွန်းဟာ ငွေကြေး/အကောင့်နဲ့ ဆိုင်တဲ့ ကိုယ်ရေး ကိစ္စ ဖြစ်လို့ Group ထဲမှာ တိုက်ရိုက် မဖြေဘဲ Admin စစ်ဆေးဖို့ လွှဲထားပါတယ်။ အဖွဲ့ဝင်ကို စောင့်နေရင်း စိတ်အေးစေမယ့် ကိုင်တွယ်ထားကြောင်း အသိပေး စာ (Holding reply) မူကြမ်း တစ်ခု ရေးပေးပါ။
+
+စည်းကမ်းများ:
+- Admin က စစ်ဆေးနေကြောင်း၊ စစ်ပြီးတာနဲ့ ပြန်ဆက်သွယ်ပေးမည် ဖြစ်ကြောင်း ယဉ်ယဉ်ကျေးကျေး ပြောပါ။
+- စစ်ဆေးမှု မြန်အောင် အဖွဲ့ဝင်ဆီက လိုအပ်မယ့် အချက်တွေ — ငွေလွှဲခဲ့တဲ့ ဖုန်းနံပါတ်/အကောင့်၊ လွှဲခဲ့တဲ့ အချိန်၊ ပြေစာ (Slip) ပုံ — ကို ပို့ပေးဖို့ တောင်းပါ။
+- Refund ရမယ်၊ ငွေ ပြန်ဝင်မယ်၊ Balance ပြင်ပေးမယ် စတဲ့ ရလဒ် တစ်ခုခုကို ကတိ လုံးဝ မပေးရပါ၊ အတည်ပြုသလို လုံးဝ မပြောရပါ။
+- မြန်မာဘာသာ စကားပြောဟန်၊ ဝါကျ တိုတို၊ Emoji လုံးဝ မပါရ၊ "ခင်ဗျာ" အများဆုံး တစ်ကြိမ်။
+- မူကြမ်း စာသား တစ်ခုတည်းသာ ထုတ်ပါ — ရှင်းလင်းချက်၊ ခေါင်းစဉ်၊ အခြား စာ မပါရပါ။"""
+
+DRAFT_INSTRUCTIONS_UNSURE = """သင်သည် "Voice Clone Pro Community" Telegram Group ရဲ့ Admin အဖွဲ့ကို ကူညီနေတဲ့ လက်ထောက် ဖြစ်ပါတယ်။
+
+အောက်က အဖွဲ့ဝင် မေးခွန်းကို AI က မသေချာလို့ Group ထဲမှာ မဖြေဘဲ Admin အတည်ပြုချက်အတွက် လွှဲထားပါတယ်။ Admin က တစ်ချက် နှိပ်ရုံနဲ့ Group ထဲ တင်ပေးနိုင်မယ့် အဖြေ မူကြမ်း တစ်ခု ရေးပေးပါ။
+
+စည်းကမ်းများ:
+- အဖြေကို အောက်က KNOWLEDGE SHEET ထဲက အချက်တွေနဲ့သာ ရေးပါ။ SHEET ထဲ မပါတဲ့ အချက် (စျေး အသစ်၊ Feature အသစ်၊ ရက်စွဲ၊ လင့်ခ် အသစ်) ကို လုံးဝ ထွင်မရေးရပါ။
+- SHEET နဲ့ ဖြေလို့ မရရင် အဖြေ အစား — Admin က စစ်ဆေးပြီး ပြန်ပြောပေးမည် ဖြစ်ကြောင်း ယဉ်ကျေးစွာ ပြောတဲ့ Holding စာ တိုတို ရေးပါ။
+- ငွေကြေး/အကောင့်နဲ့ ဆိုင်တဲ့ ရလဒ် (Refund၊ Balance ပြင်ဆင်မှု စသည်) ကို ကတိ လုံးဝ မပေးရပါ။
+- မြန်မာဘာသာ စကားပြောဟန်၊ စာပိုဒ် ၁–၃ ပိုဒ်၊ Emoji လုံးဝ မပါရ၊ "ခင်ဗျာ" အများဆုံး တစ်ကြိမ်။
+- မူကြမ်း စာသား တစ်ခုတည်းသာ ထုတ်ပါ — ရှင်းလင်းချက်၊ ခေါင်းစဉ်၊ အခြား စာ မပါရပါ။"""
+
+
+def build_draft_prompt(*, author_name: str, text: str, reason: str) -> str:
+    instructions = (
+        DRAFT_INSTRUCTIONS_SENSITIVE if reason == "sensitive" else DRAFT_INSTRUCTIONS_UNSURE
+    )
+    return (
+        f"{instructions}\n\n{build_fact_sheet()}\n\n"
+        f"=== အဖွဲ့ဝင် မေးခွန်း ===\nရေးသူ: {author_name or 'Member'}\nစာ: {text}\n\n"
+        "မူကြမ်း:"
+    )
+
+
+async def draft_escalation_answer(
+    *,
+    text: str,
+    author_name: str = "",
+    reason: str,
+    client_factory: Callable[[str], Any] | None = None,
+) -> str | None:
+    """Draft a suggested public answer for an escalation.
+
+    Returns the draft (emoji-stripped), or None when the AI call
+    fails or yields nothing usable — the caller then sends the
+    escalation DM without a draft, exactly as before this feature.
+    A draft that contains a decision-protocol token is void (the
+    model confused the two prompts; never show it to an admin as
+    an answer).
+    """
+    prompt = build_draft_prompt(author_name=author_name, text=text, reason=reason)
+    try:
+        raw = await asyncio.wait_for(
+            asyncio.to_thread(_ask_gemini_sync, prompt, client_factory=client_factory),
+            timeout=AI_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning("group_ai_admin: draft call failed (DM without draft): %s", exc)
+        return None
+    draft = strip_emoji(str(raw or "").strip().strip("`").strip())
+    if not draft or draft.upper().startswith(("NO_REPLY", "ESCALATE", "REPLY:")):
+        return None
+    return draft
+
+
+# ---------------------------------------------------------------------------
 # Anti-spam rate limiter (in-memory, injectable clock)
 # ---------------------------------------------------------------------------
 
 
 class GroupReplyRateLimiter:
-    """Per-user cooldown + global hourly cap + never-answer-twice set."""
+    """Per-user cooldown + AI-call budgets + never-answer-twice set.
+
+    Two separate concerns, deliberately kept apart:
+
+    * Reply pacing (can_reply / record_reply): the per-user cooldown
+      and the never-answer-the-same-message-twice set. This gates
+      EVERY public reply — AI answers, deterministic fast paths and
+      FAQ-cache hits alike.
+    * AI-call budgets (ai_budget_available / record_ai_call): the
+      rolling hourly/daily caps on REAL AI calls only (decision
+      calls and escalation-draft calls). Fast paths, FAQ hits,
+      deferral postings and admin DMs never consume budget; when a
+      budget is exhausted the bot simply stays silent for AI
+      answers (deferrals still post — they need no AI call).
+
+    update_limits() applies the owner-tuned BotSetting values the
+    handler reads per message; the constructor values are only the
+    defaults a fresh process starts with.
+    """
 
     def __init__(
         self,
         *,
         user_cooldown_seconds: int = USER_COOLDOWN_SECONDS,
-        global_cap: int = GLOBAL_REPLY_CAP,
-        global_window_seconds: int = GLOBAL_WINDOW_SECONDS,
+        hourly_budget: int = HOURLY_AI_BUDGET,
+        daily_budget: int = DAILY_AI_BUDGET,
+        hourly_window_seconds: int = HOURLY_WINDOW_SECONDS,
+        daily_window_seconds: int = DAILY_WINDOW_SECONDS,
         now_fn: Callable[[], float] = time.monotonic,
     ) -> None:
         self.user_cooldown_seconds = user_cooldown_seconds
-        self.global_cap = global_cap
-        self.global_window_seconds = global_window_seconds
+        self.hourly_budget = hourly_budget
+        self.daily_budget = daily_budget
+        self.hourly_window_seconds = hourly_window_seconds
+        self.daily_window_seconds = daily_window_seconds
         self._now = now_fn
         self._last_reply_by_user: dict[int, float] = {}
         self._last_deferral_by_user: dict[int, float] = {}
-        self._reply_times: list[float] = []
+        self._ai_call_times: list[float] = []
         self._answered_ids: OrderedDict[int, None] = OrderedDict()
 
-    def _prune_window(self, now: float) -> None:
-        cutoff = now - self.global_window_seconds
-        self._reply_times = [t for t in self._reply_times if t > cutoff]
+    def update_limits(self, limits: GroupAiLimits) -> None:
+        """Apply owner-tuned values (read per message by the handler)."""
+        self.user_cooldown_seconds = limits.user_cooldown_seconds
+        self.hourly_budget = limits.hourly_budget
+        self.daily_budget = limits.daily_budget
+
+    # -- reply pacing ------------------------------------------------
 
     def can_reply(self, user_id: int, message_id: int) -> bool:
         now = self._now()
@@ -820,16 +1066,31 @@ class GroupReplyRateLimiter:
         last = self._last_reply_by_user.get(int(user_id))
         if last is not None and now - last < self.user_cooldown_seconds:
             return False
-        self._prune_window(now)
-        return len(self._reply_times) < self.global_cap
+        return True
 
     def record_reply(self, user_id: int, message_id: int) -> None:
         now = self._now()
         self._last_reply_by_user[int(user_id)] = now
-        self._reply_times.append(now)
         self._answered_ids[int(message_id)] = None
         while len(self._answered_ids) > ANSWERED_IDS_MAX:
             self._answered_ids.popitem(last=False)
+
+    # -- AI-call budgets ----------------------------------------------
+
+    def _prune_ai_calls(self, now: float) -> None:
+        cutoff = now - self.daily_window_seconds
+        self._ai_call_times = [t for t in self._ai_call_times if t > cutoff]
+
+    def ai_budget_available(self) -> bool:
+        """True when one more AI call fits BOTH rolling budgets."""
+        now = self._now()
+        self._prune_ai_calls(now)
+        hourly_cutoff = now - self.hourly_window_seconds
+        hourly_used = sum(1 for t in self._ai_call_times if t > hourly_cutoff)
+        return hourly_used < self.hourly_budget and len(self._ai_call_times) < self.daily_budget
+
+    def record_ai_call(self) -> None:
+        self._ai_call_times.append(self._now())
 
     def can_defer(self, user_id: int) -> bool:
         """Deferral lines + owner DMs share the per-user cooldown so a
@@ -847,6 +1108,414 @@ class GroupReplyRateLimiter:
 # Process-wide limiter instance (state is intentionally ephemeral: a
 # restart simply resets the caps, which is the safe direction).
 rate_limiter = GroupReplyRateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# Escalation + FAQ persistence
+#
+# The ONLY group text this feature ever writes to the database:
+#   * a pending-escalation row — the question text the admins already
+#     receive by DM today, plus the AI draft attached to that DM;
+#   * an admin-approved FAQ pair, created only when an admin taps
+#     [Post answer] on a draft (the pair is then public in the group
+#     already — the admin approved and posted it).
+# Tables auto-create via Base.metadata.create_all at startup, the
+# same mechanism every other model in app/models/schema.py relies on.
+# ---------------------------------------------------------------------------
+
+
+def _as_utc(value: Any):
+    """Normalise a DB timestamp to aware UTC (SQLite returns naive)."""
+    from datetime import timezone
+
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+async def create_escalation(
+    session: Any,
+    *,
+    chat_id: int,
+    message_id: int,
+    author_id: int,
+    author_label: str,
+    author_username: str | None = None,
+    question_text: str,
+    reason: str | None = None,
+    draft_text: str | None,
+) -> int | None:
+    """Persist a pending escalation; returns its id (None on failure)."""
+    try:
+        from app.models.schema import GroupAiEscalation
+
+        row = GroupAiEscalation(
+            chat_id=int(chat_id),
+            message_id=int(message_id),
+            author_id=int(author_id),
+            author_label=str(author_label or "")[:200] or None,
+            author_username=str(author_username)[:100] if author_username else None,
+            question_text=str(question_text or ""),
+            reason=reason,
+            draft_text=draft_text,
+            original_draft_text=draft_text,
+            status="PENDING",
+        )
+        session.add(row)
+        await session.commit()
+        return int(row.id)
+    except Exception as exc:
+        logger.warning("group_ai_admin: escalation persist failed: %s", exc)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return None
+
+
+async def set_escalation_dm(
+    session: Any,
+    escalation_id: int,
+    *,
+    dm_text: str,
+    copies: list[tuple[int, int]],
+) -> None:
+    """Remember the delivered DM body + every admin copy's coordinates.
+
+    State changes later rewrite ALL copies from these two fields
+    (status line appended to dm_text, keyboard cleared/replaced).
+    Best-effort: a failure here only loses the cross-admin sync, not
+    the escalation itself.
+    """
+    import json
+
+    try:
+        from app.models.schema import GroupAiEscalation
+
+        row = await session.get(GroupAiEscalation, int(escalation_id))
+        if row is None:
+            return
+        row.dm_text = dm_text
+        row.dm_copies = json.dumps([[int(c), int(m)] for c, m in copies])
+        await session.commit()
+    except Exception as exc:
+        logger.warning("group_ai_admin: escalation DM store failed: %s", exc)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
+
+def _escalation_snapshot(row: Any) -> dict:
+    import json
+
+    copies: list[tuple[int, int]] = []
+    if row.dm_copies:
+        try:
+            copies = [(int(c), int(m)) for c, m in json.loads(row.dm_copies)]
+        except Exception:
+            copies = []
+    return {
+        "id": int(row.id),
+        "chat_id": int(row.chat_id),
+        "message_id": int(row.message_id),
+        "author_id": int(row.author_id),
+        "author_label": row.author_label,
+        "author_username": row.author_username,
+        "question_text": row.question_text,
+        "reason": row.reason,
+        "draft_text": row.draft_text,
+        "original_draft_text": row.original_draft_text,
+        "status": row.status,
+        "handled_by": row.handled_by,
+        "dm_text": row.dm_text,
+        "dm_copies": copies,
+    }
+
+
+async def claim_escalation(session: Any, escalation_id: int, *, admin_id: int, approve: bool):
+    """First-tap-wins claim of a pending escalation.
+
+    Atomically flips PENDING -> APPROVED/DISMISSED via a conditional
+    UPDATE, so two admins tapping at once can never both win. Returns
+    (outcome, row_dict_or_None) with outcome in:
+    "claimed" | "already_handled" | "expired" | "not_found".
+    A PENDING row older than 24h is expired instead of claimed.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import update
+
+    from app.models.schema import GroupAiEscalation
+
+    row = await session.get(GroupAiEscalation, int(escalation_id))
+    if row is None:
+        return "not_found", None
+    snapshot = _escalation_snapshot(row)
+    if row.status != "PENDING":
+        # APPROVED / DISMISSED / EXPIRED are closed; EDITING means an
+        # admin claimed it for editing — either way this tap loses.
+        return "already_handled", snapshot
+    created = _as_utc(row.created_at)
+    now = datetime.now(timezone.utc)
+    if created is not None and now - created > timedelta(seconds=ESCALATION_EXPIRY_SECONDS):
+        row.status = "EXPIRED"
+        await session.commit()
+        snapshot["status"] = "EXPIRED"
+        return "expired", snapshot
+    new_status = "APPROVED" if approve else "DISMISSED"
+    result = await session.execute(
+        update(GroupAiEscalation)
+        .where(GroupAiEscalation.id == int(escalation_id), GroupAiEscalation.status == "PENDING")
+        .values(status=new_status, handled_by=int(admin_id), handled_at=now)
+    )
+    await session.commit()
+    if not result.rowcount:
+        # Another admin's tap landed between our read and the UPDATE.
+        fresh = await session.get(GroupAiEscalation, int(escalation_id))
+        if fresh is not None:
+            snapshot["status"] = fresh.status
+            snapshot["handled_by"] = fresh.handled_by
+        return "already_handled", snapshot
+    snapshot["status"] = new_status
+    snapshot["handled_by"] = int(admin_id)
+    return "claimed", snapshot
+
+
+async def claim_escalation_for_edit(session: Any, escalation_id: int, *, admin_id: int):
+    """Claim a pending escalation for editing (the ✏️ button).
+
+    Atomically flips PENDING -> EDITING with handled_by = the
+    claiming admin; while EDITING, every approve/dismiss/edit tap
+    from anyone resolves as "already_handled". Same outcome set as
+    claim_escalation: "claimed" | "already_handled" | "expired" |
+    "not_found".
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import update
+
+    from app.models.schema import GroupAiEscalation
+
+    row = await session.get(GroupAiEscalation, int(escalation_id))
+    if row is None:
+        return "not_found", None
+    snapshot = _escalation_snapshot(row)
+    if row.status != "PENDING":
+        return "already_handled", snapshot
+    created = _as_utc(row.created_at)
+    now = datetime.now(timezone.utc)
+    if created is not None and now - created > timedelta(seconds=ESCALATION_EXPIRY_SECONDS):
+        row.status = "EXPIRED"
+        await session.commit()
+        snapshot["status"] = "EXPIRED"
+        return "expired", snapshot
+    result = await session.execute(
+        update(GroupAiEscalation)
+        .where(GroupAiEscalation.id == int(escalation_id), GroupAiEscalation.status == "PENDING")
+        .values(status="EDITING", handled_by=int(admin_id), handled_at=now)
+    )
+    await session.commit()
+    if not result.rowcount:
+        fresh = await session.get(GroupAiEscalation, int(escalation_id))
+        if fresh is not None:
+            snapshot["status"] = fresh.status
+            snapshot["handled_by"] = fresh.handled_by
+        return "already_handled", snapshot
+    snapshot["status"] = "EDITING"
+    snapshot["handled_by"] = int(admin_id)
+    return "claimed", snapshot
+
+
+async def release_escalation_edit(
+    session: Any,
+    escalation_id: int,
+    *,
+    admin_id: int,
+    new_draft: str | None = None,
+) -> tuple[bool, dict | None]:
+    """Release an edit claim: EDITING -> PENDING, owner-only.
+
+    With new_draft, the record's draft_text is replaced (the AI's
+    original stays in original_draft_text for audit); without it the
+    draft is untouched (the cancel path). handled_by/handled_at are
+    cleared. Returns (released, snapshot) — released is False when
+    the record is not EDITING under this admin (someone else's
+    claim, already closed, or gone).
+    """
+    from sqlalchemy import update
+
+    from app.models.schema import GroupAiEscalation
+
+    values: dict[str, Any] = {"status": "PENDING", "handled_by": None, "handled_at": None}
+    if new_draft is not None:
+        values["draft_text"] = new_draft
+    result = await session.execute(
+        update(GroupAiEscalation)
+        .where(
+            GroupAiEscalation.id == int(escalation_id),
+            GroupAiEscalation.status == "EDITING",
+            GroupAiEscalation.handled_by == int(admin_id),
+        )
+        .values(**values)
+    )
+    await session.commit()
+    row = await session.get(GroupAiEscalation, int(escalation_id))
+    snapshot = _escalation_snapshot(row) if row is not None else None
+    return bool(result.rowcount), snapshot
+
+
+async def expire_stale_escalations(session: Any) -> int:
+    """Expire PENDING escalation rows older than 24h. Returns count."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import update
+
+    from app.models.schema import GroupAiEscalation
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=ESCALATION_EXPIRY_SECONDS)
+    result = await session.execute(
+        update(GroupAiEscalation)
+        .where(
+            GroupAiEscalation.status == "PENDING",
+            GroupAiEscalation.created_at < cutoff,
+        )
+        .values(status="EXPIRED")
+    )
+    await session.commit()
+    return int(result.rowcount or 0)
+
+
+async def sweep_stale_escalations() -> int:
+    """Periodic-sweep entry point (own session; safe to call blindly)."""
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            return await expire_stale_escalations(session)
+    except Exception as exc:
+        logger.warning("group_ai_admin: escalation sweep failed: %s", exc)
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# FAQ cache — admin-approved answers only
+# ---------------------------------------------------------------------------
+
+
+def normalize_question(text: str | None) -> str:
+    """Normal form for FAQ matching: the social normaliser (lowercase,
+    emoji/punctuation dropped, whitespace collapsed)."""
+    return _social_normalise(text)
+
+
+def faq_similarity(norm_a: str, norm_b: str) -> float:
+    """Token-set Jaccard over two normalised questions (0.0–1.0)."""
+    tokens_a = set(str(norm_a or "").split())
+    tokens_b = set(str(norm_b or "").split())
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+
+async def save_faq_pair(session: Any, *, question_text: str, answer_text: str) -> int | None:
+    """Store an admin-approved (question, answer) pair.
+
+    Upserts by normalised question: a fresher approval for the same
+    question replaces the older answer instead of duplicating it.
+    Returns the row id (None on failure / empty input).
+    """
+    norm = normalize_question(question_text)
+    answer = str(answer_text or "").strip()
+    if not norm or not answer:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from app.models.schema import GroupAiFaq
+
+        row = (
+            await session.execute(
+                select(GroupAiFaq).where(GroupAiFaq.question_norm == norm)
+            )
+        ).scalars().first()
+        if row is None:
+            row = GroupAiFaq(
+                question_norm=norm,
+                question_text=str(question_text or ""),
+                answer_text=answer,
+            )
+            session.add(row)
+        else:
+            row.question_text = str(question_text or "")
+            row.answer_text = answer
+        await session.commit()
+        return int(row.id)
+    except Exception as exc:
+        logger.warning("group_ai_admin: FAQ save failed: %s", exc)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return None
+
+
+async def find_faq_answer(session: Any, text: str) -> tuple[int, str] | None:
+    """Look up a cached answer for *text*.
+
+    Exact normalised match wins immediately; otherwise the best
+    token-set Jaccard >= FAQ_MATCH_THRESHOLD over the newest
+    FAQ_SCAN_LIMIT rows. Returns (faq_id, answer_text) or None.
+    """
+    norm = normalize_question(text)
+    if not norm:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from app.models.schema import GroupAiFaq
+
+        rows = (
+            await session.execute(
+                select(GroupAiFaq).order_by(GroupAiFaq.id.desc()).limit(FAQ_SCAN_LIMIT)
+            )
+        ).scalars().all()
+    except Exception as exc:
+        logger.warning("group_ai_admin: FAQ lookup failed: %s", exc)
+        return None
+    best: tuple[int, str] | None = None
+    best_score = 0.0
+    for row in rows:
+        if row.question_norm == norm:
+            return int(row.id), row.answer_text
+        score = faq_similarity(norm, row.question_norm)
+        if score > best_score:
+            best_score = score
+            best = (int(row.id), row.answer_text)
+    if best is not None and best_score >= FAQ_MATCH_THRESHOLD:
+        return best
+    return None
+
+
+async def record_faq_hit(session: Any, faq_id: int) -> None:
+    """Increment a FAQ row's hit counter (best-effort)."""
+    try:
+        from sqlalchemy import update
+
+        from app.models.schema import GroupAiFaq
+
+        await session.execute(
+            update(GroupAiFaq)
+            .where(GroupAiFaq.id == int(faq_id))
+            .values(hit_count=GroupAiFaq.hit_count + 1)
+        )
+        await session.commit()
+    except Exception as exc:
+        logger.debug("group_ai_admin: FAQ hit count failed: %s", exc)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -873,6 +1542,7 @@ def build_escalation_dm(
     chat_id: int,
     message_id: int,
     reason: str,
+    draft_text: str | None = None,
 ) -> str:
     """Owner-DM body (HTML parse mode; user content is escaped)."""
     who = html.escape(author_name or "Member")
@@ -881,10 +1551,116 @@ def build_escalation_dm(
         "sensitive": "ငွေကြေး/အကောင့်နဲ့ ဆိုင်လို့ AI က Group ထဲမှာ မဖြေဘဲ ရပ်ထားပါတယ်။",
         "ai_escalate": "AI က မသေချာလို့ Group ထဲမှာ မဖြေဘဲ ရပ်ထားပါတယ်။",
     }.get(reason, "AI က Group ထဲမှာ မဖြေဘဲ ရပ်ထားပါတယ်။")
-    return (
+    body = (
         "🆘 <b>Group AI Admin — စစ်ဆေးပေးရန်</b>\n\n"
         f"👤 <b>User:</b> {who}{uname} • <code>{int(author_id)}</code>\n"
         f"❓ <b>မေးခွန်း:</b> {html.escape(text)}\n"
         f"🔗 <a href=\"{group_message_link(chat_id, message_id)}\">Group မှာ ကြည့်ရန်</a>\n\n"
         f"<i>{reason_line}</i>"
     )
+    if draft_text:
+        body += (
+            "\n\n📝 <b>AI အကြံပြု အဖြေ မူကြမ်း:</b>\n"
+            f"{html.escape(draft_text)}\n\n"
+            "<i>သဘောတူရင် အောက်က [အဖြေ တင်မည်] ကို နှိပ်ပါ — Group ထဲမှာ ဒီအတိုင်း တင်ပေးပါမယ်။</i>"
+        )
+    return body
+
+
+def escalation_callback_data(action: str, escalation_id: int) -> str:
+    """Callback payload for the admin DM buttons (<= 64 bytes)."""
+    return f"{ESCALATION_CALLBACK_PREFIX}:{action}:{int(escalation_id)}"
+
+
+def parse_escalation_callback(data: str | None) -> tuple[str, int] | None:
+    """Parse a button payload into (action, escalation_id) or None."""
+    parts = str(data or "").split(":")
+    if len(parts) != 3 or parts[0] != ESCALATION_CALLBACK_PREFIX:
+        return None
+    if parts[1] not in ("approve", "dismiss", "edit", "cancel"):
+        return None
+    try:
+        return parts[1], int(parts[2])
+    except ValueError:
+        return None
+
+
+def build_escalation_keyboard(escalation_id: int):
+    """[Post in group] / [Edit] / [Dismiss] keyboard for an escalation DM."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Group ထဲ တင်မည်",
+                    callback_data=escalation_callback_data("approve", escalation_id),
+                ),
+                InlineKeyboardButton(
+                    text="✏️ ပြင်မည်",
+                    callback_data=escalation_callback_data("edit", escalation_id),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚫 ပယ်မည်",
+                    callback_data=escalation_callback_data("dismiss", escalation_id),
+                ),
+            ],
+        ]
+    )
+
+
+def build_edit_cancel_keyboard(escalation_id: int):
+    """Cancel button attached to the edit FSM prompt message."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❌ မပြင်တော့ပါ",
+                    callback_data=escalation_callback_data("cancel", escalation_id),
+                ),
+            ]
+        ]
+    )
+
+
+# The DM prompt sent to the admin who claimed an escalation for
+# editing; the next private text they send becomes the new draft.
+EDIT_PROMPT_TEXT = (
+    "✏️ <b>အဖြေ မူကြမ်း ပြင်ရန်</b>\n\n"
+    "လက်ရှိ မူကြမ်း:\n{draft}\n\n"
+    "ပြင်ထားတဲ့ အဖြေ အပြည့်အစုံကို ဒီမှာ စာတစ်စောင်အဖြစ် ပြန်ပို့ပေးပါ။ "
+    "Emoji တွေ ဖယ်ပြီး Group ထဲ တင်နိုင်တဲ့ ပုံစံနဲ့ သိမ်းပေးပါမယ်။ "
+    "မပြင်တော့ရင် အောက်က [မပြင်တော့ပါ] ကို နှိပ်ပါ (သို့) /cancel လို့ ပို့ပါ။"
+)
+
+# Status lines appended to every admin DM copy on a state change
+# (the keyboard is cleared at the same moment; see the handler's
+# cross-admin copy sync).
+STATUS_LINE_POSTED = "✅ {name} က တင်ပြီးပါပြီ"
+STATUS_LINE_DISMISSED = "🚫 {name} က ပယ်လိုက်ပါပြီ"
+STATUS_LINE_EDITING = "✏️ {name} ပြင်နေပါတယ်"
+STATUS_LINE_EDIT_SAVED = "✏️ {name} က ပြင်ပြီး အသစ် ပြန်ပို့ထားပါတယ်"
+STATUS_LINE_EDIT_CANCELLED = "✏️ {name} က မပြင်တော့ဘဲ ရပ်လိုက်ပါပြီ"
+STATUS_LINE_EXPIRED = "⏰ ဒီ ကိစ္စရဲ့ သက်တမ်း ကုန်သွားပါပြီ"
+
+
+# Admin-facing callback answers (alerts/confirmations on button taps).
+ADMIN_ALERT_NOT_ADMIN = "Admin များသာ ဒီခလုတ်ကို သုံးနိုင်ပါတယ်။"
+ADMIN_ALERT_BAD_BUTTON = "ဒီ ခလုတ် အလုပ်မလုပ်တော့ပါ။"
+ADMIN_ALERT_ALREADY_HANDLED = "ဒီ ကိစ္စကို အခြား Admin တစ်ယောက် ကိုင်တွယ်ပြီးပါပြီ။"
+ADMIN_ALERT_EXPIRED = "ဒီ ကိစ္စရဲ့ သက်တမ်း (၂၄ နာရီ) ကုန်သွားပါပြီ။"
+ADMIN_ALERT_NOT_FOUND = "ဒီ ကိစ္စကို မတွေ့တော့ပါ။"
+ADMIN_ALERT_NO_DRAFT = "တင်ပေးစရာ အဖြေ မူကြမ်း မရှိပါ။"
+ADMIN_ALERT_POST_FAILED = "Group ထဲ တင်ပေးလို့ မရခဲ့ပါ — မူကြမ်းကို ကိုယ်တိုင် ကူးတင်ပေးပါ။"
+ADMIN_ALERT_NOT_EDITOR = "ပြင်နေသူ ကိုယ်တိုင်သာ ဒါကို လုပ်နိုင်ပါတယ်။"
+ADMIN_ALERT_EDIT_GONE = "ဒီ ကိစ္စကို ပြင်နေတဲ့ အခြေအနေ မရှိတော့ပါ။"
+ADMIN_CONFIRM_POSTED = "Group မှာ အဖြေ တင်ပေးလိုက်ပါပြီ။"
+ADMIN_CONFIRM_DISMISSED = "ပယ်လိုက်ပါပြီ — Group မှာ ဘာမှ မတင်ပါ။"
+ADMIN_CONFIRM_EDIT_CLAIMED = "ပြင်ရန် စာသား ပို့ပေးပါ — အောက်မှာ လမ်းညွှန် ပို့ထားပါတယ်။"
+ADMIN_CONFIRM_EDIT_SAVED = "ပြင်ထားတဲ့ မူကြမ်း အသစ်ကို Admin အားလုံးဆီ ပြန်ပို့ထားပါပြီ။"
+ADMIN_CONFIRM_EDIT_CANCELLED = "ပြင်တာ ရပ်လိုက်ပါပြီ — မူလ မူကြမ်း အတိုင်း ပြန်ထားပါတယ်။"
+ADMIN_EDIT_EMPTY = "စာသား အလွတ် ဖြစ်နေပါတယ် — ပြင်ထားတဲ့ အဖြေကို ပြန်ပို့ပေးပါ။"

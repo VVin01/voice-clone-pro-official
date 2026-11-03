@@ -589,6 +589,81 @@ class ImportedAudience(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class GroupAiEscalation(Base):
+    """A group-AI question an admin must approve before it is answered.
+
+    Created when the group AI escalates (AI ESCALATE outcome or the
+    sensitive-topic hard rule): the question text is exactly what the
+    admins already receive by DM, plus one AI-drafted suggested answer.
+    An admin's [Post answer] tap flips the row out of PENDING
+    (first tap wins, enforced by a conditional UPDATE); [Dismiss]
+    closes it without posting. Rows left PENDING for 24h are expired
+    by the periodic sweep. No other group message is ever persisted.
+    """
+
+    __tablename__ = "group_ai_escalations"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    author_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    author_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    author_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The AI's original draft, kept for audit when an admin edits the
+    # draft before approval (draft_text then holds the edited text,
+    # which is also what gets posted and FAQ-cached).
+    original_draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    # While status == 'EDITING', handled_by is the admin who claimed
+    # the record for editing; on APPROVED/DISMISSED it is the admin
+    # whose tap closed the record.
+    handled_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The escalation DM as delivered: one identical body per admin,
+    # stored verbatim (dm_text) with every copy's [chat_id,
+    # message_id] (dm_copies, JSON) so state changes can update ALL
+    # admin copies — append a status line and/or clear the keyboard.
+    dm_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dm_copies: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'EDITING', 'APPROVED', 'DISMISSED', 'EXPIRED')",
+            name="chk_group_ai_escalation_status",
+        ),
+    )
+
+
+class GroupAiFaq(Base):
+    """An admin-approved (question, answer) pair for the group AI.
+
+    Rows enter ONLY when an admin taps [Post answer] on an escalation
+    draft — never from raw AI replies — so every cached answer is one
+    a human admin has already approved and seen posted in the group.
+    question_norm is the normalised form used for deterministic
+    matching (see app/services/group_ai_admin.py).
+    """
+
+    __tablename__ = "group_ai_faqs"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    question_norm: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_text: Mapped[str] = mapped_column(Text, nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+
 class MonthlyFreeAllowanceGrant(Base):
     __tablename__ = "monthly_free_allowance_grants"
 

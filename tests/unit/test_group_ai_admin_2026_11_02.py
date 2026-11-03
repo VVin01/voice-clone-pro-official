@@ -106,22 +106,27 @@ def test_rate_limiter_user_cooldown():
     lim = gai.GroupReplyRateLimiter(now_fn=clock)
     assert lim.can_reply(1, 100)
     lim.record_reply(1, 100)
-    clock.t = 60
-    assert not lim.can_reply(1, 101)  # same user, inside 180s cooldown
+    clock.t = 30
+    # Batch H retune: the default per-user cooldown is 60s (was 180s).
+    assert not lim.can_reply(1, 101)  # same user, inside 60s cooldown
     assert lim.can_reply(2, 101)  # a different user is unaffected
-    clock.t = 181
+    clock.t = 61
     assert lim.can_reply(1, 102)
 
 
 def test_rate_limiter_global_cap_and_window():
+    # Batch H retune: the old flat "10 replies per hour" cap on
+    # can_reply is replaced by rolling AI-call budgets (defaults
+    # 40/hour, 300/day) that only real AI calls consume — replies
+    # themselves (fast paths, FAQ hits) are no longer capped here.
     clock = _Clock()
     lim = gai.GroupReplyRateLimiter(now_fn=clock)
-    for uid in range(10):
-        assert lim.can_reply(1000 + uid, 2000 + uid)
-        lim.record_reply(1000 + uid, 2000 + uid)
-    assert not lim.can_reply(9999, 3000)  # 11th reply inside the hour
+    for _ in range(40):
+        assert lim.ai_budget_available()
+        lim.record_ai_call()
+    assert not lim.ai_budget_available()  # 41st AI call inside the hour
     clock.t = 3601
-    assert lim.can_reply(9999, 3000)  # window has slid past
+    assert lim.ai_budget_available()  # hourly window has slid past
 
 
 def test_rate_limiter_never_answers_same_message_twice():
