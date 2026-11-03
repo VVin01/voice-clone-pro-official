@@ -273,7 +273,11 @@ def test_recap_failure_path_classifies_before_store_and_notify():
     assert "နည်းပညာဆိုင်ရာ အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့ပါသည်" in API_PY
     assert 'entry["error_message"] = display_err' in API_PY
     assert "error_message=display_err" in API_PY
-    assert "err_short = html.escape(display_err[:180])" in API_PY
+    # Batch K: the failure DM is composed by the shared helper, which
+    # receives the SAME classified display_err and HTML-escapes it
+    # (the old inline err_short = html.escape(display_err[:180])).
+    assert "reason=display_err" in API_PY
+    assert "reason=html.escape(reason_text)" in API_PY
 
 
 class _ExplodingDownloader:

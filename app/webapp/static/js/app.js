@@ -2639,12 +2639,21 @@ function updateRecapSplitCostHint() {
     // stays inside its single credit, so no estimate is shown there.
     const show = !!(toggle && toggle.checked && dur > recapNormalMaxSeconds()
         && state.user?.is_vip && !state.user?.is_admin);
+    // Batch K: while a segmented estimate is known, the start CTA
+    // carries the estimated total instead of the static "(1 Credit)";
+    // otherwise it falls back to the plain label. Display-only — the
+    // submit/charging path never reads the CTA text.
+    const ctaText = document.querySelector("#btn-start-recap .btn-text");
     if (!show) {
         hint.classList.add("hidden");
         hint.textContent = "";
+        if (ctaText) ctaText.textContent = t("btn_start_recap");
         return;
     }
     const est = estimateRecapSegmentParts(dur, state.recapSplitMinutes || 3);
+    if (ctaText) ctaText.textContent = est > 1
+        ? tf("btn_start_recap_credits", { credits: est })
+        : t("btn_start_recap");
     let text = tf("recap_split_cost_estimate", { parts: est, credits: est });
     const lowBalance = (state.user?.recap_credits ?? 0) < est;
     if (lowBalance) text += " " + t("recap_split_cost_low_balance");
@@ -2652,6 +2661,11 @@ function updateRecapSplitCostHint() {
     hint.style.color = lowBalance ? "#f87171" : "";
     hint.classList.remove("hidden");
 }
+
+// Batch K: setLanguage's static sweep resets the CTA label — this
+// window hook (same pattern as paintPlanHowText) repaints the live
+// segmented estimate in the new language.
+window.repaintRecapCtaPrice = updateRecapSplitCostHint;
 
 // ── Recap Live Preview visibility state machine ─────────────────────────
 // Preview-dependent UI (the canvas mockup, the drag hint, the canvas
@@ -4234,6 +4248,19 @@ function setupRecapVisualEditor() {
         });
     }
 
+    // Batch K: the script-review opt-in also lives as a visible
+    // toggle in the main options area next to the CTA. The two
+    // checkboxes are twins of ONE state — the advanced checkbox
+    // stays the single source the submit payload reads; each
+    // change mirrors into the other so they can never disagree.
+    const srAdvToggle = document.getElementById("recap-script-review-toggle");
+    const srMainToggle = document.getElementById("recap-script-review-toggle-main");
+    if (srAdvToggle && srMainToggle) {
+        srMainToggle.checked = srAdvToggle.checked;
+        srMainToggle.addEventListener("change", () => { srAdvToggle.checked = srMainToggle.checked; });
+        srAdvToggle.addEventListener("change", () => { srMainToggle.checked = srAdvToggle.checked; });
+    }
+
     // 6c. Source language pills (auto = detect; else a Whisper code)
     const langBtns = document.querySelectorAll("#recap-lang-picker .pill-btn");
     langBtns.forEach(btn => {
@@ -5529,6 +5556,22 @@ function startRecapJobPolling(jobId) {
                         blurWarnEl.textContent = hasBlurWarn ? t("warn_blur_no_source_band") : "";
                         blurWarnEl.classList.toggle("hidden", !hasBlurWarn);
                     }
+                    // Batch K: every completed recap shows its receipt —
+                    // the credits this job was actually charged — not
+                    // only segmented jobs (whose split note above
+                    // already carries the cost line).
+                    const costEl = document.getElementById("recap-cost-line");
+                    if (costEl) {
+                        const charged = data.credits_charged;
+                        const costInNote = !data.split_error && data.parts_count > 1 && charged;
+                        if (typeof charged === "number" && charged > 0 && !costInNote) {
+                            costEl.textContent = tf("recap_cost_charged_line", { credits: charged });
+                            costEl.classList.remove("hidden");
+                        } else {
+                            costEl.textContent = "";
+                            costEl.classList.add("hidden");
+                        }
+                    }
                 }
 
                 haptic("success");
@@ -5553,7 +5596,13 @@ function startRecapJobPolling(jobId) {
                 // dump): it is only pattern-matched by the mapper, never
                 // displayed. Type is 'error' (this branch used to toast
                 // with 'success' styling for a failure).
-                showStudioToast(mapErrorToToast(errMsg, 'recap'), 'error', 6000);
+                // Batch K: when the server proves a refund was issued
+                // for this job, the failure surface says so.
+                let failToast = mapErrorToToast(errMsg, 'recap');
+                if (data.credit_refunded) {
+                    failToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
+                }
+                showStudioToast(failToast, 'error', 6000);
                 if (errMsg.includes("Douyin") || errMsg.includes("Fresh cookies") || blockedLinkInfo(errMsg).blocked) {
                     const btnFileTab = document.getElementById("btn-source-mode-file");
                     if (btnFileTab) btnFileTab.click();
@@ -8149,6 +8198,17 @@ function hubHistoryDetailHtml(j) {
     if (isRecap && j.parts_count && j.parts_count > 1) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>`;
     }
+    // Batch K: the per-job receipt — every completed recap shows the
+    // credits it was charged (segmented jobs carry it in the line
+    // above), and a failed job shows its refund marker when — and
+    // only when — the server record proves a refund was issued.
+    if (isRecap && j.status === "SUCCESS" && !(j.parts_count > 1)
+        && typeof j.credits_charged === "number" && j.credits_charged > 0) {
+        inner += `<div class="history-item-body">${escapeHtml(tf("recap_cost_charged_line", { credits: j.credits_charged }))}</div>`;
+    }
+    if (isRecap && j.status === "FAILED" && j.credit_refunded) {
+        inner += `<div class="history-item-body">${escapeHtml(tf("recap_refunded_line", { credits: j.credits_refunded || j.credits_charged || 1 }))}</div>`;
+    }
     if (isRecap && j.recap_settings) {
         // R40 item 13: compact settings summary from the persisted
         // recap_config (engine / voice / subtitle position / style /
@@ -8184,7 +8244,7 @@ function hubHistoryDetailHtml(j) {
                 actions += ` <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
             }
         }
-        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "wav", j.input_snippet, j.id)}" class="history-dl-link">🎙️ Audio</a>`;
+        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", j.input_snippet, j.id)}" class="history-dl-link">🎙️ Audio</a>`;
         if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">📝 SRT</a>`;
         if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">📜 TXT</a>`;
     } else if (j.download_url) {

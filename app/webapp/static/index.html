@@ -454,16 +454,18 @@
                                 <button class="btn mini-btn" id="btn-fetch-recap-info" data-i18n="btn_analyze">စစ်ဆေးမည်</button>
                             </div>
                             <p class="link-source-help" data-i18n="link_help_recap">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်လို့ Link နဲ့ မရတာမျိုး ဖြစ်တတ်ပါတယ် — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်တာက အသေချာဆုံးပါ။</p>
+                            <p class="link-source-help" data-i18n="recap_platforms_note">🔗 YouTube, TikTok, Facebook, Douyin (抖音) လင့်ခ်များ အသုံးပြုနိုင်ပါသည်</p>
                         </div>
 
                         <!-- Mode 2: Direct File Upload -->
                         <div class="source-panel-file mt-2 hidden" id="panel-source-file">
                             <div class="video-drop-zone" id="recap-video-drop-zone">
-                                <input type="file" id="recap-video-file-input" accept="video/mp4,video/mkv,video/mov,video/webm,.mp4,.mkv,.mov" class="hidden-file-input">
+                                <input type="file" id="recap-video-file-input" accept="video/mp4,video/x-matroska,video/quicktime,video/x-msvideo,video/webm,video/mp2t,video/x-m4v,.mp4,.mkv,.mov,.avi,.webm,.ts,.m4v" class="hidden-file-input">
                                 <div class="drop-zone-content" onclick="document.getElementById('recap-video-file-input').click()">
                                     <span class="drop-icon">🎬</span>
                                     <span class="drop-text" id="recap-drop-text" data-i18n="recap_drop_text">ဖုန်း သို့မဟုတ် ကွန်ပျူတာထဲမှ MP4 ဗီဒီယို ရွေးချယ်ပါ</span>
                                     <span class="drop-subtext" data-i18n="recap_drop_subtext">Douyin, TikTok, Movie clip မည်သည့် ဗီဒီယိုဖိုင်မဆို တိုက်ရိုက်လက်ခံပါသည်</span>
+                                    <span class="drop-limits" data-i18n="recap_drop_limits">📦 အများဆုံး 1 GB · MP4, MKV, MOV, AVI, WebM, TS, M4V</span>
                                 </div>
                                 <div class="upload-progress-wrap hidden" id="recap-upload-progress">
                                     <div class="progress-bar-bg"><div class="progress-bar-fill" id="recap-upload-bar" style="width: 0%"></div></div>
@@ -1132,6 +1134,14 @@
                         </div>
                     </div>
 
+                    <label class="script-review-row recap-script-review-main mt-3" for="recap-script-review-toggle-main">
+                        <input type="checkbox" id="recap-script-review-toggle-main">
+                        <span class="script-review-main-text">
+                            <span data-i18n="recap_script_review_label">📝 Script ကို အရင် စစ်ပြင်မည် (အသံ မထုတ်ခင်)</span>
+                            <span class="script-review-hint" data-i18n="recap_script_review_hint">အသံမထုတ်ခင် Script ကို ကိုယ်တိုင် စစ်ပြီး ပြင်နိုင်ပါတယ်</span>
+                        </span>
+                    </label>
+
                     <div class="recap-action-cta-wrap mt-3">
                         <button class="btn gold-gradient-btn massive-btn" id="btn-start-recap">
     <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည် (1 Credit)</span>
@@ -1189,6 +1199,8 @@
                             </div>
                             <p id="recap-split-note" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
                             <p id="recap-blur-warning" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
+                            <p id="recap-cost-line" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
+                            <p id="recap-expiry-note" class="mt-2" data-i18n="history_expiry_note" style="font-size:12px; opacity:0.85;">⏱️ ဖိုင်များကို ၇ ရက်အထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
                         </div>
                     </div>
 
