@@ -1009,6 +1009,31 @@ async def expire_abandoned_script_ready_jobs() -> int:
             live_entry["credits_refunded"] = int(
                 refund_entry.get("credits_refunded") or 0
             )
+        # Batch K: an abandoned review previously expired silently.
+        # The owner now gets the same failure DM the runner sends —
+        # curated (localized) reason plus the refund confirmation.
+        # Once-only by construction: the persisted script_ready flag
+        # flipped above means this job is never a candidate again.
+        try:
+            _cfg = state.get("config") or {}
+            await _send_recap_failure_dm(
+                job_id=job_id,
+                chat_id=user_id,
+                title=_clean_recap_display_title(
+                    _cfg.get("title"), _cfg.get("url")
+                ),
+                reason_key="recap_failure_reason_script_expired",
+                credits_refunded=(
+                    int(refund_entry.get("credits_refunded") or 0)
+                    if refund_entry.get("credit_refunded")
+                    else 0
+                ),
+                entry=live_entry,
+            )
+        except Exception as dm_err:
+            logger.warning(
+                f"Could not send expiry DM for recap job {job_id}: {dm_err}"
+            )
         expired += 1
         logger.info(f"Recap job {job_id}: script review expired after 24h; closed and refunded.")
     return expired
@@ -3845,6 +3870,103 @@ async def _recap_job_marked_cancelled(job_id: str, entry: Optional[dict] = None)
         return False
 
 
+def _build_recap_failure_dm_text(
+    lang: str,
+    *,
+    title: str,
+    job_id: str,
+    reason: str = "",
+    reason_key: Optional[str] = None,
+    credits_refunded: int = 0,
+) -> str:
+    """Compose the recap failure DM (batch K).
+
+    Mirrors the success notification's shape (heading, title, task
+    id) but carries the CURATED failure reason — the same user-safe
+    string the Mini App surfaces, or a locale key resolved here —
+    never raw engine text. The refund line appears only when a
+    refund was actually issued (``credits_refunded`` > 0), and the
+    upload hint only for jobs whose source was a direct upload.
+    Title and reason are HTML-escaped: both can carry user-supplied
+    text and the message is sent with parse_mode="HTML".
+    """
+    clean_title = html.escape(str(title or "").strip()) or "Recap"
+    if reason_key:
+        reason_text = t(reason_key, lang)
+    else:
+        reason_text = str(reason or "").strip()
+    text = t(
+        "recap_failure_notify_text",
+        lang,
+        clean_title=clean_title,
+        reason=html.escape(reason_text),
+        job_id=job_id,
+    )
+    if credits_refunded:
+        text += t(
+            "recap_failure_refund_note", lang, credits=int(credits_refunded)
+        )
+    if "Uploaded Video" in str(title or ""):
+        text += t("recap_failure_upload_hint", lang)
+    return text
+
+
+async def _send_recap_failure_dm(
+    *,
+    job_id: str,
+    chat_id: Optional[int],
+    title: str,
+    reason: str = "",
+    reason_key: Optional[str] = None,
+    credits_refunded: int = 0,
+    entry: Optional[dict] = None,
+) -> bool:
+    """Send the recap failure DM exactly once per job (batch K).
+
+    The success DM is emitted from a single terminal branch of the
+    runner; failures mirror that once-only discipline with a
+    ``failure_notified`` flag on the registry entry, set BEFORE the
+    send attempt so a re-entered handler can never double-notify.
+    Callers without a live entry (the SCRIPT_READY expiry sweep)
+    are once-only by construction — the sweep flips the persisted
+    state that feeds it. Internal stage retries never reach this
+    helper: it is called only from terminal failure paths.
+    Returns True when a message was sent.
+    """
+    if entry is not None:
+        if entry.get("failure_notified"):
+            return False
+        entry["failure_notified"] = True
+    if not settings.bot_token or not chat_id:
+        return False
+    lang = "my"
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            _u = await session.get(User, int(chat_id))
+            if _u and getattr(_u, "language_code", None):
+                lang = _u.language_code
+    except Exception:
+        pass
+    text = _build_recap_failure_dm_text(
+        lang,
+        title=title,
+        job_id=job_id,
+        reason=reason,
+        reason_key=reason_key,
+        credits_refunded=credits_refunded,
+    )
+    from aiogram import Bot
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        await bot.send_message(chat_id=int(chat_id), text=text, parse_mode="HTML")
+    finally:
+        await bot.session.close()
+    return True
+
+
 async def _run_recap_background_job(
     job_id: str,
     req: RecapConfigRequest,
@@ -4471,6 +4593,13 @@ async def _execute_recap_background_job(
                         _recap_notify_lang,
                         count=len(entry.get("fallback_segments") or []) or 1,
                     )
+                # Batch K: disclose the retention window at delivery
+                # time too (it was previously stated only in History).
+                notify_text += t(
+                    "recap_retention_note",
+                    _recap_notify_lang,
+                    retention_days=_media_retention_days(),
+                )
                 bot_inst = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
                     await bot_inst.send_message(
@@ -4549,29 +4678,30 @@ async def _execute_recap_background_job(
         if credit_deducted and not entry.get("credit_refunded"):
             await _refund_recap_job_charge(user_id, entry)
 
-        if settings.bot_token and chat_id:
-            try:
-                from aiogram import Bot
-                from aiogram.client.default import DefaultBotProperties
-                from aiogram.enums import ParseMode
-                bot_err = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-                try:
-                    err_short = html.escape(display_err[:180])
-                    refund_note = f"✅ သင့် Recap Credit ({int(entry.get('credits_refunded') or 1)}c) ကို အကောင့်ထဲသို့ အလိုအလျောက် ပြန်လည်ဖြည့်သွင်းပေးထားပါသည်ခင်ဗျာ။" if credit_deducted else ""
-                    await bot_err.send_message(
-                        chat_id=chat_id,
-                        text=(
-                            f"⚠️ <b>Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်</b>\n"
-                            f"🆔 <b>Task:</b> <code>#{job_id}</code>\n"
-                            f"📋 <b>အကြောင်းရင်း:</b> <i>{err_short}</i>\n\n"
-                            f"{refund_note}\n"
-                            f"💡 <i>လင့်ခ် အကာအကွယ်ရှိနေပါက ဗီဒီယိုဖိုင်ကို ဒေါင်းလုဒ်ဆွဲ၍ Mini App ရှိ '📁 Video Upload' မှ တိုက်ရိုက်တင်သွင်းကာ ပြုလုပ်နိုင်ပါသည်ခင်ဗျာ။</i>"
-                        ),
-                    )
-                finally:
-                    await bot_err.session.close()
-            except Exception:
-                pass
+        # --- Send Telegram DM about Failure (batch K) ---
+        # Shared with the SCRIPT_READY expiry sweep so every
+        # terminal failure surface carries the same locale copy:
+        # job title, the curated display_err (never raw engine
+        # text) and a refund line only when a refund was issued.
+        # The helper's failure_notified flag keeps it once-only.
+        try:
+            await _send_recap_failure_dm(
+                job_id=job_id,
+                chat_id=chat_id,
+                title=_clean_recap_display_title(
+                    entry.get("title"),
+                    entry.get("url") or entry.get("source_path"),
+                ),
+                reason=display_err,
+                credits_refunded=(
+                    int(entry.get("credits_refunded") or 0)
+                    if entry.get("credit_refunded")
+                    else 0
+                ),
+                entry=entry,
+            )
+        except Exception as dm_err:
+            logger.warning(f"Could not send DM for failed job {job_id}: {dm_err}")
 
 
 def _sweep_expired_download_dirs(cutoff: datetime) -> int:
@@ -5097,6 +5227,8 @@ async def get_recap_status(
             "segmented": bool(entry.get("segmented")),
             "parts_count": entry.get("parts_count") or (len(entry.get("parts") or []) or None),
             "credits_charged": entry.get("credits_charged"),
+            "credit_refunded": bool(entry.get("credit_refunded")),
+            "credits_refunded": int(entry.get("credits_refunded") or 0),
             "credits_estimated": entry.get("credits_estimated"),
         }
 
@@ -5144,6 +5276,10 @@ async def get_recap_status(
         _r_size, _r_sendable = _recap_output_size_and_sendable(job_id, job.result_path)
     else:
         _r_size, _r_sendable = None, True
+    # Batch K: the persisted recap state is the cold-path source for
+    # the receipt fields — charged credits plus the refund proof the
+    # refund path wrote back into recap_config.
+    _db_state = _load_persisted_recap_state(job) or {}
     return {
         "id": job_id,
         "status": job.status,
@@ -5159,7 +5295,13 @@ async def get_recap_status(
         "parts": _db_parts,
         "segmented": len(_db_parts) >= 2,
         "parts_count": len(_db_parts) or None,
-        "credits_charged": None,
+        "credits_charged": (
+            int(_db_state["credits_charged"])
+            if _db_state.get("credits_charged") is not None
+            else None
+        ),
+        "credit_refunded": bool(_db_state.get("credit_refunded")),
+        "credits_refunded": int(_db_state.get("credits_refunded") or 0),
         "is_expired": is_expired,
         "download_urls": _with_stream_url({
             "video": f"/api/recap/download/{job_id}/video" if media_available else None,
@@ -5697,9 +5839,13 @@ async def get_user_history(
         # (or support) could not tell why a render looked the way it
         # did (see the 2026-11-02 complaint diagnosis).
         _recap_settings = None
+        # Batch K: the persisted recap state is also the cold-path
+        # source for the receipt fields below (charged credits +
+        # refund state); the live registry entry wins while hot.
+        _hist_state = _load_persisted_recap_state(j) if is_recap else None
         if is_recap:
             try:
-                _cfg = (_load_persisted_recap_state(j) or {}).get("config") or {}
+                _cfg = (_hist_state or {}).get("config") or {}
                 if _cfg:
                     _recap_settings = {
                         "engine": _cfg.get("tts_engine"),
@@ -5717,7 +5863,20 @@ async def get_user_history(
             "id": j.id,
             "job_type": "RECAP" if is_recap else "VOICE_CLONE",
             "parts_count": (len(_hist_parts) or None) if is_recap else None,
-            "credits_charged": (_hist_entry or {}).get("credits_charged") if is_recap else None,
+            "credits_charged": (
+                (_hist_entry or {}).get("credits_charged")
+                if (_hist_entry or {}).get("credits_charged") is not None
+                else (_hist_state or {}).get("credits_charged")
+            ) if is_recap else None,
+            "credit_refunded": bool(
+                (_hist_entry or {}).get("credit_refunded")
+                or (_hist_state or {}).get("credit_refunded")
+            ) if is_recap else False,
+            "credits_refunded": int(
+                (_hist_entry or {}).get("credits_refunded")
+                or (_hist_state or {}).get("credits_refunded")
+                or 0
+            ) if is_recap else 0,
             "engine": j.engine,
             "recap_settings": _recap_settings,
             "fallback_used": _fb_used,

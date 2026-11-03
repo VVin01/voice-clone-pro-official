@@ -209,6 +209,7 @@ const translations = {
         advanced_settings_sub: "ဘာသာစကား၊ စာတန်း၊ အသံနှင့် ဗီဒီယို ဆက်တင် အသေးစိတ်",
         queue_notice_recap: "⚡ ပုံမှန်အားဖြင့် ၂–၄ မိနစ် ခန့် ကြာနိုင်ပါတယ်",
         recap_script_review_label: "📝 Script ကို အရင် စစ်ပြင်မည် (အသံ မထုတ်ခင်)",
+        recap_script_review_hint: "အသံမထုတ်ခင် Script ကို ကိုယ်တိုင် စစ်ပြီး ပြင်နိုင်ပါတယ်",
         recap_split_label: "✂️ ဗီဒီယိုကို အပိုင်းခွဲ ထုတ်မည်",
         recap_split_minutes_label: "တစ်ပိုင်း ကြာချိန်:",
         recap_split_min_2: "2 မိနစ်",
@@ -254,6 +255,7 @@ const translations = {
         telegram_leave_hint: "💡 ဒီစာမျက်နှာကို ပိတ်သွားလို့ ရပါတယ်။ ဗီဒီယို အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ ပို့ပေးပါမည်။",
         recap_eta_text: "ခန့်မှန်းကြာချိန်: ၂–၄ မိနစ်",
         btn_start_recap: "⚡ 1-Click Recap ဖန်တီးမည် (1 Credit)",
+        btn_start_recap_credits: "⚡ 1-Click Recap ဖန်တီးမည် ({credits} Credits)",
         // Deliverables
         recap_result_title: "🎉 Pro Movie Recap အဆင်သင့်ဖြစ်ပါပြီ!",
         btn_dl_recap_video: "🎬 ဗီဒီယို အပြည့် (MP4)",
@@ -469,6 +471,8 @@ const translations = {
         history_recap_title: "🕒 လွန်ခဲ့သော ၇ ရက်အတွင်း Recap ဖန်တီးမှုများ",
         history_voice_title: "🕒 လွန်ခဲ့သော ၇ ရက်အတွင်း Voice ဖန်တီးမှုများ",
         history_expiry_note: "⏱️ ဖိုင်များကို ၇ ရက်အထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်",
+        recap_cost_charged_line: "💳 သုံးခဲ့သော Credit: {credits}",
+        recap_refunded_line: "✅ {credits} Credit ပြန်ဖြည့်ပေးပြီးပါပြီ",
         history_empty: "လွန်ခဲ့သော ၇ ရက်အတွင်း ဖန်တီးမှု မရှိသေးပါ",
         // Dedicated History Hub
         history_title: "📜 မှတ်တမ်း",
@@ -546,12 +550,14 @@ const translations = {
         err_link_advice_upload: "Credit မဆုံးရှုံးပါ — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်ပေးရင် သေချာပေါက် ရပါတယ်။",
         err_link_advice_dl: "မူရင်း App ထဲက Link ကို တိုက်ရိုက် ကူးထည့်ပြီး ပြန်စမ်းကြည့်ပါ။",
         link_help_recap: "💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်လို့ Link နဲ့ မရတာမျိုး ဖြစ်တတ်ပါတယ် — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်တာက အသေချာဆုံးပါ။",
+        recap_platforms_note: "🔗 YouTube, TikTok, Facebook, Douyin (抖音) လင့်ခ်များ အသုံးပြုနိုင်ပါသည်",
         link_help_dl: "💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်ပါတယ် — Link မရရင် မူရင်း App ထဲက Link ကို တိုက်ရိုက် ကူးထည့်ပြီး ပြန်စမ်းကြည့်ပါ။",
         recap_unverified_note: "အချက်အလက် အတည်မပြုရသေး",
         recap_unverified_warning: "⚠️ ဒီ လင့်ခ်၏ အချက်အလက်ကို အတည်မပြုနိုင်သေးပါ — Recap လုပ်ရင် မအောင်မြင်တာ သို့မဟုတ် ကြာချိန် ကန့်သတ်ချက် ကျော်တာမျိုး ဖြစ်နိုင်ပါသည်။ သေချာချင်ရင် ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် တင်တာ အစိတ်ချရဆုံး နည်းလမ်းပါ ခင်ဗျာ။",
         recap_source_tab_url: "🔗 ဗီဒီယို Link (URL)",
         recap_source_tab_file: "📁 ဗီဒီယိုဖိုင် တင်ရန် (Upload MP4)",
         recap_drop_text: "ဖုန်း သို့မဟုတ် ကွန်ပျူတာထဲမှ MP4 ဗီဒီယို ရွေးချယ်ပါ",
+        recap_drop_limits: "📦 အများဆုံး 1 GB · MP4, MKV, MOV, AVI, WebM, TS, M4V",
         recap_drop_subtext: "Douyin, TikTok, Movie clip မည်သည့် ဗီဒီယိုဖိုင်မဆို တိုက်ရိုက်လက်ခံပါသည်",
         recap_sub_ready: "✅ စာတန်းထိုး အဆင်သင့်",
         recap_sub_ai: "⚠️ AI အလိုအလျောက် စာတန်းထိုး",
@@ -1022,6 +1028,7 @@ const translations = {
         advanced_settings_sub: "Language, subtitles, narration, video & render details",
         queue_notice_recap: "⚡ Usually takes about 2–4 minutes",
         recap_script_review_label: "📝 Review & edit the script first (before voice)",
+        recap_script_review_hint: "Review and edit the script yourself before the voice is generated",
         recap_split_label: "✂️ Also split the video into parts",
         recap_split_minutes_label: "Part length:",
         recap_split_min_2: "2 min",
@@ -1067,6 +1074,7 @@ const translations = {
         telegram_leave_hint: "💡 You can close this page. When your video is ready, the Telegram Bot will send it to you.",
         recap_eta_text: "Estimated time: 2–4 min",
         btn_start_recap: "⚡ Create 1-Click Recap (1 Credit)",
+        btn_start_recap_credits: "⚡ Create 1-Click Recap ({credits} Credits)",
         // Deliverables
         recap_result_title: "🎉 Your Pro Movie Recap Is Ready!",
         btn_dl_recap_video: "🎬 Full Video (MP4)",
@@ -1282,6 +1290,8 @@ const translations = {
         history_recap_title: "🕒 Recaps from the Last 7 Days",
         history_voice_title: "🕒 Voices from the Last 7 Days",
         history_expiry_note: "⏱️ Files are kept for 7 days, then deleted automatically",
+        recap_cost_charged_line: "💳 Credits charged: {credits}",
+        recap_refunded_line: "✅ {credits} credit(s) refunded",
         history_empty: "Nothing created in the last 7 days yet",
         // Dedicated History Hub
         history_title: "📜 History",
@@ -1359,12 +1369,14 @@ const translations = {
         err_link_advice_upload: "No credit was lost — upload the video file directly and it will work.",
         err_link_advice_dl: "Copy the link directly from the original app and try again.",
         link_help_recap: "💡 Some sites (TikTok, VidMate, …) block outside downloads, so a link may not work — uploading the video file directly is the most reliable way.",
+        recap_platforms_note: "🔗 Works with YouTube, TikTok, Facebook and Douyin (抖音) links",
         link_help_dl: "💡 Some sites (TikTok, VidMate, …) block outside downloads — if a link fails, paste the link copied directly from the original app and try again.",
         recap_unverified_note: "Details unverified",
         recap_unverified_warning: "⚠️ This link's details couldn't be verified — a Recap may fail or turn out to exceed the duration limit. For a reliable result, upload the video file directly.",
         recap_source_tab_url: "🔗 Video Link (URL)",
         recap_source_tab_file: "📁 Upload a Video File (MP4)",
         recap_drop_text: "Choose an MP4 video from your phone or computer",
+        recap_drop_limits: "📦 Up to 1 GB · MP4, MKV, MOV, AVI, WebM, TS, M4V",
         recap_drop_subtext: "Any video file works — Douyin, TikTok, movie clips and more",
         recap_sub_ready: "✅ Subtitles ready",
         recap_sub_ai: "⚠️ AI auto subtitles",
@@ -1682,6 +1694,11 @@ function setLanguage(lang) {
     // replace button label are painted dynamically — repaint them in
     // the new language too.
     if (window.refreshLogoUi) window.refreshLogoUi();
+
+    // Batch K: the recap CTA label can carry the live segmented
+    // credit estimate — repaint it after the static sweep above
+    // resets it to the plain "(1 Credit)" copy.
+    if (window.repaintRecapCtaPrice) window.repaintRecapCtaPrice();
 
     // Apply placeholders
     document.querySelectorAll("[data-i18n-ph]").forEach(el => {
