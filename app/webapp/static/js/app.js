@@ -2742,6 +2742,7 @@ function setupRecapVisualEditor() {
     const valSubY = document.getElementById("val-sub-y");
 
     const previewBlur = document.getElementById("preview-blur-box");
+    const previewPlate = document.getElementById("preview-plate-box");
     const previewSub = document.getElementById("preview-sub-box");
     const previewLogo = document.getElementById("preview-logo");
     const canvas = document.getElementById("video-bg-canvas");
@@ -3462,13 +3463,25 @@ function setupRecapVisualEditor() {
     // A caption dragged fully away from the band leaves the plate at
     // its slider height.
     function fitBlurPlateToCaption() {
-        if (!previewBlur || !previewSub || !canvas) return;
+        // Blur safefix (2026-11-03): the band that grows to contain
+        // the caption is the PLATE overlay (#preview-plate-box),
+        // anchored at Sub Y exactly like the render's plate.
+        // #preview-blur-box keeps its own job — the user's source-band
+        // hint at Blur Y, the position the engine falls back to when
+        // detection finds nothing — so both engine positions are
+        // visible at once.
+        if (!previewPlate || !previewSub || !previewBlur || !canvas) return;
         if (getComputedStyle(previewSub).display === "none") return;
         const canvasH = canvas.clientHeight;
         if (!canvasH) return;
         const textEl = document.getElementById("preview-sub-text-el");
         if (!textEl) return;
-        const plate = previewBlur.getBoundingClientRect();
+        const plateY = sliderSubY ? parseFloat(sliderSubY.value) : 85;
+        const plateH = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
+        previewPlate.style.top = `${plateY}%`;
+        previewPlate.style.height = `${plateH}%`;
+        previewPlate.style.bottom = "auto";
+        const plate = previewPlate.getBoundingClientRect();
         const text = textEl.getBoundingClientRect();
         if (!plate.height || !text.height) return;
         const overlaps = text.bottom > plate.top && text.top < plate.bottom;
@@ -3476,7 +3489,7 @@ function setupRecapVisualEditor() {
         const centreDelta = Math.abs((text.top + text.bottom) / 2 - (plate.top + plate.bottom) / 2);
         const neededPx = text.height + 8 + 2 * centreDelta;
         if (plate.height < neededPx) {
-            previewBlur.style.height = `${(neededPx / canvasH) * 100}%`;
+            previewPlate.style.height = `${(neededPx / canvasH) * 100}%`;
         }
     }
 
@@ -4349,6 +4362,7 @@ function setupRecapVisualEditor() {
             const tVal = btnToggleSubs.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapBurnSubs ? t("toggle_on") : t("toggle_off");
             if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
+            if (previewPlate) previewPlate.style.display = (state.recapBlurSubs && state.recapBurnSubs) ? "block" : "none";
             // The band plate tracks the caption (Q1): grow when the
             // caption returns, relax to the slider height when hidden.
             syncBlurBoxVisual();
@@ -4364,6 +4378,7 @@ function setupRecapVisualEditor() {
             const tVal = btnToggleBlur.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapBlurSubs ? t("toggle_on") : t("toggle_off");
             if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
+            if (previewPlate) previewPlate.style.display = (state.recapBlurSubs && state.recapBurnSubs) ? "block" : "none";
         });
     }
 
@@ -5069,6 +5084,9 @@ function setupRecapVisualEditor() {
         syncToggleBtn("btn-toggle-logo", state.recapLogo);
         if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
         if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
+        // The plate exists only where the render draws one: blur on
+        // AND burn on (blur safefix 2026-11-03).
+        if (previewPlate) previewPlate.style.display = (state.recapBlurSubs && state.recapBurnSubs) ? "block" : "none";
         syncPillGroup("#sub-style-picker .style-chip", "data-style", state.recapSubStyle);
         if (previewSub) previewSub.className = `preview-sub-box ${state.recapSubStyle}`;
         syncPillGroup("#recap-sub-font-picker .pill-btn", "data-font", state.recapSubFont);
@@ -5527,6 +5545,16 @@ function startRecapJobPolling(jobId) {
                         }
                         noteEl.textContent = note;
                         noteEl.classList.toggle("hidden", !note);
+                    }
+                    // Blur no-coverage warning (blur safefix 2026-11-03):
+                    // the job finished, but the engine found no source
+                    // subtitle band to blur — tell the user to check
+                    // the blur box position.
+                    const blurWarnEl = document.getElementById("recap-blur-warning");
+                    if (blurWarnEl) {
+                        const hasBlurWarn = Array.isArray(data.warnings) && data.warnings.includes("blur_no_source_band");
+                        blurWarnEl.textContent = hasBlurWarn ? t("warn_blur_no_source_band") : "";
+                        blurWarnEl.classList.toggle("hidden", !hasBlurWarn);
                     }
                     // Batch K: every completed recap shows its receipt —
                     // the credits this job was actually charged — not
