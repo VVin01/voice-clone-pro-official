@@ -53,6 +53,13 @@ Deliberately NOT converted (guessing would corrupt legitimate text):
 * Non-Burmese scripts that own parts of U+1060..U+1097 in the Unicode
   standard (Shan/Tai letters and digits): outside this product's
   domain -- Burmese narration and titles never contain them.
+
+The module also hosts ``repair_burmese_mark_order``: a canonicaliser
+for text that is already Unicode but whose combining marks were typed
+in visual rather than storage order (a mis-order the Zawgyi detector
+above deliberately does not flag, because every codepoint involved is
+legitimate Unicode). It only ever re-sorts marks inside a syllable;
+correctly-written text passes through byte-identical.
 """
 from __future__ import annotations
 
@@ -301,3 +308,252 @@ def convert_zawgyi_to_unicode(text: str) -> str:
     if not text or not is_probably_zawgyi(text):
         return text
     return _convert(text)
+
+
+# ---------------------------------------------------------------------------
+# Mark-order repair (Unicode -> canonical Unicode storage order)
+# ---------------------------------------------------------------------------
+# A syllable typed on a visual-order keyboard (or emitted by a model
+# that "thinks" in glyphs) can carry every mark in the wrong storage
+# position: "ကီြး" for "ကြီး", "ရွ့ေ" for "ရွေ့". Each codepoint is
+# legal Unicode, so the Zawgyi detector above stays silent, but TTS
+# engines and subtitle shaping read the marks literally and garble
+# them. The repair parses the text into syllable clusters (kinzi /
+# base consonant / U+1039 stacks / combining marks / codas) and
+# stable-sorts each cluster's marks into the UTN #11 / OpenType mym2
+# storage order:
+#
+#   medials (U+103B..U+103E) -> U+1031 -> upper vowels (U+102D, U+102E,
+#   U+1032) -> lower vowels (U+102F, U+1030) -> aa signs (U+102B,
+#   U+102C) -> U+1036 -> asat / dot below (U+103A, U+1037) -> U+1038.
+#
+# Two shapes need more than sorting:
+#
+# * Coda: a consonant killed by U+103A belongs to the syllable in
+#   front of it, and the dot below of such a coda is stored INSIDE the
+#   coda, before the asat (န + ့ + ် in "အမိန့်"). The whole coda
+#   (consonant + optional dot + asat) is therefore one sorting unit.
+# * Pre-posed U+1031: a "ေ" typed before its consonant -- at the start
+#   of a word, or right after a completed syllable ("ကို" + "ေ" +
+#   "ရွ့") -- belongs to the FOLLOWING syllable. It is only moved when
+#   it cannot belong to the syllable in front of it: the old
+#   unconditional swap corrupted "မေမေ" -> "မမေေ", "တွေကို" ->
+#   "တွကေို", "နေတယ်" -> "နတေယ်", so a U+1031 that follows an open
+#   syllable (base + medials, vowel slot still empty) stays exactly
+#   where it is, and one met mid-cluster is absorbed only while the
+#   cluster is still open (see _parse_mark_cluster).
+#
+# Critical invariant, same as the converter's rule 1: text that is
+# already in canonical order comes out BYTE-IDENTICAL. Sorting is
+# stable and consonants are never added, removed or rewritten.
+
+_REPAIR_MEDIALS = "\u103B\u103C\u103D\u103E"
+_REPAIR_UPPER_VOWELS = "\u102D\u102E\u1032"
+_REPAIR_LOWER_VOWELS = "\u102F\u1030"
+_REPAIR_AA_SIGNS = "\u102B\u102C"
+_REPAIR_E_VOWEL = "\u1031"
+_REPAIR_ANUSVARA = "\u1036"
+_REPAIR_ASAT = "\u103A"
+_REPAIR_DOT_BELOW = "\u1037"
+_REPAIR_VISARGA = "\u1038"
+_REPAIR_STACKER = "\u1039"
+
+_REPAIR_MARK_CHARS = frozenset(
+    _REPAIR_MEDIALS + _REPAIR_UPPER_VOWELS + _REPAIR_LOWER_VOWELS
+    + _REPAIR_AA_SIGNS + _REPAIR_E_VOWEL + _REPAIR_ANUSVARA
+    + _REPAIR_ASAT + _REPAIR_DOT_BELOW + _REPAIR_VISARGA
+)
+# Marks that fill a syllable's vowel slot: once one of these is seen, a
+# later U+1031 can no longer belong to the same syllable.
+_REPAIR_CLOSING_VOWELS = frozenset(
+    _REPAIR_UPPER_VOWELS + _REPAIR_LOWER_VOWELS + _REPAIR_ANUSVARA
+)
+_REPAIR_TONES = frozenset(_REPAIR_DOT_BELOW + _REPAIR_VISARGA)
+
+
+def _repair_is_base(ch: str) -> bool:
+    """A syllable onset letter: consonants U+1000..U+1021 plus the
+    independent vowels U+1023..U+102A, which head their own syllable."""
+    return "\u1000" <= ch <= "\u1021" or "\u1023" <= ch <= "\u102A"
+
+
+def _repair_mark_rank(ch: str) -> tuple[int, int]:
+    if ch in _REPAIR_MEDIALS:
+        return (0, ord(ch))
+    if ch == _REPAIR_E_VOWEL:
+        return (1, 0)
+    if ch in _REPAIR_UPPER_VOWELS:
+        return (2, ord(ch))
+    if ch in _REPAIR_LOWER_VOWELS:
+        return (3, ord(ch))
+    if ch in _REPAIR_AA_SIGNS:
+        return (4, ord(ch))
+    if ch == _REPAIR_ANUSVARA:
+        return (5, 0)
+    if ch == _REPAIR_ASAT:
+        return (6, 0)
+    if ch == _REPAIR_DOT_BELOW:
+        return (7, 0)
+    return (8, 0)  # U+1038 visarga
+
+
+def _repair_is_kinzi_at(text: str, i: int) -> bool:
+    """Kinzi (U+1004 U+103A U+1039 + base) opens the NEXT syllable; the
+    U+1004 is never read as a coda when this shape matches."""
+    return (
+        text[i] == "\u1004"
+        and i + 3 < len(text)
+        and text[i + 1] == _REPAIR_ASAT
+        and text[i + 2] == _REPAIR_STACKER
+        and _repair_is_base(text[i + 3])
+    )
+
+
+def _repair_starts_cluster(text: str, i: int) -> bool:
+    if i >= len(text):
+        return False
+    return _repair_is_base(text[i]) or _repair_is_kinzi_at(text, i)
+
+
+def _repair_parse_cluster(
+    text: str, i: int, pending_e: bool
+) -> tuple[str, int]:
+    """Render one syllable cluster starting at index ``i`` with its
+    marks in canonical order; return (rendered, next_index).
+
+    ``pending_e`` carries a pre-posed U+1031 held over from the
+    previous cluster (or from the start of the text): it joins this
+    cluster's marks and sorts into the e-vowel slot.
+    """
+    n = len(text)
+    prefix = ""
+    if _repair_is_kinzi_at(text, i):
+        prefix = text[i:i + 3]
+        i += 3
+    onset = [text[i]]
+    i += 1
+    while i + 1 < n and text[i] == _REPAIR_STACKER and _repair_is_base(text[i + 1]):
+        onset.append(text[i:i + 2])
+        i += 2
+
+    units: list[tuple[tuple[int, int], str]] = []
+    has_e = False
+    if pending_e:
+        units.append(((1, 0), _REPAIR_E_VOWEL))
+        has_e = True
+    has_coda = False
+    vowel_seen = False
+    aa_seen = False
+    tone_seen = False
+    while i < n:
+        ch = text[i]
+        if ch in _REPAIR_MARK_CHARS:
+            if ch == _REPAIR_E_VOWEL:
+                # A late U+1031 still belongs to THIS syllable only
+                # while the syllable is open: no e yet, no coda yet,
+                # no closing vowel yet, and not (aa + tone), which is
+                # already a complete syllable ("ကား" + "ေ" opens the
+                # next one). Medials / tones alone leave the vowel
+                # slot empty ("ရွ့" + "ေ"), and medials plus a lone aa
+                # sign are the "ေါ" digraph typed in reverse
+                # ("အ" + "ာ" + "ေ" -> "အ" + "ေ" + "ာ").
+                if has_e or has_coda or vowel_seen or (aa_seen and tone_seen):
+                    break
+                units.append(((1, 0), ch))
+                has_e = True
+                i += 1
+                continue
+            units.append((_repair_mark_rank(ch), ch))
+            if ch in _REPAIR_CLOSING_VOWELS:
+                vowel_seen = True
+            elif ch in _REPAIR_AA_SIGNS:
+                aa_seen = True
+            elif ch in _REPAIR_TONES:
+                tone_seen = True
+            i += 1
+            continue
+        if _repair_is_base(ch):
+            if _repair_is_kinzi_at(text, i):
+                break
+            # Coda: a consonant killed by U+103A belongs to this
+            # syllable. Its dot below, when present, is stored inside
+            # the coda before the asat, so the whole coda is one unit.
+            if i + 1 < n and text[i + 1] == _REPAIR_ASAT:
+                units.append(((6, 0), text[i:i + 2]))
+                has_coda = True
+                i += 2
+                continue
+            if (
+                i + 2 < n
+                and text[i + 1] == _REPAIR_DOT_BELOW
+                and text[i + 2] == _REPAIR_ASAT
+            ):
+                units.append(((6, 0), text[i:i + 3]))
+                has_coda = True
+                i += 3
+                continue
+            break
+        break
+
+    # A loose dot below directly beside a coda chunk belongs to that
+    # coda (typed after its asat, or before its consonant): fold it
+    # inside, before the asat, instead of sorting it away from it.
+    merged: list[tuple[tuple[int, int], str]] = []
+    for rank, chunk in units:
+        if (
+            chunk == _REPAIR_DOT_BELOW
+            and merged
+            and len(merged[-1][1]) == 2
+            and merged[-1][1][1] == _REPAIR_ASAT
+            and _repair_is_base(merged[-1][1][0])
+        ):
+            prev_rank, prev = merged[-1]
+            merged[-1] = (prev_rank, prev[0] + _REPAIR_DOT_BELOW + _REPAIR_ASAT)
+        elif (
+            rank == (6, 0)
+            and len(chunk) in (2, 3)
+            and chunk[-1] == _REPAIR_ASAT
+            and merged
+            and merged[-1][1] == _REPAIR_DOT_BELOW
+        ):
+            merged[-1] = (rank, chunk[0] + _REPAIR_DOT_BELOW + _REPAIR_ASAT)
+        else:
+            merged.append((rank, chunk))
+    merged.sort(key=lambda unit: unit[0])
+    return prefix + "".join(onset) + "".join(chunk for _, chunk in merged), i
+
+
+def repair_burmese_mark_order(text: str) -> str:
+    """Re-sort every Myanmar syllable's combining marks into canonical
+    UTN #11 storage order and return the result.
+
+    For Unicode text whose marks were typed in visual order. Text that
+    is already correctly ordered -- the overwhelming majority, and
+    every string in the shipped Burmese locale -- comes back
+    byte-identical; consonants, digits, punctuation, other scripts and
+    spacing are never touched. The repair is idempotent.
+    """
+    s = str(text or "")
+    if not s or not any("\u1000" <= ch <= "\u102A" for ch in s):
+        return s
+    out: list[str] = []
+    pending_e = False
+    i, n = 0, len(s)
+    while i < n:
+        if _repair_starts_cluster(s, i):
+            rendered, i = _repair_parse_cluster(s, i, pending_e)
+            pending_e = False
+            out.append(rendered)
+        elif s[i] == _REPAIR_E_VOWEL and _repair_starts_cluster(s, i + 1):
+            # Pre-posed U+1031: hold it for the syllable that follows.
+            pending_e = True
+            i += 1
+        else:
+            if pending_e:
+                out.append(_REPAIR_E_VOWEL)
+                pending_e = False
+            out.append(s[i])
+            i += 1
+    if pending_e:
+        out.append(_REPAIR_E_VOWEL)
+    return "".join(out)

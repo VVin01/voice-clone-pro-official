@@ -29,7 +29,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.services.myanmar_text import convert_zawgyi_to_unicode
+from app.services.myanmar_text import (
+    convert_zawgyi_to_unicode,
+    repair_burmese_mark_order,
+)
 
 from .core import normalize_segments
 from .recap_planner import (
@@ -68,7 +71,13 @@ def clean_edited_narration(text: Any) -> str:
     text: the user's own spelling must never be silently rewritten (and on
     the live tree that normalizer still carries the known ခန→ခဏ overreach
     that corrupts correct words like အခန်း — fixed separately on the
-    recap-script-spelling branch)."""
+    recap-script-spelling branch).
+
+    Mark-order repair is the one addition, and it is encoding-level like
+    the Zawgyi conversion below, not a spelling rewrite: it only re-sorts
+    combining marks within a syllable (storage order, never the letters
+    or the user's word choices), and correctly-written lines pass through
+    byte-identical — pinned by tests/unit/test_burmese_mark_order_2026_11_03.py."""
     value = re.sub(r"\s+", " ", str(text or "")).strip()
     if value:
         # Encoding repair (hunt #4 A1): a line typed on a Zawgyi
@@ -76,6 +85,7 @@ def clean_edited_narration(text: Any) -> str:
         # sees. This is encoding normalization, not an orthography
         # rewrite — genuine Unicode passes through byte-identical.
         value = convert_zawgyi_to_unicode(value)
+        value = repair_burmese_mark_order(value)
         value = normalize_burmese_homoglyphs(value)
     return value
 
