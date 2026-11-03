@@ -23,7 +23,10 @@ def test_collect_keys_precedence():
         "GEMINI_IMAGE_PROJECT_2_KEY": "img-2",
         "GEMINI_IMAGE_PROJECT_1_KEY": "img-1",
     }
-    assert g.collect_gemini_keys(env) == ["img-1", "img-2"]
+    # Audit fix E (2026-11-03): collect_gemini_keys now returns the shared
+    # UNION of all sources (planner semantics) instead of only the first
+    # non-empty source, so the single key joins the image-project keys.
+    assert g.collect_gemini_keys(env) == ["img-1", "img-2", "single-key"]
     assert g.collect_gemini_keys({"GEMINI_API_KEY_3": "k3", "GEMINI_API_KEY_1": "k1"}) == ["k1", "k3"]
     assert g.collect_gemini_keys({"GEMINI_API_KEYS": "a, b ,c"}) == ["a", "b", "c"]
     assert g.collect_gemini_keys({"GEMINI_API_KEY": "only"}) == ["only"]

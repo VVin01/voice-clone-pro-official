@@ -13,6 +13,11 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+try:
+    from app.services import key_rotation as _key_rotation
+except Exception:  # pragma: no cover - app package unavailable
+    _key_rotation = None  # type: ignore[assignment]
+
 _whisper_model = None
 _current_model_size = None
 
@@ -41,6 +46,13 @@ def _transcribe_with_groq_srt(
     api_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
     if not api_keys:
         return None
+
+    # Audit fix E: rotate the starting key across calls and skip keys in
+    # cooldown, so a rate-limited key #1 no longer costs a 429 round-trip
+    # on every transcription. Shared with the recap Whisper service.
+    groq_health = _key_rotation.health_for("groq") if _key_rotation is not None else None
+    if groq_health is not None:
+        api_keys = groq_health.order(api_keys)
 
     try:
         import requests
@@ -101,6 +113,8 @@ def _transcribe_with_groq_srt(
                     )
 
                 if resp.status_code == 200:
+                    if groq_health is not None:
+                        groq_health.mark_success(key)
                     raw_json = resp.json()
                     segments = raw_json.get("segments") or []
                     detected_lang = raw_json.get("language") or language or "unknown"
@@ -128,6 +142,8 @@ def _transcribe_with_groq_srt(
                     logger.info(f"⚡ Groq Cloud Whisper generated SRT in {elapsed:.2f}s ({len(srt_entries)} cues, lang={detected_lang})")
                     return output_srt_path, detected_lang, prob
                 else:
+                    if resp.status_code == 429 and groq_health is not None:
+                        groq_health.mark_failure(key)
                     logger.warning(f"Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
             except Exception as exc:
                 logger.warning(f"Groq Whisper key {idx} failed: {exc}")

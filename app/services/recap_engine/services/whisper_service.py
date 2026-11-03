@@ -35,6 +35,16 @@ def _safe_print(*args: Any, **kwargs: Any) -> None:
 # can be shown while it downloads (the newer "xet" transfer gave no visible progress; same speed).
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
+# Audit fix E: shared Groq key-rotation health (rotating start + 429
+# cooldown memory), shared with app/services/transcriber.py. This file
+# is also loaded standalone by file path, so the import is defensive:
+# without the app package, Groq keys are used in their configured order
+# exactly as before.
+try:
+    from app.services import key_rotation as _key_rotation
+except Exception:  # pragma: no cover - standalone load
+    _key_rotation = None
+
 
 class NoUsableSpeechError(RuntimeError):
     """Source downloaded correctly, but Recap cannot obtain usable speech."""
@@ -484,6 +494,13 @@ class WhisperTimestampService:
         if not api_keys:
             return None
 
+        # Audit fix E: rotate the starting key across calls and skip keys
+        # in cooldown (a rate-limited key #1 used to cost a 429 round-trip
+        # on every transcription).
+        groq_health = _key_rotation.health_for("groq") if _key_rotation is not None else None
+        if groq_health is not None:
+            api_keys = groq_health.order(api_keys)
+
         try:
             import requests
         except ImportError:
@@ -535,6 +552,8 @@ class WhisperTimestampService:
                     )
 
                 if resp.status_code == 200:
+                    if groq_health is not None:
+                        groq_health.mark_success(key)
                     raw_json = resp.json()
                     raw_segments = raw_json.get("segments") or []
                     if not raw_segments and raw_json.get("text"):
@@ -597,6 +616,8 @@ class WhisperTimestampService:
                         "compression_ratio": round(float(sum(s.get("compression_ratio", 0.0) for s in segments) / max(1, len(segments))), 3),
                     }
                 else:
+                    if resp.status_code == 429 and groq_health is not None:
+                        groq_health.mark_failure(key)
                     self._log_msg(f"⚠️ Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
             except Exception as exc:
                 self._log_msg(f"⚠️ Groq Whisper key {idx} failed: {exc}")

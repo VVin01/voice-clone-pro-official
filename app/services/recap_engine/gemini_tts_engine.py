@@ -44,6 +44,16 @@ import wave
 from pathlib import Path
 from typing import Callable, Optional
 
+# Audit fix E: the Gemini pool is built by ONE shared helper
+# (app.services.key_rotation) so TTS sees the same union of keys as the
+# recap planner and the group admin. Defensive import: if the app
+# package is unavailable, collect_gemini_keys falls back to its
+# original first-non-empty-source behaviour below.
+try:
+    from app.services import key_rotation as _key_rotation
+except Exception:  # pragma: no cover - standalone load
+    _key_rotation = None  # type: ignore[assignment]
+
 VOICES = [("Charon", "male"), ("Algenib", "male"), ("Orus", "male"), ("Iapetus", "male"), ("Puck", "male"),
           ("Gacrux", "female"), ("Sulafat", "female"), ("Kore", "female"), ("Achernar", "female"), ("Leda", "female")]
 GEMINI_VOICE_NAMES: tuple[str, ...] = tuple(name for name, _ in VOICES)
@@ -115,11 +125,15 @@ TRANSCRIPT:
 
 
 def collect_gemini_keys(environ: Optional[dict] = None) -> list[str]:
-    """Gemini API keys from the environment, planner precedence:
-    GEMINI_IMAGE_PROJECT_<N>_KEY, then GEMINI_API_KEY_<N>, then the
-    GEMINI_API_KEYS CSV, then GEMINI_API_KEY. Values are returned for
-    use only — never log them."""
+    """Gemini API keys from the environment: the shared UNION of every
+    source in planner precedence (GEMINI_IMAGE_PROJECT_<N>_KEY, then
+    GEMINI_API_KEY_<N>, then the GEMINI_API_KEYS CSV, then
+    GEMINI_API_KEY), deduped — the same pool the recap planner and the
+    group admin use (audit fix E). Values are returned for use only —
+    never log them."""
     env = os.environ if environ is None else environ
+    if _key_rotation is not None:
+        return [key for _label, key in _key_rotation.collect_gemini_key_pool(env)]
 
     def numbered(pattern: str) -> list[str]:
         found = []
@@ -194,6 +208,15 @@ class GeminiTTSEngine:
             voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name))))
         order = list(range(len(self.keys)))
         order = order[self._last_key:] + order[:self._last_key]
+        # Audit fix E: keys cooled by quota/auth failures in earlier runs
+        # are tried last. TTS keeps its OWN registry ("gemini_tts"): the
+        # preview models' per-key quota is separate from the text
+        # models', so a TTS-dead key must not sideline the planner.
+        tts_health = _key_rotation.health_for("gemini_tts") if _key_rotation is not None else None
+        if tts_health is not None:
+            ordered_keys = tts_health.prioritized([self.keys[i] for i in order])
+            rank = {key: pos for pos, key in enumerate(ordered_keys)}
+            order = sorted(order, key=lambda i: rank[self.keys[i]])
         last = ""
         for _round in range(BUSY_ROUNDS):
             busy = False
@@ -208,6 +231,8 @@ class GeminiTTSEngine:
                             data = getattr(getattr(part, "inline_data", None), "data", None)
                             if data:
                                 self._last_key = i
+                                if tts_health is not None:
+                                    tts_health.mark_success(self.keys[i])
                                 return data
                         last = f"{model}: no audio in the answer"
                     except Exception as exc:  # noqa: BLE001
@@ -221,6 +246,11 @@ class GeminiTTSEngine:
                             ) from exc
                         if code == 429 or code in (400, 401, 403):
                             self._dead.add((model, i))
+                            # Audit fix E: quota/auth deaths (not 400,
+                            # which can be request-specific) also cool
+                            # the key for later runs, not just this one.
+                            if tts_health is not None and code != 400:
+                                tts_health.mark_failure(self.keys[i])
                             continue
                         if code in (500, 502, 503, 504):
                             busy = True
