@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
-from app.models.schema import PricingPlan
+from app.models.schema import PaymentRequest, PricingPlan
 from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.payments import (
@@ -22,8 +22,9 @@ from app.services.payments import (
     package_recap_credits,
     save_payment_intent,
 )
+from app.services.payment_review import add_admin_copy
 from app.ui.helpers import safe_edit_message
-from app.ui.keyboards import back_to_menu_kb
+from app.ui.keyboards import admin_pay_review_kb, back_to_menu_kb
 
 logger = logging.getLogger(__name__)
 payment_router = Router(name="payment")
@@ -266,7 +267,12 @@ async def _finalize_receipt_submission(message: Message, payment, file_id, lang:
         parse_mode="HTML",
     )
 
-    # Notify admins
+    # Notify admins. Every admin gets their own copy with the
+    # three-action review keyboard (batch I); each sent copy is
+    # recorded on the payment row so a later action by ANY admin can
+    # sync ALL copies (keyboards cleared + status line appended).
+    admin_kb = admin_pay_review_kb(payment.id)
+    sent_copies: list[tuple[int, int, str, str]] = []
     for admin_id in settings.admin_ids:
         try:
             admin_text = t(
@@ -280,23 +286,32 @@ async def _finalize_receipt_submission(message: Message, payment, file_id, lang:
                 recap_credits=package_recap_credits(payment.package_code),
                 amount_mmk=payment.amount_mmk,
             )
-            admin_kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text=t("btn_admin_pay_approve", "en"), callback_data=f"admin:pay_approve:{payment.id}"),
-                        InlineKeyboardButton(text=t("btn_admin_pay_reject", "en"), callback_data=f"admin:pay_reject:{payment.id}"),
-                    ]
-                ]
-            )
+            sent = None
+            kind = "text"
             if file_id:
                 if message.photo:
-                    await message.bot.send_photo(chat_id=admin_id, photo=file_id, caption=admin_text, reply_markup=admin_kb, parse_mode="HTML")
+                    kind = "photo"
+                    sent = await message.bot.send_photo(chat_id=admin_id, photo=file_id, caption=admin_text, reply_markup=admin_kb, parse_mode="HTML")
                 else:
-                    await message.bot.send_document(chat_id=admin_id, document=file_id, caption=admin_text, reply_markup=admin_kb, parse_mode="HTML")
+                    kind = "document"
+                    sent = await message.bot.send_document(chat_id=admin_id, document=file_id, caption=admin_text, reply_markup=admin_kb, parse_mode="HTML")
             else:
-                await message.bot.send_message(chat_id=admin_id, text=admin_text, reply_markup=admin_kb, parse_mode="HTML")
+                sent = await message.bot.send_message(chat_id=admin_id, text=admin_text, reply_markup=admin_kb, parse_mode="HTML")
+            if sent is not None:
+                sent_copies.append((admin_id, sent.message_id, kind, admin_text))
         except Exception as e:
             logger.warning("Failed to notify admin %s: %s", admin_id, e)
+
+    if sent_copies:
+        try:
+            async with AsyncSessionLocal() as s:
+                stored = await s.get(PaymentRequest, payment.id)
+                if stored is not None:
+                    for chat_id, message_id, kind, text in sent_copies:
+                        add_admin_copy(stored, chat_id=chat_id, message_id=message_id, kind=kind, text=text)
+                    await s.commit()
+        except Exception as e:
+            logger.warning("Failed to record admin review copies for payment %s: %s", payment.id, e)
 
 
 @payment_router.message(PaymentFSM.waiting_for_receipt, F.photo | F.document)

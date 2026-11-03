@@ -292,6 +292,22 @@ class PaymentRequest(Base):
     reviewed_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Batch I (payment admin review): every admin receives a Telegram
+    # copy of the review message; the copies are stored here as JSON
+    # [{"chat_id", "message_id", "kind", "text"}] so a terminal action
+    # by ANY admin (Telegram or Mini App) can clear the keyboards and
+    # append a status line on ALL copies, not just the actor's own.
+    admin_notify_copies: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Edit-and-approve claim: while one admin edits the credit amount,
+    # the request is claimed by them; other admins' review keyboards
+    # are cleared and their taps answer "already being handled".
+    review_claimed_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    review_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Edit-and-approve audit: the minutes BEFORE the admin's correction
+    # and the admin who made it (the corrected value lands in `minutes`
+    # and is what the approval credits).
+    original_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edited_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()

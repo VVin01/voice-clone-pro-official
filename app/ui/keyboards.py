@@ -235,6 +235,25 @@ def admin_pay_reject_confirm_kb(pay_id: str, lang: str = "my") -> InlineKeyboard
     )
 
 
+def admin_pay_review_kb(pay_id: str) -> InlineKeyboardMarkup:
+    """The three-action keyboard on every admin's Telegram copy of a
+    payment review message (batch I): approve / edit-and-approve /
+    reject. Burmese labels, matching the owner-specified pattern; the
+    approve/reject callback data are the long-standing ones, so all
+    existing prompt/confirm handlers keep working unchanged."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ အတည်ပြုမယ်", callback_data=f"admin:pay_approve:{pay_id}"),
+                InlineKeyboardButton(text="🚫 ငြင်းမယ်", callback_data=f"admin:pay_reject:{pay_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="✏️ ပြင်ပြီးအတည်ပြုမယ်", callback_data=f"admin:pay_edit:{pay_id}"),
+            ],
+        ]
+    )
+
+
 def admin_tutorial_mgmt_kb(
     video_link: str | None = None,
     is_enabled: bool = True,

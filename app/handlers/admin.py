@@ -39,6 +39,16 @@ from app.services.broadcast import (
 )
 from app.services.i18n import t
 from app.services.ledger import get_or_create_user
+from app.services.payment_review import (
+    apply_edited_approval,
+    approved_status_line,
+    claim_payment_review,
+    mark_copies_claimed,
+    rejected_status_line,
+    release_payment_claim,
+    restore_admin_copies,
+    sync_admin_copies,
+)
 from app.services.payments import approve_payment_request, package_recap_credits, reject_payment_request
 from app.ui.keyboards import (
     admin_broadcast_audience_kb,
@@ -464,6 +474,55 @@ async def handle_admin_pay_receipt(callback: CallbackQuery, session: AsyncSessio
         await callback.answer(f"Receipt ID: {payment.receipt_file_id}", show_alert=True)
 
 
+# ---------------------------------------------------------------------------
+# Payment review: multi-admin copy sync + edit-and-approve (batch I)
+# ---------------------------------------------------------------------------
+
+_EDIT_CLAIMED_ALERT = "✏️ အခြား Admin တစ်ယောက်က ဒီ တောင်းဆိုချက်ကို ကိုင်တွယ်နေပါပြီ။"
+_EDIT_ALREADY_HANDLED_ALERT = "ဒီ တောင်းဆိုချက်ကို ကိုင်တွယ်ပြီးသား ဖြစ်ပါတယ်။"
+
+
+class PaymentReviewFSM(StatesGroup):
+    waiting_for_corrected_minutes = State()
+    confirming_edit = State()
+
+
+def _claimed_by_other(payment: PaymentRequest, admin_id: int) -> bool:
+    """True while a DIFFERENT admin holds the edit-and-approve claim."""
+    return payment.review_claimed_by is not None and payment.review_claimed_by != admin_id
+
+
+def _own_copy_key(callback: CallbackQuery) -> tuple[int, int] | None:
+    """(chat_id, message_id) of the message this callback belongs to —
+    used to skip the acting admin's own review copy during a sync,
+    because the bot handlers rewrite that message themselves."""
+    msg = callback.message
+    chat = getattr(msg, "chat", None) if msg is not None else None
+    if chat is None:
+        return None
+    return (chat.id, msg.message_id)
+
+
+async def _sync_review_copies(
+    callback: CallbackQuery,
+    payment: PaymentRequest,
+    *,
+    line: str,
+    skip_own: bool = True,
+) -> None:
+    """Best-effort sync of all stored Telegram review copies; a sync
+    failure must never fail the admin action that triggered it."""
+    try:
+        await sync_admin_copies(
+            callback.bot,
+            payment,
+            line=line,
+            skip=_own_copy_key(callback) if skip_own else None,
+        )
+    except Exception as exc:
+        logger.warning("Payment review copy sync failed for %s: %s", payment.id, exc)
+
+
 @admin_router.callback_query(F.data.startswith("admin:pay_approve:"))
 async def handle_admin_pay_approve_prompt(callback: CallbackQuery, session: AsyncSession | None = None):
     if not await is_authorized_admin(callback):
@@ -486,6 +545,10 @@ async def handle_admin_pay_approve_prompt(callback: CallbackQuery, session: Asyn
 
     if payment.status != PaymentStatus.PENDING.value:
         await callback.answer(f"Payment is already {payment.status}!", show_alert=True)
+        return
+
+    if _claimed_by_other(payment, callback.from_user.id):
+        await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
         return
 
     confirm_text = (
@@ -513,6 +576,10 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
     if session is not None:
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
+        existing = await session.get(PaymentRequest, pay_id)
+        if existing is not None and _claimed_by_other(existing, callback.from_user.id):
+            await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
+            return
         ok, payment, msg = await approve_payment_request(session, pay_id, admin_id=callback.from_user.id)
         if ok and payment:
             await session.commit()
@@ -530,6 +597,10 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
         async with AsyncSessionLocal() as s:
             user, _ = await get_or_create_user(s, callback.from_user.id)
             lang = user.language_code
+            existing = await s.get(PaymentRequest, pay_id)
+            if existing is not None and _claimed_by_other(existing, callback.from_user.id):
+                await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
+                return
             ok, payment, msg = await approve_payment_request(s, pay_id, admin_id=callback.from_user.id)
             if ok and payment:
                 await s.commit()
@@ -547,6 +618,13 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
     if not ok or not payment:
         await callback.answer(f"Failed to approve: {msg}", show_alert=True)
         return
+
+    # Batch I: sync every OTHER admin's Telegram copy (keyboards
+    # cleared + status line); this handler rewrites the actor's own
+    # message into the result card below, so that copy is skipped.
+    await _sync_review_copies(
+        callback, payment, line=approved_status_line(callback.from_user.full_name, payment)
+    )
 
     approved_text = (
         f"✅ <b>Payment Approved (#{payment.id})</b>\n"
@@ -596,6 +674,10 @@ async def handle_admin_pay_reject_prompt(callback: CallbackQuery, session: Async
         await callback.answer(f"Payment is already {payment.status}!", show_alert=True)
         return
 
+    if _claimed_by_other(payment, callback.from_user.id):
+        await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
+        return
+
     confirm_text = (
         f"⚠️ <b>Confirm Payment Rejection</b>\n\n"
         f"• Payment ID: <code>{payment.id}</code>\n"
@@ -621,6 +703,10 @@ async def handle_admin_pay_reject_confirm(callback: CallbackQuery, session: Asyn
     if session is not None:
         user, _ = await get_or_create_user(session, callback.from_user.id)
         lang = user.language_code
+        existing = await session.get(PaymentRequest, pay_id)
+        if existing is not None and _claimed_by_other(existing, callback.from_user.id):
+            await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
+            return
         ok, payment, msg = await reject_payment_request(session, pay_id, admin_id=callback.from_user.id)
         if ok and payment:
             await session.commit()
@@ -639,6 +725,10 @@ async def handle_admin_pay_reject_confirm(callback: CallbackQuery, session: Asyn
         async with AsyncSessionLocal() as s:
             user, _ = await get_or_create_user(s, callback.from_user.id)
             lang = user.language_code
+            existing = await s.get(PaymentRequest, pay_id)
+            if existing is not None and _claimed_by_other(existing, callback.from_user.id):
+                await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
+                return
             ok, payment, msg = await reject_payment_request(s, pay_id, admin_id=callback.from_user.id)
             if ok and payment:
                 await s.commit()
@@ -657,6 +747,11 @@ async def handle_admin_pay_reject_confirm(callback: CallbackQuery, session: Asyn
     if not ok or not payment:
         await callback.answer(f"Failed to reject: {msg}", show_alert=True)
         return
+
+    # Batch I: sync every OTHER admin's Telegram copy (see approve).
+    await _sync_review_copies(
+        callback, payment, line=rejected_status_line(callback.from_user.full_name)
+    )
 
     rejected_text = (
         f"❌ <b>Payment Rejected (#{payment.id})</b>\n"
@@ -685,6 +780,294 @@ async def handle_admin_pay_reject_confirm(callback: CallbackQuery, session: Asyn
 # Backward compatibility aliases
 handle_admin_pay_reject = handle_admin_pay_reject_confirm
 handle_admin_pay_approve = handle_admin_pay_approve_confirm
+
+
+# ---------------------------------------------------------------------------
+# Edit-and-approve (batch I): [✏️ ပြင်ပြီးအတည်ပြုမယ်]
+#
+# Tapping Edit claims the request for that admin (atomic conditional
+# UPDATE in payment_review.claim_payment_review): every OTHER admin's
+# Telegram copy loses its keyboard and shows who is editing, and their
+# approve/reject/edit taps answer "already being handled". The claimer
+# gets an FSM prompt in DM, enters the corrected credit minutes, sees
+# original vs corrected, and confirms or cancels. Confirm applies the
+# correction and approves through the shared service; cancel releases
+# the claim and restores the other copies' keyboards.
+# ---------------------------------------------------------------------------
+
+
+def _pay_edit_cancel_kb(pay_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 ပယ်ဖျက်မယ်", callback_data=f"admin:pay_edit_cancel:{pay_id}")],
+        ]
+    )
+
+
+@admin_router.callback_query(F.data.startswith("admin:pay_edit:"))
+async def handle_admin_pay_edit_start(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession | None = None
+):
+    if not await is_authorized_admin(callback):
+        return
+
+    pay_id = callback.data.split(":")[2]
+    if session is not None:
+        ok, payment, code = await claim_payment_review(session, pay_id, callback.from_user.id)
+        if ok:
+            await session.commit()
+    else:
+        async with AsyncSessionLocal() as s:
+            ok, payment, code = await claim_payment_review(s, pay_id, callback.from_user.id)
+            if ok:
+                await s.commit()
+
+    if not ok or payment is None:
+        if code == "PAYMENT_NOT_FOUND":
+            await callback.answer(t("admin_alert_payment_not_found", "my"), show_alert=True)
+        elif code == "CLAIMED_BY_OTHER":
+            await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
+        else:
+            await callback.answer(_EDIT_ALREADY_HANDLED_ALERT, show_alert=True)
+        return
+
+    # Claim held: other admins' copies lose their keyboards and show
+    # who is editing (best-effort — a failed edit never blocks us).
+    try:
+        await mark_copies_claimed(
+            callback.bot,
+            payment,
+            claimer_chat_id=callback.from_user.id,
+            claimer_name=callback.from_user.full_name,
+        )
+    except Exception as exc:
+        logger.warning("Failed to mark copies claimed for payment %s: %s", payment.id, exc)
+
+    await state.set_state(PaymentReviewFSM.waiting_for_corrected_minutes)
+    await state.update_data(payment_id=payment.id, original_minutes=payment.minutes)
+
+    prompt_text = (
+        "✏️ <b>ပြင်ပြီးအတည်ပြုမယ်</b>\n\n"
+        f"• Payment ID: <code>{payment.id}</code>\n"
+        f"• User: <code>{payment.user_id}</code>\n"
+        f"• Package: <b>{html.escape(str(payment.package_code))}</b>\n"
+        f"• လက်ရှိ အတည်ပြုမည့် မိနစ်: <b>{payment.minutes} မိနစ်</b>\n\n"
+        "ပြင်ဆင်မည့် မိနစ် ပမာဏကို ဂဏန်းဖြင့် ရိုက်ထည့်ပေးပါ။"
+    )
+    try:
+        await callback.message.answer(prompt_text, reply_markup=_pay_edit_cancel_kb(payment.id), parse_mode="HTML")
+    except Exception:
+        try:
+            await callback.bot.send_message(
+                chat_id=callback.from_user.id,
+                text=prompt_text,
+                reply_markup=_pay_edit_cancel_kb(payment.id),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            logger.warning("Failed to send edit prompt for payment %s: %s", payment.id, exc)
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+
+@admin_router.message(PaymentReviewFSM.waiting_for_corrected_minutes)
+async def handle_admin_pay_edit_minutes_input(
+    message: Message, state: FSMContext, session: AsyncSession | None = None
+):
+    if not settings.is_admin(message.from_user.id if message.from_user else None):
+        return
+
+    data = await state.get_data()
+    pay_id = data.get("payment_id")
+    if not pay_id:
+        await state.clear()
+        return
+
+    raw = (message.text or "").strip().replace(",", "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not (1 <= value <= 100_000):
+        await message.answer(
+            "⚠️ မိနစ် ပမာဏကို ဂဏန်း မှန်ကန်စွာ ရိုက်ထည့်ပေးပါ (1 – 100,000)။",
+            reply_markup=_pay_edit_cancel_kb(pay_id),
+            parse_mode="HTML",
+        )
+        return
+
+    # Re-verify the claim before showing the confirmation: the request
+    # may have been decided meanwhile (e.g. via the Mini App, which
+    # also releases the claim) or the claim may no longer be ours.
+    if session is not None:
+        payment = await session.get(PaymentRequest, pay_id)
+    else:
+        async with AsyncSessionLocal() as s:
+            payment = await s.get(PaymentRequest, pay_id)
+
+    if (
+        payment is None
+        or payment.status != PaymentStatus.PENDING.value
+        or payment.review_claimed_by != message.from_user.id
+    ):
+        await state.clear()
+        await message.answer("ဒီ တောင်းဆိုချက်ကို ကိုင်တွယ်ပြီးသား (သို့) အခြေအနေ ပြောင်းလဲသွားပါပြီ။")
+        return
+
+    await state.update_data(corrected_minutes=value)
+    await state.set_state(PaymentReviewFSM.confirming_edit)
+
+    confirm_text = (
+        "✏️ <b>ပြင်ဆင်မှု အတည်ပြုရန်</b>\n\n"
+        f"• Payment ID: <code>{payment.id}</code>\n"
+        f"• မူလ မိနစ်: <b>{payment.minutes} မိနစ်</b>\n"
+        f"• ပြင်ဆင်မည့် မိနစ်: <b>{value} မိနစ်</b>\n\n"
+        "<i>အတည်ပြုလိုက်ပါက ပြင်ဆင်ထားသော မိနစ်ဖြင့် Credit ထည့်ပေးပါမည်။</i>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ အတည်ပြုမယ်", callback_data=f"admin:pay_edit_confirm:{payment.id}")],
+            [InlineKeyboardButton(text="🚫 ပယ်ဖျက်မယ်", callback_data=f"admin:pay_edit_cancel:{payment.id}")],
+        ]
+    )
+    await message.answer(confirm_text, reply_markup=kb, parse_mode="HTML")
+
+
+@admin_router.callback_query(F.data.startswith("admin:pay_edit_confirm:"))
+async def handle_admin_pay_edit_confirm(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession | None = None
+):
+    if not await is_authorized_admin(callback):
+        return
+
+    pay_id = callback.data.split(":")[2]
+    data = await state.get_data()
+    corrected = data.get("corrected_minutes")
+    if data.get("payment_id") != pay_id or corrected is None:
+        await callback.answer(
+            "⏰ ဒီ ပြင်ဆင်မှုကို ဆက်လက် မလုပ်နိုင်တော့ပါ။ Edit ခလုတ်ကို ပြန်နှိပ်ပါ။",
+            show_alert=True,
+        )
+        return
+
+    # The service re-verifies PENDING + our claim under the approval
+    # row lock, applies the correction, and approves via the shared
+    # approve_payment_request() — crediting stays on the one path.
+    target_lang = "my"
+    if session is not None:
+        ok, payment, msg = await apply_edited_approval(session, pay_id, callback.from_user.id, int(corrected))
+        if ok and payment:
+            await session.commit()
+            target_user = await session.get(User, payment.user_id)
+            target_lang = target_user.language_code if target_user else "my"
+    else:
+        async with AsyncSessionLocal() as s:
+            ok, payment, msg = await apply_edited_approval(s, pay_id, callback.from_user.id, int(corrected))
+            if ok and payment:
+                await s.commit()
+                target_user = await s.get(User, payment.user_id)
+                target_lang = target_user.language_code if target_user else "my"
+
+    if not ok or payment is None:
+        await state.clear()
+        await callback.answer(f"မအောင်မြင်ပါ: {msg}", show_alert=True)
+        return
+
+    await state.clear()
+
+    try:
+        await callback.bot.send_message(
+            chat_id=payment.user_id,
+            text=t(
+                "payment_approved_user_notify",
+                target_lang,
+                minutes=payment.minutes,
+                recap_credits=package_recap_credits(payment.package_code),
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Failed to notify user %s of edited payment approval: %s", payment.user_id, e)
+
+    # Sync ALL copies, including the claimer's own original review
+    # copy (it still shows the claim state; the result card below is a
+    # different message — the FSM confirmation).
+    await _sync_review_copies(
+        callback,
+        payment,
+        line=approved_status_line(callback.from_user.full_name, payment),
+        skip_own=False,
+    )
+
+    done_text = (
+        f"✅ <b>ပြင်ဆင်၍ အတည်ပြုပြီးပါပြီ (#{payment.id})</b>\n"
+        f"• မူလ မိနစ်: <b>{payment.original_minutes} မိနစ်</b> → ပြင်ဆင်: <b>{payment.minutes} မိနစ်</b>\n"
+        f"• User <code>{payment.user_id}</code> ထံ Credit ထည့်ပေးပြီးပါပြီ။"
+    )
+    await safe_edit_message(callback, done_text, reply_markup=None, parse_mode="HTML")
+    try:
+        await callback.answer("အတည်ပြုပြီးပါပြီ")
+    except Exception:
+        pass
+
+
+@admin_router.callback_query(F.data.startswith("admin:pay_edit_cancel:"))
+async def handle_admin_pay_edit_cancel(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession | None = None
+):
+    if not await is_authorized_admin(callback):
+        return
+
+    pay_id = callback.data.split(":")[2]
+    if session is not None:
+        payment = await session.get(PaymentRequest, pay_id)
+        released = False
+        if payment is not None and payment.review_claimed_by == callback.from_user.id:
+            released = await release_payment_claim(session, pay_id, callback.from_user.id)
+            if released:
+                await session.commit()
+    else:
+        async with AsyncSessionLocal() as s:
+            payment = await s.get(PaymentRequest, pay_id)
+            released = False
+            if payment is not None and payment.review_claimed_by == callback.from_user.id:
+                released = await release_payment_claim(s, pay_id, callback.from_user.id)
+                if released:
+                    await s.commit()
+
+    if payment is None:
+        await callback.answer(t("admin_alert_payment_not_found", "my"), show_alert=True)
+        return
+    if payment.status != PaymentStatus.PENDING.value:
+        await callback.answer(_EDIT_ALREADY_HANDLED_ALERT, show_alert=True)
+        return
+    if _claimed_by_other(payment, callback.from_user.id):
+        await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
+        return
+
+    if released:
+        # Give the other admins their review keyboards back.
+        try:
+            await restore_admin_copies(callback.bot, payment, skip_chat_id=callback.from_user.id)
+        except Exception as exc:
+            logger.warning("Failed to restore copies for payment %s: %s", payment.id, exc)
+
+    data = await state.get_data()
+    if data.get("payment_id") == pay_id:
+        await state.clear()
+
+    await safe_edit_message(
+        callback,
+        "🚫 <b>ပြင်ဆင်မှု ပယ်ဖျက်ပြီးပါပြီ</b>\nတောင်းဆိုချက်ကို မူလအတိုင်း ဆက်လက် စစ်ဆေးနိုင်ပါပြီ။",
+        reply_markup=None,
+        parse_mode="HTML",
+    )
+    try:
+        await callback.answer("ပယ်ဖျက်ပြီးပါပြီ")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

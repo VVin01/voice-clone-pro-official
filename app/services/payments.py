@@ -241,6 +241,10 @@ async def approve_payment_request(
     payment.status = PaymentStatus.APPROVED.value
     payment.reviewed_by = admin_id
     payment.reviewed_at = utc_now()
+    # Terminal transition releases any edit-and-approve claim in the
+    # same transaction, whichever surface approved (bot / Mini App).
+    payment.review_claimed_by = None
+    payment.review_claimed_at = None
 
     # Credit purchased minutes. Recap-only plans carry minutes == 0 and
     # credit_purchased_minutes() rejects non-positive amounts, so it is
@@ -316,6 +320,9 @@ async def reject_payment_request(
     payment.reviewed_by = admin_id
     payment.reviewed_at = utc_now()
     payment.rejection_reason = reason or "Payment evidence unverified"
+    # Terminal transition releases any edit-and-approve claim (above).
+    payment.review_claimed_by = None
+    payment.review_claimed_at = None
 
     session.add(AuditLog(
         admin_id=admin_id,
