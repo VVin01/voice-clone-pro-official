@@ -820,11 +820,6 @@ function applyTelegramSendable(kind, sendable) {
 }
 window.applyTelegramSendable = applyTelegramSendable;
 
-function dlJobIdFromUrl(url) {
-    const m = String(url || "").match(/\/download\/([^/]+)\//);
-    return m ? m[1] : "";
-}
-
 async function downloadAuthFile(url, filename) {
     if (!url) return;
     try {
@@ -1294,6 +1289,7 @@ function setupTabs() {
                 loadAdminSettings();
                 if (window.adminQueueInterval) clearInterval(window.adminQueueInterval);
                 window.adminQueueInterval = setInterval(() => {
+                    if (document.hidden) return; // audit fix: no re-fetch/re-render while hidden
                     const adminPane = document.getElementById("tab-admin");
                     if (adminPane && adminPane.classList.contains("active")) {
                         loadAdminQueue(true);
@@ -1658,12 +1654,6 @@ async function playVoicePreview(voiceId, buttonEl) {
         console.warn("Audio playback failed for voice:", voiceId);
         stopCurrentVoicePreview();
     };
-}
-
-function previewSelectedRecapVoice() {
-    // The all-voices <select> was removed (all 12 voices are cards now);
-    // kept as a thin wrapper over the current card selection.
-    playVoicePreview(state.recapVoice || "komin", null);
 }
 
 // ── Gemini TTS Voice Previews ──────────────────────────────────────
@@ -5343,7 +5333,10 @@ function startRecapJobPolling(jobId) {
     let recapPollFailures = 0;
     let recapPollNotFound = 0;
     let recapPollTicks = 0;
-    const RECAP_POLL_MAX_TICKS = 1800; // 60 min at the 2s interval
+    // Tick budget in 2s units: 1800 = the 60-minute overall cap. After
+    // the backoff below each 5s tick counts 2.5 units, so the cap (and
+    // every stop condition) is unchanged.
+    const RECAP_POLL_MAX_TICKS = 1800;
 
     function noteRecapPollFailure() {
         recapPollFailures++;
@@ -5361,8 +5354,19 @@ function startRecapJobPolling(jobId) {
         showStudioToast(t("poll_job_gone"), 'error', 6000);
     }
 
-    state.recapPollTimer = setInterval(async () => {
-        recapPollTicks++;
+    // Polling efficiency (audit fix 2026-11-03): ticks are skipped
+    // while the tab is hidden, and after the first 60s of polling the
+    // interval backs off from 2s to 5s (the callback is a named const
+    // so it can be re-armed at the slower interval).
+    let recapPollBackedOff = false;
+    const recapPollTick = async () => {
+        if (document.hidden) return;
+        recapPollTicks += recapPollBackedOff ? 2.5 : 1;
+        if (!recapPollBackedOff && recapPollTicks >= 30) {
+            recapPollBackedOff = true;
+            clearInterval(state.recapPollTimer);
+            state.recapPollTimer = setInterval(recapPollTick, 5000);
+        }
         if (recapPollTicks > RECAP_POLL_MAX_TICKS) {
             clearInterval(state.recapPollTimer);
             state.recapPollTimer = null;
@@ -5453,15 +5457,19 @@ function startRecapJobPolling(jobId) {
 
                 if (btnVideo && data.download_urls?.video) {
                     btnVideo.setAttribute("data-dl-url", data.download_urls.video);
+                    btnVideo.setAttribute("data-dl-name", brandedDlName("Recap", "mp4", null, jobId));
                 }
                 if (btnAudio && data.download_urls?.audio) {
                     btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
+                    btnAudio.setAttribute("data-dl-name", brandedDlName("RecapAudio", "mp3", null, jobId));
                 }
                 if (btnSrt && data.download_urls?.srt) {
                     btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
+                    btnSrt.setAttribute("data-dl-name", brandedDlName("Subtitles", "srt", null, jobId));
                 }
                 if (btnScript && data.download_urls?.script) {
                     btnScript.setAttribute("data-dl-url", data.download_urls.script);
+                    btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, jobId));
                 }
 
                 // Split parts (optional Video Splitter deliverables)
@@ -5537,7 +5545,8 @@ function startRecapJobPolling(jobId) {
             console.warn("Recap polling error:", err);
             noteRecapPollFailure();
         }
-    }, 2000);
+    };
+    state.recapPollTimer = setInterval(recapPollTick, 2000);
 }
 
 // ── Recap Script Review / Edit (two-phase flow) ─────────────────────────
@@ -7484,12 +7493,22 @@ async function adminRetryJob(jobId) {
 let activeRetryPollers = {};
 
 function pollAdminJobProgress(jobId) {
+    // Shape guard (audit fix 2026-11-03): never poll for an id that
+    // cannot be a job — production logs showed this poller requesting
+    // /api/recap/final_edge_tts_smart_sync/status (an engine name, not
+    // a job id) repeatedly. Real job ids are rc_* (recap) or UUIDs
+    // (voice clone).
+    if (!/^rc_/.test(jobId) && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(jobId)) {
+        console.warn("pollAdminJobProgress skipped for non-job id:", jobId);
+        return;
+    }
     if (activeRetryPollers[jobId]) {
         clearInterval(activeRetryPollers[jobId]);
     }
 
     let pollCount = 0;
     const maxPolls = 80; // Up to ~3.5 mins
+    let notFoundCount = 0;
 
     activeRetryPollers[jobId] = setInterval(async () => {
         pollCount++;
@@ -7505,7 +7524,34 @@ function pollAdminJobProgress(jobId) {
             const statusUrl = isRecap ? `/api/recap/${jobId}/status` : `/api/jobs/${jobId}/status`;
 
             const res = await fetch(statusUrl, { headers: getAuthHeaders() });
+            if (res.status === 404) {
+                // Mirror the user-side recap poller: three 404s in a
+                // row mean the job is gone (purged, or never persisted)
+                // — stop polling and surface the same "job gone" state
+                // instead of silently spinning until the poll cap.
+                notFoundCount++;
+                if (notFoundCount >= 3) {
+                    clearInterval(activeRetryPollers[jobId]);
+                    delete activeRetryPollers[jobId];
+                    const goneBox = document.getElementById(`retry-status-box-${jobId}`);
+                    if (goneBox) {
+                        goneBox.innerHTML = `
+                            <div class="text-xs mt-1 p-2" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
+                                ⚠️ <strong>${escapeHtml(t("poll_job_gone"))}</strong>
+                            </div>
+                        `;
+                    }
+                    const goneRetryBtn = document.getElementById(`btn-retry-${jobId}`);
+                    if (goneRetryBtn) {
+                        goneRetryBtn.disabled = false;
+                        goneRetryBtn.innerText = "🔄 Retry";
+                    }
+                    showStudioToast(t("poll_job_gone"), 'error', 6000);
+                }
+                return;
+            }
             if (!res.ok) return;
+            notFoundCount = 0;
 
             const data = await res.json();
             const statusBox = document.getElementById(`retry-status-box-${jobId}`);
@@ -8264,15 +8310,19 @@ async function openRecapInPlayer(recapJobId) {
             }
             if (btnVideo && data.download_urls?.video) {
                 btnVideo.setAttribute("data-dl-url", data.download_urls.video);
+                btnVideo.setAttribute("data-dl-name", brandedDlName("Recap", "mp4", null, recapJobId));
             }
             if (btnAudio && data.download_urls?.audio) {
                 btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
+                btnAudio.setAttribute("data-dl-name", brandedDlName("RecapAudio", "mp3", null, recapJobId));
             }
             if (btnSrt && data.download_urls?.srt) {
                 btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
+                btnSrt.setAttribute("data-dl-name", brandedDlName("Subtitles", "srt", null, recapJobId));
             }
             if (btnScript && data.download_urls?.script) {
                 btnScript.setAttribute("data-dl-url", data.download_urls.script);
+                btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, recapJobId));
             }
             if (btnTg) {
                 btnTg.disabled = false;
@@ -8391,15 +8441,19 @@ async function checkStartupDeepLinks() {
                     }
                     if (btnVideo && data.download_urls?.video) {
                         btnVideo.setAttribute("data-dl-url", data.download_urls.video);
+                        btnVideo.setAttribute("data-dl-name", brandedDlName("Recap", "mp4", null, recapJobId));
                     }
                     if (btnAudio && data.download_urls?.audio) {
                         btnAudio.setAttribute("data-dl-url", data.download_urls.audio);
+                        btnAudio.setAttribute("data-dl-name", brandedDlName("RecapAudio", "mp3", null, recapJobId));
                     }
                     if (btnSrt && data.download_urls?.srt) {
                         btnSrt.setAttribute("data-dl-url", data.download_urls.srt);
+                        btnSrt.setAttribute("data-dl-name", brandedDlName("Subtitles", "srt", null, recapJobId));
                     }
                     if (btnScript && data.download_urls?.script) {
                         btnScript.setAttribute("data-dl-url", data.download_urls.script);
+                        btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, recapJobId));
                     }
                     if (btnTg) {
                         btnTg.disabled = false;
@@ -8464,49 +8518,17 @@ function downloadDeliverable(url, defaultFilename) {
     }
 }
 
-function setupDeliverablesDownloads() {
-    const btnVideo = document.getElementById("btn-recap-dl-video");
-    const btnAudio = document.getElementById("btn-recap-dl-audio");
-    const btnSrt = document.getElementById("btn-recap-dl-srt");
-    const btnScript = document.getElementById("btn-recap-dl-script");
-
-    if (btnVideo) {
-        btnVideo.addEventListener("click", (e) => {
-            const url = btnVideo.getAttribute("data-dl-url") || btnVideo.href;
-            if (url && url !== "#") {
-                e.preventDefault();
-                downloadDeliverable(url, brandedDlName("Recap", "mp4", null, dlJobIdFromUrl(url)));
-            }
-        });
-    }
-    if (btnAudio) {
-        btnAudio.addEventListener("click", (e) => {
-            const url = btnAudio.getAttribute("data-dl-url") || btnAudio.href;
-            if (url && url !== "#") {
-                e.preventDefault();
-                downloadDeliverable(url, brandedDlName("RecapAudio", "mp3", null, dlJobIdFromUrl(url)));
-            }
-        });
-    }
-    if (btnSrt) {
-        btnSrt.addEventListener("click", (e) => {
-            const url = btnSrt.getAttribute("data-dl-url") || btnSrt.href;
-            if (url && url !== "#") {
-                e.preventDefault();
-                downloadDeliverable(url, brandedDlName("Subtitles", "srt", null, dlJobIdFromUrl(url)));
-            }
-        });
-    }
-    if (btnScript) {
-        btnScript.addEventListener("click", (e) => {
-            const url = btnScript.getAttribute("data-dl-url") || btnScript.href;
-            if (url && url !== "#") {
-                e.preventDefault();
-                downloadDeliverable(url, brandedDlName("Script", "txt", null, dlJobIdFromUrl(url)));
-            }
-        });
-    }
-}
+// NOTE (audit fix 2026-11-03): the four recap result-screen download
+// anchors (btn-recap-dl-video/audio/srt/script) used to ALSO get
+// element-level click listeners here (setupDeliverablesDownloads)
+// that fired downloadDeliverable()/Telegram openLink on the very same
+// tap the delegated document handler (a[data-dl-url] →
+// downloadAuthFile) already handled — one tap, two downloads with two
+// different code paths. The delegated handler is now the single owner
+// of these buttons, exactly like every other download anchor in the
+// app; the render sites set both data-dl-url (tokenized server-side)
+// and data-dl-name (brandedDlName) for them. downloadDeliverable()
+// above remains available for genuine non-anchor callers.
 
 // ── Alert Boxes Auto-Sliding Carousel ───────────────────────────────────────
 function setupAlertCarousel() {
@@ -8547,8 +8569,8 @@ function setupAlertCarousel() {
     function startAutoSlide() {
         if (timer) clearInterval(timer);
         timer = setInterval(() => {
-            if (!isPaused) nextSlide();
-        }, 3500); // 3.5 seconds auto rotation
+            if (!isPaused && !document.hidden) nextSlide();
+        }, 3500); // 3.5 seconds auto rotation (paused while the tab is hidden)
     }
 
     if (btnNext) {
@@ -8616,7 +8638,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupVoiceStudio();
     setupRecapVisualEditor();
     setupAlertCarousel();
-    setupDeliverablesDownloads();
     setupDownloader();
     setupSlipPreview();
     setupStickyCtas();
