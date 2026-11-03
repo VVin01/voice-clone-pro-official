@@ -571,6 +571,12 @@ def _warp_proxy_url() -> Optional[str]:
     raw = raw.strip()
     return raw or None
 
+# Hard ceiling for any single downloaded source file (audit fix
+# 2026-11-03): yt-dlp receives it as max_filesize and the tikwm byte
+# fetch enforces the same cap while streaming. Disk protection only —
+# legitimate sources are far below 5 GB.
+MAX_DOWNLOAD_BYTES = 5 * 1024 ** 3
+
 # tikwm resolver guardrails (failure-triggered only): hard timeouts,
 # response validation, and an in-memory circuit breaker so a sick or
 # hostile resolver can never stall or poison the extraction path.
@@ -859,7 +865,10 @@ class MediaDownloader:
             'quiet': True,
             'no_warnings': True,
             'ignoreerrors': False,
-            'nocheckcertificate': True,
+            # TLS certificates are verified (audit fix 2026-11-03: the
+            # old 'nocheckcertificate': True disabled verification for
+            # every source host).
+            'max_filesize': MAX_DOWNLOAD_BYTES,
             'retries': 10,
             'fragment_retries': 10,
             'file_access_retries': 5,
@@ -1180,6 +1189,12 @@ class MediaDownloader:
         data = self._tikwm_resolve(expanded_url)
         if data is None:
             return None
+        if data.get('play_size') is not None and data['play_size'] > MAX_DOWNLOAD_BYTES:
+            logger.warning(
+                f"tikwm download refused: play size {data['play_size']}B exceeds "
+                f"the {MAX_DOWNLOAD_BYTES}B ceiling for {expanded_url}"
+            )
+            return None
         play_url = data['play_url']
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
         safe_id = re.sub(r'[^A-Za-z0-9_-]', '_', data['id'] or 'tiktok')[:40] or 'tiktok'
@@ -1196,9 +1211,18 @@ class MediaDownloader:
                 if ctype != 'video/mp4':
                     logger.warning(f"tikwm download refused: content-type {ctype!r} for {expanded_url}")
                     return None
+                written = 0
                 with open(file_path, 'wb') as fh:
                     for chunk in resp.iter_content(chunk_size=256 * 1024):
                         if chunk:
+                            written += len(chunk)
+                            if written > MAX_DOWNLOAD_BYTES:
+                                # Over the disk-protection ceiling:
+                                # abort; the except path below removes
+                                # the partial file.
+                                raise RuntimeError(
+                                    f"tikwm download exceeded the {MAX_DOWNLOAD_BYTES}B ceiling"
+                                )
                             fh.write(chunk)
         except Exception as e:
             logger.warning(f"tikwm download failed for {expanded_url}: {e}")
@@ -1314,9 +1338,10 @@ class MediaDownloader:
 
         if info is None:
             e = last_exc if last_exc is not None else RuntimeError("Could not extract media info from the provided URL.")
-            # TikTok per-post block family: one guarded resolver try
-            # before surfacing the (already classified) failure.
-            if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+            # TikTok: one guarded resolver try after ANY primary-chain
+            # failure (audit fix 2026-11-03 — the gate used to require
+            # a blocked-family error) before surfacing the failure.
+            if _is_tiktok_url(expanded_url):
                 tw_info = self._tikwm_get_info(url, expanded_url)
                 if tw_info is not None:
                     return tw_info
@@ -1475,9 +1500,10 @@ class MediaDownloader:
                 logger.warning(f"download_video: client '{client_label}' failed for {expanded_url} ({exc}). Trying next client...")
 
         e = primary_exc if primary_exc is not None else RuntimeError("Download failed")
-        # TikTok per-post block family: guarded resolver byte fetch
-        # before the format fallback / classified failure below.
-        if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+        # TikTok: guarded resolver byte fetch after ANY primary-chain
+        # failure (audit fix 2026-11-03), before the format fallback /
+        # classified failure below.
+        if _is_tiktok_url(expanded_url):
             tw_dl = self._tikwm_download_video(url, expanded_url, dest_dir)
             if tw_dl is not None:
                 return tw_dl
@@ -1587,9 +1613,10 @@ class MediaDownloader:
                 logger.warning(f"download_audio: client '{client_label}' failed for {expanded_url} ({exc}). Trying next client...")
 
         e = primary_exc if primary_exc is not None else RuntimeError("Audio download failed")
-        # TikTok per-post block family: fetch the video via the
-        # guarded resolver, then extract its audio locally.
-        if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+        # TikTok: after ANY primary-chain failure (audit fix
+        # 2026-11-03), fetch the video via the guarded resolver, then
+        # extract its audio locally.
+        if _is_tiktok_url(expanded_url):
             tw_dl = self._tikwm_download_video(url, expanded_url, dest_dir)
             if tw_dl is not None:
                 tw_path, _tw_info = tw_dl
@@ -1652,9 +1679,10 @@ class MediaDownloader:
 
         if info is None:
             e = primary_exc if primary_exc is not None else RuntimeError("Audio download failed")
-            # TikTok per-post block family: guarded resolver fetch,
-            # then pull the audio track out of the video locally.
-            if _is_tiktok_url(expanded_url) and _is_blocked_family_error(str(e)):
+            # TikTok: after ANY primary-chain failure (audit fix
+            # 2026-11-03), guarded resolver fetch, then pull the audio
+            # track out of the video locally.
+            if _is_tiktok_url(expanded_url):
                 tw_dl = self._tikwm_download_video(url, expanded_url, dest_dir)
                 if tw_dl is not None:
                     tw_path, _tw_info = tw_dl

@@ -10,7 +10,6 @@ import subprocess
 import re
 import sys
 import unicodedata
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,6 +98,86 @@ def is_edge_refused(error: BaseException | str) -> bool:
     return "403" in text or "WSServerHandshakeError" in text
 
 
+# ---------------------------------------------------------------------------
+# Media subprocess timeouts + job time budget (audit fix 2026-11-03).
+#
+# Every ffmpeg/ffprobe call in the recap engine is bounded: a render
+# that wedges on a corrupt input used to hang the whole job forever —
+# no failure, no refund, one execution slot burned. Render timeouts
+# scale with the media duration (RENDER_TIMEOUT_PER_SECOND seconds of
+# wall clock per second of media, never less than the floor); probes
+# and other short operations get a fixed cap. A blown timeout raises
+# RuntimeError so the job fails through the normal path. On top of the
+# per-call bounds, EdgeSmartSync enforces a whole-job budget checked at
+# segment boundaries (see recap_job_timeout).
+PROBE_TIMEOUT_SECONDS = 120
+RENDER_TIMEOUT_FLOOR_SECONDS = 600
+RENDER_TIMEOUT_PER_SECOND = 30.0
+JOB_TIMEOUT_FLOOR_SECONDS = 3600
+JOB_TIMEOUT_PER_SECOND = 15.0
+JOB_TIMEOUT_CAP_SECONDS = 4 * 3600
+
+
+def ffmpeg_timeout(duration_seconds: float | None) -> int:
+    """Wall-clock timeout (seconds) for a render over this much media."""
+    try:
+        duration = float(duration_seconds or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    return int(max(RENDER_TIMEOUT_FLOOR_SECONDS, RENDER_TIMEOUT_PER_SECOND * max(0.0, duration)))
+
+
+def recap_job_timeout(source_duration: float | None) -> int:
+    """Whole-job time budget (seconds) for one pipeline run."""
+    try:
+        duration = float(source_duration or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    scaled = JOB_TIMEOUT_PER_SECOND * max(0.0, duration)
+    return int(min(JOB_TIMEOUT_CAP_SECONDS, max(JOB_TIMEOUT_FLOOR_SECONDS, scaled)))
+
+
+def _run_media(cmd: list[str], *, timeout: float, what: str) -> subprocess.CompletedProcess:
+    """subprocess.run for media tools, with a bounded wait: a timeout
+    becomes a clear RuntimeError instead of an unbounded hang."""
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"{what} timed out after {int(timeout)}s — failing the job instead of hanging."
+        ) from None
+
+
+def _file_identity(path: Any, *, content_hash_limit: int = 8 * 1024 * 1024) -> dict[str, Any] | None:
+    """Stable identity of a file input for checkpoint fingerprints:
+    a content hash for small files, size+mtime for large ones, None
+    when the file is missing or unreadable."""
+    try:
+        p = Path(path)
+        if not p.is_file():
+            return None
+        st = p.stat()
+        if st.st_size <= content_hash_limit:
+            return {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+        return {"path": str(p), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+    except Exception:
+        return None
+
+
+def _stage_fingerprint(stage: str, components: Any) -> str:
+    """Fingerprint of one late pipeline stage's inputs (concat /
+    overlay / mux), so a resumed run can skip a stage whose inputs
+    are provably unchanged and whose output is still on disk."""
+    raw = json.dumps(
+        {"stage": stage, "components": components},
+        ensure_ascii=False, sort_keys=True, default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 class EdgeTTSEngine:
     """Local Edge-TTS adapter with resilient direct/system-route retries.
 
@@ -107,13 +186,6 @@ class EdgeTTSEngine:
     MP3 in-process so the adapter can classify errors, back off, and try both
     a proxy-bypassed route and the inherited system/proxy route.
     """
-
-    _PROXY_KEYS = (
-        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-        "http_proxy", "https_proxy", "all_proxy",
-        "NO_PROXY", "no_proxy",
-    )
-    _env_lock = threading.Lock()
 
     def __init__(self, *, ffmpeg: str, work_dir: Path, rate: str = "+0%", pitch: str = "+0Hz", log: LogFn = _noop) -> None:
         import importlib.util
@@ -162,23 +234,21 @@ class EdgeTTSEngine:
         await communicate.save(str(mp3))
 
     def _synthesize_once(self, text: str, voice: str, mp3: Path, *, direct: bool) -> None:
-        # edge_tts/aiohttp respects environment/system proxy settings. Some
-        # setups need a proxy for Gemini while Edge TTS succeeds only direct.
-        with self._env_lock:
-            backup = {key: os.environ.get(key) for key in self._PROXY_KEYS}
-            try:
-                if direct:
-                    for key in self._PROXY_KEYS:
-                        os.environ.pop(key, None)
-                    os.environ["NO_PROXY"] = "*"
-                    os.environ["no_proxy"] = "*"
-                asyncio.run(self._save_mp3_async(text, voice, mp3, None if direct else self.proxy))
-            finally:
-                for key, old_value in backup.items():
-                    if old_value is None:
-                        os.environ.pop(key, None)
-                    else:
-                        os.environ[key] = old_value
+        # Route selection is per-call (audit fix 2026-11-03). The old
+        # code stripped/restored the process-global proxy env vars
+        # under a lock for the whole synthesis; with two recap jobs
+        # running concurrently — and the planner/downloader reading
+        # proxy settings from the same environment — that raced every
+        # other thread in the process. edge_tts.Communicate takes an
+        # explicit proxy argument instead:
+        #   * proxy route: the configured proxy URL, passed as-is;
+        #   * direct route: "" — a non-None proxy makes aiohttp skip
+        #     its environment lookup entirely, and the empty URL is
+        #     falsy in the connector, so the connection goes direct;
+        #   * system route with no proxy configured: None, which keeps
+        #     the historical "inherit the system/env proxy" meaning.
+        proxy = "" if direct else self.proxy
+        asyncio.run(self._save_mp3_async(text, voice, mp3, proxy))
 
     def generate_channel99_voice(self, text: str, voice: str):
         clean_text = self._clean_text(text)
@@ -228,10 +298,10 @@ class EdgeTTSEngine:
                 f"text_preview={preview!r}. Last errors: " + " | ".join(errors[-4:])
             )
 
-        conv = subprocess.run(
+        conv = _run_media(
             [self.ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(mp3),
              "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(wav)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=PROBE_TIMEOUT_SECONDS, what="Edge TTS WAV conversion",
         )
         try:
             mp3.unlink(missing_ok=True)
@@ -333,12 +403,9 @@ def segment_fingerprint(seg: dict[str, Any], voice: str) -> str:
 
 
 def probe_duration(ffprobe: str, path: Path) -> float:
-    result = subprocess.run(
+    result = _run_media(
         [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        timeout=PROBE_TIMEOUT_SECONDS, what="ffprobe duration probe",
     )
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr[-2000:]}")
@@ -416,7 +483,7 @@ def trim_edge_silence(
     return target, (last - first) / rate
 
 
-def concat_audio(ffmpeg: str, parts: list[Path], output: Path, work_dir: Path) -> None:
+def concat_audio(ffmpeg: str, parts: list[Path], output: Path, work_dir: Path, *, total_duration: float | None = None) -> None:
     if not parts:
         raise ValueError("Audio parts မရှိပါ။")
     list_file = work_dir / "audio_parts.txt"
@@ -426,7 +493,7 @@ def concat_audio(ffmpeg: str, parts: list[Path], output: Path, work_dir: Path) -
         "-f", "concat", "-safe", "0", "-i", str(list_file),
         "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = _run_media(cmd, timeout=ffmpeg_timeout(total_duration), what="Audio concat")
     if result.returncode != 0:
         raise RuntimeError(f"Audio concat failed:\n{result.stderr[-4000:]}")
 
@@ -518,9 +585,9 @@ def _even(value: float) -> int:
 
 def probe_video_size(ffprobe: str, path: Path | str) -> tuple[int, int]:
     """Width/height of the first video stream as ffmpeg decodes it (phone rotation applied)."""
-    result = subprocess.run(
+    result = _run_media(
         [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json", str(path)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=PROBE_TIMEOUT_SECONDS, what="ffprobe video size probe",
     )
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr[-1200:]}")
@@ -971,7 +1038,7 @@ def _distributed_freeze_graph(
     return ";".join(filters), "[vout]", metrics
 
 def ffmpeg_encoders(ffmpeg: str) -> set[str]:
-    result = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = _run_media([ffmpeg, "-hide_banner", "-encoders"], timeout=PROBE_TIMEOUT_SECONDS, what="ffmpeg encoder probe")
     text = (result.stdout or "") + "\n" + (result.stderr or "")
     encoders: set[str] = set()
     for line in text.splitlines():
@@ -1061,16 +1128,20 @@ def render_video_part(
             "-movflags", "+faststart", str(output),
         ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = _run_media(
+        cmd,
+        timeout=ffmpeg_timeout(max(source_duration, target_duration)),
+        what="Video segment render",
+    )
     if result.returncode != 0:
         raise RuntimeError(f"Video segment render failed ({encoder}):\n{result.stderr[-4000:]}")
     return metrics
 
-def concat_video_parts(ffmpeg: str, parts: list[Path], output: Path, work_dir: Path) -> None:
+def concat_video_parts(ffmpeg: str, parts: list[Path], output: Path, work_dir: Path, *, total_duration: float | None = None) -> None:
     list_file = work_dir / "video_parts.txt"
     list_file.write_text("\n".join(_concat_list_line(p) for p in parts) + "\n", encoding="utf-8")
     cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", "-movflags", "+faststart", str(output)]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = _run_media(cmd, timeout=ffmpeg_timeout(total_duration), what="Video concat")
     if result.returncode != 0:
         raise RuntimeError(f"Video concat failed:\n{result.stderr[-4000:]}")
 
@@ -1083,6 +1154,7 @@ def mux_audio(
     volume_percent: int = 100,
     bgm_path: Optional[Path] = None,
     bgm_volume: float = 0.18,
+    duration: float | None = None,
 ) -> None:
     # Warm broadcast mastering chain:
     # 1. highpass=60Hz: cuts low-frequency hum/rumble
@@ -1127,7 +1199,7 @@ def mux_audio(
             "-shortest", "-movflags", "+faststart", str(output),
         ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = _run_media(cmd, timeout=ffmpeg_timeout(duration), what="Final mux")
     if result.returncode != 0:
         raise RuntimeError(f"Final mux failed:\n{result.stderr[-4000:]}")
 
@@ -2392,6 +2464,7 @@ def apply_production_overlays(
     frame_size: tuple[int, int] = (1920, 1080),
     layout: dict[str, Any] | None = None,
     render_quality: str = "standard",
+    duration: float | None = None,
 ) -> Path:
     overlays = dict(overlays or {})
     cw, ch = int(frame_size[0]), int(frame_size[1])
@@ -2627,7 +2700,7 @@ def apply_production_overlays(
 
     graph.append(f"{current}format=yuv420p[vout]")
     cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(encoder, render_quality) + ["-movflags", "+faststart", str(output_video)]
-    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    p = _run_media(cmd, timeout=ffmpeg_timeout(duration), what="Production overlay render")
     if p.returncode != 0 and encoder == "h264_nvenc":
         log("⚠️ Overlay NVENC failed — libx264 fallback")
         cmd2 = cmd[:]
@@ -2635,7 +2708,7 @@ def apply_production_overlays(
         map_pos = cmd2.index("-map")
         prefix = cmd2[:map_pos] + ["-map", "[vout]", "-map_metadata", "-1", "-an"]
         cmd2 = prefix + encoder_args_for_quality("libx264", render_quality) + ["-movflags", "+faststart", str(output_video)]
-        p = subprocess.run(cmd2, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        p = _run_media(cmd2, timeout=ffmpeg_timeout(duration), what="Production overlay render")
     if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
         raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
     return output_video
@@ -2850,7 +2923,7 @@ def extract_preview_with_overlays(
         "-update", "1",
         str(out_img),
     ]
-    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    p = _run_media(cmd, timeout=PROBE_TIMEOUT_SECONDS, what="Preview extraction")
     if ass_temp and ass_temp.is_file():
         ass_temp.unlink(missing_ok=True)
     if p.returncode != 0 or not out_img.is_file():
@@ -2922,6 +2995,7 @@ class EdgeSmartSync:
         log: LogFn = _noop,
         progress: Callable[[int, int, str], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        max_run_seconds: float | None = None,
     ) -> None:
         self.job_dir = Path(job_dir).resolve()
         self.source_path = Path(source_path).resolve() if source_path else (self.job_dir / "source.mp4")
@@ -2958,6 +3032,23 @@ class EdgeSmartSync:
         self.log = log
         self.progress = progress or (lambda a, b, c: None)
         self.should_stop = should_stop or (lambda: False)
+        # Whole-job time budget (audit fix 2026-11-03): run() arms the
+        # deadline from the source duration; _check_run_deadline turns
+        # an over-budget job into a failure (refund path) instead of
+        # an endless hang. None = derive from the source duration.
+        self.max_run_seconds = max_run_seconds
+        self._run_started: float | None = None
+        self._run_budget: float | None = None
+
+    def _check_run_deadline(self, stage: str) -> None:
+        if self._run_started is None or self._run_budget is None:
+            return
+        if time.monotonic() - self._run_started > self._run_budget:
+            raise TimeoutError(
+                f"Recap render exceeded its {int(self._run_budget)}s job time budget "
+                f"at {stage} — failing the job so it can be refunded/retried "
+                f"instead of hanging."
+            )
 
     def _checkpoint_load(self, paths: PipelinePaths) -> dict[str, Any]:
         if paths.checkpoint.is_file():
@@ -3045,6 +3136,13 @@ class EdgeSmartSync:
 
         plan = load_json(plan_file)
         segments = normalize_segments(plan)
+        # Arm the whole-job deadline (audit fix 2026-11-03).
+        self._run_started = time.monotonic()
+        _source_duration = float(segments[-1]["video_end"]) if segments else 0.0
+        self._run_budget = (
+            float(self.max_run_seconds) if self.max_run_seconds
+            else float(recap_job_timeout(_source_duration))
+        )
         paths = make_paths(self.job_dir)
         checkpoint = self._checkpoint_load(paths)
         checkpoint.setdefault("audio", {})
@@ -3252,6 +3350,7 @@ class EdgeSmartSync:
             for idx, seg in enumerate(segments, 1):
                 if self.should_stop():
                     raise InterruptedError("STOP requested — လက်ရှိပြီးထားတာတွေ checkpoint ထဲသိမ်းထားပါတယ်။")
+                self._check_run_deadline("TTS")
                 base = segment_basename(seg)
                 dst = paths.tts_parts / f"{base}.wav"
                 fp = segment_fingerprint(seg, fingerprint_voice)
@@ -3429,7 +3528,7 @@ class EdgeSmartSync:
             self.log(f"✂️ Short pauses: Edge TTS silence trimmed · voice {tts_total / 60:.1f} → {cursor / 60:.1f} min "
                      f"(~0.25 s between lines; picture never cut for it)")
         self.log("🔗 Timestamp audio parts concat...")
-        concat_audio(self.ffmpeg, audio_parts, paths.voice, paths.work)
+        concat_audio(self.ffmpeg, audio_parts, paths.voice, paths.work, total_duration=cursor)
         final_audio_duration = probe_duration(self.ffprobe, paths.voice)
         self.log(f"✅ {paths.voice.name} = {final_audio_duration:.2f}s")
 
@@ -3570,6 +3669,7 @@ class EdgeSmartSync:
         for idx, (seg, item) in enumerate(zip(segments, timing), 1):
             if self.should_stop():
                 raise InterruptedError("STOP requested — video parts checkpoint ထဲကနေ Resume လုပ်နိုင်ပါတယ်။")
+            self._check_run_deadline("video render")
             base = segment_basename(seg)
             dst = paths.video_parts / f"{base}.mp4"
             target = float(item["audio_duration"])
@@ -3656,23 +3756,66 @@ class EdgeSmartSync:
             video_parts.append(dst)
             self.progress(idx, len(segments), f"Video {idx}/{len(segments)}")
 
-        self.log("🔗 Smart Sync video parts concat...")
-        concat_video_parts(self.ffmpeg, video_parts, paths.synced_video_noaudio, paths.work)
+        # Late stages (concat -> overlay -> mux) are checkpointed by
+        # input fingerprint (audit fix 2026-11-03): a resumed run whose
+        # parts, overlays and voice are unchanged skips straight to the
+        # finished outputs instead of redoing a full-length overlay
+        # re-encode. Any input change — a re-rendered part, an edited
+        # overlay setting, a replaced voice/BGM file — changes the
+        # fingerprint and re-runs exactly the affected stages.
+        late = checkpoint.setdefault("late_stage", {})
+        part_fps = [
+            (checkpoint.get("video") or {}).get(segment_basename(seg), {}).get("fingerprint")
+            for seg in segments
+        ]
+        concat_fp = _stage_fingerprint("concat", {"parts": part_fps, "encoder": encoder})
+        synced = paths.synced_video_noaudio
+        if late.get("concat") == concat_fp and synced.is_file() and synced.stat().st_size > 5000:
+            self.log("♻️ Smart Sync concat reuse (inputs unchanged)")
+        else:
+            self._check_run_deadline("concat")
+            self.log("🔗 Smart Sync video parts concat...")
+            concat_video_parts(self.ffmpeg, video_parts, synced, paths.work, total_duration=audio_cursor)
+            late["concat"] = concat_fp
+            atomic_write_json(paths.checkpoint, checkpoint)
         self._log_sync_check(paths, segments, checkpoint)
         video_for_mux = paths.synced_video_noaudio
-        if (
+        overlays_active = bool(
             self.overlays.get("blur_boxes")
             or str(self.overlays.get("title_text") or "").strip()
             or str(self.overlays.get("logo_path") or "").strip()
             or str(self.overlays.get("extra_text") or "").strip()
             or str(self.overlays.get("subtitles_file") or "").strip()
-        ):
-            self.log("🎨 Production overlay pass — Blur / Title PNG / Logo / Subtitles...")
-            video_for_mux = apply_production_overlays(
-                self.ffmpeg, paths.synced_video_noaudio, paths.decorated_video_noaudio,
-                self.overlays, encoder, paths.work, self.log, frame_size=(layout["cw"], layout["ch"]),
-                layout=layout, render_quality=self.render_quality,
-            )
+        )
+        overlay_fp: str | None = None
+        if overlays_active:
+            overlay_fp = _stage_fingerprint("overlay", {
+                "concat": concat_fp,
+                "overlays": self.overlays,
+                "files": {
+                    key: _file_identity(self.overlays.get(key))
+                    for key in ("logo_path", "subtitles_file", "bgm_path")
+                    if self.overlays.get(key)
+                },
+                "encoder": encoder,
+                "quality": self.render_quality,
+                "frame": [layout["cw"], layout["ch"], layout["ratio"], layout["fill"]],
+            })
+            decorated = paths.decorated_video_noaudio
+            if late.get("overlay") == overlay_fp and decorated.is_file() and decorated.stat().st_size > 5000:
+                self.log("♻️ Production overlay reuse (inputs unchanged)")
+                video_for_mux = decorated
+            else:
+                self._check_run_deadline("overlay")
+                self.log("🎨 Production overlay pass — Blur / Title PNG / Logo / Subtitles...")
+                video_for_mux = apply_production_overlays(
+                    self.ffmpeg, paths.synced_video_noaudio, paths.decorated_video_noaudio,
+                    self.overlays, encoder, paths.work, self.log, frame_size=(layout["cw"], layout["ch"]),
+                    layout=layout, render_quality=self.render_quality,
+                    duration=audio_cursor,
+                )
+                late["overlay"] = overlay_fp
+                atomic_write_json(paths.checkpoint, checkpoint)
         self.log("🎧 Final audio mux (with limiter & mastering chain)...")
         volume_percent = int(getattr(self, "voice_volume_percent", 100) or 100)
         if volume_percent != 100:
@@ -3681,15 +3824,29 @@ class EdgeSmartSync:
         bgm_vol = float(self.overlays.get("bgm_volume", 0.18))
         if bgm_file and Path(bgm_file).is_file():
             self.log(f"🎵 Studio BGM sidechain ducking applied ({Path(bgm_file).name}, vol={bgm_vol:.2f})")
-        mux_audio(
-            self.ffmpeg,
-            video_for_mux,
-            paths.voice,
-            paths.final,
-            volume_percent,
-            bgm_path=Path(bgm_file) if bgm_file else None,
-            bgm_volume=bgm_vol,
-        )
+        mux_fp = _stage_fingerprint("mux", {
+            "video": overlay_fp if overlays_active else concat_fp,
+            "voice": _file_identity(paths.voice),
+            "volume": volume_percent,
+            "bgm": _file_identity(bgm_file) if bgm_file else None,
+            "bgm_volume": bgm_vol,
+        })
+        if late.get("mux") == mux_fp and paths.final.is_file() and paths.final.stat().st_size > 5000:
+            self.log("♻️ Final mux reuse (inputs unchanged)")
+        else:
+            self._check_run_deadline("mux")
+            mux_audio(
+                self.ffmpeg,
+                video_for_mux,
+                paths.voice,
+                paths.final,
+                volume_percent,
+                bgm_path=Path(bgm_file) if bgm_file else None,
+                bgm_volume=bgm_vol,
+                duration=audio_cursor,
+            )
+            late["mux"] = mux_fp
+            atomic_write_json(paths.checkpoint, checkpoint)
         final_duration = probe_duration(self.ffprobe, paths.final)
 
         # Copy synced SRT and ASS next to final video
@@ -3717,7 +3874,8 @@ class EdgeSmartSync:
                 "-map_metadata", "-1",
                 str(final_mp3)
             ]
-            subprocess.run(cmd_mp3, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd_mp3, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=ffmpeg_timeout(final_duration))
         except Exception as e_mp3:
             self.log(f"⚠️ Standalone MP3 export warning: {e_mp3}")
             final_mp3 = paths.voice

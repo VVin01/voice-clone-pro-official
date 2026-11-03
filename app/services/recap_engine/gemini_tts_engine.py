@@ -259,7 +259,10 @@ class GeminiTTSEngine:
         trim = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,"
                 "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.12,areverse")
         tempo = f",atempo={max(0.5, min(2.0, 1 + self.rate / 100)):.3f}" if self.rate else ""
+        # Bounded like every engine media call (audit fix 2026-11-03;
+        # 120s == core.PROBE_TIMEOUT_SECONDS — one TTS line is seconds
+        # long, so this is a hang backstop, never a real limit).
         subprocess.run([self.ffmpeg, "-y", "-v", "error", "-i", str(raw), "-af", trim + tempo, "-ar", "48000",
-                        "-ac", "1", "-c:a", "pcm_s16le", str(out)], check=True)
+                        "-ac", "1", "-c:a", "pcm_s16le", str(out)], check=True, timeout=120)
         raw.unlink(missing_ok=True)
         return out

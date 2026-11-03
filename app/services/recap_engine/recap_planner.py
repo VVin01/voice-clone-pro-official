@@ -19,11 +19,13 @@ from typing import Any, Callable
 
 try:
     from app.services.recap_engine.core import (
+        PROBE_TIMEOUT_SECONDS,
         canonicalize_burmese_text,
+        ffmpeg_timeout,
         normalize_burmese_orthography,
     )
 except ImportError:
-    from .core import canonicalize_burmese_text, normalize_burmese_orthography
+    from .core import PROBE_TIMEOUT_SECONDS, canonicalize_burmese_text, ffmpeg_timeout, normalize_burmese_orthography
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
@@ -302,7 +304,8 @@ def _probe_video_duration(ffprobe: str, source: Path) -> float:
         "-show_entries", "stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", str(source),
     ]
-    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=PROBE_TIMEOUT_SECONDS)
     if p.returncode == 0:
         raw = (p.stdout or "").strip().splitlines()
         for line in raw:
@@ -318,6 +321,7 @@ def _probe_video_duration(ffprobe: str, source: Path) -> float:
         [ffprobe, "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(source)],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=PROBE_TIMEOUT_SECONDS,
     )
     if p2.returncode != 0:
         raise RuntimeError("ffprobe duration failed:\n" + (p2.stderr or p.stderr)[-3000:])
@@ -330,6 +334,7 @@ def _probe_audio_duration(ffprobe: str, source: Path) -> float | None:
          "-show_entries", "stream=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(source)],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=PROBE_TIMEOUT_SECONDS,
     )
     if p.returncode != 0:
         return None
@@ -359,7 +364,8 @@ def _prepare_whisper_audio(ffmpeg: str, source: Path, job_dir: Path, video_durat
         "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(out),
     ]
     log(f"✂️ Preparing Whisper audio: trim to video duration {video_duration:.3f}s")
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=ffmpeg_timeout(video_duration))
     if proc.returncode != 0 or not out.is_file():
         raise RuntimeError("Whisper audio preparation failed:\n" + (proc.stderr or "")[-3000:])
     return out

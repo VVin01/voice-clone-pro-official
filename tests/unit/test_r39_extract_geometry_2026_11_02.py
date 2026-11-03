@@ -199,6 +199,13 @@ def test_chain_non_youtube_behaviour_unchanged(monkeypatch, tmp_path):
         raise Exception("some brand-new failure mode")
 
     _patch_chain(monkeypatch, handler)
+    # Audit fix 2026-11-03: a TikTok URL now also tries the guarded
+    # tikwm fallback after this failure — stub the resolver transport
+    # as unreachable so the fallthrough stays hermetic.
+    def _resolver_down(url, **kwargs):
+        raise ConnectionError("resolver down")
+
+    monkeypatch.setattr(dl_mod.requests, "get", _resolver_down)
     dl = MediaDownloader(download_dir=str(tmp_path))
     with pytest.raises(Exception, match="brand-new failure"):
         dl.get_info(TIKTOK_URL)
@@ -443,20 +450,41 @@ def test_tikwm_circuit_breaker_opens_and_skips(monkeypatch, tmp_path):
     assert len(calls) == dl_mod.TIKWM_BREAKER_THRESHOLD
 
 
-def test_tikwm_not_triggered_by_other_failures(monkeypatch, tmp_path):
+def test_tikwm_triggered_by_any_primary_failure(monkeypatch, tmp_path):
+    # Audit fix 2026-11-03 supersedes the R39 gate: the guarded tikwm
+    # fallback used to require a blocked-family error; it is now
+    # attempted after ANY primary-chain failure for a TikTok URL
+    # (breaker + validation guards unchanged). The classifier helper
+    # itself is retained and still pinned below.
     def handler(opts, url, download):
         raise Exception("ERROR: [TikTok] 1: No video formats found!")
+
+    _patch_chain(monkeypatch, handler)
+    record = []
+    monkeypatch.setattr(
+        dl_mod.requests, "get",
+        _tikwm_dispatcher(api_resp=_Resp(json_data=TIKWM_PAYLOAD), probe_resp=_good_probe(), record=record),
+    )
+    dl = MediaDownloader(download_dir=str(tmp_path))
+    out = dl.get_info(TIKTOK_URL)
+    assert out["tikwm_fallback"] is True
+    assert record and record[0][0] == dl_mod.TIKWM_API_URL  # resolver WAS consulted
+    assert not _is_blocked_family_error("ERROR: [TikTok] 1: No video formats found!")
+    assert _is_blocked_family_error(RAW_IP_BLOCK)
+    assert _is_blocked_family_error("ERROR: HTTP Error 403: Forbidden")
+
+
+def test_tikwm_not_triggered_for_non_tiktok_hosts(monkeypatch, tmp_path):
+    def handler(opts, url, download):
+        raise Exception("ERROR: [youtube] x: No video formats found!")
 
     _patch_chain(monkeypatch, handler)
     called = []
     monkeypatch.setattr(dl_mod.requests, "get", lambda *a, **k: called.append(a) or _Resp())
     dl = MediaDownloader(download_dir=str(tmp_path))
-    with pytest.raises(RuntimeError):
-        dl.get_info(TIKTOK_URL)
-    assert called == []  # 'No video formats' is the unavailable family, not the blocked family
-    assert not _is_blocked_family_error("ERROR: [TikTok] 1: No video formats found!")
-    assert _is_blocked_family_error(RAW_IP_BLOCK)
-    assert _is_blocked_family_error("ERROR: HTTP Error 403: Forbidden")
+    with pytest.raises(Exception):
+        dl.get_info(YOUTUBE_URL)
+    assert called == []  # the broadened gate is TikTok-only
 
 
 def test_tikwm_play_url_validation():
