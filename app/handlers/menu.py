@@ -266,7 +266,11 @@ async def handle_user_language_toggle(callback: CallbackQuery, session: AsyncSes
     await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
 
 
-@menu_router.message(Command("help"))
+# Audit fix G: /help, /history and /samples render private per-user
+# content (worst case, /history posts the caller's balance, jobs and
+# ledger overview) — they must never run in a group chat, so all three
+# are private-only (same F.chat.type pattern as app/handlers/payment.py).
+@menu_router.message(Command("help"), F.chat.type == "private")
 async def handle_help_command(message: Message, session: AsyncSession | None = None):
     if session is not None:
         text, kb = await render_help_settings_content(session, message.from_user.id)
@@ -567,7 +571,8 @@ async def handle_history_clear_confirm(callback: CallbackQuery, session: AsyncSe
     await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
 
 
-@menu_router.message(Command("history"))
+# Audit fix G: private-only — see the /help filter above.
+@menu_router.message(Command("history"), F.chat.type == "private")
 async def handle_history_command(message: Message, session: AsyncSession | None = None):
     if session is not None:
         text, kb = await render_history_overview_content(session, message.from_user.id)
@@ -600,7 +605,8 @@ async def handle_voice_samples_catalog(callback: CallbackQuery, session: AsyncSe
     await safe_answer_callback(callback)
 
 
-@menu_router.message(Command("samples", "voices"))
+# Audit fix G: private-only — see the /help filter above.
+@menu_router.message(Command("samples", "voices"), F.chat.type == "private")
 async def handle_samples_command(message: Message, session: AsyncSession | None = None):
     user_id = message.from_user.id
     if session is not None:

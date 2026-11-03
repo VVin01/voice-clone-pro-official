@@ -34,7 +34,10 @@ def _is_banned_user(user, telegram_id: int) -> bool:
     )
 
 
-@start_router.message(CommandStart())
+# Audit fix G: /start runs the private registration/menu flow — in a group
+# it would post gate/menu content publicly, so it is private-only
+# (same F.chat.type pattern as app/handlers/payment.py).
+@start_router.message(CommandStart(), F.chat.type == "private")
 async def handle_start(message: Message, command: CommandObject):
     telegram_id = message.from_user.id
     username = message.from_user.username
@@ -270,7 +273,8 @@ async def handle_gate_verify(callback: CallbackQuery):
     await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
 
 
-@start_router.message(Command("language", "lang"))
+# Audit fix G: private-only — see the /start filter above.
+@start_router.message(Command("language", "lang"), F.chat.type == "private")
 async def handle_language_command(message: Message, session: AsyncSession | None = None):
     if session is not None:
         user, _ = await get_or_create_user(session, message.from_user.id)
