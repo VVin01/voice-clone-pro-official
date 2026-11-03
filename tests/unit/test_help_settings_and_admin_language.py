@@ -6,11 +6,9 @@ from aiogram.types import CallbackQuery, Message, User as TgUser
 from sqlalchemy import select
 
 from app.config import settings
-from app.handlers.admin import (
-    handle_admin_settings,
-    handle_admin_settings_allowance,
-    handle_admin_settings_free_chars,
-)
+# Bot cleanup 2026-11-03: this file's chat Bot Settings tests retired
+# with the admin:settings screens. The Help & Settings (user-side),
+# language-toggle and payment-invoice tests below stay.
 from app.handlers.menu import (
     handle_help_command,
     handle_menu_help_settings,
@@ -19,84 +17,13 @@ from app.handlers.menu import (
 from app.models.schema import User
 from app.services.ledger import get_or_create_user
 from app.ui.keyboards import (
-    admin_dashboard_kb,
-    admin_settings_interactive_kb,
     help_settings_kb,
     main_menu_kb,
 )
 
 
-@pytest.mark.asyncio
-async def test_admin_settings_language_honors_user_profile(db_session):
-    """Bot settings panel displays buttons localized to the admin's active language."""
-    settings.admin_ids_raw = "888001"
-
-    # 1. Admin with English language
-    admin_en, _ = await get_or_create_user(db_session, telegram_id=888001)
-    admin_en.language_code = "en"
-    await db_session.flush()
-
-    cb_en = MagicMock(spec=CallbackQuery)
-    cb_en.from_user = TgUser(id=888001, is_bot=False, first_name="AdminEn")
-    cb_en.message = MagicMock(spec=Message)
-    cb_en.message.edit_text = AsyncMock()
-    cb_en.answer = AsyncMock()
-    cb_en.data = "admin:settings"
-
-    await handle_admin_settings(cb_en, session=db_session)
-    cb_en.message.edit_text.assert_called_once()
-    kb_en = cb_en.message.edit_text.call_args[1].get("reply_markup")
-    button_texts_en = [btn.text for row in kb_en.inline_keyboard for btn in row]
-
-    # Verify English labels are displayed
-    assert any("Edit Free Allowance" in t for t in button_texts_en)
-    assert any("Edit Free Char Limit" in t for t in button_texts_en)
-    assert any("Edit Purchased Char Limit" in t for t in button_texts_en)
-    assert any("Edit Daily Limit" in t for t in button_texts_en)
-    assert any("Edit Channels/Gates" in t for t in button_texts_en)
-    assert any("Back" in t for t in button_texts_en)
-
-    # 2. Admin with Burmese language
-    admin_en.language_code = "my"
-    await db_session.flush()
-
-    cb_my = MagicMock(spec=CallbackQuery)
-    cb_my.from_user = TgUser(id=888001, is_bot=False, first_name="AdminMy")
-    cb_my.message = MagicMock(spec=Message)
-    cb_my.message.edit_text = AsyncMock()
-    cb_my.answer = AsyncMock()
-    cb_my.data = "admin:settings"
-
-    await handle_admin_settings(cb_my, session=db_session)
-    cb_my.message.edit_text.assert_called_once()
-    kb_my = cb_my.message.edit_text.call_args[1].get("reply_markup")
-    button_texts_my = [btn.text for row in kb_my.inline_keyboard for btn in row]
-
-    # Verify Myanmar labels are displayed
-    assert any("အခမဲ့မိနစ် ပြင်ရန်" in t for t in button_texts_my)
-    assert any("အခမဲ့စာလုံးရေ ပြင်ရန်" in t for t in button_texts_my)
-    assert any("ဝယ်ယူသူစာလုံးရေ ပြင်ရန်" in t for t in button_texts_my)
-    assert any("နေ့စဉ်အကြိမ်ရေ ပြင်ရန်" in t for t in button_texts_my)
-    assert any("ချန်နယ်/ဂရု ပြင်ရန်" in t for t in button_texts_my)
 
 
-@pytest.mark.asyncio
-async def test_tutorial_manager_no_longer_duplicated_in_bot_settings():
-    """Tutorial Manager is on Admin Dashboard but NOT in Bot Settings."""
-    # Main Admin Dashboard has tutorial manager
-    dash_kb = admin_dashboard_kb(lang="en")
-    dash_cbs = [btn.callback_data for row in dash_kb.inline_keyboard for btn in row]
-    assert "admin:tutorial" in dash_cbs
-
-    # Bot Settings interactive panel does NOT have tutorial manager
-    settings_kb = admin_settings_interactive_kb(lang="en")
-    settings_cbs = [btn.callback_data for row in settings_kb.inline_keyboard for btn in row]
-    assert "admin:tutorial" not in settings_cbs
-
-    # Grid is 4 rows of 2 buttons each
-    assert len(settings_kb.inline_keyboard) == 4
-    for row in settings_kb.inline_keyboard:
-        assert len(row) == 2
 
 
 @pytest.mark.asyncio
@@ -154,36 +81,6 @@ async def test_help_and_settings_navigation_and_language_toggle(db_session):
     cb.message.edit_text.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_admin_settings_dynamically_reflects_updated_pricing_plans(db_session):
-    """Bot Settings panel automatically updates Minute Packages when pricing changes."""
-    from app.services.payments import get_active_pricing_plans, update_pricing_plan_price
-
-    settings.admin_ids_raw = "888001"
-    admin, _ = await get_or_create_user(db_session, telegram_id=888001)
-
-    # Seed default plans first
-    await get_active_pricing_plans(db_session)
-
-    # 1. Update MIN_10 to 3,850 MMK
-    ok, plan, status = await update_pricing_plan_price(db_session, "MIN_10", 3850, admin_id=888001)
-    assert ok is True
-    await db_session.flush()
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888001, is_bot=False, first_name="Admin")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    cb.data = "admin:settings"
-
-    await handle_admin_settings(cb, session=db_session)
-
-    cb.message.edit_text.assert_called_once()
-    rendered_text = cb.message.edit_text.call_args[0][0]
-
-    assert "Minute Packages:" in rendered_text
-    assert "3,850 MMK" in rendered_text
 
 
 @pytest.mark.asyncio

@@ -4,73 +4,94 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from app.services.i18n import t
 
 
-def language_selection_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🇲🇲 မြန်မာစာ", callback_data="set_lang:my"),
-                InlineKeyboardButton(text="🇬🇧 English", callback_data="set_lang:en"),
-            ]
+def language_selection_kb(
+    active_lang: str | None = None,
+    show_back: bool = False,
+    lang: str = "my",
+) -> InlineKeyboardMarkup:
+    # The active language carries a ✅ marker (same convention as
+    # help_settings_kb) so the current choice is visible at a glance;
+    # callers that re-open this screen for an existing user pass
+    # show_back=True so the screen is never a dead end (bot cleanup
+    # 2026-11-03). The brand-new-user /start call passes neither: there
+    # is no chosen language and nothing to go back to yet.
+    my_text = "✅ 🇲🇲 မြန်မာစာ" if active_lang == "my" else "🇲🇲 မြန်မာစာ"
+    en_text = "✅ 🇬🇧 English" if active_lang == "en" else "🇬🇧 English"
+    rows = [
+        [
+            InlineKeyboardButton(text=my_text, callback_data="set_lang:my"),
+            InlineKeyboardButton(text=en_text, callback_data="set_lang:en"),
         ]
-    )
+    ]
+    if show_back:
+        rows.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def membership_gate_kb(channel_link: str, group_link: str, lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("btn_join_channel", lang), url=channel_link)],
-            [InlineKeyboardButton(text=t("btn_join_group", lang), url=group_link)],
-            [InlineKeyboardButton(text=t("btn_verify_membership", lang), callback_data="gate:verify")],
-        ]
-    )
+def membership_gate_kb(
+    channel_link: str,
+    group_link: str,
+    lang: str = "my",
+    channel_ok: bool = False,
+    group_ok: bool = False,
+) -> InlineKeyboardMarkup:
+    # Status-card keyboard: a Join button is offered only for a chat
+    # the user is still missing (bot cleanup 2026-11-03); the verify
+    # ("check again") button is always present. Callers that do not
+    # pass the flags get the historical both-buttons behaviour.
+    rows = []
+    if not channel_ok:
+        rows.append([InlineKeyboardButton(text=t("btn_join_channel", lang), url=channel_link)])
+    if not group_ok:
+        rows.append([InlineKeyboardButton(text=t("btn_join_group", lang), url=group_link)])
+    rows.append([InlineKeyboardButton(text=t("btn_verify_membership", lang), callback_data="gate:verify")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def main_menu_kb(is_admin: bool = False, lang: str = "my") -> InlineKeyboardMarkup:
+def _mini_app_base_url() -> str:
     import os
-    from aiogram.types import WebAppInfo
-    from app.config import settings
 
-    web_app_url = (
+    return (
         os.getenv("MINI_APP_URL", "").strip()
         or os.getenv("RENDER_EXTERNAL_URL", "").strip()
         or "https://voice-clone-studio-c1er.onrender.com"
     )
 
-    launch_text = t("menu_launch_text", lang)
-    recap_text = t("menu_recap_text", lang)
-    dl_text = t("menu_downloader_text", lang)
-    tutorial_text = t("menu_tutorials_text", lang)
-    tutorial_url = (
-        getattr(settings, "tutorial_index_link", "").strip()
-        or os.getenv("TUTORIAL_INDEX_LINK", "").strip()
-        or "https://t.me/VoiceClonePro/38"
-    )
-    switch_lang_text = t("menu_switch_lang", lang)
-    verify_gate_text = t("menu_verify_gate", lang)
 
+def main_menu_kb(
+    is_admin: bool = False,
+    lang: str = "my",
+    membership_pending: bool = False,
+) -> InlineKeyboardMarkup:
+    from aiogram.types import WebAppInfo
+
+    web_app_url = _mini_app_base_url()
+
+    # Bot cleanup 2026-11-03: the chat menu is a lean launcher — the
+    # Mini App is the primary surface. Four core buttons (hero WebApp,
+    # Plans, Refer, Language/Help) + the membership button ONLY while
+    # the user is unverified + admin entries for admins. The separate
+    # Recap/Downloader WebApp deep-links and the channel Tutorials row
+    # retired: Mini App tabs and the Help screen cover them.
     buttons = [
-        [InlineKeyboardButton(text=launch_text, web_app=WebAppInfo(url=web_app_url))],
+        [InlineKeyboardButton(text=t("menu_launch_text", lang), web_app=WebAppInfo(url=web_app_url))],
         [
-            InlineKeyboardButton(text=recap_text, web_app=WebAppInfo(url=f"{web_app_url}?tab=tab-recap")),
-            InlineKeyboardButton(text=dl_text, web_app=WebAppInfo(url=f"{web_app_url}?tab=tab-downloader")),
-        ],
-        [
-            InlineKeyboardButton(text=tutorial_text, url=tutorial_url),
+            InlineKeyboardButton(text=t("menu_buy_minutes_text", lang), callback_data="menu:buy_minutes"),
         ],
         [
             InlineKeyboardButton(text=t("btn_menu_refer_earn", lang), callback_data="menu:refer_earn"),
         ],
         [
-            InlineKeyboardButton(text=t("menu_buy_minutes_text", lang), callback_data="menu:buy_minutes"),
-        ],
-        [
-            InlineKeyboardButton(text=switch_lang_text, callback_data="menu:change_lang"),
-            InlineKeyboardButton(text=verify_gate_text, callback_data="gate:verify"),
+            InlineKeyboardButton(text=t("menu_language_help_text", lang), callback_data="menu:help_settings"),
         ],
     ]
+    if membership_pending:
+        buttons.append([
+            InlineKeyboardButton(text=t("menu_verify_gate", lang), callback_data="menu:membership"),
+        ])
     if is_admin:
-        admin_text = t("menu_admin_broadcast", lang)
-        buttons.append([InlineKeyboardButton(text=admin_text, callback_data="admin:broadcast")])
+        buttons.append([InlineKeyboardButton(text=t("menu_admin_panel_text", lang), callback_data="admin:dashboard")])
+        buttons.append([InlineKeyboardButton(text=t("menu_admin_broadcast", lang), callback_data="admin:broadcast")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -110,30 +131,26 @@ def back_to_menu_kb(lang: str = "my") -> InlineKeyboardMarkup:
     )
 
 
-def admin_dashboard_kb(lang: str = "my", pending_payments: int = 0, pending_cvr: int = 0) -> InlineKeyboardMarkup:
-    pay_badge = f" ({pending_payments})" if pending_payments > 0 else ""
-    cvr_badge = f" ({pending_cvr})" if pending_cvr > 0 else ""
+def admin_menu_kb(lang: str = "my") -> InlineKeyboardMarkup:
+    # Bot cleanup 2026-11-03: the chat-side admin surface is a compact
+    # landing — a read-only pulse (rendered as the message text), the
+    # Mini App Admin Suite as the real work surface, Broadcast, Home.
+    # The old 11-button dashboard (voice models / users / queue /
+    # custom voice / settings / audit / pricing screens) retired: all
+    # of it lives in the Mini App Admin tab now.
+    from aiogram.types import WebAppInfo
+
+    web_app_url = _mini_app_base_url()
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=t("admin_btn_voice_mgmt", lang), callback_data="admin:voices"),
-                InlineKeyboardButton(text=f"{t('admin_btn_minutes_payments', lang)}{pay_badge}", callback_data="admin:payments"),
-            ],
-            [
-                InlineKeyboardButton(text=t("admin_btn_users_referrals", lang), callback_data="admin:users"),
-                InlineKeyboardButton(text=t("admin_btn_queue_monitor", lang), callback_data="admin:queue"),
-            ],
-            [
-                InlineKeyboardButton(text=f"{t('admin_btn_custom_voice', lang)}{cvr_badge}", callback_data="admin:cvr"),
-                InlineKeyboardButton(text=t("admin_btn_bot_settings", lang), callback_data="admin:settings"),
-            ],
-            [
-                InlineKeyboardButton(text=t("admin_btn_audit_logs", lang), callback_data="admin:audit"),
-                InlineKeyboardButton(text=t("admin_btn_tutorial_mgr", lang), callback_data="admin:tutorial"),
+                InlineKeyboardButton(
+                    text=t("admin_menu_open_suite", lang),
+                    web_app=WebAppInfo(url=f"{web_app_url}?tab=tab-admin"),
+                )
             ],
             [
                 InlineKeyboardButton(text=t("admin_btn_broadcast", lang), callback_data="admin:broadcast"),
-                InlineKeyboardButton(text=t("admin_btn_refresh", lang), callback_data="admin:refresh"),
             ],
             [
                 InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home"),
@@ -148,31 +165,35 @@ def admin_broadcast_audience_kb(
     imported_unregistered_count: int,
     lang: str = "my",
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"👥 Registered All ({registered_count})",
-                    callback_data="admin:bc_group:REGISTERED_ALL",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"📥 Imported All ({imported_all_count})",
-                    callback_data="admin:bc_group:IMPORTED_ALL",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"⏳ Imported Unregistered ({imported_unregistered_count})",
-                    callback_data="admin:bc_group:IMPORTED_UNREGISTERED",
-                )
-            ],
-            [
-                InlineKeyboardButton(text="❌ Cancel", callback_data="admin:broadcast_cancel")
-            ],
-        ]
-    )
+    # Bot cleanup 2026-11-03: audiences with 0 recipients are hidden —
+    # offering a broadcast segment that reaches nobody was pure
+    # mis-tap risk.
+    rows = []
+    if registered_count > 0:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"👥 Registered All ({registered_count})",
+                callback_data="admin:bc_group:REGISTERED_ALL",
+            )
+        ])
+    if imported_all_count > 0:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"📥 Imported All ({imported_all_count})",
+                callback_data="admin:bc_group:IMPORTED_ALL",
+            )
+        ])
+    if imported_unregistered_count > 0:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"⏳ Imported Unregistered ({imported_unregistered_count})",
+                callback_data="admin:bc_group:IMPORTED_UNREGISTERED",
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(text="❌ Cancel", callback_data="admin:broadcast_cancel")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_broadcast_prompt_kb(lang: str = "my") -> InlineKeyboardMarkup:
@@ -187,76 +208,13 @@ def admin_broadcast_preview_kb(token: str, lang: str = "my") -> InlineKeyboardMa
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=t("admin_btn_broadcast_confirm", lang), callback_data=f"admin:broadcast_send:{token}")],
+            [InlineKeyboardButton(text=t("admin_btn_broadcast_test", lang), callback_data=f"admin:broadcast_test:{token}")],
             [InlineKeyboardButton(text=t("admin_btn_broadcast_cancel", lang), callback_data="admin:broadcast_cancel")],
         ]
     )
 
 
-def admin_users_list_kb(users: list, page: int, total_pages: int, lang: str = "my") -> InlineKeyboardMarkup:
-    buttons = []
-    for u in users:
-        uname = f"@{u.username}" if u.username else "no_username"
-        btn_text = f"#{u.id} · {uname} ({u.account_category})"
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin:user_detail:{u.id}:{page}")])
 
-    # Navigation pagination row
-    nav_row = []
-    if page > 1:
-        nav_row.append(InlineKeyboardButton(text="◀ Prev", callback_data=f"admin:users_page:{page - 1}"))
-    nav_row.append(InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data=f"admin:users_page:{page}"))
-    if page < total_pages:
-        nav_row.append(InlineKeyboardButton(text="Next ▶", callback_data=f"admin:users_page:{page + 1}"))
-    buttons.append(nav_row)
-
-    buttons.append([
-        InlineKeyboardButton(text=t("admin_btn_search_user", lang), callback_data="admin:user_search"),
-        InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_user_card_kb(
-    target_user_id: int,
-    return_page: int = 1,
-    lang: str = "my",
-    user_status: str = "ACTIVE",
-    account_category: str = "FREE",
-) -> InlineKeyboardMarkup:
-    status_btn_text = t("admin_btn_unblock_user", lang) if user_status == "BLOCKED" else t("admin_btn_block_user", lang)
-    status_action = "UNBLOCK" if user_status == "BLOCKED" else "BLOCK"
-    tier_btn_text = "🔄 Switch to FREE" if account_category == "PURCHASED" else "⭐ Switch to PURCHASED"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=tier_btn_text, callback_data=f"admin:user_tier:{target_user_id}:{return_page}"),
-            ],
-            [
-                InlineKeyboardButton(text="⚡ +10m Bonus", callback_data=f"admin:user_quick_credit:{target_user_id}:10:{return_page}"),
-                InlineKeyboardButton(text="⚡ +30m Bonus", callback_data=f"admin:user_quick_credit:{target_user_id}:30:{return_page}"),
-            ],
-            [
-                InlineKeyboardButton(text="➕ Custom Credit", callback_data=f"admin:adjust_start:{target_user_id}:CREDIT:{return_page}"),
-                InlineKeyboardButton(text="➖ Debit Minutes", callback_data=f"admin:adjust_start:{target_user_id}:DEBIT:{return_page}"),
-            ],
-            [
-                InlineKeyboardButton(text=t("admin_btn_view_ledger", lang), callback_data=f"admin:user_ledger:{target_user_id}:{return_page}"),
-                InlineKeyboardButton(text=status_btn_text, callback_data=f"admin:user_status:{target_user_id}:{status_action}:{return_page}"),
-            ],
-            [
-                InlineKeyboardButton(text="🔄 Refresh", callback_data=f"admin:user_detail:{target_user_id}:{return_page}"),
-                InlineKeyboardButton(text="🔙 Back to Users", callback_data=f"admin:users_page:{return_page}"),
-            ],
-        ]
-    )
-
-
-def admin_user_ledger_kb(target_user_id: int, return_page: int = 1, lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"admin:user_ledger:{target_user_id}:{return_page}")],
-            [InlineKeyboardButton(text="🔙 Back to User Detail", callback_data=f"admin:user_detail:{target_user_id}:{return_page}")],
-        ]
-    )
 
 
 def admin_pay_approve_confirm_kb(pay_id: str, lang: str = "my") -> InlineKeyboardMarkup:
@@ -328,218 +286,18 @@ def admin_tutorial_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
     )
 
 
-def admin_user_search_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("admin_btn_search_cancel", lang), callback_data="admin:user_search_cancel")]
-        ]
-    )
 
 
-def admin_adjust_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Cancel Adjustment", callback_data="admin:adjust_cancel")]
-        ]
-    )
 
 
-def admin_adjust_preview_kb(token: str, lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("admin_btn_confirm_apply", lang), callback_data=f"admin:adjust_confirm:{token}")],
-            [InlineKeyboardButton(text=t("admin_btn_cancel", lang), callback_data="admin:adjust_cancel")],
-        ]
-    )
 
 
-def admin_queue_kb(
-    lang: str = "my",
-    failed_count: int = 0,
-    running: int = 0,
-    queued: int = 0,
-    success: int = 0,
-) -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(text=t("admin_btn_queue_running", lang, count=running), callback_data="admin:queue_view:running"),
-            InlineKeyboardButton(text=t("admin_btn_queue_queued", lang, count=queued), callback_data="admin:queue_view:queued"),
-        ],
-        [
-            InlineKeyboardButton(text=t("admin_btn_queue_success", lang, count=success), callback_data="admin:queue_view:success"),
-            InlineKeyboardButton(text=t("admin_btn_queue_failed", lang, count=failed_count), callback_data="admin:queue_failures"),
-        ],
-        [
-            InlineKeyboardButton(text=t("kb_refresh_queue", lang), callback_data="admin:queue"),
-        ],
-        [
-            InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard"),
-        ],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_queue_list_kb(jobs: list | None = None, category: str = "running", lang: str = "my") -> InlineKeyboardMarkup:
-    rows = []
-    if jobs:
-        for j in jobs:
-            j_short = str(j.id)
-            st = str(getattr(j, "status", "")).upper()
-            st_icon = "⚙️" if st == "RUNNING" else ("⏳" if st == "QUEUED" else ("✅" if st == "SUCCESS" else "❌"))
-            btn_label = f"{st_icon} #{j_short} · User {j.user_id}"
-            rows.append([InlineKeyboardButton(text=btn_label, callback_data=f"admin:job_detail:{j.id}")])
-
-    refresh_cb = f"admin:queue_view:{category}" if category in ("running", "queued", "success") else "admin:queue"
-    rows.append([
-        InlineKeyboardButton(text=t("kb_refresh", lang), callback_data=refresh_cb),
-        InlineKeyboardButton(text=t("admin_btn_back_to_queue", lang), callback_data="admin:queue"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_queue_failures_kb(jobs: list | None = None, lang: str = "my") -> InlineKeyboardMarkup:
-    buttons = []
-    if jobs:
-        for j in jobs:
-            j_short = str(j.id)
-            btn_label = f"❌ #{j_short} · User {j.user_id}"
-            buttons.append([InlineKeyboardButton(text=btn_label, callback_data=f"admin:job_detail:{j.id}")])
-    buttons.append([
-        InlineKeyboardButton(text=t("kb_refresh", lang), callback_data="admin:queue_failures"),
-        InlineKeyboardButton(text=t("admin_btn_back_to_queue", lang), callback_data="admin:queue"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def admin_job_detail_kb(job_id: str, is_retryable: bool = False, lang: str = "my", status: str = "FAILED") -> InlineKeyboardMarkup:
-    buttons = []
-    if is_retryable:
-        buttons.append([InlineKeyboardButton(text=t("admin_btn_retry_job", lang), callback_data=f"admin:job_retry_prompt:{job_id}")])
-    buttons.append([
-        InlineKeyboardButton(text=t("kb_refresh", lang), callback_data=f"admin:job_detail:{job_id}"),
-        InlineKeyboardButton(text=t("admin_btn_back_to_queue", lang), callback_data="admin:queue"),
-    ])
-    st_upper = str(status).upper()
-    if st_upper == "FAILED":
-        back_text = t("kb_back_failed", lang)
-        buttons.append([InlineKeyboardButton(text=back_text, callback_data="admin:queue_failures")])
-    elif st_upper in ("RUNNING", "QUEUED", "SUCCESS"):
-        back_text = t("kb_back_jobs_status", lang, status=st_upper.capitalize())
-        buttons.append([InlineKeyboardButton(text=back_text, callback_data=f"admin:queue_view:{st_upper.lower()}")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_job_retry_confirm_kb(job_id: str, lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("admin_btn_confirm_retry", lang), callback_data=f"admin:job_retry_confirm:{job_id}")],
-            [InlineKeyboardButton(text=t("admin_btn_cancel", lang), callback_data=f"admin:job_detail:{job_id}")],
-        ]
-    )
-
-
-def admin_settings_interactive_kb(lang: str = "my", maintenance_mode: bool = False) -> InlineKeyboardMarkup:
-    maint_text = t("kb_maintenance_on", lang) if maintenance_mode else t("kb_maintenance_off", lang)
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=t("admin_btn_edit_allowance", lang), callback_data="admin:settings:allowance"),
-                InlineKeyboardButton(text=t("admin_btn_edit_free_chars", lang), callback_data="admin:settings:free_chars"),
-            ],
-            [
-                InlineKeyboardButton(text=t("admin_btn_edit_purchased_chars", lang), callback_data="admin:settings:purchased_chars"),
-                InlineKeyboardButton(text=t("admin_btn_edit_daily_limit", lang), callback_data="admin:settings:daily_limit"),
-            ],
-            [
-                InlineKeyboardButton(text=t("admin_btn_edit_gates", lang), callback_data="admin:settings:gates"),
-                InlineKeyboardButton(text=f"🛠️ {maint_text}", callback_data="admin:settings:toggle_maintenance"),
-            ],
-            [
-                InlineKeyboardButton(text=t("admin_btn_refresh", lang), callback_data="admin:settings"),
-                InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard"),
-            ],
-        ]
-    )
-
-
-def admin_setting_presets_kb(
-    setting_key: str,
-    presets: list[tuple[str, str]],
-    allow_custom: bool = True,
-    lang: str = "my",
-) -> InlineKeyboardMarkup:
-    rows = []
-    # 2 buttons per row for presets
-    current_row = []
-    for label, val in presets:
-        current_row.append(InlineKeyboardButton(text=label, callback_data=f"admin:set:{setting_key}:{val}"))
-        if len(current_row) == 2:
-            rows.append(current_row)
-            current_row = []
-    if current_row:
-        rows.append(current_row)
-
-    if allow_custom:
-        rows.append([InlineKeyboardButton(text=t("admin_btn_custom_input", lang), callback_data=f"admin:settings_input:{setting_key}")])
-
-    rows.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:settings")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_settings_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="admin:settings")]
-        ]
-    )
-
-
-def admin_pricing_plan_edit_kb(code: str, lang: str = "my") -> InlineKeyboardMarkup:
-    presets = [
-        [1500, 2000, 2500],
-        [3000, 5000, 8000, 10000],
-    ]
-    rows = []
-    for r in presets:
-        rows.append([
-            InlineKeyboardButton(
-                text=f"{val:,} Ks",
-                callback_data=f"admin:price_set:{code}:{val}",
-            )
-            for val in r
-        ])
-    rows.append([
-        InlineKeyboardButton(text="✍️ Custom Price", callback_data=f"admin:price_custom:{code}"),
-        InlineKeyboardButton(text="🔙 Back to Pricing", callback_data="admin:pricing"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def admin_payment_accounts_edit_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📱 KBZPay Number", callback_data="admin:pay_field:payment_kpay_number"),
-                InlineKeyboardButton(text="👤 KBZPay Name", callback_data="admin:pay_field:payment_kpay_name"),
-            ],
-            [
-                InlineKeyboardButton(text="📱 WavePay Number", callback_data="admin:pay_field:payment_wave_number"),
-                InlineKeyboardButton(text="👤 WavePay Name", callback_data="admin:pay_field:payment_wave_name"),
-            ],
-            [
-                InlineKeyboardButton(text="🔙 Back to Pricing", callback_data="admin:pricing"),
-            ],
-        ]
-    )
-
-
-def admin_model_rename_cancel_kb(model_id: int, lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Cancel", callback_data=f"admin:model:{model_id}")]
-        ]
-    )
 
 
 def user_history_kb(
@@ -629,80 +387,8 @@ def custom_voice_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
     )
 
 
-def admin_cvr_list_kb(requests: list, status_filter: str = "PENDING", lang: str = "my") -> InlineKeyboardMarkup:
-    buttons = []
-    for req in requests:
-        st_badge = "⏳" if req.status == "PENDING" else ("✅" if req.status == "APPROVED" else "❌")
-        m_name = req.model_name[:14] if req.model_name else "Unnamed"
-        btn_text = f"{st_badge} {req.id} · {m_name}"
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin:cvr:detail:{req.id}")])
-
-    filter_btn = (
-        InlineKeyboardButton(text="📋 All Requests", callback_data="admin:cvr:filter:ALL")
-        if status_filter == "PENDING"
-        else InlineKeyboardButton(text="⏳ Pending Only", callback_data="admin:cvr:filter:PENDING")
-    )
-    buttons.append([
-        filter_btn,
-        InlineKeyboardButton(text="🔄 Refresh", callback_data="admin:cvr"),
-    ])
-    buttons.append([
-        InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def admin_cvr_detail_kb(req_id: str, status: str = "PENDING", lang: str = "my") -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text="🎧 နမူနာအသံနားဆင်မည်", callback_data=f"admin:cvr:play:{req_id}")],
-    ]
-    if status == "PENDING":
-        buttons.append([
-            InlineKeyboardButton(text=t("admin_btn_cvr_assign_existing", lang), callback_data=f"admin:cvr:assign_exist:{req_id}"),
-            InlineKeyboardButton(text=t("admin_btn_cvr_scan_assign", lang), callback_data=f"admin:cvr:scan_assign:{req_id}"),
-        ])
-        buttons.append([
-            InlineKeyboardButton(text=t("admin_btn_cvr_reject", lang), callback_data=f"admin:cvr:reject_prompt:{req_id}")
-        ])
-    buttons.append([
-        InlineKeyboardButton(text=t("admin_btn_back_to_cvr", lang), callback_data="admin:cvr")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_cvr_select_model_kb(req_id: str, models: list, lang: str = "my") -> InlineKeyboardMarkup:
-    buttons = []
-    row = []
-    for m in models:
-        row.append(InlineKeyboardButton(text=f"🎙️ {m.name[:16]}", callback_data=f"admin:cvr:do_assign:{req_id}:{m.id}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([
-        InlineKeyboardButton(text=t("btn_cancel", lang), callback_data=f"admin:cvr:detail:{req_id}")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_cvr_reject_presets_kb(req_id: str, lang: str = "my") -> InlineKeyboardMarkup:
-    presets = [
-        ("🔇 အသံဖိုင် ဆူညံ/မကြည်လင်ပါ", "0"),
-        ("🎵 နောက်ခံတေးဂီတ ပါဝင်နေပါသည်", "1"),
-        ("⏱️ ကြာချိန် တိုတောင်းလွန်းပါသည် (<30s)", "2"),
-    ]
-    buttons = [
-        [InlineKeyboardButton(text=label, callback_data=f"admin:cvr:do_reject:{req_id}:{idx}")]
-        for label, idx in presets
-    ]
-    buttons.append([
-        InlineKeyboardButton(text="✍️ Custom Reason", callback_data=f"admin:cvr:reject_custom:{req_id}")
-    ])
-    buttons.append([
-        InlineKeyboardButton(text=t("btn_cancel", lang), callback_data=f"admin:cvr:detail:{req_id}")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def voice_samples_catalog_kb(
@@ -741,16 +427,5 @@ def voice_samples_catalog_kb(
         InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_model_sample_cancel_kb(model_id: int, lang: str = "my") -> InlineKeyboardMarkup:
-    cancel_text = t("btn_cancel", lang)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=cancel_text, callback_data=f"admin:model:{model_id}")]
-        ]
-    )
-
-
 
 

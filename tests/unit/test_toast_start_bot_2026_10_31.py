@@ -76,16 +76,12 @@ async def test_set_language_verified_branch_includes_welcome_block(db_session):
 
 # --- B4/B5/B7: main menu keyboard -----------------------------------------
 
-def test_main_menu_recap_downloader_labels_localized():
-    my = {b.text for b in _flat(main_menu_kb(is_admin=False, lang="my"))}
-    en = {b.text for b in _flat(main_menu_kb(is_admin=False, lang="en"))}
-    assert "🎬 Recap ဖန်တီးမည်" in my
-    assert "📥 ဒေါင်းလုဒ် လုပ်မည်" in my
-    assert "🎬 Movie Recap Maker" in en
-    assert "📥 Media Downloader" in en
 
 
-def test_main_menu_buy_button_after_refer_row():
+def test_main_menu_buy_button_before_refer_row():
+    # Renamed in the bot-chat cleanup (2026-11-03): the locked menu
+    # order is hero → Buy → Refer & Earn → Language / Help, so Buy now
+    # sits immediately BEFORE Refer & Earn.
     for lang, label in (("my", "💎 မိနစ် / Plan ဝယ်မည်"), ("en", "💎 Buy Minutes / Plans")):
         kb = main_menu_kb(is_admin=False, lang=lang)
         flat = _flat(kb)
@@ -93,27 +89,11 @@ def test_main_menu_buy_button_after_refer_row():
         assert len(buy) == 1
         assert buy[0].text == label
         datas = [b.callback_data for b in flat]
-        assert datas.index("menu:buy_minutes") == datas.index("menu:refer_earn") + 1
+        assert datas.index("menu:buy_minutes") == datas.index("menu:refer_earn") - 1
 
 
-def test_main_menu_tutorial_button_points_to_index_with_plural_label(monkeypatch):
-    monkeypatch.setattr(settings, "tutorial_index_link", "https://t.me/VoiceClonePro/38")
-    for lang, label in (
-        ("my", "📚 လမ်းညွှန်ဗီဒီယိုများ ကြည့်မည်"),
-        ("en", "📚 Watch Tutorial Videos"),
-    ):
-        flat = _flat(main_menu_kb(is_admin=False, lang=lang))
-        tut = [b for b in flat if b.url and "VoiceClonePro" in b.url]
-        assert len(tut) == 1
-        assert tut[0].url == "https://t.me/VoiceClonePro/38"
-        assert tut[0].text == label
 
 
-def test_main_menu_tutorial_button_honours_custom_index_link(monkeypatch):
-    monkeypatch.setattr(settings, "tutorial_index_link", "https://t.me/VoiceClonePro/99")
-    flat = _flat(main_menu_kb(is_admin=False, lang="en"))
-    tut = [b for b in flat if b.url and "VoiceClonePro" in b.url]
-    assert tut[0].url == "https://t.me/VoiceClonePro/99"
 
 
 # --- BUG: recap_credits 0 vs None ------------------------------------------

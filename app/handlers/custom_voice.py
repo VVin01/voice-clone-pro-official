@@ -272,20 +272,17 @@ async def handle_cvr_sample_input(message: Message, state: FSMContext):
         file_name=html.escape(sample_file_name or "audio"),
         duration=str(sample_duration) if sample_duration else "N/A",
     )
-    admin_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=t("custom_voice_admin_btn_review", "en"),
-                    callback_data=f"admin:cvr:detail:{req.id}",
-                )
-            ]
-        ]
-    )
-
+    # Bot cleanup 2026-11-03: the alert's old "Review" button pointed
+    # at the retired chat-side CVR screens (admin:cvr:detail:). The
+    # alert itself stays — admins still learn a request arrived, with
+    # the sample forwarded below — but it carries no button rather
+    # than a dead one. NOTE: chat CVR review retired per the cleanup
+    # scope and the Mini App Admin tab has no CVR section yet, so
+    # requests currently have no admin action surface (flagged in the
+    # build record for a follow-up decision).
     for admin_id in settings.admin_ids:
         try:
-            await message.bot.send_message(admin_id, admin_text, reply_markup=admin_kb, parse_mode="HTML")
+            await message.bot.send_message(admin_id, admin_text, parse_mode="HTML")
             if message.voice:
                 await message.bot.send_voice(admin_id, sample_file_id, caption=t("cvr_admin_sample_caption", "en", request_id=req.id))
             elif message.audio:

@@ -6,33 +6,13 @@ from app.config import settings
 from app.handlers.admin import (
     handle_admin_command,
     handle_admin_dashboard,
-    handle_admin_model_detail,
     handle_admin_pay_reject,
-    handle_admin_pricing,
-    handle_admin_settings,
     handle_admin_tutorial,
-    render_admin_dashboard,
+    render_admin_pulse,
 )
 from app.services.ledger import get_or_create_user
 
 
-@pytest.mark.asyncio
-async def test_admin_settings_handler_authorized(db_session):
-    settings.admin_ids_raw = "888111"
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888111, is_bot=False, first_name="BossAdmin")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-
-    await handle_admin_settings(cb, session=db_session)
-
-    cb.message.edit_text.assert_called_once()
-    call_args = cb.message.edit_text.call_args[0][0]
-    assert "Bot Runtime Settings" in call_args
-    assert "App Env:" in call_args
-    assert "Free Char Limit:" in call_args
-    cb.answer.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -53,22 +33,6 @@ async def test_admin_tutorial_handler_authorized(db_session):
     cb.answer.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_admin_pricing_handler_authorized(db_session):
-    settings.admin_ids_raw = "888111"
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888111, is_bot=False, first_name="BossAdmin")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-
-    await handle_admin_pricing(cb, session=db_session)
-
-    cb.message.edit_text.assert_called_once()
-    call_args = cb.message.edit_text.call_args[0][0]
-    assert ("Active Minute Packages" in call_args or "လက်ရှိ မိနစ်ပက်ကေ့ဂျ်များ" in call_args)
-    assert "MMK" in call_args
-    cb.answer.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -80,63 +44,12 @@ async def test_admin_handlers_unauthorized():
     cb.message.edit_text = AsyncMock()
     cb.answer = AsyncMock()
 
-    await handle_admin_settings(cb)
+    cb.data = "admin:dashboard"
+    await handle_admin_dashboard(cb)
     cb.message.edit_text.assert_not_called()
     cb.answer.assert_called_once_with("⛔ Access denied. Admin only.", show_alert=True)
 
 
-@pytest.mark.asyncio
-async def test_admin_model_detail_html_escaping(db_session):
-    from contextlib import asynccontextmanager
-    from unittest.mock import patch
-    from app.models.schema import VoiceModel
-
-    settings.admin_ids_raw = "888111"
-
-    admin_user, _ = await get_or_create_user(db_session, telegram_id=888111)
-    admin_user.language_code = "en"
-    await db_session.flush()
-
-    unsafe_path = "C:\\Models\\Rock & Roll <v1>\\model.pth"
-    model = VoiceModel(
-        name="TestModel",
-        slug="test-model",
-        type="SYSTEM",
-        model_dir="C:\\Models",
-        pth_path=unsafe_path,
-        status="ACTIVE",
-        is_default_free=False,
-    )
-    db_session.add(model)
-    await db_session.flush()
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888111, is_bot=False, first_name="BossAdmin")
-    cb.data = f"admin:model:{model.id}"
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-
-    @asynccontextmanager
-    async def mock_session_ctx():
-        yield db_session
-
-    with patch("app.handlers.admin.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_admin_model_detail(cb)
-
-    cb.message.edit_text.assert_called_once()
-    rendered_text = cb.message.edit_text.call_args[0][0]
-    parse_mode = cb.message.edit_text.call_args[1].get("parse_mode")
-
-    assert parse_mode == "HTML"
-    # Escaped entities present
-    assert "Rock &amp; Roll &lt;v1&gt;" in rendered_text
-    # Raw unsafe characters absent
-    assert unsafe_path not in rendered_text
-    assert "<v1>" not in rendered_text
-    # Legitimate HTML formatting intact
-    assert "<b>Model: TestModel</b>" in rendered_text
-    assert "<code>" in rendered_text
 
 
 @pytest.mark.asyncio
@@ -213,35 +126,44 @@ async def test_admin_command_handler_authorized(db_session):
     call_args = msg.answer.call_args[0][0]
     call_kwargs = msg.answer.call_args[1]
     assert call_kwargs.get("parse_mode") == "HTML"
-    assert "Server Status: 🟢 Online" in call_args
-    assert "<code>888111</code>" in call_args
-    assert "Users Overview:" in call_args
-    assert "Voice Studio Jobs:" in call_args
-    assert "Minutes & Ledger Pool:" in call_args
+    # Bot cleanup 2026-11-03: /admin renders the compact pulse, not
+    # the retired 11-button dashboard.
+    assert "Admin Panel" in call_args
+    assert "Users: <b>1</b> (VIP 0)" in call_args
+    assert "Last failure: None yet" in call_args
 
     reply_markup = call_kwargs.get("reply_markup")
     assert reply_markup is not None
-    callbacks = [btn.callback_data for row in reply_markup.inline_keyboard for btn in row]
-    assert "admin:voices" in callbacks
-    assert "admin:payments" in callbacks
-    assert "admin:users" in callbacks
-    assert "admin:queue" in callbacks
-    assert "admin:settings" in callbacks
-    assert "admin:tutorial" in callbacks
-    assert "admin:refresh" in callbacks
+    buttons = [btn for row in reply_markup.inline_keyboard for btn in row]
+    callbacks = [btn.callback_data for btn in buttons]
+    assert "admin:broadcast" in callbacks
     assert "menu:home" in callbacks
+    # The Admin Suite entry is a WebApp deep-link to the Mini App tab.
+    assert any(btn.web_app is not None and "tab=tab-admin" in (btn.web_app.url or "") for btn in buttons)
+    # Retired chat screens are gone from the landing.
+    for retired in ("admin:voices", "admin:payments", "admin:users", "admin:queue", "admin:settings", "admin:cvr", "admin:audit"):
+        assert retired not in callbacks
 
 
 @pytest.mark.asyncio
-async def test_admin_command_handler_unauthorized():
+async def test_admin_command_handler_unauthorized(db_session):
+    # Bot cleanup 2026-11-03: a non-admin /admin no longer gets the
+    # "Admin only" denial — it silently falls through to the normal
+    # user welcome (here: the membership gate card, since the probe
+    # cannot verify this user).
     settings.admin_ids_raw = "888111"
     msg = MagicMock(spec=Message)
     msg.from_user = TgUser(id=999999, is_bot=False, first_name="Intruder")
     msg.answer = AsyncMock()
+    msg.bot = MagicMock()
+    msg.bot.get_chat_member = AsyncMock(side_effect=Exception("no membership"))
 
-    await handle_admin_command(msg)
+    await handle_admin_command(msg, session=db_session)
 
-    msg.answer.assert_called_once_with("⛔ Access denied. Admin only.")
+    msg.answer.assert_called_once()
+    sent_text = msg.answer.call_args[0][0]
+    assert "Access denied" not in sent_text
+    assert "Admin only" not in sent_text
 
 
 @pytest.mark.asyncio
@@ -267,7 +189,7 @@ async def test_admin_dashboard_callback_refresh(db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_dashboard_metrics_and_html_escaping(db_session):
+async def test_admin_pulse_metrics_and_html_escaping(db_session):
     from app.models.enums import AccountCategory, JobStatus
     from app.models.schema import Job, User
     settings.admin_ids_raw = "888111"
@@ -285,29 +207,27 @@ async def test_admin_dashboard_metrics_and_html_escaping(db_session):
     db_session.add_all([j1, j2])
     await db_session.flush()
 
-    text, kb = await render_admin_dashboard(admin_id=888111, lang="en", session=db_session)
+    text, kb = await render_admin_pulse(lang="en", session=db_session)
 
-    # Metrics assertions
-    assert "Total: <b>2</b> (Free: 1 · Purchased: 1)" in text
-    assert "Total Jobs: <b>2</b>" in text
-    assert "✅ Success: <b>1</b>" in text
-    assert "❌ Failed: <b>1</b>" in text
+    # Pulse metrics assertions
+    assert "Users: <b>2</b> (VIP 1)" in text
+    assert "Jobs today: <b>2</b>" in text
+    assert "Running: 0" in text
+    assert "Queued: 0" in text
 
-    # HTML escaping assertions
-    assert "&lt;InvalidIndex &amp; BufferOverflow&gt;" in text
+    # The failure line carries the escaped first line of the stored
+    # error (no machine-class prefix here), never the raw text.
+    assert "VoxCPM2 crashed: &lt;InvalidIndex &amp; BufferOverflow&gt;" in text
     assert unsafe_err not in text
     assert "<InvalidIndex" not in text
-    assert "<b>Recent Issues:</b>" in text
-
-
-@pytest.mark.asyncio
-async def test_admin_dashboard_empty_db_safety(db_session):
-    text, kb = await render_admin_dashboard(admin_id=777, lang="en", session=db_session)
-
-    assert "Total: <b>0</b>" in text
-    assert "Total Jobs: <b>0</b>" in text
-    assert "Clean (0 failed jobs)" in text
-    assert "Purchased: <b>0.0m</b>" in text
     assert kb is not None
 
 
+@pytest.mark.asyncio
+async def test_admin_pulse_empty_db_safety(db_session):
+    text, kb = await render_admin_pulse(lang="en", session=db_session)
+
+    assert "Users: <b>0</b>" in text
+    assert "Jobs today: <b>0</b>" in text
+    assert "Last failure: None yet" in text
+    assert kb is not None

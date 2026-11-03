@@ -16,12 +16,9 @@ from app.services.custom_voice import (
 )
 from app.services.ledger import get_or_create_user
 from app.services.models import get_available_models_for_user
-from app.handlers.admin import (
-    handle_admin_cvr_detail,
-    handle_admin_cvr_do_assign,
-    handle_admin_cvr_do_reject,
-    handle_admin_cvr_list,
-)
+# Bot cleanup 2026-11-03: the chat-side admin CVR workflow test
+# retired with the admin:cvr:* screens. The service-level assign /
+# reject tests below stay — services.custom_voice is unchanged.
 
 
 @pytest.mark.asyncio
@@ -235,74 +232,6 @@ async def test_admin_reject_frees_user_slot(db_session):
     assert req_c is not None
 
 
-@pytest.mark.asyncio
-async def test_admin_cvr_callbacks_workflow(db_session):
-    from app.config import settings
-    from aiogram.types import User as TgUser
-
-    admin_id = 888111
-    settings.admin_ids_raw = str(admin_id)
-    admin, _ = await get_or_create_user(db_session, telegram_id=admin_id)
-
-    # Purchased user submits request
-    u, _ = await get_or_create_user(db_session, telegram_id=8808)
-    u.account_category = AccountCategory.PURCHASED.value
-    _, req, _ = await create_custom_voice_request(db_session, u.id, "Test Model", "sample_id_xyz", "sample.mp3", 45)
-    await db_session.commit()
-
-    # 1. Admin lists CVRs
-    cb_list = MagicMock()
-    cb_list.from_user = TgUser(id=admin_id, is_bot=False, first_name="BossAdmin")
-    cb_list.data = "admin:cvr"
-    cb_list.message = MagicMock()
-    cb_list.message.edit_text = AsyncMock()
-    cb_list.answer = AsyncMock()
-
-    await handle_admin_cvr_list(cb_list, session=db_session)
-    cb_list.message.edit_text.assert_called_once()
-    assert "Custom Voice Requests" in cb_list.message.edit_text.call_args[0][0]
-
-    # 2. Admin views CVR detail
-    cb_detail = MagicMock()
-    cb_detail.from_user = TgUser(id=admin_id, is_bot=False, first_name="BossAdmin")
-    cb_detail.data = f"admin:cvr:detail:{req.id}"
-    cb_detail.message = MagicMock()
-    cb_detail.message.edit_text = AsyncMock()
-    cb_detail.answer = AsyncMock()
-
-    await handle_admin_cvr_detail(cb_detail, session=db_session)
-    cb_detail.message.edit_text.assert_called_once()
-    assert req.id in cb_detail.message.edit_text.call_args[0][0]
-
-    # 3. Create a model in DB and admin assigns it
-    m = VoiceModel(
-        id=7702,
-        name="Test Voice Output",
-        slug="test-voice-output",
-        model_dir="storage/models/test",
-        pth_path="voxcpm",  # runnable model (see the V1 note above)
-        type=VoiceModelType.SYSTEM.value,
-        status=VoiceModelStatus.ACTIVE.value,
-    )
-    db_session.add(m)
-    await db_session.commit()
-
-    cb_assign = MagicMock()
-    cb_assign.from_user = TgUser(id=admin_id, is_bot=False, first_name="BossAdmin")
-    cb_assign.data = f"admin:cvr:do_assign:{req.id}:{m.id}"
-    cb_assign.message = MagicMock()
-    cb_assign.message.edit_text = AsyncMock()
-    cb_assign.answer = AsyncMock()
-    cb_assign.bot.send_message = AsyncMock()
-
-    await handle_admin_cvr_do_assign(cb_assign, session=db_session)
-    assert cb_assign.bot.send_message.called
-    assert cb_assign.answer.called
-
-    # Verify request is approved
-    refreshed_req = await get_custom_voice_request_by_id(db_session, req.id)
-    assert refreshed_req.status == CustomVoiceRequestStatus.APPROVED.value
-    assert refreshed_req.assigned_model_id == m.id
 
 
 @pytest.mark.asyncio

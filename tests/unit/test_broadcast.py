@@ -36,7 +36,7 @@ from app.services.ledger import get_or_create_user
 from app.ui.keyboards import (
     admin_broadcast_preview_kb,
     admin_broadcast_prompt_kb,
-    admin_dashboard_kb,
+    admin_menu_kb,
     main_menu_kb,
 )
 
@@ -67,8 +67,8 @@ class FakeFSMContext:
 @pytest.mark.asyncio
 async def test_broadcast_keyboards_integration():
     """Verify admin dashboard includes broadcast button, user menu excludes it, and helper KBs format correctly."""
-    # Admin dashboard keyboard must include admin:broadcast
-    adm_kb = admin_dashboard_kb(lang="en")
+    # Admin landing keyboard (pulse menu) must include admin:broadcast
+    adm_kb = admin_menu_kb(lang="en")
     adm_callbacks = [btn.callback_data for row in adm_kb.inline_keyboard for btn in row]
     assert "admin:broadcast" in adm_callbacks
     assert "Broadcast" in [btn.text for row in adm_kb.inline_keyboard for btn in row if btn.callback_data == "admin:broadcast"][0]
@@ -86,7 +86,7 @@ async def test_broadcast_keyboards_integration():
 
     prev_kb = admin_broadcast_preview_kb(token="test123token", lang="en")
     prev_cbs = [btn.callback_data for row in prev_kb.inline_keyboard for btn in row]
-    assert prev_cbs == ["admin:broadcast_send:test123token", "admin:broadcast_cancel"]
+    assert prev_cbs == ["admin:broadcast_send:test123token", "admin:broadcast_test:test123token", "admin:broadcast_cancel"]
 
 
 @pytest.mark.asyncio
@@ -302,7 +302,10 @@ async def test_admin_broadcast_flow_compose_preview_and_cancel(db_session):
 
     assert state.current_state == AdminBroadcastFSM.choosing_audience
     cb_start.message.edit_text.assert_called_once()
-    assert "Audience Selection" in cb_start.message.edit_text.call_args[0][0]
+    assert "Choose Audience" in cb_start.message.edit_text.call_args[0][0]
+    # The header reconciles the segments in one line (Imported
+    # Unregistered is a subset of Imported All).
+    assert "subset of Imported All" in cb_start.message.edit_text.call_args[0][0]
     cb_start.answer.assert_called_once()
 
     # Step 1b: Admin selects audience
@@ -347,7 +350,7 @@ async def test_admin_broadcast_flow_compose_preview_and_cancel(db_session):
     # Preview must safely escape HTML tags
     assert "&lt;Pro Users&gt; &amp; VIPs!" in preview_call[0][0]
     assert unsafe_content not in preview_call[0][0]
-    assert "Target Recipients:" in preview_call[0][0]
+    assert "Recipients:" in preview_call[0][0]
 
     # Verify confirmation token exists in reply markup
     token = state.data.get("token")
@@ -371,7 +374,8 @@ async def test_admin_broadcast_flow_compose_preview_and_cancel(db_session):
     assert state.data == {}
     cb_cancel.answer.assert_called_once_with("❌ Broadcast cancelled.", show_alert=True)
     cb_cancel.message.edit_text.assert_called_once()
-    assert "Server Status: 🟢 Online" in cb_cancel.message.edit_text.call_args[0][0]
+    # Cancel lands back on the compact admin pulse (cleanup 2026-11-03).
+    assert "Admin Panel" in cb_cancel.message.edit_text.call_args[0][0]
 
 
 @pytest.mark.asyncio

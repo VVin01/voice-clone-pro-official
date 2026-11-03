@@ -16,37 +16,35 @@ from app.ui.keyboards import main_menu_kb
 
 @pytest.mark.asyncio
 async def test_four_item_user_menu_and_admin_button():
-    # Current main menu (Mini App-first design): three WebApp launch
-    # buttons (callback_data None), a tutorial URL button, the
-    # Refer & Earn callback, language switch and membership verify
-    # callbacks. No admin broadcast button for ordinary users.
+    # Bot-chat cleanup (2026-11-03): the main menu is exactly 4 core
+    # buttons for a verified user — hero WebApp (callback_data None),
+    # Buy, Refer & Earn, Language / Help. The Recap/Downloader WebApp
+    # deep-links and the Tutorials URL button were retired (Mini App
+    # nav covers them); the membership button only appears while
+    # unverified (membership_pending=True — pinned in
+    # test_bot_cleanup_2026_11_03.py).
     kb_user_my = main_menu_kb(is_admin=False, lang="my")
     user_buttons = [btn.callback_data for row in kb_user_my.inline_keyboard for btn in row]
-    assert user_buttons == [None, None, None, None, "menu:refer_earn", "menu:buy_minutes", "menu:change_lang", "gate:verify"]
+    assert user_buttons == [None, "menu:buy_minutes", "menu:refer_earn", "menu:help_settings"]
     assert "admin:broadcast_prompt" not in user_buttons
-    assert len(user_buttons) == 8
+    assert len(user_buttons) == 4
     flat_my = [btn for row in kb_user_my.inline_keyboard for btn in row]
-    assert flat_my[0].web_app is not None  # Launch Studio WebApp button
-    assert flat_my[3].url  # Tutorial URL button
+    assert flat_my[0].web_app is not None  # Hero Mini App WebApp button
 
     kb_user_en = main_menu_kb(is_admin=False, lang="en")
     flat_en = [btn for row in kb_user_en.inline_keyboard for btn in row]
     assert "Open Mini App" in flat_en[0].text  # R40 deck H2 renamed menu_launch_text
-    assert "Recap" in flat_en[1].text
-    assert "Downloader" in flat_en[2].text
-    assert "Tutorial" in flat_en[3].text
-    assert "Refer & Earn" in flat_en[4].text
-    assert "Buy Minutes" in flat_en[5].text
-    assert "Language" in flat_en[6].text
-    assert "Verify Membership" in flat_en[7].text
+    assert "Buy Minutes" in flat_en[1].text
+    assert "Refer & Earn" in flat_en[2].text
+    assert "Language" in flat_en[3].text
 
-    # Admin keyboard: same user items + 1 broadcast button
+    # Admin keyboard: the same 4 core items + admin entry + broadcast.
     kb_admin = main_menu_kb(is_admin=True, lang="en")
     admin_buttons = [btn.callback_data for row in kb_admin.inline_keyboard for btn in row]
-    assert admin_buttons == [None, None, None, None, "menu:refer_earn", "menu:buy_minutes", "menu:change_lang", "gate:verify", "admin:broadcast"]
-    assert len(admin_buttons) == 9
+    assert admin_buttons == [None, "menu:buy_minutes", "menu:refer_earn", "menu:help_settings", "admin:dashboard", "admin:broadcast"]
+    assert len(admin_buttons) == 6
     flat_admin = [btn for row in kb_admin.inline_keyboard for btn in row]
-    assert "Broadcast" in flat_admin[8].text
+    assert "Broadcast" in flat_admin[5].text
 
 
 @pytest.mark.asyncio
@@ -108,7 +106,9 @@ async def test_render_main_menu_display(db_session):
     assert "Voice Balance" in text
     assert "Recap Balance" in text
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert callbacks == [None, None, None, None, "menu:refer_earn", "menu:buy_minutes", "menu:change_lang", "gate:verify"]
+    # Fresh user: gate flags are False, so the membership status-card
+    # button is present (bot-chat cleanup, 2026-11-03).
+    assert callbacks == [None, "menu:buy_minutes", "menu:refer_earn", "menu:help_settings", "menu:membership"]
 
 
 @pytest.mark.asyncio

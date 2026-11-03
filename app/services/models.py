@@ -13,6 +13,36 @@ from app.models.schema import AuditLog, User, UserVoiceModelGrant, VoiceModel, u
 logger = logging.getLogger(__name__)
 
 
+def is_legacy_local_model(model) -> bool:
+    """True for legacy pre-VoxCPM2 SYSTEM model rows (the old trained
+    .pth voices — e.g. the rows the admin screen showed as "The Light",
+    "Kartoon", "Myanmar Voice 1", "Ant").
+
+    Ground truth (bot cleanup 2026-11-03): these rows exist only in the
+    VoiceModel table — nothing in code seeds or defines them any more
+    (session.init_db seeds only the VoxCPM row, slug "voxcpm-cloud-ai",
+    pth_path "voxcpm"). Their artifact files are gone and queue.py maps
+    every job for a non-"voxcpm" model onto the VoxCPM row, so the rows
+    are display-only zombies: ACTIVE in the DB yet unusable, which is
+    exactly what made the old admin screen show 🔴 "(ACTIVE)".
+
+    They are HIDDEN from display surfaces, never deleted: history
+    rendering (services.history.get_models_map_for_jobs) and old job
+    records still resolve model names/ids through the rows. PERSONAL
+    models are user property and are never legacy by this test.
+    """
+    if getattr(model, "type", None) != VoiceModelType.SYSTEM.value:
+        return False
+    pth = (getattr(model, "pth_path", "") or "").strip().lower()
+    slug = (getattr(model, "slug", "") or "").lower()
+    return pth != "voxcpm" and "voxcpm" not in slug
+
+
+def is_displayable_model(model) -> bool:
+    """Catalogue visibility: everything except legacy local models."""
+    return not is_legacy_local_model(model)
+
+
 def safe_model_slug(name: str) -> str:
     """Sanitize model name or artifact path into a filesystem/slug-safe token."""
     value = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip()).strip("-").lower()
@@ -354,6 +384,21 @@ async def get_available_models_for_user(session: AsyncSession, user_id: int) -> 
 
     res = await session.execute(stmt)
     return list(res.scalars().all())
+
+
+async def get_displayable_models_for_user(session: AsyncSession, user_id: int) -> list[VoiceModel]:
+    """Catalogue-facing variant of get_available_models_for_user.
+
+    Bot cleanup 2026-11-03: display surfaces (bot samples catalogue,
+    bot clone model picker, Mini App /voices/models) must not list
+    the legacy .pth SYSTEM rows. The filter lives HERE, not inside
+    get_available_models_for_user, because that function is also the
+    authorization source for job creation (get_authorized_model) —
+    and the generation path must keep its existing remap semantics
+    for granted/legacy rows (queue.py logs and falls back to VoxCPM).
+    """
+    models = await get_available_models_for_user(session, user_id)
+    return [m for m in models if is_displayable_model(m)]
 
 
 async def get_authorized_model(session: AsyncSession, user_id: int, model_id: int | None) -> VoiceModel | None:

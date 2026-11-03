@@ -64,94 +64,34 @@ def test_statics_token_bumped_to_r37():
     assert "20261102_ma1" not in HTML
 
 
-# ── D1: Decimal dashboard sums ──────────────────────────────────────
-
-class _ScalarResult:
-    def __init__(self, value):
-        self._value = value
-
-    def scalar(self):
-        return self._value
-
-    def scalar_one_or_none(self):
-        return self._value
+# ── D1: Decimal dashboard sums (dashboard retired 2026-11-03; hazard swept below) ──
 
 
-class _DecimalSumSession:
-    """Wraps a real session but answers the two MinuteBalance SUM
-    queries with Decimals — exactly what the Postgres dialect returns
-    for a NUMERIC-backed column (the prod condition)."""
-
-    def __init__(self, real, purchased: Decimal, consumed: Decimal):
-        self._real = real
-        self._purchased = purchased
-        self._consumed = consumed
-
-    async def execute(self, stmt, *args, **kwargs):
-        sql = str(stmt).lower()
-        if "sum(" in sql and "purchased_seconds" in sql:
-            return _ScalarResult(self._purchased)
-        if "sum(" in sql and "consumed_seconds" in sql:
-            return _ScalarResult(self._consumed)
-        return await self._real.execute(stmt, *args, **kwargs)
 
 
-@pytest.mark.asyncio
-async def test_d1_dashboard_metrics_survive_decimal_sums(db_session):
-    from app.handlers.admin import _fetch_dashboard_metrics
-
-    wrapped = _DecimalSumSession(
-        db_session, purchased=Decimal("3661"), consumed=Decimal("7265")
-    )
-    data = await _fetch_dashboard_metrics(wrapped)
-    # 3661s -> 61.0m ; 7265s -> 121.1m, correctly rounded, no TypeError.
-    assert data["purchased_minutes"] == 61.0
-    assert data["consumed_minutes"] == 121.1
-    assert isinstance(data["purchased_minutes"], float)
-    assert isinstance(data["consumed_minutes"], float)
 
 
-@pytest.mark.asyncio
-async def test_d1_dashboard_render_survives_decimal_sums(db_session):
-    from app.handlers.admin import render_admin_dashboard
-
-    wrapped = _DecimalSumSession(
-        db_session, purchased=Decimal("3661"), consumed=Decimal("7265")
-    )
-    text, kb = await render_admin_dashboard(
-        admin_id=888111, lang="en", session=wrapped
-    )
-    assert "61.0m" in text
-    assert "121.1m" in text
-    assert kb is not None
 
 
-@pytest.mark.asyncio
-async def test_d1_dashboard_decimal_zero_sums(db_session):
-    from app.handlers.admin import _fetch_dashboard_metrics
-
-    wrapped = _DecimalSumSession(
-        db_session, purchased=Decimal("0"), consumed=Decimal("0")
-    )
-    data = await _fetch_dashboard_metrics(wrapped)
-    assert data["purchased_minutes"] == 0.0
-    assert data["consumed_minutes"] == 0.0
 
 
-def test_d1_sweep_dashboard_is_the_only_sql_sum_site():
-    """The dialect-gap sweep: func.sum( over app/ exists ONLY in the
-    dashboard metrics (fixed above) — every other division site reads
-    per-row ORM attributes, which the dialect returns as ints."""
+
+def test_d1_sweep_no_sql_sum_sites_remain():
+    """Bot-chat cleanup (2026-11-03): the old /admin dashboard — the ONLY
+    func.sum( site in app/ — was retired wholesale, so the Decimal-sum
+    division hazard is gone by construction. This sweep now pins the
+    STRONGER invariant: no func.sum( anywhere under app/ at all (the
+    Mini App admin API computes its aggregates per-row). If a future
+    change reintroduces a SQL SUM over a NUMERIC column, this test
+    fails first — coerce with int(...) at the source and update here
+    deliberately."""
     app_root = ROOT / "app"
     sum_sites = []
     for py in app_root.rglob("*.py"):
         text = py.read_text(encoding="utf-8")
         if "func.sum(" in text:
             sum_sites.append(py.relative_to(ROOT).as_posix())
-    assert sum_sites == ["app/handlers/admin.py"]
-    # …and both of its sum lines are int()-coerced at the source.
-    assert "purchased_sec = int((await session.execute(select(func.sum(MinuteBalance.purchased_seconds)))).scalar() or 0)" in APP_PY
-    assert "consumed_sec = int((await session.execute(select(func.sum(MinuteBalance.consumed_seconds)))).scalar() or 0)" in APP_PY
+    assert sum_sites == []
 
 
 # ── D2: plate fit engages at the settle points ──────────────────────

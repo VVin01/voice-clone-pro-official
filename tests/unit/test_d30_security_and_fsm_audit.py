@@ -13,14 +13,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.handlers import setup_handlers
 from app.handlers.admin import (
-    AdminAdjustFSM,
     AdminBroadcastFSM,
-    AdminUserSearchFSM,
-    handle_admin_adjust_amount_input,
-    handle_admin_adjust_cancel,
-    handle_admin_adjust_confirm,
-    handle_admin_adjust_reason_input,
-    handle_admin_adjust_start,
     handle_admin_broadcast_cancel,
     handle_admin_broadcast_confirm,
     handle_admin_broadcast_group_select,
@@ -28,9 +21,6 @@ from app.handlers.admin import (
     handle_admin_broadcast_start,
     handle_admin_command,
     handle_admin_dashboard,
-    handle_admin_user_search_cancel,
-    handle_admin_user_search_query,
-    handle_admin_user_search_start,
 )
 from app.handlers.clone import (
     CloneFSM,
@@ -646,119 +636,8 @@ async def test_admin_broadcast_realistic_token_lifecycle(db_session, monkeypatch
     assert len(campaigns_after) == 1
 
 
-@pytest.mark.asyncio
-async def test_admin_minute_adjustment_fsm_complete_lifecycle(db_session):
-    """Admin minute adjustment multi-step FSM: amount, reason, confirm, and idempotency."""
-    admin_id = 888003
-    target_id = 4001
-    settings.admin_ids_raw = str(admin_id)
-
-    target_user = User(id=target_id, username="target_alice", status=UserStatus.ACTIVE.value, account_category=AccountCategory.FREE.value)
-    db_session.add(target_user)
-    bal = await get_minute_balance(db_session, target_id)
-    bal.purchased_seconds = 300  # 5 min
-    await db_session.commit()
-
-    sm = create_mock_session_maker(db_session)
-    state = FakeFSMContext()
-
-    # 1. Admin initiates minute adjustment
-    cb_init = MagicMock(spec=CallbackQuery)
-    cb_init.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_init.data = f"admin:adjust_start:{target_id}:CREDIT:1"
-    cb_init.message = MagicMock(spec=Message)
-    cb_init.message.edit_text = AsyncMock()
-    cb_init.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_adjust_start(cb_init, state)
-
-    assert state.current_state == AdminAdjustFSM.waiting_for_amount
-    assert state.data["target_user_id"] == target_id
-
-    # 2. Admin inputs amount (10 minutes)
-    msg_amt = MagicMock(spec=Message)
-    msg_amt.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    msg_amt.text = "10"
-    msg_amt.answer = AsyncMock()
-
-    await handle_admin_adjust_amount_input(msg_amt, state)
-    assert state.current_state == AdminAdjustFSM.waiting_for_reason
-    assert state.data["minutes"] == 10.0
-    assert state.data["direction"] == "CREDIT"
-
-    # 3. Admin inputs reason -> Confirmation preview
-    msg_rsn = MagicMock(spec=Message)
-    msg_rsn.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    msg_rsn.text = "QA test incentive bonus"
-    msg_rsn.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_adjust_reason_input(msg_rsn, state)
-    assert state.current_state == AdminAdjustFSM.confirming
-    assert state.data["reason"] == "QA test incentive bonus"
-    assert "token" in state.data
-    adjust_token = state.data["token"]
-
-    # 4. Admin confirms adjustment
-    cb_conf = MagicMock(spec=CallbackQuery)
-    cb_conf.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_conf.data = f"admin:adjust_confirm:{adjust_token}"
-    cb_conf.message = MagicMock(spec=Message)
-    cb_conf.message.edit_text = AsyncMock()
-    cb_conf.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_adjust_confirm(cb_conf, state=state, session=db_session)
-    assert state.current_state is None
-
-    # Prove ledger event created and balance incremented (+600 seconds)
-    bal_after = await get_minute_balance(db_session, target_id)
-    assert bal_after.purchased_seconds == 900  # 300 + 600
-
-    ledgers = (await db_session.execute(select(MinuteLedgerEvent).where(MinuteLedgerEvent.user_id == target_id))).scalars().all()
-    assert any(ev.seconds == 600 and "QA test incentive bonus" in (ev.note or "") for ev in ledgers)
-
-    # Prove audit log was recorded
-    audits = (await db_session.execute(select(AuditLog).where(AuditLog.admin_id == admin_id))).scalars().all()
-    assert len(audits) >= 1
-    assert audits[-1].action == "balance.adjust.credit"
 
 
-@pytest.mark.asyncio
-async def test_admin_user_search_fsm_complete_lifecycle(db_session):
-    """Admin user search multi-step FSM: initiation, search execution, and cancellation."""
-    admin_id = 888004
-    settings.admin_ids_raw = str(admin_id)
-
-    db_session.add(User(id=5001, username="charlie_test", status=UserStatus.ACTIVE.value))
-    await db_session.commit()
-
-    sm = create_mock_session_maker(db_session)
-    state = FakeFSMContext()
-
-    # 1. Admin initiates search
-    cb_start = MagicMock(spec=CallbackQuery)
-    cb_start.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_start.data = "admin:search_user"
-    cb_start.message = MagicMock(spec=Message)
-    cb_start.message.edit_text = AsyncMock()
-    cb_start.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_user_search_start(cb_start, state)
-    assert state.current_state == AdminUserSearchFSM.waiting_for_query
-
-    # 2. Admin enters query
-    msg_q = MagicMock(spec=Message)
-    msg_q.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    msg_q.text = "@charlie_test"
-    msg_q.answer = AsyncMock()
-
-    await handle_admin_user_search_query(msg_q, state=state, session=db_session)
-    assert state.current_state is None
-    msg_q.answer.assert_called_once()
-    assert "charlie_test" in msg_q.answer.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -1103,7 +982,13 @@ async def test_non_admin_cannot_reach_admin_operations(db_session, monkeypatch):
 
     send_msg_calls = [c[0][0] for c in bot.call_args_list if c[0] and type(c[0][0]).__name__ == "SendMessage"]
     assert len(send_msg_calls) == 1
-    assert "access denied" in send_msg_calls[0].text.lower() or "admin only" in send_msg_calls[0].text.lower() or "ဝင်ရောက်ခွင့်မရှိပါ" in send_msg_calls[0].text
+    # Bot cleanup 2026-11-03: /admin from a non-admin NO LONGER draws
+    # the denial — it silently falls through to the normal user
+    # welcome/gate flow. The security property that matters is that
+    # no admin surface or data is exposed: the single message is the
+    # ordinary user-facing one and contains no denial/admin content.
+    _txt = send_msg_calls[0].text.lower()
+    assert "access denied" not in _txt and "admin only" not in _txt and "ဝင်ရောက်ခွင့်မရှိပါ" not in send_msg_calls[0].text
 
     # 2. Normal user sends admin:dashboard callback
     bot.reset_mock()

@@ -9,20 +9,14 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.handlers.admin import (
-    evaluate_job_retry_eligibility,
-    handle_admin_job_detail,
-    handle_admin_job_retry_confirm,
-    handle_admin_job_retry_prompt,
     handle_admin_pay_approve_confirm,
     handle_admin_pay_approve_prompt,
     handle_admin_pay_reject_confirm,
     handle_admin_pay_reject_prompt,
-    handle_admin_settings,
     handle_admin_tutorial,
     handle_admin_tutorial_toggle,
     handle_admin_tutorial_url_input,
     handle_admin_tutorial_remove_confirm,
-    handle_admin_user_ledger,
 )
 from app.handlers.menu import handle_menu_tutorial, render_main_menu
 from app.models.enums import (
@@ -93,37 +87,6 @@ async def test_free_user_welcome_bonus_default_zero(db_session):
     assert balance_after.total_usable_seconds == 180
 
 
-@pytest.mark.asyncio
-async def test_admin_settings_and_policies_canonical_panel(db_session):
-    """admin:settings and alias admin:policies render combined infrastructure and policy details."""
-    settings.admin_ids_raw = "888111"
-    admin_user, _ = await get_or_create_user(db_session, telegram_id=888111)
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888111, is_bot=False, first_name="Admin")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-
-    # Test canonical callback
-    cb.data = "admin:settings"
-    await handle_admin_settings(cb, session=db_session)
-
-    cb.message.edit_text.assert_called_once()
-    rendered_text = cb.message.edit_text.call_args[0][0]
-    kb = cb.message.edit_text.call_args[1].get("reply_markup")
-
-    assert "Bot Runtime Settings & System Policies" in rendered_text
-    assert "Infrastructure & Runtime:" in rendered_text
-    assert "Free Tier Policy:" in rendered_text
-    assert "Purchased Tier Policy:" in rendered_text
-    assert "Minute Packages:" in rendered_text
-    assert "Deduction & Billing Rules:" in rendered_text
-
-    # Verify buttons
-    callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "admin:settings" in callbacks
-    assert "admin:dashboard" in callbacks
 
 
 @pytest.mark.asyncio
@@ -248,128 +211,10 @@ async def test_admin_tutorial_crud_and_user_menu_sync(db_session):
     assert "updated" in user_empty_url_text.lower() or "temporarily" in user_empty_url_text.lower()
 
 
-@pytest.mark.asyncio
-async def test_admin_job_retry_eligibility_classification(db_session):
-    """Failure classification correctly distinguishes non-retryable user/policy errors from retryable system errors."""
-    u, _ = await get_or_create_user(db_session, telegram_id=777888)
-    u.status = UserStatus.ACTIVE.value
-    await db_session.flush()
-
-    # 1. Non-retryable policy error: insufficient balance
-    j_bal = Job(id="job-bal-fail", user_id=u.id, status=JobStatus.FAILED.value, error_message="INSUFFICIENT_BALANCE: Need 60s, have 10s")
-    can_retry, cat, reason = evaluate_job_retry_eligibility(j_bal, u)
-    assert can_retry is False
-    assert cat == "POLICY_USER_ERROR"
-    assert "INSUFFICIENT_BALANCE" in reason
-
-    # 2. Non-retryable policy error: model not authorized
-    j_model = Job(id="job-model-fail", user_id=u.id, status=JobStatus.FAILED.value, error_message="MODEL_NOT_AUTHORIZED: Model 5 is purchased only")
-    can_retry, cat, reason = evaluate_job_retry_eligibility(j_model, u)
-    assert can_retry is False
-    assert cat == "POLICY_USER_ERROR"
-
-    # 3. Non-retryable user error: text limit exceeded
-    j_text = Job(id="job-text-fail", user_id=u.id, status=JobStatus.FAILED.value, error_message="TEXT_EXCEEDS_FREE_LIMIT: 250 > 100")
-    can_retry, cat, reason = evaluate_job_retry_eligibility(j_text, u)
-    assert can_retry is False
-    assert cat == "POLICY_USER_ERROR"
-
-    # 4. Inactive/suspended user
-    u_blocked, _ = await get_or_create_user(db_session, telegram_id=999111)
-    u_blocked.status = UserStatus.BLOCKED.value
-    await db_session.flush()
-
-    j_sys_blocked = Job(id="job-sys-blocked", user_id=u_blocked.id, status=JobStatus.FAILED.value, error_message="VoxCPM2 worker crash")
-    can_retry, cat, reason = evaluate_job_retry_eligibility(j_sys_blocked, u_blocked)
-    assert can_retry is False
-    assert cat == "USER_INACTIVE"
-
-    # 5. Retryable transient system error on active user
-    j_transient = Job(id="job-transient-1", user_id=u.id, status=JobStatus.FAILED.value, error_message="VoxCPM2 inference failed (exit 1): DLL load error")
-    can_retry, cat, reason = evaluate_job_retry_eligibility(j_transient, u)
-    assert can_retry is True
-    assert cat == "SYSTEM_FAILURE"
 
 
-@pytest.mark.asyncio
-async def test_admin_job_retry_execution(db_session):
-    """Admin job retry confirms revalidation, resets status to QUEUED, and logs audit record."""
-    settings.admin_ids_raw = "888111"
-    admin_user, _ = await get_or_create_user(db_session, telegram_id=888111)
-
-    target_user, _ = await get_or_create_user(db_session, telegram_id=888222)
-    target_user.status = UserStatus.ACTIVE.value
-    await db_session.flush()
-
-    failed_job = Job(
-        id="job-retryable-99",
-        user_id=target_user.id,
-        status=JobStatus.FAILED.value,
-        error_message="VoxCPM2 worker timeout after 180s",
-    )
-    db_session.add(failed_job)
-    await db_session.flush()
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888111, is_bot=False, first_name="Admin")
-    cb.data = f"admin:job_retry_confirm:{failed_job.id}"
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-
-    await handle_admin_job_retry_confirm(cb, session=db_session)
-
-    # Job is now QUEUED and error cleared
-    await db_session.refresh(failed_job)
-    assert failed_job.status == JobStatus.QUEUED.value
-    assert failed_job.error_message is None
-
-    # Alert sent
-    assert any("re-queued" in str(c).lower() for c in cb.answer.call_args_list)
 
 
-@pytest.mark.asyncio
-async def test_admin_user_ledger_history_display(db_session):
-    """Admin can inspect user ledger history with chronological entries, amounts, directions, and notes."""
-    settings.admin_ids_raw = "888111"
-    admin_user, _ = await get_or_create_user(db_session, telegram_id=888111)
-
-    target_user, _ = await get_or_create_user(db_session, telegram_id=654321)
-    ev1 = MinuteLedgerEvent(
-        user_id=target_user.id,
-        direction="CREDIT",
-        source="MONTHLY_FREE",
-        seconds=180,
-        note="Monthly allowance grant",
-    )
-    ev2 = MinuteLedgerEvent(
-        user_id=target_user.id,
-        direction="DEBIT",
-        source="CONSUME",
-        seconds=30,
-        reference_id="job-test-11",
-        note="Deduction for voice generation job",
-    )
-    db_session.add_all([ev1, ev2])
-    await db_session.flush()
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888111, is_bot=False, first_name="Admin")
-    cb.data = f"admin:user_ledger:{target_user.id}:1"
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-
-    await handle_admin_user_ledger(cb, session=db_session)
-
-    cb.message.edit_text.assert_called_once()
-    rendered_text = cb.message.edit_text.call_args[0][0]
-    assert f"Ledger History for User <code>{target_user.id}</code>" in rendered_text
-    assert "CREDIT" in rendered_text
-    assert "DEBIT" in rendered_text
-    assert "MONTHLY_FREE" in rendered_text
-    assert "CONSUME" in rendered_text
-    assert "job-test-11" in rendered_text
 
 
 @pytest.mark.asyncio
