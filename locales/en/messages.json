@@ -371,6 +371,7 @@
   "pay_package_combined_btn": "🎙️🎬 {minutes} Min + {credits} Recap — {price} MMK",
   "bot_generic_error": "⚠️ Something went wrong. Please wait a moment and try again.",
   "note_over_50mb_download": "📥 This file is larger than 50 MB, so it can't be sent via Telegram — please download it.",
+  "warn_blur_no_source_band": "⚠️ Source subtitle position not found — please check the blur box position.",
   "upload_too_large_1gb": "Video is larger than 1 GB — please choose a file under 1 GB.",
   "alert_btn_view_result": "View Result",
   "recap_tier_vip_text": "🎬 VIP Member: Up to 10 Minutes per Recap • Watermark-Free Output ✨",

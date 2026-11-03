@@ -2145,7 +2145,13 @@ def detect_source_subtitle_bands(
         agg /= used
         pers /= used
         h_px = agg.shape[0]
-        y_lo = int(0.40 * h_px)
+        # Scan the FULL frame height (blur safefix 2026-11-03): source
+        # captions also sit at the TOP of the frame in short dramas and
+        # social clips, and a scan that started at 40% of the height
+        # could never cover them — they ghosted through under the new
+        # subtitle line. The persistence/peak thresholds below are
+        # what reject scene noise, not the scan range.
+        y_lo = 0
         cand = [y for y in range(y_lo, h_px) if pers[y] >= 0.35 and agg[y] >= 0.012]
         if not cand:
             return []

@@ -371,6 +371,7 @@
   "pay_package_combined_btn": "🎙️🎬 {minutes} မိနစ် + {credits} Recap — {price} ကျပ်",
   "bot_generic_error": "⚠️ တစ်ခုခု ချို့ယွင်းသွားပါသည်။ ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါခင်ဗျာ။",
   "note_over_50mb_download": "📥 ဒီဖိုင်က 50 MB ထက် ကြီးနေလို့ Telegram နဲ့ တိုက်ရိုက် ပို့လို့ မရပါ — Download ရယူပါ။",
+  "warn_blur_no_source_band": "⚠️ မူရင်းစာတန်း နေရာကို ရှာမတွေ့ပါ — Blur Box နေရာကို ပြန်စစ်ပေးပါ။",
   "upload_too_large_1gb": "ဗီဒီယိုဖိုင်က 1 GB ထက် ကြီးနေပါသည် — 1 GB အောက် ဖိုင်ကို ရွေးချယ်ပါ။",
   "alert_btn_view_result": "ကြည့်ရှုမည်",
   "recap_tier_vip_text": "🎬 VIP အဖွဲ့ဝင်: ဗီဒီယိုကြာချိန် ၁၀ မိနစ်အထိ • Watermark ကင်းလွတ်ခွင့် ရရှိထားပါသည် ✨",
