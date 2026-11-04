@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r46">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r47">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -405,6 +405,7 @@
                         </button>
                     </div>
                     <p id="voice-oversize-note" class="hidden mt-2" data-i18n="note_over_50mb_download" style="font-size:12px; opacity:0.9;">📥 ဒီဖိုင်က 50 MB ထက် ကြီးနေလို့ Telegram နဲ့ တိုက်ရိုက် ပို့လို့ မရပါ — Download ရယူပါ။</p>
+                    <p id="voice-fallback-note" class="hidden mt-2" style="font-size:12px; opacity:0.9;"></p>
                 </div>
 
                 <!-- History now lives in the dedicated History tab -->
@@ -712,6 +713,14 @@
                                                     <span class="slider-val" id="val-blur-h">7%</span>
                                                 </div>
                                                 <input type="range" min="3" max="22" value="7" class="studio-slider" id="slider-blur-h">
+                                            </div>
+
+                                            <div class="slider-group">
+                                                <div class="slider-header">
+                                                    <span data-i18n="slider_blur_strength">🌫️ Blur အား (Strength):</span>
+                                                    <span class="slider-val" id="val-blur-strength">18</span>
+                                                </div>
+                                                <input type="range" min="4" max="40" value="18" class="studio-slider" id="slider-blur-strength">
                                             </div>
 
                                             <div class="slider-group">
@@ -1216,6 +1225,7 @@
                             </div>
                             <p id="recap-split-note" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
                             <p id="recap-blur-warning" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
+                            <p id="recap-fallback-note" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
                             <p id="recap-cost-line" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
                             <p id="recap-expiry-note" class="mt-2" data-i18n="history_expiry_note" style="font-size:12px; opacity:0.85;">⏱️ ဖိုင်များကို ၇ ရက်အထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
                         </div>
@@ -2294,7 +2304,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r46"></script>
-    <script src="/static/js/app.js?v=20261104_r46"></script>
+    <script src="/static/js/i18n.js?v=20261104_r47"></script>
+    <script src="/static/js/app.js?v=20261104_r47"></script>
 </body>
 </html>

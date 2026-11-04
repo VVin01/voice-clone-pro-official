@@ -875,9 +875,15 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
     # Audit fix E: share the recap planner's cross-job cooldown memory
     # (same text models, same keys) — cooled keys start last, and a
     # quota/auth rejection here cools the key for the next caller too.
+    # Batch O (DECISION backlog item 3): the starting key also ROTATES
+    # per message via KeyHealth.order(); keys it omits (cooled) are
+    # appended at the tail so the pool never shrinks.
     health = _key_rotation.health_for("gemini")
-    ordered = health.prioritized([key for _label, key in pool])
-    if ordered != [key for _label, key in pool]:
+    _pool_keys = [key for _label, key in pool]
+    ordered = health.order(_pool_keys)
+    _seen = set(ordered)
+    ordered = ordered + [k for k in _pool_keys if k not in _seen]
+    if ordered != _pool_keys:
         rank = {key: idx for idx, key in enumerate(ordered)}
         pool = sorted(pool, key=lambda item: rank[item[1]])
     models = gemini_model_chain()

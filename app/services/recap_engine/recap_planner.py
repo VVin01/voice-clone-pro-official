@@ -245,10 +245,19 @@ def _configure_gemini_key_pool(
     # pool never shrinks, so the model/key fallback chain below (and
     # the env sync in activate()) behaves exactly as before — the
     # cooldown only changes which key a job starts from.
+    # Batch O (DECISION backlog item 3): the starting key now also
+    # ROTATES per job via KeyHealth.order() — consecutive jobs begin at
+    # different keys instead of every job hammering key #1 first.
+    # order() omits cooled keys, so any it leaves out are appended at
+    # the tail in their original relative order: still last-resort
+    # candidates for this job, never silently dropped.
     if _key_rotation is not None:
         try:
-            _ordered = _key_rotation.health_for("gemini").prioritized([key for _label, key in key_pool])
-            if _ordered != [key for _label, key in key_pool]:
+            _pool_keys = [key for _label, key in key_pool]
+            _ordered = _key_rotation.health_for("gemini").order(_pool_keys)
+            _seen = set(_ordered)
+            _ordered = _ordered + [k for k in _pool_keys if k not in _seen]
+            if _ordered != _pool_keys:
                 _rank = {key: idx for idx, key in enumerate(_ordered)}
                 key_pool = sorted(key_pool, key=lambda item: _rank[item[1]])
         except Exception:

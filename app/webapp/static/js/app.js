@@ -2485,6 +2485,17 @@ async function handleVoiceGenerate() {
     }
 }
 
+// Batch O: persistent fallback disclosure on the voice result card.
+// The completion toast alone was easy to miss; when the status payload
+// says the backup engine voiced the job, the note stays on the card.
+function renderVoiceFallbackNote(data) {
+    const noteEl = document.getElementById("voice-fallback-note");
+    if (!noteEl) return;
+    const used = !!(data && data.fallback_used);
+    noteEl.textContent = used ? t("voice_fallback_notice") : "";
+    noteEl.classList.toggle("hidden", !used);
+}
+
 function startJobPolling(jobId) {
     if (state.pollTimer) clearInterval(state.pollTimer);
 
@@ -2549,6 +2560,7 @@ function startJobPolling(jobId) {
                 setVoiceStage("success");
                 haptic("success");
                 if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
+                renderVoiceFallbackNote(data);
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
@@ -2762,10 +2774,12 @@ window.recapHasSource = recapHasSource;
 function setupRecapVisualEditor() {
     const sliderBlurY = document.getElementById("slider-blur-y");
     const sliderBlurH = document.getElementById("slider-blur-h");
+    const sliderBlurStrength = document.getElementById("slider-blur-strength");
     const sliderSubY = document.getElementById("slider-sub-y");
 
     const valBlurY = document.getElementById("val-blur-y");
     const valBlurH = document.getElementById("val-blur-h");
+    const valBlurStrength = document.getElementById("val-blur-strength");
     const valSubY = document.getElementById("val-sub-y");
 
     const previewBlur = document.getElementById("preview-blur-box");
@@ -3551,6 +3565,24 @@ function setupRecapVisualEditor() {
         sliderBlurH.addEventListener("input", () => {
             syncBlurBoxVisual();
         });
+    }
+
+    // Batch O: blur strength slider — the value rides the submit
+    // payload into the engine's boxblur radius; the canvas mockup's
+    // backdrop blur scales with it so the preview hints at the
+    // strength the render will use (default 18 ≈ the shipped 6px).
+    function syncBlurStrengthVisual() {
+        const v = sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18;
+        if (valBlurStrength) valBlurStrength.textContent = String(Number.isFinite(v) ? v : 18);
+        if (previewBlur) {
+            const px = 2 + ((Number.isFinite(v) ? v : 18) - 4) / 3;
+            previewBlur.style.backdropFilter = `blur(${px.toFixed(1)}px)`;
+            previewBlur.style.webkitBackdropFilter = `blur(${px.toFixed(1)}px)`;
+        }
+    }
+    if (sliderBlurStrength) {
+        sliderBlurStrength.addEventListener("input", syncBlurStrengthVisual);
+        syncBlurStrengthVisual();
     }
 
     if (sliderSubY && previewSub && valSubY) {
@@ -4351,6 +4383,7 @@ function setupRecapVisualEditor() {
         haptic("medium");
         if (sliderBlurY) sliderBlurY.value = "85";
         if (sliderBlurH) sliderBlurH.value = "7";
+        if (sliderBlurStrength) { sliderBlurStrength.value = "18"; syncBlurStrengthVisual(); }
         if (sliderSubY) sliderSubY.value = "85";
         syncBlurBoxVisual();
         syncSubBoxVisual();
@@ -4880,6 +4913,7 @@ function setupRecapVisualEditor() {
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
         recapFontSize: [12, 30], recapLines: [1, 2], recapSplitMinutes: [1, 10],
         recapBlurY: [0, 100], recapBlurH: [1, 50], recapSubY: [0, 100],
+        recapBlurStrength: [4, 40],
     };
 
     function snapshotRecapSettings() {
@@ -4894,9 +4928,11 @@ function setupRecapVisualEditor() {
         snap.recapSplitEnabled = !!(st && st.checked);
         const by = document.getElementById("slider-blur-y");
         const bh = document.getElementById("slider-blur-h");
+        const bs = document.getElementById("slider-blur-strength");
         const sy = document.getElementById("slider-sub-y");
         snap.recapBlurY = by ? parseInt(by.value) : 85;
         snap.recapBlurH = bh ? parseInt(bh.value) : 7;
+        snap.recapBlurStrength = bs ? parseInt(bs.value) : 18;
         snap.recapSubY = sy ? parseInt(sy.value) : 85;
         return snap;
     }
@@ -4996,9 +5032,14 @@ function setupRecapVisualEditor() {
         refreshLogoUi();
         const by = document.getElementById("slider-blur-y");
         const bh = document.getElementById("slider-blur-h");
+        const bs = document.getElementById("slider-blur-strength");
         const sy = document.getElementById("slider-sub-y");
         if (by && Number.isFinite(state.recapBlurY)) by.value = state.recapBlurY;
         if (bh && Number.isFinite(state.recapBlurH)) bh.value = state.recapBlurH;
+        if (bs && Number.isFinite(state.recapBlurStrength)) {
+            bs.value = state.recapBlurStrength;
+            bs.dispatchEvent(new Event("input"));
+        }
         if (sy && Number.isFinite(state.recapSubY)) sy.value = state.recapSubY;
         syncSubtitleFontSize(state.recapFontSize || 16);
         syncSubtitleLines(state.recapLines || 1);
@@ -5039,6 +5080,7 @@ function setupRecapVisualEditor() {
             recapFontSize: cfg.sub_font_size, recapLines: cfg.sub_lines,
             recapSplitMinutes: cfg.split_minutes,
             recapBlurY: cfg.blur_y, recapBlurH: cfg.blur_h, recapSubY: cfg.sub_y,
+            recapBlurStrength: cfg.blur_strength,
             recapZoom: cfg.zoom_factor, recapVoice: cfg.voice_slug,
             recapGeminiVoice: cfg.gemini_voice || "",
             recapSplitEnabled: !!cfg.split_video,
@@ -5235,6 +5277,7 @@ async function handleStartRecap() {
     try {
         const sliderBlurY = document.getElementById("slider-blur-y");
         const sliderBlurH = document.getElementById("slider-blur-h");
+        const sliderBlurStrength = document.getElementById("slider-blur-strength");
         const sliderSubY = document.getElementById("slider-sub-y");
 
         const payload = {
@@ -5254,6 +5297,7 @@ async function handleStartRecap() {
             blur_subtitles: state.recapBlurSubs !== false,
             blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
             blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 7,
+            blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
             burn_subtitles: state.recapBurnSubs !== false,
             sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
             sub_style: state.recapSubStyle || "yellow",
@@ -5528,6 +5572,24 @@ function startRecapJobPolling(jobId) {
                         const hasBlurWarn = Array.isArray(data.warnings) && data.warnings.includes("blur_no_source_band");
                         blurWarnEl.textContent = hasBlurWarn ? t("warn_blur_no_source_band") : "";
                         blurWarnEl.classList.toggle("hidden", !hasBlurWarn);
+                    }
+                    // Batch O: persistent fallback disclosure on the
+                    // result card (the completion toast alone was easy
+                    // to miss). The status payload carries the total
+                    // segment count, so a job whose EVERY segment fell
+                    // back gets the full-fallback wording.
+                    const fbNoteEl = document.getElementById("recap-fallback-note");
+                    if (fbNoteEl) {
+                        const fbCount = (data.fallback_segments || []).length;
+                        const fbTotal = typeof data.segments_count === "number" ? data.segments_count : 0;
+                        let fbText = "";
+                        if (data.fallback_used && fbTotal > 0 && fbCount >= fbTotal) {
+                            fbText = t("recap_fallback_note_all");
+                        } else if (data.fallback_used) {
+                            fbText = tf("recap_fallback_note", { count: fbCount || 1 });
+                        }
+                        fbNoteEl.textContent = fbText;
+                        fbNoteEl.classList.toggle("hidden", !fbText);
                     }
                     // Batch K: every completed recap shows its receipt —
                     // the credits this job was actually charged — not
@@ -7309,9 +7371,9 @@ async function adminSendBroadcast() {
                     ${row(t("admin_bc_blocked"), bd.blocked_by_user || 0)}
                     ${row(t("admin_bc_deactivated"), bd.deactivated_or_not_found || 0)}
                     ${row(t("admin_bc_testids"), bd.invalid_test_id || 0)}
-                    ${bd.pre_existing_blocked_in_db ? row(t("admin_bc_preblocked"), bd.pre_existing_blocked_in_db) : ""}
                     ${bd.other_errors ? row(t("admin_bc_other"), bd.other_errors) : ""}
-                </div>`;
+                </div>
+                ${bd.pre_existing_blocked_in_db ? `<div class="adm-bc-note">${row(t("admin_bc_preblocked"), bd.pre_existing_blocked_in_db)}</div>` : ""}`;
             showStudioToast(`${t("admin_bc_delivered")}: ${data.sent_count} / ${data.total_users_in_db}`, 'success');
             if (textEl) {
                 textEl.value = "";
@@ -8693,6 +8755,7 @@ async function checkStartupDeepLinks() {
                 const data = await res.json();
                 if (data.status === "SUCCESS") {
                     if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
+                    renderVoiceFallbackNote(data);
                     state.activeJobId = jobId;
                     const resultBox = document.getElementById("voice-result-box");
                     const audioPlayer = document.getElementById("result-audio-player");

@@ -47,6 +47,22 @@ def find_binary(name: str) -> str:
 
 _WATERMARK_BLUR_BOX = {"x": 0.74, "y": 0.03, "w": 0.24, "h": 0.12}
 
+# Batch O: user-facing blur strength (boxblur radius). 18 is the
+# historical hardcoded value; core.apply_production_overlays clamps
+# to the same 4–40 range when it builds the filter.
+DEFAULT_BLUR_STRENGTH = 18
+BLUR_STRENGTH_MIN = 4
+BLUR_STRENGTH_MAX = 40
+
+
+def clamp_blur_strength(value) -> int:
+    """Coerce a blur-strength input to the supported 4–40 range."""
+    try:
+        strength = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_BLUR_STRENGTH
+    return max(BLUR_STRENGTH_MIN, min(BLUR_STRENGTH_MAX, strength))
+
 
 def _boxes_near_or_overlapping(a: dict, b: dict) -> bool:
     """Merge predicate for the final pass, mirroring the centre-gap
@@ -233,6 +249,7 @@ def run_recap_pipeline(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
+    blur_strength: int = DEFAULT_BLUR_STRENGTH,
     blur_watermark: bool = False,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
@@ -444,7 +461,7 @@ def run_recap_pipeline(
         _job_warnings.append("blur_no_source_band")
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
-        overlays["blur_strength"] = 18
+        overlays["blur_strength"] = clamp_blur_strength(blur_strength)
 
     if title_text and str(title_text).strip():
         overlays["title_text"] = str(title_text).strip()
@@ -626,6 +643,7 @@ def generate_recap_preview(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
+    blur_strength: int = DEFAULT_BLUR_STRENGTH,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
     sub_lines: int = 1,
@@ -735,7 +753,7 @@ def generate_recap_preview(
         )
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
-        overlays["blur_strength"] = 18
+        overlays["blur_strength"] = clamp_blur_strength(blur_strength)
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
         overlays["sub_y"] = float(sub_y)
