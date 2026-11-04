@@ -365,6 +365,7 @@
   "recap_failure_refund_note": "\n\n✅ <b>Don't worry — the {credits} credit(s) you used have been refunded to your account.</b>",
   "recap_failure_upload_hint": "\n\n💡 <i>Tip: for long videos, submitting a link or uploading in shorter parts is usually faster and more reliable.</i>",
   "recap_failure_reason_script_expired": "The script review window (24 hours) expired before the video was rendered",
+  "recap_failure_reason_server_interrupted": "The server restarted repeatedly while the video was being rendered",
   "recap_queue_ahead": "🧾 {count} job(s) ahead of you",
   "recap_eta_dynamic": "⏳ Estimated time ~{min} min",
   "recap_cancel_confirm": "Cancel this recap job? The charged credit will be refunded.",

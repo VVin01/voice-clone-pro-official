@@ -955,6 +955,40 @@ async def _persist_recap_credits_charged(entry: dict) -> None:
         logger.warning(f"Could not persist recap charge state for {job_id}: {exc}")
 
 
+async def _clear_recap_stranded_reset_count(job_id: str) -> None:
+    """Zero a recap job's persisted stranded-reset counter (Batch AB).
+
+    The orphan sweep (app.webapp.server.reset_stale_running_recap_jobs)
+    counts how many times a RUNNING row had to be rescued after a
+    server restart/OOM kill and fails the job at the limit, so a job
+    whose render reliably kills the instance cannot loop forever.
+    Every terminal or reactivation path clears the count again: a job
+    that finished (or was deliberately retried) must start its next
+    life from zero. Best-effort, like the other _persist_recap_*
+    helpers: a failure here only leaves a stale count, never breaks
+    the path that called it.
+    """
+    if not job_id:
+        return
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            state = _load_persisted_recap_state(job) if job is not None else None
+            if state is None:
+                return
+            if not state.get("stranded_reset_count"):
+                return
+            state["stranded_reset_count"] = 0
+            job.recap_config = json.dumps(state, ensure_ascii=False)
+            await session.commit()
+    except Exception as exc:
+        logger.warning(
+            f"Could not clear stranded reset count for {job_id}: {exc}"
+        )
+
+
 SCRIPT_READY_TTL_SECONDS = 24 * 3600
 
 _SCRIPT_READY_EXPIRED_MESSAGE = (
@@ -1303,6 +1337,8 @@ async def expire_abandoned_script_ready_jobs() -> int:
                 if fresh_state is not None:
                     fresh_state["script_ready"] = False
                     fresh_state["script_ready_expired"] = True
+                    # Batch AB: terminal state clears the stranded count.
+                    fresh_state["stranded_reset_count"] = 0
                     fresh_state["credit_refunded"] = bool(
                         refund_entry.get("credit_refunded")
                     )
@@ -1352,6 +1388,121 @@ async def expire_abandoned_script_ready_jobs() -> int:
         expired += 1
         logger.info(f"Recap job {job_id}: script review expired after 24h; closed and refunded.")
     return expired
+
+
+_STRANDED_RESET_FAILURE_MESSAGE = (
+    "The recap render was interrupted by repeated server restarts and "
+    "could not be completed. The charged recap credit has been refunded."
+)
+
+
+async def _fail_stranded_recap_job(job_id: str, user_id: int, state: dict) -> bool:
+    """Terminally fail a recap job that hit the stranded-reset limit.
+
+    Batch AB: the orphan sweep re-queues a RUNNING row stranded by a
+    restart, but a render that reliably kills the instance (e.g. an
+    OOM during the overlay pass) would otherwise loop forever —
+    restart, re-queue, kill, restart. When the persisted
+    ``stranded_reset_count`` reaches the limit the sweep calls this
+    instead of re-queueing. Modelled on the no-live-entry branch of
+    expire_abandoned_script_ready_jobs: the charge is refunded exactly
+    once through the existing persisted-claim path (Batch O option C),
+    the row is marked FAILED with the refund outcome and a cleared
+    counter written back in the same blob update, the bulky media is
+    stripped, and the owner gets the standard failure DM. Once-only by
+    construction: after the FAILED write the sweep's RUNNING predicate
+    never matches the row again. Best-effort throughout — returns
+    False (and leaves the row for a later sweep) on unexpected errors
+    instead of raising into the sweep.
+    """
+    try:
+        refunded = bool(state.get("credit_refunded"))
+        refunded_amount = (
+            int(state.get("credits_refunded") or 0) if refunded else 0
+        )
+        if not refunded:
+            amount = int(state.get("credits_charged") or 0)
+            if amount <= 0 and state.get("credit_deducted"):
+                amount = 1
+            if amount > 0:
+                # Claim through the persisted blob BEFORE issuing the
+                # balance refund (Batch O), so a racing refund that
+                # persists first is never doubled; the claim is
+                # released if the balance refund itself fails.
+                _claim, _recorded = await _claim_persisted_recap_refund(
+                    job_id, amount
+                )
+                if _claim == "claimed":
+                    if await _refund_recap_credits(
+                        user_id, amount, job_id=job_id
+                    ):
+                        refunded = True
+                        refunded_amount = amount
+                    else:
+                        await _release_persisted_recap_refund_claim(job_id)
+                elif _claim == "already":
+                    refunded = True
+                    refunded_amount = int(_recorded or 0)
+        try:
+            from app.db.session import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Job, job_id)
+                if job is None:
+                    return False
+                fresh_state = _load_persisted_recap_state(job)
+                if fresh_state is not None:
+                    fresh_state["credit_refunded"] = refunded
+                    fresh_state["credits_refunded"] = refunded_amount
+                    # Terminal state: the counter's job is done.
+                    fresh_state["stranded_reset_count"] = 0
+                    job.recap_config = json.dumps(
+                        fresh_state, ensure_ascii=False
+                    )
+                job.status = JobStatus.FAILED.value
+                job.error_message = _STRANDED_RESET_FAILURE_MESSAGE
+                job.finished_at = utc_now()
+                await session.commit()
+        except Exception as exc:
+            logger.warning(
+                f"Could not mark stranded recap job {job_id} failed: {exc}"
+            )
+            return False
+        # Batch W discipline: a failed job's media bulk is waste —
+        # strip it now instead of leaving it on the persistent disk.
+        try:
+            _strip_failed_recap_job_media(
+                settings.storage_root / "recap_output" / job_id
+            )
+        except Exception as strip_err:
+            logger.warning(
+                f"Recap job {job_id}: stranded-failure media strip failed: {strip_err}"
+            )
+        # The owner gets the same failure DM the other terminal
+        # failure paths send — curated reason plus refund line.
+        try:
+            _cfg = state.get("config") or {}
+            await _send_recap_failure_dm(
+                job_id=job_id,
+                chat_id=user_id,
+                title=_clean_recap_display_title(
+                    _cfg.get("title"), _cfg.get("url")
+                ),
+                reason_key="recap_failure_reason_server_interrupted",
+                credits_refunded=refunded_amount if refunded else 0,
+            )
+        except Exception as dm_err:
+            logger.warning(
+                f"Could not send stranded-failure DM for recap job {job_id}: {dm_err}"
+            )
+        logger.info(
+            f"Recap job {job_id}: stranded reset limit reached; "
+            f"closed as FAILED (refunded={refunded_amount})."
+        )
+        return True
+    except Exception as exc:
+        logger.warning(f"Could not fail stranded recap job {job_id}: {exc}")
+        return False
 
 
 def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> dict:
@@ -1552,8 +1703,14 @@ async def _cancel_recap_job_core(
     # cancel never did it at all; hoisting it here gives both
     # surfaces the expiry-sweep hygiene atomically.
     _persisted_state = _load_persisted_recap_state(job)
-    if _persisted_state is not None and _persisted_state.get("script_ready"):
+    if _persisted_state is not None and (
+        _persisted_state.get("script_ready")
+        or _persisted_state.get("stranded_reset_count")
+    ):
         _persisted_state["script_ready"] = False
+        # Batch AB: cancel is terminal — clear the stranded count in
+        # the same blob write.
+        _persisted_state["stranded_reset_count"] = 0
         job.recap_config = json.dumps(_persisted_state, ensure_ascii=False)
 
     job.status = JobStatus.CANCELLED.value
@@ -5040,6 +5197,9 @@ async def _execute_recap_background_job(
         except Exception as db_succ_err:
             logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
 
+        # Batch AB: terminal state clears the stranded-reset count.
+        await _clear_recap_stranded_reset_count(job_id)
+
         await _persist_recap_warnings(entry)
 
         # Deliverables are stored and ready in Mini App
@@ -5130,6 +5290,8 @@ async def _execute_recap_background_job(
                 await session.commit()
         except Exception:
             pass
+        # Batch AB: terminal state clears the stranded-reset count.
+        await _clear_recap_stranded_reset_count(job_id)
         if credit_deducted and not entry.get("credit_refunded"):
             await _refund_recap_job_charge(user_id, entry)
         # Batch W (2026-11-04): a cancelled job's media bulk is waste
@@ -5175,6 +5337,8 @@ async def _execute_recap_background_job(
                 await session.commit()
         except Exception as ref_err:
             logger.warning(f"Recap job status update failed: {ref_err}")
+        # Batch AB: terminal state clears the stranded-reset count.
+        await _clear_recap_stranded_reset_count(job_id)
         # Refund in its own commit, after the status update, so a
         # status-write failure cannot swallow the refund. The registry
         # flag makes a second failure handler for the same job a no-op.
@@ -6382,6 +6546,9 @@ async def retry_recap_job(
             detail="မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
         )
     result = await create_recap_job(cfg, user=user, db=db, _gate=user)
+    # Batch AB: the retried-from job is terminal; clear any stranded
+    # count it accumulated (the NEW job starts from a fresh blob).
+    await _clear_recap_stranded_reset_count(job_id)
     result["retried_from"] = job_id
     return result
 
@@ -8422,6 +8589,13 @@ async def retry_queued_job(
     job.started_at = None
     job.finished_at = None
     job.error_message = None
+    # Batch AB: a reactivated job starts its stranded-reset count
+    # from zero again — folded into this same write.
+    if job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap":
+        _retry_state = _load_persisted_recap_state(job)
+        if _retry_state is not None and _retry_state.get("stranded_reset_count"):
+            _retry_state["stranded_reset_count"] = 0
+            job.recap_config = json.dumps(_retry_state, ensure_ascii=False)
     await db.commit()
 
     if job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap":
