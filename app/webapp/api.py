@@ -1483,6 +1483,18 @@ async def _cancel_recap_job_core(
     """
     refund_info: dict = {"refunded": False}
 
+    # Batch N: a parked (SCRIPT_READY) job's persisted script_ready
+    # flag is cleared in the SAME commit as the status flip below.
+    # The owner-cancel endpoint used to do this as a post-step in a
+    # second session — a crash between the two writes left a
+    # CANCELLED row still claiming script_ready — and the admin
+    # cancel never did it at all; hoisting it here gives both
+    # surfaces the expiry-sweep hygiene atomically.
+    _persisted_state = _load_persisted_recap_state(job)
+    if _persisted_state is not None and _persisted_state.get("script_ready"):
+        _persisted_state["script_ready"] = False
+        job.recap_config = json.dumps(_persisted_state, ensure_ascii=False)
+
     job.status = JobStatus.CANCELLED.value
     job.finished_at = utc_now()
     job.error_message = db_error_message
@@ -5417,8 +5429,23 @@ async def create_recap_job(
     # Concurrency: at most settings.max_concurrent_jobs_per_user (default
     # 1, same as voice clones) active recap jobs per user; admins exempt.
     # Checked before any credit is deducted, so a rejected job costs nothing.
-    if not settings.is_admin(user.id):
+    #
+    # Batch N: for non-admins the count check, the charge and the Job
+    # insert below now run under a User-row lock (SELECT … FOR UPDATE —
+    # the same pattern as the voice path in queue.py) inside ONE
+    # transaction that commits only after the insert. Two concurrent
+    # submits (or a submit racing a retry of a failed job) used to
+    # interleave check-pass / check-pass / charge / charge; the loser
+    # now blocks on the row lock until the winner commits, then counts
+    # the winner's committed job and is rejected BEFORE any credit
+    # moves. SQLite (tests) ignores FOR UPDATE; Postgres honours it.
+    _submit_locked = not settings.is_admin(user.id)
+    if _submit_locked:
+        await db.execute(
+            select(User).where(User.id == user.id).with_for_update()
+        )
         if await _recap_active_job_count(db, user.id) >= max(1, settings.max_concurrent_jobs_per_user):
+            await db.rollback()
             raise HTTPException(
                 status_code=429,
                 detail="A recap job is already running for your account. Please wait for it to finish before starting another.",
@@ -5445,10 +5472,10 @@ async def create_recap_job(
                 status_code=403,
                 detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
             )
-        await db.commit()
-        # The bulk UPDATE does not sync the in-memory instance; reload
-        # so remaining_credits and the persisted job state are exact.
-        await db.refresh(user)
+        # No commit here (batch N): the charge commits together with
+        # the Job-row insert below, still under the row lock, so a
+        # concurrent submit can never observe "charged but jobless"
+        # or slip its own count check in between the two.
         deducted_credit = True
 
     job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
@@ -5484,37 +5511,55 @@ async def create_recap_job(
     }
 
     # Record Recap Job in database table for 24h history and tracking
-    try:
-        db_job = Job(
-            id=job_id,
-            user_id=user.id,
-            chat_id=user.id,
-            status=JobStatus.QUEUED.value,
-            job_type=JobType.RECAP.value,
-            engine="recap",
-            preset_voice=req.voice_slug,
-            input_text=clean_display_title,
-            source_audio_path=req.url,
-            # R40 item 15c: the old hardcoded 120 made EVERY recap row
-            # in /history display "120s" forever. Estimate from the
-            # source duration verified above; the real output duration
-            # replaces it in seconds_consumed on completion.
-            seconds_estimated=int(checked_duration) if checked_duration else 0,
-            # Full config + credit state, so a restart/deploy
-            # re-dispatch restores THIS job instead of a default one.
-            recap_config=_persisted_recap_state(
-                req,
-                credit_deducted=deducted_credit,
-                credits_charged=1 if deducted_credit else 0,
-                is_vip=is_vip,
-                phase="script" if req.script_review else "full",
-                estimated_parts=estimated_parts,
-            ),
-        )
-        db.add(db_job)
+    db_job = Job(
+        id=job_id,
+        user_id=user.id,
+        chat_id=user.id,
+        status=JobStatus.QUEUED.value,
+        job_type=JobType.RECAP.value,
+        engine="recap",
+        preset_voice=req.voice_slug,
+        input_text=clean_display_title,
+        source_audio_path=req.url,
+        # R40 item 15c: the old hardcoded 120 made EVERY recap row
+        # in /history display "120s" forever. Estimate from the
+        # source duration verified above; the real output duration
+        # replaces it in seconds_consumed on completion.
+        seconds_estimated=int(checked_duration) if checked_duration else 0,
+        # Full config + credit state, so a restart/deploy
+        # re-dispatch restores THIS job instead of a default one.
+        recap_config=_persisted_recap_state(
+            req,
+            credit_deducted=deducted_credit,
+            credits_charged=1 if deducted_credit else 0,
+            is_vip=is_vip,
+            phase="script" if req.script_review else "full",
+            estimated_parts=estimated_parts,
+        ),
+    )
+    if _submit_locked:
+        # Batch N locked path: insert inside the SAME transaction as
+        # the row lock + charge. The savepoint keeps a failed insert
+        # from discarding the charge (historical behaviour: the job
+        # still runs from the registry when the history row cannot be
+        # persisted); the single commit below then releases the lock
+        # with charge and job row becoming visible together.
+        try:
+            async with db.begin_nested():
+                db.add(db_job)
+                await db.flush()
+        except Exception as err_db:
+            logger.warning(f"Could not persist recap Job record in DB: {err_db}")
         await db.commit()
-    except Exception as err_db:
-        logger.warning(f"Could not persist recap Job record in DB: {err_db}")
+        # The bulk UPDATE does not sync the in-memory instance; reload
+        # so remaining_credits and the persisted job state are exact.
+        await db.refresh(user)
+    else:
+        try:
+            db.add(db_job)
+            await db.commit()
+        except Exception as err_db:
+            logger.warning(f"Could not persist recap Job record in DB: {err_db}")
 
     # Start background task with VIP tier flag for watermark control and credit tracking
     try:
@@ -5961,8 +6006,6 @@ async def cancel_recap_job(
         raise HTTPException(status_code=404, detail="Recap job not found")
 
     entry_status = str((entry or {}).get("status") or "")
-    state = _load_persisted_recap_state(job) if job is not None else None
-    parked = bool(state and state.get("script_ready"))
     cancellable = entry_status in ("QUEUED", "RUNNING", "SCRIPT_READY") or (
         job is not None
         and job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
@@ -5974,36 +6017,15 @@ async def cancel_recap_job(
         )
 
     if job is not None:
+        # The core also clears the persisted script_ready flag for a
+        # parked job, in the same commit as the status flip (batch N)
+        # — the separate post-step this endpoint used to run is gone.
         refund_info = await _cancel_recap_job_core(
             db,
             job,
             db_error_message="Cancelled by user via Mini App",
             registry_error_message="Cancelled by user",
         )
-        if parked:
-            # Discard the held script state (expiry-sweep hygiene):
-            # the parking flag comes off the persisted blob so the
-            # cancelled job can never be restored as SCRIPT_READY.
-            try:
-                from app.db.session import AsyncSessionLocal
-
-                async with AsyncSessionLocal() as session:
-                    fresh = await session.get(Job, job_id)
-                    fresh_state = (
-                        _load_persisted_recap_state(fresh)
-                        if fresh is not None
-                        else None
-                    )
-                    if fresh_state is not None and fresh_state.get("script_ready"):
-                        fresh_state["script_ready"] = False
-                        fresh.recap_config = json.dumps(
-                            fresh_state, ensure_ascii=False
-                        )
-                        await session.commit()
-            except Exception as exc:
-                logger.warning(
-                    f"Could not clear script_ready state for cancelled job {job_id}: {exc}"
-                )
     else:
         # Registry-only job (its DB insert failed at submit): the same
         # marker + refund helpers, minus the row write.
@@ -6551,6 +6573,24 @@ async def get_user_history(
             "recap_config": _hist_cfg,
             "source_available": _hist_source_available,
             "can_retry": _hist_can_retry,
+            # Batch N: a recap job PARKED at script review (row still
+            # RUNNING; the park flag lives on the live registry entry
+            # or, after a restart, in the persisted recap state) is
+            # surfaced explicitly so the history detail can offer the
+            # review action instead of a bare "running" spinner that
+            # waits forever for a render that will never start.
+            "script_ready": bool(
+                is_recap
+                and j.status == JobStatus.RUNNING.value
+                and (
+                    ((_hist_entry or {}).get("status") == "SCRIPT_READY")
+                    or bool((_hist_state or {}).get("script_ready"))
+                )
+            ),
+            "script_ready_at": (
+                (_hist_entry or {}).get("script_ready_at")
+                or (_hist_state or {}).get("script_ready_at")
+            ) if is_recap else None,
             "fallback_used": _fb_used,
             "fallback_segments": _fb_segs,
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),

@@ -145,15 +145,6 @@ except ImportError:
         transcribe_to_srt = None
 
 try:
-    from app.services.gemini_recap import generate_tiktok_recap_and_srt, get_gemini_api_key
-except ImportError:
-    try:
-        from gemini_recap import generate_tiktok_recap_and_srt, get_gemini_api_key
-    except ImportError:
-        generate_tiktok_recap_and_srt = None
-        get_gemini_api_key = lambda: None
-
-try:
     from app.services.recap_engine.recap_pipeline import run_recap_pipeline, generate_recap_preview
 except ImportError:
     try:
@@ -1844,65 +1835,6 @@ class MediaDownloader:
 
         return srt_files, info
 
-    def generate_viral_recap(
-        self,
-        url: str,
-        target_dir: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Extracts subtitle for the media (using native subtitles or AI transcription),
-        and prompts Google Gemini to create a viral TikTok recap script and Myanmar SRT.
-        Supports both Online URLs and Local/Uploaded files.
-        """
-        if is_local_media(url):
-            return self.generate_viral_recap_for_local(url, target_dir=target_dir)
-
-        if generate_tiktok_recap_and_srt is None:
-            raise ImportError("gemini_recap module is not available.")
-
-        dest_dir = target_dir or self.download_dir
-        os.makedirs(dest_dir, exist_ok=True)
-
-        srt_files, info = self.download_subtitles(url, target_dir=dest_dir)
-        if not srt_files:
-            raise ValueError("Could not extract or transcribe subtitles for this media.")
-
-        primary_srt = srt_files[0]
-        with open(primary_srt, "r", encoding="utf-8", errors="replace") as f:
-            srt_content = f.read()
-
-        title = info.get("title", "Video")
-        platform = info.get("platform", "Web Media")
-
-        recap_result = generate_tiktok_recap_and_srt(
-            srt_content=srt_content,
-            title=title,
-            platform=platform
-        )
-
-        media_id = str(info.get("id") or "media")
-        safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', media_id)
-
-        # Save TikTok recap script to a .txt file
-        script_path = os.path.join(dest_dir, f"{safe_id}_tiktok_recap.txt")
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(recap_result["recap_script"])
-
-        # Save Myanmar SRT if generated
-        myanmar_srt_path = None
-        if recap_result.get("myanmar_srt"):
-            myanmar_srt_path = os.path.join(dest_dir, f"{safe_id}_myanmar.srt")
-            with open(myanmar_srt_path, "w", encoding="utf-8") as f:
-                f.write(recap_result["myanmar_srt"])
-
-        return {
-            "recap_script": recap_result["recap_script"],
-            "script_path": script_path,
-            "myanmar_srt_path": myanmar_srt_path,
-            "original_srt_path": primary_srt,
-            "info": info
-        }
-
     def process_local_video(
         self,
         file_path: str,
@@ -2034,54 +1966,6 @@ class MediaDownloader:
 
         return [srt_path], info
 
-    def generate_viral_recap_for_local(
-        self,
-        file_path: str,
-        target_dir: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Transcribe local media with Whisper and generate viral TikTok Recap + Myanmar SRT with Gemini."""
-        if generate_tiktok_recap_and_srt is None:
-            raise ImportError("gemini_recap module is not available.")
-
-        dest_dir = target_dir or self.download_dir
-        os.makedirs(dest_dir, exist_ok=True)
-
-        srt_files, info = self.transcribe_local_media(file_path, target_dir=dest_dir)
-        if not srt_files:
-            raise ValueError("Could not extract subtitles from local media.")
-
-        primary_srt = srt_files[0]
-        with open(primary_srt, "r", encoding="utf-8", errors="replace") as f:
-            srt_content = f.read()
-
-        title = info.get("title", "Uploaded Video")
-        platform = info.get("platform", "Uploaded Media")
-
-        recap_result = generate_tiktok_recap_and_srt(
-            srt_content=srt_content,
-            title=title,
-            platform=platform
-        )
-
-        safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(info.get("id", "media")))
-        script_path = os.path.join(dest_dir, f"{safe_id}_tiktok_recap.txt")
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(recap_result["recap_script"])
-
-        myanmar_srt_path = None
-        if recap_result.get("myanmar_srt"):
-            myanmar_srt_path = os.path.join(dest_dir, f"{safe_id}_myanmar.srt")
-            with open(myanmar_srt_path, "w", encoding="utf-8") as f:
-                f.write(recap_result["myanmar_srt"])
-
-        return {
-            "recap_script": recap_result["recap_script"],
-            "script_path": script_path,
-            "myanmar_srt_path": myanmar_srt_path,
-            "original_srt_path": primary_srt,
-            "info": info
-        }
-
     def generate_recap_video(
         self,
         url_or_path: str,
@@ -2101,8 +1985,6 @@ class MediaDownloader:
         blur_subtitles: bool = True,
         blur_y: float = 0.85,
         blur_h: float = 0.07,
-        blur_x: float = 0.05,
-        blur_w: float = 0.90,
         blur_watermark: bool = False,
         burn_subtitles: bool = True,
         sub_y: Optional[float] = 0.85,
@@ -2197,8 +2079,6 @@ class MediaDownloader:
             blur_subtitles=blur_subtitles,
             blur_y=blur_y,
             blur_h=blur_h,
-            blur_x=blur_x,
-            blur_w=blur_w,
             blur_watermark=blur_watermark,
             burn_subtitles=burn_subtitles,
             sub_y=sub_y,
@@ -2232,8 +2112,6 @@ class MediaDownloader:
         blur_subtitles: bool = True,
         blur_y: float = 0.85,
         blur_h: float = 0.07,
-        blur_x: float = 0.05,
-        blur_w: float = 0.90,
         burn_subtitles: bool = True,
         sub_y: Optional[float] = 0.85,
         sub_lines: int = 1,
@@ -2289,8 +2167,6 @@ class MediaDownloader:
             blur_subtitles=blur_subtitles,
             blur_y=blur_y,
             blur_h=blur_h,
-            blur_x=blur_x,
-            blur_w=blur_w,
             burn_subtitles=burn_subtitles,
             sub_y=sub_y,
             sub_lines=sub_lines,

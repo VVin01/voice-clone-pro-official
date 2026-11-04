@@ -203,6 +203,31 @@ def plan_parts(duration: float, part_seconds: float, *, smart: bool = True, max_
     return parts
 
 
+# Telegram's Bot API refuses bot-sent files over 50 MB; recap parts are
+# delivered through it, so a part must stay under this cap (batch N).
+MAX_PART_BYTES = 48 * 1024 * 1024
+
+
+def size_capped_part_seconds(duration: float, total_bytes: int, part_seconds: float,
+                             cap_bytes: int = MAX_PART_BYTES) -> float:
+    """Cap a part length so a part at the render's average byte rate
+    stays under ``cap_bytes``.
+
+    Pure helper (unit-tested without ffmpeg). Returns ``part_seconds``
+    unchanged when the byte rate is unknown or the cap does not bind;
+    the result never goes below plan_parts' own 5 s floor. The cap is
+    an average-rate estimate — split_rendered_video re-splits any part
+    that still lands over the cap after rendering.
+    """
+    duration = float(duration or 0.0)
+    if duration <= 0 or not total_bytes or float(total_bytes) <= 0:
+        return float(part_seconds)
+    bytes_per_second = float(total_bytes) / duration
+    if bytes_per_second <= 0:
+        return float(part_seconds)
+    return max(5.0, min(float(part_seconds), float(cap_bytes) / bytes_per_second))
+
+
 def _has_audio(ffprobe: str, source: str | Path) -> bool:
     p = subprocess.run([ffprobe, "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of",
                         "csv=p=0", str(source)], capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -326,6 +351,17 @@ def split_rendered_video(
     out_dir = Path(out_dir)
     duration = probe_duration(ffprobe, source)
     part_seconds = max(30.0, float(part_minutes) * 60.0)
+    # Size-aware cap (batch N): cap the part length by the finished
+    # render's own average byte rate so parts stay deliverable
+    # (≤ MAX_PART_BYTES); the re-split pass after rendering handles
+    # sections whose bitrate runs hotter than the average.
+    _uncapped_part_seconds = part_seconds
+    part_seconds = size_capped_part_seconds(
+        duration, source.stat().st_size, part_seconds, MAX_PART_BYTES
+    )
+    if part_seconds < _uncapped_part_seconds:
+        log(f"📦 Splitter: size cap — part length limited to ~{part_seconds:.0f}s "
+            f"so each part stays under {MAX_PART_BYTES // (1024 * 1024)} MB")
     has_audio = _has_audio(ffprobe, source)
 
     levels = None
@@ -362,30 +398,75 @@ def split_rendered_video(
         state = {}
 
     work = out_dir / ".labels"
-    done: list[dict[str, Any]] = []
-    for p in parts:
-        if should_stop and should_stop():
-            raise InterruptedError("Split stopped — finished parts are kept for resume")
-        out = out_dir / f"recap_part_{p['n']:02d}.mp4"
-        label = part_label(label_template, p["n"], total) if label_on else ""
-        key = _fingerprint(source, p, settings, label)
-        if out.is_file() and state.get(out.name) == key:
-            log(f"♻️ Part {p['n']}/{total} already made — kept")
-        else:
-            label_png = None
-            if label:
-                work.mkdir(exist_ok=True)
-                label_png = render_label_png(label, work / f"label_{p['n']:02d}.png",
-                                             font_size, int((cw or 1080) * 0.6), box=True)
-            render_part(ffmpeg, source, p["start"], p["end"], out,
-                        encoder=encoder, codec_args=codec_args, has_audio=has_audio,
-                        render_quality=render_quality,
-                        label_png=label_png)
-            state[out.name] = key
-            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-            log(f"✅ {out.name} ({label})" if label else f"✅ {out.name}")
-        done.append({"n": p["n"], "path": str(out), "start": p["start"], "end": p["end"],
-                     "cut": p["cut"], "label": label})
+
+    def _render_plan(plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        plan_total = len(plan)
+        rendered: list[dict[str, Any]] = []
+        for p in plan:
+            if should_stop and should_stop():
+                raise InterruptedError("Split stopped — finished parts are kept for resume")
+            out = out_dir / f"recap_part_{p['n']:02d}.mp4"
+            label = part_label(label_template, p["n"], plan_total) if label_on else ""
+            key = _fingerprint(source, p, settings, label)
+            if out.is_file() and state.get(out.name) == key:
+                log(f"♻️ Part {p['n']}/{plan_total} already made — kept")
+            else:
+                label_png = None
+                if label:
+                    work.mkdir(exist_ok=True)
+                    label_png = render_label_png(label, work / f"label_{p['n']:02d}.png",
+                                                 font_size, int((cw or 1080) * 0.6), box=True)
+                render_part(ffmpeg, source, p["start"], p["end"], out,
+                            encoder=encoder, codec_args=codec_args, has_audio=has_audio,
+                            render_quality=render_quality,
+                            label_png=label_png)
+                state[out.name] = key
+                state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+                log(f"✅ {out.name} ({label})" if label else f"✅ {out.name}")
+            rendered.append({"n": p["n"], "path": str(out), "start": p["start"], "end": p["end"],
+                             "cut": p["cut"], "label": label})
+        return rendered
+
+    done = _render_plan(parts)
+
+    # Re-split pass (batch N): a part whose ACTUAL bytes still exceed
+    # the cap (its section ran hotter than the render's average rate)
+    # is divided ONCE, proportionally to its own measured byte rate,
+    # and the refined plan is rendered again — the fingerprint check
+    # keeps every part whose range and label survived, so only the
+    # divided range (and any part whose label total changed) actually
+    # re-renders. A sub-part that is STILL over the cap is left as-is:
+    # one re-split is the designed bound.
+    oversized = {
+        (d["start"], d["end"])
+        for d in done
+        if d.get("path") and Path(d["path"]).stat().st_size > MAX_PART_BYTES
+    }
+    if oversized:
+        refined: list[dict[str, Any]] = []
+        for p in parts:
+            if (p["start"], p["end"]) in oversized:
+                span = float(p["end"]) - float(p["start"])
+                actual = Path(out_dir / f"recap_part_{p['n']:02d}.mp4").stat().st_size
+                sub_seconds = max(5.0, span * (MAX_PART_BYTES / float(actual)))
+                sub_plan = plan_parts(span, sub_seconds, smart=False, levels=None)
+                for sp in sub_plan:
+                    refined.append({
+                        "start": round(float(p["start"]) + float(sp["start"]), 3),
+                        "end": round(float(p["start"]) + float(sp["end"]), 3),
+                        "cut": sp["cut"],
+                    })
+                log(f"📦 Splitter: part {p['n']} rendered at "
+                    f"{actual / (1024 * 1024):.1f} MB — re-splitting into "
+                    f"{len(sub_plan)} smaller part(s)")
+            else:
+                refined.append({"start": p["start"], "end": p["end"], "cut": p["cut"]})
+        if len(refined) > len(parts):
+            for idx, rp in enumerate(refined, 1):
+                rp["n"] = idx
+            parts = refined
+            total = len(parts)
+            done = _render_plan(parts)
 
     # Parts made earlier for a different plan (e.g. 3-min before 5-min) are removed.
     keep = {Path(d["path"]).name for d in done}
