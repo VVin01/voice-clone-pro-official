@@ -1814,20 +1814,22 @@ SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
 }
 
 # The production default: what burns when the user has NOT explicitly
-# chosen a font (empty value or anything unknown — the legacy
-# "default" selector was an explicit choice and aliases to
-# noto_sans instead). Padauk since the Batch Q font choice
-# (2026-11-04); before that Noto Sans Myanmar (2026-11-01 shaping
-# fix) — see the registry notes above.
+# chosen a font (empty value or anything unknown). Padauk since the
+# Batch Q font choice (2026-11-04); before that Noto Sans Myanmar
+# (2026-11-01 shaping fix) — see the registry notes above.
 DEFAULT_SUBTITLE_FONT = "padauk"
 
 # Legacy selector aliases → current keys (stored configs, history
 # rows and old Mini App snapshots may still carry these values).
-# "default" was an EXPLICIT picker choice meaning Noto Sans Myanmar
-# — users who picked it keep that font; it is NOT the un-chosen
-# path (empty/unknown → DEFAULT_SUBTITLE_FONT).
+# "serif" was an explicit picker choice of Noto Serif Myanmar and
+# keeps that meaning. "default" was the OLD picker's label for Noto
+# Sans Myanmar and Batch Q aliased it to noto_sans; Batch T (Ulfa,
+# 2026-11-04) migrates it to Padauk instead — "Default" was the
+# factory setting most savers never actively chose, so they get the
+# new premium default. Explicit current keys are unaffected (a
+# stored "noto_sans" still means Noto Sans Myanmar).
 SUBTITLE_FONT_ALIASES = {
-    "default": "noto_sans",
+    "default": "padauk",
     "serif": "noto_serif",
 }
 
@@ -1852,8 +1854,8 @@ def resolve_subtitle_font(value: str | None) -> tuple[str, str]:
 
     Accepts a current option key ("noto_serif"), a family name
     ("Noto Serif Myanmar"), or a legacy selector (SUBTITLE_FONT_
-    ALIASES: "serif" → noto_serif, "default" → noto_sans — the
-    latter was an explicit picker choice, so it keeps its meaning).
+    ALIASES: "serif" → noto_serif, "default" → padauk since
+    Batch T migrated the old "Default" savers to the new default).
     Empty and unknown values are the un-chosen path and resolve to
     DEFAULT_SUBTITLE_FONT (Padauk since 2026-11-04). A family name
     passed explicitly still round-trips to its own family.

@@ -58,11 +58,12 @@ def test_recap_config_request_sub_font_aliases_and_fallback():
     req2b = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="serif")
     assert req2b.sub_font == "noto_serif"
 
-    # The legacy 'default' selector was an explicit choice of Noto
-    # Sans Myanmar — it aliases to noto_sans so saved choices keep
-    # their font (it is NOT the un-chosen path; omission → padauk).
+    # The legacy 'default' selector was the old picker's Noto Sans
+    # Myanmar label; Batch T (Ulfa, 2026-11-04) migrates those
+    # savers to the new default, so it aliases to padauk (omission
+    # also lands on padauk; an explicit 'noto_sans' is unaffected).
     req2c = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="default")
-    assert req2c.sub_font == "noto_sans"
+    assert req2c.sub_font == "padauk"
 
     # Unknown font safely falls back to the production default ('padauk')
     req3 = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="ComicSansUnknown")
