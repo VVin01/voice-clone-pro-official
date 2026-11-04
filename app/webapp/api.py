@@ -5131,6 +5131,13 @@ async def _execute_recap_background_job(
             pass
         if credit_deducted and not entry.get("credit_refunded"):
             await _refund_recap_job_charge(user_id, entry)
+        # Batch W (2026-11-04): a cancelled job's media bulk is waste
+        # exactly like a failed one's — strip it now (see the generic
+        # failure handler below) instead of at the 7-day sweep.
+        try:
+            _strip_failed_recap_job_media(job_dir)
+        except Exception as strip_err:
+            logger.warning(f"Recap job {job_id}: cancelled-job media strip failed: {strip_err}")
         raise
     except Exception as e:
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
@@ -5200,6 +5207,21 @@ async def _execute_recap_background_job(
         except Exception as dm_err:
             logger.warning(f"Could not send DM for failed job {job_id}: {dm_err}")
 
+        # Batch W (2026-11-04): strip the failed job's media bulk now.
+        # A failed job's downloaded source, split segments and render
+        # intermediates are pure waste — user retry creates a NEW job
+        # and admin retry re-dispatches without resume_source (it
+        # re-downloads and re-renders) — but they used to sit on the
+        # persistent disk for the full 7-day retention window, which
+        # is how the disk filled and every new job started dying on
+        # "[Errno 28] No space left on device". The small JSON state
+        # (plans, checkpoints, fallback markers) stays for inspection;
+        # the record sweep removes the rest with the row at 7 days.
+        try:
+            _strip_failed_recap_job_media(job_dir)
+        except Exception as strip_err:
+            logger.warning(f"Recap job {job_id}: failed-job media strip failed: {strip_err}")
+
 
 def _sweep_expired_download_dirs(cutoff: datetime) -> int:
     """Remove downloader cache dirs older than the retention cutoff.
@@ -5238,6 +5260,260 @@ def _sweep_expired_download_dirs(cutoff: datetime) -> int:
         except OSError:
             continue
     return removed
+
+
+# ── Batch W (2026-11-04): filesystem-level storage retention ──────────────
+# cleanup_expired_jobs below is record-driven: it removes only the files
+# a Job row deleted in the same run points at. The 2026-11-04 disk-full
+# incident (10 GB persistent disk exhausted; six recap jobs dead on
+# "[Errno 28] No space left on device") showed what accumulates outside
+# that view:
+#   * recap_output dirs whose Job row is already gone (a purge whose
+#     file removal failed, a job that died before its row existed) —
+#     never revisited by the record sweep;
+#   * FAILED/CANCELLED jobs keep their whole dir — downloaded source,
+#     split segments, render intermediates — for the full 7-day window;
+#   * temp/recap_preview_src (a full source video per previewed URL)
+#     had NO cleanup at all;
+#   * voice-worker temp dirs orphaned by a dead process, and clone-flow
+#     uploads (temp/inputs, temp/voxcpm_refs) abandoned mid-conversation.
+# The helpers below sweep exactly those, and only those: fixed roots
+# under settings.storage_root, age thresholds, reference checks against
+# surviving Job rows, and symlinks never followed or removed through.
+_FAILED_STRIP_AGE_SECONDS = 24 * 3600
+_PREVIEW_CACHE_AGE_SECONDS = 24 * 3600
+_TEMP_JOB_DIR_AGE_SECONDS = 24 * 3600
+_ABANDONED_UPLOAD_AGE_SECONDS = 24 * 3600
+_JOB_MEDIA_SUFFIXES = {
+    ".mp4", ".mkv", ".mov", ".webm", ".m4v", ".ts", ".avi",
+    ".mp3", ".wav", ".ogg", ".m4a", ".part", ".ytdl",
+}
+_FINAL_RENDER_NAME = "final_edge_tts_smart_sync.mp4"
+_KNOWN_TEMP_SUBDIRS = {"inputs", "voxcpm_refs", "recap_uploads", "recap_preview_src"}
+_TERMINAL_JOB_STATUSES = {
+    JobStatus.SUCCESS.value,
+    JobStatus.FAILED.value,
+    JobStatus.CANCELLED.value,
+}
+
+
+def _dir_size_and_newest_mtime(root: Path) -> tuple[int, float]:
+    """(total bytes, newest mtime) under ``root``, never following
+    symlinks — a symlinked dir is neither descended into nor counted."""
+    total = 0
+    newest = 0.0
+    try:
+        newest = root.lstat().st_mtime
+    except OSError:
+        pass
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not Path(dirpath, d).is_symlink()]
+        for name in filenames:
+            p = Path(dirpath, name)
+            try:
+                if p.is_symlink():
+                    continue
+                st = p.stat()
+            except OSError:
+                continue
+            total += st.st_size
+            if st.st_mtime > newest:
+                newest = st.st_mtime
+    return total, newest
+
+
+def _safe_rmtree(target: Path, storage_root: Path) -> bool:
+    """Remove a directory tree, guarded: only a real (non-symlink)
+    directory strictly inside the storage root is ever removed."""
+    try:
+        if target.is_symlink() or not target.is_dir():
+            return False
+        resolved = target.resolve()
+        root_resolved = storage_root.resolve()
+        if resolved == root_resolved or root_resolved not in resolved.parents:
+            return False
+        shutil.rmtree(target, ignore_errors=True)
+        return not target.exists()
+    except Exception:
+        return False
+
+
+def _strip_failed_recap_job_media(job_dir: Path) -> tuple[int, int]:
+    """Remove the bulky media of a FAILED/CANCELLED recap job's dir.
+
+    Keeps the small state that is still read afterwards — every *.json
+    (script plans, checkpoints, and the fallback-transparency markers
+    the status/history serializers read via _recap_fallback_info) and
+    a completed final render — and removes the gigabytes: the
+    downloaded source, source_segments/ and parts/, the TTS/video
+    render intermediates, and partial downloads. No live flow reads
+    the removed files: user retry creates a NEW job, and admin retry
+    re-dispatches without resume_source, so it re-downloads and
+    re-renders into the same dir. Symlinks are never followed.
+    Returns (files_removed, bytes_freed).
+    """
+    removed = 0
+    freed = 0
+    try:
+        if job_dir.is_symlink() or not job_dir.is_dir():
+            return removed, freed
+        for dirpath, dirnames, filenames in os.walk(job_dir, followlinks=False):
+            dirnames[:] = [d for d in dirnames if not Path(dirpath, d).is_symlink()]
+            for name in filenames:
+                if name == _FINAL_RENDER_NAME:
+                    continue
+                if Path(name).suffix.lower() not in _JOB_MEDIA_SUFFIXES:
+                    continue
+                p = Path(dirpath, name)
+                try:
+                    if p.is_symlink():
+                        continue
+                    freed += p.stat().st_size
+                    p.unlink(missing_ok=True)
+                    removed += 1
+                except OSError:
+                    continue
+    except Exception:
+        pass
+    return removed, freed
+
+
+async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
+    """Filesystem-level retention for artefacts no Job row covers.
+
+    Companion to cleanup_expired_jobs (which calls this): the record
+    sweep handles rows + their files inside the retention window; this
+    pass handles the orphans and the waste classes listed above.
+    Finished outputs and anything a surviving row still references are
+    never touched, and nothing younger than its class threshold is
+    removed. Returns {"dirs": n, "files": n, "bytes": n} and logs a
+    one-line summary whenever it removes anything.
+    """
+    stats = {"dirs": 0, "files": 0, "bytes": 0}
+    storage_root = settings.storage_root
+    now_ts = time.time()
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                select(Job.id, Job.status, Job.source_audio_path, Job.result_path)
+            )).all()
+    except Exception as e:
+        logger.warning(f"Storage orphan sweep skipped (job index unavailable): {e}")
+        return stats
+
+    status_by_id: dict[str, str] = {}
+    referenced_names: set[str] = set()
+    referenced_stems: set[str] = set()
+    for jid, status, src_path, res_path in rows:
+        status_by_id[str(jid)] = status
+        for p in (src_path, res_path):
+            if p:
+                referenced_names.add(Path(p).name)
+                referenced_stems.add(Path(p).stem)
+
+    # 1. recap_output: orphan dirs (no surviving row) older than the
+    #    retention window go whole; FAILED/CANCELLED dirs older than
+    #    24h get their media stripped (their rows — and the small JSON
+    #    state — are removed by the record sweep at the window).
+    recap_root = storage_root / "recap_output"
+    if recap_root.is_dir() and not recap_root.is_symlink():
+        for d in list(recap_root.iterdir()):
+            try:
+                if d.is_symlink() or not d.is_dir():
+                    continue
+                size, newest = _dir_size_and_newest_mtime(d)
+                status = status_by_id.get(d.name)
+                if status is None:
+                    if newest < retention_cutoff_ts and _safe_rmtree(d, storage_root):
+                        stats["dirs"] += 1
+                        stats["bytes"] += size
+                elif status in (JobStatus.FAILED.value, JobStatus.CANCELLED.value):
+                    if now_ts - newest > _FAILED_STRIP_AGE_SECONDS:
+                        f_removed, f_bytes = _strip_failed_recap_job_media(d)
+                        stats["files"] += f_removed
+                        stats["bytes"] += f_bytes
+            except OSError:
+                continue
+
+    # 2. temp/recap_preview_src: a pure derived cache (frames and the
+    #    source are re-fetched on demand), keyed by URL. 24h of quiet
+    #    means nobody is previewing it any more.
+    preview_root = storage_root / "temp" / "recap_preview_src"
+    if preview_root.is_dir() and not preview_root.is_symlink():
+        for d in list(preview_root.iterdir()):
+            try:
+                if d.is_symlink() or not d.is_dir():
+                    continue
+                size, newest = _dir_size_and_newest_mtime(d)
+                if now_ts - newest > _PREVIEW_CACHE_AGE_SECONDS and _safe_rmtree(d, storage_root):
+                    stats["dirs"] += 1
+                    stats["bytes"] += size
+            except OSError:
+                continue
+
+    temp_root = storage_root / "temp"
+    if temp_root.is_dir() and not temp_root.is_symlink():
+        # 3. Voice-worker per-job temp dirs (temp/<job.id>): the worker
+        #    removes its own in a finally block, so a survivor older
+        #    than 24h belongs to a dead process or a terminal job.
+        for d in list(temp_root.iterdir()):
+            try:
+                if d.is_symlink() or not d.is_dir() or d.name in _KNOWN_TEMP_SUBDIRS:
+                    continue
+                status = status_by_id.get(d.name)
+                if status is not None and status not in _TERMINAL_JOB_STATUSES:
+                    continue
+                size, newest = _dir_size_and_newest_mtime(d)
+                if now_ts - newest > _TEMP_JOB_DIR_AGE_SECONDS and _safe_rmtree(d, storage_root):
+                    stats["dirs"] += 1
+                    stats["bytes"] += size
+            except OSError:
+                continue
+        # 4. Abandoned clone-flow uploads: files in temp/inputs and
+        #    temp/voxcpm_refs that no surviving Job row references and
+        #    that have sat untouched for 24h (a live conversation or a
+        #    queued job is never that old, and referenced files are
+        #    kept regardless of age).
+        for sub in ("inputs", "voxcpm_refs"):
+            sub_dir = temp_root / sub
+            if sub_dir.is_symlink() or not sub_dir.is_dir():
+                continue
+            for f in list(sub_dir.iterdir()):
+                try:
+                    if f.is_symlink() or not f.is_file():
+                        continue
+                    if f.name in referenced_names or f.stem in referenced_stems:
+                        continue
+                    st = f.stat()
+                    if now_ts - st.st_mtime > _ABANDONED_UPLOAD_AGE_SECONDS:
+                        f.unlink(missing_ok=True)
+                        stats["files"] += 1
+                        stats["bytes"] += st.st_size
+                except OSError:
+                    continue
+        # 5. Stray partial downloads at the temp root.
+        for f in list(temp_root.iterdir()):
+            try:
+                if f.is_symlink() or not f.is_file():
+                    continue
+                if f.suffix.lower() not in (".part", ".ytdl"):
+                    continue
+                st = f.stat()
+                if now_ts - st.st_mtime > _FAILED_STRIP_AGE_SECONDS:
+                    f.unlink(missing_ok=True)
+                    stats["files"] += 1
+                    stats["bytes"] += st.st_size
+            except OSError:
+                continue
+
+    if stats["dirs"] or stats["files"]:
+        logger.info(
+            "Storage orphan sweep (Batch W): removed %d dirs, %d files, freed %.1f MB.",
+            stats["dirs"], stats["files"], stats["bytes"] / (1024 * 1024),
+        )
+    return stats
 
 
 async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
@@ -5380,6 +5656,16 @@ async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
             logger.info(f"Auto-cleaned {downloads_removed} expired downloader caches (>{days}d).")
     except Exception as e:
         logger.warning(f"Downloader cache sweep failed: {e}")
+
+    # Filesystem-level orphan sweep (Batch W, 2026-11-04): artefacts no
+    # Job row covers — orphaned recap_output dirs, FAILED-job media,
+    # the preview-source cache, dead voice-worker temp dirs, abandoned
+    # clone uploads. Best-effort like the sections above: a failure
+    # here must not fail the whole cleanup.
+    try:
+        await _sweep_storage_orphans(retention_cutoff_ts=cutoff.timestamp())
+    except Exception as e:
+        logger.warning(f"Storage orphan sweep failed: {e}")
 
     if deleted_count > 0:
         logger.info(f"Auto-cleaned {deleted_count} expired (>{days}d) jobs and media files.")
