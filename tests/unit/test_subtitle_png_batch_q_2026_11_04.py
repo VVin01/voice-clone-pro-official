@@ -80,10 +80,10 @@ def test_no_basic_layout_fallback_anywhere():
 # ── 2. Font file rule: static Bold by path, variable font banned ──
 
 def test_font_file_is_bundled_static_bold():
-    p = subtitle_font_file("default")
+    p = subtitle_font_file("noto_sans")
     assert p.name == "NotoSansMyanmar-Bold.ttf"
     assert p.is_file()
-    for key in ("default", "serif", "padauk"):
+    for key in ("padauk", "noto_sans", "pyidaungsu", "noto_serif"):
         p = subtitle_font_file(key)
         assert "Bold" in p.name
         # The variable font that merged stacks (2026-11-01) can
@@ -277,7 +277,7 @@ def test_parse_ass_source_roundtrip(tmp_path):
     assert parsed is not None
     assert parsed["cues"] == [(0.5, 2.5, "မြို့ကြီးဆီကို ထွက်ခွာပြီး")]
     assert parsed["font_px"] == subtitle_font_px(1280, 720, 16, 1, None)
-    assert parsed["font_family"] == "Noto Sans Myanmar"
+    assert parsed["font_family"] == "Padauk"  # un-chosen default family
     assert parsed["visuals"]["fill"] == (255, 255, 0, 255)
 
 

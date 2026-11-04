@@ -3637,7 +3637,7 @@ class RecapConfigRequest(BaseModel):
     sub_style: str = "yellow"         # yellow, white, boxed, neon
     sub_font_size: int = Field(16, ge=12, le=30)
     sub_lines: int = Field(1, ge=1, le=2)
-    sub_font: str = "default"         # default, serif, padauk
+    sub_font: str = "padauk"          # padauk, noto_sans, pyidaungsu, noto_serif
     include_logo: bool = True
     logo_pos: str = "top-right"       # top-right, top-left, bottom-right, bottom-left, top-center
     duration_seconds: Optional[int] = None

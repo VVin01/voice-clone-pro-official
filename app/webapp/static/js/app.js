@@ -368,7 +368,7 @@ const state = {
     logoHas: false,
     logoUrl: null,
     recapSubStyle: "yellow",
-    recapSubFont: "default",
+    recapSubFont: "padauk",
     recapFontSize: 16,
     recapLines: 1,
     recapSplitMinutes: 3,
@@ -4584,12 +4584,17 @@ function setupRecapVisualEditor() {
         // mockup table that systematically over-promised the size.
         previewText.style.fontSize = `${subtitlePreviewFontPx()}px`;
 
+        // Batch Q font choice: the four families are served as
+        // static webfonts (@font-face in style.css, /static/fonts/)
+        // so the live sample renders in the SAME font the PNG burn
+        // will use — the picker's keys are the backend's keys.
         const fontMap = {
-            "default": "'Padauk', sans-serif",
-            "serif": "'Noto Serif Myanmar', serif",
-            "padauk": "'Padauk', sans-serif"
+            "padauk": "'Padauk', sans-serif",
+            "noto_sans": "'Noto Sans Myanmar', sans-serif",
+            "pyidaungsu": "'Pyidaungsu', sans-serif",
+            "noto_serif": "'Noto Serif Myanmar', serif"
         };
-        previewText.style.fontFamily = fontMap[state.recapSubFont || "default"] || fontMap["default"];
+        previewText.style.fontFamily = fontMap[state.recapSubFont || "padauk"] || fontMap["padauk"];
 
         if (lines === 1) {
             previewBox.classList.remove("two-lines");
@@ -4644,14 +4649,14 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // 12b. Subtitle Font Picker (default / serif / padauk)
+    // 12b. Subtitle Font Picker (padauk / noto_sans / pyidaungsu / noto_serif)
     const subFontBtns = document.querySelectorAll("#recap-sub-font-picker .pill-btn");
     subFontBtns.forEach(btn => {
         btn.addEventListener("click", () => {
             haptic("selection");
             subFontBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
-            state.recapSubFont = btn.getAttribute("data-font") || "default";
+            state.recapSubFont = btn.getAttribute("data-font") || "padauk";
             updateSubtitleVisualPreview();
         });
     });
@@ -4999,7 +5004,7 @@ function setupRecapVisualEditor() {
         recapSpeed: ["+0%", "+8%", "+12%", "+18%", "+22%"],
         recapStoryStyle: ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
         recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"],
-        recapSubFont: ["default", "serif", "padauk"],
+        recapSubFont: ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
         recapLogoPos: ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
         recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja"],
         recapRenderQuality: ["standard", "high", "max"],
@@ -5061,6 +5066,12 @@ function setupRecapVisualEditor() {
         let saved = null;
         try { saved = JSON.parse(localStorage.getItem(RECAP_SETTINGS_KEY) || "null"); } catch (e) {}
         if (!saved || typeof saved !== "object") return;
+        // Batch Q font choice: legacy snapshot values from before the
+        // four-key registry keep their meaning — a saved choice is
+        // honoured, not silently swapped ("Default" was Noto Sans
+        // Myanmar, "Serif" was Noto Serif Myanmar).
+        const LEGACY_SUB_FONTS = { "default": "noto_sans", "serif": "noto_serif" };
+        if (LEGACY_SUB_FONTS[saved.recapSubFont]) saved.recapSubFont = LEGACY_SUB_FONTS[saved.recapSubFont];
         Object.entries(RECAP_SETTING_ENUMS).forEach(([k, allowed]) => {
             if (allowed.includes(saved[k])) state[k] = saved[k];
         });
@@ -5400,7 +5411,7 @@ async function handleStartRecap() {
             sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
             sub_style: state.recapSubStyle || "yellow",
             sub_font_size: state.recapFontSize || 16,
-            sub_font: state.recapSubFont || "default",
+            sub_font: state.recapSubFont || "padauk",
             sub_lines: state.recapLines || 1,
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",

@@ -26,18 +26,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_recap_config_request_sub_font_default():
-    """sub_font defaults to 'default' when omitted."""
+    """sub_font defaults to 'padauk' when omitted (Batch Q font
+    choice, 2026-11-04 — Padauk is the product default)."""
     req = RecapConfigRequest(url="https://example.com/video.mp4")
-    assert req.sub_font == "default"
+    assert req.sub_font == "padauk"
 
 
 def test_recap_config_request_sub_font_choices():
     """All registered fonts in SUBTITLE_FONT_OPTIONS are accepted.
 
-    The "default" key is the no-choice selector: the validator resolves it
-    to the production default font key — 'padauk' 2026-10-30..2026-11-01,
-    'default' (Noto Sans Myanmar) again since the 2026-11-01 shaping fix;
-    every key passes through unchanged.
+    Since the Batch Q font choice the registry keys are the four
+    family keys (padauk / noto_sans / pyidaungsu / noto_serif) and
+    every key passes the validator unchanged. (History: the old
+    "default" key was the no-choice selector — 'padauk'
+    2026-10-30..2026-11-01, Noto Sans Myanmar 2026-11-01..2026-11-04.)
     """
     for key in SUBTITLE_FONT_OPTIONS:
         req = RecapConfigRequest(url="https://example.com/video.mp4", sub_font=key)
@@ -47,38 +49,49 @@ def test_recap_config_request_sub_font_choices():
 def test_recap_config_request_sub_font_aliases_and_fallback():
     """Full family names or unknown strings resolve safely via resolve_subtitle_font."""
     req1 = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="Noto Serif Myanmar")
-    assert req1.sub_font == "serif"
+    assert req1.sub_font == "noto_serif"
 
     req2 = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="Padauk")
     assert req2.sub_font == "padauk"
 
-    # Unknown font safely falls back to the production default ('default')
+    # The legacy 'serif' selector aliases to noto_serif.
+    req2b = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="serif")
+    assert req2b.sub_font == "noto_serif"
+
+    # The legacy 'default' selector was an explicit choice of Noto
+    # Sans Myanmar — it aliases to noto_sans so saved choices keep
+    # their font (it is NOT the un-chosen path; omission → padauk).
+    req2c = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="default")
+    assert req2c.sub_font == "noto_sans"
+
+    # Unknown font safely falls back to the production default ('padauk')
     req3 = RecapConfigRequest(url="https://example.com/video.mp4", sub_font="ComicSansUnknown")
-    assert req3.sub_font == "default"
+    assert req3.sub_font == "padauk"
 
 
 # ── 2. Downloader & Pipeline Signature Verification ───────────────────────
 
 
 def test_downloader_generate_recap_video_accepts_sub_font():
-    """MediaDownloader.generate_recap_video accepts sub_font with default 'default'."""
+    """MediaDownloader.generate_recap_video accepts sub_font with default 'padauk'."""
     sig = inspect.signature(MediaDownloader.generate_recap_video)
     assert "sub_font" in sig.parameters
-    assert sig.parameters["sub_font"].default == "default"
+    assert sig.parameters["sub_font"].default == "padauk"
 
 
 def test_downloader_generate_recap_preview_accepts_sub_font():
-    """MediaDownloader.generate_recap_preview accepts sub_font with default 'default'."""
+    """MediaDownloader.generate_recap_preview accepts sub_font with default 'padauk'."""
     sig = inspect.signature(MediaDownloader.generate_recap_preview)
     assert "sub_font" in sig.parameters
-    assert sig.parameters["sub_font"].default == "default"
+    assert sig.parameters["sub_font"].default == "padauk"
 
 
 # ── 3. Mini App HTML Structure & Liquid Glass Classes ─────────────────────
 
 
 def test_miniapp_html_contains_sub_font_picker():
-    """The Recap settings area contains #recap-sub-font-picker with 3 options."""
+    """The Recap settings area contains #recap-sub-font-picker with the
+    four Batch Q font-choice options."""
     html_file = REPO_ROOT / "app" / "webapp" / "static" / "index.html"
     assert html_file.is_file()
     html_content = html_file.read_text(encoding="utf-8")
@@ -86,13 +99,14 @@ def test_miniapp_html_contains_sub_font_picker():
     assert 'id="recap-sub-font-picker"' in html_content
     assert 'data-i18n="recap_sub_font_label"' in html_content
 
-    # Three options matching backend options
-    assert 'data-font="default"' in html_content
-    assert 'data-font="serif"' in html_content
+    # Four options matching the backend registry keys
     assert 'data-font="padauk"' in html_content
+    assert 'data-font="noto_sans"' in html_content
+    assert 'data-font="pyidaungsu"' in html_content
+    assert 'data-font="noto_serif"' in html_content
 
-    # Default option is active
-    match = re.search(r'<button[^>]*data-font="default"[^>]*>', html_content)
+    # The default option (Padauk) is active
+    match = re.search(r'<button[^>]*data-font="padauk"[^>]*>', html_content)
     assert match is not None
     assert "active" in match.group(0)
 
@@ -123,9 +137,10 @@ def test_i18n_key_parity_for_subtitle_font():
 
     expected_keys = {
         "recap_sub_font_label",
-        "recap_sub_font_default",
-        "recap_sub_font_serif",
         "recap_sub_font_padauk",
+        "recap_sub_font_noto_sans",
+        "recap_sub_font_pyidaungsu",
+        "recap_sub_font_noto_serif",
     }
 
     # Extract my section
@@ -152,8 +167,8 @@ def test_app_js_state_and_payload():
     """app.js registers state.recapSubFont and includes it in start recap request."""
     app_js = (REPO_ROOT / "app" / "webapp" / "static" / "js" / "app.js").read_text(encoding="utf-8")
 
-    assert 'recapSubFont: "default"' in app_js
-    assert 'sub_font: state.recapSubFont || "default"' in app_js
+    assert 'recapSubFont: "padauk"' in app_js
+    assert 'sub_font: state.recapSubFont || "padauk"' in app_js
     assert 'recap-sub-font-picker' in app_js
     assert 'data-font' in app_js
 
@@ -177,8 +192,11 @@ def test_phone_width_overflow_audit():
     my_dict = _extract_i18n_keys(my_match.group(1))
     en_dict = _extract_i18n_keys(en_match.group(1))
 
-    # Font pill keys
-    pill_keys = ["recap_sub_font_default", "recap_sub_font_serif", "recap_sub_font_padauk"]
+    # Font pill keys (four options since the Batch Q font choice)
+    pill_keys = [
+        "recap_sub_font_padauk", "recap_sub_font_noto_sans",
+        "recap_sub_font_pyidaungsu", "recap_sub_font_noto_serif",
+    ]
 
     for lang_code, lang_dict in [("my", my_dict), ("en", en_dict)]:
         labels = [lang_dict[k] for k in pill_keys]
@@ -186,11 +204,19 @@ def test_phone_width_overflow_audit():
         # Plus 26px padding (13px left + 13px right) per button
         # Plus 4px gap between buttons
         est_pill_widths = [len(label) * 9 + 26 for label in labels]
-        total_pills_width = sum(est_pill_widths) + (len(labels) - 1) * 4
 
         # For phone widths (360px screen with 32px card margin -> 328px available width)
         available_phone_width = 360 - 32
-        assert total_pills_width < available_phone_width, (
-            f"Labels in {lang_code} ({labels}) estimated at {total_pills_width}px "
-            f"exceeds phone width {available_phone_width}px"
+        # .pill-group wraps (flex-wrap: wrap in style.css), so four
+        # pills flow onto two rows: the audit's invariant is that no
+        # single pill overflows and the two widest neighbours that
+        # share a row still fit — nothing is ever clipped.
+        assert max(est_pill_widths) < available_phone_width, (
+            f"Widest label in {lang_code} ({labels}) estimated at "
+            f"{max(est_pill_widths)}px exceeds phone width {available_phone_width}px"
+        )
+        widest_two = sum(sorted(est_pill_widths, reverse=True)[:2]) + 4
+        assert widest_two < available_phone_width, (
+            f"Two widest labels in {lang_code} ({labels}) estimated at {widest_two}px "
+            f"exceed phone width {available_phone_width}px"
         )
