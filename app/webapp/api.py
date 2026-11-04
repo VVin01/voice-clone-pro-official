@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
-from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, PaymentRequest, AuditLog, utc_now
+from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, RecapCreditLedgerEvent, PaymentRequest, AuditLog, utc_now
 from app.services.i18n import t
 from app.services.models import get_authorized_model, get_available_models_for_user, is_displayable_model
 from app.services.myanmar_text import convert_zawgyi_to_unicode
@@ -730,7 +730,7 @@ def _recap_eta_seconds(
     return None
 
 
-async def _refund_recap_credits(user_id: int, count: int) -> bool:
+async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None = None) -> bool:
     """Refund `count` recap credits in its own session/commit.
 
     Separate from the job-status update so a status-write failure cannot
@@ -738,6 +738,13 @@ async def _refund_recap_credits(user_id: int, count: int) -> bool:
     only invoke it once per failed job (see _run_recap_background_job,
     which marks the registry entry as refunded after a successful commit).
     Returns True when credits were actually added.
+
+    Batch O (billing option C): when `job_id` is given, the refund is
+    also written to the recap-credit ledger (CREDIT, reference
+    ``REFUND:<job_id>``) in the SAME transaction as the balance change,
+    and a job whose refund is already on the ledger is never refunded
+    again from here — the ledger row is the durable cross-check behind
+    the persisted refund claim.
     """
     if count <= 0:
         return False
@@ -745,8 +752,11 @@ async def _refund_recap_credits(user_id: int, count: int) -> bool:
         return False
     try:
         from app.db.session import AsyncSessionLocal
+        from app.services.ledger import record_recap_credit_event, recap_refund_event_exists
 
         async with AsyncSessionLocal() as session:
+            if job_id and await recap_refund_event_exists(session, user_id, job_id):
+                return False
             # Atomic increment (hunt F5): no read-modify-write window in
             # which a concurrent charge could be overwritten.
             result = await session.execute(
@@ -756,6 +766,15 @@ async def _refund_recap_credits(user_id: int, count: int) -> bool:
             )
             if not result.rowcount:
                 return False
+            if job_id:
+                await record_recap_credit_event(
+                    session,
+                    user_id=user_id,
+                    direction="CREDIT",
+                    credits=count,
+                    reference_id=f"REFUND:{job_id}",
+                    note=f"Recap credit refund for job {job_id}",
+                )
             await session.commit()
             return True
     except Exception as exc:
@@ -768,7 +787,7 @@ async def _refund_recap_credit(user_id: int) -> bool:
     return await _refund_recap_credits(user_id, 1)
 
 
-async def _charge_recap_credits(user_id: int, count: int) -> bool:
+async def _charge_recap_credits(user_id: int, count: int, *, job_id: str | None = None) -> bool:
     """Deduct `count` recap credits in its own session/commit.
 
     All-or-nothing: when the balance cannot cover the full amount,
@@ -783,6 +802,7 @@ async def _charge_recap_credits(user_id: int, count: int) -> bool:
         return True
     try:
         from app.db.session import AsyncSessionLocal
+        from app.services.ledger import record_recap_credit_event
 
         async with AsyncSessionLocal() as session:
             # Atomic all-or-nothing charge (hunt F5): the WHERE clause
@@ -797,6 +817,17 @@ async def _charge_recap_credits(user_id: int, count: int) -> bool:
             )
             if not result.rowcount:
                 return False
+            if job_id:
+                # Batch O (billing option C): the charge lands on the
+                # recap-credit ledger in the same transaction.
+                await record_recap_credit_event(
+                    session,
+                    user_id=user_id,
+                    direction="DEBIT",
+                    credits=count,
+                    reference_id=job_id,
+                    note=f"Recap credit charge for job {job_id}",
+                )
             await session.commit()
             return True
     except Exception as exc:
@@ -1248,7 +1279,15 @@ async def expire_abandoned_script_ready_jobs() -> int:
                     job_id, _amount
                 )
                 if _claim == "claimed":
-                    if not await _refund_recap_job_charge(user_id, refund_entry):
+                    # Batch O: refund directly — routing this through
+                    # _refund_recap_job_charge would re-claim the blob
+                    # this sweep just claimed and read its own claim
+                    # as "already refunded". The claim is released if
+                    # the balance refund itself fails.
+                    if await _refund_recap_credits(user_id, _amount, job_id=job_id):
+                        refund_entry["credit_refunded"] = True
+                        refund_entry["credits_refunded"] = _amount
+                    else:
                         await _release_persisted_recap_refund_claim(job_id)
                 elif _claim == "already":
                     refund_entry["credit_refunded"] = True
@@ -1414,7 +1453,7 @@ async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: i
     """
     already = int(entry.get("credits_charged") or 0)
     extra = int(total_parts) - already
-    if extra > 0 and not await _charge_recap_credits(user_id, extra):
+    if extra > 0 and not await _charge_recap_credits(user_id, extra, job_id=entry.get("id")):
         raise _RecapInsufficientCreditsError(total_parts)
     entry["credits_charged"] = int(total_parts)
     entry["credit_deducted"] = True
@@ -1429,9 +1468,11 @@ async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: i
 async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     """Refund whatever a recap job was actually charged — 1 credit for
     a normal job, N credits for a segmented one — exactly once per job
-    (the registry flag makes repeat failure handlers no-ops). Mirrors
-    the normal failed-recap semantics: a failed job's full charge is
-    returned, so the user is left exactly whole."""
+    (the registry flag makes repeat failure handlers no-ops, and since
+    Batch O the persisted Job-row claim is taken before the balance
+    moves, so a crash between refund and flag-persist cannot reopen
+    the refund). Mirrors the normal failed-recap semantics: a failed
+    job's full charge is returned, so the user is left exactly whole."""
     if entry.get("credit_refunded"):
         return False
     amount = int(entry.get("credits_charged") or 0)
@@ -1448,7 +1489,25 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     # still refund.
     entry["credit_refunded"] = True
     entry["credits_refunded"] = amount
-    if await _refund_recap_credits(user_id, amount):
+    # Batch O (billing option C): the claim is ALSO taken in the
+    # persisted Job-row state BEFORE the balance moves. The in-memory
+    # flag alone left a crash window — refund committed, flag persist
+    # (below) never ran — after which a registry-less path (admin
+    # cancel, expiry sweep) could refund the same charge a second
+    # time. "already" means the durable record says this charge was
+    # refunded (or is being refunded under a claim) — sync the entry
+    # and stop. "error" (no Job row / no persisted blob: legacy rows)
+    # falls through to the historical in-memory-only behaviour; the
+    # ledger REFUND row written by _refund_recap_credits still guards
+    # those refunds against a repeat.
+    _job_id = entry.get("id")
+    _claim_state = "error"
+    if _job_id:
+        _claim_state, _recorded = await _claim_persisted_recap_refund(_job_id, amount)
+        if _claim_state == "already":
+            entry["credits_refunded"] = int(_recorded or amount)
+            return False
+    if await _refund_recap_credits(user_id, amount, job_id=_job_id):
         # Persist the refund on the Job row too (hunt #5): if the
         # process restarts now, the re-dispatch plan restores the flag
         # and a second failure cannot refund the same charge again;
@@ -1457,6 +1516,8 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
         return True
     entry["credit_refunded"] = False
     entry["credits_refunded"] = 0
+    if _claim_state == "claimed":
+        await _release_persisted_recap_refund_claim(_job_id)
     return False
 
 
@@ -1531,16 +1592,48 @@ async def _cancel_recap_job_core(
                     "recap_credits": int(persisted.get("credits_refunded") or proven_credits),
                     "note": "charge already refunded before the restart (persisted state)",
                 }
-            elif not settings.is_admin(job.user_id) and await _refund_recap_credits(job.user_id, proven_credits):
-                refund_info = {
-                    "refunded": True,
-                    "recap_credits": proven_credits,
-                    "note": (
-                        "registry unavailable; amount restored from persisted recap state"
-                        if persisted is not None
-                        else "base credit only (registry unavailable)"
-                    ),
-                }
+            elif not settings.is_admin(job.user_id):
+                # Batch O (billing option C): claim the refund in the
+                # persisted blob BEFORE the balance moves — this bare
+                # read-then-refund used to leave a crash window in
+                # which another path could refund the same charge
+                # again. Legacy rows (no blob) keep the historical
+                # direct refund; the ledger REFUND row still guards
+                # them against a repeat.
+                _did_refund = False
+                if persisted is not None:
+                    _claim, _recorded = await _claim_persisted_recap_refund(
+                        job.id, proven_credits
+                    )
+                    if _claim == "already":
+                        refund_info = {
+                            "refunded": True,
+                            "recap_credits": int(_recorded or proven_credits),
+                            "note": "charge already refunded before the restart (persisted state)",
+                        }
+                    elif _claim == "claimed":
+                        if await _refund_recap_credits(job.user_id, proven_credits, job_id=job.id):
+                            _did_refund = True
+                        else:
+                            await _release_persisted_recap_refund_claim(job.id)
+                    else:  # "error": blob vanished mid-flight — direct refund
+                        _did_refund = await _refund_recap_credits(
+                            job.user_id, proven_credits, job_id=job.id
+                        )
+                else:
+                    _did_refund = await _refund_recap_credits(
+                        job.user_id, proven_credits, job_id=job.id
+                    )
+                if _did_refund:
+                    refund_info = {
+                        "refunded": True,
+                        "recap_credits": proven_credits,
+                        "note": (
+                            "registry unavailable; amount restored from persisted recap state"
+                            if persisted is not None
+                            else "base credit only (registry unavailable)"
+                        ),
+                    }
     except Exception as exc:
         logger.warning(f"Cancel refund failed for job {job.id}: {exc}")
         refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
@@ -3532,6 +3625,13 @@ class RecapConfigRequest(BaseModel):
     blur_subtitles: bool = True
     blur_y: int = Field(85, ge=0, le=100)
     blur_h: int = Field(7, ge=1, le=50)
+    # Batch O (DECISION backlog item 5, Ulfa reversed to user-facing):
+    # blur strength = boxblur radius over the source's embedded
+    # subtitles. Default 18 is the historical hardcoded value; the
+    # validator CLAMPS into the engine's 4–40 range instead of
+    # rejecting, so an out-of-range client value degrades to the
+    # nearest supported strength rather than failing the submit.
+    blur_strength: int = 18
     burn_subtitles: bool = True
     sub_y: int = Field(85, ge=0, le=100)
     sub_style: str = "yellow"         # yellow, white, boxed, neon
@@ -3566,6 +3666,15 @@ class RecapConfigRequest(BaseModel):
     #   (owner decision 2026-10-30; see _top_up_recap_segment_charge).
     split_video: bool = False
     split_minutes: int = Field(3, ge=1, le=10)
+
+    @field_validator("blur_strength")
+    @classmethod
+    def _clamp_blur_strength(cls, v) -> int:
+        try:
+            strength = int(v)
+        except (TypeError, ValueError):
+            return 18
+        return max(4, min(40, strength))
 
     @field_validator("sub_font")
     @classmethod
@@ -4733,6 +4842,7 @@ async def _execute_recap_background_job(
             blur_subtitles=req.blur_subtitles,
             blur_y=float(req.blur_y) / 100.0,
             blur_h=float(req.blur_h) / 100.0,
+            blur_strength=req.blur_strength,
             burn_subtitles=req.burn_subtitles,
             sub_y=float(req.sub_y) / 100.0,
             sub_lines=req.sub_lines,
@@ -5537,6 +5647,19 @@ async def create_recap_job(
             estimated_parts=estimated_parts,
         ),
     )
+    if deducted_credit:
+        # Batch O (billing option C): the submit charge lands on the
+        # recap-credit ledger in the SAME transaction as the charge
+        # itself (both branches below commit this session), so the
+        # audit row can never exist without the charge or vice versa.
+        db.add(RecapCreditLedgerEvent(
+            user_id=user.id,
+            source="RECAP",
+            direction="DEBIT",
+            credits=1,
+            reference_id=job_id,
+            note=f"Recap job {job_id} submit charge",
+        ))
     if _submit_locked:
         # Batch N locked path: insert inside the SAME transaction as
         # the row lock + charge. The savepoint keeps a failed insert
@@ -5570,8 +5693,17 @@ async def create_recap_job(
         ))
     except Exception:
         # The job never ran, so a deducted credit must not be lost.
+        # Batch O: refund under the persisted claim (the Job row and
+        # its blob committed above), so this refund is as durable as
+        # every other path; "error" (row/blob unexpectedly missing)
+        # falls back to the plain refund, still ledger-guarded.
         if deducted_credit:
-            await _refund_recap_credit(user.id)
+            _claim, _recorded = await _claim_persisted_recap_refund(job_id, 1)
+            if _claim == "claimed":
+                if not await _refund_recap_credits(user.id, 1, job_id=job_id):
+                    await _release_persisted_recap_refund_claim(job_id)
+            elif _claim == "error":
+                await _refund_recap_credits(user.id, 1, job_id=job_id)
         raise
 
     return {
@@ -6903,12 +7035,38 @@ async def purge_admin_history(
 
 # ── 6. VIP Pricing Plans & Payments ────────────────────────────────────────
 @api_router.get("/vip/plans")
-async def get_vip_plans(user: User = Depends(get_current_user)):
+async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
     """Return specialized high-value VIP subscription packages and payment accounts."""
     lang = user.language_code or "my"
     is_my = (lang == "my")
 
-    return {
+    # Batch O (DECISION backlog item 15): the displayed price/minutes
+    # for every plan are resolved from the SAME sources the payment
+    # path charges from — PLAN_CATALOGUE overlaid with DB PricingPlan
+    # rows, DB winning wherever a row exists — so the Mini App can
+    # never show a price that payment would not charge. (Before, this
+    # list was a third, fully hardcoded copy: an admin price edit in
+    # the DB changed what the bot charged but not what the Mini App
+    # displayed.) The presentation copy below is unchanged; its
+    # numeric fields are overwritten from this resolution at the end.
+    from app.models.schema import PricingPlan
+    from app.services.payments import PLAN_CATALOGUE
+
+    _db_by_code = {
+        row.code: row
+        for row in (await db.execute(select(PricingPlan))).scalars().all()
+    }
+    _resolved: dict[str, dict] = {}
+    for _entry in PLAN_CATALOGUE:
+        _row = _db_by_code.get(_entry["code"])
+        _resolved[_entry["code"]] = {
+            "category": _entry["category"],
+            "minutes": int(_row.minutes) if _row is not None else int(_entry["minutes"]),
+            "recap_credits": int(_entry["recap_credits"]),
+            "price": f"{int(_row.price_mmk) if _row is not None else int(_entry['price_mmk']):,}",
+        }
+
+    _result = {
         "plans": [
             {
                 "id": "MIN_10",
@@ -7060,6 +7218,17 @@ async def get_vip_plans(user: User = Depends(get_current_user)):
         ],
         "support_telegram": "@VoiceCloneProAdmin",
     }
+    # Batch O: overwrite the presentation literal's numeric fields
+    # from the catalogue+DB resolution computed above (all 8 plan ids
+    # exist in PLAN_CATALOGUE, so every plan is covered).
+    for _p in _result["plans"]:
+        _r = _resolved.get(_p["id"])
+        if _r is not None:
+            _p["category"] = _r["category"]
+            _p["minutes"] = _r["minutes"]
+            _p["recap_credits"] = _r["recap_credits"]
+            _p["price"] = _r["price"]
+    return _result
 
 
 @api_router.post("/vip/submit-slip")

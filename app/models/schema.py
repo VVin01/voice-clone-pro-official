@@ -197,6 +197,47 @@ class MinuteLedgerEvent(Base):
     )
 
 
+class RecapCreditLedgerEvent(Base):
+    """Audit trail for recap-credit movements (Batch O, billing option C).
+
+    Mirrors MinuteLedgerEvent's conventions for the recap-credit
+    currency (whole credits on users.recap_credits, which the minute
+    ledger cannot represent): a DEBIT row is written in the same
+    transaction as every charge (submit + segment top-up) and a
+    CREDIT row — reference_id ``REFUND:<job_id>``, the voice path's
+    refund convention — in the same transaction as every refund, so
+    the refund row doubles as a durable, checkable refund record.
+    """
+
+    __tablename__ = "recap_credit_ledger_events"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    direction: Mapped[str] = mapped_column(String(20), nullable=False)
+    credits: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reference_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('RECAP')",
+            name="chk_recap_ledger_source",
+        ),
+        CheckConstraint(
+            "direction IN ('CREDIT', 'DEBIT')",
+            name="chk_recap_ledger_direction",
+        ),
+        CheckConstraint("credits > 0", name="chk_recap_ledger_credits_positive"),
+    )
+
+
 class AdjustmentIdempotencyRecord(Base):
     __tablename__ = "adjustment_idempotency_records"
 

@@ -212,7 +212,7 @@ async def test_status_cold_path_failed_db_none(tmp_path, monkeypatch):
 async def test_concurrent_refund_calls_refund_exactly_once(monkeypatch):
     calls: list[int] = []
 
-    async def fake_refund(user_id, amount):
+    async def fake_refund(user_id, amount, *, job_id=None):
         calls.append(amount)
         await asyncio.sleep(0.05)  # force the interleave the bug needed
         return True
@@ -241,7 +241,7 @@ async def test_concurrent_refund_calls_refund_exactly_once(monkeypatch):
 async def test_refund_claim_rolls_back_on_failure(monkeypatch):
     attempts = {"n": 0}
 
-    async def flaky_refund(user_id, amount):
+    async def flaky_refund(user_id, amount, *, job_id=None):
         attempts["n"] += 1
         return attempts["n"] > 1
 
@@ -289,7 +289,7 @@ async def test_sweep_claims_persisted_refund_before_issuing(tmp_path, monkeypatc
 
         seen: dict = {}
 
-        async def fake_refund(user_id, amount):
+        async def fake_refund(user_id, amount, *, job_id=None):
             # At the moment the balance refund is issued, the claim
             # must ALREADY be persisted on the Job row.
             async with maker() as s:
@@ -334,7 +334,7 @@ async def test_sweep_skips_refund_when_blob_already_refunded(tmp_path, monkeypat
 
         calls: list[int] = []
 
-        async def fake_refund(user_id, amount):
+        async def fake_refund(user_id, amount, *, job_id=None):
             calls.append(amount)
             return True
 
@@ -369,7 +369,7 @@ async def test_sweep_with_live_entry_refunds_via_shared_entry(tmp_path, monkeypa
 
         calls: list[int] = []
 
-        async def fake_refund(user_id, amount):
+        async def fake_refund(user_id, amount, *, job_id=None):
             calls.append(amount)
             await asyncio.sleep(0.01)
             return True
@@ -740,5 +740,5 @@ def test_action_fallback_errors_are_localized():
 
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("20261104_r46") == 3
+    assert INDEX_HTML.count("20261104_r47") == 3
     assert "20261103_r44" not in INDEX_HTML

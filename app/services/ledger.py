@@ -19,6 +19,7 @@ from app.models.schema import (
     MinuteBalance,
     MinuteLedgerEvent,
     MonthlyFreeAllowanceGrant,
+    RecapCreditLedgerEvent,
     Referral,
     ReferralReward,
     User,
@@ -685,6 +686,58 @@ async def refund_job_seconds(
     balance.updated_at = utc_now()
     await session.flush()
     return balance
+
+
+def recap_refund_reference(job_id: str) -> str:
+    """The ledger reference_id a recap job's refund is recorded under
+    (the voice path's ``REFUND:<job_id>`` convention)."""
+    return f"REFUND:{job_id}"
+
+
+async def record_recap_credit_event(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    direction: str,
+    credits: int,
+    reference_id: str | None = None,
+    note: str | None = None,
+) -> None:
+    """Append one recap-credit ledger event (Batch O, billing option C).
+
+    The caller owns the transaction: the event is added to `session`
+    alongside the balance change it describes, so the two commit (or
+    roll back) together.
+    """
+    if credits <= 0:
+        return
+    session.add(
+        RecapCreditLedgerEvent(
+            user_id=user_id,
+            source="RECAP",
+            direction=direction,
+            credits=int(credits),
+            reference_id=reference_id,
+            note=note,
+        )
+    )
+
+
+async def recap_refund_event_exists(
+    session: AsyncSession, user_id: int, job_id: str
+) -> bool:
+    """True when a refund CREDIT for this job is already on the ledger
+    — the durable cross-check behind the persisted refund claim."""
+    existing = (
+        await session.execute(
+            select(RecapCreditLedgerEvent.id).where(
+                RecapCreditLedgerEvent.user_id == user_id,
+                RecapCreditLedgerEvent.reference_id == recap_refund_reference(job_id),
+                RecapCreditLedgerEvent.direction == LedgerDirection.CREDIT.value,
+            )
+        )
+    ).first()
+    return existing is not None
 
 
 async def admin_adjust_balance(
