@@ -39,6 +39,29 @@ COPY requirements.txt .
 # Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt gradio_client
 
+# Batch V (2026-11-04): bake the local-Whisper fallback model into the
+# image. Transcription tries Groq first; on ANY Groq refusal the local
+# faster-whisper fallback runs — but the model used to download on
+# first use (~139 MB for `base`) into ~/.cache/huggingface, and the
+# container filesystem is wiped by every deploy/restart, so in a fresh
+# container that download raced the job, failed after 3 attempts, and
+# killed it at the transcription stage with an error no user-message
+# classifier recognised. Pre-download the model at build time into a
+# FIXED HF_HOME inside the image: the runtime cache probe
+# (download_model(..., local_files_only=True) in whisper_service.py)
+# then hits with no network access. The runtime download fallback
+# stays in place for any other model. ALIGNMENT REQUIREMENT: the
+# baked model follows the WHISPER_MODEL build arg (default `base`,
+# the code default in recap_planner.py / whisper_service.py) — a
+# deployment that overrides WHISPER_MODEL at runtime (e.g. the Render
+# dashboard) must be rebuilt with --build-arg WHISPER_MODEL=<name>
+# to match, or that model falls back to the runtime download again.
+ARG WHISPER_MODEL=base
+ENV HF_HOME=/opt/hf-cache \
+    WHISPER_MODEL=${WHISPER_MODEL}
+RUN HF_HUB_DISABLE_XET=1 python3 -c "import os; from faster_whisper.utils import download_model; download_model(os.environ['WHISPER_MODEL'])" \
+    && test -d /opt/hf-cache/hub
+
 # Copy application code
 COPY . .
 
