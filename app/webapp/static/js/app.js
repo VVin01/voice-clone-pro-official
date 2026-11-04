@@ -3528,7 +3528,7 @@ function setupRecapVisualEditor() {
     // Picker size → fraction of canvas height; mirrors
     // SUBTITLE_FONT_HEIGHT_FRACTIONS in core.py (×1.25 two-line).
     function subtitleFontFraction(sizePt, lines) {
-        const pts = [[13, 2.6], [16, 3.2], [19, 4.0], [22, 5.0]];
+        const pts = [[13, 3.2], [16, 4.0], [19, 4.8], [22, 5.6]];
         const v = parseFloat(sizePt) || 16;
         let f;
         if (v <= pts[0][0]) {
