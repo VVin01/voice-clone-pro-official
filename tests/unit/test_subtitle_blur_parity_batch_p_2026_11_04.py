@@ -14,6 +14,10 @@ Pins:
   BOTH sides (audit: the bases already agreed — Batch J assembly
   and every render consumer read canvas fractions, and the Live
   Canvas positions the box in % of the whole canvas element).
+
+Batch AA (2026-11-04) supersedes the blur-box basis above: blur_y /
+blur_h are now PICTURE-relative end-to-end, like sub_y. Section 6
+below is updated accordingly; the subtitle pins are untouched.
 """
 from __future__ import annotations
 
@@ -246,24 +250,27 @@ def test_preview_sub_and_plate_use_anchor():
 # ── 6. Blur box basis audit ────────────────────────────────────────
 
 def test_blur_box_basis_canvas_on_both_sides():
-    # Render consumers read blur boxes as fractions of the FULL
-    # canvas (unchanged in Batch P)…
+    # Batch AA deliberate rewrite of this pin: the INTERNAL box
+    # format is still canvas fractions on both sides (render
+    # consumers read fractions of the FULL output canvas)…
     assert "fractions of the FULL output canvas" in CORE_PY
-    # …the pipeline fallback hint passes the user's blur_y straight
-    # through as a canvas fraction…
     pipeline_py = (ENGINE_DIR / "recap_pipeline.py").read_text(encoding="utf-8")
+    # …the LEGACY fallback hint (no explicit user box) still passes
+    # the user's blur_y straight through as a canvas fraction…
     assert '_fallback_box = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}' in pipeline_py
     # …detected SOURCE bands are converted to canvas fractions…
     assert "source_band_to_canvas_box(band, _band_layout)" in pipeline_py
-    # …and the Live Canvas positions its blur box in % of the whole
-    # canvas element, so the bases already agree — no conversion.
+    # …but the USER-facing basis changed in Batch AA: blur_y/blur_h
+    # are picture-relative, the preview paints through
+    # blurBoxCanvasGeom, and an explicit box is converted by
+    # user_blur_box_to_canvas_box (full pins in the Batch AA file).
     sync_body = APP_JS.split("function syncBlurBoxVisual()", 1)[1].split("\n    }", 1)[0]
-    assert "previewBlur.style.top = `${y}%`;" in sync_body
-    assert "previewBlur.style.height = `${h}%`;" in sync_body
+    assert "blurBoxCanvasGeom(y, h)" in sync_body
+    assert "user_blur_box_to_canvas_box(blur_y, blur_h, _layout)" in pipeline_py
 
 
 # ── 7. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261104_r53") == 3
+    assert INDEX_HTML.count("?v=20261104_r54") == 3
     assert "20261104_r48" not in INDEX_HTML

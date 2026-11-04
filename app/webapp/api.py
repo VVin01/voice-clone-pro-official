@@ -3782,6 +3782,15 @@ class RecapConfigRequest(BaseModel):
     blur_subtitles: bool = True
     blur_y: int = Field(85, ge=0, le=100)
     blur_h: int = Field(7, ge=1, le=50)
+    # Batch AA: blur_y/blur_h are percents of the PICTURE height
+    # (Batch P's sub_y basis), and this marker records that the user
+    # DELIBERATELY set the blur box (slider / drag / resize in the
+    # Mini App, or a History prefill of a job that carried it). It
+    # rides the persisted recap_config (model_dump) end-to-end: an
+    # explicit box is authoritative at render — detection is not
+    # consulted for the source band. Absent/False (every pre-AA
+    # client and stored config) keeps the legacy detection path.
+    blur_box_explicit: bool = False
     # Batch O (DECISION backlog item 5, Ulfa reversed to user-facing):
     # blur strength = boxblur radius over the source's embedded
     # subtitles. Default 18 is the historical hardcoded value; the
@@ -4999,6 +5008,7 @@ async def _execute_recap_background_job(
             blur_subtitles=req.blur_subtitles,
             blur_y=float(req.blur_y) / 100.0,
             blur_h=float(req.blur_h) / 100.0,
+            blur_box_explicit=bool(req.blur_box_explicit),
             blur_strength=req.blur_strength,
             burn_subtitles=req.burn_subtitles,
             sub_y=float(req.sub_y) / 100.0,

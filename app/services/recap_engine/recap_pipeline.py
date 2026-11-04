@@ -18,7 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from recap_planner import RecapPlanBuilder
-from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, ensure_plate_contains_anchor, _layout_content_box
+from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, user_blur_box_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, ensure_plate_contains_anchor, _layout_content_box
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,7 @@ def assemble_blur_boxes(
     plate: Optional[dict],
     detected_bands: Optional[list[dict]] = None,
     fallback_box: Optional[dict] = None,
+    user_box: Optional[dict] = None,
     blur_watermark: bool = False,
     layout: Optional[dict] = None,
     canvas_w: int = 1920,
@@ -132,6 +133,20 @@ def assemble_blur_boxes(
     source_band_to_canvas_box); ``None`` means detection did not run
     or failed. ``fallback_box`` is the user's blur_y hint box, built
     by the caller only when the hint was moved away from sub_y.
+
+    ``user_box`` (Batch AA) is the EXPLICIT user-set blur box, already
+    converted to canvas fractions via user_blur_box_to_canvas_box.
+    When it is present it is AUTHORITATIVE for the source-subtitle
+    band: it is the sole source-band box — detection results and the
+    fallback hint are not consulted, and the reconcile can neither
+    merge it into the plate, drop it into letterbox padding, nor
+    move it. It ships exactly as drawn; the only pass that can still
+    touch it is the final Batch J overlap merge, which folds it with
+    the plate/watermark ONLY when they actually overlap (the overlay
+    pass blurs once per box, so an overlap would double-blur) — the
+    union still covers the drawn box exactly. The own-subtitle plate
+    continues through the normal path below. Callers skip detection
+    entirely when a user box is present.
 
     Returns ``(boxes, source_band_covered)``:
 
@@ -164,7 +179,16 @@ def assemble_blur_boxes(
     plate_out = dict(plate) if plate is not None else None
     plate_merged = False
 
-    if detected_bands:
+    if user_box is not None:
+        # Batch AA: the explicit user box IS the source-subtitle
+        # blur — verbatim, as the sole extra. It bypasses the
+        # reconcile (which could merge it into the plate, drop it
+        # into letterbox padding, or shift it) and the plate is
+        # never fed into it; the final overlap-merge below still
+        # applies, exactly as for every other shipped box.
+        covered = True
+        extras = [dict(user_box)]
+    elif detected_bands:
         covered = True
         if plate_out is not None:
             new_plate, extras = reconcile_source_bands(
@@ -249,6 +273,7 @@ def run_recap_pipeline(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
+    blur_box_explicit: bool = False,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
     blur_watermark: bool = False,
     burn_subtitles: bool = True,
@@ -388,6 +413,13 @@ def run_recap_pipeline(
             )
         else:
             _plate = {"x": 0.05, "y": _anchor_sub_y, "w": 0.90, "h": float(blur_h)}
+    # Batch AA: an EXPLICIT user-set blur box is authoritative for
+    # the source band — converted from picture fractions with the
+    # same layout math the preview paints it with, it replaces
+    # detection entirely (detection is not even run below).
+    _user_box = None
+    if blur_subtitles and blur_box_explicit:
+        _user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _layout)
     # Auto-cover the SOURCE video's own burned-in subtitle band. The
     # plate only covers the Myanmar subtitle position (y≈0.85); source
     # dialogue subs usually sit higher (≈0.70) and would otherwise
@@ -401,7 +433,7 @@ def run_recap_pipeline(
     _canvas_bands: Optional[list[dict]] = None
     _detection_failed = False
     _band_layout = None
-    if blur_subtitles:
+    if blur_subtitles and _user_box is None:
         try:
             # Detected bands are SOURCE-frame fractions; the preset
             # boxes above and every blur-box consumer use CANVAS
@@ -427,7 +459,9 @@ def run_recap_pipeline(
     # they actually moved it away from the subtitle position, so the
     # default state gains no second band. assemble_blur_boxes
     # consults it solely when detection found nothing, and reconciles
-    # it against the plate like a detected band.
+    # it against the plate like a detected band. Batch AA: this is
+    # the LEGACY path only — an explicit user box (_user_box above)
+    # supersedes it, and assemble_blur_boxes ignores it then.
     _fallback_box = None
     if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
         _fallback_box = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}
@@ -445,6 +479,7 @@ def run_recap_pipeline(
         plate=_plate,
         detected_bands=_canvas_bands,
         fallback_box=_fallback_box,
+        user_box=_user_box,
         blur_watermark=blur_watermark,
         layout=_band_layout,
         canvas_w=int(_asm_layout.get("cw") or 1920),
@@ -643,6 +678,7 @@ def generate_recap_preview(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
+    blur_box_explicit: bool = False,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
@@ -708,26 +744,32 @@ def generate_recap_preview(
             )
         except Exception:
             _p_plate = {"x": 0.05, "y": float(sub_y) if sub_y is not None else float(blur_y), "w": 0.90, "h": float(blur_h)}
+        # Batch AA: same rule as the render — an explicit user box
+        # is authoritative and detection is not run at all.
+        _p_user_box = None
+        if blur_box_explicit:
+            _p_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout)
         _p_bands: Optional[list[dict]] = None
         _p_band_layout = _p_layout
-        try:
-            if _p_band_layout is None:
-                _p_src_w2, _p_src_h2 = probe_video_size(ffprobe_bin, src)
-                _p_band_layout = frame_layout(
-                    output_ratio, frame_fill, _p_src_w2, _p_src_h2,
-                    crop_top=crop_top, crop_bottom=crop_bottom,
-                    crop_left=crop_left, crop_right=crop_right,
-                )
-            _p_bands = [
-                source_band_to_canvas_box(band, _p_band_layout)
-                for band in detect_source_subtitle_bands(
-                    ffmpeg_bin, ffprobe_bin, src,
-                    out_path.parent / f"preview_subband_{src.stem}",
-                    log=lambda _m: None,
-                )
-            ]
-        except Exception:
-            _p_bands = None
+        if _p_user_box is None:
+            try:
+                if _p_band_layout is None:
+                    _p_src_w2, _p_src_h2 = probe_video_size(ffprobe_bin, src)
+                    _p_band_layout = frame_layout(
+                        output_ratio, frame_fill, _p_src_w2, _p_src_h2,
+                        crop_top=crop_top, crop_bottom=crop_bottom,
+                        crop_left=crop_left, crop_right=crop_right,
+                    )
+                _p_bands = [
+                    source_band_to_canvas_box(band, _p_band_layout)
+                    for band in detect_source_subtitle_bands(
+                        ffmpeg_bin, ffprobe_bin, src,
+                        out_path.parent / f"preview_subband_{src.stem}",
+                        log=lambda _m: None,
+                    )
+                ]
+            except Exception:
+                _p_bands = None
         _p_fallback = None
         if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
             _p_fallback = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}
@@ -745,6 +787,7 @@ def generate_recap_preview(
             plate=_p_plate,
             detected_bands=_p_bands,
             fallback_box=_p_fallback,
+            user_box=_p_user_box,
             blur_watermark=False,
             layout=_p_band_layout,
             canvas_w=int(_p_asm_layout.get("cw") or 1920),
