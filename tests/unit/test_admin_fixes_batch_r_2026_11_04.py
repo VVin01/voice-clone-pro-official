@@ -164,6 +164,14 @@ async def test_overview_income_windows_and_boundaries(db_session):
     assert inc["all_time_count"] == 7
 
 
+def test_overview_income_uses_per_row_aggregation_not_sql_sum():
+    # Codebase convention (premium-round D1 sweep): no SQL SUM under
+    # app/ — the admin API aggregates per-row. Batch R's income must
+    # honour it; this pins the api module specifically.
+    src = (ROOT / "app/webapp/api.py").read_text(encoding="utf-8")
+    assert "func.sum(" not in src
+
+
 @pytest.mark.asyncio
 async def test_overview_income_empty_db_is_zeros(db_session):
     admin = _user(ADMIN_ID)
