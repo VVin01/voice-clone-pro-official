@@ -313,6 +313,6 @@ def test_frontend_income_and_banned_split_wiring():
         assert i18n_js.count(key + ":") >= 2, key
 
 
-def test_cache_version_r51():
+def test_cache_version_r52():
     index_html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert index_html.count("?v=20261104_r51") == 3
+    assert index_html.count("?v=20261104_r52") == 3

@@ -13,7 +13,8 @@ Download buttons for dead files.
 These tests pin the fixed behaviour:
 - outputs resolve under settings.storage_root (the persistent disk root);
 - ONE availability check drives every serializer's deliverables;
-- the sweep keeps everything inside the retention window (default 7 days)
+- the sweep keeps everything inside the retention window (24 hours
+  since Batch X, 2026-11-04 — the owner's 24-hour retention order)
   and purges beyond it;
 - the sweep deletes the record before touching files, so it can never
   leave a SUCCESS job whose media is gone.
@@ -94,11 +95,13 @@ def test_recap_output_resolves_under_storage_root(storage):
     assert api_mod.check_job_file_exists("rc_ret_missing", True, None) is False
 
 
-def test_retention_default_is_seven_days():
+def test_retention_default_is_24_hours():
+    # Batch X (2026-11-04) supersedes the old seven-days pin: the
+    # owner abolished the 7-day window; retention is 24 hours (1 day).
     from app.config.settings import Settings
 
-    assert Settings().media_retention_days == 7
-    assert api_mod._media_retention_days() == 7
+    assert Settings().media_retention_days == 1
+    assert api_mod._media_retention_days() == 1
 
 
 # ── 2. One availability check drives every serializer ───────────────────────
@@ -189,9 +192,12 @@ async def test_sweep_keeps_within_retention_and_purges_beyond(tmp_path, storage,
         user, _ = await get_or_create_user(s, telegram_id=770003, first_name="C")
         uid = user.id
         ids = {}
-        for label, age in [("25h", datetime.timedelta(hours=25)),
-                           ("6d", datetime.timedelta(days=6)),
-                           ("8d", datetime.timedelta(days=8))]:
+        # Batch X: the window is 24 hours — 23h is inside, 25h and 6d
+        # are beyond it (under the old 7-day window all three survived
+        # except the 8d case this test used previously).
+        for label, age in [("23h", datetime.timedelta(hours=23)),
+                           ("25h", datetime.timedelta(hours=25)),
+                           ("6d", datetime.timedelta(days=6))]:
             jid = f"rc_sweep_{label}"
             final = _make_recap_output(storage, jid)
             s.add(_recap_job(jid, uid, now - age, result_path=final))
@@ -199,16 +205,16 @@ async def test_sweep_keeps_within_retention_and_purges_beyond(tmp_path, storage,
         await s.commit()
 
     deleted = await api_mod.cleanup_expired_jobs()
-    assert deleted == 1
+    assert deleted == 2
 
     async with maker() as s:
         remaining = {j.id for j in (await s.execute(select(Job))).scalars().all()}
-    # 25h and 6d jobs survive with files intact; the 8d job is fully purged.
-    assert ids["25h"][0] in remaining and ids["25h"][1].is_file()
-    assert ids["6d"][0] in remaining and ids["6d"][1].is_file()
-    assert ids["8d"][0] not in remaining
-    assert not ids["8d"][1].is_file()
-    assert not (storage / "recap_output" / ids["8d"][0]).exists()
+    # The 23h job survives with files intact; 25h and 6d are fully purged.
+    assert ids["23h"][0] in remaining and ids["23h"][1].is_file()
+    for label in ("25h", "6d"):
+        assert ids[label][0] not in remaining
+        assert not ids[label][1].is_file()
+        assert not (storage / "recap_output" / ids[label][0]).exists()
 
     await engine.dispose()
 

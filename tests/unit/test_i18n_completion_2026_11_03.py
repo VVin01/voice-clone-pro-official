@@ -441,5 +441,5 @@ def test_server_progress_labels_use_locales():
 # ── (g) cache-bust version ───────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261104_r51") == 3
+    assert INDEX_HTML.count("?v=20261104_r52") == 3
     assert "20261103_r41" not in INDEX_HTML
