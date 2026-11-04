@@ -13,6 +13,11 @@ DEFAULT_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="Start Voice Studio"),
 ]
 
+# Batch Y (2026-11-04): the Mini App menu-button label shown beside the
+# message input on phones. Originally "📱 Open Studio" — too long and not
+# premium; the owner settled on the plain word "Open" (no emoji).
+MENU_BUTTON_TEXT = "Open"
+
 
 def get_default_bot_commands() -> list[BotCommand]:
     """Return the canonical bot commands for the user-facing native commands menu.
@@ -48,7 +53,7 @@ async def setup_bot_commands(bot: Bot) -> None:
                 from aiogram.types import MenuButtonWebApp, WebAppInfo
                 await bot.set_chat_menu_button(
                     menu_button=MenuButtonWebApp(
-                        text="📱 Open Studio",
+                        text=MENU_BUTTON_TEXT,
                         web_app=WebAppInfo(url=web_app_url),
                     )
                 )

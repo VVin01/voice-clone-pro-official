@@ -10,6 +10,7 @@ from aiogram.types import (
 )
 
 from app.ui.commands import (
+    MENU_BUTTON_TEXT,
     get_default_bot_commands,
     setup_bot_commands,
 )
@@ -52,6 +53,33 @@ async def test_setup_bot_commands_registers_only_start_in_default_scope():
     # Registered command must be only /start
     assert [c.command for c in call1_cmds] == ["start"]
     assert "admin" not in [c.command for c in call1_cmds]
+
+
+def test_menu_button_text_is_short_premium_label():
+    # Batch Y (2026-11-04): pin the shortened menu-button label.
+    # Supersedes the original "📱 Open Studio" (owner: too long, not
+    # premium) — the owner settled on the plain word "Open", no emoji.
+    assert MENU_BUTTON_TEXT == "Open"
+
+
+@pytest.mark.asyncio
+async def test_setup_bot_commands_sets_menu_button_with_open_label(monkeypatch):
+    # When a Mini App URL is configured, the chat menu button must carry
+    # the Batch Y label and point at that URL.
+    from aiogram.types import MenuButtonWebApp
+
+    monkeypatch.setenv("MINI_APP_URL", "https://example.com/studio")
+    mock_bot = MagicMock(spec=Bot)
+    mock_bot.set_my_commands = AsyncMock()
+    mock_bot.set_chat_menu_button = AsyncMock()
+
+    await setup_bot_commands(mock_bot)
+
+    assert mock_bot.set_chat_menu_button.await_count == 1
+    menu_button = mock_bot.set_chat_menu_button.await_args.kwargs["menu_button"]
+    assert isinstance(menu_button, MenuButtonWebApp)
+    assert menu_button.text == "Open"
+    assert menu_button.web_app.url == "https://example.com/studio"
 
 
 @pytest.mark.asyncio
