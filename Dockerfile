@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     ca-certificates \
     fontconfig \
+    libraqm0 \
     fonts-sil-padauk \
     fonts-noto-extra \
     fonts-noto-core \
