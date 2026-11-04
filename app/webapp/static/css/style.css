@@ -174,7 +174,11 @@ a { color: var(--gold-2); }
 }
 .top-nav .brand { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
 .brand-crest { width: 36px; height: 36px; flex-shrink: 0; }
-.crest-svg { width: 36px; height: 36px; display: block; }
+.brand-logo-img {
+    width: 36px; height: 36px; display: block; border-radius: 50%;
+    object-fit: cover;
+    box-shadow: 0 0 0 1px rgba(10, 95, 215, 0.22), 0 2px 6px rgba(10, 40, 80, 0.18);
+}
 .brand-text { min-width: 0; flex: 1; }
 .brand-title-wrap { display: flex; align-items: center; gap: var(--s2); }
 .brand-title-wrap h1 {
@@ -307,6 +311,20 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     padding: 2px 8px; border-radius: 999px; line-height: 1.5;
 }
 .badge-studio.gold { color: var(--gold-2); background: var(--gold-soft); border-color: var(--gold-border); }
+
+/* ── Batch AE: VIP pane title stacking on phones ───────────────────────
+   The VIP title is too long to share a row with the PREMIUM badge at
+   phone widths: the h2 wrapped so a single Burmese word dropped alone
+   onto line 2 while the badge floated mid-title (row is
+   align-items:center). At <=480px stack the row instead — the title
+   takes the full width and the badge gets its own line under it — and
+   balance the h2 wrap so neither locale strands an orphan word.
+   Wider layouts keep the original side-by-side row. Layout only:
+   title text and badge are unchanged. */
+@media (max-width: 480px) {
+    #tab-vip .pane-title-row { flex-direction: column; align-items: flex-start; gap: var(--s1); }
+    #tab-vip .pane-header h2 { text-wrap: balance; }
+}
 
 /* ── Cards ──────────────────────────────────────────────────────────── */
 .card {
