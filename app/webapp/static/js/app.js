@@ -6690,7 +6690,20 @@ async function loadAdminData() {
             set("adm-queued-jobs", stats.queued_jobs ?? 0);
             set("adm-failed-24h", stats.failed_jobs_24h ?? 0);
             set("adm-banned-users", stats.banned_users ?? 0);
+            // Batch R: headline is admin-bans + bot-blockers combined;
+            // the sub-line shows the split so both numbers stay visible.
+            set("adm-banned-split", tf("admin_stat_banned_split", { admin: stats.banned_by_admin ?? 0, bot: stats.bot_blocked_users ?? 0 }));
             set("adm-new-24h", stats.new_users_24h ?? 0);
+            // Batch R: income card (approved payment requests only).
+            const inc = stats.income || {};
+            const setIncome = (id, mmk, count) => {
+                set(id, (mmk || 0).toLocaleString() + " MMK");
+                set(id + "-count", tf("admin_income_count", { count: count || 0 }));
+            };
+            setIncome("adm-income-today", inc.today_mmk, inc.today_count);
+            setIncome("adm-income-7d", inc.last_7d_mmk, inc.last_7d_count);
+            setIncome("adm-income-30d", inc.last_30d_mmk, inc.last_30d_count);
+            setIncome("adm-income-all", inc.all_time_mmk, inc.all_time_count);
             const elSize = document.getElementById("adm-storage-size");
             if (elSize) elSize.innerText = admFmtBytes(stats.db_size_bytes) + " / " + admFmtBytes(stats.storage_bytes);
             const badge = document.getElementById("adm-nav-slips-badge");

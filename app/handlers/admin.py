@@ -320,15 +320,12 @@ async def handle_admin_dashboard(callback: CallbackQuery, session: AsyncSession 
             lang = user.language_code
             text, kb = await render_admin_pulse(lang=lang, session=s)
 
-    try:
-        await callback.message.edit_text(
-            text,
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        if "message is not modified" not in str(e).lower():
-            logger.warning("Failed to edit admin pulse message: %s", e)
+    # Batch R (2026-11-04): was a raw edit_text with a swallowing
+    # try/except — on a MEDIA message (the payment result card lives
+    # on the slip photo) edit_text raises "there is no text in the
+    # message to edit" and the button silently did nothing. Route
+    # through the media-aware helper like the neighbouring handlers.
+    await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
 
     if callback.data == "admin:refresh":
         await callback.answer(t("admin_alert_refreshed", lang))
@@ -359,7 +356,11 @@ async def handle_admin_payments(callback: CallbackQuery):
         buttons = [
             [InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard")],
         ]
-        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+        # Batch R (2026-11-04): was a raw edit_text — after approving
+        # the LAST pending slip from the photo result card, this branch
+        # raised "there is no text in the message to edit" and the
+        # admin got the generic error popup. Media-aware helper now.
+        await safe_edit_message(callback, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
         await callback.answer()
         return
 

@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r49">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r50">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -1600,6 +1600,7 @@
                             <div class="card glass stat-mini-card">
                                 <span class="stat-lbl" data-i18n="admin_stat_banned">ပိတ်ထားသူများ</span>
                                 <span class="stat-num" id="adm-banned-users">—</span>
+                                <span class="stat-sub" id="adm-banned-split"></span>
                             </div>
                             <div class="card glass stat-mini-card">
                                 <span class="stat-lbl" data-i18n="admin_stat_new24">၂၄ နာရီအတွင်း အသစ်</span>
@@ -1612,6 +1613,34 @@
                         </div>
                         <div class="adm-status-chips mt-2" id="adm-jobs-by-status"></div>
                         <p class="text-muted text-xs mt-2" id="adm-worker-line">—</p>
+                    </div>
+
+                    <div class="card glass mt-3" id="admin-income-card">
+                        <div class="card-header-row">
+                            <div class="card-label">💰 <span data-i18n="admin_stat_income">ဝင်ငွေ</span></div>
+                        </div>
+                        <div class="admin-stats-grid mt-2">
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_income_today">ယနေ့</span>
+                                <span class="stat-num" id="adm-income-today" style="font-size:17px;">—</span>
+                                <span class="stat-sub" id="adm-income-today-count"></span>
+                            </div>
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_income_7d">၇ ရက်အတွင်း</span>
+                                <span class="stat-num" id="adm-income-7d" style="font-size:17px;">—</span>
+                                <span class="stat-sub" id="adm-income-7d-count"></span>
+                            </div>
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_income_30d">ရက် ၃၀ အတွင်း</span>
+                                <span class="stat-num" id="adm-income-30d" style="font-size:17px;">—</span>
+                                <span class="stat-sub" id="adm-income-30d-count"></span>
+                            </div>
+                            <div class="card glass stat-mini-card">
+                                <span class="stat-lbl" data-i18n="admin_income_all">စုစုပေါင်း</span>
+                                <span class="stat-num" id="adm-income-all" style="font-size:17px;">—</span>
+                                <span class="stat-sub" id="adm-income-all-count"></span>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card glass mt-3" id="admin-recent-card">
@@ -2305,7 +2334,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r49"></script>
-    <script src="/static/js/app.js?v=20261104_r49"></script>
+    <script src="/static/js/i18n.js?v=20261104_r50"></script>
+    <script src="/static/js/app.js?v=20261104_r50"></script>
 </body>
 </html>
