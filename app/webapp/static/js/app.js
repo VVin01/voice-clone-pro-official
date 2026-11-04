@@ -6685,7 +6685,11 @@ async function loadAdminData() {
             admOverviewClear();
             const stats = await resStats.json();
             const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
-            set("adm-total-users", stats.total_users ?? 0);
+            // Batch X: headline is REAL users (accounts that have run
+            // a job / bought / been granted credit); the sub-line shows
+            // the registered total and the never-used remainder.
+            set("adm-total-users", stats.real_users ?? stats.total_users ?? 0);
+            set("adm-total-users-split", tf("admin_stat_users_split", { total: stats.total_users ?? 0, never: stats.never_used_users ?? 0 }));
             set("adm-vip-users", stats.vip_users ?? 0);
             set("adm-pending-slips", stats.pending_slips ?? 0);
             set("adm-queued-jobs", stats.queued_jobs ?? 0);
@@ -6961,7 +6965,7 @@ function closeAdminMediaModal() {
 }
 
 // Shared "media gone" panel for the admin media modal. The copy states the
-// real retention rule (files are kept on the server for 7 days, then the
+// real retention rule (files are kept on the server for 24 hours, then the
 // retention sweep removes them) — it must never blame deploys or disk
 // wipes: outputs live on the persistent disk and survive restarts.
 // Regenerate is the single primary action here.
@@ -8085,7 +8089,7 @@ window.adminPurgeHistory = adminPurgeHistory;
 
 async function adminTriggerPurge24h() {
     // Name kept for compatibility; the purge boundary is the media
-    // retention window (settings.media_retention_days, default 7 days),
+    // retention window (settings.media_retention_days, default 1 day),
     // matching the automatic sweep.
     return adminPurgeHistory("older_retention");
 }

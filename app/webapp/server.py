@@ -224,7 +224,7 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).warning("Error during webapp DB init: %s", e)
 
     # Initial media-retention cleanup on startup (default: purge jobs and
-    # files older than 7 days — see settings.media_retention_days)
+    # files older than 24 hours — see settings.media_retention_days)
     import asyncio
     try:
         from app.webapp.api import cleanup_expired_jobs

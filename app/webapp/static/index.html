@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r51">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r52">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -1228,7 +1228,7 @@
                             <p id="recap-blur-warning" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
                             <p id="recap-fallback-note" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
                             <p id="recap-cost-line" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
-                            <p id="recap-expiry-note" class="mt-2" data-i18n="history_expiry_note" style="font-size:12px; opacity:0.85;">⏱️ ဖိုင်များကို ၇ ရက်အထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
+                            <p id="recap-expiry-note" class="mt-2" data-i18n="history_expiry_note" style="font-size:12px; opacity:0.85;">⏱️ ဖိုင်များကို ၂၄ နာရီအထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
                         </div>
                     </div>
 
@@ -1535,7 +1535,7 @@
                     <button type="button" class="mini-chip hub-refresh-chip" onclick="loadUserHistory()" title="Refresh" aria-label="Refresh">🔄</button>
                 </div>
 
-                <p class="history-expiry-note mt-2" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၇ ရက်အထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
+                <p class="history-expiry-note mt-2" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
 
                 <div id="hub-history-list" class="hub-history-list mt-3">
                     <p class="text-muted" data-i18n="history_loading">မှတ်တမ်း ရယူနေပါတယ်…</p>
@@ -1568,8 +1568,9 @@
                 <div class="adm-screen" id="adm-screen-overview">
                     <div class="admin-stats-grid">
                         <div class="card glass stat-mini-card">
-                            <span class="stat-lbl" data-i18n="admin_stat_users">အသုံးပြုသူ စုစုပေါင်း</span>
+                            <span class="stat-lbl" data-i18n="admin_stat_users">တကယ် အသုံးပြုသူများ</span>
                             <span class="stat-num" id="adm-total-users">—</span>
+                            <span class="stat-sub" id="adm-total-users-split"></span>
                         </div>
                         <div class="card glass stat-mini-card adm-tap" onclick="openAdminUsersPaid()">
                             <span class="stat-lbl" data-i18n="admin_stat_vip">VIP အဖွဲ့ဝင်များ</span>
@@ -1765,7 +1766,7 @@
                                 <p class="text-muted text-xs" data-i18n="admin_purge_note">ဖျက်လိုက်သော ဖိုင်နှင့် မှတ်တမ်းများ ပြန် မရနိုင်ပါ။</p>
                                 <div class="admin-purge-grid mt-2">
                                     <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('failed')"><span data-i18n="adm_purge_failed">❌ FAILED ရှင်းမည်</span></button>
-                                    <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('older_retention')"><span data-i18n="adm_purge_older">⏱️ ၇ ရက်ကျော် ရှင်းမည်</span></button>
+                                    <button class="btn mini-btn danger-btn purge-btn" onclick="adminPurgeHistory('older_retention')"><span data-i18n="adm_purge_older">⏱️ ၂၄ နာရီကျော် ရှင်းမည်</span></button>
                                     <button class="btn mini-btn secondary-btn purge-btn" onclick="adminPurgeHistory('matching')"><span data-i18n="adm_purge_matching">🎯 Filter မိသမျှ ရှင်းမည်</span></button>
                                 </div>
                             </div>
@@ -2334,7 +2335,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r51"></script>
-    <script src="/static/js/app.js?v=20261104_r51"></script>
+    <script src="/static/js/i18n.js?v=20261104_r52"></script>
+    <script src="/static/js/app.js?v=20261104_r52"></script>
 </body>
 </html>

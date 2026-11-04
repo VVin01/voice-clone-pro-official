@@ -201,7 +201,7 @@ async def render_help_settings_content(session: AsyncSession, user_id: int) -> t
         char_purchased=f"{settings.character_limit_purchased:,}",
         daily_limit=settings.free_daily_job_limit,
         vip_recap_min=int(getattr(settings, "recap_max_duration_seconds", 600) or 600) // 60,
-        retention_days=settings.media_retention_days,
+        retention_hours=settings.media_retention_days * 24,
         referral_seconds=REFERRAL_REWARD_SECONDS,
         referral_cap_min=(MAX_REFERRALS_REWARDED * REFERRAL_REWARD_SECONDS) // 60,
     )

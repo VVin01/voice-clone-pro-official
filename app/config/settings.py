@@ -140,8 +140,10 @@ class Settings(BaseSettings):
     # Generated-media retention (days). Job outputs live on the persistent
     # disk (storage_root) and survive restarts/deploys; the periodic sweep
     # removes a job's files and record only once it is older than this
-    # window. User-facing copy states this same number — keep them in sync.
-    media_retention_days: int = Field(default=7, alias="MEDIA_RETENTION_DAYS")
+    # window. Batch X (owner's order 2026-11-04): the window is 24 HOURS
+    # (1 day), not the old 7 days — the 10 GB disk filled with in-window
+    # outputs. User-facing copy states this same number — keep in sync.
+    media_retention_days: int = Field(default=1, alias="MEDIA_RETENTION_DAYS")
 
     # Tutorial Links & Controls (Voice Clone & Movie Recap)
     tutorial_video_link: str = Field(

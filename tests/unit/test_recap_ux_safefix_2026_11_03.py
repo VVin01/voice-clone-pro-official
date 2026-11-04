@@ -4,8 +4,8 @@ Display/notification-only fixes from the recap UX audit:
 
 1. the script-review opt-in gains a visible twin toggle in the main
    options area, bound to the same state as the advanced checkbox;
-2. the 7-day retention line is disclosed on the result card and in
-   the completion DM, not only in History;
+2. the retention line (24 hours since Batch X) is disclosed on the
+   result card and in the completion DM, not only in History;
 3. every completed recap shows a per-job receipt (charged credits)
    and failed jobs show a refund marker — the amounts come from the
    server payload, extended here to carry the persisted credit state
@@ -255,10 +255,12 @@ def test_failure_dm_text_reason_key_localized():
     assert t("recap_failure_reason_script_expired", "en") in text
 
 
-def test_success_dm_retention_note_renders_days():
-    note = t("recap_retention_note", "my", retention_days=7)
-    assert "7" in note
-    assert "{retention_days}" not in note
+def test_success_dm_retention_note_renders_hours():
+    # Batch X (2026-11-04): the note states the 24-hour window in
+    # hours ({retention_hours}); supersedes the old days-based pin.
+    note = t("recap_retention_note", "my", retention_hours=24)
+    assert "24" in note
+    assert "{retention_hours}" not in note
 
 
 # ── (5) failure DM: sender fires exactly once ────────────────────────
@@ -546,5 +548,5 @@ def test_batch_k_key_sets_stay_symmetric():
 # ── static version lockstep ──────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261104_r51") == 3
+    assert INDEX_HTML.count("?v=20261104_r52") == 3
     assert "20261103_r42" not in INDEX_HTML

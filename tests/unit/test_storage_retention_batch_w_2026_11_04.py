@@ -218,7 +218,9 @@ async def test_sweep_removes_old_orphan_recap_dir_keeps_young(storage, sweep_db)
     old_dir = _make_failed_recap_dir(storage, "rc_w_orphan_old")
     _age_tree(old_dir, 8 * 86400)
     young_dir = _make_failed_recap_dir(storage, "rc_w_orphan_young")
-    _age_tree(young_dir, 1 * 86400)
+    # Batch X: the retention window is 24h now — "young" must be
+    # comfortably inside it (12h), not exactly on the old boundary.
+    _age_tree(young_dir, 12 * 3600)
 
     await api_mod.cleanup_expired_jobs()
 
@@ -234,9 +236,13 @@ async def test_sweep_strips_failed_media_but_spares_success_and_running(storage,
     async with maker() as s:
         user, _ = await get_or_create_user(s, telegram_id=770101, first_name="W")
         uid = user.id
-        s.add(_job("rc_w_sfailed", uid, JobStatus.FAILED.value, now - datetime.timedelta(days=2)))
-        s.add(_job("rc_w_ssuccess", uid, JobStatus.SUCCESS.value, now - datetime.timedelta(days=2)))
-        s.add(_job("rc_w_srunning", uid, JobStatus.RUNNING.value, now - datetime.timedelta(days=2)))
+        # Batch X: rows are created 12h ago so they sit INSIDE the
+        # 24-hour retention window (the record sweep must not take
+        # them); the dirs below stay aged 2 days so the FAILED strip
+        # threshold (dir mtime > 24h) is what fires.
+        s.add(_job("rc_w_sfailed", uid, JobStatus.FAILED.value, now - datetime.timedelta(hours=12)))
+        s.add(_job("rc_w_ssuccess", uid, JobStatus.SUCCESS.value, now - datetime.timedelta(hours=12)))
+        s.add(_job("rc_w_srunning", uid, JobStatus.RUNNING.value, now - datetime.timedelta(hours=12)))
         await s.commit()
 
     failed_dir = _make_failed_recap_dir(storage, "rc_w_sfailed")
@@ -275,7 +281,10 @@ async def test_sweep_preview_cache_and_temp_artefacts(storage, sweep_db):
         kept_input.parent.mkdir(parents=True, exist_ok=True)
         kept_input.write_bytes(b"\x00" * 100)
         _age_tree(kept_input.parent, 2 * 86400)  # aged, but referenced below
-        s.add(_job("9103", uid, JobStatus.SUCCESS.value, now - datetime.timedelta(days=1),
+        # Batch X: 9103 sits inside the 24h retention window (12h) so
+        # its row — and the reference protecting kept_input — survives
+        # the record sweep; exactly-1-day was the old boundary case.
+        s.add(_job("9103", uid, JobStatus.SUCCESS.value, now - datetime.timedelta(hours=12),
                    job_type=JobType.VOICE_CLONE.value, engine="voxcpm",
                    source_audio_path=str(kept_input)))
         await s.commit()
