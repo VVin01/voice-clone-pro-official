@@ -8543,6 +8543,9 @@ class AdminSettingsPayload(BaseModel):
     tutorial_refer_link: Optional[str] = None
     tutorial_support_link: Optional[str] = None
     maintenance_mode: Optional[bool] = None
+    # Batch Z: announcement text (e.g. reopening time) the Group AI
+    # quotes verbatim while maintenance mode is on.
+    maintenance_note: Optional[str] = None
     group_ai_admin_enabled: Optional[bool] = None
     # Final-audit batch M: the group-AI anti-spam limits join the
     # payload — they were registered dynamic settings read per
@@ -8593,6 +8596,7 @@ async def get_admin_settings(
             for key, default in TUTORIAL_EXTRA_LINKS.items()
         },
         "maintenance_mode": getattr(settings, "maintenance_mode", False),
+        "maintenance_note": str(getattr(settings, "maintenance_note", "") or ""),
         "group_ai_admin_enabled": getattr(settings, "group_ai_admin_enabled", False),
         "group_ai_user_cooldown_seconds": int(getattr(settings, "group_ai_user_cooldown_seconds", 60) or 0),
         "group_ai_hourly_budget": int(getattr(settings, "group_ai_hourly_budget", 40) or 40),
@@ -8718,6 +8722,23 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = limit_val
+        elif key == "maintenance_note":
+            # Batch Z: free-text announcement the Group AI quotes
+            # verbatim from its fact sheet while maintenance is on
+            # (e.g. the reopening time). Whitespace-stripped and
+            # length-capped so the sheet stays bounded; empty is a
+            # real choice (no announced detail for the AI to state).
+            note = str(value).strip()
+            if len(note) > 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Maintenance မှတ်စု (maintenance_note) သည် "
+                        "စာလုံး 200 ထက် မရှည်ရပါ။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = note
         elif key in ("group_ai_hourly_budget", "group_ai_daily_budget"):
             # Final-audit batch M: budgets gate real AI spend, so 0
             # (which would silently disable group answers) is rejected

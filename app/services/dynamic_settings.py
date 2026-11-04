@@ -38,6 +38,7 @@ SETTING_TYPES: dict[str, type] = {
     "channel_invite_link": str,
     "group_invite_link": str,
     "maintenance_mode": bool,
+    "maintenance_note": str,
     "group_ai_admin_enabled": bool,
     "group_ai_user_cooldown_seconds": int,
     "group_ai_hourly_budget": int,

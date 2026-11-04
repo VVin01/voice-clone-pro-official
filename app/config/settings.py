@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     purchased_daily_job_limit: int = Field(default=0, alias="PURCHASED_DAILY_JOB_LIMIT")  # 0 = unlimited
     max_concurrent_jobs_per_user: int = Field(default=1, alias="MAX_CONCURRENT_JOBS_PER_USER")
     maintenance_mode: bool = Field(default=False, alias="MAINTENANCE_MODE")
+    # Admin-written announcement the Group AI quotes verbatim from
+    # its fact sheet while maintenance mode is on (e.g. the reopening
+    # time); empty means no announced detail. BotSetting-backed like
+    # the mode itself — see app/services/dynamic_settings.py (Batch Z).
+    maintenance_note: str = Field(default="", alias="MAINTENANCE_NOTE")
     # AI group-admin auto-reply kill switch (BotSetting-backed; the
     # handler re-reads the DB row per message, so Admin toggles apply
     # instantly). Default OFF — see app/services/group_ai_admin.py.
