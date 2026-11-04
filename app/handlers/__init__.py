@@ -59,6 +59,11 @@ def setup_handlers(dp: Dispatcher, session_factory: Any = None) -> None:
                     "message to delete not found",
                     "message can't be deleted",
                     "message can't be edited",
+                    # Batch R: raised when edit_text hits a media
+                    # message (e.g. the payment result card on the
+                    # slip photo) — a navigation no-op, never worth a
+                    # generic error popup at the admin.
+                    "there is no text in the message to edit",
                     "chat not found",
                     "bot was blocked by the user",
                 )

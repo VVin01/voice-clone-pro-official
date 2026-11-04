@@ -7533,12 +7533,69 @@ async def get_admin_overview(
         jobs_by_status[st.value] = (await db.execute(
             select(func.count(Job.id)).where(Job.status == st.value)
         )).scalar() or 0
-    banned_users = (await db.execute(
+    # Batch R (2026-11-04): the old card counted ONLY admin bans
+    # (status == BLOCKED), so it never moved when a broadcast found
+    # users who had blocked the BOT (bot_blocked flag) — the owner
+    # read that as the status screen lying. Headline is now the
+    # combined OR-count (a user who is both counts once); the two
+    # components ride along for the card's sub-line. Semantics are
+    # unchanged — this is counting/presentation only.
+    banned_by_admin = (await db.execute(
         select(func.count(User.id)).where(User.status == UserStatus.BLOCKED.value)
+    )).scalar() or 0
+    bot_blocked_users = (await db.execute(
+        select(func.count(User.id)).where(User.bot_blocked.is_(True))
+    )).scalar() or 0
+    banned_users = (await db.execute(
+        select(func.count(User.id)).where(
+            or_(User.status == UserStatus.BLOCKED.value, User.bot_blocked.is_(True))
+        )
     )).scalar() or 0
     new_users_24h = (await db.execute(
         select(func.count(User.id)).where(User.created_at >= cutoff_24h)
     )).scalar() or 0
+
+    # Batch R: income (ဝင်ငွေ) from APPROVED payment requests.
+    # amount_mmk is the server-derived plan price and every approval
+    # funnels through approve_payment_request, so this sum is the
+    # real collected revenue; manual admin grants create no
+    # PaymentRequest row and stay excluded. Bucket on the approval
+    # moment (reviewed_at), falling back to created_at for legacy
+    # rows whose reviewed_at was never populated. "Today" is the
+    # Asia/Rangoon calendar day (fixed UTC+06:30 — Myanmar has no
+    # DST); 7d/30d are rolling windows ending now.
+    _rangoon = timezone(timedelta(hours=6, minutes=30))
+    _now_utc = datetime.now(timezone.utc)
+    _rangoon_midnight = _now_utc.astimezone(_rangoon).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    _income_bucket = func.coalesce(PaymentRequest.reviewed_at, PaymentRequest.created_at)
+    _income_base = (PaymentRequest.status == PaymentStatus.APPROVED.value,)
+
+    async def _income_since(since: datetime | None) -> tuple[int, int]:
+        stmt = select(
+            func.coalesce(func.sum(PaymentRequest.amount_mmk), 0),
+            func.count(PaymentRequest.id),
+        ).where(*_income_base)
+        if since is not None:
+            stmt = stmt.where(_income_bucket >= since)
+        row = (await db.execute(stmt)).one()
+        return int(row[0] or 0), int(row[1] or 0)
+
+    _inc_today = await _income_since(_rangoon_midnight.astimezone(timezone.utc))
+    _inc_7d = await _income_since(_now_utc - timedelta(days=7))
+    _inc_30d = await _income_since(_now_utc - timedelta(days=30))
+    _inc_all = await _income_since(None)
+    income = {
+        "today_mmk": _inc_today[0],
+        "today_count": _inc_today[1],
+        "last_7d_mmk": _inc_7d[0],
+        "last_7d_count": _inc_7d[1],
+        "last_30d_mmk": _inc_30d[0],
+        "last_30d_count": _inc_30d[1],
+        "all_time_mmk": _inc_all[0],
+        "all_time_count": _inc_all[1],
+    }
 
     db_size_bytes = None
     try:
@@ -7627,6 +7684,9 @@ async def get_admin_overview(
         "failed_jobs_24h": failed_24h,
         "jobs_by_status": jobs_by_status,
         "banned_users": banned_users,
+        "banned_by_admin": banned_by_admin,
+        "bot_blocked_users": bot_blocked_users,
+        "income": income,
         "new_users_24h": new_users_24h,
         "db_size_bytes": db_size_bytes,
         "storage_bytes": storage_bytes,
