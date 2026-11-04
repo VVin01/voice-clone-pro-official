@@ -79,11 +79,12 @@ def test_resolve_keys_families_aliases_and_default():
     for key in KEYS:
         assert resolve_subtitle_font(key) == (key, FAMILIES[key])
         assert resolve_subtitle_font(FAMILIES[key]) == (key, FAMILIES[key])
-    # Legacy selectors from stored configs keep their meaning:
-    # "Default" was an explicit choice of Noto Sans Myanmar and
-    # "Serif" of Noto Serif Myanmar — saved choices are honoured.
+    # Legacy selectors from stored configs: "Serif" was an explicit
+    # choice of Noto Serif Myanmar and keeps its meaning; "Default"
+    # was the old factory value and — since Batch T (Ulfa,
+    # 2026-11-04) — migrates to the Padauk default.
     assert resolve_subtitle_font("serif") == ("noto_serif", "Noto Serif Myanmar")
-    assert resolve_subtitle_font("default") == ("noto_sans", "Noto Sans Myanmar")
+    assert resolve_subtitle_font("default") == ("padauk", "Padauk")
     # Un-chosen / unknown → the Padauk default.
     for v in ("", None, "ComicSansUnknown"):
         assert resolve_subtitle_font(v) == ("padauk", "Padauk"), v
@@ -106,7 +107,7 @@ def test_recap_config_accepts_only_the_four_keys():
     ).sub_font == "noto_serif"
     assert RecapConfigRequest(
         url="https://example.com/v.mp4", sub_font="default"
-    ).sub_font == "noto_sans"
+    ).sub_font == "padauk"
     assert RecapConfigRequest(
         url="https://example.com/v.mp4", sub_font="Pyidaungsu"
     ).sub_font == "pyidaungsu"
@@ -178,8 +179,9 @@ def test_appjs_wiring_uses_the_four_keys():
     for family in FAMILIES.values():
         assert f"'{family}'" in APP_JS  # preview fontMap covers all four
     # Saved snapshots from before the rename are migrated on
-    # restore, so a saved "Default"/"Serif" choice keeps its font.
-    assert 'LEGACY_SUB_FONTS = { "default": "noto_sans", "serif": "noto_serif" }' in APP_JS
+    # restore: "Serif" keeps its font; "Default" savers move to
+    # Padauk (Batch T, Ulfa 2026-11-04).
+    assert 'LEGACY_SUB_FONTS = { "default": "padauk", "serif": "noto_serif" }' in APP_JS
 
 
 def test_i18n_labels_for_all_four_in_both_locales():
@@ -209,3 +211,36 @@ def test_default_ass_family_is_padauk(tmp_path):
         if l.startswith("Style: Default")
     )
     assert ",Padauk," in line
+
+
+# ── 7. Batch T: "Default" savers migrate to Padauk ─────────────────
+
+def test_batch_t_default_alias_is_padauk_at_every_boundary():
+    """Batch T (Ulfa, 2026-11-04): the legacy "default" selector
+    resolves to Padauk at EVERY boundary — the server alias map, the
+    renderer resolve, the font FILE the PNG renderer loads, the
+    config validator, and the Mini App snapshot-restore map (which
+    history prefill also funnels through). Explicit choices are
+    untouched: a stored "noto_sans" still renders Noto Sans and the
+    "serif" alias still means Noto Serif."""
+    from app.webapp.api import RecapConfigRequest
+
+    # Server alias map + renderer resolve.
+    assert core.SUBTITLE_FONT_ALIASES == {"default": "padauk", "serif": "noto_serif"}
+    assert resolve_subtitle_font("default") == ("padauk", "Padauk")
+    assert resolve_subtitle_font("Default") == ("padauk", "Padauk")
+    # The file actually loaded for a "default"-valued job is Padauk's.
+    assert subtitle_font_file("default").name == "Padauk-Bold.ttf"
+    # Config validator boundary.
+    assert RecapConfigRequest(
+        url="https://example.com/v.mp4", sub_font="default"
+    ).sub_font == "padauk"
+    # Mini App snapshot restore / history prefill boundary.
+    assert 'LEGACY_SUB_FONTS = { "default": "padauk", "serif": "noto_serif" }' in APP_JS
+    # Explicit choices keep their meaning.
+    assert resolve_subtitle_font("noto_sans") == ("noto_sans", "Noto Sans Myanmar")
+    assert subtitle_font_file("noto_sans").name == "NotoSansMyanmar-Bold.ttf"
+    assert resolve_subtitle_font("serif") == ("noto_serif", "Noto Serif Myanmar")
+    assert RecapConfigRequest(
+        url="https://example.com/v.mp4", sub_font="noto_sans"
+    ).sub_font == "noto_sans"

@@ -41,12 +41,13 @@ def test_registry_options_and_files_exist():
 
 def test_resolve_keys_families_and_legacy():
     # Batch Q font choice (2026-11-04): four family keys. The legacy
-    # "default" selector was an EXPLICIT choice of Noto Sans Myanmar
-    # and aliases to noto_sans (saved choices keep their meaning);
-    # the un-chosen path (empty/unknown) resolves to
-    # DEFAULT_SUBTITLE_FONT — Padauk, re-verified through the raqm
-    # PNG renderer.
-    assert resolve_subtitle_font("default") == ("noto_sans", "Noto Sans Myanmar")
+    # "default" selector was the old picker's Noto Sans Myanmar
+    # label; Batch T (Ulfa, 2026-11-04) migrates those savers to
+    # Padauk, so it aliases to padauk — same landing as the
+    # un-chosen path (empty/unknown → DEFAULT_SUBTITLE_FONT, Padauk,
+    # re-verified through the raqm PNG renderer). Explicit keys
+    # (noto_sans below) keep their meaning.
+    assert resolve_subtitle_font("default") == ("padauk", "Padauk")
     assert resolve_subtitle_font("padauk") == ("padauk", "Padauk")
     assert resolve_subtitle_font("noto_sans") == ("noto_sans", "Noto Sans Myanmar")
     assert resolve_subtitle_font("pyidaungsu") == ("pyidaungsu", "Pyidaungsu")

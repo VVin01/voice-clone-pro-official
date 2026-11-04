@@ -5067,10 +5067,11 @@ function setupRecapVisualEditor() {
         try { saved = JSON.parse(localStorage.getItem(RECAP_SETTINGS_KEY) || "null"); } catch (e) {}
         if (!saved || typeof saved !== "object") return;
         // Batch Q font choice: legacy snapshot values from before the
-        // four-key registry keep their meaning — a saved choice is
-        // honoured, not silently swapped ("Default" was Noto Sans
-        // Myanmar, "Serif" was Noto Serif Myanmar).
-        const LEGACY_SUB_FONTS = { "default": "noto_sans", "serif": "noto_serif" };
+        // four-key registry are migrated on restore ("Serif" was
+        // Noto Serif Myanmar and keeps that meaning; "Default" was
+        // the old factory value — Batch T, Ulfa 2026-11-04: those
+        // savers move to the new premium default, Padauk).
+        const LEGACY_SUB_FONTS = { "default": "padauk", "serif": "noto_serif" };
         if (LEGACY_SUB_FONTS[saved.recapSubFont]) saved.recapSubFont = LEGACY_SUB_FONTS[saved.recapSubFont];
         Object.entries(RECAP_SETTING_ENUMS).forEach(([k, allowed]) => {
             if (allowed.includes(saved[k])) state[k] = saved[k];
