@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 import socket
@@ -1766,23 +1767,18 @@ SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = {
 # staged for libass (merged stacks) — it stays on disk only for the PIL
 # title/brand paths that reference it by filename. Padauk and Serif remain
 # selectable options.
+# Batch Q font choice (Ulfa, 2026-11-04): the registry now carries
+# exactly FOUR user-selectable options, every one shaping-verified
+# through the Pillow+raqm PNG renderer (the libass-era verdicts in
+# the note above no longer bind — raqm shapes Padauk and Pyidaungsu
+# clusters correctly at caption size, verified glyph-by-glyph in
+# ~/workspace/font-compare). Padauk is the DEFAULT again, this time
+# on the strength of the raqm verification. Keys were renamed to
+# stable family keys (noto_sans / noto_serif / pyidaungsu); the old
+# "default"/"serif" selectors survive as resolve-time aliases so
+# stored configs keep working. The variable NotoSansMyanmar.ttf
+# stays in NO option's file list (banned by construction).
 SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
-    "default": {
-        "name": "Noto Sans",
-        "label": "Noto Sans",
-        "short": "Noto Sans",
-        "family": "Noto Sans Myanmar",
-        "files": ["NotoSansMyanmar-Regular.ttf", "NotoSansMyanmar-Bold.ttf"],
-        "license": "OFL-1.1 (LICENSE-NotoSansMyanmar-OFL.txt)",
-    },
-    "serif": {
-        "name": "Noto Serif Myanmar",
-        "label": "စာလုံးလှ Serif (Noto Serif)",
-        "short": "Serif",
-        "family": "Noto Serif Myanmar",
-        "files": ["NotoSerifMyanmar-Regular.ttf", "NotoSerifMyanmar-Bold.ttf"],
-        "license": "OFL-1.1 (LICENSE-NotoSerifMyanmar-OFL.txt)",
-    },
     "padauk": {
         "name": "Padauk",
         "label": "ပတေက် (Padauk)",
@@ -1791,14 +1787,49 @@ SUBTITLE_FONT_OPTIONS: dict[str, dict[str, Any]] = {
         "files": ["Padauk-Regular.ttf", "Padauk-Bold.ttf"],
         "license": "OFL-1.1 (LICENSE-Padauk-OFL.txt)",
     },
+    "noto_sans": {
+        "name": "Noto Sans",
+        "label": "Noto Sans",
+        "short": "Noto Sans",
+        "family": "Noto Sans Myanmar",
+        "files": ["NotoSansMyanmar-Regular.ttf", "NotoSansMyanmar-Bold.ttf"],
+        "license": "OFL-1.1 (LICENSE-NotoSansMyanmar-OFL.txt)",
+    },
+    "pyidaungsu": {
+        "name": "Pyidaungsu",
+        "label": "ပြည်ထောင်စု (Pyidaungsu)",
+        "short": "Pyidaungsu",
+        "family": "Pyidaungsu",
+        "files": ["Pyidaungsu-Bold.ttf"],
+        "license": "OFL-1.1 (LICENSE-Pyidaungsu-OFL.txt)",
+    },
+    "noto_serif": {
+        "name": "Noto Serif Myanmar",
+        "label": "စာလုံးလှ Serif (Noto Serif)",
+        "short": "Serif",
+        "family": "Noto Serif Myanmar",
+        "files": ["NotoSerifMyanmar-Regular.ttf", "NotoSerifMyanmar-Bold.ttf"],
+        "license": "OFL-1.1 (LICENSE-NotoSerifMyanmar-OFL.txt)",
+    },
 }
 
 # The production default: what burns when the user has NOT explicitly
-# chosen a font (empty value, the "default" selector, or anything unknown).
-# Noto Sans Myanmar (static builds) — restored 2026-11-01 after the Padauk
-# default (2026-10-30) produced detached-looking clusters in production
-# renders; see the registry note above.
-DEFAULT_SUBTITLE_FONT = "default"
+# chosen a font (empty value or anything unknown — the legacy
+# "default" selector was an explicit choice and aliases to
+# noto_sans instead). Padauk since the Batch Q font choice
+# (2026-11-04); before that Noto Sans Myanmar (2026-11-01 shaping
+# fix) — see the registry notes above.
+DEFAULT_SUBTITLE_FONT = "padauk"
+
+# Legacy selector aliases → current keys (stored configs, history
+# rows and old Mini App snapshots may still carry these values).
+# "default" was an EXPLICIT picker choice meaning Noto Sans Myanmar
+# — users who picked it keep that font; it is NOT the un-chosen
+# path (empty/unknown → DEFAULT_SUBTITLE_FONT).
+SUBTITLE_FONT_ALIASES = {
+    "default": "noto_sans",
+    "serif": "noto_serif",
+}
 
 
 def bundled_fonts_dir() -> Path:
@@ -1819,21 +1850,21 @@ def bundled_font_files() -> list[str]:
 def resolve_subtitle_font(value: str | None) -> tuple[str, str]:
     """Resolve a subtitle-font selector to (option_key, family_name).
 
-    Accepts an option key ("serif"), a family name ("Noto Serif Myanmar"),
-    or a legacy value. The "default" selector means "no explicit choice"
-    and resolves to DEFAULT_SUBTITLE_FONT (Noto Sans Myanmar) — same for
-    empty and unknown values. Legacy "Pyidaungsu" maps to the default too:
-    Pyidaungsu's GSUB shaping is incomplete for libass (see
-    ensure_system_myanmar_fonts) and it is not bundled. A family name
-    passed explicitly ("Noto Sans Myanmar") still round-trips to its own
-    family — only the un-chosen path changed.
+    Accepts a current option key ("noto_serif"), a family name
+    ("Noto Serif Myanmar"), or a legacy selector (SUBTITLE_FONT_
+    ALIASES: "serif" → noto_serif, "default" → noto_sans — the
+    latter was an explicit picker choice, so it keeps its meaning).
+    Empty and unknown values are the un-chosen path and resolve to
+    DEFAULT_SUBTITLE_FONT (Padauk since 2026-11-04). A family name
+    passed explicitly still round-trips to its own family.
     """
     v = str(value or "").strip()
     if not v:
         return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
     low = v.lower()
-    if low == "default":
-        return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
+    if low in SUBTITLE_FONT_ALIASES:
+        key = SUBTITLE_FONT_ALIASES[low]
+        return key, SUBTITLE_FONT_OPTIONS[key]["family"]
     if low in SUBTITLE_FONT_OPTIONS:
         return low, SUBTITLE_FONT_OPTIONS[low]["family"]
     for key, opt in SUBTITLE_FONT_OPTIONS.items():
@@ -1861,8 +1892,18 @@ def subtitle_font_file(value: str | None) -> Path:
         p = src_dir / fn
         if p.is_file():
             return p
-    # Option's files missing on disk (should not happen): fall back
-    # to the default option's files, then to any bundled static.
+    # The chosen family's files are missing on disk (should not
+    # happen — the registry test pins their presence): fall back to
+    # noto_sans and LOG it. A job must never fail over a font
+    # (Batch Q font choice, 2026-11-04).
+    logging.getLogger(__name__).warning(
+        "subtitle font %r files missing in %s — falling back to noto_sans",
+        key, src_dir,
+    )
+    for fn in SUBTITLE_FONT_OPTIONS["noto_sans"]["files"]:
+        p = src_dir / fn
+        if p.is_file():
+            return p
     for fn in SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["files"]:
         p = src_dir / fn
         if p.is_file():
@@ -2102,7 +2143,7 @@ def write_synced_ass_file(
     ass_path: Path,
     cw: int,
     ch: int,
-    font_name: str = "Noto Sans Myanmar",
+    font_name: str = "",
     raw_font_size: int = 16,
     sub_style: str = "yellow",
     sub_lines: int = 1,

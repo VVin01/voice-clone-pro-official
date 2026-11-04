@@ -4,6 +4,36 @@
    Burmese-first type scale. No stacked passes, no external fonts.
    ════════════════════════════════════════════════════════════════════ */
 
+/* ── Subtitle webfonts (Batch Q font choice, 2026-11-04) ─────────────
+   The four user-selectable subtitle families, self-hosted from
+   /static/fonts/ (Bold builds, OFL-1.1 — licences ship beside the
+   engine's copies in app/assets/fonts/). The recap live preview
+   renders its sample in the chosen family so preview == burn. */
+@font-face {
+    font-family: 'Padauk';
+    src: url('/static/fonts/Padauk-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Noto Sans Myanmar';
+    src: url('/static/fonts/NotoSansMyanmar-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Pyidaungsu';
+    src: url('/static/fonts/Pyidaungsu-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Noto Serif Myanmar';
+    src: url('/static/fonts/NotoSerifMyanmar-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-display: swap;
+}
+
 /* ── Tokens ───────────────────────────────────────────────────────────
    Liquid Glass reskin (owner's Style 5 pick, 2026-10-29): the token
    NAMES are kept from the premium rebuild so every component rule

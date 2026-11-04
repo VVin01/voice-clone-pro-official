@@ -53,7 +53,7 @@ def test_burned_ass_carries_spelling_corrections(tmp_path):
 
 
 def test_ass_writer_uses_bundled_family_per_font_option(tmp_path):
-    for key in ("default", "serif", "padauk"):
+    for key in ("padauk", "noto_sans", "pyidaungsu", "noto_serif"):
         _, family = resolve_subtitle_font(key)
         ass = write_synced_ass_file(
             [(0.0, 3.0, TORTURE_1)], tmp_path / f"s_{key}.ass", 1280, 720,
@@ -63,7 +63,7 @@ def test_ass_writer_uses_bundled_family_per_font_option(tmp_path):
 
 
 @pytest.mark.skipif(not FFMPEG, reason="ffmpeg not available")
-@pytest.mark.parametrize("font_key", ["default", "serif", "padauk"])
+@pytest.mark.parametrize("font_key", ["padauk", "noto_sans", "pyidaungsu", "noto_serif"])
 def test_torture_line_renders_in_every_font(tmp_path, font_key):
     """Burn the stack-dense torture line through the REAL overlay pass
     (ASS + libass) once per bundled font; the subtitle band must contain
