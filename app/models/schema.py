@@ -721,6 +721,31 @@ class GroupAiFaq(Base):
     )
 
 
+class UserPreference(Base):
+    """Account-bound Mini App preferences (Batch AC, 2026-11-04).
+
+    One row per user holding a JSON blob of PREFERENCE values only
+    (voice choice, recap style/subtitle/blur-strength defaults — see
+    USER_PREF_FIELDS in app/webapp/api.py for the exact allowlist).
+    Per-source geometry (a recap job's blur_y/blur_h box and the
+    blur_box_explicit marker) is deliberately NOT stored here: it
+    belongs to one source video, not to the account. The table is
+    created at startup via Base.metadata.create_all, like the
+    Batch H group-AI tables — no migration framework.
+    """
+
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    prefs_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+
 class MonthlyFreeAllowanceGrant(Base):
     __tablename__ = "monthly_free_allowance_grants"
 

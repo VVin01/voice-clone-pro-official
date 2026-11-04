@@ -582,6 +582,672 @@ function getAuthHeaders(includeContentType = true) {
 }
 window.getAuthHeaders = getAuthHeaders;
 
+// ── Batch AC: LiveJobs manager (global live layer) ─────────────────────
+// ONE global transport for job state: a single adaptive poll of
+// GET /api/jobs/live carrying every active job plus jobs that turned
+// terminal in the last ~10 minutes. It feeds the progress pill, the
+// jobs sheet and in-place History updates. The per-screen detail
+// pollers keep rendering their rich detail views (download URLs,
+// script editor, fallback segments — payloads the bulk endpoint
+// deliberately does not carry), but they render through the SAME
+// monotonic merge below, so a reconnect can never move a displayed
+// stage backwards (the old recap reset-to-1/4 bug).
+const LIVE_JOB_TERMINAL_STATUSES = ["SUCCESS", "FAILED", "CANCELLED"];
+function liveJobsIsTerminal(status) {
+    return LIVE_JOB_TERMINAL_STATUSES.includes(String(status || "").toUpperCase());
+}
+function liveJobsIsActive(status) {
+    return ["PENDING", "QUEUED", "RUNNING", "SCRIPT_READY"].includes(String(status || "").toUpperCase());
+}
+function liveJobsMergeJob(prev, next) {
+    if (!next) return prev || null;
+    if (!prev) {
+        const fresh = { ...next };
+        fresh._terminalRendered = false;
+        return fresh;
+    }
+    const merged = { ...prev, ...next };
+    // Terminal state is sticky: once a job is done it never flips back.
+    if (liveJobsIsTerminal(prev.status)) {
+        merged.status = prev.status;
+        merged.progress_percent = prev.progress_percent;
+        merged.stage_index = prev.stage_index;
+        merged.stage_total = prev.stage_total;
+    } else if (!liveJobsIsTerminal(next.status)) {
+        // MONOTONIC: displayed progress/stage never go backwards.
+        merged.progress_percent = Math.max(prev.progress_percent || 0, next.progress_percent || 0);
+        merged.stage_index = Math.max(prev.stage_index || 0, next.stage_index || 0);
+        merged.stage_total = next.stage_total || prev.stage_total || 0;
+    }
+    merged._terminalRendered = !!prev._terminalRendered;
+    return merged;
+}
+
+const LiveJobs = {
+    jobs: new Map(),
+    subscribers: [],
+    timer: null,
+    started: false,
+    failStreak: 0,
+    reconnecting: false,
+
+    subscribe(fn) {
+        if (typeof fn === "function") LiveJobs.subscribers.push(fn);
+    },
+    notify(job, opts) {
+        LiveJobs.subscribers.forEach(fn => { try { fn(job, opts || {}); } catch (e) {} });
+        renderLiveJobsPill();
+        renderLiveJobsSheet();
+    },
+    hasActiveJob() {
+        for (const j of LiveJobs.jobs.values()) {
+            if (liveJobsIsActive(j.status)) return true;
+        }
+        return false;
+    },
+    activeJobs() {
+        return [...LiveJobs.jobs.values()].filter(j => liveJobsIsActive(j.status));
+    },
+    track(job) {
+        if (!job || !job.id) return;
+        const prev = LiveJobs.jobs.get(job.id);
+        const merged = liveJobsMergeJob(prev, job);
+        LiveJobs.jobs.set(job.id, merged);
+        LiveJobs.notify(merged, { terminal: liveJobsIsTerminal(merged.status) && !merged._terminalRendered });
+    },
+    applySnapshot(list) {
+        const seen = new Set();
+        (Array.isArray(list) ? list : []).forEach(raw => {
+            if (!raw || !raw.id) return;
+            seen.add(raw.id);
+            const prev = LiveJobs.jobs.get(raw.id);
+            const merged = liveJobsMergeJob(prev, raw);
+            const isNewTerminal = liveJobsIsTerminal(merged.status) && !(prev && prev._terminalRendered);
+            if (isNewTerminal) merged._terminalRendered = true;
+            LiveJobs.jobs.set(raw.id, merged);
+            LiveJobs.notify(merged, { terminal: isNewTerminal });
+            if (isNewTerminal) applyLiveJobToHistory(merged);
+        });
+        // Active jobs the server no longer reports are gone (purged /
+        // never persisted): drop them instead of haunting the pill.
+        for (const [id, j] of [...LiveJobs.jobs.entries()]) {
+            if (!seen.has(id) && liveJobsIsActive(j.status)) {
+                LiveJobs.jobs.delete(id);
+                LiveJobs.notify(j, { removed: true });
+            }
+        }
+        renderLiveJobsPill();
+        renderLiveJobsSheet();
+    },
+    async fetchNow() {
+        try {
+            const res = await fetch("/api/jobs/live", { headers: getAuthHeaders() });
+            if (!res.ok) throw new Error("live " + res.status);
+            const data = await res.json();
+            LiveJobs.failStreak = 0;
+            if (LiveJobs.reconnecting) {
+                LiveJobs.reconnecting = false;
+                renderLiveJobsPill();
+            }
+            LiveJobs.applySnapshot(data.jobs || []);
+        } catch (e) {
+            // A failed fetch keeps the last known state — never a reset.
+            LiveJobs.failStreak++;
+            if (LiveJobs.failStreak >= 3 && !LiveJobs.reconnecting) {
+                LiveJobs.reconnecting = true;
+                renderLiveJobsPill();
+            }
+        }
+        LiveJobs.schedule();
+    },
+    schedule() {
+        if (LiveJobs.timer) clearTimeout(LiveJobs.timer);
+        LiveJobs.timer = null;
+        if (typeof document !== "undefined" && document.hidden) return; // PAUSED while hidden
+        const active = LiveJobs.hasActiveJob();
+        const delay = active ? (LiveJobs.failStreak > 0 ? 5000 : 2000) : 15000;
+        LiveJobs.timer = setTimeout(() => { LiveJobs.fetchNow(); }, delay);
+    },
+    start() {
+        if (LiveJobs.started) return;
+        LiveJobs.started = true;
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                if (LiveJobs.timer) clearTimeout(LiveJobs.timer);
+                LiveJobs.timer = null;
+            } else {
+                LiveJobs.fetchNow(); // immediate catch-up on return
+            }
+        });
+        window.addEventListener("focus", () => { LiveJobs.fetchNow(); });
+        LiveJobs.fetchNow();
+    },
+};
+window.LiveJobs = LiveJobs;
+
+// ── Batch AC: progress pill + jobs sheet ───────────────────────────────
+function liveJobStageText(job) {
+    if (!job) return "";
+    if (job.status === "QUEUED") {
+        return job.queue_position
+            ? tf("live_job_queued_pos", { pos: job.queue_position })
+            : t("live_job_queued");
+    }
+    if (job.status === "SCRIPT_READY") return t("hist_script_ready_badge");
+    if (job.progress_stage) {
+        const stageText = t("recap_stage_" + job.progress_stage);
+        if (stageText && stageText !== "recap_stage_" + job.progress_stage) return stageText;
+    }
+    if (job.progress_label) return job.progress_label;
+    if (job.kind === "voice") return t("voice_synthesizing");
+    return t("recap_processing_msg");
+}
+function renderLiveJobsPill() {
+    const pill = document.getElementById("live-jobs-pill");
+    if (!pill) return;
+    const active = LiveJobs.activeJobs();
+    if (!active.length) {
+        pill.classList.add("hidden");
+        return;
+    }
+    pill.classList.remove("hidden");
+    const lead = [...active].sort((a, b) => (b.progress_percent || 0) - (a.progress_percent || 0))[0];
+    const countEl = document.getElementById("live-jobs-pill-count");
+    const stageEl = document.getElementById("live-jobs-pill-stage");
+    const fillEl = document.getElementById("live-jobs-pill-fill");
+    if (countEl) countEl.innerText = tf("live_jobs_count", { count: active.length });
+    if (stageEl) stageEl.innerText = LiveJobs.reconnecting ? t("poll_reconnecting") : liveJobStageText(lead);
+    if (fillEl) fillEl.style.width = `${Math.min(100, Math.max(4, lead.progress_percent || 0))}%`;
+}
+function liveJobsSheetRowHtml(job) {
+    const isRecap = job.kind === "recap";
+    const title = escapeHtml(job.title || (isRecap ? "Movie Recap" : "Voice Synthesis"));
+    const pct = Math.min(100, Math.max(0, job.progress_percent || 0));
+    const elapsed = (typeof job.elapsed_seconds === "number")
+        ? tf("live_job_elapsed", { sec: job.elapsed_seconds }) : "";
+    let action = "";
+    if (liveJobsIsActive(job.status)) {
+        action = `<button type="button" class="mini-chip" onclick="liveJobOpen('${job.id}','${job.kind}')">${t("studio_inline_view")}</button>`
+            + ` <button type="button" class="mini-chip" onclick="liveJobCancel('${job.id}','${job.kind}')">${t("btn_cancel_job")}</button>`;
+    } else if (liveJobsIsTerminal(job.status)) {
+        action = `<button type="button" class="mini-chip" onclick="liveJobOpen('${job.id}','${job.kind}')">${t("live_job_view_result")}</button>`;
+    }
+    return `<div class="live-job-row" data-live-job-id="${job.id}">
+        <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
+        <div class="live-job-row-main">
+            <div class="live-job-row-title">${title}</div>
+            <div class="live-job-row-meta">${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}${elapsed ? " · " + escapeHtml(elapsed) : ""}</div>
+            <div class="live-job-row-bar"><span class="live-job-row-fill" style="width:${pct}%"></span></div>
+        </div>
+        <div class="live-job-row-actions">${action}</div>
+    </div>`;
+}
+function renderLiveJobsSheet() {
+    const list = document.getElementById("live-jobs-sheet-list");
+    if (!list) return;
+    const all = [...LiveJobs.jobs.values()];
+    const active = all.filter(j => liveJobsIsActive(j.status));
+    const recent = all.filter(j => liveJobsIsTerminal(j.status));
+    if (!active.length && !recent.length) {
+        list.innerHTML = `<p class="text-muted">${t("live_jobs_empty")}</p>`;
+        return;
+    }
+    let html = active.map(liveJobsSheetRowHtml).join("");
+    if (recent.length) {
+        html += `<div class="live-jobs-sheet-head" style="margin-top:10px;"><span>${t("live_job_recent_done")}</span></div>`;
+        html += recent.map(liveJobsSheetRowHtml).join("");
+    }
+    list.innerHTML = html;
+}
+function openLiveJobsSheet() {
+    const sheet = document.getElementById("live-jobs-sheet");
+    if (sheet) sheet.classList.remove("hidden");
+    renderLiveJobsSheet();
+    LiveJobs.fetchNow();
+}
+window.openLiveJobsSheet = openLiveJobsSheet;
+function closeLiveJobsSheet() {
+    const sheet = document.getElementById("live-jobs-sheet");
+    if (sheet) sheet.classList.add("hidden");
+}
+window.closeLiveJobsSheet = closeLiveJobsSheet;
+window.liveJobCancel = function(jobId, kind) {
+    closeLiveJobsSheet();
+    if (kind === "recap") {
+        cancelRecapJobById(jobId);
+    } else {
+        showStudioConfirm(t("voice_cancel_confirm"), async () => {
+            try {
+                const res = await fetch(`/api/jobs/${jobId}/cancel`, {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || t("err_generic"));
+                showStudioToast(t("voice_cancelled_toast"), "info", 5000);
+                if (state.activeJobId === jobId) {
+                    if (state.pollTimer) clearInterval(state.pollTimer);
+                    state.pollTimer = null;
+                    const box = document.getElementById("voice-progress-box");
+                    if (box) box.classList.add("hidden");
+                    const btn = document.getElementById("btn-generate-voice");
+                    if (btn) btn.disabled = false;
+                }
+                LiveJobs.fetchNow();
+                loadUserHistory();
+            } catch (err) {
+                showStudioToast((err && err.message) ? err.message : t("err_generic"), "error");
+            }
+        });
+    }
+};
+window.liveJobOpen = function(jobId, kind) {
+    closeLiveJobsSheet();
+    const job = LiveJobs.jobs.get(jobId);
+    if (kind === "recap") {
+        switchTab("tab-recap");
+        if (job && job.status === "SUCCESS") {
+            openRecapInPlayer(jobId);
+        } else if (job && liveJobsIsTerminal(job.status)) {
+            openHistoryHub();
+        } else {
+            openRecapDetail(jobId);
+        }
+    } else {
+        switchTab("tab-voice");
+        openVoiceDetail(jobId);
+    }
+};
+
+// ── Batch AC: the studio survives submit ───────────────────────────────
+// Submitting NEVER tears the workspace down: no control is reset, the
+// canvas is untouched, and nothing scrolls the user away. Progress
+// lives on the pill/sheet; the studio keeps only a slim inline status
+// line. The detailed progress view opens BY CHOICE (inline line, pill
+// sheet, History) and its Back button returns to the untouched studio.
+state.voiceDetailOpen = false;
+state.recapDetailOpen = false;
+function showStudioInlineStatus(kind, text) {
+    const line = document.getElementById(kind + "-inline-status");
+    const label = document.getElementById(kind + "-inline-status-text");
+    if (label && text) label.innerText = text;
+    if (line) line.classList.remove("hidden");
+}
+window.showStudioInlineStatus = showStudioInlineStatus;
+function openVoiceDetail(jobId) {
+    state.voiceDetailOpen = true;
+    const box = document.getElementById("voice-progress-box");
+    if (box) {
+        box.classList.remove("hidden");
+        box.scrollIntoView({ behavior: "smooth" });
+    }
+    if (jobId && !state.pollTimer) startJobPolling(jobId);
+}
+window.openVoiceDetail = openVoiceDetail;
+function openRecapDetail(jobId) {
+    state.recapDetailOpen = true;
+    const box = document.getElementById("recap-progress-box");
+    if (box) {
+        box.classList.remove("hidden");
+        box.scrollIntoView({ behavior: "smooth" });
+    }
+    if (jobId && !state.recapPollTimer) startRecapJobPolling(jobId);
+}
+window.openRecapDetail = openRecapDetail;
+window.openCurrentVoiceDetail = function() { openVoiceDetail(state.activeJobId); };
+window.openCurrentRecapDetail = function() { openRecapDetail(state.recapJobId); };
+window.backToStudio = function(kind) {
+    if (kind === "recap") {
+        state.recapDetailOpen = false;
+        const box = document.getElementById("recap-progress-box");
+        if (box) box.classList.add("hidden");
+        const tab = document.getElementById("tab-recap");
+        if (tab) tab.scrollIntoView({ behavior: "smooth" });
+    } else {
+        state.voiceDetailOpen = false;
+        const box = document.getElementById("voice-progress-box");
+        if (box) box.classList.add("hidden");
+        const tab = document.getElementById("tab-voice");
+        if (tab) tab.scrollIntoView({ behavior: "smooth" });
+    }
+};
+function showLiveSubmitLimit(kind) {
+    // The server concurrency rule (1 active job per user) explained IN
+    // PLACE: the workspace stays exactly as it is, the running job is
+    // one tap away in the sheet, and nothing is a dead end.
+    showStudioToast(t("live_submit_limit_title") + " — " + t("live_submit_limit_body"), "warning", 6000);
+    showStudioInlineStatus(kind, t("live_submit_limit_title"));
+    openLiveJobsSheet();
+}
+window.showLiveSubmitLimit = showLiveSubmitLimit;
+
+// ── Batch AC: duplicate-submit guard + confirmation hand-off ──────────
+// Owner-chosen pattern (over a silent stay in the studio): a
+// successful submit hands off to a confirmation the user exits by
+// choice, and the Create/Generate button cannot re-submit an
+// UNCHANGED configuration — it re-arms only when the user changes
+// any setting/input (a deliberate variation).
+function createSubmitGuard() {
+    return { inFlight: false, submittedFingerprint: null, _fp: null };
+}
+function guardBegin(guard, fingerprint) {
+    if (guard.inFlight) return "in-flight";
+    if (guard.submittedFingerprint && guard.submittedFingerprint === fingerprint) return "unchanged";
+    guard.inFlight = true;
+    guard._fp = fingerprint;
+    return "ok";
+}
+function guardSuccess(guard) {
+    guard.inFlight = false;
+    guard.submittedFingerprint = guard._fp;
+    guard._fp = null;
+}
+function guardFailure(guard) {
+    guard.inFlight = false;
+    guard._fp = null;
+}
+function guardRearmCheck(guard, currentFingerprint) {
+    if (guard.submittedFingerprint && currentFingerprint !== guard.submittedFingerprint) {
+        guard.submittedFingerprint = null;
+        return true;
+    }
+    return false;
+}
+const voiceSubmitGuard = createSubmitGuard();
+const recapSubmitGuard = createSubmitGuard();
+function studioConfigFingerprint(kind) {
+    if (kind === "voice") {
+        const textInput = document.getElementById("voice-text-input");
+        return JSON.stringify({
+            text: textInput ? textInput.value : "",
+            persona: state.selectedPersona,
+            speed: state.speed,
+            subMode: state.voxcpmSubMode,
+            ref: state.selectedReferenceFile
+                ? (state.selectedReferenceFile.name + ":" + state.selectedReferenceFile.size)
+                : null,
+        });
+    }
+    const urlInput = document.getElementById("recap-url-input");
+    const blurY = document.getElementById("slider-blur-y");
+    const blurH = document.getElementById("slider-blur-h");
+    const sr = document.getElementById("recap-script-review-toggle");
+    return JSON.stringify({
+        prefs: collectAccountPrefs(),
+        url: state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : ""),
+        blurY: blurY ? blurY.value : null,
+        blurH: blurH ? blurH.value : null,
+        scriptReview: !!(sr && sr.checked),
+        title: state.recapVideoTitle || "",
+    });
+}
+function setSubmitButtonState(kind) {
+    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+    const btn = document.getElementById(kind === "voice" ? "btn-generate-voice" : "btn-start-recap");
+    if (!btn) return;
+    const span = btn.querySelector(".btn-text");
+    if (span && !span.dataset.acOriginal) span.dataset.acOriginal = span.innerText;
+    btn.disabled = !!(guard.inFlight || guard.submittedFingerprint);
+    if (span) {
+        span.innerText = guard.submittedFingerprint
+            ? t("submit_already_creating")
+            : (span.dataset.acOriginal || span.innerText);
+    }
+}
+function studioSubmitBegin(kind) {
+    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+    const result = guardBegin(guard, studioConfigFingerprint(kind));
+    if (result === "unchanged") {
+        showStudioToast(t("submit_already_creating"), "info", 5000);
+        return false;
+    }
+    if (result !== "ok") return false; // in-flight double-tap: exactly one submit
+    setSubmitButtonState(kind);
+    return true;
+}
+function studioSubmitSuccess(kind) {
+    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+    guardSuccess(guard);
+    setSubmitButtonState(kind);
+}
+function studioSubmitFailure(kind) {
+    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+    guardFailure(guard);
+    setSubmitButtonState(kind);
+}
+function setupSubmitGuards() {
+    [["tab-voice", "voice"], ["tab-recap", "recap"]].forEach(([tabId, kind]) => {
+        const tab = document.getElementById(tabId);
+        if (!tab) return;
+        const check = () => {
+            const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+            if (guardRearmCheck(guard, studioConfigFingerprint(kind))) {
+                setSubmitButtonState(kind);
+            }
+        };
+        ["input", "change", "click"].forEach(evt => tab.addEventListener(evt, check));
+    });
+    // The guard stays authoritative over the detail pollers' legacy
+    // button re-enables: any live update re-applies the guard state.
+    LiveJobs.subscribe(() => {
+        setSubmitButtonState("voice");
+        setSubmitButtonState("recap");
+    });
+}
+
+// The confirmation itself: success indication, the cost actually
+// charged stated plainly, and a compact live progress snippet fed by
+// LiveJobs. Exactly two actions — Watch the job / Back to studio —
+// and nothing auto-navigates.
+state.submitConfirmJob = null;
+function renderSubmitConfirmSnippet(job) {
+    const stageEl = document.getElementById("submit-confirm-stage");
+    const fillEl = document.getElementById("submit-confirm-fill");
+    if (!job) return;
+    if (stageEl) stageEl.innerText = `${job.status || ""} · ${liveJobStageText(job)}`;
+    if (fillEl) fillEl.style.width = `${Math.min(100, Math.max(4, job.progress_percent || 0))}%`;
+}
+function showSubmitConfirmation(kind, jobId, costText) {
+    state.submitConfirmJob = { kind, id: jobId };
+    const card = document.getElementById("submit-confirm");
+    const costEl = document.getElementById("submit-confirm-cost");
+    if (costEl) costEl.innerText = costText || "";
+    const tracked = LiveJobs.jobs.get(jobId);
+    renderSubmitConfirmSnippet(tracked || {
+        status: "QUEUED", kind, progress_percent: kind === "voice" ? 45 : 5,
+    });
+    if (card) card.classList.remove("hidden");
+}
+window.showSubmitConfirmation = showSubmitConfirmation;
+window.submitConfirmWatch = function() {
+    const job = state.submitConfirmJob;
+    const card = document.getElementById("submit-confirm");
+    if (card) card.classList.add("hidden");
+    if (!job) return;
+    if (job.kind === "recap") openRecapDetail(job.id);
+    else openVoiceDetail(job.id);
+};
+window.submitConfirmBack = function() {
+    // Back to the preserved studio — exactly as the user left it;
+    // the workspace underneath was never torn down.
+    const card = document.getElementById("submit-confirm");
+    if (card) card.classList.add("hidden");
+    state.submitConfirmJob = null;
+};
+LiveJobs.subscribe((job) => {
+    const current = state.submitConfirmJob;
+    if (current && job && job.id === current.id) renderSubmitConfirmSnippet(job);
+});
+
+// History cards for tracked jobs update IN PLACE: the cached row's
+// status flips, the row's badge/border/live line follow, and on a
+// terminal flip ONE history reload swaps in the real result actions
+// (download/send buttons) — never a manual Refresh.
+let liveHistoryReloadPending = false;
+function applyLiveJobToHistory(job) {
+    if (!job || typeof hubHistoryCache === "undefined" || !Array.isArray(hubHistoryCache)) return;
+    const item = hubHistoryCache.find(h => h.id === job.id);
+    if (!item) {
+        if (liveJobsIsTerminal(job.status) && !liveHistoryReloadPending) {
+            liveHistoryReloadPending = true;
+            loadUserHistory().finally(() => { liveHistoryReloadPending = false; });
+        }
+        return;
+    }
+    const changed = item.status !== job.status;
+    item.status = job.status;
+    const row = document.querySelector(`#hub-history-list .hub-row[data-job-id="${job.id}"]`);
+    if (row) {
+        const badge = row.querySelector(".history-item-badge");
+        if (badge) {
+            badge.textContent = job.status || "";
+            badge.className = "history-item-badge status-" + String(job.status || "").toLowerCase();
+        }
+        row.className = row.className.replace(/border-\w+-dim/g, "").trim();
+        const border = hubStatusBorder(job.status);
+        if (border) row.classList.add(border);
+        const live = row.querySelector(".hub-live-meta");
+        if (live) {
+            live.textContent = liveJobsIsActive(job.status)
+                ? ` · ${Math.min(100, Math.max(0, job.progress_percent || 0))}%`
+                : "";
+        }
+    }
+    if (changed && liveJobsIsTerminal(job.status) && !liveHistoryReloadPending) {
+        liveHistoryReloadPending = true;
+        loadUserHistory().finally(() => { liveHistoryReloadPending = false; });
+    }
+}
+LiveJobs.subscribe((job) => { applyLiveJobToHistory(job); });
+
+// ── Batch AC: account-bound preferences ────────────────────────────────
+// Server wins over localStorage; localStorage is a write-through cache
+// for instant paint. If the server is unreachable the app works from
+// cache and syncs on the next launch — the user is never blocked.
+const USER_PREFS_CACHE_KEY = "vcp_user_prefs_cache";
+let userPrefsSaveTimer = null;
+function collectAccountPrefs() {
+    const bs = document.getElementById("slider-blur-strength");
+    const sy = document.getElementById("slider-sub-y");
+    const splitToggle = document.getElementById("recap-split-toggle");
+    return {
+        voice_persona: state.selectedPersona,
+        voice_speed: state.speed,
+        recapRatio: state.recapRatio,
+        recapRatioFill: state.recapRatioFill,
+        recapSpeed: state.recapSpeed,
+        recapStoryStyle: state.recapStoryStyle,
+        recapSubStyle: state.recapSubStyle,
+        recapSubFont: state.recapSubFont,
+        recapLogoPos: state.recapLogoPos,
+        recapSourceLanguage: state.recapSourceLanguage,
+        recapRenderQuality: state.recapRenderQuality,
+        recapTtsEngine: state.recapTtsEngine,
+        recapSyncCrop: !!state.recapSyncCrop,
+        recapMirror: !!state.recapMirror,
+        recapBurnSubs: !!state.recapBurnSubs,
+        recapBlurSubs: !!state.recapBlurSubs,
+        recapLogo: !!state.recapLogo,
+        recapSplitEnabled: !!(splitToggle && splitToggle.checked),
+        recapCropTop: state.recapCropTop || 0,
+        recapCropBottom: state.recapCropBottom || 0,
+        recapCropLeft: state.recapCropLeft || 0,
+        recapCropRight: state.recapCropRight || 0,
+        recapFontSize: state.recapFontSize || 16,
+        recapLines: state.recapLines || 1,
+        recapSplitMinutes: state.recapSplitMinutes || 3,
+        recapSubY: sy ? parseInt(sy.value) : (state.recapSubY || 85),
+        recapBlurStrength: bs ? parseInt(bs.value) : (state.recapBlurStrength || 18),
+        recapZoom: state.recapZoom,
+        recapVoice: state.recapVoice,
+        recapGeminiVoice: state.recapGeminiVoice || "",
+    };
+}
+function cacheAccountPrefs(prefs) {
+    try {
+        localStorage.setItem(USER_PREFS_CACHE_KEY, JSON.stringify(prefs));
+        // Write-through into the recap settings snapshot the existing
+        // restore path reads at launch (merge: per-source blur
+        // geometry keys already in the snapshot are preserved — they
+        // are NOT account preferences and are never sent to the server).
+        const snap = JSON.parse(localStorage.getItem("vcp_recap_settings") || "{}") || {};
+        Object.keys(prefs).forEach(k => { if (k.startsWith("recap")) snap[k] = prefs[k]; });
+        localStorage.setItem("vcp_recap_settings", JSON.stringify(snap));
+    } catch (e) {}
+}
+function applyAccountPrefs(prefs) {
+    if (!prefs || typeof prefs !== "object") return;
+    if (typeof prefs.voice_persona === "string" && prefs.voice_persona) {
+        state.selectedPersona = prefs.voice_persona;
+        if (typeof renderCuratedVoices === "function") { try { renderCuratedVoices(); } catch (e) {} }
+    }
+    if (typeof prefs.voice_speed === "string") {
+        state.speed = prefs.voice_speed;
+        document.querySelectorAll("#speed-selector .pill-btn").forEach(p => {
+            p.classList.toggle("active", p.getAttribute("data-speed") === state.speed);
+        });
+    }
+    const recapKeys = [
+        "recapRatio", "recapRatioFill", "recapSpeed", "recapStoryStyle",
+        "recapSubStyle", "recapSubFont", "recapLogoPos", "recapSourceLanguage",
+        "recapRenderQuality", "recapTtsEngine", "recapSyncCrop", "recapMirror",
+        "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapCropTop",
+        "recapCropBottom", "recapCropLeft", "recapCropRight", "recapFontSize",
+        "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
+        "recapZoom", "recapVoice", "recapGeminiVoice",
+    ];
+    recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
+    cacheAccountPrefs(prefs);
+}
+async function loadAccountPrefs() {
+    try {
+        const res = await fetch("/api/user/preferences", { headers: getAuthHeaders() });
+        if (!res.ok) return; // cache-only mode; sync next launch
+        const data = await res.json();
+        if (data && data.preferences) applyAccountPrefs(data.preferences);
+    } catch (e) {
+        // Offline / server unreachable: work from the cache, silently.
+    }
+}
+window.loadAccountPrefs = loadAccountPrefs;
+function showPrefsSavedNote() {
+    const note = document.getElementById("prefs-saved-note");
+    if (!note) return;
+    note.innerText = t("live_prefs_saved");
+    note.classList.remove("hidden");
+    setTimeout(() => { note.classList.add("hidden"); }, 3000);
+}
+async function saveAccountPrefsNow() {
+    const prefs = collectAccountPrefs();
+    cacheAccountPrefs(prefs);
+    try {
+        const res = await fetch("/api/user/preferences", {
+            method: "PUT",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ preferences: prefs }),
+        });
+        if (res.ok) showPrefsSavedNote();
+    } catch (e) {
+        // Silent: the cache already holds the change; next launch syncs.
+    }
+}
+function saveAccountPrefsSoon() {
+    if (userPrefsSaveTimer) clearTimeout(userPrefsSaveTimer);
+    userPrefsSaveTimer = setTimeout(saveAccountPrefsNow, 600);
+}
+window.saveAccountPrefsSoon = saveAccountPrefsSoon;
+function setupAccountPrefs() {
+    const recapTab = document.getElementById("tab-recap");
+    if (recapTab) {
+        ["click", "change", "input"].forEach(evt => recapTab.addEventListener(evt, saveAccountPrefsSoon));
+    }
+    const voiceTab = document.getElementById("tab-voice");
+    if (voiceTab) {
+        ["click", "change", "input"].forEach(evt => voiceTab.addEventListener(evt, saveAccountPrefsSoon));
+    }
+}
+
+
 // -- 401 "Open via Telegram" modal (security audit round 2) --
 // Previously a 401 from /api/user/me was silently ignored and other
 // calls surfaced a raw error or left the UI blank. Now the first 401
@@ -2392,15 +3058,29 @@ function updateVoicePreflight() {
 
 // ── Submit Voice Job & Live Polling ─────────────────────────────────────────
 async function handleVoiceGenerate() {
+    // Batch AC duplicate-submit guard: the button disables on the
+    // first tap; an in-flight double-tap is exactly one submit, and
+    // an UNCHANGED configuration cannot resubmit after success.
+    if (!studioSubmitBegin("voice")) return;
+    // Batch AC: a second submit while a job is active is explained IN
+    // PLACE (the server gate counts all active jobs for this user) —
+    // the studio is never evicted and there is no dead end.
+    if (LiveJobs.hasActiveJob() && !(state.user && state.user.is_admin)) {
+        studioSubmitFailure("voice");
+        showLiveSubmitLimit("voice");
+        return;
+    }
     const textInput = document.getElementById("voice-text-input");
     const text = textInput ? textInput.value.trim() : "";
     if (!text) {
+        studioSubmitFailure("voice");
         showStudioToast(t("toast_empty_text"), 'warning');
         return;
     }
 
     const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
     if (text.length > maxChars) {
+        studioSubmitFailure("voice");
         showStudioToast(tf("text_too_long", {
             len: text.length,
             tier: state.user?.is_vip ? "VIP" : t("tier_free_label"),
@@ -2418,7 +3098,10 @@ async function handleVoiceGenerate() {
     const etaText = document.getElementById("voice-eta-text");
     const btnGen = document.getElementById("btn-generate-voice");
 
-    if (progressBox) progressBox.classList.remove("hidden");
+    // Batch AC: the studio survives submit — the detail progress box
+    // opens only by choice (state.voiceDetailOpen); the workspace,
+    // its text and every control stay exactly as the user left them.
+    if (progressBox && state.voiceDetailOpen) progressBox.classList.remove("hidden");
     if (resultBox) resultBox.classList.add("hidden");
     if (btnGen) btnGen.disabled = true;
     setVoiceStage("submit");
@@ -2477,8 +3160,18 @@ async function handleVoiceGenerate() {
         if (etaText) etaText.innerText = t("calculating_eta");
 
         startJobPolling(data.job_id);
+        // Batch AC confirmation hand-off: Generate stays in its
+        // disabled "already creating" state for THIS configuration
+        // (the guard re-arms only when a setting/input changes), a
+        // slim inline line carries the job, the pill tracks it, and
+        // the confirmation offers Watch / Back to studio.
+        studioSubmitSuccess("voice");
+        showStudioInlineStatus("voice", t("preparing_msg"));
+        LiveJobs.track({ id: data.job_id, kind: "voice", status: "QUEUED", progress_percent: 45, stage_index: 0, stage_total: 1, title: text.slice(0, 70) });
+        showSubmitConfirmation("voice", data.job_id, t("confirm_cost_voice"));
 
     } catch (err) {
+        studioSubmitFailure("voice");
         showErrorToast(err, 'voice');
         if (progressBox) progressBox.classList.add("hidden");
         if (btnGen) btnGen.disabled = false;
@@ -2501,6 +3194,7 @@ function startJobPolling(jobId) {
 
     let tick = 0;
     let failStreak = 0;
+    let voiceMaxRank = 0; // Batch AC: monotonic status rank (never backwards)
     const pollStartedAt = Date.now();
     // Poll-death honesty (upload-ux pass): the old loop swallowed every
     // failure and, at its 4-minute cap, stopped silently — leaving a
@@ -2536,6 +3230,12 @@ function startJobPolling(jobId) {
             failStreak = 0;
             const data = await res.json();
 
+            // Batch AC monotonic guard: a stale/replayed response with
+            // an earlier status rank is dropped, never rendered.
+            const _voiceRank = { QUEUED: 1, RUNNING: 2, SUCCESS: 3, FAILED: 3, CANCELLED: 3 }[data.status] || 0;
+            if (_voiceRank && _voiceRank < voiceMaxRank) return;
+            if (_voiceRank) voiceMaxRank = _voiceRank;
+
             const statusMsg = document.getElementById("voice-status-msg");
             const progressFill = document.getElementById("voice-progress-fill");
             const etaText = document.getElementById("voice-eta-text");
@@ -2564,7 +3264,9 @@ function startJobPolling(jobId) {
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
-                    resultBox.scrollIntoView({ behavior: "smooth" });
+                    // Batch AC: no scroll hijack on completion — the
+                    // pill/sheet announce the result; the user opens
+                    // it by choice and the studio stays where it was.
                 }
                 if (btnGen) btnGen.disabled = false;
 
@@ -5292,6 +5994,10 @@ function recapJobIsActive() {
 }
 
 async function handleStartRecap() {
+    // Batch AC: a parallel submit is explained IN PLACE (limit text +
+    // the jobs sheet with the running job) — never a silent dead end,
+    // and the workspace is never evicted.
+    if (recapJobIsActive()) showLiveSubmitLimit("recap");
     if (recapJobIsActive()) return; // a recap job is already running
     // Hard guard: a picked file whose upload has not succeeded is NOT
     // a recap source — never submit on the strength of a local pick.
@@ -5363,10 +6069,11 @@ async function handleStartRecap() {
     if (resultBox) resultBox.classList.add("hidden");
     const failedBoxOnStart = document.getElementById("recap-failed-box");
     if (failedBoxOnStart) failedBoxOnStart.classList.add("hidden");
-    if (progressBox) {
-        progressBox.classList.remove("hidden");
-        progressBox.scrollIntoView({ behavior: "smooth" });
-    }
+    // Batch AC: the studio survives submit — no scroll-away and the
+    // detail progress box stays closed; a slim inline status line in
+    // the studio plus the global pill carry the job from here. The
+    // canvas, preview and every control value are left untouched.
+    showStudioInlineStatus("recap", t("recap_stage1_status"));
     if (progressFill) progressFill.style.width = "10%";
     setRecapStage("1/4", null);
     // R40 deck F-1/F-2: the first status/ETA lines named the vendor
@@ -5382,6 +6089,16 @@ async function handleStartRecap() {
         stepText.innerText = tf("recap_eta_estimate", {
             min: currentLang === "my" ? estMinutes : estMinutes.replace("၁.၅ - ၂.၅", "1.5 - 2.5").replace("၃ - ၄", "3 - 4"),
         });
+    }
+
+    // Batch AC duplicate-submit guard, engaged at the last moment
+    // before the request (after every auto-adjustment, e.g. the
+    // split auto-enable, has settled the real configuration): an
+    // in-flight double-tap is one submit, and an UNCHANGED
+    // configuration cannot resubmit after a successful submit.
+    if (!studioSubmitBegin("recap")) {
+        if (btn) btn.disabled = false;
+        return;
     }
 
     try {
@@ -5439,8 +6156,22 @@ async function handleStartRecap() {
         try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
         loadUserProfile();
         startRecapJobPolling(data.recap_id);
+        // Batch AC: Start is free again immediately — the workspace
+        // survives, the pill tracks this job, and a parallel submit
+        // is explained in place (server concurrency rule unchanged).
+        // The button stays in its disabled "already creating" state
+        // for THIS configuration (guard) — it is NOT re-enabled here.
+        studioSubmitSuccess("recap");
+        LiveJobs.track({ id: data.recap_id, kind: "recap", status: "QUEUED", progress_percent: 5, stage_index: 0, stage_total: 4, title: state.recapVideoTitle || "" });
+        const confirmCostText = (data.estimated_parts && data.estimated_parts > 1)
+            ? tf("confirm_cost_recap_segmented", { parts: data.estimated_parts })
+            : (data.credits_charged
+                ? tf("confirm_cost_recap", { credits: data.credits_charged })
+                : t("confirm_cost_none"));
+        showSubmitConfirmation("recap", data.recap_id, confirmCostText);
 
     } catch (err) {
+        studioSubmitFailure("recap");
         // R40 item 11: this catch only sees SUBMIT-time failures — the
         // server rejected /recap/generate before any charge (or the
         // request never landed), so the generic recap failure copy
@@ -5464,8 +6195,10 @@ function startRecapJobPolling(jobId) {
     const stepText = document.getElementById("recap-step-text");
     const btn = document.getElementById("btn-start-recap");
 
-    if (progressBox) progressBox.classList.remove("hidden");
-    if (btn) btn.disabled = true;
+    // Batch AC: the detail view opens BY CHOICE only — polling never
+    // evicts the studio, and the poller never locks Start (a parallel
+    // submit is explained in place by handleStartRecap).
+    if (progressBox && state.recapDetailOpen) progressBox.classList.remove("hidden");
     const failedBoxOnPoll = document.getElementById("recap-failed-box");
     if (failedBoxOnPoll) failedBoxOnPoll.classList.add("hidden");
 
@@ -5484,6 +6217,11 @@ function startRecapJobPolling(jobId) {
     let recapPollFailures = 0;
     let recapPollNotFound = 0;
     let recapPollTicks = 0;
+    // Batch AC monotonic guard: after a reconnect the cold server path
+    // can report step 1/4 / 15% for a job this client already saw at
+    // step 3/4 — the displayed stage/percent must never go backwards.
+    let recapPollMaxPercent = 0;
+    let recapPollMaxStep = 0;
     // Tick budget in 2s units: 1800 = the 60-minute overall cap. After
     // the backoff below each 5s tick counts 2.5 units, so the cap (and
     // every stop condition) is unchanged.
@@ -5539,6 +6277,18 @@ function startRecapJobPolling(jobId) {
             const data = await res.json();
             recapPollFailures = 0;
             recapPollNotFound = 0;
+            // Batch AC monotonic clamp (see recapPollMaxPercent above).
+            const _stepParts = String(data.progress_step || "").split("/");
+            const _stepNum = parseInt(_stepParts[0], 10) || 0;
+            if (_stepNum >= recapPollMaxStep) {
+                recapPollMaxStep = _stepNum;
+            } else if (data.progress_step) {
+                data.progress_step = recapPollMaxStep + "/" + (_stepParts[1] || "4");
+            }
+            if (data.progress_percent) {
+                data.progress_percent = Math.max(recapPollMaxPercent, data.progress_percent);
+                recapPollMaxPercent = data.progress_percent;
+            }
             if (progressFill && data.progress_percent) {
                 progressFill.style.width = `${Math.min(100, Math.max(10, data.progress_percent))}%`;
             }
@@ -5592,7 +6342,9 @@ function startRecapJobPolling(jobId) {
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
-                    resultBox.scrollIntoView({ behavior: "smooth" });
+                    // Batch AC: no scroll hijack on completion — the
+                    // pill/sheet announce the result and the user
+                    // opens it by choice; the studio stays put.
                 }
 
                 const btnTg = document.getElementById("btn-recap-send-telegram");
@@ -8619,8 +9371,8 @@ function hubHistoryDetailHtml(j) {
         actions += ` <button type="button" onclick="deleteHistoryItem('${j.id}')" class="history-dl-link">${t("btn_delete_history")}</button>`;
     } else if (j.status === "RUNNING" || j.status === "QUEUED") {
         actions = isRecap
-            ? `<button type="button" onclick="startRecapJobPolling('${j.id}')" class="history-dl-link">${t("hist_track_recap")}</button> <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`
-            : `<button type="button" onclick="startJobPolling('${j.id}')" class="history-dl-link">${t("hist_track_voice")}</button>`;
+            ? `<button type="button" onclick="openRecapDetail('${j.id}')" class="history-dl-link">${t("hist_track_recap")}</button> <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`
+            : `<button type="button" onclick="openVoiceDetail('${j.id}')" class="history-dl-link">${t("hist_track_voice")}</button>`;
     } else if (j.is_expired) {
         actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
     } else if (isRecap) {
@@ -8710,7 +9462,7 @@ function hubHistoryRowHtml(j) {
             <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
             <span class="hub-row-text">
                 <span class="hub-row-title">${title}</span>
-                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : ""}${escapeHtml(j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span></span>
+                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : ""}${escapeHtml(j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
             </span>
             ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
             <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
@@ -9163,4 +9915,9 @@ document.addEventListener("DOMContentLoaded", () => {
     loadLegacyModels();
     loadUserHistory();
     checkStartupDeepLinks();
+    // Batch AC: global live-jobs transport + account-bound prefs.
+    LiveJobs.start();
+    setupAccountPrefs();
+    setupSubmitGuards();
+    loadAccountPrefs();
 });
