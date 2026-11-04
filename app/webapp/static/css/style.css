@@ -680,6 +680,10 @@ select.studio-input { min-height: 50px; }
     font-size: 12.5px; font-weight: 700; text-decoration: none; line-height: 1.4;
 }
 .history-dl-link.tg-btn { background: var(--sky-soft); color: var(--sky); border-color: rgba(62, 198, 224, 0.4); }
+/* Batch AF: an authenticated download in flight — downloadAuthFile
+   paints the live progress onto the tapped element and restores it
+   when the fetch settles; the element is inert meanwhile. */
+.dl-downloading { opacity: 0.72; pointer-events: none; }
 .badge-expired { color: var(--text-3); font-size: 12px; }
 .history-error-snippet { font-size: 12px; color: var(--red); word-break: break-word; }
 
