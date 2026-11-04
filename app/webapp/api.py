@@ -5092,10 +5092,11 @@ async def _execute_recap_background_job(
                     )
                 # Batch K: disclose the retention window at delivery
                 # time too (it was previously stated only in History).
+                # Batch X: the copy states the window in HOURS (24).
                 notify_text += t(
                     "recap_retention_note",
                     _recap_notify_lang,
-                    retention_days=_media_retention_days(),
+                    retention_hours=_media_retention_days() * 24,
                 )
                 bot_inst = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
@@ -5133,7 +5134,7 @@ async def _execute_recap_background_job(
             await _refund_recap_job_charge(user_id, entry)
         # Batch W (2026-11-04): a cancelled job's media bulk is waste
         # exactly like a failed one's — strip it now (see the generic
-        # failure handler below) instead of at the 7-day sweep.
+        # failure handler below) instead of at the retention sweep.
         try:
             _strip_failed_recap_job_media(job_dir)
         except Exception as strip_err:
@@ -5212,11 +5213,11 @@ async def _execute_recap_background_job(
         # intermediates are pure waste — user retry creates a NEW job
         # and admin retry re-dispatches without resume_source (it
         # re-downloads and re-renders) — but they used to sit on the
-        # persistent disk for the full 7-day retention window, which
+        # persistent disk for the full retention window, which
         # is how the disk filled and every new job started dying on
         # "[Errno 28] No space left on device". The small JSON state
         # (plans, checkpoints, fallback markers) stays for inspection;
-        # the record sweep removes the rest with the row at 7 days.
+        # the record sweep removes the rest with the row at the window.
         try:
             _strip_failed_recap_job_media(job_dir)
         except Exception as strip_err:
@@ -5272,7 +5273,7 @@ def _sweep_expired_download_dirs(cutoff: datetime) -> int:
 #     file removal failed, a job that died before its row existed) —
 #     never revisited by the record sweep;
 #   * FAILED/CANCELLED jobs keep their whole dir — downloaded source,
-#     split segments, render intermediates — for the full 7-day window;
+#     split segments, render intermediates — for the full window;
 #   * temp/recap_preview_src (a full source video per previewed URL)
 #     had NO cleanup at all;
 #   * voice-worker temp dirs orphaned by a dead process, and clone-flow
@@ -5519,7 +5520,7 @@ async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
 async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
     """
     Purge jobs and generated media files older than the media retention
-    window (settings.media_retention_days, default 7 days) to free disk
+    window (settings.media_retention_days, default 1 day = 24 hours) to free disk
     space. Removes DB records and physical files (recap output dirs,
     generated voice clones).
 
@@ -6731,12 +6732,13 @@ def _media_retention_days() -> int:
 
     Outputs are stored on the persistent disk and kept for this many days;
     the sweep, the history window and the user-facing copy all derive from
-    this one value so they can never disagree.
+    this one value so they can never disagree. Batch X (2026-11-04): the
+    window is 1 day — 24 hours — by the owner's direct order.
     """
     try:
-        days = int(getattr(settings, "media_retention_days", 7) or 7)
+        days = int(getattr(settings, "media_retention_days", 1) or 1)
     except Exception:
-        days = 7
+        days = 1
     return max(1, days)
 
 
@@ -6846,7 +6848,7 @@ async def get_user_history(
 ):
     """
     Get user's job generation history (both Voice Clone and Recap) within
-    the media retention window (default 7 days). Older jobs are purged by
+    the media retention window (default 24 hours). Older jobs are purged by
     the retention sweep together with their files.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=_media_retention_days())
@@ -7254,7 +7256,7 @@ async def purge_admin_history(
     elif req.mode == "failed":
         stmt = stmt.where(Job.status == JobStatus.FAILED.value)
     elif req.mode == "older_retention":
-        # Beyond the media retention window (default 7 days) — the same
+        # Beyond the media retention window (default 24 hours) — the same
         # boundary the automatic sweep uses, so a manual purge can never
         # wipe media users are still entitled to download.
         stmt = stmt.where(Job.created_at < now_utc - timedelta(days=_media_retention_days()))
@@ -7796,6 +7798,57 @@ async def get_admin_overview(
     user_count_res = await db.execute(select(func.count(User.id)))
     total_users = user_count_res.scalar() or 0
 
+    # Batch X (2026-11-04): REAL users — the overview card's headline.
+    # A User row is created for anyone who ever opened the bot (gate
+    # visitors, one-tap /start, blocked-at-the-gate accounts), so the
+    # raw row count overstates the user base — the owner's complaint
+    # behind this batch. "Real" follows the Batch R headline pattern:
+    # a user counts when they have actually used the bot, defined as
+    #   * at least one Job row, any status (a FAILED job is still a
+    #     real attempt at using the product), OR
+    #   * an APPROVED payment request (a completed purchase), OR
+    #   * a purchase/admin credit grant in the minute ledger
+    #     (PURCHASE / ADJUST credits — the ledger side of a purchase
+    #     or a manual admin grant).
+    # Passive ledger credits (WELCOME / MONTHLY_FREE / REFERRAL) do
+    # NOT qualify on their own: they are granted automatically and
+    # fire for accounts that never did anything. The components ride
+    # along (registered / never-used) for the card's sub-line; the
+    # legacy total_users field keeps its literal meaning for every
+    # other consumer.
+    from app.models.enums import LedgerDirection, LedgerSource
+
+    _job_user_ids = {
+        r[0] for r in (await db.execute(select(Job.user_id).distinct())).all()
+    }
+    _buyer_user_ids = {
+        r[0]
+        for r in (
+            await db.execute(
+                select(PaymentRequest.user_id)
+                .where(PaymentRequest.status == PaymentStatus.APPROVED.value)
+                .distinct()
+            )
+        ).all()
+    }
+    _granted_user_ids = {
+        r[0]
+        for r in (
+            await db.execute(
+                select(MinuteLedgerEvent.user_id)
+                .where(
+                    MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
+                    MinuteLedgerEvent.source.in_(
+                        [LedgerSource.PURCHASE.value, LedgerSource.ADJUST.value]
+                    ),
+                )
+                .distinct()
+            )
+        ).all()
+    }
+    real_users = len(_job_user_ids | _buyer_user_ids | _granted_user_ids)
+    never_used_users = max(0, total_users - real_users)
+
     vip_count_res = await db.execute(select(func.count(User.id)).where(User.account_category == AccountCategory.PURCHASED.value))
     vip_users = vip_count_res.scalar() or 0
 
@@ -7972,6 +8025,11 @@ async def get_admin_overview(
 
     return {
         "total_users": total_users,
+        # Batch X: headline + split for the users card (additive —
+        # total_users above keeps its literal registered-rows meaning).
+        "real_users": real_users,
+        "registered_users": total_users,
+        "never_used_users": never_used_users,
         "vip_users": vip_users,
         "pending_slips": pending_slips,
         "queued_jobs": queued_jobs,
