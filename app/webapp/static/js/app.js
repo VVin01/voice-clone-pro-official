@@ -680,6 +680,14 @@ window.showGateReminder = showGateReminder;
         const res = await origFetch(...args);
         try {
             const url = typeof args[0] === "string" ? args[0] : ((args[0] && args[0].url) || "");
+            // Batch N: 401s from ANY /api/ route get the shared
+            // session-expired / open-via-Telegram handling — before
+            // this only the call sites that remembered to check
+            // isAuthFailure() themselves reacted, and a bare 401
+            // elsewhere surfaced as an unexplained failure.
+            if (res.status === 401 && url.includes("/api/")) {
+                isAuthFailure(res);
+            }
             if (res.status === 403 && url.includes("/api/") && !url.includes("/api/user/verify-membership")) {
                 res.clone().json().then((data) => {
                     const detail = (data && data.detail) || "";
@@ -4842,134 +4850,6 @@ function setupRecapVisualEditor() {
         btnRecap.addEventListener("click", handleStartRecap);
     }
 
-    // ── Interactive Touch / Mouse Crop Guide Handles ──
-    function setupInteractiveCropHandles() {
-        const handleT = document.getElementById("crop-handle-t");
-        const handleB = document.getElementById("crop-handle-b");
-        const handleL = document.getElementById("crop-handle-l");
-        const handleR = document.getElementById("crop-handle-r");
-        const innerMovie = document.getElementById("mockup-inner-movie");
-        if (!innerMovie || (!handleT && !handleB && !handleL && !handleR)) return;
-
-        function attachHandleDrag(handle, onDelta) {
-            if (!handle) return;
-            let startCoord = 0;
-            let isDragging = false;
-
-            function onStart(coord) {
-                isDragging = true;
-                startCoord = coord;
-                haptic("light");
-            }
-            function onMove(coord) {
-                if (!isDragging) return;
-                const delta = coord - startCoord;
-                if (Math.abs(delta) >= 3) {
-                    startCoord = coord;
-                    onDelta(delta > 0 ? 1 : -1);
-                    updateCanvasMockupVisuals();
-                }
-            }
-            function onEnd() {
-                isDragging = false;
-            }
-
-            // Desktop Mouse Drag
-            handle.addEventListener("mousedown", (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const isHoriz = (handle === handleL || handle === handleR);
-                onStart(isHoriz ? e.clientX : e.clientY);
-                const mm = (ev) => {
-                    ev.preventDefault();
-                    onMove(isHoriz ? ev.clientX : ev.clientY);
-                };
-                const mu = () => {
-                    onEnd();
-                    window.removeEventListener("mousemove", mm);
-                    window.removeEventListener("mouseup", mu);
-                };
-                window.addEventListener("mousemove", mm);
-                window.addEventListener("mouseup", mu);
-            });
-
-            // Mobile Touch Drag
-            handle.addEventListener("touchstart", (e) => {
-                if (e.touches && e.touches.length > 0) {
-                    e.stopPropagation();
-                    const isHoriz = (handle === handleL || handle === handleR);
-                    onStart(isHoriz ? e.touches[0].clientX : e.touches[0].clientY);
-                }
-            }, { passive: true });
-
-            handle.addEventListener("touchmove", (e) => {
-                if (isDragging && e.touches && e.touches.length > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const isHoriz = (handle === handleL || handle === handleR);
-                    onMove(isHoriz ? e.touches[0].clientX : e.touches[0].clientY);
-                }
-            }, { passive: false });
-
-            handle.addEventListener("touchend", onEnd);
-            handle.addEventListener("touchcancel", onEnd);
-        }
-
-        attachHandleDrag(handleT, (dir) => {
-            state.recapCropTop = Math.max(0, Math.min(30, (state.recapCropTop || 0) + dir));
-            if (sliderCropTop) sliderCropTop.value = state.recapCropTop;
-            if (valCropTop) valCropTop.innerText = `${state.recapCropTop}%`;
-        });
-        attachHandleDrag(handleB, (dir) => {
-            state.recapCropBottom = Math.max(0, Math.min(30, (state.recapCropBottom || 0) - dir));
-            if (sliderCropBottom) sliderCropBottom.value = state.recapCropBottom;
-            if (valCropBottom) valCropBottom.innerText = `${state.recapCropBottom}%`;
-        });
-        attachHandleDrag(handleL, (dir) => {
-            state.recapCropLeft = Math.max(0, Math.min(30, (state.recapCropLeft || 0) + dir));
-            if (sliderCropLeft) sliderCropLeft.value = state.recapCropLeft;
-            if (valCropLeft) valCropLeft.innerText = `${state.recapCropLeft}%`;
-        });
-        attachHandleDrag(handleR, (dir) => {
-            state.recapCropRight = Math.max(0, Math.min(30, (state.recapCropRight || 0) - dir));
-            if (sliderCropRight) sliderCropRight.value = state.recapCropRight;
-            if (valCropRight) valCropRight.innerText = `${state.recapCropRight}%`;
-        });
-
-        // Touch Pinch-to-Zoom on innerMovie
-        let initDistance = 0;
-        let initCrop = 0;
-
-        innerMovie.addEventListener("touchstart", (e) => {
-            if (e.touches && e.touches.length === 2) {
-                const dx = e.touches[0].clientX - e.touches[1].clientX;
-                const dy = e.touches[0].clientY - e.touches[1].clientY;
-                initDistance = Math.hypot(dx, dy);
-                initCrop = (state.recapCropTop || 0);
-            }
-        }, { passive: true });
-
-        innerMovie.addEventListener("touchmove", (e) => {
-            if (e.touches && e.touches.length === 2 && initDistance > 0) {
-                e.preventDefault();
-                const dx = e.touches[0].clientX - e.touches[1].clientX;
-                const dy = e.touches[0].clientY - e.touches[1].clientY;
-                const dist = Math.hypot(dx, dy);
-                const scaleDiff = (initDistance - dist) * 0.08;
-                const newCrop = Math.max(0, Math.min(25, Math.round(initCrop + scaleDiff)));
-                state.recapCropTop = newCrop;
-                state.recapCropBottom = newCrop;
-                if (sliderCropTop) sliderCropTop.value = newCrop;
-                if (sliderCropBottom) sliderCropBottom.value = newCrop;
-                if (valCropTop) valCropTop.innerText = `${newCrop}%`;
-                if (valCropBottom) valCropBottom.innerText = `${newCrop}%`;
-                updateCanvasMockupVisuals();
-            }
-        }, { passive: false });
-
-        innerMovie.addEventListener("touchend", () => { initDistance = 0; });
-    }
-    setupInteractiveCropHandles();
 
     // ── Recap settings persistence (overnight hands-on fix, 2026-11-02) ──
     // Every Recap setting used to live only in `state`, so closing and
@@ -8505,7 +8385,30 @@ function hubHistoryDetailHtml(j) {
         }
     }
     let actions = "";
-    if (j.status === "FAILED") {
+    if (isRecap && j.script_ready) {
+        // Batch N: a job PARKED at script review — its row reads
+        // RUNNING but nothing is rendering; it waits for the user's
+        // review and auto-refunds if left unreviewed for 24h. Offer
+        // the same review action the Track poller opens, plus
+        // cancel / re-run prefill / delete like the other states
+        // (delete answers the server's terminal-only 409 as a toast
+        // while the job is still parked — cancel is the way out).
+        let parkedNote = t("hist_script_ready_badge");
+        if (j.script_ready_at) {
+            const parkedMs = Date.parse(j.script_ready_at);
+            if (!Number.isNaN(parkedMs)) {
+                const hoursLeft = Math.max(0, Math.ceil(24 - (Date.now() - parkedMs) / 3600000));
+                parkedNote += " · " + tf("hist_script_ready_expires", { hours: hoursLeft });
+            }
+        }
+        actions = `<span class="badge-expired text-xs" style="color:#fbbf24;">📝 ${escapeHtml(parkedNote)}</span>`;
+        actions += ` <button type="button" onclick="openRecapScriptEditor('${j.id}')" class="history-dl-link">${t("btn_review_script")}</button>`;
+        actions += ` <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`;
+        if (j.recap_config) {
+            actions += ` <button type="button" onclick="rerunRecapFromHistory('${j.id}')" class="history-dl-link">${t("btn_rerun_recap")}</button>`;
+        }
+        actions += ` <button type="button" onclick="deleteHistoryItem('${j.id}')" class="history-dl-link">${t("btn_delete_history")}</button>`;
+    } else if (j.status === "FAILED") {
         actions = `<span class="badge-expired text-xs" style="color:#f87171;">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
         // Batch L: one-tap retry (hidden when the server says the
         // source is gone — the note explains instead), re-run prefill

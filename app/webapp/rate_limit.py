@@ -19,11 +19,16 @@ Why IP + user id combined, not either alone:
     this limiter never grants access.
 
 What is limited, and what is deliberately NOT limited:
-    Limited (POST only): voice generation, recap generation, media
-    extraction, recap video upload, and payment-slip submission.
-    NOT limited: GET endpoints, including job/status polling, config,
-    curated voices, history, and admin reads. Status polling every few
-    seconds would otherwise break normal Mini App use.
+    Limited (POST, plus the one listed DELETE): voice generation,
+    recap generation and its per-job actions (retry / cancel /
+    render / send-to-Telegram), media extraction and fetch, recap
+    video upload, the recap demo send, preview frames, payment-slip
+    submission, the send-to-Telegram posts, and history deletion.
+    Per-job routes are listed as single-segment templates
+    (``/api/recap/{job_id}/retry``). NOT limited: GET endpoints,
+    including job/status polling, config, curated voices, history
+    reads, and admin reads. Status polling every few seconds would
+    otherwise break normal Mini App use.
 
 Limits are generous for normal use (a user generates a handful of
 jobs per minute) and are meant to stop bulk abuse that would drain
@@ -48,6 +53,21 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/recap/upload_video": (20, 60),
     "/api/downloader/extract": (30, 60),
     "/api/vip/submit-slip": (20, 60),
+    # Batch N: the remaining expensive / state-changing endpoints, in
+    # the same generous band as the originals — these stop scripted
+    # abuse (quota drain, Telegram spam, disk churn), not a human
+    # tapping buttons.
+    "/api/downloader/fetch": (20, 60),
+    "/api/recap/demo/send": (10, 60),
+    "/api/recap/preview-frame": (60, 60),
+    # Single-segment templates: "{param}" matches any one segment.
+    "/api/recap/{job_id}/retry": (10, 60),
+    "/api/recap/{job_id}/cancel": (30, 60),
+    "/api/recap/{job_id}/render": (20, 60),
+    "/api/recap/{job_id}/send-telegram": (20, 60),
+    "/api/voices/{job_id}/send-telegram": (20, 60),
+    "/api/downloader/{download_id}/send-telegram": (20, 60),
+    "/api/history/{job_id}": (30, 60),
 }
 
 # path prefix -> max Content-Length in bytes, when the client sends one.
@@ -98,8 +118,26 @@ def _rate_key(request: Request) -> str:
     return f"ip:{ip}"
 
 
+def _template_matches(template: str, path: str) -> bool:
+    """Segment-wise template match: a ``{param}`` segment matches any
+    single non-empty segment (a job id, a download id); every other
+    segment must match literally, and the segment counts must agree."""
+    template_parts = template.split("/")
+    path_parts = path.split("/")
+    if len(template_parts) != len(path_parts):
+        return False
+    for template_seg, path_seg in zip(template_parts, path_parts):
+        if template_seg.startswith("{") and template_seg.endswith("}"):
+            if not path_seg:
+                return False
+            continue
+        if template_seg != path_seg:
+            return False
+    return True
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """In-memory sliding-window limiter for selected POST endpoints."""
+    """In-memory sliding-window limiter for selected POST/DELETE endpoints."""
 
     def __init__(self, app, limits: dict[str, tuple[int, int]] | None = None):
         super().__init__(app)
@@ -107,13 +145,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     def _is_limited(self, path: str) -> tuple[int, int] | None:
-        # Exact match first so generate-with-audio is not confused with
-        # generate; then fall back to the longest matching prefix.
+        # Exact match first so generate-with-audio is not confused
+        # with generate; then single-segment templates; then the
+        # longest matching prefix (template keys never take part in
+        # prefix matching).
         if path in self.limits:
             return self.limits[path]
+        for template, limit in self.limits.items():
+            if "{" in template and _template_matches(template, path):
+                return limit
         best: tuple[int, int] | None = None
         best_len = -1
         for prefix, limit in self.limits.items():
+            if "{" in prefix:
+                continue
             if path.startswith(prefix) and len(prefix) > best_len:
                 best = limit
                 best_len = len(prefix)
@@ -135,8 +180,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         except ValueError:
                             pass
                     break
-        # Rate limit: POST to a listed endpoint only.
-        if request.method == "POST":
+        # Rate limit: POST to a listed endpoint, plus DELETE for the
+        # listed destructive route (history delete). The upload-size
+        # gate above stays POST-only.
+        if request.method in ("POST", "DELETE"):
             limit = self._is_limited(request.url.path)
             if limit is not None:
                 max_requests, window = limit

@@ -29,6 +29,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select, update
@@ -42,6 +43,43 @@ logger = logging.getLogger(__name__)
 
 _CAPTION_LIMIT = 1024  # Telegram media caption limit
 _TEXT_LIMIT = 4096  # Telegram text message limit
+
+
+# ── Claim TTL (batch N) ──────────────────────────────────────────────
+
+# An edit-and-approve claim older than this is STALE: the claiming
+# admin has presumably walked away, so the claim stops blocking the
+# other admins (the same lazy-expiry idea as the group-AI escalations'
+# 24h expiry). Live claims (≤ TTL) keep the exact batch-I behaviour —
+# this weakens nothing for an admin who is actively editing.
+PAYMENT_REVIEW_CLAIM_TTL = timedelta(minutes=60)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Normalise a stored timestamp to aware UTC (naive reads as UTC)."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def payment_claim_is_stale(
+    payment: PaymentRequest, *, now: datetime | None = None
+) -> bool:
+    """True when the row carries a claim older than the TTL.
+
+    Unclaimed rows are never stale, and neither is a claim with no
+    timestamp (pre-TTL legacy rows): only a positively-aged claim
+    expires.
+    """
+    if getattr(payment, "review_claimed_by", None) is None:
+        return False
+    claimed_at = _as_utc(getattr(payment, "review_claimed_at", None))
+    if claimed_at is None:
+        return False
+    moment = _as_utc(now) if now is not None else utc_now()
+    return moment - claimed_at > PAYMENT_REVIEW_CLAIM_TTL
 
 
 # ── Stored admin copies ──────────────────────────────────────────────
@@ -237,6 +275,29 @@ async def claim_payment_review(
     flow). Returns (ok, payment, code) with code one of CLAIMED /
     PAYMENT_NOT_FOUND / ALREADY_<status> / CLAIMED_BY_OTHER.
     """
+    # Lazy TTL expiry (batch N): first clear THIS request's claim if
+    # it is another admin's and older than PAYMENT_REVIEW_CLAIM_TTL,
+    # so the claim UPDATE below can land; a live claim is untouched
+    # and still resolves to CLAIMED_BY_OTHER.
+    stale_cutoff = utc_now() - PAYMENT_REVIEW_CLAIM_TTL
+    await session.execute(
+        update(PaymentRequest)
+        .where(
+            PaymentRequest.id == payment_id,
+            PaymentRequest.status == PaymentStatus.PENDING.value,
+            PaymentRequest.review_claimed_by.is_not(None),
+            PaymentRequest.review_claimed_by != admin_id,
+            PaymentRequest.review_claimed_at.is_not(None),
+            PaymentRequest.review_claimed_at < stale_cutoff,
+        )
+        .values(review_claimed_by=None, review_claimed_at=None)
+        # SQL-level only: the ORM session-sync evaluator would compare
+        # the cutoff against the in-memory (naive, post-SQLite-refresh)
+        # claimed_at and raise on naive/aware mixing; the
+        # populate_existing select below refreshes the row anyway.
+        .execution_options(synchronize_session=False)
+    )
+    await session.flush()
     stmt = (
         update(PaymentRequest)
         .where(

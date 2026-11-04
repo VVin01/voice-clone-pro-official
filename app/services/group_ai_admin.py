@@ -1141,6 +1141,43 @@ def _as_utc(value: Any):
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+def _escalation_audit(
+    session: Any,
+    *,
+    action: str,
+    admin_id: int,
+    escalation_id: int,
+    chat_id: int | None = None,
+) -> None:
+    """Append an AuditLog row for an escalation admin action (batch N).
+
+    The caller owns the transaction: the audit row commits together
+    with the action it records. Best-effort by design — a failure is
+    logged and swallowed so auditing can never break the admin action
+    itself. For the "created" action the recorded actor is the group
+    member whose question was escalated (the row is raised by the
+    system from their message; no admin has acted yet); approve /
+    dismiss / edit actions record the acting admin.
+    """
+    import json
+
+    try:
+        from app.models.schema import AuditLog
+
+        details: dict[str, Any] = {"escalation_id": int(escalation_id)}
+        if chat_id is not None:
+            details["chat_id"] = int(chat_id)
+        session.add(AuditLog(
+            admin_id=int(admin_id),
+            action=action,
+            target_type="group_ai_escalation",
+            target_id=str(int(escalation_id)),
+            details_json=json.dumps(details, ensure_ascii=False),
+        ))
+    except Exception as exc:
+        logger.warning("group_ai_admin: escalation audit failed (%s): %s", action, exc)
+
+
 async def create_escalation(
     session: Any,
     *,
@@ -1170,6 +1207,14 @@ async def create_escalation(
             status="PENDING",
         )
         session.add(row)
+        await session.flush()
+        _escalation_audit(
+            session,
+            action="group_ai_escalation.created",
+            admin_id=int(author_id),
+            escalation_id=int(row.id),
+            chat_id=int(chat_id),
+        )
         await session.commit()
         return int(row.id)
     except Exception as exc:
@@ -1277,6 +1322,14 @@ async def claim_escalation(session: Any, escalation_id: int, *, admin_id: int, a
         .where(GroupAiEscalation.id == int(escalation_id), GroupAiEscalation.status == "PENDING")
         .values(status=new_status, handled_by=int(admin_id), handled_at=now)
     )
+    if result.rowcount:
+        _escalation_audit(
+            session,
+            action="group_ai_escalation.approved" if approve else "group_ai_escalation.dismissed",
+            admin_id=int(admin_id),
+            escalation_id=int(escalation_id),
+            chat_id=snapshot["chat_id"],
+        )
     await session.commit()
     if not result.rowcount:
         # Another admin's tap landed between our read and the UPDATE.
@@ -1323,6 +1376,14 @@ async def claim_escalation_for_edit(session: Any, escalation_id: int, *, admin_i
         .where(GroupAiEscalation.id == int(escalation_id), GroupAiEscalation.status == "PENDING")
         .values(status="EDITING", handled_by=int(admin_id), handled_at=now)
     )
+    if result.rowcount:
+        _escalation_audit(
+            session,
+            action="group_ai_escalation.edit_claimed",
+            admin_id=int(admin_id),
+            escalation_id=int(escalation_id),
+            chat_id=snapshot["chat_id"],
+        )
     await session.commit()
     if not result.rowcount:
         fresh = await session.get(GroupAiEscalation, int(escalation_id))
@@ -1367,6 +1428,13 @@ async def release_escalation_edit(
         )
         .values(**values)
     )
+    if result.rowcount:
+        _escalation_audit(
+            session,
+            action="group_ai_escalation.edit_released",
+            admin_id=int(admin_id),
+            escalation_id=int(escalation_id),
+        )
     await session.commit()
     row = await session.get(GroupAiEscalation, int(escalation_id))
     snapshot = _escalation_snapshot(row) if row is not None else None

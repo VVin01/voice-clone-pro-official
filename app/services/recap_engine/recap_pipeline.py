@@ -233,8 +233,6 @@ def run_recap_pipeline(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
-    blur_x: float = 0.05,
-    blur_w: float = 0.90,
     blur_watermark: bool = False,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
@@ -353,9 +351,11 @@ def run_recap_pipeline(
         # R39 plate: fixed ~92%-wide centred band, height fitted to
         # the wrapped subtitle lines (never below the caller's
         # blur_h), anchored at the content rim on letterboxed
-        # layouts. blur_x/blur_w no longer shape the plate (kept as
-        # parameters for caller compatibility); blur-strength
-        # semantics are unchanged (overlays["blur_strength"] below).
+        # layouts. The plate geometry is fixed — the old blur_x/blur_w
+        # parameters never shaped it and were removed in batch N (the
+        # legacy-box fallback below inlines their 0.05/0.90 values);
+        # blur-strength semantics are unchanged
+        # (overlays["blur_strength"] below).
         # R40 item 3: the plate is fed the SUBTITLE's sub_y — before,
         # it was fed blur_y, so a job with sub_y=67/blur_y=85 shipped
         # its subtitle floating on sharp picture at 67% while the
@@ -370,7 +370,7 @@ def run_recap_pipeline(
                 sub_y=_anchor_sub_y, min_h=blur_h,
             )
         else:
-            _plate = {"x": float(blur_x), "y": _anchor_sub_y, "w": float(blur_w), "h": float(blur_h)}
+            _plate = {"x": 0.05, "y": _anchor_sub_y, "w": 0.90, "h": float(blur_h)}
     # Auto-cover the SOURCE video's own burned-in subtitle band. The
     # plate only covers the Myanmar subtitle position (y≈0.85); source
     # dialogue subs usually sit higher (≈0.70) and would otherwise
@@ -413,7 +413,7 @@ def run_recap_pipeline(
     # it against the plate like a detected band.
     _fallback_box = None
     if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
-        _fallback_box = {"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)}
+        _fallback_box = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}
     _anchor = None
     if _layout is not None:
         _anchor = subtitle_anchor_y(
@@ -626,8 +626,6 @@ def generate_recap_preview(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
-    blur_x: float = 0.05,
-    blur_w: float = 0.90,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
     sub_lines: int = 1,
@@ -691,7 +689,7 @@ def generate_recap_preview(
                 sub_y=float(sub_y) if sub_y is not None else float(blur_y), min_h=blur_h,
             )
         except Exception:
-            _p_plate = {"x": float(blur_x), "y": float(sub_y) if sub_y is not None else float(blur_y), "w": float(blur_w), "h": float(blur_h)}
+            _p_plate = {"x": 0.05, "y": float(sub_y) if sub_y is not None else float(blur_y), "w": 0.90, "h": float(blur_h)}
         _p_bands: Optional[list[dict]] = None
         _p_band_layout = _p_layout
         try:
@@ -714,7 +712,7 @@ def generate_recap_preview(
             _p_bands = None
         _p_fallback = None
         if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
-            _p_fallback = {"x": float(blur_x), "y": float(blur_y), "w": float(blur_w), "h": float(blur_h)}
+            _p_fallback = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}
         _p_anchor = None
         if _p_layout is not None:
             _p_anchor = subtitle_anchor_y(

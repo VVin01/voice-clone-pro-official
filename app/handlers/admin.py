@@ -44,6 +44,7 @@ from app.services.payment_review import (
     approved_status_line,
     claim_payment_review,
     mark_copies_claimed,
+    payment_claim_is_stale,
     rejected_status_line,
     release_payment_claim,
     restore_admin_copies,
@@ -488,8 +489,15 @@ class PaymentReviewFSM(StatesGroup):
 
 
 def _claimed_by_other(payment: PaymentRequest, admin_id: int) -> bool:
-    """True while a DIFFERENT admin holds the edit-and-approve claim."""
-    return payment.review_claimed_by is not None and payment.review_claimed_by != admin_id
+    """True while a DIFFERENT admin holds the edit-and-approve claim.
+
+    Batch N: a claim older than PAYMENT_REVIEW_CLAIM_TTL (60 min) is
+    stale and no longer blocks the other admins; live claims do."""
+    return (
+        payment.review_claimed_by is not None
+        and payment.review_claimed_by != admin_id
+        and not payment_claim_is_stale(payment)
+    )
 
 
 def _own_copy_key(callback: CallbackQuery) -> tuple[int, int] | None:
