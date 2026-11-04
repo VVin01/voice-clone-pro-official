@@ -27,6 +27,14 @@ already uses for Edge TTS (``generate_channel99_voice(text, voice)`` ->
   recap re-trying every line.
 * Finished lines are cached in the job work dir (same fingerprint
   scheme as the desktop tool), so a resumed run reuses them.
+* Batch U (2026-11-04): the starting key rotates per call through
+  KeyHealth.order() on this engine's own "gemini_tts" registry
+  (Batch O had deliberately left the engine on a stable order), and
+  the starting TTS model rotates per call across TTS_MODELS — each
+  preview model carries its own per-project quota bucket, and
+  rotation spreads lines across all of them instead of draining the
+  first bucket first. Cooled keys are tried last, never dropped;
+  failover inside a call is unchanged.
 
 Quota note: Gemini TTS preview models carry their own per-key daily
 quota, separate from the text models the planner uses; when it runs
@@ -39,6 +47,7 @@ import hashlib
 import os
 import re
 import subprocess
+import threading
 import time
 import wave
 from pathlib import Path
@@ -76,6 +85,22 @@ GEMINI_VOICE_DISPLAY_MY: dict[str, str] = {
     "Achernar": "မသွန်းရည်",
 }
 TTS_MODELS = ("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
+# Batch U: process-level starting-model rotation cursor (in-memory
+# only, the same lifetime as KeyHealth). Advanced once per _ask() call.
+_TTS_MODEL_LOCK = threading.Lock()
+_TTS_MODEL_CURSOR = 0
+
+
+def _rotated_tts_models() -> tuple[str, ...]:
+    """TTS_MODELS rotated so consecutive calls start on different
+    models; failover inside the call walks the remaining model(s)."""
+    global _TTS_MODEL_CURSOR
+    if len(TTS_MODELS) < 2:
+        return TTS_MODELS
+    with _TTS_MODEL_LOCK:
+        start = _TTS_MODEL_CURSOR % len(TTS_MODELS)
+        _TTS_MODEL_CURSOR += 1
+    return TTS_MODELS[start:] + TTS_MODELS[:start]
 PROFILE_VERSION = "single_narrator_v3"
 DEFAULT_DIRECTION = ("An energetic, ALIVE Burmese storyteller PERFORMING the story for listeners — warm, vivid and "
                      "gripping, never flat or robotic: the pace breathes with the scene (quicker and tighter at "
@@ -208,19 +233,31 @@ class GeminiTTSEngine:
             voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name))))
         order = list(range(len(self.keys)))
         order = order[self._last_key:] + order[:self._last_key]
-        # Audit fix E: keys cooled by quota/auth failures in earlier runs
-        # are tried last. TTS keeps its OWN registry ("gemini_tts"): the
-        # preview models' per-key quota is separate from the text
-        # models', so a TTS-dead key must not sideline the planner.
+        # TTS keeps its OWN registry ("gemini_tts"): the preview
+        # models' per-key quota is separate from the text models', so
+        # a TTS-dead key must not sideline the planner.
         tts_health = _key_rotation.health_for("gemini_tts") if _key_rotation is not None else None
         if tts_health is not None:
-            ordered_keys = tts_health.prioritized([self.keys[i] for i in order])
-            rank = {key: pos for pos, key in enumerate(ordered_keys)}
-            order = sorted(order, key=lambda i: rank[self.keys[i]])
+            # Batch U (2026-11-04): per-call key rotation — the same
+            # KeyHealth.order() mechanism the planner and Group AI use
+            # (Batch O deliberately left this engine unrotated, on
+            # prioritized()). order() omits cooled keys, so any it
+            # leaves out are appended at the tail in their original
+            # relative order, exactly as the planner does: a cooled
+            # key is tried last, never dropped.
+            try:
+                rotated_keys = tts_health.order(list(self.keys))
+                _seen_keys = set(rotated_keys)
+                rotated_keys += [k for k in self.keys if k not in _seen_keys]
+                rank = {key: pos for pos, key in enumerate(rotated_keys)}
+                order = sorted(order, key=lambda i: rank[self.keys[i]])
+            except Exception:
+                pass
+        models = _rotated_tts_models()
         last = ""
         for _round in range(BUSY_ROUNDS):
             busy = False
-            for model in TTS_MODELS:
+            for model in models:
                 for i in order:
                     if (model, i) in self._dead:
                         continue
