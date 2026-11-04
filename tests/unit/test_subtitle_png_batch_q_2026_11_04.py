@@ -374,5 +374,5 @@ def test_end_to_end_preview_frame_uses_png(tmp_path):
 # ── 11. Cache version ──────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261104_r57") == 3
+    assert INDEX_HTML.count("?v=20261104_r57") == 4
     assert "20261104_r48" not in INDEX_HTML

@@ -27,7 +27,7 @@ letterboxed layout (16:9 source in a 9:16 canvas), drag/resize in
 picture fractions, plate-growth cap, new-source reset, the explicit
 rule both ways (including values equal to the defaults), detection
 not consulted when a user box is present, the legacy path's
-byte-identical assembly, Blur OFF ⇒ zero boxes, and the r55 cache
+byte-identical assembly, Blur OFF ⇒ zero boxes, and the r56 cache
 bump.
 """
 from __future__ import annotations
@@ -456,5 +456,5 @@ def test_legacy_fallback_hint_construction_unchanged():
 # ── 9. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r55():
-    assert INDEX_HTML.count("?v=20261104_r57") == 3
+    assert INDEX_HTML.count("?v=20261104_r57") == 4
     assert "20261104_r53" not in INDEX_HTML

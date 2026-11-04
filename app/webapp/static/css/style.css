@@ -174,7 +174,11 @@ a { color: var(--gold-2); }
 }
 .top-nav .brand { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
 .brand-crest { width: 36px; height: 36px; flex-shrink: 0; }
-.crest-svg { width: 36px; height: 36px; display: block; }
+.brand-logo-img {
+    width: 36px; height: 36px; display: block; border-radius: 50%;
+    object-fit: cover;
+    box-shadow: 0 0 0 1px rgba(10, 95, 215, 0.22), 0 2px 6px rgba(10, 40, 80, 0.18);
+}
 .brand-text { min-width: 0; flex: 1; }
 .brand-title-wrap { display: flex; align-items: center; gap: var(--s2); }
 .brand-title-wrap h1 {
