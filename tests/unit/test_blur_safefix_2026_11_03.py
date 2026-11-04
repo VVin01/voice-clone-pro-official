@@ -303,7 +303,9 @@ def test_both_pipeline_paths_use_the_shared_assembly():
     assert "assemble_blur_boxes(" in render_body
     assert "assemble_blur_boxes(" in preview_body
     # Detection in the render path is gated on the Blur toggle now.
-    assert "if blur_subtitles:\n        try:" in render_body
+    # (Batch AA deliberate pin update: detection is additionally
+    # skipped when an explicit user box rules the source band.)
+    assert "if blur_subtitles and _user_box is None:\n        try:" in render_body
     assert 'if burn_subtitles:\n        # Auto-cover' not in PIPELINE_PY
 
 
@@ -315,9 +317,11 @@ def test_canvas_draws_plate_and_hint_as_separate_boxes():
     fit_body = APP_JS.split("function fitBlurPlateToCaption()", 1)[1].split("\n    }", 1)[0]
     assert "previewPlate" in fit_body
     assert "sliderSubY" in fit_body  # plate anchored at the subtitle Y
-    # The hint box still follows the Blur sliders (unchanged wiring).
+    # The hint box still follows the Blur sliders (unchanged wiring;
+    # Batch AA deliberate pin update: the paint is now
+    # picture-relative via blurBoxCanvasGeom).
     sync_body = APP_JS.split("function syncBlurBoxVisual()", 1)[1].split("\n    }", 1)[0]
-    assert "previewBlur.style.height = `${h}%`;" in sync_body
+    assert "previewBlur.style.height = `${(geom.height * 100).toFixed(3)}%`;" in sync_body
     assert "fitBlurPlateToCaption();" in sync_body
 
 

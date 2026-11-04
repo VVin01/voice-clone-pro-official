@@ -724,6 +724,52 @@ def source_band_to_canvas_box(band: dict[str, Any], layout: dict[str, Any]) -> d
     }
 
 
+USER_BLUR_BOX_WIDTH_FRACTION = 0.92
+
+
+def user_blur_box_to_canvas_box(
+    blur_y: float, blur_h: float, layout: dict[str, Any] | None = None
+) -> dict[str, float]:
+    """Map the user's blur box from PICTURE fractions to a canvas box.
+
+    Batch AA contract: ``blur_y`` / ``blur_h`` are fractions of the
+    PICTURE height end-to-end (Mini App sliders → submit payload →
+    persisted recap_config → engine), exactly like Batch P's sub_y.
+    The preview draws the box on the picture — centre at
+    oy + blur_y × ph, height blur_h × ph, width fixed at 92% of the
+    canvas and centred (the .draggable-box CSS: left 4% / right 4%) —
+    so the render converts with the same layout math and the box the
+    user drew is the box that ships: centre (oy + blur_y × ph) / ch,
+    height blur_h × ph / ch, x = 0.04, w = 0.92. On full-frame
+    layouts (oy = 0, ph = ch) this is the identity mapping. With no
+    layout (the size probe failed) the picture is assumed to fill
+    the canvas, matching the plate's no-layout fallback. The box is
+    returned verbatim — consumers clamp the drawn rectangle into
+    the canvas exactly as they do for every other box.
+    """
+    by = _clamp01(blur_y, 0.85)
+    bh = _clamp01(blur_h, 0.07)
+    w_frac = USER_BLUR_BOX_WIDTH_FRACTION
+    x_frac = (1.0 - w_frac) / 2.0
+    if layout is not None:
+        cw = int(layout.get("cw") or 0)
+        ch = int(layout.get("ch") or 0)
+        if cw > 0 and ch > 0:
+            _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
+            return {
+                "x": round(x_frac, 4),
+                "y": round((oy + by * ph) / ch, 4),
+                "w": round(w_frac, 4),
+                "h": round(bh * ph / ch, 4),
+            }
+    return {
+        "x": round(x_frac, 4),
+        "y": round(by, 4),
+        "w": round(w_frac, 4),
+        "h": round(bh, 4),
+    }
+
+
 # ── R39: subtitle plate + letterbox geometry ────────────────────────
 #
 # Two geometry defects from the 2026-11-02 blur/subtitle inspection

@@ -48,7 +48,7 @@ ADMIN_ID = 999001
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_qa1():
-    assert HTML.count("?v=20261104_r53") == 3
+    assert HTML.count("?v=20261104_r54") == 3
     assert "20261102_tb1" not in HTML
 
 
@@ -69,9 +69,13 @@ def test_q1_fit_function_defined_with_containment_rule():
     assert 'document.getElementById("preview-sub-text-el")' in body
     # Only an overlapping caption grows the plate…
     assert "text.bottom > plate.top && text.top < plate.bottom" in body
-    # …to text height + breathing room + twice the centre offset,
-    # expressed as a % of the canvas height.
-    assert "text.height + 8 + 2 * centreDelta" in body
+    # …to text height + breathing room, expressed as a % of the
+    # canvas height. (Batch AA deliberate pin update: the old
+    # "+ twice the centre offset" term was removed — uncapped
+    # inflation — and the growth is now capped; see the Batch AA
+    # test file for the cap pins.)
+    assert "text.height + 8" in body
+    assert "2 * centreDelta" not in body
     assert "(neededPx / canvasH) * 100" in body
 
 
@@ -80,7 +84,10 @@ def test_q1_blur_sync_always_refits():
                      "function fitBlurPlateToCaption()")
     assert "fitBlurPlateToCaption();" in body
     # The slider height is still applied first (the fit only grows).
-    assert "previewBlur.style.height = `${h}%`;" in body
+    # (Batch AA deliberate pin update: the height is now painted
+    # picture-relative via blurBoxCanvasGeom — see the Batch AA
+    # test file.)
+    assert "previewBlur.style.height = `${(geom.height * 100).toFixed(3)}%`;" in body
 
 
 def test_q1_caption_moves_and_preview_updates_refit():
