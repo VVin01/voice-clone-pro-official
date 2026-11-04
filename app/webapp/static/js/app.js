@@ -3477,6 +3477,85 @@ function setupRecapVisualEditor() {
         });
     });
 
+    // Batch P: ONE geometry for preview and render (recapter
+    // standard) — mirrors core.frame_layout + subtitle_centre_px in
+    // core.py. The picture rect is computed from the same inputs the
+    // render uses (source aspect, chosen ratio, crop, fill), and
+    // sub_y is interpreted picture-relatively on letterboxed
+    // layouts, exactly as the render burns it.
+    function recapPictureRect() {
+        let rCanvas = 9 / 16;
+        if (state.recapRatio === "16:9") rCanvas = 16 / 9;
+        else if (state.recapRatio === "1:1") rCanvas = 1.0;
+        let rSource = null;
+        if (state.recapSourceWidth && state.recapSourceHeight && state.recapSourceHeight > 0) {
+            rSource = state.recapSourceWidth / state.recapSourceHeight;
+        } else if (canvasVideo && canvasVideo.videoWidth && canvasVideo.videoHeight) {
+            rSource = canvasVideo.videoWidth / canvasVideo.videoHeight;
+        }
+        if (state.recapRatio === "Original" && rSource) rCanvas = rSource;
+        if (!rSource) {
+            rSource = (state.recapRatio === "9:16" || state.recapRatio === "1:1") ? (16 / 9) : (9 / 16);
+        }
+        const ct = Math.max(0, Math.min(35, state.recapCropTop || 0)) / 100.0;
+        const cb = Math.max(0, Math.min(35, state.recapCropBottom || 0)) / 100.0;
+        const cl = Math.max(0, Math.min(35, state.recapCropLeft || 0)) / 100.0;
+        const cr = Math.max(0, Math.min(35, state.recapCropRight || 0)) / 100.0;
+        const keepW = Math.max(0.10, 1.0 - cl - cr);
+        const keepH = Math.max(0.10, 1.0 - ct - cb);
+        const hasCrop = (ct > 0.001 || cb > 0.001 || cl > 0.001 || cr > 0.001);
+        const rCropped = rSource * (keepW / keepH);
+        const fillMode = state.recapRatioFill || "blur";
+        if (fillMode === "crop" || (!hasCrop && Math.abs(rSource - rCanvas) < 0.01)) {
+            return { ox: 0, oy: 0, pw: 1, ph: 1 };
+        }
+        let pw = 1, ph = 1;
+        if (rCropped >= rCanvas) { ph = rCanvas / rCropped; }
+        else { pw = rCropped / rCanvas; }
+        return { ox: (1 - pw) / 2, oy: (1 - ph) / 2, pw, ph };
+    }
+
+    // Subtitle centre as a fraction of the canvas height — the same
+    // anchor the render burns (subtitle_centre_px in core.py):
+    // oy + sub_y × ph on letterboxed layouts, sub_y full-frame.
+    function subtitleAnchorCanvasFrac(subYPercent) {
+        const r = recapPictureRect();
+        const sy = Math.max(0, Math.min(100, subYPercent)) / 100.0;
+        if ((r.oy + r.ph) < 1 - 0.002) return r.oy + sy * r.ph;
+        return sy;
+    }
+
+    // Picker size → fraction of canvas height; mirrors
+    // SUBTITLE_FONT_HEIGHT_FRACTIONS in core.py (×1.25 two-line).
+    function subtitleFontFraction(sizePt, lines) {
+        const pts = [[13, 2.6], [16, 3.2], [19, 4.0], [22, 5.0]];
+        const v = parseFloat(sizePt) || 16;
+        let f;
+        if (v <= pts[0][0]) {
+            f = pts[0][1] * v / pts[0][0];
+        } else {
+            f = null;
+            for (let i = 1; i < pts.length; i++) {
+                if (v <= pts[i][0]) {
+                    f = pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * (v - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
+                    break;
+                }
+            }
+            if (f === null) {
+                const a = pts[pts.length - 2], b = pts[pts.length - 1];
+                f = b[1] + (b[1] - a[1]) * (v - b[0]) / (b[0] - a[0]);
+            }
+        }
+        if ((parseInt(lines) || 1) !== 1) f *= 1.25;
+        return f / 100.0;
+    }
+
+    function subtitlePreviewFontPx() {
+        const canvasH = canvas ? canvas.clientHeight : 0;
+        const frac = subtitleFontFraction(state.recapFontSize || 16, state.recapLines || 1);
+        return canvasH > 0 ? Math.max(8, Math.round(frac * canvasH)) : 13;
+    }
+
     // 1. Slider Controls for Original Blur and Subtitle Y (100% synced with backend FFmpeg coordinates)
     function syncBlurBoxVisual() {
         if (!previewBlur) return;
@@ -3519,7 +3598,10 @@ function setupRecapVisualEditor() {
         if (!textEl) return;
         const plateY = sliderSubY ? parseFloat(sliderSubY.value) : 85;
         const plateH = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
-        previewPlate.style.top = `${plateY}%`;
+        // Batch P: the plate shares the subtitle's render anchor
+        // (picture-relative on letterboxed layouts), exactly like
+        // the render's subtitle_plate_box.
+        previewPlate.style.top = `${(subtitleAnchorCanvasFrac(plateY) * 100).toFixed(3)}%`;
         previewPlate.style.height = `${plateH}%`;
         previewPlate.style.bottom = "auto";
         const plate = previewPlate.getBoundingClientRect();
@@ -3548,9 +3630,16 @@ function setupRecapVisualEditor() {
         if (!previewSub) return;
         const y = sliderSubY ? parseFloat(sliderSubY.value) : 85;
         if (valSubY) valSubY.innerText = `${Math.round(y)}%`;
-        // Anchored at top: y% with translateY(-50%) places subtitle center exactly at y% (1:1 with ASS subtitle baseline offset)
-        previewSub.style.top = `${y}%`;
+        // Batch P: the sample sits at the RENDER's anchor — sub_y is
+        // a percent of the PICTURE height on letterboxed layouts
+        // (subtitle_centre_px in core.py), not of the whole canvas,
+        // so what the user sees is where the render will burn it.
+        previewSub.style.top = `${(subtitleAnchorCanvasFrac(y) * 100).toFixed(3)}%`;
         previewSub.style.bottom = "auto";
+        // Keep the sample size on the render's formula after layout
+        // settles change the canvas height.
+        const subTextEl = document.getElementById("preview-sub-text-el");
+        if (subTextEl) subTextEl.style.fontSize = `${subtitlePreviewFontPx()}px`;
         // The band plate tracks the caption (Q1): re-fit after a move.
         syncBlurBoxVisual();
     }
@@ -3592,7 +3681,7 @@ function setupRecapVisualEditor() {
     }
 
     // ── Interactive Drag & Drop / Manual Move on Canvas ──────────────────
-    function enableVerticalDrag(boxElement, onUpdateY, getInitialY) {
+    function enableVerticalDrag(boxElement, onUpdateY, getInitialY, getDeltaScale) {
         if (!boxElement || !canvas) return;
 
         let isDragging = false;
@@ -3615,7 +3704,8 @@ function setupRecapVisualEditor() {
             // Calculate percentage delta from initial touch/click to prevent sudden jumping
             const deltaPx = clientY - startClientY;
             const deltaPercent = (deltaPx / canvasRect.height) * 100;
-            const clampedY = Math.max(10, Math.min(95, Math.round(startPercent + deltaPercent)));
+            const deltaScale = getDeltaScale ? (getDeltaScale() || 1) : 1;
+            const clampedY = Math.max(10, Math.min(95, Math.round(startPercent + deltaPercent * deltaScale)));
             onUpdateY(clampedY);
         }
 
@@ -3684,7 +3774,14 @@ function setupRecapVisualEditor() {
     enableVerticalDrag(previewSub, (y) => {
         if (sliderSubY) sliderSubY.value = y;
         syncSubBoxVisual();
-    }, () => sliderSubY ? parseFloat(sliderSubY.value) : 85);
+    }, () => sliderSubY ? parseFloat(sliderSubY.value) : 85, () => {
+        // Batch P: on letterboxed layouts the caption's canvas
+        // position moves ph× slower than sub_y (picture-relative
+        // anchor) — scale the drag delta so the box follows the
+        // finger 1:1 instead of lagging behind it.
+        const r = recapPictureRect();
+        return ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
+    });
 
     // ── Resize Handles for Blur Box Height ──
     const blurResizeTop = previewBlur ? previewBlur.querySelector(".box-resize-handle.top") : null;
@@ -4481,10 +4578,11 @@ function setupRecapVisualEditor() {
         const lines = state.recapLines || 1;
         const size = state.recapFontSize || 16;
 
-        // Font scaling for miniature live canvas mockup
-        const fontScaleMap = { 13: 11, 16: 13, 19: 15, 22: 17 };
-        const px = fontScaleMap[size] || 13;
-        previewText.style.fontSize = `${px}px`;
+        // Batch P: the sample is sized by the render's own formula —
+        // the picker's fraction of the canvas height (×1.25 for two
+        // lines), via subtitleFontFraction — replacing the fixed
+        // mockup table that systematically over-promised the size.
+        previewText.style.fontSize = `${subtitlePreviewFontPx()}px`;
 
         const fontMap = {
             "default": "'Padauk', sans-serif",

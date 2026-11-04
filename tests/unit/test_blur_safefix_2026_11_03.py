@@ -57,14 +57,19 @@ CW, CH = LAYOUT["cw"], LAYOUT["ch"]
 
 
 def _plate(sub_y: float) -> dict:
+    # Batch P note: these scenarios originally used raw_font_size=54
+    # (outside the API's 12–30 range), relying on the old formula's
+    # 62px clamp. The Batch P height-fraction formula is unbounded,
+    # so the scenarios now use 22 — the largest picker size — which
+    # reproduces the intended "large plate" geometry.
     return subtitle_plate_box(
-        CW, CH, LAYOUT, raw_font_size=54, sub_lines=2, sub_y=sub_y, min_h=0.07
+        CW, CH, LAYOUT, raw_font_size=22, sub_lines=2, sub_y=sub_y, min_h=0.07
     )
 
 
 def _anchor(sub_y: float) -> float:
     return subtitle_anchor_y(
-        CW, CH, LAYOUT, sub_y=sub_y, raw_font_size=54, sub_lines=2
+        CW, CH, LAYOUT, sub_y=sub_y, raw_font_size=22, sub_lines=2
     )
 
 
@@ -340,7 +345,7 @@ def test_fallback_dropped_into_letterbox_padding_is_not_coverage():
     assert layout["oy"] > 0  # letterboxed: content starts below 0
     plate = subtitle_plate_box(
         layout["cw"], layout["ch"], layout,
-        raw_font_size=54, sub_lines=2, sub_y=0.85, min_h=0.07,
+        raw_font_size=22, sub_lines=2, sub_y=0.85, min_h=0.07,
     )
     fallback = {"x": 0.04, "y": 0.05, "w": 0.92, "h": 0.06}  # in the top bar
     boxes, covered = assemble_blur_boxes(
@@ -349,7 +354,7 @@ def test_fallback_dropped_into_letterbox_padding_is_not_coverage():
         layout=layout, canvas_w=layout["cw"], canvas_h=layout["ch"],
         anchor_y=subtitle_anchor_y(
             layout["cw"], layout["ch"], layout,
-            sub_y=0.85, raw_font_size=54, sub_lines=2,
+            sub_y=0.85, raw_font_size=22, sub_lines=2,
         ),
     )
     assert covered is False
