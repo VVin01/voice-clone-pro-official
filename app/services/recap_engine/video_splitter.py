@@ -40,6 +40,7 @@ try:  # package import (app runtime)
         encoder_args_for_quality,
         ffmpeg_encoders,
         ffmpeg_timeout,
+        nvenc_usable,
         probe_duration,
         probe_video_size,
     )
@@ -50,6 +51,7 @@ except ImportError:  # flat import (engine runtime, sys.path includes this dir)
         encoder_args_for_quality,
         ffmpeg_encoders,
         ffmpeg_timeout,
+        nvenc_usable,
         probe_duration,
         probe_video_size,
     )
@@ -383,7 +385,7 @@ def split_rendered_video(
     cw, _ch = probe_video_size(ffprobe, source)
     font_size = max(20, min(72, int(round(48 * (cw or 1080) / 1080.0))))
     encoders = ffmpeg_encoders(ffmpeg)
-    encoder = "h264_nvenc" if "h264_nvenc" in encoders else "libx264"
+    encoder = "h264_nvenc" if ("h264_nvenc" in encoders and nvenc_usable(ffmpeg)) else "libx264"
     settings = {"part_seconds": part_seconds, "smart_cut": bool(smart_cut),
                 "max_extra": float(max_extra), "quality": str(render_quality or "standard"),
                 "codec": " ".join(codec_args) if codec_args else encoder}
@@ -516,7 +518,7 @@ def split_source_into_segments(
     levels = audio_levels(ffmpeg, source, timeout=ffmpeg_timeout(duration)) if has_audio else None
     plan = plan_parts(duration, part_seconds, smart=True, levels=levels)
     encoders = ffmpeg_encoders(ffmpeg)
-    encoder = "h264_nvenc" if "h264_nvenc" in encoders else "libx264"
+    encoder = "h264_nvenc" if ("h264_nvenc" in encoders and nvenc_usable(ffmpeg)) else "libx264"
     out_dir.mkdir(parents=True, exist_ok=True)
     log(f"✂️ Source split: {source.name} → {len(plan)} segment(s) of "
         f"≤{part_seconds:.0f}s (smart cuts at narration pauses)")

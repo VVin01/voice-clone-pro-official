@@ -6,6 +6,8 @@ Hosts frontend Single Page Application (SPA) and REST API endpoints.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -21,12 +23,25 @@ from app.webapp.api import api_router
 from app.webapp.rate_limit import RateLimitMiddleware
 
 
+logger = logging.getLogger(__name__)
+
+
 # Wall-clock moment this process booted (set by the lifespan). The
 # periodic orphan sweep uses it as an absolute cutoff: a RUNNING recap
 # row whose started_at predates this process cannot be rendering
 # anywhere once this process has outlived the deploy-overlap window,
 # and a row this process claimed itself always has a later started_at.
 _SERVER_BOOT_AT = None
+
+
+# Batch AB: how many times the orphan sweep may rescue the same job
+# before it is failed terminally instead of re-queued. A render that
+# reliably kills the instance (e.g. an OOM in the overlay pass) would
+# otherwise loop forever: restart → sweep re-queues → render kills
+# the instance again. The count is durable — it lives in the Job
+# row's persisted recap state (``stranded_reset_count``) — and every
+# terminal/reactivation path in app.webapp.api clears it back to 0.
+RECAP_STRANDED_RESET_LIMIT = 3
 
 
 async def reset_stale_running_recap_jobs(
@@ -54,33 +69,129 @@ async def reset_stale_running_recap_jobs(
     therefore re-runs this reset periodically with
     ``absolute_cutoff`` = this process's boot time once the process
     has been up past the overlap window.
+
+    Batch AB: each rescue of a job with persisted recap state bumps
+    its durable ``stranded_reset_count``; at RECAP_STRANDED_RESET_LIMIT
+    the job is FAILED (with refund) via
+    ``app.webapp.api._fail_stranded_recap_job`` instead of re-queued,
+    so a job whose render kills the instance cannot loop forever.
+    Legacy rows without a parseable persisted blob keep the historical
+    behaviour (re-queue, no counting). Returns the total number of
+    stranded jobs handled (re-queued + failed).
     """
     from datetime import timedelta
-    from sqlalchemy import update
+    from sqlalchemy import select, update
     from app.db.session import AsyncSessionLocal
     from app.models.enums import JobStatus, JobType
     from app.models.schema import Job, utc_now
+    from app.webapp.api import _fail_stranded_recap_job, _load_persisted_recap_state
 
     cutoff = absolute_cutoff if absolute_cutoff is not None else utc_now() - timedelta(minutes=cutoff_minutes)
-    stmt = (
-        update(Job)
-        .where(
-            Job.status == JobStatus.RUNNING.value,
-            (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap"),
-            (Job.started_at <= cutoff) | (Job.started_at.is_(None) & (Job.created_at <= cutoff)),
-        )
-        .values(status=JobStatus.QUEUED.value, started_at=None)
+    stranded_predicate = (
+        Job.status == JobStatus.RUNNING.value,
+        (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap"),
+        (Job.started_at <= cutoff) | (Job.started_at.is_(None) & (Job.created_at <= cutoff)),
     )
 
+    async def _sweep(sess: AsyncSession) -> int:
+        handled = 0
+        rows = (
+            await sess.execute(select(Job).where(*stranded_predicate))
+        ).scalars().all()
+        for job in rows:
+            # Capture ids up front: the rollback below expires the
+            # ORM object's attributes, and lazy-loading them back
+            # inside this async sweep would raise.
+            job_id = str(job.id)
+            user_id = int(job.user_id)
+            try:
+                state = _load_persisted_recap_state(job)
+                if state is None:
+                    # Legacy row (no parseable persisted blob): the
+                    # historical behaviour — re-queue, no counting.
+                    res = await sess.execute(
+                        update(Job)
+                        .where(
+                            Job.id == job.id,
+                            Job.status == JobStatus.RUNNING.value,
+                        )
+                        .values(status=JobStatus.QUEUED.value, started_at=None)
+                    )
+                    await sess.commit()
+                    if res.rowcount:
+                        handled += 1
+                        logger.info(
+                            "Orphan sweep: recap job %s re-queued "
+                            "(legacy row, no stranded-reset counting)",
+                            job_id,
+                        )
+                    continue
+                try:
+                    new_count = int(state.get("stranded_reset_count") or 0) + 1
+                except (TypeError, ValueError):
+                    new_count = 1
+                if new_count < RECAP_STRANDED_RESET_LIMIT:
+                    state["stranded_reset_count"] = new_count
+                    res = await sess.execute(
+                        update(Job)
+                        .where(
+                            Job.id == job.id,
+                            Job.status == JobStatus.RUNNING.value,
+                        )
+                        .values(
+                            status=JobStatus.QUEUED.value,
+                            started_at=None,
+                            recap_config=json.dumps(state, ensure_ascii=False),
+                        )
+                    )
+                    await sess.commit()
+                    if res.rowcount:
+                        handled += 1
+                        logger.info(
+                            "Orphan sweep: recap job %s stranded reset %d/%d — re-queued",
+                            job_id,
+                            new_count,
+                            RECAP_STRANDED_RESET_LIMIT,
+                        )
+                    continue
+                # Limit reached: fail terminally (refund + DM happen
+                # inside the helper, through its own sessions). End
+                # this session's read transaction first so the helper
+                # writes against a free database connection.
+                await sess.rollback()
+                if await _fail_stranded_recap_job(job_id, user_id, state):
+                    handled += 1
+                    logger.info(
+                        "Orphan sweep: recap job %s stranded reset %d/%d — FAILED (stranded reset limit reached)",
+                        job_id,
+                        new_count,
+                        RECAP_STRANDED_RESET_LIMIT,
+                    )
+                else:
+                    logger.warning(
+                        "Orphan sweep: recap job %s stranded reset %d/%d — could not be failed; left RUNNING for the next sweep",
+                        job_id,
+                        new_count,
+                        RECAP_STRANDED_RESET_LIMIT,
+                    )
+            except Exception:
+                # One bad row must never stop the sweep of the others.
+                try:
+                    await sess.rollback()
+                except Exception:
+                    pass
+                logger.warning(
+                    "Orphan sweep: could not handle stranded recap job %s",
+                    job_id,
+                    exc_info=True,
+                )
+        return handled
+
     if session is not None:
-        res = await session.execute(stmt)
-        await session.commit()
-        return res.rowcount
+        return await _sweep(session)
 
     async with AsyncSessionLocal() as sess:
-        res = await sess.execute(stmt)
-        await sess.commit()
-        return res.rowcount
+        return await _sweep(sess)
 
 
 async def _dispatch_oldest_queued_recap() -> bool:
