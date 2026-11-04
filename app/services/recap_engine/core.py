@@ -729,9 +729,26 @@ def source_band_to_canvas_box(band: dict[str, Any], layout: dict[str, Any]) -> d
 #  2. On letterboxed layouts (blur/black fill — e.g. a 16:9 picture
 #     centred in a 9:16 canvas) the subtitle was sized from the
 #     CANVAS and anchored at 85% of the canvas height, so it floated
-#     small and disconnected in the bottom padding. Font size now
-#     scales with the CONTENT box and both plate and subtitle anchor
-#     at the content box's lower rim, overlapping it.
+#     small and disconnected in the bottom padding.
+#
+# ── Batch P (2026-11-04): recapter-standard geometry ────────────────
+#
+# The R39 letterbox rule anchored the subtitle at the content box's
+# lower rim and IGNORED the user's sub_y there, while the Mini App
+# preview honoured sub_y literally as a percent of the canvas — the
+# live parity test (sub_y=55%, 22pt) rendered at ~65% of the canvas
+# and visibly smaller than previewed. The geometry now follows the
+# recapter standard (VVin01/recapter): coordinates are relative to
+# the PLACED PICTURE, and the font size is ONE height-relative
+# formula shared by preview and render.
+#  * On letterboxed layouts sub_y is a percent of the CONTENT
+#    (picture) height: the subtitle centre sits at oy + sub_y × ph.
+#    Full-frame layouts keep the historical meaning (sub_y of the
+#    canvas height).
+#  * subtitle_font_px maps the picker size to a fixed fraction of
+#    the CANVAS height (13→2.6%, 16→3.2%, 19→4.0%, 22→5.0%) with NO
+#    content-box scaling, so the four picker sizes always render at
+#    four distinct sizes and the preview can show the same number.
 
 SUBTITLE_PLATE_WIDTH_FRACTION = 0.92
 SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION = 0.92  # full-frame plate bottom keeps an ~8% canvas margin
@@ -755,35 +772,73 @@ def content_rim_y(layout: dict[str, Any] | None, cw: int, ch: int) -> int | None
     return rim if rim < ch - 4 else None
 
 
+# Picker size (pt) → fraction of the canvas height. One shared
+# table: subtitle_font_px below and the Mini App preview
+# (subtitleFontFraction in app.js) both read it, so the size the
+# user sees is the size the render burns.
+SUBTITLE_FONT_HEIGHT_FRACTIONS = (
+    (13, 0.026),
+    (16, 0.032),
+    (19, 0.040),
+    (22, 0.050),
+)
+SUBTITLE_TWO_LINE_FONT_FACTOR = 1.25
+SUBTITLE_FONT_MIN_PX = 18
+
+
+def _subtitle_font_fraction(raw_font_size: int) -> float:
+    """Height fraction for a picker size, linearly interpolated
+    between the table points (extended proportionally outside)."""
+    pts = SUBTITLE_FONT_HEIGHT_FRACTIONS
+    v = float(raw_font_size or 16)
+    if v <= pts[0][0]:
+        return pts[0][1] * v / pts[0][0]
+    for (p0, f0), (p1, f1) in zip(pts, pts[1:]):
+        if v <= p1:
+            return f0 + (f1 - f0) * (v - p0) / (p1 - p0)
+    (p0, f0), (p1, f1) = pts[-2], pts[-1]
+    return f1 + (f1 - f0) * (v - p1) / (p1 - p0)
+
+
 def subtitle_font_px(cw: int, ch: int, raw_font_size: int = 16, sub_lines: int = 1,
                      layout: dict[str, Any] | None = None) -> int:
-    """ASS font size in px for a canvas, optionally content-scaled.
+    """ASS font size in px for a canvas (Batch P: one formula).
 
-    With no layout (or content filling the canvas) this reproduces
-    the historical canvas formula exactly — same scale factors, same
-    clamps. For letterboxed content the UNCLAMPED canvas size is
-    scaled by min(contentW, contentH) / min(canvasW, canvasH) — the
-    same effective scale factor the full-frame path uses, applied to
-    the content box — and clamped to [18, full-frame size].
+    rendered px = canvas_height × the picker's height fraction
+    (×1.25 in two-line mode), minimum 18px. The layout NEVER scales
+    the size — the R39 content-box scaling (which compressed 22pt
+    to ~1.8% of the canvas height on letterboxed jobs) is gone, so
+    the four picker sizes stay distinct at any canvas height. The
+    ``layout`` parameter is kept for call-site compatibility only.
     """
-    cw = max(320, int(cw))
     ch = max(240, int(ch))
-    is_vert = ch > cw
-    scale_factor = (int(raw_font_size or 16) / 288.0)
-    if is_vert:
-        target = ch * scale_factor * (0.42 if sub_lines == 1 else 0.62)
-        lo, hi = 22, (44 if sub_lines == 1 else 56)
-    else:
-        target = ch * scale_factor * (0.60 if sub_lines == 1 else 0.80)
-        lo, hi = 26, (48 if sub_lines == 1 else 62)
-    full_frame = max(lo, min(hi, int(round(target))))
-    if layout:
-        pw, ph, _ox, _oy = _layout_content_box(layout, cw, ch)
-        if pw < cw - 4 or ph < ch - 4:
-            ratio = min(pw, ph) / float(min(cw, ch))
-            if ratio < 1.0:
-                return max(18, min(full_frame, int(round(target * ratio))))
-    return full_frame
+    frac = _subtitle_font_fraction(raw_font_size)
+    if int(sub_lines or 1) != 1:
+        frac *= SUBTITLE_TWO_LINE_FONT_FACTOR
+    return max(SUBTITLE_FONT_MIN_PX, int(round(ch * frac)))
+
+
+def subtitle_centre_px(cw: int, ch: int, layout: dict[str, Any] | None,
+                       sub_y: float | None) -> float | None:
+    """Subtitle centre Y in canvas px (from the top) for a sub_y
+    fraction, or None when sub_y is None (caller falls back to its
+    legacy margin/box/default rules).
+
+    Batch P picture-relative rule: on letterboxed layouts (padding
+    below the picture) sub_y is a percent of the CONTENT height —
+    centre = oy + sub_y × ph. On full-frame layouts sub_y keeps its
+    historical meaning — a percent of the canvas height. The ASS
+    writer, the SRT fallback, subtitle_anchor_y and the subtitle
+    plate all resolve through this one function so they can never
+    drift apart again.
+    """
+    if sub_y is None:
+        return None
+    sy = _clamp01(float(sub_y), 0.85)
+    if content_rim_y(layout, cw, ch) is not None:
+        _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
+        return oy + sy * ph
+    return sy * ch
 
 
 def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
@@ -794,12 +849,11 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
     Fixed ~92%-of-frame-width band, horizontally centred; height fits
     the wrapped subtitle lines (text height + padding) and never
     shrinks below the caller's blur_h (the R37 settle-fit contract —
-    the plate grows when the lines need more room). Full-frame plates
-    keep the caller's centre, clamped so the plate bottom respects
-    an ~8% canvas-height safe margin. Letterboxed plates anchor at
-    the content box's lower rim, overlapping it (plate centre a
-    quarter plate-height above the rim: ~75% of the plate over the
-    picture, ~25% over the padding below).
+    the plate grows when the lines need more room). The plate centre
+    IS the subtitle centre (subtitle_centre_px): picture-relative
+    on letterboxed layouts, the caller's sub_y on full-frame ones —
+    where it is additionally clamped so the plate bottom respects
+    an ~8% canvas-height safe margin.
     """
     cw = max(320, int(cw))
     ch = max(240, int(ch))
@@ -812,14 +866,13 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
     h_frac = max(0.01, min(0.50, h_frac))
     w_frac = SUBTITLE_PLATE_WIDTH_FRACTION
     x_frac = (1.0 - w_frac) / 2.0
-    rim = content_rim_y(layout, cw, ch)
-    if rim is not None:
-        centre_px = rim - (h_frac * ch) / 4.0
-        y_frac = centre_px / ch
-    else:
-        y_frac = _clamp01(sub_y, 0.85)
+    centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
+    y_frac = (centre_px if centre_px is not None else 0.85 * ch) / ch
+    if content_rim_y(layout, cw, ch) is None:
         if y_frac + h_frac / 2.0 > SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION:
             y_frac = SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION - h_frac / 2.0
+    half = h_frac / 2.0
+    y_frac = max(half, min(1.0 - half, y_frac))
     return {
         "x": round(x_frac, 4),
         "y": round(y_frac, 4),
@@ -844,19 +897,19 @@ def subtitle_anchor_y(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
                       sub_lines: int = 1) -> float:
     """Canvas-fraction centre Y where the burned subtitle will sit.
 
-    Mirrors write_synced_ass_file: on letterboxed layouts the subtitle
-    anchors at the content box's lower rim (centre a quarter
-    text-height above the rim); otherwise it sits at the caller's
-    sub_y (85% default).
+    Mirrors write_synced_ass_file through subtitle_centre_px: on
+    letterboxed layouts sub_y is picture-relative (centre inside
+    the content box at oy + sub_y × ph); otherwise it sits at the
+    caller's sub_y of the canvas height (85% default). The
+    raw_font_size/sub_lines parameters are kept for call-site
+    compatibility; the Batch P anchor no longer depends on them.
     """
     cw = max(320, int(cw))
     ch = max(240, int(ch))
-    rim = content_rim_y(layout, cw, ch)
-    if rim is not None:
-        font_px = subtitle_font_px(cw, ch, raw_font_size, sub_lines, layout)
-        text_half = (font_px * (1.15 if sub_lines == 1 else 2.3)) / 2.0
-        return (rim - text_half / 2.0) / ch
-    return _clamp01(sub_y if sub_y is not None else 0.85, 0.85)
+    centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
+    if centre_px is None:
+        centre_px = 0.85 * ch
+    return centre_px / ch
 
 
 def reconcile_source_bands(plate: dict[str, float] | None,
@@ -1996,8 +2049,8 @@ def write_synced_ass_file(
     # bundled family name for libass HarfBuzz mym2 shaping.
     _, font_name = resolve_subtitle_font(font_name)
 
-    # Font size: canvas formula, scaled to the CONTENT box when the
-    # layout letterboxes the picture (R39 — see subtitle_font_px).
+    # Font size: the one height-relative formula (Batch P — see
+    # subtitle_font_px); the layout no longer scales it.
     font_size = subtitle_font_px(cw, ch, raw_font_size, sub_lines, layout)
 
     # Canvas-normalized subtitle positioning
@@ -2005,17 +2058,13 @@ def write_synced_ass_file(
     # ASS Alignment 2 (bottom-center) positions text baseline at margin_v.
     # To place the subtitle center exactly at sy*ch, subtract half the rendered text height:
     text_half_height = (font_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
-    rim = content_rim_y(layout, cw, ch)
-    if rim is not None:
-        # Letterboxed (R39): anchor at the content box's lower rim,
-        # overlapping it — subtitle centre a quarter text-height
-        # above the rim, so the text rides the picture's bottom edge
-        # instead of floating at 85% of the padded canvas.
-        centre_px = rim - text_half_height / 2.0
+    centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
+    if centre_px is not None:
+        # Batch P: picture-relative on letterboxed layouts (centre =
+        # oy + sub_y × ph), sub_y of the canvas height full-frame —
+        # the same anchor the preview shows (subtitle_centre_px is
+        # the single implementation both sides mirror).
         pixels_from_bottom = ch - (centre_px + text_half_height)
-    elif sub_y is not None:
-        sy = _clamp01(float(sub_y), 0.85)
-        pixels_from_bottom = (ch * (1.0 - sy)) - text_half_height
     elif subtitles_margin_v is not None:
         mv_val = float(subtitles_margin_v)
         pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
@@ -2656,20 +2705,26 @@ def apply_production_overlays(
             raw_size = int(overlays.get("subtitles_font_size", 16))
             # WrapStyle=2 is NO WRAPPING (strictly keeps 1 line). WrapStyle=0 is smart multi-line wrapping.
             wrap_style = 2 if sub_lines == 1 else 0
-            if ch > cw:  # 9:16 Vertical
-                sub_size = max(9, min(22, int(round(raw_size * 0.72)))) if sub_lines == 1 else max(10, min(24, raw_size))
-            else:
-                sub_size = max(11, min(26, raw_size))
+            # Batch P: the same height-fraction table as
+            # subtitle_font_px, expressed in libass's 288-tall script
+            # units for SRT (fraction × 288, ×1.25 for two lines) —
+            # replacing the orientation clamps that compressed the
+            # picker sizes on this fallback path too.
+            _frac288 = _subtitle_font_fraction(raw_size)
+            if sub_lines != 1:
+                _frac288 *= SUBTITLE_TWO_LINE_FONT_FACTOR
+            sub_size = max(4, int(round(288 * _frac288)))
             # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
             text_half_h = (sub_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
-            rim = content_rim_y({"pw": pw, "ph": ph, "ox": ox, "oy": oy}, cw, ch)
-            if rim is not None:
-                # Letterboxed (R39): anchor at the content box's lower
-                # rim, overlapping it — same rule as the ASS path.
-                pixels_from_bottom = max(10.0, ch - rim - (text_half_h * 2.0) / 4.0)
-            elif "sub_y" in overlays and overlays["sub_y"] is not None:
-                sy = _clamp01(float(overlays["sub_y"]), 0.85)
-                pixels_from_bottom = max(10.0, (ch * (1.0 - sy)) - text_half_h)
+            _centre_px = subtitle_centre_px(
+                cw, ch, {"pw": pw, "ph": ph, "ox": ox, "oy": oy},
+                overlays.get("sub_y"),
+            )
+            if _centre_px is not None:
+                # Batch P: picture-relative on letterboxed layouts,
+                # canvas-relative full-frame — same anchor as the
+                # ASS path via subtitle_centre_px.
+                pixels_from_bottom = max(10.0, ch - _centre_px - text_half_h)
             elif "subtitles_margin_v" in overlays:
                 mv_val = float(overlays["subtitles_margin_v"])
                 pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch

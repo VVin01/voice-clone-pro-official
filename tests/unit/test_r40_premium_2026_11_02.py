@@ -144,12 +144,14 @@ def test_ensure_plate_contains_anchor():
 
 
 def test_anchor_matches_ass_writer_positions():
-    # Full-frame: anchor == sub_y. Letterbox: anchor rides the rim.
+    # Full-frame: anchor == sub_y. Letterbox (Batch P): anchor is
+    # picture-relative — oy + sub_y × ph, inside the picture.
     assert subtitle_anchor_y(1080, 1920, None, sub_y=0.67) == pytest.approx(0.67)
     layout = frame_layout("9:16", "blur", 1920, 1080)
     anchor = subtitle_anchor_y(layout["cw"], layout["ch"], layout, sub_y=0.85)
     rim_frac = (layout["oy"] + layout["ph"]) / layout["ch"]
-    assert anchor < rim_frac  # just above the rim, on the picture
+    assert anchor == pytest.approx((layout["oy"] + 0.85 * layout["ph"]) / layout["ch"])
+    assert anchor < rim_frac  # on the picture, above its lower rim
 
 
 # ── Item 4: Classic Gold outline ────────────────────────────────────
@@ -174,7 +176,7 @@ def test_ass_outline_never_exceeds_8pct_of_font(tmp_path):
         raw_font_size=16, sub_lines=1, sub_y=0.85, sub_style="yellow",
     )
     fields = _ass_style_fields(out)
-    assert fields["font_size"] == 44
+    assert fields["font_size"] == 61  # Batch P height-fraction formula (was 44)
     assert fields["outline"] <= 0.08 * fields["font_size"] + 1e-9
     assert fields["outline"] == pytest.approx(3.47, abs=0.05)
 

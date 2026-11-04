@@ -592,18 +592,23 @@ def test_letterbox_layout_facts():
     assert content_rim_y(full, 1080, 1920) is None
 
 
-def test_font_px_full_frame_formula_unchanged():
-    assert subtitle_font_px(1080, 1920, 16, 1, None) == 44
-    assert subtitle_font_px(1920, 1080, 16, 1, None) == 36
+def test_font_px_full_frame_height_fraction():
+    # Batch P: ONE height-relative formula — 16pt = 3.2% of the
+    # canvas height, whatever the orientation (the R39 orientation
+    # factors/clamps that produced 44/36 are superseded).
+    assert subtitle_font_px(1080, 1920, 16, 1, None) == 61
+    assert subtitle_font_px(1920, 1080, 16, 1, None) == 35
     full = frame_layout("9:16", "blur", 1080, 1920)
-    assert subtitle_font_px(1080, 1920, 16, 1, full) == 44
+    assert subtitle_font_px(1080, 1920, 16, 1, full) == 61
 
 
-def test_font_px_letterbox_scales_to_content_box():
+def test_font_px_letterbox_not_content_scaled():
     lay = _letterbox_layout()
-    # min(content)=608 vs min(canvas)=1080 → 44.8 × 608/1080 ≈ 25
-    assert subtitle_font_px(1080, 1920, 16, 1, lay) == 25
-    assert subtitle_font_px(1080, 1920, 16, 2, lay) == 37
+    # Batch P: NO letterbox content-box scaling — the size is the
+    # canvas-height fraction on letterboxed layouts too (the R39
+    # ×608/1080 compression to 25/37 is superseded).
+    assert subtitle_font_px(1080, 1920, 16, 1, lay) == 61
+    assert subtitle_font_px(1080, 1920, 16, 2, lay) == 77
 
 
 def test_plate_full_frame_92_percent_and_safe_margin():
@@ -618,23 +623,22 @@ def test_plate_full_frame_92_percent_and_safe_margin():
 def test_plate_height_grows_for_two_lines():
     plate = subtitle_plate_box(1080, 1920, None, raw_font_size=16, sub_lines=2, sub_y=0.85, min_h=0.07)
     assert plate["h"] > 0.07  # settle-fit: the plate grows to fit the wrapped lines
-    assert abs(plate["h"] - 0.0904) < 0.001
+    # Batch P font (77px at 16pt/2-line) drives the fitted height.
+    assert abs(plate["h"] - 0.1243) < 0.001
 
 
-def test_plate_letterbox_anchors_at_content_rim():
+def test_plate_letterbox_anchors_at_subtitle_anchor():
     lay = _letterbox_layout()
     plate = subtitle_plate_box(1080, 1920, lay, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=0.07)
     assert plate["x"] == 0.04 and plate["w"] == 0.92
     centre_px = plate["y"] * 1920
-    h_px = plate["h"] * 1920
-    rim = 1264
-    # The plate straddles the rim: top above it, bottom below it,
-    # centre a quarter plate-height above it.
-    assert centre_px - h_px / 2 < rim < centre_px + h_px / 2
-    assert abs(centre_px - (rim - h_px / 4)) < 1.5
-    # Pure fit (no caller minimum) is much shorter than the legacy 7%.
+    # Batch P: the plate centre IS the subtitle centre —
+    # picture-relative: oy + sub_y × ph = 656 + 0.85 × 608 = 1172.8
+    # (the R39 rim anchor at 1264 is superseded).
+    assert abs(centre_px - 1172.8) < 1.5
+    # Pure fit (no caller minimum) follows the fitted text height.
     fit = subtitle_plate_box(1080, 1920, lay, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=None)
-    assert fit["h"] < 0.03
+    assert abs(fit["h"] - 0.062) < 0.002
 
 
 def test_ass_legacy_geometry_without_layout(tmp_path):
@@ -643,8 +647,8 @@ def test_ass_legacy_geometry_without_layout(tmp_path):
         raw_font_size=16, sub_lines=1, sub_y=0.85,
     )
     fields = _ass_style_fields(out)
-    assert fields["font_size"] == 44
-    assert fields["margin_v"] == 263
+    assert fields["font_size"] == 61
+    assert fields["margin_v"] == 253
 
 
 def test_ass_letterbox_geometry(tmp_path):
@@ -654,16 +658,17 @@ def test_ass_letterbox_geometry(tmp_path):
         raw_font_size=16, sub_lines=1, sub_y=0.85, layout=lay,
     )
     fields = _ass_style_fields(out)
-    assert fields["font_size"] == 25
-    # MarginV 649 → text bottom at 1920-649=1271 ≈ rim 1264 (+text_h/4 overlap)
-    assert fields["margin_v"] == 649
+    assert fields["font_size"] == 61
+    # MarginV 712 → subtitle centre at oy + 0.85 × ph = 1172.8px
+    # (Batch P picture-relative anchor; R39 rim anchor superseded).
+    assert fields["margin_v"] == 712
     out2 = write_synced_ass_file(
         [(0.0, 3.0, "မင်္ဂလာပါ")], tmp_path / "c.ass", 1080, 1920,
         raw_font_size=16, sub_lines=2, sub_y=0.85, layout=lay,
     )
     fields2 = _ass_style_fields(out2)
-    assert fields2["font_size"] == 37
-    assert fields2["margin_v"] == 635
+    assert fields2["font_size"] == 77
+    assert fields2["margin_v"] == 659
 
 
 def test_pipeline_uses_plate_helper():
@@ -715,7 +720,10 @@ def _band_bright(frame: Path, y0: int, y1: int) -> int:
 def test_srt_letterbox_subtitle_rides_the_rim(tmp_path):
     layout = {"pw": 1080, "ph": 608, "ox": 0, "oy": 656, "sw": 1920, "sh": 1080, "fill": "blur"}
     frame = _render_srt_case(tmp_path, layout)
-    rim_band = _band_bright(frame, 1150, 1380)     # around the content rim (1264)
+    # Batch P: sub_y=85 is picture-relative — centre at
+    # oy + 0.85 × ph = 1173px, just above the rim (1264); the band
+    # below covers the text and the rim approach.
+    rim_band = _band_bright(frame, 1080, 1380)
     legacy_band = _band_bright(frame, 1500, 1750)  # the old 85%-of-canvas home
     assert rim_band > 400
     assert legacy_band < max(50, rim_band // 4)
