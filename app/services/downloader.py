@@ -321,6 +321,40 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
             "YouTube၊ TikTok၊ Facebook လင့်ခ်များဖြင့် စမ်းကြည့်ပါ။ " + upload_hint
         )
     if (
+        "could not download the whisper model" in low
+        or "local whisper backend" in low
+    ):
+        # Batch V (2026-11-04): the local-Whisper transcription
+        # fallback could not obtain its model ("Could not download
+        # the Whisper model from huggingface.co …" after 3 attempts)
+        # or found no local backend ("Local Whisper backend မတွေ့ပါ …").
+        # Neither string matched a needle, so recap jobs reaching the
+        # fallback died at the transcription stage behind the generic
+        # technical-error message. This is a server-side transient:
+        # same remedy shape as the network class — wait and retry.
+        # The needles are the exceptions' own distinctive openings,
+        # so unrelated download/whisper wording stays unclassified.
+        # (Placed early: the download error embeds the underlying
+        # network exception text, which broader needles below could
+        # otherwise claim first.)
+        return (
+            "⚠️ စာသားပြောင်းစနစ် ခေတ္တ အလုပ်များနေပါသည်။ "
+            "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
+    if "no_usable_speech" in low or "music_only_or_transcript_too_thin" in low:
+        # Batch V (2026-11-04): the source was fetched correctly but
+        # holds no usable speech — whisper_service raises
+        # NoUsableSpeechError with these codes (no audio stream,
+        # 0 usable transcript segments, or a music/noise-only rescue
+        # the quality guard rejected). Retrying the same source
+        # cannot change the outcome; the user needs a source with
+        # clear speech.
+        return (
+            "⚠️ ဒီ ဗီဒီယို၏ အသံတွင် စကားပြောသံ မပါဝင်ပါ (သို့မဟုတ်) "
+            "အသုံးပြု၍ ရအောင် ရှင်းလင်းမှု မရှိပါ။ စကားပြောသံ ရှင်းလင်းသော "
+            "အခြား ဗီဒီယိုဖြင့် စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
+    if (
         ("http error 403" in low or "http error 401" in low
          or ("403" in low and "forbidden" in low)
          or ("401" in low and "unauthorized" in low))
