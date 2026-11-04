@@ -315,6 +315,21 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
         "ပြုလုပ်နိုင်ပါသည် ခင်ဗျာ။"
     )
 
+    if "no space left on device" in low or "errno 28" in low:
+        # Server storage exhausted (Batch W, 2026-11-04): every recap
+        # failure that day died on the full persistent disk — "[Errno
+        # 28] No space left on device" raised by yt-dlp's file write
+        # or by the job-dir mkdir — and matched no needle, so users
+        # saw the generic technical-error line for a problem that is
+        # neither their link's nor the source's fault. Errno 28 IS
+        # ENOSPC by definition, so this needle cannot overreach onto
+        # source-side errors. NOTE (merge coordination): Batch V adds
+        # its whisper needles in this same function — the two blocks
+        # are independent and can land in either order.
+        return (
+            "⚠️ ဆာဗာ သိုလှောင်နေရာ ပြည့်နေပါသဖြင့် ဒီ အလုပ်ကို လုပ်ဆောင်၍ မရပါ။ "
+            "ပြဿနာကို ပြုပြင်နေပါသည် — ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+        )
     if "unsupported url" in low:
         return (
             "⚠️ ဒီ လင့်ခ် အမျိုးအစား ကို မထောက်ပံ့သေးပါ။ "
