@@ -308,6 +308,20 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
 }
 .badge-studio.gold { color: var(--gold-2); background: var(--gold-soft); border-color: var(--gold-border); }
 
+/* ── Batch AE: VIP pane title stacking on phones ───────────────────────
+   The VIP title is too long to share a row with the PREMIUM badge at
+   phone widths: the h2 wrapped so a single Burmese word dropped alone
+   onto line 2 while the badge floated mid-title (row is
+   align-items:center). At <=480px stack the row instead — the title
+   takes the full width and the badge gets its own line under it — and
+   balance the h2 wrap so neither locale strands an orphan word.
+   Wider layouts keep the original side-by-side row. Layout only:
+   title text and badge are unchanged. */
+@media (max-width: 480px) {
+    #tab-vip .pane-title-row { flex-direction: column; align-items: flex-start; gap: var(--s1); }
+    #tab-vip .pane-header h2 { text-wrap: balance; }
+}
+
 /* ── Cards ──────────────────────────────────────────────────────────── */
 .card {
     background: var(--surface);
