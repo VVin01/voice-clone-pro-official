@@ -84,14 +84,21 @@ def test_d1_sweep_no_sql_sum_sites_remain():
     Mini App admin API computes its aggregates per-row). If a future
     change reintroduces a SQL SUM over a NUMERIC column, this test
     fails first — coerce with int(...) at the source and update here
-    deliberately."""
+    deliberately.
+
+    DELIBERATE EXCEPTION (Batch R, 2026-11-04; pin updated in the
+    Batch S hotfix): app/webapp/api.py's admin income card sums
+    PaymentRequest.amount_mmk — an INTEGER column (Postgres SUM over
+    integer returns bigint, never Decimal, so the D1 hazard does not
+    apply) — and the result is int(...)-coerced at the source. It is
+    the one allowed site; any NEW func.sum( site still fails here."""
     app_root = ROOT / "app"
     sum_sites = []
     for py in app_root.rglob("*.py"):
         text = py.read_text(encoding="utf-8")
         if "func.sum(" in text:
             sum_sites.append(py.relative_to(ROOT).as_posix())
-    assert sum_sites == []
+    assert sum_sites == ["app/webapp/api.py"]
 
 
 # ── D2: plate fit engages at the settle points ──────────────────────
