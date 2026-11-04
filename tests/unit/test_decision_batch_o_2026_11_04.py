@@ -250,11 +250,14 @@ def test_group_ai_rotates_start_key_per_message(monkeypatch):
 
 
 def test_gemini_tts_engine_keeps_prioritized():
-    # Item 1 covers the planner + Group AI only: the TTS engine has its
-    # own within-run rotation and a separate registry, and deliberately
-    # keeps prioritized() (see key_rotation.prioritized's docstring).
+    # SUPERSEDED by Batch U (2026-11-04, owner scope extension "tts
+    # ကိုလဲသုံးနော်"): the TTS engine now rotates its starting key per
+    # call via KeyHealth.order() like the planner and Group AI, so
+    # this Batch O pin is deliberately inverted. Behavioural coverage
+    # lives in test_gemini_model_rotation_batch_u_2026_11_04.py.
     src = (ROOT / "app/services/recap_engine/gemini_tts_engine.py").read_text(encoding="utf-8")
-    assert "tts_health.prioritized(" in src
+    assert "tts_health.order(" in src
+    assert "tts_health.prioritized(" not in src
 
 
 # ── (2) user-facing blur strength ───────────────────────────────────

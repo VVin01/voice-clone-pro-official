@@ -19,7 +19,7 @@ SENTENCES = [
 def _capture_prompt(monkeypatch, style: str, is_female: bool = False) -> str:
     captured = {}
 
-    def fake_gemini_json(ai, prompt, retries=1, log=None):
+    def fake_gemini_json(ai, prompt, retries=1, log=None, rotation_tier=None):
         captured["prompt"] = prompt
         return {"items": [
             {"id": row["id"], "translation": SENTENCES[i]}
@@ -103,7 +103,7 @@ def _capture_audit_prompt(monkeypatch, style: str) -> str:
         for i, row in enumerate(CURRENT)
     ]
 
-    def fake_gemini_json(ai, prompt, retries=1, log=None):
+    def fake_gemini_json(ai, prompt, retries=1, log=None, rotation_tier=None):
         captured["prompt"] = prompt
         return {"checks": [{"id": row["id"], "status": "pass"} for row in rows]}
 

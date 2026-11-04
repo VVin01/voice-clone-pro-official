@@ -11,6 +11,7 @@ import difflib
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 from contextlib import contextmanager
@@ -102,6 +103,39 @@ DEPRECATED_GEMINI_MODELS = {
     "gemini-1.5-flash",
     "gemini-1.5-pro",
 }
+
+# Models deferred to the END of the chain as slow last resorts (see
+# _configure_gemini_key_pool). Batch U: rotation never STARTS on one of
+# these, and failover reaches them only after every other model.
+SLOW_TAIL_GEMINI_MODELS = ("gemini-3.8-flash", "gemini-3.7-flash")
+
+# Batch U (2026-11-04): per-call STARTING-model rotation counters.
+# Process-level and in-memory only (the same lifetime as KeyHealth):
+# each logical planner call advances its tier's counter once to pick
+# the chain position it STARTS from — "full" alternates between the
+# two full models (translation + audit calls, whose output quality is
+# model-sensitive), "wide" cycles across every non-tail position
+# (story-context calls). The admin-configured chain order still
+# defines the failover priority AFTER the starting point, and the
+# slow tail stays last-resort only. This spreads load across the
+# models' separate per-project quota buckets instead of draining the
+# primary's bucket first.
+_MODEL_ROTATION_LOCK = threading.Lock()
+_MODEL_ROTATION_COUNTERS: dict[str, int] = {"full": 0, "wide": 0}
+
+
+def _next_model_rotation(tier: str) -> int:
+    with _MODEL_ROTATION_LOCK:
+        value = _MODEL_ROTATION_COUNTERS[tier]
+        _MODEL_ROTATION_COUNTERS[tier] = value + 1
+        return value
+
+
+def _reset_model_rotation() -> None:
+    """Restart both rotation counters (tests; process state only)."""
+    with _MODEL_ROTATION_LOCK:
+        for tier in _MODEL_ROTATION_COUNTERS:
+            _MODEL_ROTATION_COUNTERS[tier] = 0
 
 
 class GeminiKeyPoolExhaustedError(RuntimeError):
@@ -236,6 +270,10 @@ def _configure_gemini_key_pool(
       * After every key is rejected -> next model and restart from key #1.
       * 503/high-demand/timeout -> next model immediately and restart from key #1.
       * Model/key switches retry the exact same request without consuming validation retries.
+      * Batch U: each logical call first re-points the chain at a rotated
+        STARTING model (ai._recap_begin_gemini_call, driven by _gemini_json's
+        rotation_tier); failover then walks the call's visit order — every
+        remaining model stays reachable and the slow tail is visited last.
     """
     if not key_pool:
         return
@@ -285,7 +323,7 @@ def _configure_gemini_key_pool(
         clean = str(x or "").strip()
         if not clean or clean in DEPRECATED_GEMINI_MODELS:
             continue
-        if clean in ("gemini-3.8-flash", "gemini-3.7-flash"):
+        if clean in SLOW_TAIL_GEMINI_MODELS:
             if clean not in deferred_slow:
                 deferred_slow.append(clean)
             continue
@@ -300,6 +338,11 @@ def _configure_gemini_key_pool(
 
     model_index = 0
     key_index = 0
+    # Batch U: the current logical call's model visit order (indices
+    # into `models`). Defaults to the natural chain order; begin_call()
+    # rebuilds it per call around the rotated starting model.
+    visit_order = list(range(len(models)))
+    visit_pos = 0
     timeout_seconds = max(25, min(int(request_timeout_seconds), 90))
     http_options = {
         "timeout": timeout_seconds * 1000,
@@ -356,22 +399,64 @@ def _configure_gemini_key_pool(
         return True
 
     def advance_model(reason: str = "next model") -> bool:
-        next_model = model_index + 1
-        if next_model >= len(models):
+        nonlocal visit_pos
+        next_pos = visit_pos + 1
+        if next_pos >= len(visit_order):
             return False
+        visit_pos = next_pos
         # Required behavior: every model starts again at Key 1.
-        activate(next_model, 0, reason=reason)
+        activate(visit_order[visit_pos], 0, reason=reason)
         return True
 
     def advance_after_key_pool() -> bool:
         _cool_current_key()
         return advance_model("key pool exhausted")
 
+    # Batch U: the slow tail sits at the end of `models` by
+    # construction (deferred above). Rotation never STARTS on the
+    # tail; a call's visit order reaches it only after every other
+    # position, so it stays last-resort only.
+    tail_start = len(models)
+    while tail_start > 0 and models[tail_start - 1] in SLOW_TAIL_GEMINI_MODELS:
+        tail_start -= 1
+    body_positions = list(range(tail_start))
+    tail_positions = list(range(tail_start, len(models)))
+
+    def _visit_order_for(tier: str | None) -> list[int]:
+        if not body_positions:
+            return list(range(len(models)))
+        if tier == "full":
+            # Rotate the start between the two full models only; the
+            # other full model follows, then the lite models in chain
+            # order, then the tail.
+            head = body_positions[:2]
+            start = head[_next_model_rotation("full") % len(head)]
+            rest = [p for p in head if p != start] + body_positions[len(head):]
+            return [start] + rest + tail_positions
+        if tier == "wide":
+            # Rotate the start across every non-tail position; the
+            # walk wraps around the body and ends at the tail.
+            start = body_positions[_next_model_rotation("wide") % len(body_positions)]
+            k = body_positions.index(start)
+            return body_positions[k:] + body_positions[:k] + tail_positions
+        return body_positions + tail_positions
+
+    def begin_call(tier: str | None = None) -> None:
+        """Point the chain at this logical call's rotated starting
+        model (Batch U) and restart it at Key 1. Failover afterwards
+        walks the visit order, so every model remains reachable from
+        either start and the slow tail is always last."""
+        nonlocal visit_order, visit_pos
+        visit_order = _visit_order_for(tier)
+        visit_pos = 0
+        activate(visit_order[0], 0)
+
     ai._recap_active_key_label = key_pool[0][0]
     ai._recap_active_model = models[0]
     ai._recap_key_pool_size = len(key_pool)
     ai._recap_model_pool_size = len(models)
     ai._recap_model_chain = list(models)
+    ai._recap_begin_gemini_call = begin_call
     ai._recap_rotate_gemini_key = rotate_key
     ai._recap_advance_gemini_model = advance_model
     ai._recap_advance_after_key_pool = advance_after_key_pool
@@ -1216,12 +1301,22 @@ def _extract_json_payload(raw_text: str) -> Any:
         raise
 
 
-def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = None) -> Any:
+def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = None,
+                 rotation_tier: str | None = None) -> Any:
     """Run one logical Gemini request with model/key failover.
 
     Fallback switches never consume JSON/validation retries, so the exact same
     translation/cleanup/audit batch is resent after each switch.
+
+    Batch U: ``rotation_tier`` picks the call's STARTING model via the
+    pool's begin hook — "full" rotates between the two full models,
+    "wide" across every non-tail model, None keeps the natural chain
+    head. Rotation happens once per logical call, before the retry
+    loop, so validation retries keep the call's starting point.
     """
+    begin = getattr(ai, "_recap_begin_gemini_call", None)
+    if callable(begin):
+        begin(rotation_tier)
     last: Exception | None = None
     attempt = 1
     while attempt <= retries:
@@ -1360,7 +1455,7 @@ SOURCE CHUNK {i}/{len(batches)}:
 {_source_lines(batch)}
 """
         try:
-            data = _gemini_json(ai, prompt, log=log)
+            data = _gemini_json(ai, prompt, log=log, rotation_tier="wide")
             if not isinstance(data, dict):
                 raise RuntimeError("Story context response must be a JSON object")
         except (GeminiKeyPoolExhaustedError, InterruptedError):
@@ -1648,7 +1743,7 @@ CRITICAL OUTPUT ID PROTOCOL:
     last: Exception | None = None
     for attempt in range(1, 4):
         try:
-            payload = _gemini_json(ai, prompt, retries=1, log=log)
+            payload = _gemini_json(ai, prompt, retries=1, log=log, rotation_tier="full")
             translated = _validate_translation_items(current, payload, log=log)
             for row in translated:
                 row["translation"] = _enforce_style_and_gender_particles(
@@ -1857,7 +1952,7 @@ Your checks[].id list MUST equal exactly: {exact_ids_json}
         last_error: Exception | None = None
         for attempt in range(1, 3):
             try:
-                payload = _gemini_json(ai, prompt, retries=2, log=log)
+                payload = _gemini_json(ai, prompt, retries=2, log=log, rotation_tier="full")
                 checks = payload.get("checks") if isinstance(payload, dict) else None
                 if not isinstance(checks, list):
                     raise ValueError("audit response must contain a checks array")

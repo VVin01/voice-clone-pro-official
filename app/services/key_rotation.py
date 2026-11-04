@@ -94,7 +94,9 @@ class KeyHealth:
         Unlike :meth:`order` this does NOT advance the rotation cursor
         and never drops a key — used where an existing within-run
         rotation must keep its exact semantics and the cooldown may
-        only change which key a run STARTS from (Gemini planner/TTS).
+        only change which key a run STARTS from. (Its last caller, the
+        Gemini TTS engine, moved to :meth:`order` in Batch U,
+        2026-11-04; the method stays as tested API.)
         """
         pool = list(keys)
         if not pool:
