@@ -7563,39 +7563,49 @@ async def get_admin_overview(
     # moment (reviewed_at), falling back to created_at for legacy
     # rows whose reviewed_at was never populated. "Today" is the
     # Asia/Rangoon calendar day (fixed UTC+06:30 — Myanmar has no
-    # DST); 7d/30d are rolling windows ending now.
+    # DST); 7d/30d are rolling windows ending now. Aggregates are
+    # computed per-row in Python — the codebase-wide convention for
+    # this API (no SQL SUM under app/, pinned by the premium-round
+    # D1 sweep test after the old Decimal-sum hazard).
     _rangoon = timezone(timedelta(hours=6, minutes=30))
     _now_utc = datetime.now(timezone.utc)
-    _rangoon_midnight = _now_utc.astimezone(_rangoon).replace(
+    _today_start_utc = _now_utc.astimezone(_rangoon).replace(
         hour=0, minute=0, second=0, microsecond=0
-    )
-    _income_bucket = func.coalesce(PaymentRequest.reviewed_at, PaymentRequest.created_at)
-    _income_base = (PaymentRequest.status == PaymentStatus.APPROVED.value,)
-
-    async def _income_since(since: datetime | None) -> tuple[int, int]:
-        stmt = select(
-            func.coalesce(func.sum(PaymentRequest.amount_mmk), 0),
-            func.count(PaymentRequest.id),
-        ).where(*_income_base)
-        if since is not None:
-            stmt = stmt.where(_income_bucket >= since)
-        row = (await db.execute(stmt)).one()
-        return int(row[0] or 0), int(row[1] or 0)
-
-    _inc_today = await _income_since(_rangoon_midnight.astimezone(timezone.utc))
-    _inc_7d = await _income_since(_now_utc - timedelta(days=7))
-    _inc_30d = await _income_since(_now_utc - timedelta(days=30))
-    _inc_all = await _income_since(None)
+    ).astimezone(timezone.utc)
+    _since_7d = _now_utc - timedelta(days=7)
+    _since_30d = _now_utc - timedelta(days=30)
     income = {
-        "today_mmk": _inc_today[0],
-        "today_count": _inc_today[1],
-        "last_7d_mmk": _inc_7d[0],
-        "last_7d_count": _inc_7d[1],
-        "last_30d_mmk": _inc_30d[0],
-        "last_30d_count": _inc_30d[1],
-        "all_time_mmk": _inc_all[0],
-        "all_time_count": _inc_all[1],
+        "today_mmk": 0, "today_count": 0,
+        "last_7d_mmk": 0, "last_7d_count": 0,
+        "last_30d_mmk": 0, "last_30d_count": 0,
+        "all_time_mmk": 0, "all_time_count": 0,
     }
+    _approved_rows = (await db.execute(
+        select(
+            PaymentRequest.reviewed_at,
+            PaymentRequest.created_at,
+            PaymentRequest.amount_mmk,
+        ).where(PaymentRequest.status == PaymentStatus.APPROVED.value)
+    )).all()
+    for _reviewed_at, _created_at, _amount in _approved_rows:
+        income["all_time_mmk"] += _amount
+        income["all_time_count"] += 1
+        _bucket_ts = _reviewed_at or _created_at
+        if _bucket_ts is None:
+            continue
+        if _bucket_ts.tzinfo is None:
+            # SQLite can hand back naive datetimes; stored values
+            # are UTC by construction (utc_now).
+            _bucket_ts = _bucket_ts.replace(tzinfo=timezone.utc)
+        if _bucket_ts >= _today_start_utc:
+            income["today_mmk"] += _amount
+            income["today_count"] += 1
+        if _bucket_ts >= _since_7d:
+            income["last_7d_mmk"] += _amount
+            income["last_7d_count"] += 1
+        if _bucket_ts >= _since_30d:
+            income["last_30d_mmk"] += _amount
+            income["last_30d_count"] += 1
 
     db_size_bytes = None
     try:
