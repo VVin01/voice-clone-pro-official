@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r52">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r53">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -1955,6 +1955,14 @@
                             </div>
                             <div class="form-row-2 mt-2">
                                 <div>
+                                    <label class="input-label" data-i18n="settings_maintenance_note">Maintenance မှတ်စု (ကြေညာချက်)</label>
+                                    <input type="text" id="adm-set-maintenance-note" class="studio-input" maxlength="200" placeholder="ဥပမာ: ည ၉:၃၀ ပြန်ဖွင့်ပါမယ်">
+                                    <p class="text-xs text-muted" data-i18n="settings_maintenance_note_hint">Maintenance Mode ပွင့်နေစဉ် Group AI က အဖွဲ့ဝင်တွေကို ဒီ စာသားအတိုင်း ပြောပြပါမယ် — အလွတ် ထားရင် ပြန်ဖွင့်ချိန် မကြေညာပါ</p>
+                                </div>
+                                <div></div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
                                     <label class="input-label" data-i18n="settings_char_limit_free">အခမဲ့ စာလုံးရေ ကန့်သတ်ချက် (Free Character Limit)</label>
                                     <input type="number" id="adm-set-char-limit-free" class="studio-input" min="100" max="10000" step="50" inputmode="numeric">
                                     <p class="text-xs text-muted" data-i18n="settings_char_limit_free_hint">အခမဲ့ အသုံးပြုသူများ တစ်ကြိမ်လျှင် ထုတ်လုပ်နိုင်သော စာလုံးရေ အများဆုံး</p>
@@ -2335,7 +2343,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r52"></script>
-    <script src="/static/js/app.js?v=20261104_r52"></script>
+    <script src="/static/js/i18n.js?v=20261104_r53"></script>
+    <script src="/static/js/app.js?v=20261104_r53"></script>
 </body>
 </html>

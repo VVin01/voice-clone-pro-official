@@ -656,8 +656,36 @@ def build_fact_sheet() -> str:
         "Mini App ရဲ့ History မှာ အခြေအနေ စစ်နိုင်ပါတယ်။",
         "• Mini App မပွင့်ဘူး ဆိုရင်: Channel နဲ့ Group နှစ်ခုလုံး Join ထားသလား အရင် "
         "စစ်ပါ — တစ်ခုခုက ထွက်ထားရင် ပြန် Join လိုက်ရင် ပွင့်ပါတယ်။",
-        "=== KNOWLEDGE SHEET END ===",
     ]
+
+    # Batch Z: while maintenance mode is on, the sheet gains a
+    # current-status section — without it the AI answered as if the
+    # service were normal while every creation feature was blocked
+    # (owner report 2026-11-04). Mode and note are read from the
+    # in-memory settings, the same source the gate and /start use.
+    # The note is quoted verbatim; when no note is set, the section
+    # states that no reopening time has been announced, so the AI
+    # cannot invent one. When the mode is OFF nothing is appended
+    # and the sheet is byte-identical to the pre-Z sheet.
+    if bool(getattr(settings, "maintenance_mode", False)):
+        lines.append("【အခုလက်ရှိ အခြေအနေ — ပြုပြင်ထိန်းသိမ်းမှု】")
+        lines.append(
+            "• Voice Clone Pro ကို အခု ပြုပြင်ထိန်းသိမ်းမှု (Maintenance) "
+            "လုပ်နေပါတယ်။ Bot နဲ့ Mini App ထဲက ဖန်တီးမှု လုပ်ဆောင်ချက်တွေ "
+            "(Voice Clone လုပ်တာ၊ Recap လုပ်တာ စသည်) ယာယီ သုံးလို့ မရသေးပါဘူး — "
+            "ဒါက သုံးစွဲသူဘက်က အမှား မဟုတ်ပါဘူး။ 'ဘာလို့ သုံးလို့ မရတာလဲ'၊ "
+            "'Job လုပ်လို့ မရဘူး'၊ 'ဘယ်တော့ ပြန်ရမလဲ' စတဲ့ မေးခွန်းတွေကို "
+            "ဒီ အခြေအနေနဲ့ ဖြေပါ။"
+        )
+        note = str(getattr(settings, "maintenance_note", "") or "").strip()
+        if note:
+            lines.append(f"• ကြေညာထားတဲ့ အသေးစိတ်: {note}")
+        else:
+            lines.append(
+                "• ပြန်ဖွင့်မည့် အချိန် ကြေညာထားတာ မရှိသေးပါ — "
+                "ပြန်ဖွင့်ချိန်ကို ထွင် မပြောရပါ။"
+            )
+    lines.append("=== KNOWLEDGE SHEET END ===")
     return "\n".join(lines)
 
 

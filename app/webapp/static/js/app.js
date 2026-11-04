@@ -8213,6 +8213,7 @@ async function loadAdminSettings() {
         const elWaveName = document.getElementById("adm-set-wave-name");
         const elTutLink = document.getElementById("adm-set-tutorial-link");
         const elMaint = document.getElementById("adm-set-maintenance");
+        const elMaintNote = document.getElementById("adm-set-maintenance-note");
         const elGroupAi = document.getElementById("adm-set-group-ai");
         const elCharLimitFree = document.getElementById("adm-set-char-limit-free");
         const elCharLimitPurchased = document.getElementById("adm-set-char-limit-purchased");
@@ -8240,6 +8241,7 @@ async function loadAdminSettings() {
         if (elWaveName) elWaveName.value = s.payment_wave_name || "";
         if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
         if (elMaint) elMaint.checked = !!s.maintenance_mode;
+        if (elMaintNote) elMaintNote.value = s.maintenance_note || "";
         if (elGroupAi) elGroupAi.checked = !!s.group_ai_admin_enabled;
         const elGroupAiCooldown = document.getElementById("adm-set-group-ai-cooldown");
         const elGroupAiHourly = document.getElementById("adm-set-group-ai-hourly");
@@ -8370,6 +8372,7 @@ async function saveAdminSettings() {
     const waveName = document.getElementById("adm-set-wave-name")?.value?.trim();
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
+    const maintNote = document.getElementById("adm-set-maintenance-note")?.value?.trim() || "";
     const groupAi = !!document.getElementById("adm-set-group-ai")?.checked;
     const groupAiCooldownRaw = document.getElementById("adm-set-group-ai-cooldown")?.value?.trim();
     const groupAiCooldown = groupAiCooldownRaw === "" || groupAiCooldownRaw == null ? null : parseInt(groupAiCooldownRaw, 10);
@@ -8424,6 +8427,7 @@ async function saveAdminSettings() {
         recap_demo_asset: recapDemoAsset,
         ...tutExtraLinks,
         maintenance_mode: maint,
+        maintenance_note: maintNote,
         group_ai_admin_enabled: groupAi,
         ...(Number.isFinite(groupAiCooldown) ? { group_ai_user_cooldown_seconds: groupAiCooldown } : {}),
         ...(Number.isFinite(groupAiHourly) ? { group_ai_hourly_budget: groupAiHourly } : {}),
