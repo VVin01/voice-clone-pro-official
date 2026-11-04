@@ -2,9 +2,12 @@
 
 Owner report: burned-in Myanmar subtitles 'look spelled wrong'. Audit
 result (see watermark-v2-2026-10-30.md): every burn path in the app —
-main recap ASS, SRT force_style fallback, Live Canvas preview — goes
+main recap ASS, SRT force_style fallback, Live Canvas preview — went
 through libass (HarfBuzz complex-text shaping); there is no drawtext
-anywhere in the app. These tests pin that behaviour down:
+anywhere in the app. Batch Q (2026-11-04) replaced the burns with
+Pillow+raqm PNG overlays (same complex-text shaping family) because
+the TEXT proved correct and the issue was legibility. These tests
+pin that behaviour down:
 
 * canonicalize_burmese_text is a NO-OP on well-formed text (it only
   repairs visual-order typing), so it cannot scramble correct input;

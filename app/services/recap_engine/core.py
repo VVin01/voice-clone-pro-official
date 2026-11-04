@@ -27,6 +27,11 @@ except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
         sys.path.insert(0, str(_ROOT))
     from app.services.myanmar_text import repair_burmese_mark_order
 
+try:
+    from app.services.recap_engine import png_subtitles as _png_subs
+except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
+    import png_subtitles as _png_subs  # type: ignore[no-redef]
+
 
 LogFn = Callable[[str], None]
 def _noop(_: str) -> None:
@@ -775,12 +780,16 @@ def content_rim_y(layout: dict[str, Any] | None, cw: int, ch: int) -> int | None
 # Picker size (pt) → fraction of the canvas height. One shared
 # table: subtitle_font_px below and the Mini App preview
 # (subtitleFontFraction in app.js) both read it, so the size the
-# user sees is the size the render burns.
+# user sees is the size the render burns. Batch Q raised every
+# anchor one notch (16pt default 3.2% → 4.0% of canvas height —
+# the recapter readability zone) after the shaping diagnosis
+# showed small captions, not wrong text, caused the "misspelled"
+# look (~/workspace/subtitle-compare/shaping).
 SUBTITLE_FONT_HEIGHT_FRACTIONS = (
-    (13, 0.026),
-    (16, 0.032),
-    (19, 0.040),
-    (22, 0.050),
+    (13, 0.032),
+    (16, 0.040),
+    (19, 0.048),
+    (22, 0.056),
 )
 SUBTITLE_TWO_LINE_FONT_FACTOR = 1.25
 SUBTITLE_FONT_MIN_PX = 18
@@ -839,6 +848,39 @@ def subtitle_centre_px(cw: int, ch: int, layout: dict[str, Any] | None,
         _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
         return oy + sy * ph
     return sy * ch
+
+
+def _subtitle_block_top_px(
+    cw: int, ch: int, layout: dict[str, Any] | None, *,
+    sub_y: float | None, subtitles_margin_v: float | None,
+    boxes: list[dict[str, Any]] | None, font_px: int, sub_lines: int,
+    block_h: int,
+) -> int:
+    """Top Y (canvas px) for a subtitle block of height ``block_h``
+    (Batch Q PNG placement).
+
+    Shares the pre-Q anchor rules so the PNG lands where libass put
+    the text: subtitle_centre_px when sub_y is set (Batch P
+    picture-relative rule; the block is centred on it); otherwise
+    the legacy fallbacks from write_synced_ass_file — explicit
+    margin, first blur box, or the 12%-of-height default — with the
+    block's bottom edge where those rules placed the text block's
+    bottom (they were computed against the estimated text height,
+    font_px × 1.15 per line).
+    """
+    centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
+    if centre_px is not None:
+        return int(round(centre_px - block_h / 2.0))
+    text_half_height = (font_px * (1.15 if int(sub_lines or 1) == 1 else 2.3)) / 2.0
+    if subtitles_margin_v is not None:
+        mv_val = float(subtitles_margin_v)
+        pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
+    elif boxes:
+        by = _clamp01(boxes[0].get("y", 0.85))
+        pixels_from_bottom = (ch * (1.0 - by)) - text_half_height
+    else:
+        pixels_from_bottom = max(20, int(round(ch * 0.12)))
+    return int(round(ch - pixels_from_bottom - block_h))
 
 
 def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
@@ -1800,6 +1842,34 @@ def resolve_subtitle_font(value: str | None) -> tuple[str, str]:
     return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
 
 
+def subtitle_font_file(value: str | None) -> Path:
+    """Bundled static font FILE for a subtitle-font selector (Batch Q).
+
+    The PNG renderer loads fonts by path, so the family-resolution
+    lottery disappears entirely. ASS burned with Bold=-1, so the
+    Bold build is preferred. Every candidate comes from
+    SUBTITLE_FONT_OPTIONS' file lists — all static builds; the
+    variable NotoSansMyanmar.ttf is in NO option's list and can
+    therefore never be picked here (it stays banned by construction,
+    not just by staging discipline).
+    """
+    key, _family = resolve_subtitle_font(value)
+    src_dir = bundled_fonts_dir()
+    files = list(SUBTITLE_FONT_OPTIONS[key]["files"])
+    ordered = sorted(files, key=lambda fn: 0 if "bold" in fn.lower() else 1)
+    for fn in ordered:
+        p = src_dir / fn
+        if p.is_file():
+            return p
+    # Option's files missing on disk (should not happen): fall back
+    # to the default option's files, then to any bundled static.
+    for fn in SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["files"]:
+        p = src_dir / fn
+        if p.is_file():
+            return p
+    raise RuntimeError("no bundled subtitle font file found")
+
+
 def stage_bundled_fonts(dest_dir: Path) -> Path | None:
     """Copy every bundled subtitle font into dest_dir for libass fontsdir.
 
@@ -2508,6 +2578,80 @@ def split_burmese_subtitle_cues(
     return [(round(start_sec, 3), round(end_sec, 3), formatted_text)]
 
 
+def _resolve_png_subtitle_job(
+    overlays: dict[str, Any], cw: int, ch: int,
+    layout: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Resolve everything the Batch Q PNG subtitle burn needs.
+
+    Cue source, in priority order: the pipeline's ``subtitle_cues``
+    (set by EdgeSmartSync beside subtitles_file); else the cues are
+    parsed back out of the subtitles_file itself (.srt, or .ass —
+    whose embedded style also supplies the font size/visuals, so a
+    file-only call renders what the file describes). Returns None
+    when there is nothing to burn.
+    """
+    sub_lines = int(overlays.get("sub_lines", 1))
+    cues: list[tuple[float, float, str]] = []
+    file_font_px: int | None = None
+    file_visuals: dict[str, Any] | None = None
+    file_family: str | None = None
+    raw_cues = overlays.get("subtitle_cues")
+    if raw_cues:
+        for item in raw_cues:
+            try:
+                a, b, t = float(item[0]), float(item[1]), str(item[2])
+            except Exception:
+                continue
+            if t.strip() and b > a:
+                cues.append((a, b, t))
+    if not cues:
+        sub_file = str(overlays.get("subtitles_file") or "").strip()
+        spath = Path(sub_file) if sub_file else None
+        if spath and spath.is_file():
+            suffix = spath.suffix.lower()
+            if suffix == ".srt":
+                cues = _png_subs.parse_srt_cues(spath)
+            elif suffix == ".ass":
+                parsed = _png_subs.parse_ass_source(spath)
+                if parsed:
+                    cues = parsed["cues"]
+                    file_font_px = parsed.get("font_px")
+                    file_visuals = parsed.get("visuals")
+                    file_family = parsed.get("font_family")
+    if not cues:
+        return None
+    # Same canonicalizer the ASS writer applied, so the burned text
+    # is byte-identical to the pre-Q burn (it is idempotent — the
+    # pipeline's cues and the synced files are already canonical).
+    cues = [
+        (a, b, canonicalize_burmese_text(t))
+        for a, b, t in cues
+    ]
+    cues = [(a, b, t) for a, b, t in cues if t.strip()]
+    if not cues:
+        return None
+    raw_size = int(overlays.get("subtitles_font_size", 16))
+    font_px = file_font_px or subtitle_font_px(cw, ch, raw_size, sub_lines, layout)
+    if file_visuals is not None:
+        visuals = file_visuals
+    else:
+        st_key = str(
+            overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow"
+        ).lower()
+        preset = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
+        visuals = _png_subs.preset_visuals(preset, ch, font_px)
+    font_sel = file_family or overlays.get("subtitles_font") or overlays.get("sub_font")
+    font_path = subtitle_font_file(str(font_sel) if font_sel else None)
+    return {
+        "cues": cues,
+        "font_px": int(font_px),
+        "visuals": visuals,
+        "font_path": font_path,
+        "sub_lines": sub_lines,
+    }
+
+
 def apply_production_overlays(
     ffmpeg: str,
     input_video: Path,
@@ -2547,7 +2691,13 @@ def apply_production_overlays(
     subtitles_file = str(overlays.get("subtitles_file") or "").strip()
     subtitles_path = Path(subtitles_file) if subtitles_file else None
     watermark_mode = bool(overlays.get("watermark"))
-    if not boxes and not title_text and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()):
+    # Batch Q: subtitles burn as PNG overlays (png_subtitles), never
+    # libass — resolve the cue job up front so the no-op guard below
+    # still fires only when there is truly nothing to composite.
+    sub_job = _resolve_png_subtitle_job(
+        overlays, cw, ch, {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
+    )
+    if not boxes and not title_text and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()) and sub_job is None:
         return input_video
 
     cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_video)]
@@ -2675,81 +2825,44 @@ def apply_production_overlays(
         graph.append(f"{current}[etxt]overlay=x='{ox}+({pw}*{ex:.6f}-w/2)':y='{oy}+({ph}*{ey:.6f}-h/2)':eof_action=repeat[{out}]")
         current = f"[{out}]"
 
-    if subtitles_path and subtitles_path.is_file():
-        sub_esc = subtitles_path.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
-        fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
-        fonts_arg = ""
-        ass_fonts_dir = work_dir / "ass_fonts"
-        try:
-            staged_dir = stage_bundled_fonts(ass_fonts_dir)
-            if staged_dir is None:
-                raise RuntimeError("no bundled fonts staged")
-            fonts_dir_esc = staged_dir.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
-            fonts_arg = f":fontsdir='{fonts_dir_esc}'"
-        except Exception:
-            if fonts_dir.is_dir():
-                fonts_dir_esc = fonts_dir.as_posix().replace(":", r"\:").replace("'", r"\'")
-                fonts_arg = f":fontsdir='{fonts_dir_esc}'"
-
-        out = "vsub"
-        if subtitles_path.suffix.lower() == ".ass":
-            # For ASS subtitles, libass strictly follows the styles, resolution (PlayResX/Y),
-            # margins, and fonts embedded inside the ASS header.
-            graph.append(f"{current}subtitles='{sub_esc}'{fonts_arg}[{out}]")
-        else:
-            # Bind the chosen bundled Myanmar font family for accurate complex script text shaping
-            _, sub_font = resolve_subtitle_font(
-                str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+    if sub_job is not None:
+        # Batch Q: burn each cue as a Pillow+raqm PNG overlay in the
+        # same graph position the libass burn occupied (after blur /
+        # title / logo / extra text, before the watermark pattern).
+        # Placement: horizontally centred on the canvas; vertical
+        # position from subtitle_centre_px via _subtitle_block_top_px
+        # — the Batch P anchor, minus half the PNG's real height.
+        renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
+        lay_dict = {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
+        for cue_start, cue_end, cue_text in sub_job["cues"]:
+            rendered = renderer.render_text(
+                cue_text,
+                sub_job["sub_lines"],
+                sub_job["font_px"],
+                sub_job["font_path"],
+                sub_job["visuals"],
             )
-            sub_lines = int(overlays.get("sub_lines", 1))
-            raw_size = int(overlays.get("subtitles_font_size", 16))
-            # WrapStyle=2 is NO WRAPPING (strictly keeps 1 line). WrapStyle=0 is smart multi-line wrapping.
-            wrap_style = 2 if sub_lines == 1 else 0
-            # Batch P: the same height-fraction table as
-            # subtitle_font_px, expressed in libass's 288-tall script
-            # units for SRT (fraction × 288, ×1.25 for two lines) —
-            # replacing the orientation clamps that compressed the
-            # picker sizes on this fallback path too.
-            _frac288 = _subtitle_font_fraction(raw_size)
-            if sub_lines != 1:
-                _frac288 *= SUBTITLE_TWO_LINE_FONT_FACTOR
-            sub_size = max(4, int(round(288 * _frac288)))
-            # Canvas-normalized subtitle positioning matching Live Canvas Preview (sy=0.85 means 15% from bottom)
-            text_half_h = (sub_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
-            _centre_px = subtitle_centre_px(
-                cw, ch, {"pw": pw, "ph": ph, "ox": ox, "oy": oy},
-                overlays.get("sub_y"),
+            if rendered is None:
+                continue
+            png_path, _png_w, png_h = rendered
+            idx = input_index
+            cmd += ["-i", str(png_path)]
+            input_index += 1
+            top = _subtitle_block_top_px(
+                cw, ch, lay_dict,
+                sub_y=overlays.get("sub_y"),
+                subtitles_margin_v=overlays.get("subtitles_margin_v"),
+                boxes=boxes,
+                font_px=sub_job["font_px"],
+                sub_lines=sub_job["sub_lines"],
+                block_h=png_h,
             )
-            if _centre_px is not None:
-                # Batch P: picture-relative on letterboxed layouts,
-                # canvas-relative full-frame — same anchor as the
-                # ASS path via subtitle_centre_px.
-                pixels_from_bottom = max(10.0, ch - _centre_px - text_half_h)
-            elif "subtitles_margin_v" in overlays:
-                mv_val = float(overlays["subtitles_margin_v"])
-                pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
-            elif boxes:
-                b0 = boxes[0]
-                by = _clamp01(b0.get("y", 0.85))
-                pixels_from_bottom = max(10.0, (ch * (1.0 - by)) - text_half_h)
-            else:
-                pixels_from_bottom = max(14, int(round(ch * 0.12)))
-
-            # FFmpeg's subtitles filter (libass on SRT) uses a 288 reference scale for MarginV
-            sub_margin = max(4, min(280, int(round((pixels_from_bottom / max(1, ch)) * 288))))
-            st_key = str(overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow").lower()
-            st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
-            p_col = st["primary"]
-            o_col = st["outline_col"]
-            b_col = st["back_col"]
-            b_style = st["border_style"]
-            outl = st["outline"]
-            shad = st["shadow"]
+            out = f"vsub{idx}"
             graph.append(
-                f"{current}subtitles='{sub_esc}'{fonts_arg}:force_style='Fontname={sub_font},FontSize={sub_size},"
-                f"PrimaryColour={p_col},OutlineColour={o_col},BackColour={b_col},BorderStyle={b_style},Outline={outl},Shadow={shad},MarginV={sub_margin},MarginL=20,MarginR=20,Alignment=2,WrapStyle={wrap_style}'[{out}]"
+                f"{current}[{idx}:v]overlay=x='(W-w)/2':y={top}:"
+                f"eof_action=repeat:enable='between(t,{cue_start:.3f},{cue_end:.3f})'[{out}]"
             )
-        current = f"[{out}]"
+            current = f"[{out}]"
 
     if pattern_idx is not None:
         # Diagonal tiled pattern over the WHOLE picture area — centre and
@@ -2939,37 +3052,42 @@ def extract_preview_with_overlays(
         elif sub_lines == 1:
             sample = sample.replace("\n", " ").strip()
 
-        ass_temp = temp_dir / "preview_sample.ass"
+        # Batch Q: the sample subtitle is a Pillow+raqm PNG overlay
+        # (png_subtitles), exactly like the production burn — the
+        # preview frame shows the same shaping, size table and
+        # anchor the finished video will carry.
         _, sub_font = resolve_subtitle_font(
-            str(overlays.get("subtitles_font") or ensure_system_myanmar_fonts())
+            str(overlays.get("subtitles_font") or overlays.get("sub_font") or ensure_system_myanmar_fonts())
         )
-        write_synced_ass_file(
-            cues=[(0.0, 10.0, sample)],
-            ass_path=ass_temp,
-            cw=cw,
-            ch=ch,
-            font_name=sub_font,
-            raw_font_size=int(overlays.get("subtitles_font_size", 16)),
-            sub_style=str(overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow"),
-            sub_lines=sub_lines,
-            sub_y=overlays.get("sub_y"),
-            subtitles_margin_v=overlays.get("subtitles_margin_v"),
-            boxes=boxes,
-            layout=layout,
+        font_px = subtitle_font_px(
+            cw, ch, int(overlays.get("subtitles_font_size", 16)), sub_lines, layout
         )
-        sub_esc = ass_temp.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
-        fonts_dir = bundled_fonts_dir()
-        safe_fonts_dir = temp_dir / "fonts"
-        staged = stage_bundled_fonts(safe_fonts_dir)
-        active_fonts_dir = staged if staged is not None else fonts_dir
-        fonts_arg = ""
-        if active_fonts_dir.is_dir():
-            fonts_dir_esc = active_fonts_dir.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
-            fonts_arg = f":fontsdir='{fonts_dir_esc}'"
-
-        out = "vsub"
-        graph.append(f"{current}subtitles='{sub_esc}'{fonts_arg}[{out}]")
-        current = f"[{out}]"
+        st_key = str(
+            overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow"
+        ).lower()
+        preset = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
+        visuals = _png_subs.preset_visuals(preset, ch, font_px)
+        renderer = _png_subs.PngSubtitleRenderer(temp_dir / "subtitle_png_cache")
+        rendered = renderer.render_text(
+            canonicalize_burmese_text(sample), sub_lines, font_px,
+            subtitle_font_file(sub_font), visuals,
+        )
+        if rendered is not None:
+            png_path, _png_w, png_h = rendered
+            sub_idx = 2 if logo_idx is not None else 1
+            cmd_inputs += ["-i", str(png_path)]
+            top = _subtitle_block_top_px(
+                cw, ch, layout,
+                sub_y=overlays.get("sub_y"),
+                subtitles_margin_v=overlays.get("subtitles_margin_v"),
+                boxes=boxes,
+                font_px=font_px,
+                sub_lines=sub_lines,
+                block_h=png_h,
+            )
+            out = "vsub"
+            graph.append(f"{current}[{sub_idx}:v]overlay=x='(W-w)/2':y={top}[{out}]")
+            current = f"[{out}]"
 
     graph.append(f"{current}format=yuv420p[vout]")
 
@@ -2985,8 +3103,6 @@ def extract_preview_with_overlays(
         str(out_img),
     ]
     p = _run_media(cmd, timeout=PROBE_TIMEOUT_SECONDS, what="Preview extraction")
-    if ass_temp and ass_temp.is_file():
-        ass_temp.unlink(missing_ok=True)
     if p.returncode != 0 or not out_img.is_file():
         raise RuntimeError("Preview extraction failed: " + p.stderr[-1500:])
     return out_img
@@ -3706,6 +3822,14 @@ class EdgeSmartSync:
 
         if self.overlays.get("burn_subtitles"):
             self.overlays["subtitles_file"] = str(ass_file) if ass_file.is_file() else (str(srt_file) if srt_file.is_file() else None)
+            # Batch Q: the burn consumes the cue list directly (PNG
+            # overlays); the .ass/.srt files remain the downloadable
+            # side-files and the parse-back fallback for file-only
+            # callers of apply_production_overlays.
+            self.overlays["subtitle_cues"] = [
+                [float(c_st), float(c_en), c_txt]
+                for c_st, c_en, c_txt in all_sub_cues
+            ]
 
         if not self.render_final_video:
             self.log("✅ Audio + Smart Sync plan READY (final video render skipped).")
