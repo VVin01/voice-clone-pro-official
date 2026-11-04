@@ -196,6 +196,8 @@ def test_admin_form_has_maintenance_note_input():
 
     assert 'id="adm-set-maintenance-note"' in index_html
     assert 'data-i18n="settings_maintenance_note"' in index_html
+    assert 'data-i18n-ph="settings_maintenance_note_ph"' in index_html
+    assert i18n_js.count("settings_maintenance_note_ph:") == 2
     # Load + save wiring.
     assert "adm-set-maintenance-note" in app_js
     assert "maintenance_note" in app_js
