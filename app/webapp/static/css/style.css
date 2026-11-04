@@ -3183,3 +3183,64 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 #btn-sync-crop { flex: 0 0 auto; }
 #btn-sync-crop .chip-lbl { white-space: nowrap; }
 .recap-detail-toggle { flex: 1 1 auto; min-width: 0; }
+
+/* ── Batch AC: live jobs pill + sheet, prefs saved note ─────────── */
+.live-jobs-pill {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 86px; z-index: 900; display: flex; align-items: center; gap: 8px;
+    max-width: min(92vw, 430px); padding: 8px 14px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.35); cursor: pointer;
+    background: rgba(23, 32, 54, 0.92); color: #fff; font-size: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.live-jobs-pill-bar {
+    flex: 1 1 70px; height: 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.22); overflow: hidden;
+}
+.live-jobs-pill-fill {
+    display: block; height: 100%; width: 0%;
+    background: linear-gradient(90deg, #57c7ff, #ffd257);
+    border-radius: 999px; transition: width 0.6s ease;
+    animation: liveJobsPulse 1.6s ease-in-out infinite;
+}
+@keyframes liveJobsPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+.live-jobs-sheet {
+    position: fixed; inset: 0; z-index: 1200;
+    background: rgba(10, 14, 24, 0.55);
+    display: flex; align-items: flex-end; justify-content: center;
+}
+.live-jobs-sheet-card {
+    width: min(96vw, 480px); max-height: 72vh; overflow-y: auto;
+    background: #fff; color: #172036; border-radius: 18px 18px 0 0;
+    padding: 16px;
+}
+.live-jobs-sheet-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-weight: 700; margin-bottom: 10px;
+}
+.live-job-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 0; border-top: 1px solid #e6ebf2;
+}
+.live-job-row-main { flex: 1; min-width: 0; }
+.live-job-row-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-job-row-meta { font-size: 12px; opacity: 0.75; }
+.live-job-row-bar { height: 5px; border-radius: 999px; background: #e6ebf2; overflow: hidden; margin-top: 4px; }
+.live-job-row-fill { display: block; height: 100%; background: linear-gradient(90deg, #57c7ff, #ffd257); }
+.prefs-saved-note { font-size: 12px; opacity: 0.8; margin: 4px 0 8px; }
+.studio-inline-status {
+    display: flex; align-items: center; gap: 8px; margin-top: 10px;
+    font-size: 12px; opacity: 0.9;
+}
+.submit-confirm {
+    position: fixed; inset: 0; z-index: 1250;
+    background: rgba(10, 14, 24, 0.55);
+    display: flex; align-items: flex-end; justify-content: center;
+}
+.submit-confirm-card {
+    width: min(96vw, 480px); background: #fff; color: #172036;
+    border-radius: 18px 18px 0 0; padding: 20px 16px; text-align: center;
+}
+.submit-confirm-icon { font-size: 34px; }
+.submit-confirm-hint { font-size: 12px; opacity: 0.8; margin-top: 10px; }
+.submit-confirm-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }

@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
-from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, RecapCreditLedgerEvent, PaymentRequest, AuditLog, utc_now
+from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, RecapCreditLedgerEvent, PaymentRequest, AuditLog, UserPreference, utc_now
 from app.services.i18n import t
 from app.services.models import get_authorized_model, get_available_models_for_user, is_displayable_model
 from app.services.myanmar_text import convert_zawgyi_to_unicode
@@ -2706,6 +2706,451 @@ async def get_job_status(
         "output_size_bytes": _voice_size,
         "telegram_sendable": _voice_sendable,
     }
+
+
+# ── Batch AC: account-bound preferences ─────────────────────────────────
+# The user's recap + voice PREFERENCES live on the server, bound to
+# the account, so they survive a new device / cleared WebView storage
+# (owner pain point: "my settings keep disappearing"). localStorage
+# is only a write-through cache on the client; the server wins.
+#
+# The field list below is the COMPLETE stored set. Deliberately NOT
+# preferences (Batch AA semantics, respected before AA merges):
+# per-source blur-box geometry — blur_y / blur_h for a specific
+# source and the blur_box_explicit marker — stays per-source and is
+# dropped by the sanitizer if a client sends it.
+USER_PREF_ENUMS: Dict[str, List[str]] = {
+    "voice_speed": ["slow", "normal", "fast"],
+    "recapRatio": ["9:16", "16:9", "1:1", "Original"],
+    "recapRatioFill": ["blur", "crop", "black"],
+    "recapSpeed": ["+0%", "+8%", "+12%", "+18%", "+22%"],
+    "recapStoryStyle": ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
+    "recapSubStyle": ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"],
+    "recapSubFont": ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
+    "recapLogoPos": ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
+    "recapSourceLanguage": ["auto", "en", "zh", "ko", "th", "ja"],
+    "recapRenderQuality": ["standard", "high", "max"],
+    "recapTtsEngine": ["voxcpm", "gemini"],
+}
+USER_PREF_BOOLS: List[str] = [
+    "recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs",
+    "recapLogo", "recapSplitEnabled",
+]
+USER_PREF_INTS: Dict[str, tuple] = {
+    "recapCropTop": (0, 35), "recapCropBottom": (0, 35),
+    "recapCropLeft": (0, 35), "recapCropRight": (0, 35),
+    "recapFontSize": (12, 30), "recapLines": (1, 2),
+    "recapSplitMinutes": (1, 10), "recapSubY": (0, 100),
+    "recapBlurStrength": (4, 40),
+}
+# Free-string preferences, length-capped; voice slugs are additionally
+# checked against the curated registry when one matches that role.
+USER_PREF_STRINGS: Dict[str, int] = {
+    "voice_persona": 50, "recapVoice": 50, "recapGeminiVoice": 100,
+}
+USER_PREF_FLOATS: Dict[str, tuple] = {"recapZoom": (1.0, 1.2)}
+
+DEFAULT_USER_PREFS: Dict[str, Any] = {
+    "voice_persona": "komin",
+    "voice_speed": "normal",
+    "recapRatio": "9:16",
+    "recapRatioFill": "blur",
+    "recapSpeed": "+12%",
+    "recapStoryStyle": "viral",
+    "recapSubStyle": "yellow",
+    "recapSubFont": "padauk",
+    "recapLogoPos": "top-right",
+    "recapSourceLanguage": "auto",
+    "recapRenderQuality": "standard",
+    "recapTtsEngine": "voxcpm",
+    "recapSyncCrop": True,
+    "recapMirror": True,
+    "recapBurnSubs": True,
+    "recapBlurSubs": True,
+    "recapLogo": True,
+    "recapSplitEnabled": False,
+    "recapCropTop": 0,
+    "recapCropBottom": 0,
+    "recapCropLeft": 0,
+    "recapCropRight": 0,
+    "recapFontSize": 16,
+    "recapLines": 1,
+    "recapSplitMinutes": 3,
+    "recapSubY": 85,
+    "recapBlurStrength": 18,
+    "recapZoom": 1.06,
+    "recapVoice": "komin",
+    "recapGeminiVoice": "",
+}
+
+
+def _sanitize_user_prefs(raw) -> Dict[str, Any]:
+    """Keep only known preference fields with valid values.
+
+    Unknown keys (including per-source blur geometry: recapBlurY,
+    recapBlurH, blur_box_explicit) are dropped, never stored. Legacy
+    subtitle-font aliases migrate exactly like the client does.
+    """
+    out: Dict[str, Any] = {}
+    if not isinstance(raw, dict):
+        return out
+    raw = dict(raw)
+    _legacy_fonts = {"default": "padauk", "serif": "noto_serif"}
+    if raw.get("recapSubFont") in _legacy_fonts:
+        raw["recapSubFont"] = _legacy_fonts[raw["recapSubFont"]]
+    for key, allowed in USER_PREF_ENUMS.items():
+        if raw.get(key) in allowed:
+            out[key] = raw[key]
+    for key in USER_PREF_BOOLS:
+        if isinstance(raw.get(key), bool):
+            out[key] = raw[key]
+    for key, (lo, hi) in USER_PREF_INTS.items():
+        v = raw.get(key)
+        if isinstance(v, bool):
+            continue
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            continue
+        if lo <= iv <= hi:
+            out[key] = iv
+    for key, (lo, hi) in USER_PREF_FLOATS.items():
+        v = raw.get(key)
+        if isinstance(v, bool):
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if lo <= fv <= hi:
+            out[key] = fv
+    for key, max_len in USER_PREF_STRINGS.items():
+        v = raw.get(key)
+        if isinstance(v, str) and len(v) <= max_len:
+            out[key] = v
+    # Voice slugs must be real curated personas when they name a voice.
+    for key in ("voice_persona", "recapVoice"):
+        if key in out and out[key] and get_curated_voice(out[key]) is None:
+            del out[key]
+    return out
+
+
+def _effective_user_prefs(stored) -> Dict[str, Any]:
+    """Server-wins merge: today's defaults under the stored values."""
+    merged = dict(DEFAULT_USER_PREFS)
+    merged.update(_sanitize_user_prefs(stored))
+    return merged
+
+
+class UserPreferencesPayload(BaseModel):
+    preferences: Dict[str, Any] = Field(default_factory=dict)
+
+
+@api_router.get("/user/preferences")
+async def get_user_preferences(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """The calling user's own account-bound preferences.
+
+    A brand-new user (no row yet) gets today's defaults with
+    ``is_new: true`` — nothing is written on a read.
+    """
+    row = await db.get(UserPreference, user.id)
+    stored = None
+    if row is not None and row.prefs_json:
+        try:
+            stored = json.loads(row.prefs_json)
+        except (TypeError, ValueError):
+            stored = None
+    return {
+        "success": True,
+        "is_new": row is None,
+        "preferences": _effective_user_prefs(stored),
+    }
+
+
+@api_router.put("/user/preferences")
+async def put_user_preferences(
+    payload: UserPreferencesPayload,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Save a partial preference update to the caller's OWN record.
+
+    The update merges over the stored record (itself merged over the
+    defaults), so a client may send only the fields that changed.
+    """
+    clean = _sanitize_user_prefs(payload.preferences)
+    row = await db.get(UserPreference, user.id)
+    stored = None
+    if row is not None and row.prefs_json:
+        try:
+            stored = json.loads(row.prefs_json)
+        except (TypeError, ValueError):
+            stored = None
+    merged_stored = _sanitize_user_prefs(stored)
+    merged_stored.update(clean)
+    if row is None:
+        row = UserPreference(user_id=user.id, prefs_json=json.dumps(merged_stored))
+        db.add(row)
+    else:
+        row.prefs_json = json.dumps(merged_stored)
+        row.updated_at = utc_now()
+    await db.commit()
+    return {
+        "success": True,
+        "preferences": _effective_user_prefs(merged_stored),
+    }
+
+
+# ── Batch AC: bulk live-jobs layer ──────────────────────────────────────
+# ONE response carrying ALL the calling user's non-terminal voice +
+# recap jobs, plus jobs that reached a terminal state within the last
+# LIVE_JOBS_RECENT_TERMINAL_MINUTES minutes (so a client that was
+# tracking a card can flip it). Strictly the caller's own jobs; the
+# query is bounded.
+LIVE_JOBS_RECENT_TERMINAL_MINUTES = 10
+LIVE_JOBS_LIMIT = 20
+_LIVE_TERMINAL_STATUSES = (
+    JobStatus.SUCCESS.value,
+    JobStatus.FAILED.value,
+    JobStatus.CANCELLED.value,
+)
+_LIVE_ACTIVE_STATUSES = (
+    JobStatus.PENDING.value,
+    JobStatus.QUEUED.value,
+    JobStatus.RUNNING.value,
+)
+
+
+def _live_stage_from_step(step, status) -> tuple:
+    """Parse a recap "x/y" step into (stage_index, stage_total)."""
+    m = re.match(r"\s*(\d+)\s*/\s*(\d+)\s*$", str(step or ""))
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    if status in _LIVE_TERMINAL_STATUSES:
+        return 1, 1
+    return 0, 4
+
+
+def _live_job_payload(job, registry_entry=None, now=None) -> Dict[str, Any]:
+    """Serialize one Job row (+ live recap registry entry) for the
+    bulk live-jobs response. Pure apart from the registry read the
+    caller passes in, so it is unit-testable without a request."""
+    now = now or datetime.now(timezone.utc)
+    is_recap = (
+        job.job_type == JobType.RECAP.value
+        or str(job.id).startswith("rc_")
+        or job.engine == "recap"
+    )
+    kind = "recap" if is_recap else "voice"
+    status = job.status
+    progress_percent = 100 if status == JobStatus.SUCCESS.value else 0
+    progress_stage = None
+    progress_label = ""
+    queue_position = None
+    stage_index, stage_total = (1, 1) if status in _LIVE_TERMINAL_STATUSES else (0, 1)
+
+    if is_recap and registry_entry is not None:
+        status = str(registry_entry.get("status") or status)
+        progress_percent = int(registry_entry.get("progress_percent") or 0)
+        progress_stage = registry_entry.get("progress_stage")
+        progress_label = str(registry_entry.get("progress_label") or "")
+        stage_index, stage_total = _live_stage_from_step(
+            registry_entry.get("progress_step"), status
+        )
+        if status in ("QUEUED", "RUNNING"):
+            queue_position = _recap_registry_queue_position(job.id, registry_entry)
+    elif is_recap:
+        if status == JobStatus.SUCCESS.value:
+            progress_percent, stage_index, stage_total = 100, 4, 4
+        elif status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+            progress_percent, stage_index, stage_total = 15, 1, 4
+    else:
+        if status == JobStatus.QUEUED.value:
+            progress_percent = 45
+        elif status == JobStatus.RUNNING.value:
+            progress_percent = 80
+        elif status == JobStatus.SUCCESS.value:
+            progress_percent = 100
+
+    created = job.created_at
+    finished = job.finished_at
+    end = finished or now
+    elapsed = None
+    if created is not None:
+        try:
+            elapsed = max(0, int((end - created).total_seconds()))
+        except Exception:
+            elapsed = None
+    raw_title = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
+    title = (raw_title or "")[:70]
+    return {
+        "id": job.id,
+        "kind": kind,
+        "status": status,
+        "stage_index": stage_index,
+        "stage_total": stage_total,
+        "progress_percent": progress_percent,
+        "progress_stage": progress_stage,
+        "progress_label": progress_label,
+        "queue_position": queue_position,
+        "elapsed_seconds": elapsed,
+        "title": title,
+        "created_at": created.isoformat() if created else None,
+        "finished_at": finished.isoformat() if finished else None,
+    }
+
+
+@api_router.get("/jobs/live")
+async def get_live_jobs(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Bulk live state for ALL the calling user's jobs (Batch AC)."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=LIVE_JOBS_RECENT_TERMINAL_MINUTES)
+    stmt = (
+        select(Job)
+        .where(
+            Job.user_id == user.id,
+            or_(
+                Job.status.in_(_LIVE_ACTIVE_STATUSES),
+                Job.finished_at >= cutoff,
+                # Rows whose finished_at was never stamped still flip
+                # their tracked card via the created_at window.
+                (Job.status.in_(_LIVE_TERMINAL_STATUSES) & (Job.created_at >= cutoff)),
+            ),
+        )
+        .order_by(Job.created_at.desc())
+        .limit(LIVE_JOBS_LIMIT)
+    )
+    res = await db.execute(stmt)
+    jobs = res.scalars().all()
+
+    seen_ids = {j.id for j in jobs}
+    out = []
+    for job in jobs:
+        entry = RECAP_JOBS_REGISTRY.get(job.id) if (
+            job.job_type == JobType.RECAP.value or str(job.id).startswith("rc_")
+        ) else None
+        payload = _live_job_payload(job, entry, now=now)
+        # Voice queue position: the shared truthful counter (older
+        # active jobs ahead of this one, across kinds — the voice
+        # concurrency gate counts the same pool).
+        if payload["kind"] == "voice" and payload["status"] == JobStatus.QUEUED.value:
+            try:
+                from app.services.queue import get_queue_position
+
+                payload["queue_position"] = await get_queue_position(db, job.id)
+            except Exception:
+                payload["queue_position"] = None
+        out.append(payload)
+
+    # Registry-only recap jobs (their DB insert failed at submit):
+    # still the user's live jobs, still tracked by the client.
+    for job_id, entry in RECAP_JOBS_REGISTRY.items():
+        if job_id in seen_ids or entry.get("user_id") != user.id:
+            continue
+        e_status = str(entry.get("status") or "")
+        e_created = entry.get("created_at")
+        recent_terminal = False
+        if e_status in _LIVE_TERMINAL_STATUSES and isinstance(e_created, (int, float)):
+            recent_terminal = (time.time() - float(e_created)) <= LIVE_JOBS_RECENT_TERMINAL_MINUTES * 60
+        if e_status not in _LIVE_ACTIVE_STATUSES and e_status != "SCRIPT_READY" and not recent_terminal:
+            continue
+        stage_index, stage_total = _live_stage_from_step(entry.get("progress_step"), e_status)
+        out.append({
+            "id": job_id,
+            "kind": "recap",
+            "status": e_status or "PENDING",
+            "stage_index": stage_index,
+            "stage_total": stage_total,
+            "progress_percent": int(entry.get("progress_percent") or 0),
+            "progress_stage": entry.get("progress_stage"),
+            "progress_label": str(entry.get("progress_label") or ""),
+            "queue_position": (
+                _recap_registry_queue_position(job_id, entry)
+                if e_status in ("QUEUED", "RUNNING") else None
+            ),
+            "elapsed_seconds": (
+                max(0, int(time.time() - float(e_created)))
+                if isinstance(e_created, (int, float)) else None
+            ),
+            "title": str(entry.get("title") or "")[:70],
+            "created_at": None,
+            "finished_at": None,
+        })
+        if len(out) >= LIVE_JOBS_LIMIT:
+            break
+
+    active_count = sum(
+        1 for p in out
+        if p["status"] in _LIVE_ACTIVE_STATUSES or p["status"] == "SCRIPT_READY"
+    )
+    return {
+        "success": True,
+        "jobs": out,
+        "active_count": active_count,
+        "recent_terminal_minutes": LIVE_JOBS_RECENT_TERMINAL_MINUTES,
+        "server_time": now.isoformat(),
+    }
+
+
+@api_router.post("/jobs/{job_id}/cancel")
+async def cancel_voice_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """User cancel for their OWN queued / running VOICE job (Batch AC).
+
+    Recap jobs keep their dedicated endpoint (/recap/{id}/cancel with
+    its credit machinery); anything that is not a voice row is a 404
+    here, with the same owner-only discipline as every other job
+    endpoint. Refund semantics mirror the admin console's voice
+    branch exactly: flip to CANCELLED, then the idempotent ledger
+    refund (a job the worker already charged gets its seconds back;
+    an uncharged job refunds nothing).
+    """
+    job = await db.get(Job, str(job_id))
+    if not job or job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if (
+        job.job_type == JobType.RECAP.value
+        or job.id.startswith("rc_")
+        or job.engine == "recap"
+    ):
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+        raise HTTPException(
+            status_code=409,
+            detail="လုပ်ဆောင်နေဆဲ အသံ အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
+        )
+    job.status = JobStatus.CANCELLED.value
+    job.finished_at = utc_now()
+    job.error_message = "Cancelled by user via Mini App"
+    await db.commit()
+
+    refund_info: Dict[str, Any] = {"refunded": False}
+    try:
+        from app.services.ledger import refund_job_seconds
+
+        before = (await db.execute(
+            select(MinuteLedgerEvent).where(
+                MinuteLedgerEvent.user_id == job.user_id,
+                MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
+            )
+        )).first()
+        await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: voice job cancelled by user")
+        await db.commit()
+        if not before:
+            refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
+    except Exception as exc:
+        logger.warning(f"User cancel refund failed for voice job {job_id}: {exc}")
+        refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
+    return {"success": True, "status": "CANCELLED", "refund": refund_info}
 
 
 @api_router.get("/audio/stream/{job_id}")

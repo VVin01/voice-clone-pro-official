@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r54">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r55">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -378,8 +378,16 @@
                     </div>
                 </div>
 
+                <!-- Batch AC: slim inline status line — the studio
+                     survives submit; details open by choice. -->
+                <div class="studio-inline-status hidden" id="voice-inline-status">
+                    <span id="voice-inline-status-text"></span>
+                    <button type="button" class="mini-chip" onclick="openCurrentVoiceDetail()"><span data-i18n="studio_inline_view">အသေးစိတ် ကြည့်မည်</span></button>
+                </div>
+
                 <!-- Generation Progress & Player Section -->
                 <div class="card glass progress-card hidden" id="voice-progress-box">
+                    <button type="button" class="btn secondary-btn mb-2" onclick="backToStudio('voice')"><span data-i18n="studio_back_btn">← စတူဒီယိုသို့ ပြန်မည်</span></button>
                     <div class="progress-status-header">
                         <span class="spinner-wave" id="voice-spinner">⚡</span>
                         <span class="status-msg" id="voice-status-msg" data-i18n="preparing_msg">ပြင်ဆင်နေသည်…</span>
@@ -1046,6 +1054,7 @@
                         </button>
 
                         <div class="advanced-accordion-body hidden" id="recap-advanced-body">
+                            <p class="prefs-saved-note hidden" id="prefs-saved-note"></p>
                     <section class="recap-adv-section" id="recap-adv-section-frame">
                             <!-- 3. Video Transformations & Custom Video Crop -->
                             <div class="recap-adv-group hidden" id="recap-preview-transform-group">
@@ -1175,8 +1184,16 @@
 
                     <!-- ════ ⚙️ ADVANCED STUDIO SETTINGS ACCORDION ════ -->
 
+                    <!-- Batch AC: slim inline status line — the studio
+                         survives submit; details open by choice. -->
+                    <div class="studio-inline-status hidden" id="recap-inline-status">
+                        <span id="recap-inline-status-text"></span>
+                        <button type="button" class="mini-chip" onclick="openCurrentRecapDetail()"><span data-i18n="studio_inline_view">အသေးစိတ် ကြည့်မည်</span></button>
+                    </div>
+
                     <!-- ════ LIVE PROGRESS CARD ════ -->
                     <div class="card glass progress-card hidden mt-3" id="recap-progress-box">
+                        <button type="button" class="btn secondary-btn mb-2" onclick="backToStudio('recap')"><span data-i18n="studio_back_btn">← စတူဒီယိုသို့ ပြန်မည်</span></button>
                         <div class="progress-status-header">
                             <span class="spinner-wave" id="recap-spinner">⚡</span>
                             <span class="status-msg" id="recap-status-msg" data-i18n="recap_processing_msg">Recap ဖန်တီးနေသည်…</span>
@@ -2246,6 +2263,45 @@
             </button>
         </div>
 
+        <!-- ════ BATCH AC: LIVE JOBS PILL + SHEET ════
+             The pill sits above the tab bar whenever at least one
+             job is active, on every tab. Tapping it opens the sheet
+             listing all active jobs with per-job Cancel. -->
+        <button type="button" class="live-jobs-pill hidden" id="live-jobs-pill" onclick="openLiveJobsSheet()">
+            <span class="live-jobs-pill-count" id="live-jobs-pill-count"></span>
+            <span class="live-jobs-pill-stage" id="live-jobs-pill-stage"></span>
+            <span class="live-jobs-pill-bar"><span class="live-jobs-pill-fill" id="live-jobs-pill-fill"></span></span>
+        </button>
+        <!-- ════ BATCH AC: SUBMIT CONFIRMATION HAND-OFF ════
+             Shown on a successful submit while the studio stays
+             preserved underneath. Exactly two actions: watch the
+             job, or return to the untouched studio. -->
+        <div class="submit-confirm hidden" id="submit-confirm">
+            <div class="submit-confirm-card">
+                <div class="submit-confirm-icon">✅</div>
+                <h3 data-i18n="confirm_title">✅ အလုပ် စတင်ပါပြီ</h3>
+                <p id="submit-confirm-cost"></p>
+                <div class="live-job-row-main">
+                    <div class="live-job-row-meta" id="submit-confirm-stage"></div>
+                    <div class="live-job-row-bar"><span class="live-job-row-fill" id="submit-confirm-fill" style="width:4%"></span></div>
+                </div>
+                <p class="submit-confirm-hint" data-i18n="confirm_pill_hint">💡 ဒီအလုပ်ကို အောက်က အလုပ်အလုံး (Jobs pill) ကနေလည်း အချိန်မရွေး လိုက်ကြည့်နိုင်ပါတယ်။</p>
+                <div class="submit-confirm-actions">
+                    <button type="button" class="btn gold-gradient-btn" id="submit-confirm-watch" onclick="submitConfirmWatch()"><span data-i18n="confirm_watch_btn">👀 အလုပ်ကို ကြည့်မည်</span></button>
+                    <button type="button" class="btn secondary-btn" id="submit-confirm-back" onclick="submitConfirmBack()"><span data-i18n="studio_back_btn">← စတူဒီယိုသို့ ပြန်မည်</span></button>
+                </div>
+            </div>
+        </div>
+        <div class="live-jobs-sheet hidden" id="live-jobs-sheet">
+            <div class="live-jobs-sheet-card">
+                <div class="live-jobs-sheet-head">
+                    <span data-i18n="live_jobs_title">လုပ်ဆောင်နေသော အလုပ်များ</span>
+                    <button type="button" class="modal-close" onclick="closeLiveJobsSheet()">✕</button>
+                </div>
+                <div id="live-jobs-sheet-list"></div>
+            </div>
+        </div>
+
         <!-- ════ BOTTOM LUXURY FLOATING DOCK ════ -->
         <div class="nav-scrim" aria-hidden="true"></div>
         <nav class="bottom-nav">
@@ -2343,7 +2399,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r54"></script>
-    <script src="/static/js/app.js?v=20261104_r54"></script>
+    <script src="/static/js/i18n.js?v=20261104_r55"></script>
+    <script src="/static/js/app.js?v=20261104_r55"></script>
 </body>
 </html>
