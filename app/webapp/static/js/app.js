@@ -371,6 +371,16 @@ const state = {
     recapSubFont: "padauk",
     recapFontSize: 16,
     recapLines: 1,
+    // Batch AA: true once the user DELIBERATELY sets the blur box
+    // (Blur Y/H sliders, box drag, resize handles) for the current
+    // source. Rides the submit payload as blur_box_explicit: an
+    // explicit box is authoritative at render. Reset by
+    // resetBlurBoxForNewSource() whenever a NEW source loads.
+    recapBlurBoxTouched: false,
+    // Batch AA: identity of the last successfully loaded source
+    // ("url:<url>" / "file:<server path>") — the new-source reset
+    // fires only when a success event brings a DIFFERENT source.
+    recapLoadedSourceKey: null,
     recapSplitMinutes: 3,
     recapSourceLanguage: "auto",
     recapRenderQuality: "standard",
@@ -3900,6 +3910,14 @@ function setupRecapVisualEditor() {
             state.recapSourceWidth = data.width;
             state.recapSourceHeight = data.height;
         }
+        // Batch AA: an upload success is a NEW source (every upload
+        // gets a fresh server path) — reset the blur box / subtitle
+        // Y to the tight defaults for this picture.
+        const _aaUploadKey = "file:" + (data.local_path || "");
+        if (state.recapLoadedSourceKey !== _aaUploadKey) {
+            state.recapLoadedSourceKey = _aaUploadKey;
+            resetBlurBoxForNewSource();
+        }
         if (data.thumbnail) {
             // /api/recap/frame needs the auth header: fetch it as a
             // blob instead of assigning the raw URL to an <img>.
@@ -4227,6 +4245,47 @@ function setupRecapVisualEditor() {
         return sy;
     }
 
+    // Batch AA: the blur box is drawn on the PICTURE, exactly like
+    // the subtitle (recapter standard) — blur_y is the box centre as
+    // a fraction of the PICTURE height and blur_h its height as a
+    // fraction of the picture height, end-to-end (sliders → payload
+    // → engine; core.user_blur_box_to_canvas_box converts with this
+    // same layout math at render). Returns the box geometry as
+    // fractions of the CANVAS height for painting: centre =
+    // oy + blur_y × ph, height = blur_h × ph on letterboxed layouts;
+    // identity on full-frame layouts. Width stays 92% centred (CSS).
+    function blurBoxCanvasGeom(yPercent, hPercent) {
+        const r = recapPictureRect();
+        const y = Math.max(0, Math.min(100, yPercent)) / 100.0;
+        const h = Math.max(0, Math.min(100, hPercent)) / 100.0;
+        if ((r.oy + r.ph) < 1 - 0.002) {
+            return { centre: r.oy + y * r.ph, height: h * r.ph };
+        }
+        return { centre: y, height: h };
+    }
+
+    // Batch AA: a NEW source starts from the tight defaults — the
+    // previous video's blur box / subtitle position must not ride
+    // onto a different picture. Resets the sliders, the state, the
+    // persisted snapshot and the explicit-box marker, and repaints.
+    // History re-run prefill does NOT go through here (it restores a
+    // job's own settings on purpose), and a page reload restoring
+    // the same session's snapshot is untouched: this is called only
+    // from the new-source success hooks (Analyze success for a
+    // different URL, upload success for a new file).
+    function resetBlurBoxForNewSource() {
+        state.recapBlurY = 85;
+        state.recapBlurH = 7;
+        state.recapSubY = 85;
+        state.recapBlurBoxTouched = false;
+        if (sliderBlurY) sliderBlurY.value = 85;
+        if (sliderBlurH) sliderBlurH.value = 7;
+        if (sliderSubY) sliderSubY.value = 85;
+        syncBlurBoxVisual();
+        syncSubBoxVisual();
+        saveRecapSettings();
+    }
+
     // Picker size → fraction of canvas height; mirrors
     // SUBTITLE_FONT_HEIGHT_FRACTIONS in core.py (×1.25 two-line).
     function subtitleFontFraction(sizePt, lines) {
@@ -4265,9 +4324,15 @@ function setupRecapVisualEditor() {
         const h = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
         if (valBlurY) valBlurY.innerText = `${Math.round(y)}%`;
         if (valBlurH) valBlurH.innerText = `${Math.round(h)}%`;
-        // Anchored at top: y% with translateY(-50%) places blur center exactly at y% (1:1 with FFmpeg y_center)
-        previewBlur.style.top = `${y}%`;
-        previewBlur.style.height = `${h}%`;
+        // Batch AA: the box is painted PICTURE-relative (Batch P
+        // machinery): with translateY(-50%) the centre lands at
+        // oy + blur_y × ph of the canvas and the height is
+        // blur_h × ph — the same conversion the render applies
+        // (core.user_blur_box_to_canvas_box), so the drawn box is
+        // the rendered box.
+        const geom = blurBoxCanvasGeom(y, h);
+        previewBlur.style.top = `${(geom.centre * 100).toFixed(3)}%`;
+        previewBlur.style.height = `${(geom.height * 100).toFixed(3)}%`;
         previewBlur.style.bottom = "auto";
         fitBlurPlateToCaption();
     }
@@ -4280,8 +4345,16 @@ function setupRecapVisualEditor() {
     // and bottom at 16:9 / 1:1 / Original, 4.8px at 9:16). Whenever
     // the caption overlaps the plate, the plate grows — preview only;
     // the blur_h % sent to the render is untouched — until it fully
-    // contains the caption (text height + breathing room + twice the
-    // centre offset, since the plate stays centred on its anchor).
+    // contains the caption (text height + breathing room).
+    // Batch AA: the old growth term added TWICE the centre offset
+    // between caption and plate on top, uncapped — a caption sitting
+    // near the plate's edge inflated the plate far beyond anything
+    // the render would draw. The growth is now the caption's real
+    // need (text height + 8px padding) with an absolute ceiling of
+    // 25% of the canvas height — above the largest legitimate plate
+    // (two-line caption at the largest font ≈ 17–20% of canvas; the
+    // engine's own plate clamp is 50%, typical plates 7–17%) and
+    // far below the runaway values the delta term could reach.
     // A caption dragged fully away from the band leaves the plate at
     // its slider height.
     function fitBlurPlateToCaption() {
@@ -4304,15 +4377,19 @@ function setupRecapVisualEditor() {
         // (picture-relative on letterboxed layouts), exactly like
         // the render's subtitle_plate_box.
         previewPlate.style.top = `${(subtitleAnchorCanvasFrac(plateY) * 100).toFixed(3)}%`;
-        previewPlate.style.height = `${plateH}%`;
+        // Batch AA: the plate's floor is the blur height converted
+        // to canvas terms with the same picture-relative math.
+        previewPlate.style.height = `${(blurBoxCanvasGeom(plateY, plateH).height * 100).toFixed(3)}%`;
         previewPlate.style.bottom = "auto";
         const plate = previewPlate.getBoundingClientRect();
         const text = textEl.getBoundingClientRect();
         if (!plate.height || !text.height) return;
         const overlaps = text.bottom > plate.top && text.top < plate.bottom;
         if (!overlaps) return;
-        const centreDelta = Math.abs((text.top + text.bottom) / 2 - (plate.top + plate.bottom) / 2);
-        const neededPx = text.height + 8 + 2 * centreDelta;
+        // Batch AA: growth = the caption's real need only, capped
+        // at PLATE_MAX_HEIGHT_FRAC of the canvas (see the Q1 note).
+        const PLATE_MAX_HEIGHT_FRAC = 0.25;
+        const neededPx = Math.min(text.height + 8, canvasH * PLATE_MAX_HEIGHT_FRAC);
         if (plate.height < neededPx) {
             previewPlate.style.height = `${(neededPx / canvasH) * 100}%`;
         }
@@ -4348,12 +4425,16 @@ function setupRecapVisualEditor() {
 
     if (sliderBlurY && previewBlur && valBlurY) {
         sliderBlurY.addEventListener("input", () => {
+            // Batch AA: a deliberate slider set marks the box
+            // explicit — it will rule the render's source band.
+            state.recapBlurBoxTouched = true;
             syncBlurBoxVisual();
         });
     }
 
     if (sliderBlurH && previewBlur && valBlurH) {
         sliderBlurH.addEventListener("input", () => {
+            state.recapBlurBoxTouched = true;
             syncBlurBoxVisual();
         });
     }
@@ -4468,9 +4549,18 @@ function setupRecapVisualEditor() {
 
     // Attach dragging to Blur Box
     enableVerticalDrag(previewBlur, (y) => {
+        // Batch AA: dragging the box is a deliberate set.
+        state.recapBlurBoxTouched = true;
         if (sliderBlurY) sliderBlurY.value = y;
         syncBlurBoxVisual();
-    }, () => sliderBlurY ? parseFloat(sliderBlurY.value) : 85);
+    }, () => sliderBlurY ? parseFloat(sliderBlurY.value) : 85, () => {
+        // Batch AA: mirror Batch P's subtitle drag — on letterboxed
+        // layouts the box's canvas position moves ph× slower than
+        // blur_y (picture-relative anchor), so scale the drag delta
+        // by 1/ph and the box follows the finger 1:1.
+        const r = recapPictureRect();
+        return ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
+    });
 
     // Attach dragging to Subtitle Box
     enableVerticalDrag(previewSub, (y) => {
@@ -4512,7 +4602,14 @@ function setupRecapVisualEditor() {
             // Dragging bottom handle down (y > startY) expands height; dragging up shrinks height
             const deltaPx = isTop ? (startY - y) : (y - startY);
             const deltaPct = (deltaPx / canvasH) * 100;
-            const newH = Math.max(3, Math.min(22, Math.round(startH + deltaPct)));
+            // Batch AA: blur_h is a % of the PICTURE height, so a
+            // canvas-% finger delta converts by 1/ph on letterboxed
+            // layouts (same conversion as the box drag above).
+            const r = recapPictureRect();
+            const deltaScale = ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
+            const newH = Math.max(3, Math.min(22, Math.round(startH + deltaPct * deltaScale)));
+            // Batch AA: resizing is a deliberate set.
+            state.recapBlurBoxTouched = true;
             if (sliderBlurH) sliderBlurH.value = newH;
             syncBlurBoxVisual();
         }
@@ -5535,6 +5632,15 @@ function setupRecapVisualEditor() {
 
                 state.uploadedVideoPath = null;
                 state.recapUploadPending = false;
+                // Batch AA: a successful Check for a NEW url is a
+                // new source — reset the blur box / subtitle Y to
+                // the tight defaults (re-checking the SAME url keeps
+                // the user's box).
+                const _aaSourceKey = "url:" + (data.url || url);
+                if (state.recapLoadedSourceKey !== _aaSourceKey) {
+                    state.recapLoadedSourceKey = _aaSourceKey;
+                    resetBlurBoxForNewSource();
+                }
                 // R40 item 9: remember the VERIFIED source URL so the
                 // canvas can pull real frames from /recap/preview-frame
                 // at the seek position. Unverified payloads get none —
@@ -5712,7 +5818,7 @@ function setupRecapVisualEditor() {
         recapRenderQuality: ["standard", "high", "max"],
         recapTtsEngine: ["voxcpm", "gemini"],
     };
-    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapLogo"];
+    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapBlurBoxTouched"];
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
@@ -5892,6 +5998,11 @@ function setupRecapVisualEditor() {
             recapFontSize: cfg.sub_font_size, recapLines: cfg.sub_lines,
             recapSplitMinutes: cfg.split_minutes,
             recapBlurY: cfg.blur_y, recapBlurH: cfg.blur_h, recapSubY: cfg.sub_y,
+            // Batch AA: a job whose blur box was explicit re-runs
+            // with an explicit box — authoritativeness is preserved
+            // through the prefill (pre-AA configs have no marker and
+            // stay on the legacy path).
+            recapBlurBoxTouched: cfg.blur_box_explicit === true,
             recapBlurStrength: cfg.blur_strength,
             recapZoom: cfg.zoom_factor, recapVoice: cfg.voice_slug,
             recapGeminiVoice: cfg.gemini_voice || "",
@@ -5921,6 +6032,11 @@ function setupRecapVisualEditor() {
             // picks a source again (the toast explains prefill).
             state.uploadedVideoPath = null;
         }
+        // Batch AA: the prefilled source IS the loaded source — a
+        // later Analyze of THIS url must not reset the prefilled
+        // box; only a different source does.
+        if (/^https?:\/\//i.test(srcUrl)) state.recapLoadedSourceKey = "url:" + srcUrl;
+        else if (srcUrl) state.recapLoadedSourceKey = "file:" + srcUrl;
         const ctaBtn = document.getElementById("btn-start-recap");
         if (ctaBtn) ctaBtn.scrollIntoView({ behavior: "smooth", block: "center" });
     };
@@ -6124,6 +6240,9 @@ async function handleStartRecap() {
             blur_subtitles: state.recapBlurSubs !== false,
             blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
             blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 7,
+            // Batch AA: the explicit-set marker rides along — the
+            // engine treats a marked box as authoritative.
+            blur_box_explicit: !!state.recapBlurBoxTouched,
             blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
             burn_subtitles: state.recapBurnSubs !== false,
             sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,

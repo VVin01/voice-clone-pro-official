@@ -724,6 +724,52 @@ def source_band_to_canvas_box(band: dict[str, Any], layout: dict[str, Any]) -> d
     }
 
 
+USER_BLUR_BOX_WIDTH_FRACTION = 0.92
+
+
+def user_blur_box_to_canvas_box(
+    blur_y: float, blur_h: float, layout: dict[str, Any] | None = None
+) -> dict[str, float]:
+    """Map the user's blur box from PICTURE fractions to a canvas box.
+
+    Batch AA contract: ``blur_y`` / ``blur_h`` are fractions of the
+    PICTURE height end-to-end (Mini App sliders → submit payload →
+    persisted recap_config → engine), exactly like Batch P's sub_y.
+    The preview draws the box on the picture — centre at
+    oy + blur_y × ph, height blur_h × ph, width fixed at 92% of the
+    canvas and centred (the .draggable-box CSS: left 4% / right 4%) —
+    so the render converts with the same layout math and the box the
+    user drew is the box that ships: centre (oy + blur_y × ph) / ch,
+    height blur_h × ph / ch, x = 0.04, w = 0.92. On full-frame
+    layouts (oy = 0, ph = ch) this is the identity mapping. With no
+    layout (the size probe failed) the picture is assumed to fill
+    the canvas, matching the plate's no-layout fallback. The box is
+    returned verbatim — consumers clamp the drawn rectangle into
+    the canvas exactly as they do for every other box.
+    """
+    by = _clamp01(blur_y, 0.85)
+    bh = _clamp01(blur_h, 0.07)
+    w_frac = USER_BLUR_BOX_WIDTH_FRACTION
+    x_frac = (1.0 - w_frac) / 2.0
+    if layout is not None:
+        cw = int(layout.get("cw") or 0)
+        ch = int(layout.get("ch") or 0)
+        if cw > 0 and ch > 0:
+            _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
+            return {
+                "x": round(x_frac, 4),
+                "y": round((oy + by * ph) / ch, 4),
+                "w": round(w_frac, 4),
+                "h": round(bh * ph / ch, 4),
+            }
+    return {
+        "x": round(x_frac, 4),
+        "y": round(by, 4),
+        "w": round(w_frac, 4),
+        "h": round(bh, 4),
+    }
+
+
 # ── R39: subtitle plate + letterbox geometry ────────────────────────
 #
 # Two geometry defects from the 2026-11-02 blur/subtitle inspection
@@ -1142,6 +1188,54 @@ def ffmpeg_encoders(ffmpeg: str) -> set[str]:
         if len(fields) >= 2 and fields[0].startswith("V"):
             encoders.add(fields[1])
     return encoders
+
+
+# Batch AB: the `-encoders` LISTING only proves the binary was built
+# with NVENC support — on a GPU-less host (production Render has no
+# GPU) every h264_nvenc encode still fails at runtime, and each render
+# stage used to pay a doomed encode attempt before falling back.
+# nvenc_usable() runs ONE real 1-frame test encode per process per
+# ffmpeg binary and caches the verdict, so selection can trust it.
+_NVENC_PROBE_CACHE: dict[str, bool] = {}
+NVENC_PROBE_TIMEOUT_SECONDS = 30
+
+
+def nvenc_usable(ffmpeg: str) -> bool:
+    """True only when a real 1-frame h264_nvenc encode succeeds."""
+    if ffmpeg in _NVENC_PROBE_CACHE:
+        return _NVENC_PROBE_CACHE[ffmpeg]
+    try:
+        result = _run_media(
+            [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=c=black:s=256x256:r=1:d=0.1",
+                "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-",
+            ],
+            timeout=NVENC_PROBE_TIMEOUT_SECONDS,
+            what="NVENC capability probe",
+        )
+        usable = result.returncode == 0
+    except Exception:
+        usable = False
+    _NVENC_PROBE_CACHE[ffmpeg] = usable
+    return usable
+
+
+def _select_render_encoder(ffmpeg: str, checkpoint: dict[str, Any] | None) -> str:
+    """Pick the render encoder for a run (Batch AB).
+
+    NVENC counts only when it is both listed AND probe-usable. When
+    the probe fails the answer is libx264 UNCONDITIONALLY — a
+    checkpoint remembered on a GPU host must not resurrect the doomed
+    encoder on a GPU-less one. When the probe passes, the historical
+    remembered/preferred logic applies unchanged.
+    """
+    encoders = ffmpeg_encoders(ffmpeg)
+    if "h264_nvenc" not in encoders or not nvenc_usable(ffmpeg):
+        return "libx264"
+    preferred = "h264_nvenc"
+    remembered = str((checkpoint or {}).get("selected_encoder") or "")
+    return remembered if remembered in {"h264_nvenc", "libx264"} else preferred
 
 
 def render_video_part(
@@ -2695,6 +2789,17 @@ def _resolve_png_subtitle_job(
     }
 
 
+# Batch AB: explicit ffmpeg thread cap for the production overlay
+# steps. The production instance has 2 GB RAM; the libx264 quality
+# presets pass "-threads 0" (auto), and at 1080×1920 each extra
+# encoder/filter thread holds additional frame buffers — the single
+# whole-video overlay pass OOM-killed the instance ~15 s in. The
+# overlay steps append "-threads 2" AFTER the quality args (the last
+# -threads wins in ffmpeg) to bound peak RSS, with negligible speed
+# cost on a ≤2 vCPU instance.
+OVERLAY_FFMPEG_THREADS = 2
+
+
 def apply_production_overlays(
     ffmpeg: str,
     input_video: Path,
@@ -2743,26 +2848,21 @@ def apply_production_overlays(
     if not boxes and not title_text and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()) and sub_job is None:
         return input_video
 
-    cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_video)]
-    input_index = 1
+    # Batch AB: the overlay pass runs as TWO sequential ffmpeg steps
+    # (blur boxes first, then everything else — see the step builders
+    # below) to bound the peak memory of the pass, so the PNG assets
+    # are rendered up front here and each step registers its own
+    # inputs. Registration order is unchanged: title, logo, extra
+    # text, watermark pattern, then one input per subtitle cue PNG.
     title_file: Path | None = None
-    title_idx: int | None = None
-    logo_idx: int | None = None
     extra_file: Path | None = None
-    extra_idx: int | None = None
     if title_text:
         title_file = _render_title_png(
             title_text, work_dir / "title_overlay.png",
             str(overlays.get("title_font_path") or ""), int(overlays.get("title_font_size", 54)),
             max_width=text_width,
         )
-        title_idx = input_index
-        cmd += ["-i", str(title_file)]
-        input_index += 1
-    if logo_file and logo_file.is_file():
-        logo_idx = input_index
-        cmd += ["-i", str(logo_file)]
-        input_index += 1
+    logo_present = bool(logo_file and logo_file.is_file())
     if extra_text:
         extra_file = _render_extra_text_png(
             extra_text,
@@ -2771,9 +2871,6 @@ def apply_production_overlays(
             0.18,
             max_width=text_width,
         )
-        extra_idx = input_index
-        cmd += ["-i", str(extra_file)]
-        input_index += 1
     # Free-tier brand watermark v3 (2026-10-30): when the pipeline flags
     # overlays["watermark"], the extra-text panel below is REPLACED by a
     # single mark — the full-frame diagonal tiled pattern of the bot
@@ -2783,7 +2880,7 @@ def apply_production_overlays(
     # composited LAST in the graph (after subtitles), and this whole pass
     # runs after the mirror/zoom/ratio part renders, so the mark is never
     # mirrored.
-    pattern_idx: int | None = None
+    pattern_file: Path | None = None
     if watermark_mode:
         pattern_opacity = float(overlays.get("watermark_pattern_opacity", BRAND_PATTERN_OPACITY))
         pattern_file = render_brand_pattern_png(
@@ -2792,12 +2889,11 @@ def apply_production_overlays(
             frame_height=ph,
             opacity=pattern_opacity,
         )
-        pattern_idx = input_index
-        cmd += ["-i", str(pattern_file)]
-        input_index += 1
 
-    graph: list[str] = []
-    current = "[0:v]"
+    # Step 1's filter graph: ONLY the blur-box chains, exactly as
+    # they were built for the old single graph.
+    blur_graph: list[str] = []
+    blur_current = "[0:v]"
     blur_strength = max(4, min(40, int(overlays.get("blur_strength", 18))))
     for i, b in enumerate(boxes):
         # Coordinates are fractions of the FULL output canvas (cw×ch) — the UI blur box is
@@ -2823,58 +2919,19 @@ def apply_production_overlays(
         safe_luma = max(2, min(blur_strength, (min(w, h) // 2) - 1))
         safe_chroma = max(1, min(safe_luma // 2, 9))
         base = f"bbase{i}"; crop = f"bcrop{i}"; blur = f"bblur{i}"; out = f"bv{i}"
-        graph.append(f"{current}split=2[{base}][{crop}]")
-        graph.append(
+        blur_graph.append(f"{blur_current}split=2[{base}][{crop}]")
+        blur_graph.append(
             f"[{crop}]crop={w}:{h}:{x}:{y},"
             f"boxblur=luma_radius={safe_luma}:luma_power=2:"
             f"chroma_radius={safe_chroma}:chroma_power=1[{blur}]"
         )
-        graph.append(f"[{base}][{blur}]overlay={x}:{y}[{out}]")
-        current = f"[{out}]"
+        blur_graph.append(f"[{base}][{blur}]overlay={x}:{y}[{out}]")
+        blur_current = f"[{out}]"
 
-    if title_idx is not None and title_file is not None:
-        pos = overlays.get("title_position") or [0.5, 0.12]
-        tx = _clamp01(pos[0] if len(pos) > 0 else 0.5, 0.5)
-        ty = _clamp01(pos[1] if len(pos) > 1 else 0.12, 0.12)
-        out = "vtitle"
-        graph.append(f"{current}[{title_idx}:v]overlay=x='{ox}+({pw}*{tx:.6f}-w/2)':y='{oy}+({ph}*{ty:.6f}-h/2)':eof_action=repeat[{out}]")
-        current = f"[{out}]"
-
-    if logo_idx is not None:
-        pos = overlays.get("logo_position") or [0.80, 0.06]
-        lx = _clamp01(pos[0] if len(pos) > 0 else 0.80, 0.80)
-        ly = _clamp01(pos[1] if len(pos) > 1 else 0.06, 0.06)
-        lw = max(0.04, min(0.40, float(overlays.get("logo_width_fraction", 0.16))))
-        lo = max(0.10, min(1.00, float(overlays.get("logo_opacity", 0.65))))
-        graph.append(f"[{logo_idx}:v]scale={max(24, int(round(pw * lw)))}:-1[lg0]")
-        if lo < 0.999:
-            graph.append(f"[lg0]format=rgba,colorchannelmixer=aa={lo:.3f}[lg]")
-        else:
-            graph.append(f"[lg0]copy[lg]")
-        out = "vlogo"
-        graph.append(f"{current}[lg]overlay=x='{ox}+({pw}*{lx:.6f})':y='{oy}+({ph}*{ly:.6f})':eof_action=repeat[{out}]")
-        current = f"[{out}]"
-
-    if extra_idx is not None and extra_file is not None and not watermark_mode:
-        pos = overlays.get("extra_text_position") or [0.50, 0.68]
-        ex = _clamp01(pos[0] if len(pos) > 0 else 0.50, 0.50)
-        ey = _clamp01(pos[1] if len(pos) > 1 else 0.68, 0.68)
-        eo = max(0.10, min(1.00, float(overlays.get("extra_text_opacity", 0.65))))
-        if eo < 0.999:
-            graph.append(f"[{extra_idx}:v]format=rgba,colorchannelmixer=aa={eo:.3f}[etxt]")
-        else:
-            graph.append(f"[{extra_idx}:v]copy[etxt]")
-        out = "vextra"
-        graph.append(f"{current}[etxt]overlay=x='{ox}+({pw}*{ex:.6f}-w/2)':y='{oy}+({ph}*{ey:.6f}-h/2)':eof_action=repeat[{out}]")
-        current = f"[{out}]"
-
+    # Batch Q cue PNGs, rendered up front (the renderer cache lives in
+    # work_dir as before): (png_path, block_top_px, cue_start, cue_end).
+    cue_inputs: list[tuple[Path, int, float, float]] = []
     if sub_job is not None:
-        # Batch Q: burn each cue as a Pillow+raqm PNG overlay in the
-        # same graph position the libass burn occupied (after blur /
-        # title / logo / extra text, before the watermark pattern).
-        # Placement: horizontally centred on the canvas; vertical
-        # position from subtitle_centre_px via _subtitle_block_top_px
-        # — the Batch P anchor, minus half the PNG's real height.
         renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
         lay_dict = {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
         for cue_start, cue_end, cue_text in sub_job["cues"]:
@@ -2888,9 +2945,6 @@ def apply_production_overlays(
             if rendered is None:
                 continue
             png_path, _png_w, png_h = rendered
-            idx = input_index
-            cmd += ["-i", str(png_path)]
-            input_index += 1
             top = _subtitle_block_top_px(
                 cw, ch, lay_dict,
                 sub_y=overlays.get("sub_y"),
@@ -2900,6 +2954,83 @@ def apply_production_overlays(
                 sub_lines=sub_job["sub_lines"],
                 block_h=png_h,
             )
+            cue_inputs.append((png_path, top, float(cue_start), float(cue_end)))
+
+    def _build_step2_cmd(step_encoder: str) -> list[str]:
+        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(step2_input)]
+        input_index = 1
+        title_idx: int | None = None
+        logo_idx: int | None = None
+        extra_idx: int | None = None
+        pattern_idx: int | None = None
+        if title_file is not None:
+            title_idx = input_index
+            cmd += ["-i", str(title_file)]
+            input_index += 1
+        if logo_present:
+            logo_idx = input_index
+            cmd += ["-i", str(logo_file)]
+            input_index += 1
+        if extra_file is not None:
+            extra_idx = input_index
+            cmd += ["-i", str(extra_file)]
+            input_index += 1
+        if pattern_file is not None:
+            pattern_idx = input_index
+            cmd += ["-i", str(pattern_file)]
+            input_index += 1
+        cue_indices: list[int] = []
+        for png_path, _top, _cs, _ce in cue_inputs:
+            cue_indices.append(input_index)
+            cmd += ["-i", str(png_path)]
+            input_index += 1
+
+        graph: list[str] = []
+        current = "[0:v]"
+        if title_idx is not None and title_file is not None:
+            pos = overlays.get("title_position") or [0.5, 0.12]
+            tx = _clamp01(pos[0] if len(pos) > 0 else 0.5, 0.5)
+            ty = _clamp01(pos[1] if len(pos) > 1 else 0.12, 0.12)
+            out = "vtitle"
+            graph.append(f"{current}[{title_idx}:v]overlay=x='{ox}+({pw}*{tx:.6f}-w/2)':y='{oy}+({ph}*{ty:.6f}-h/2)':eof_action=repeat[{out}]")
+            current = f"[{out}]"
+
+        if logo_idx is not None:
+            pos = overlays.get("logo_position") or [0.80, 0.06]
+            lx = _clamp01(pos[0] if len(pos) > 0 else 0.80, 0.80)
+            ly = _clamp01(pos[1] if len(pos) > 1 else 0.06, 0.06)
+            lw = max(0.04, min(0.40, float(overlays.get("logo_width_fraction", 0.16))))
+            lo = max(0.10, min(1.00, float(overlays.get("logo_opacity", 0.65))))
+            graph.append(f"[{logo_idx}:v]scale={max(24, int(round(pw * lw)))}:-1[lg0]")
+            if lo < 0.999:
+                graph.append(f"[lg0]format=rgba,colorchannelmixer=aa={lo:.3f}[lg]")
+            else:
+                graph.append(f"[lg0]copy[lg]")
+            out = "vlogo"
+            graph.append(f"{current}[lg]overlay=x='{ox}+({pw}*{lx:.6f})':y='{oy}+({ph}*{ly:.6f})':eof_action=repeat[{out}]")
+            current = f"[{out}]"
+
+        if extra_idx is not None and extra_file is not None and not watermark_mode:
+            pos = overlays.get("extra_text_position") or [0.50, 0.68]
+            ex = _clamp01(pos[0] if len(pos) > 0 else 0.50, 0.50)
+            ey = _clamp01(pos[1] if len(pos) > 1 else 0.68, 0.68)
+            eo = max(0.10, min(1.00, float(overlays.get("extra_text_opacity", 0.65))))
+            if eo < 0.999:
+                graph.append(f"[{extra_idx}:v]format=rgba,colorchannelmixer=aa={eo:.3f}[etxt]")
+            else:
+                graph.append(f"[{extra_idx}:v]copy[etxt]")
+            out = "vextra"
+            graph.append(f"{current}[etxt]overlay=x='{ox}+({pw}*{ex:.6f}-w/2)':y='{oy}+({ph}*{ey:.6f}-h/2)':eof_action=repeat[{out}]")
+            current = f"[{out}]"
+
+        # Batch Q: burn each cue as a Pillow+raqm PNG overlay in the
+        # same graph position the libass burn occupied (after title /
+        # logo / extra text, before the watermark pattern). The blur
+        # chains ran in step 1; placement is unchanged — horizontally
+        # centred on the canvas, vertical position from
+        # subtitle_centre_px via _subtitle_block_top_px (the Batch P
+        # anchor), computed when the cue PNGs were rendered above.
+        for (png_path, top, cue_start, cue_end), idx in zip(cue_inputs, cue_indices):
             out = f"vsub{idx}"
             graph.append(
                 f"{current}[{idx}:v]overlay=x='(W-w)/2':y={top}:"
@@ -2907,27 +3038,58 @@ def apply_production_overlays(
             )
             current = f"[{out}]"
 
-    if pattern_idx is not None:
-        # Diagonal tiled pattern over the WHOLE picture area — centre and
-        # edges alike, so no crop can remove it. It is composited over the
-        # burned subtitles at ~0.19 opacity: visible as a brand texture,
-        # never enough to hurt subtitle readability.
-        graph.append(f"{current}[{pattern_idx}:v]overlay=x='{ox}':y='{oy}':eof_action=repeat[vpat]")
-        current = "[vpat]"
+        if pattern_idx is not None:
+            # Diagonal tiled pattern over the WHOLE picture area — centre and
+            # edges alike, so no crop can remove it. It is composited over the
+            # burned subtitles at ~0.19 opacity: visible as a brand texture,
+            # never enough to hurt subtitle readability.
+            graph.append(f"{current}[{pattern_idx}:v]overlay=x='{ox}':y='{oy}':eof_action=repeat[vpat]")
+            current = "[vpat]"
 
-    graph.append(f"{current}format=yuv420p[vout]")
-    cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(encoder, render_quality) + ["-movflags", "+faststart", str(output_video)]
-    p = _run_media(cmd, timeout=ffmpeg_timeout(duration), what="Production overlay render")
-    if p.returncode != 0 and encoder == "h264_nvenc":
-        log("⚠️ Overlay NVENC failed — libx264 fallback")
-        cmd2 = cmd[:]
-        # Rebuild tail safely rather than trying to mutate codec options in-place.
-        map_pos = cmd2.index("-map")
-        prefix = cmd2[:map_pos] + ["-map", "[vout]", "-map_metadata", "-1", "-an"]
-        cmd2 = prefix + encoder_args_for_quality("libx264", render_quality) + ["-movflags", "+faststart", str(output_video)]
-        p = _run_media(cmd2, timeout=ffmpeg_timeout(duration), what="Production overlay render")
+        graph.append(f"{current}format=yuv420p[vout]")
+        cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(step_encoder, render_quality) + ["-threads", str(OVERLAY_FFMPEG_THREADS), "-movflags", "+faststart", str(output_video)]
+        return cmd
+
+    def _run_overlay_step(build_cmd, step_encoder: str):
+        """Run one overlay step; on an NVENC failure rebuild that step
+        with libx264 (same thread cap) and report libx264 as the
+        encoder in use from then on."""
+        p = _run_media(build_cmd(step_encoder), timeout=ffmpeg_timeout(duration), what="Production overlay render")
+        if p.returncode != 0 and step_encoder == "h264_nvenc":
+            log("⚠️ Overlay NVENC failed — libx264 fallback")
+            p = _run_media(build_cmd("libx264"), timeout=ffmpeg_timeout(duration), what="Production overlay render")
+            return "libx264", p
+        return step_encoder, p
+
+    used_encoder = encoder
+    intermediate: Path | None = None
+    step2_input = input_video
+    if boxes:
+        # STEP 1: blur boxes only, into a scratch intermediate (no
+        # +faststart — it is re-read immediately by step 2 and deleted
+        # on success; a failed pass re-runs both steps from scratch).
+        intermediate = work_dir / "overlay_step1_blurred.mp4"
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        def _build_step1_cmd(step_encoder: str) -> list[str]:
+            graph1 = blur_graph + [f"{blur_current}format=yuv420p[vout]"]
+            return [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_video)] + ["-filter_complex", ";".join(graph1), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(step_encoder, render_quality) + ["-threads", str(OVERLAY_FFMPEG_THREADS), str(intermediate)]
+
+        used_encoder, p1 = _run_overlay_step(_build_step1_cmd, used_encoder)
+        if p1.returncode != 0:
+            raise RuntimeError("Production overlay render failed: " + p1.stderr[-3000:])
+        step2_input = intermediate
+
+    # STEP 2: title / logo / extra text / subtitle cues / watermark
+    # pattern over the (possibly pre-blurred) video.
+    used_encoder, p = _run_overlay_step(_build_step2_cmd, used_encoder)
     if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
         raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
+    if intermediate is not None:
+        try:
+            intermediate.unlink()
+        except OSError:
+            pass
     return output_video
 
 
@@ -3884,10 +4046,9 @@ class EdgeSmartSync:
             }
 
         self.log("🎬 Smart Sync video parts render စမယ်...")
-        encoders = ffmpeg_encoders(self.ffmpeg)
-        preferred = "h264_nvenc" if "h264_nvenc" in encoders else "libx264"
-        remembered = str(checkpoint.get("selected_encoder") or "")
-        encoder = remembered if remembered in {"h264_nvenc", "libx264"} else preferred
+        # Batch AB: NVENC must be listed AND probe-usable — the
+        # listing alone lies on GPU-less hosts (see _select_render_encoder).
+        encoder = _select_render_encoder(self.ffmpeg, checkpoint)
         video_parts: list[Path] = []
         # Cumulative frame lock: each part gets round(audio_end*30) - frames_so_far
         # frames, so video never drifts more than half a frame from the narration.
@@ -4035,7 +4196,8 @@ class EdgeSmartSync:
                 video_for_mux = decorated
             else:
                 self._check_run_deadline("overlay")
-                self.log("🎨 Production overlay pass — Blur / Title PNG / Logo / Subtitles...")
+                self.log(f"🎨 Production overlay pass — Blur / Title PNG / Logo / Subtitles... [encoder={encoder}]")
+                _overlay_started = time.monotonic()
                 video_for_mux = apply_production_overlays(
                     self.ffmpeg, paths.synced_video_noaudio, paths.decorated_video_noaudio,
                     self.overlays, encoder, paths.work, self.log, frame_size=(layout["cw"], layout["ch"]),
@@ -4044,6 +4206,10 @@ class EdgeSmartSync:
                 )
                 late["overlay"] = overlay_fp
                 atomic_write_json(paths.checkpoint, checkpoint)
+                # Batch AB: a completion line with elapsed time — the
+                # OOM loop left NO log trace of the pass ever finishing
+                # (or not), which is what made it undebuggable.
+                self.log(f"✅ Production overlay pass complete in {time.monotonic() - _overlay_started:.1f}s [encoder={encoder}]")
         self.log("🎧 Final audio mux (with limiter & mastering chain)...")
         volume_percent = int(getattr(self, "voice_volume_percent", 100) or 100)
         if volume_percent != 100:
