@@ -437,6 +437,10 @@ window.haptic = haptic;
 // Data loaders use this so a hung connection ends in the loader's error
 // state (with Retry) instead of an endless spinner.
 const FETCH_TIMEOUT_MS = 12000;
+// Telegram sends are different: the server uploads up to 50 MB to
+// Telegram before it can answer, so the send-telegram call gets a
+// generous-but-finite cap instead of spinning forever (Batch AF).
+const TELEGRAM_SEND_TIMEOUT_MS = 180000;
 async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -1414,6 +1418,57 @@ async function fetchAuthBlobUrl(url) {
     } catch (e) { return null; }
 }
 
+// Batch AF: progress-reporting variant for the DOWNLOAD path only.
+// The blob design holds the whole file in memory before the save
+// prompt appears, so a large render used to be a long, silent,
+// apparently-dead wait with no feedback at all. When the response
+// can be streamed, report real percentages computed from
+// Content-Length; when no total is known, report null and the
+// caller paints an indeterminate "downloading…" state. Playback
+// keeps using fetchAuthBlobUrl / the signed stream URL — untouched.
+async function fetchAuthBlobUrlWithProgress(url, onProgress) {
+    if (!url) return null;
+    if (!url.startsWith("/api/")) return url;
+    try {
+        const res = await fetch(url, { headers: getAuthHeaders(false) });
+        if (isAuthFailure(res)) return null;
+        if (!res.ok) return null;
+        const blob = await _streamedResponseBlob(res, onProgress);
+        return URL.createObjectURL(blob);
+    } catch (e) { return null; }
+}
+
+async function _streamedResponseBlob(res, onProgress) {
+    const notify = typeof onProgress === "function" ? onProgress : null;
+    const reader = (res.body && typeof res.body.getReader === "function")
+        ? res.body.getReader() : null;
+    if (!reader) {
+        // No streaming available (older WebView): one indeterminate
+        // paint, then the same whole-blob read as before.
+        if (notify) notify(null);
+        return res.blob();
+    }
+    let total = 0;
+    try {
+        total = parseInt(res.headers && res.headers.get ? res.headers.get("content-length") : "", 10) || 0;
+    } catch (e) { total = 0; }
+    if (notify) notify(total > 0 ? 0 : null);
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+            chunks.push(value);
+            received += value.byteLength || value.length || 0;
+        }
+        if (notify) notify(total > 0 ? Math.min(99, Math.floor((received / total) * 100)) : null);
+    }
+    let type = "";
+    try { type = (res.headers && res.headers.get && res.headers.get("content-type")) || ""; } catch (e) {}
+    return new Blob(chunks, { type });
+}
+
 async function setAuthMediaSource(el, url) {
     if (!el || !url) return false;
     const objUrl = await fetchAuthBlobUrl(url);
@@ -1504,10 +1559,37 @@ function applyTelegramSendable(kind, sendable) {
 }
 window.applyTelegramSendable = applyTelegramSendable;
 
-async function downloadAuthFile(url, filename) {
+async function downloadAuthFile(url, filename, el) {
     if (!url) return;
+    // Batch AF: when the tapped element is handed over (the delegated
+    // data-dl-url handler passes it), paint the download progress on
+    // the element itself and ALWAYS restore its original content when
+    // the fetch settles — success or failure — so no button can stay
+    // stuck on a percentage. A second tap on an element whose
+    // download is already in flight is ignored.
+    let onProgress = null;
+    let restoreEl = null;
+    if (el) {
+        if (el.dataset && el.dataset.dlBusy === "1") return;
+        const originalHTML = el.innerHTML;
+        if (el.dataset) el.dataset.dlBusy = "1";
+        el.classList.add("dl-downloading");
+        el.setAttribute("aria-busy", "true");
+        onProgress = (pct) => {
+            el.innerHTML = pct == null
+                ? t("dl_downloading")
+                : tf("dl_downloading_pct", { pct });
+        };
+        onProgress(null);
+        restoreEl = () => {
+            el.innerHTML = originalHTML;
+            el.classList.remove("dl-downloading");
+            el.removeAttribute("aria-busy");
+            if (el.dataset) delete el.dataset.dlBusy;
+        };
+    }
     try {
-        const objUrl = await fetchAuthBlobUrl(url);
+        const objUrl = await fetchAuthBlobUrlWithProgress(url, onProgress);
         if (!objUrl) throw new Error("Download failed");
         const a = document.createElement("a");
         a.href = objUrl;
@@ -1519,6 +1601,8 @@ async function downloadAuthFile(url, filename) {
         haptic("success");
     } catch (err) {
         showErrorToast(err, 'download');
+    } finally {
+        if (restoreEl) restoreEl();
     }
 }
 window.downloadAuthFile = downloadAuthFile;
@@ -1550,7 +1634,7 @@ document.addEventListener("click", (e) => {
     if (!a) return;
     e.preventDefault();
     if (a.hasAttribute("data-dl-url")) {
-        downloadAuthFile(a.getAttribute("data-dl-url"), a.getAttribute("data-dl-name") || a.getAttribute("download") || undefined);
+        downloadAuthFile(a.getAttribute("data-dl-url"), a.getAttribute("data-dl-name") || a.getAttribute("download") || undefined, a);
     } else {
         openAuthFile(a.getAttribute("data-open-url"));
     }
@@ -7342,11 +7426,29 @@ async function sendRecapToTelegram(targetJobId) {
         btn.innerHTML = `<span class="spinner-inline">⏳</span> <span>${t("toast_sending_telegram")}</span>`;
     }
     try {
-        const res = await fetch(`/api/recap/${jobId}/send-telegram`, {
+        // Batch AF: route through fetchWithTimeout — the plain fetch
+        // had NO timeout, so a stuck server-side send spun the button
+        // forever. The cap is generous because the server uploads up
+        // to 50 MB to Telegram before it can answer.
+        const res = await fetchWithTimeout(`/api/recap/${jobId}/send-telegram`, {
             method: "POST",
             headers: getAuthHeaders(),
-        });
+        }, TELEGRAM_SEND_TIMEOUT_MS);
         const data = await res.json();
+        if (!res.ok && data.detail === "telegram_delivery_failed") {
+            // Batch AF: the server now reports a failed delivery
+            // honestly (it used to answer success unconditionally, so
+            // this toast claimed ✅ for sends that never happened).
+            // Say exactly that and point at the Download action that
+            // still works (same coded-detail pattern as the voice
+            // flow's file_too_large_telegram).
+            showStudioToast(t("toast_telegram_send_failed"), 'error', 6000);
+            if (btn && !targetJobId) {
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+            return;
+        }
         if (!res.ok) throw new Error(data.detail || "Failed to send to Telegram");
         haptic("success");
         if (btn && !targetJobId) {

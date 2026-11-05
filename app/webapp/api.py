@@ -4811,10 +4811,21 @@ async def _send_recap_telegram_delivery(
     voice_name: str,
     duration_sec: int,
     job_id: Optional[str] = None,
-):
-    """Deliver completed recap video and media files directly to user's Telegram."""
+) -> tuple:
+    """Deliver completed recap video and media files directly to user's Telegram.
+
+    Batch AF: returns ``(delivered, reason)`` instead of swallowing
+    every failure into a warning log. ``delivered`` is True only when
+    the main delivery (the video, the split parts, or the oversize
+    notice) actually went out; ``reason`` is a coarse failure class
+    (exception type / gate name) for server logs — never user copy.
+    The send-telegram endpoint turns a False into an honest error
+    response; before this, it answered success unconditionally and
+    the client showed "✅ ပို့ပြီးပါပြီ" for sends that never
+    happened (observed live 2026-11-04).
+    """
     if not settings.bot_token or not chat_id:
-        return
+        return False, "bot_not_configured" if not settings.bot_token else "missing_chat_id"
     # chat_id is the user's Telegram id for direct deliveries; resolve their
     # stored language so delivery buttons/captions are not Myanmar-only.
     lang = "my"
@@ -4826,6 +4837,7 @@ async def _send_recap_telegram_delivery(
                 lang = _u.language_code
     except Exception:
         lang = "my"
+    delivered = False
     try:
         from aiogram import Bot
         from aiogram.types import FSInputFile
@@ -4862,7 +4874,8 @@ async def _send_recap_telegram_delivery(
             if is_segmented:
                 # Segmented job: the registered video is only part 1 —
                 # the parts together are the whole delivery.
-                await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
+                sent_parts = await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
+                delivered = sent_parts > 0
             elif file_size <= 50 * 1024 * 1024:
                 vf = FSInputFile(
                     video_path,
@@ -4872,10 +4885,12 @@ async def _send_recap_telegram_delivery(
                     ),
                 )
                 await bot.send_video(chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML")
+                delivered = True
             elif parts_available:
                 # Full render exceeds Telegram's 50 MB bot limit, but the
                 # job was split: the parts ARE the Telegram delivery.
-                await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
+                sent_parts = await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
+                delivered = sent_parts > 0
             else:
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
                 app_url = settings.mini_app_url
@@ -4901,6 +4916,7 @@ async def _send_recap_telegram_delivery(
                     size_formatted=size_formatted,
                 )
                 await bot.send_message(chat_id=chat_id, text=over_caption, reply_markup=kb, parse_mode="HTML")
+                delivered = True
 
             if srt_path and os.path.isfile(srt_path):
                 sf = FSInputFile(
@@ -4921,6 +4937,11 @@ async def _send_recap_telegram_delivery(
             await bot.session.close()
     except Exception as e:
         logger.warning(f"Failed to send recap video to Telegram chat {chat_id}: {e}")
+        # Batch AF: a failure AFTER the main delivery (e.g. the SRT
+        # extra) still counts as delivered — the video the user asked
+        # for did arrive; the reason rides along for the logs.
+        return delivered, type(e).__name__
+    return delivered, None
 
 
 def _recap_workspace_dir(job_id: str) -> Path:
@@ -7276,7 +7297,7 @@ async def send_recap_to_telegram(
         db_job.preset_voice if db_job else None,
     ) or "Smart Sync AI"
 
-    await _send_recap_telegram_delivery(
+    delivered, fail_reason = await _send_recap_telegram_delivery(
         chat_id=user.id,
         video_path=video_path,
         audio_path=audio_path,
@@ -7288,6 +7309,20 @@ async def send_recap_to_telegram(
         duration_sec=0,
         job_id=job_id,
     )
+    if not delivered:
+        # Batch AF: this endpoint used to answer success
+        # unconditionally because the delivery helper swallowed every
+        # error into a warning log — the client then showed
+        # "✅ ပို့ပြီးပါပြီ" for sends that never happened (observed
+        # live 2026-11-04: toast at ~23:00, nothing in the bot chat
+        # 14+ minutes later). Answer honestly with the same
+        # coded-detail style as file_too_large_telegram; the client
+        # maps the code to localized copy.
+        logger.warning(
+            f"Recap Telegram delivery failed for job {job_id} "
+            f"(user {user.id}): {fail_reason or 'unknown'}"
+        )
+        raise HTTPException(status_code=502, detail="telegram_delivery_failed")
     return {"success": True, "message": "Telegram သို့ ဗီဒီယို ပို့ပြီးပါပြီခင်ဗျာ!"}
 
 

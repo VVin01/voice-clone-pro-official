@@ -556,6 +556,7 @@ const translations = {
         btn_telegram_sent: "✅ Telegram သို့ ပို့ပြီးပါပြီ",
         toast_telegram_sent: "Telegram သို့ အောင်မြင်စွာ ပို့ပြီးပါပြီ!",
         toast_sending_telegram: "Telegram သို့ ပို့နေသည်…",
+        toast_telegram_send_failed: "Telegram သို့ ပို့ဆောင်၍ မအောင်မြင်ပါ — ဖိုင်ကို Download ရယူနိုင်ပါတယ်",
         // Safe user-facing error copy (toast/start fix 2026-10-31): raw
         // server details / job error strings NEVER reach a toast — the
         // client-side mapper (mapErrorToToast) picks one of these.
@@ -590,6 +591,8 @@ const translations = {
         preview_load_failed: "နမူနာ ဖွင့်လို့ မရပါ — ပြန် စမ်းကြည့်ပါ",
         err_send_telegram: "Telegram သို့ ပို့မရပါ — ခဏနေ ပြန်ကြိုးစားပါ",
         err_download_failed: "ဒေါင်းလုဒ် မအောင်မြင်ပါ — ခဏနေ ပြန်ကြိုးစားပါ",
+        dl_downloading: "⬇️ ဒေါင်းလုဒ် ရယူနေသည်…",
+        dl_downloading_pct: "⬇️ ဒေါင်းလုဒ် ရယူနေသည်… {pct}%",
         err_link_blocked: "⛔ မူရင်းဆိုက်က ပြင်ပ Download ကို ပိတ်ထားလို့ ဒီ Link ကို မရပါ။",
         err_link_blocked_named: "⛔ {source} က ပြင်ပ Download ကို ပိတ်ထားလို့ ဒီ Link ကို မရပါ။",
         err_link_advice_upload: "Credit မဆုံးရှုံးပါ — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်ပေးရင် သေချာပေါက် ရပါတယ်။",
@@ -1444,6 +1447,7 @@ const translations = {
         btn_telegram_sent: "✅ Sent to Telegram",
         toast_telegram_sent: "Delivered to Telegram!",
         toast_sending_telegram: "Sending to Telegram…",
+        toast_telegram_send_failed: "Delivery to Telegram failed — you can download the file instead",
         // Safe user-facing error copy (toast/start fix 2026-10-31): raw
         // server details / job error strings NEVER reach a toast — the
         // client-side mapper (mapErrorToToast) picks one of these.
@@ -1478,6 +1482,8 @@ const translations = {
         preview_load_failed: "Couldn't load the sample — please try again",
         err_send_telegram: "Couldn't send to Telegram — please try again in a moment",
         err_download_failed: "Download failed — please try again in a moment",
+        dl_downloading: "⬇️ Downloading…",
+        dl_downloading_pct: "⬇️ Downloading… {pct}%",
         err_link_blocked: "⛔ The source site blocks outside downloads, so this link can't be fetched.",
         err_link_blocked_named: "⛔ {source} blocks outside downloads, so this link can't be fetched.",
         err_link_advice_upload: "No credit was lost — upload the video file directly and it will work.",
