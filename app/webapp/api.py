@@ -55,6 +55,43 @@ logger = logging.getLogger(__name__)
 api_router = APIRouter(prefix="/api")
 
 
+# ── Maintenance refusal (shared error shape) ────────────────────────────────
+# The ONE detail string every maintenance refusal carries. The write-side
+# guard in require_gate_verified() raises it, and since Batch AR the
+# read side raises it too (see _enforce_maintenance_access) — the Mini
+# App client keys its full-screen maintenance gate off this prefix.
+MAINTENANCE_MODE_DETAIL = (
+    "MAINTENANCE_MODE: ဆာဗာ ပြုပြင်ထိန်းသိမ်းမှု ဆောင်ရွက်နေပါသည် — "
+    "မကြာမီ ပြန်လည် အသုံးပြုနိုင်ပါမည်။"
+)
+
+
+def _enforce_maintenance_access(user: User) -> None:
+    """Batch AR (owner order 2026-11-05): while maintenance mode is ON,
+    non-admin users may not use the Mini App AT ALL — reads included,
+    not just writes. Before AR, maintenance only refused writes (hunt
+    C1, in require_gate_verified below) and users could still open,
+    browse and read everything; the owner ordered entry itself closed.
+
+    This helper is the read-side half of that one mechanism — same
+    flag, same exemption, same error shape:
+    - the flag is settings.maintenance_mode (the dynamic setting the
+      admin toggle writes; no new setting was added);
+    - admins are exempt and keep full access;
+    - the refusal is the shared MAINTENANCE_MODE 403.
+
+    It is enforced inside get_current_user() so every authenticated
+    Mini App endpoint inherits it, and re-checked explicitly on the
+    signed-token download paths that resolve a user without going
+    through get_current_user(). The surfaces that must stay reachable
+    never pass through here: GET /api/config (no user dependency),
+    static assets, /health, the Telegram webhook and the WORKER_TOKEN
+    internal upload — none of them resolve a Telegram user.
+    """
+    if getattr(settings, "maintenance_mode", False) and not settings.is_admin(user.id):
+        raise HTTPException(status_code=403, detail=MAINTENANCE_MODE_DETAIL)
+
+
 # ── Dependency: Authenticate Telegram User ──────────────────────────────────
 async def get_current_user(
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
@@ -103,6 +140,11 @@ async def get_current_user(
             user.username = new_username
             await db.commit()
 
+    # Batch AR: maintenance refuses non-admins here, at the shared
+    # identity dependency, so EVERY authenticated Mini App endpoint —
+    # reads included — refuses with the MAINTENANCE_MODE shape while
+    # maintenance is on. Admins pass through untouched.
+    _enforce_maintenance_access(user)
     return user
 
 
@@ -228,10 +270,18 @@ async def get_optional_user(
     grants access: callers must treat None as "preview only" (language
     defaults, public lists) and must not use it for writes, generation,
     history, downloads, or admin actions.
+
+    Batch AR exception: a MAINTENANCE_MODE refusal is re-raised, not
+    anonymised — during maintenance an identified non-admin must be
+    refused outright, never silently downgraded to the anonymous
+    preview (which would keep serving them the persona list). Genuinely
+    anonymous callers (no/invalid initData) still get the preview.
     """
     try:
         return await get_current_user(x_telegram_init_data, db)
-    except HTTPException:
+    except HTTPException as exc:
+        if str(getattr(exc, "detail", "") or "").startswith("MAINTENANCE_MODE"):
+            raise
         return None
 
 
@@ -306,12 +356,16 @@ async def require_gate_verified(
     # Maintenance enforcement (hunt C1): the flag existed and the bot
     # honoured it at /start and the clone entry, but Mini App writes
     # never checked it — during maintenance the webapp kept accepting
-    # generations, slips and uploads. Admins are exempt (above);
-    # reads stay open (this dependency only guards writes).
+    # generations, slips and uploads. Admins are exempt (above).
+    # Batch AR: reads no longer stay open either — get_current_user()
+    # raises the same refusal for every authenticated endpoint (see
+    # _enforce_maintenance_access); this check remains as the
+    # write-side belt-and-braces for any caller that resolved a user
+    # without that dependency.
     if getattr(settings, "maintenance_mode", False):
         raise HTTPException(
             status_code=403,
-            detail="MAINTENANCE_MODE: ဆာဗာ ပြုပြင်ထိန်းသိမ်းမှု ဆောင်ရွက်နေပါသည် — မကြာမီ ပြန်လည် အသုံးပြုနိုင်ပါမည်။",
+            detail=MAINTENANCE_MODE_DETAIL,
         )
     # Production ban enforcement (2026-10-31): the bot has always blocked
     # status=BLOCKED users via AccessControlMiddleware, but the Mini App
@@ -2580,6 +2634,15 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         "maintenance_mode",
         default=str(getattr(settings, "maintenance_mode", False)).lower(),
     )
+    # Batch AR: the entry gate shows the admin's maintenance_note
+    # verbatim (it is public-facing copy by design — the Group AI
+    # already quotes it to members, Batch Z), so the unauthenticated
+    # config payload carries it next to the flag itself.
+    maintenance_note_raw = await get_dynamic_setting(
+        db,
+        "maintenance_note",
+        default=str(getattr(settings, "maintenance_note", "") or ""),
+    )
     return {
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
@@ -2595,6 +2658,8 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         # So the Mini App can show its maintenance state instead of
         # letting writes fail one by one (hunt C1).
         "maintenance_mode": str(maintenance_raw).lower() in ("true", "1", "yes"),
+        # Batch AR: the note the full-screen maintenance gate renders.
+        "maintenance_note": str(maintenance_note_raw or ""),
     }
 
 
@@ -2644,6 +2709,11 @@ async def get_user_logo_file(
             user = await db.get(User, token_uid)
     if user is None:
         raise HTTPException(status_code=401, detail="Telegram authentication required")
+    # Batch AR: a signed token resolves the user WITHOUT passing
+    # through get_current_user(), so the maintenance entry block is
+    # re-checked here (initData callers were already refused inside
+    # get_optional_user). Admins exempt, same shape as everywhere.
+    _enforce_maintenance_access(user)
     # Batch AJ L11: same ban discipline as the recap token downloads.
     if getattr(user, "status", None) == "BLOCKED" and not settings.is_admin(user.id):
         raise HTTPException(status_code=404, detail="Logo မတင်ရသေးပါ")
@@ -8212,6 +8282,11 @@ async def download_recap_file(
     # banned AFTER it was minted must not keep downloading with it.
     if getattr(user, "status", None) == "BLOCKED" and not settings.is_admin(user.id):
         raise HTTPException(status_code=404, detail="Recap file not found")
+    # Batch AR: same story for maintenance — a token minted before
+    # maintenance was switched on must not keep serving files to a
+    # non-admin while the Mini App is closed for maintenance.
+    # (initData callers were already refused inside get_optional_user.)
+    _enforce_maintenance_access(user)
     # Ownership first, before any file is resolved from disk: a registry
     # entry or a DB job must belong to the requester (or the requester
     # must be an admin). Files on disk with no job record are not served.
