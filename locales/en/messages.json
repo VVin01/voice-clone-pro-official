@@ -104,6 +104,7 @@
   "queue_failed_legacy_model": "This legacy voice model can no longer be used. Please resubmit with VoxCPM2 and a reference voice (3–30 seconds).",
   "queue_failed_concurrent": "Too many jobs are running at once. Please wait a moment and try again.",
   "queue_failed_daily": "Today's free limit has been reached.",
+  "queue_failed_daily_minutes": "You have reached today's voice limit of {limit_minutes} minutes. Please try again tomorrow.",
   "queue_failed_insufficient_balance": "Insufficient minute balance.",
   "queue_failed_text_limit": "Your text exceeds the character limit.",
   "queue_failed_audio_not_found": "Audio file not found.",

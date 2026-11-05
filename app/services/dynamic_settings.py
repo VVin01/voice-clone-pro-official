@@ -33,6 +33,8 @@ SETTING_TYPES: dict[str, type] = {
     "recap_free_max_duration_seconds": int,
     "recap_max_duration_seconds": int,
     "free_daily_job_limit": int,
+    "voice_daily_limit_minutes_free": int,
+    "voice_daily_limit_minutes_paid": int,
     "required_channel_id": str,
     "required_group_id": str,
     "channel_invite_link": str,
