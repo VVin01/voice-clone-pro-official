@@ -272,6 +272,26 @@ async def _escalate(
             await gai.set_escalation_dm(s, escalation_id, dm_text=dm_text, copies=copies)
 
 
+def _log_decision(message: Message, user_id: int | None, decision: str, reason: str = "") -> None:
+    """Batch AQ: one INFO line per terminal Group-AI decision.
+
+    Before this, decisions were logged NOWHERE — a member question
+    could vanish into silence (AI timeout, NO_REPLY, budget) with no
+    trace at all, and two unanswered questions on 2026-11-05 were
+    undiagnosable for exactly that reason. Ids + the reason class
+    only — NEVER the message text or the AI's raw output (group
+    messages are not stored; the logs follow the same rule).
+    """
+    logger.info(
+        "group_ai_admin: decision=%s reason=%s chat_id=%s message_id=%s user_id=%s",
+        decision,
+        reason or "-",
+        message.chat.id,
+        message.message_id,
+        user_id,
+    )
+
+
 @group_admin_router.message(
     F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}),
     F.text,
@@ -313,6 +333,7 @@ async def handle_group_message(
         # Hard rule first: payment/refund/account topics never reach
         # the AI — defer in the group and hand the question to a human.
         if gai.detect_sensitive_topic(message.text):
+            _log_decision(message, user.id if user else None, "escalate", "sensitive")
             await _escalate(
                 message,
                 bot,
@@ -332,29 +353,47 @@ async def handle_group_message(
         context_lines = gai.context_buffer.snapshot(message.chat.id)
         gai.context_buffer.push(message.chat.id, user.first_name or "", message.text or "")
 
+        reply_to = message.reply_to_message
+        replied_to_text = (getattr(reply_to, "text", None) or None) if reply_to else None
+
         # Social fast paths (owner revision 2026-11-02): a pure
         # greeting or a short "want to try" starter fragment gets a
         # warm deterministic welcome/pointer — no AI call needed, and
         # the tone stays exactly as approved. Join service notices
         # never arrive here (they carry no user text).
+        #
+        # Batch AQ: a third deterministic path — while maintenance
+        # mode is on, a genuine service-availability question gets the
+        # maintenance answer immediately. It sits AFTER the sensitive
+        # check and the can_reply cooldown above, consumes no AI
+        # budget, and never fires when maintenance is off.
         fast_path_text = None
+        fast_path_kind = None
         if gai.is_greeting_only(message.text):
             fast_path_text = gai.WELCOME_TEXT
+            fast_path_kind = "greeting"
         elif gai.is_starter_fragment(message.text):
             fast_path_text = gai.STARTER_POINTER_TEXT
+            fast_path_kind = "starter"
+        elif gai.maintenance_mode_on() and gai.is_service_availability_question(
+            message.text,
+            context_lines=context_lines,
+            replied_to_text=replied_to_text,
+        ):
+            fast_path_text = gai.build_maintenance_reply()
+            fast_path_kind = "maintenance"
         if fast_path_text is not None:
             await message.reply(fast_path_text)
             gai.rate_limiter.record_reply(user.id, message.message_id)
+            _log_decision(message, user.id, f"fast_path:{fast_path_kind}")
             return
 
-        reply_to = message.reply_to_message
         is_reply_to_bot = bool(
             reply_to
             and reply_to.from_user
             and (reply_to.from_user.username or "").lower() == gai.BOT_USERNAME
         )
         bot_mentioned = f"@{gai.BOT_USERNAME}" in (message.text or "").lower()
-        replied_to_text = (getattr(reply_to, "text", None) or None) if reply_to else None
 
         # FAQ cache (admin-approved answers only): a near-identical
         # repeat question is answered from the cache — no AI call, no
@@ -370,12 +409,14 @@ async def handle_group_message(
                     await message.reply(answer_text)
                     gai.rate_limiter.record_reply(user.id, message.message_id)
                     await gai.record_faq_hit(s, faq_id)
+                    _log_decision(message, user.id, "faq_hit")
                     return
 
         # AI answers are budget-gated: with the hourly/daily AI-call
         # budget exhausted the bot stays silent (deferrals and the
         # free paths above are unaffected — they need no AI call).
         if not gai.rate_limiter.ai_budget_available():
+            _log_decision(message, user.id, "no_reply", "ai_budget_exhausted")
             return
         gai.rate_limiter.record_ai_call()
 
@@ -388,7 +429,14 @@ async def handle_group_message(
             replied_to_text=replied_to_text,
         )
 
+        if decision == gai.DECISION_AI_FAILED:
+            # Batch AQ: the call failed (timeout / pool exhausted) —
+            # silence for the member, but logged AS a failure, not
+            # mistaken for the AI choosing not to answer.
+            _log_decision(message, user.id, "ai_failed", "ai_call")
+            return
         if decision == gai.DECISION_ESCALATE:
+            _log_decision(message, user.id, "escalate", "ai_escalate")
             await _escalate(
                 message,
                 bot,
@@ -398,6 +446,7 @@ async def handle_group_message(
             )
             return
         if decision != gai.DECISION_REPLY or not reply_text:
+            _log_decision(message, user.id, "no_reply", "ai_decision")
             return
 
         # Owner rule (2026-11-02): zero emoji in group replies. The
@@ -406,14 +455,17 @@ async def handle_group_message(
         # only emoji becomes empty and is treated as silence.
         reply_text = gai.strip_emoji(reply_text)
         if not reply_text:
+            _log_decision(message, user.id, "no_reply", "empty_reply")
             return
 
         # Re-check the cap at send time (another reply may have landed
         # while the AI was thinking), then answer as a threaded reply.
         if not gai.rate_limiter.can_reply(user.id, message.message_id):
+            _log_decision(message, user.id, "no_reply", "cooldown_recheck")
             return
         await message.reply(reply_text)
         gai.rate_limiter.record_reply(user.id, message.message_id)
+        _log_decision(message, user.id, "reply", "ai")
     except Exception as exc:
         logger.warning("group_ai_admin: handler failed (silence): %s", exc)
     finally:

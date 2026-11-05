@@ -97,6 +97,20 @@ ANSWERED_IDS_MAX = 1000  # bound on the never-twice memory
 
 AI_TIMEOUT_SECONDS = 45
 
+# Batch AQ: hard cap on generate_content attempts inside ONE group
+# decision call. The walk is keys-outer x models-inner over the shared
+# Gemini pool — 17 keys x 4 models = 68 combinations since the
+# 2026-11-05 pool expansion. Walking all of them inside the 45 s
+# envelope made the timeout the NORMAL failure mode (production
+# 2026-11-05: a member's question burned the full 45 s and got
+# silence). 8 attempts = the first two health-ordered keys across the
+# whole 4-model chain, or more keys when an auth/quota failure skips
+# a key's remaining models early: a healthy pool still answers on
+# attempt 1, a degraded pool now fails in seconds instead of always
+# consuming the full timeout. The shared pool/chain helpers are NOT
+# changed — the recap planner keeps its full walk.
+AI_MAX_ATTEMPTS = 8
+
 # Escalation approval (admin DM buttons) + FAQ cache tuning.
 ESCALATION_CALLBACK_PREFIX = "gai_esc"
 ESCALATION_EXPIRY_SECONDS = 24 * 3600  # pending records die after 24h
@@ -513,6 +527,169 @@ def detect_sensitive_topic(text: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Service-availability fast path (Batch AQ, 2026-11-05)
+#
+# Production failure that forced this: while maintenance mode was on,
+# members asked "ခုထိ သုံးမရသေးဘူး" in the group and got SILENCE —
+# the only maintenance answer lived in the AI fact sheet, and the AI
+# decision call itself timed out after 45 s. A question whose answer
+# is a fixed fact ("the service is down for maintenance") must not
+# depend on the flaky AI call at all. When maintenance mode is ON and
+# the message carries a genuine service-availability signal, the
+# handler answers deterministically with build_maintenance_reply().
+# When maintenance is OFF this path never fires.
+# ---------------------------------------------------------------------------
+
+
+def maintenance_mode_on() -> bool:
+    """The in-memory maintenance flag — the same source the gate,
+    /start and the Batch Z fact-sheet section read."""
+    try:
+        from app.config import settings
+
+        return bool(getattr(settings, "maintenance_mode", False))
+    except Exception:
+        return False
+
+
+# Genuine availability signals: the member reports they CANNOT use /
+# open / enter the service, or asks when it will be back. Deliberately
+# NOT in the set: a bare "မရသေးဘူး" ("not yet") — far too common in
+# member-to-member chat and in unrelated complaints. The two real
+# questions from 2026-11-05 match on stronger forms:
+#   "Bot က ပြန်သုံးလို့မရသေးဘူးလား"  -> "သုံးလို့မရ"
+#   "ခုထိ သုံးမရသေးဘူး"              -> "သုံးမရ"
+_AVAILABILITY_PATTERNS: tuple[str, ...] = (
+    # Burmese — cannot use / open / enter / do
+    "သုံးမရ",
+    "သုံးလို့မရ",
+    "သုံးမဖြစ်",
+    "သုံးလို့မဖြစ်",
+    "ဖွင့်မရ",
+    "ဖွင့်လို့မရ",
+    "မပွင့်ဘူး",
+    "မပွင့်သေး",
+    "ပွင့်မလာ",
+    "ဝင်မရ",
+    "ဝင်လို့မရ",
+    "လုပ်မရ",
+    "လုပ်လို့မရ",
+    # Burmese — when will it be back / still being fixed
+    "ပြန်ဖွင့်",
+    "ဘယ်တော့ဖွင့်",
+    "ဘယ်တော့ပြန်ဖွင့်",
+    "ပြုပြင်နေတုန်း",
+    "ပြုပြင်ဆဲ",
+    "ပြင်နေတုန်း",
+    "ပြင်ဆဲ",
+    "ပြုပြင်ထိန်းသိမ်း",
+    # English
+    "maintenance",
+    "still down",
+    "is down",
+    "not working",
+    "can't use",
+    "cannot use",
+    "cant use",
+    "can't open",
+    "cannot open",
+    "cant open",
+    "when will it be back",
+    "when is it back",
+)
+
+_AVAILABILITY_PATTERNS_NORM: tuple[str, ...] = tuple(
+    _sensitive_normalise(pat) for pat in _AVAILABILITY_PATTERNS
+)
+_AVAILABILITY_PATTERNS_DESPACED: tuple[str, ...] = tuple(
+    pat.replace(" ", "") for pat in _AVAILABILITY_PATTERNS_NORM
+)
+
+# A bare "still??" fragment ("ခုထိရော ??", 2026-11-05 10:25) carries
+# no signal of its own. It counts ONLY when the conversation context
+# (the handler's recent-candidate window or the message this replies
+# to) already carries an availability signal — a follow-up, not a
+# fresh topic. Exact whole-message forms, after social normalisation
+# (punctuation dropped), so anything longer never qualifies.
+_STILL_FRAGMENT_FORMS: frozenset[str] = frozenset(
+    {
+        "ခုထိ",
+        "ခုထိရော",
+        "အခုထိ",
+        "အခုထိရော",
+        "still",
+        "yet",
+    }
+)
+
+
+def _availability_signal_in(text: str | None) -> bool:
+    """True when ONE text carries an availability pattern (dual pass
+    over the sensitive-style normalisation, like
+    detect_sensitive_topic: spaced + despaced)."""
+    norm = _sensitive_normalise(text)
+    if not norm:
+        return False
+    if any(pat in norm for pat in _AVAILABILITY_PATTERNS_NORM):
+        return True
+    despaced = norm.replace(" ", "")
+    return any(pat in despaced for pat in _AVAILABILITY_PATTERNS_DESPACED if pat)
+
+
+def is_service_availability_question(
+    text: str | None,
+    *,
+    context_lines: list[str] | None = None,
+    replied_to_text: str | None = None,
+) -> bool:
+    """True when the member is asking/reporting that the SERVICE is
+    unusable — the deterministic maintenance fast path's trigger.
+
+    Pure detector, same conventions as detect_sensitive_topic. The
+    handler only consults it while maintenance mode is on; the
+    detector itself is maintenance-agnostic. A signal in the message
+    itself always qualifies; the context-only "still??" fragment
+    qualifies only with an availability signal in the supplied
+    context / replied-to text.
+    """
+    if _availability_signal_in(text):
+        return True
+    if _social_normalise(text) in _STILL_FRAGMENT_FORMS:
+        if replied_to_text and _availability_signal_in(replied_to_text):
+            return True
+        return any(_availability_signal_in(line) for line in (context_lines or []))
+    return False
+
+
+def build_maintenance_reply() -> str:
+    """The deterministic group answer while maintenance mode is on.
+
+    Wording mirrors the Batch Z fact-sheet maintenance section — the
+    exact facts the AI was instructed to use — so the group hears the
+    same answer with or without the AI. The admin maintenance_note is
+    quoted verbatim when set; when it is empty the reply says plainly
+    that no reopening time has been announced (never invent one).
+    Burmese only, no emoji, like every fixed reply in this module.
+    """
+    from app.config import settings
+
+    lines = [
+        "Voice Clone Pro ကို အခု ပြုပြင်ထိန်းသိမ်းမှု (Maintenance) "
+        "လုပ်နေပါတယ်။ Bot နဲ့ Mini App ထဲက ဖန်တီးမှု လုပ်ဆောင်ချက်တွေ "
+        "ယာယီ သုံးလို့ မရသေးပါဘူး — ဒါက သုံးစွဲသူဘက်က အမှား မဟုတ်ပါဘူး။"
+    ]
+    note = str(getattr(settings, "maintenance_note", "") or "").strip()
+    if note:
+        lines.append(note)
+    else:
+        lines.append(
+            "ပြန်ဖွင့်မယ့် အချိန်ကို ကြေညာ မထားရသေးပါဘူး — ပြီးတာနဲ့ "
+            "ဒီ Group ထဲမှာ အသိပေးပါမယ်။ ခဏ စောင့်ပေးပါနော်။"
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Conversation context (IN-MEMORY ONLY — never stored, never logged)
 #
 # A small per-chat ring of the most recent candidate messages, fed to
@@ -770,6 +947,12 @@ REPLY: <အဖြေ စာသား>"""
 DECISION_REPLY = "reply"
 DECISION_NO_REPLY = "no_reply"
 DECISION_ESCALATE = "escalate"
+# Batch AQ: ask_group_admin_ai returns this (instead of NO_REPLY) when
+# the AI CALL ITSELF failed — timeout, pool exhausted, no key — so the
+# handler can log the failure distinctly. Silence toward the member is
+# unchanged; only the bookkeeping differs. parse_ai_decision never
+# returns it (the AI never produced an answer at all).
+DECISION_AI_FAILED = "ai_failed"
 
 
 def build_prompt(
@@ -1027,13 +1210,25 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
         pool = sorted(pool, key=lambda item: rank[item[1]])
     models = gemini_model_chain()
     last_exc: Exception | None = None
+    # Batch AQ: count attempts against AI_MAX_ATTEMPTS (see the
+    # constant). Bookkeeping (mark_success / mark_failure) is
+    # unchanged for every attempt actually made; the health ordering
+    # above is untouched. The cap is the ONLY change to the walk.
+    attempts = 0
+    cap_hit = False
     for label, key in pool:
+        if cap_hit:
+            break
         try:
             client = factory(key)
         except Exception as exc:
             last_exc = exc
             continue
         for model in models:
+            if attempts >= AI_MAX_ATTEMPTS:
+                cap_hit = True
+                break
+            attempts += 1
             try:
                 response = client.models.generate_content(model=model, contents=prompt)
                 text = str(getattr(response, "text", "") or "").strip()
@@ -1050,7 +1245,9 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
                     break
                 # Model-level problem: try the next model on this key.
                 continue
-    raise RuntimeError(f"group_ai_admin: Gemini pool exhausted: {last_exc}")
+    raise RuntimeError(
+        f"group_ai_admin: Gemini pool exhausted after {attempts} attempts: {last_exc}"
+    )
 
 
 async def ask_group_admin_ai(
@@ -1063,7 +1260,12 @@ async def ask_group_admin_ai(
     replied_to_text: str | None = None,
     client_factory: Callable[[str], Any] | None = None,
 ) -> tuple[str, str | None]:
-    """Ask the AI for a decision; ANY failure degrades to silence."""
+    """Ask the AI for a decision; ANY failure degrades to silence.
+
+    Batch AQ: a failed CALL returns DECISION_AI_FAILED (not
+    DECISION_NO_REPLY) so the handler can log it as a failure —
+    the member-visible behaviour (silence) is identical.
+    """
     prompt = build_prompt(
         author_name=author_name,
         text=text,
@@ -1078,8 +1280,17 @@ async def ask_group_admin_ai(
             timeout=AI_TIMEOUT_SECONDS,
         )
     except Exception as exc:
-        logger.warning("group_ai_admin: AI call failed, staying silent: %s", exc)
-        return DECISION_NO_REPLY, None
+        # Batch AQ: name the exception TYPE — a bare TimeoutError
+        # stringifies to "" and the production warning ended in an
+        # empty colon (2026-11-05), hiding the cause. The member still
+        # gets silence; the distinct DECISION_AI_FAILED lets the
+        # handler log the failure instead of a phantom "no_reply".
+        logger.warning(
+            "group_ai_admin: AI call failed, staying silent: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return DECISION_AI_FAILED, None
     return parse_ai_decision(raw)
 
 
