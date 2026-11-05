@@ -64,6 +64,72 @@ def space_supports_clone(space_name: str) -> bool:
     return not any(marker in name for marker in _CLONE_INCAPABLE_SPACE_MARKERS)
 
 
+# Batch AT (AT-2): per-space attempt cap inside ONE synthesis call.
+# The pre-AT walk was space-major, so a single congested/broken space
+# could consume the whole global failover budget before a healthy
+# space was ever tried (production voice job a670e490: 18 attempts,
+# all on space #1, then the 240 s budget expired). Even with the
+# round-robin order (AT-1), this cap bounds how much of the budget
+# one space may eat per call; the global budget stays the outer bound.
+MAX_ATTEMPTS_PER_SPACE = 4
+
+# Batch AT (AT-3): per-space Gradio endpoint mapping. Every space
+# defaults to the openbmb-style "/generate" endpoint.
+# yunaisbusy/voxcpm2-fast is a duplicate of the yeyee-family app: its
+# app.py (read via the HF API 2026-11-05) exposes
+# generate_preset(voice_name, target_text),
+# generate_clone(ref_audio_path, ref_text, target_text) and
+# generate_style(style, target_text) — there is NO api_name="generate",
+# so every pre-AT call to it failed instantly with "Cannot find a
+# function with `api_name`: /generate" (production recap job
+# rc_1793880623_7150ea: 3 of every line's 6 pair attempts burned
+# there). The engine's existing yeyee-family call shape —
+# submit(ref_audio_path=…, ref_text=…, target_text=…) — matches
+# generate_clone's signature exactly, so the fast space is routed
+# through that same family with these endpoint names. The engine
+# never calls a preset endpoint (preset voices resolve to a style
+# prompt or a reference clip), so "preset" is recorded here for
+# completeness only.
+_CLONE_STYLE_ENDPOINTS = {
+    "clone": "/generate_clone",
+    "style": "/generate_style",
+    "preset": "/generate_preset",
+}
+_DEFAULT_SPACE_ENDPOINTS = {
+    "clone": "/generate",
+    "style": "/generate",
+    "preset": "/generate",
+}
+SPACE_API_ENDPOINTS = {
+    "yunaisbusy/voxcpm2-fast": dict(_CLONE_STYLE_ENDPOINTS),
+}
+
+
+def space_api_endpoints(space_name: str) -> dict:
+    """Gradio endpoint names for one space (Batch AT, AT-3).
+
+    Defaults to "/generate" for every kind; the yeyee family and the
+    spaces in SPACE_API_ENDPOINTS use the clone/style endpoint names
+    their app.py actually exposes.
+    """
+    name = str(space_name or "")
+    if name in SPACE_API_ENDPOINTS:
+        return dict(SPACE_API_ENDPOINTS[name])
+    if "yeyee2609" in name.lower():
+        return dict(_CLONE_STYLE_ENDPOINTS)
+    return dict(_DEFAULT_SPACE_ENDPOINTS)
+
+
+def _format_pair_error(exc: BaseException) -> str:
+    """Batch AT (AT-4): pair-failure log detail — exception TYPE plus
+    its message, truncated to 300 chars. Pre-AT the pair line carried
+    only the exception's string form, which for the production
+    failures was the bare class name with no message attached, making
+    the failovers undiagnosable from logs alone (10 bare "ValueError"
+    attempts in voice job a670e490)."""
+    return f"{type(exc).__name__}: {exc}"[:300]
+
+
 # yeyee2609 style prompts (fix 2026-10-29): previously every male
 # persona resolved to the single "Knowledge Zone" preset and every
 # female persona to the single "Channel 99" preset, so all voices came
@@ -301,6 +367,15 @@ class VoxCPMEngine:
     _last_init_times: dict[str, float] = {}
     _token_cooldowns: dict[str, float] = {}
     _token_rr_counter: int = 0
+    # Batch AT (AT-5): per-bind-slot rotation counters. A bound pool
+    # worker (recap TTS slot N) used to restart at token N on EVERY
+    # call, so the first few pool accounts absorbed nearly all
+    # synthesis starts (production Window A: only 3 distinct tokens
+    # across the window's attempts). The counter for a slot advances
+    # on every call made with that bind index — shared across engine
+    # instances and jobs, guarded by _lock — so consecutive calls
+    # from the same slot start at different tokens.
+    _token_bind_rr_counters: dict[int, int] = {}
     _lock = threading.Lock()
     # Batch AJ (M12): cooldown persistence backstop. The in-memory
     # dict above stays keyed by raw token (existing behaviour/tests),
@@ -579,19 +654,25 @@ class VoxCPMEngine:
             for sp in skipped:
                 self._log(f"ℹ️ Space '{sp}' has no reference-clone endpoint; skipping it for this clone request")
             candidate_spaces = capable
-        pairs: List[Tuple[str, Optional[str]]] = []
-        for sp in candidate_spaces:
-            for tok in tokens_pool:
-                pairs.append((sp, tok))
 
-        # Rotate healthy tokens across requests while keeping primary space priority
+        # Rotate healthy tokens across requests (starting offset only;
+        # the pair ORDER itself is built round-robin below).
         healthy_auth = [t for t in tokens_pool if t is not None and self._token_cooldowns.get(t, 0) <= now]
+        ordered_toks: List[Optional[str]] = list(tokens_pool)
         if len(healthy_auth) > 1:
             if self.token_bind_index is not None:
-                # Batch AL: a bound pool worker starts at its OWN token
-                # every call, so N concurrent workers spread over N
-                # different accounts instead of contending on one.
-                shift = int(self.token_bind_index) % len(healthy_auth)
+                # Batch AL: a bound pool worker starts at its OWN token,
+                # so N concurrent workers spread over N different
+                # accounts instead of contending on one.
+                # Batch AT (AT-5): the slot's start ADVANCES by one on
+                # every call (per-slot counter shared across engine
+                # instances), so the same first few accounts are not
+                # re-picked at the head of every segment's walk.
+                bind = int(self.token_bind_index)
+                with self._lock:
+                    advance = self._token_bind_rr_counters.get(bind, 0)
+                    self._token_bind_rr_counters[bind] = advance + 1
+                shift = (bind + advance) % len(healthy_auth)
             else:
                 with self._lock:
                     shift = self._token_rr_counter % len(healthy_auth)
@@ -599,7 +680,17 @@ class VoxCPMEngine:
             rotated_auth = healthy_auth[shift:] + healthy_auth[:shift]
             other_toks = [t for t in tokens_pool if t not in healthy_auth]
             ordered_toks = rotated_auth + other_toks
-            pairs = [(sp, tok) for sp in candidate_spaces for tok in ordered_toks]
+
+        # Batch AT (AT-1): space-first round-robin pair order — one
+        # pair per space per round (token-major), so every space gets
+        # an early attempt before any space gets a second one. The
+        # pre-AT space-major order exhausted the failover budget on
+        # space #1 alone (production voice job a670e490) and burned
+        # half of every recap line's attempts on one broken space
+        # before reaching a healthy one (job rc_1793880623_7150ea).
+        pairs: List[Tuple[str, Optional[str]]] = [
+            (sp, tok) for tok in ordered_toks for sp in candidate_spaces
+        ]
 
         # Batch AL: pairs this job has already ruled out (token quota
         # dead on every space, or the (space, token) pair refused at the
@@ -632,6 +723,8 @@ class VoxCPMEngine:
         total_budget = float(kwargs.get("total_timeout") or (_budget_env if _budget_env else 240))
         synth_deadline = time.time() + total_budget
 
+        # Batch AT (AT-2): attempts spent per space within THIS call.
+        space_attempts: dict[str, int] = {}
         for attempt, (space_name, active_token) in enumerate(pairs, 1):
             if time.time() > synth_deadline:
                 self._log(f"⏱️ VoxCPM total failover budget ({total_budget:.0f}s) exhausted; stopping further space attempts")
@@ -640,6 +733,12 @@ class VoxCPMEngine:
                 # Ruled out by an earlier failure in THIS walk (e.g. the
                 # token died on another space a moment ago).
                 continue
+            if space_attempts.get(space_name, 0) >= MAX_ATTEMPTS_PER_SPACE:
+                # Batch AT (AT-2): this space has had its share of
+                # this call — move on even if tokens remain on it, so
+                # the global budget is spread across spaces.
+                continue
+            space_attempts[space_name] = space_attempts.get(space_name, 0) + 1
             attempts_made += 1
             tok_masked = mask_hf_token(active_token)
             try:
@@ -658,6 +757,10 @@ class VoxCPMEngine:
                 if ref_file and prompt_text:
                     # Locked-timbre cloning: the reference clip alone defines the voice.
                     effective_control = ""
+                # Batch AT (AT-3): endpoint names for THIS space —
+                # "/generate" by default, the clone/style family for
+                # spaces whose app exposes those functions instead.
+                endpoints = space_api_endpoints(space_name)
 
                 if "soemintheinsmt6" in space_name:
                     # Prompt-only space: clone requests were filtered
@@ -667,7 +770,14 @@ class VoxCPMEngine:
                         voice_description=control_instruction or DEFAULT_BURMESE_CONTROL,
                         api_name="/tts",
                     )
-                elif "yeyee2609" in space_name:
+                elif endpoints["clone"] == "/generate_clone":
+                    # yeyee family + mapped duplicates of it (AT-3,
+                    # e.g. yunaisbusy/voxcpm2-fast): the clone call
+                    # shape below is the one their app.py declares —
+                    # generate_clone(ref_audio_path, ref_text,
+                    # target_text) — unchanged from the pre-AT yeyee
+                    # branch; only the routing now comes from the
+                    # endpoint mapping instead of the owner name.
                     if ref_file:
                         if not prompt_text:
                             self._log(f"ℹ️ Space '{space_name}' cloning needs the reference transcript; skipping to next space...")
@@ -676,14 +786,14 @@ class VoxCPMEngine:
                             ref_audio_path=ref_file,
                             ref_text=prompt_text,
                             target_text=clean_text,
-                            api_name="/generate_clone",
+                            api_name=endpoints["clone"],
                         )
                     else:
                         chosen_style = PRESET_MAP_YEYEE.get(preset_voice) if preset_voice else None
                         job = client.submit(
                             style=chosen_style or effective_control,
                             target_text=clean_text,
-                            api_name="/generate_style",
+                            api_name=endpoints["style"],
                         )
                 elif "chenchenaoyang" in space_name:
                     job = client.submit(
@@ -709,7 +819,7 @@ class VoxCPMEngine:
                         cfg_value_input=float(cfg_value or 2.0),
                         do_normalize=True,
                         denoise=True,
-                        api_name="/generate",
+                        api_name=endpoints["clone"],
                     )
 
                 # Poll status with queue tracking
@@ -874,7 +984,7 @@ class VoxCPMEngine:
                     self._token_cooldowns[active_token] = time.time() + 1800
                     self._schedule_cooldown_persist()
                     self._log(f"⚠️ Token {tok_masked} rejected as invalid/unauthorized on '{space_name}'; cooling down for 30m...")
-                self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {e_pair}")
+                self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {_format_pair_error(e_pair)}")
                 time.sleep(0.5)
 
         # Fallback to the Edge-TTS studio persona engine — ONLY after
@@ -927,4 +1037,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens", "space_supports_clone", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "VoxCPMQuotaExhaustedError"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens", "space_supports_clone", "space_api_endpoints", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "VoxCPMQuotaExhaustedError"]
