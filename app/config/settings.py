@@ -113,6 +113,13 @@ class Settings(BaseSettings):
     recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # VIP: 10 mins (600s)
     free_daily_job_limit: int = Field(default=5, alias="FREE_DAILY_JOB_LIMIT")
     purchased_daily_job_limit: int = Field(default=0, alias="PURCHASED_DAILY_JOB_LIMIT")  # 0 = unlimited
+    # Batch AN: per-user DAILY voice-minutes cap, split by tier (owner
+    # order 2026-11-05 — the scarce resource is HF caller quota, so one
+    # user must not burn the pool in a day). Enforced in
+    # create_voice_clone_job for FREE + PURCHASED; admins exempt;
+    # 0 = unlimited for that tier.
+    voice_daily_limit_minutes_free: int = Field(default=5, alias="VOICE_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
+    voice_daily_limit_minutes_paid: int = Field(default=30, alias="VOICE_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
     max_concurrent_jobs_per_user: int = Field(default=1, alias="MAX_CONCURRENT_JOBS_PER_USER")
     maintenance_mode: bool = Field(default=False, alias="MAINTENANCE_MODE")
     # Admin-written announcement the Group AI quotes verbatim from

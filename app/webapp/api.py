@@ -1986,11 +1986,25 @@ def _voice_job_error_status(reason: str) -> int:
     "LEGACY_MODEL_ENGINE_REMOVED": 400,
         "CONCURRENT_JOB_LIMIT_EXCEEDED": 429,
         "DAILY_JOB_LIMIT_EXCEEDED": 429,
+        "DAILY_MINUTE_LIMIT_EXCEEDED": 429,
         "INSUFFICIENT_BALANCE": 403,
     }.get(reason, 400)
 
 
-def _voice_job_error_detail(reason: str) -> str:
+def _voice_job_error_detail(reason: str, user: User | None = None) -> str:
+    if reason == "DAILY_MINUTE_LIMIT_EXCEEDED":
+        # Batch AN: name the caller's OWN tier limit (the endpoints
+        # pass their authenticated user; without one, quote the FREE
+        # tier, which is the default account category).
+        _limit = (
+            settings.voice_daily_limit_minutes_paid
+            if user is not None and user.account_category == AccountCategory.PURCHASED.value
+            else settings.voice_daily_limit_minutes_free
+        )
+        return (
+            f"ယနေ့အတွက် အသံ အသုံးချနိုင်သော မိနစ် ({int(_limit)} မိနစ်) ပြည့်သွားပါပြီ။ "
+            "မနက်ဖြန် ပြန်ကြိုးစားပါ။"
+        )
     return {
         "MODEL_NOT_AUTHORIZED": "အသံမော်ဒယ် မတွေ့ရှိပါ",
     "LEGACY_MODEL_ENGINE_REMOVED": "ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃–၃၀ စက္ကန့်) အသစ် ပို့ပေးပါ။",
@@ -2678,7 +2692,7 @@ async def create_voice_job(
     if not job:
         raise HTTPException(
             status_code=_voice_job_error_status(_reason),
-            detail=_voice_job_error_detail(_reason),
+            detail=_voice_job_error_detail(_reason, user),
         )
     await db.commit()
     await db.refresh(job)
@@ -2848,7 +2862,7 @@ async def create_voice_job_with_audio(
                 pass
         raise HTTPException(
             status_code=_voice_job_error_status(_reason),
-            detail=_voice_job_error_detail(_reason),
+            detail=_voice_job_error_detail(_reason, user),
         )
     await db.commit()
     await db.refresh(job)
@@ -10071,6 +10085,8 @@ class AdminSettingsPayload(BaseModel):
     character_limit_purchased: Optional[int] = None
     free_monthly_allowance_seconds: Optional[int] = None
     free_daily_job_limit: Optional[int] = None
+    voice_daily_limit_minutes_free: Optional[int] = None
+    voice_daily_limit_minutes_paid: Optional[int] = None
     recap_free_max_duration_seconds: Optional[int] = None
     recap_max_duration_seconds: Optional[int] = None
     required_channel_id: Optional[str] = None
@@ -10119,6 +10135,8 @@ async def get_admin_settings(
         "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
         "free_monthly_allowance_seconds": int(getattr(settings, "free_monthly_allowance_seconds", 180)),
         "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
+        "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 5)),
+        "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 30)),
         "recap_free_max_duration_seconds": int(getattr(settings, "recap_free_max_duration_seconds", 120)),
         "recap_max_duration_seconds": int(getattr(settings, "recap_max_duration_seconds", 600)),
         "required_channel_id": str(getattr(settings, "required_channel_id", "") or ""),
@@ -10274,6 +10292,8 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
         elif key in (
             "free_monthly_allowance_seconds",
             "free_daily_job_limit",
+            "voice_daily_limit_minutes_free",
+            "voice_daily_limit_minutes_paid",
             "recap_free_max_duration_seconds",
             "recap_max_duration_seconds",
         ):
@@ -10284,6 +10304,8 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             _bounds = {
                 "free_monthly_allowance_seconds": (0, 31_536_000),
                 "free_daily_job_limit": (0, 1000),
+                "voice_daily_limit_minutes_free": (0, 1440),
+                "voice_daily_limit_minutes_paid": (0, 1440),
                 "recap_free_max_duration_seconds": (0, 86400),
                 "recap_max_duration_seconds": (60, 86400),
             }

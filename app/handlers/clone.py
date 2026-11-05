@@ -570,6 +570,7 @@ _VOICE_QUEUE_FAILURE_KEYS: dict[str, str] = {
     "LEGACY_MODEL_ENGINE_REMOVED": "queue_failed_legacy_model",
     "CONCURRENT_JOB_LIMIT_EXCEEDED": "queue_failed_concurrent",
     "DAILY_JOB_LIMIT_EXCEEDED": "queue_failed_daily",
+    "DAILY_MINUTE_LIMIT_EXCEEDED": "queue_failed_daily_minutes",
     "INSUFFICIENT_BALANCE": "queue_failed_insufficient_balance",
     "TEXT_EXCEEDS_CHARACTER_LIMIT": "queue_failed_text_limit",
     "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT": "queue_failed_text_limit",
@@ -577,9 +578,17 @@ _VOICE_QUEUE_FAILURE_KEYS: dict[str, str] = {
 }
 
 
-def voice_queue_failure_message(reason: str | None, lang: str) -> str:
+def voice_queue_failure_message(reason: str | None, lang: str, account_category: str | None = None) -> str:
     """Localized, user-safe message for a create_voice_clone_job reason."""
     key = _VOICE_QUEUE_FAILURE_KEYS.get(reason or "", "queue_failed_generic")
+    if (reason or "") == "DAILY_MINUTE_LIMIT_EXCEEDED":
+        # Batch AN: the message names the caller's OWN tier limit.
+        limit = (
+            settings.voice_daily_limit_minutes_paid
+            if account_category == AccountCategory.PURCHASED.value
+            else settings.voice_daily_limit_minutes_free
+        )
+        return t(key, lang, limit_minutes=int(limit))
     return t(key, lang)
 
 
@@ -607,7 +616,8 @@ async def _submit_voice_job(
             source_audio_path=source_audio_path,
         )
         if not job:
-            err_msg = voice_queue_failure_message(reason, lang)
+            acct_user, _ = await get_or_create_user(session, callback.from_user.id)
+            err_msg = voice_queue_failure_message(reason, lang, account_category=acct_user.account_category)
             await callback.answer(err_msg, show_alert=True)
             return
 
@@ -654,7 +664,8 @@ async def _submit_voxcpm_job(
             source_audio_path=source_audio_path,
         )
         if not job:
-            err_msg = voice_queue_failure_message(reason, lang)
+            acct_user, _ = await get_or_create_user(session, message.from_user.id)
+            err_msg = voice_queue_failure_message(reason, lang, account_category=acct_user.account_category)
             await message.answer(err_msg, reply_markup=back_to_menu_kb(lang), parse_mode="HTML")
             return
 

@@ -214,6 +214,64 @@ async def create_voice_clone_job(
             if daily_count >= settings.purchased_daily_job_limit:
                 return None, "DAILY_JOB_LIMIT_EXCEEDED"
 
+        # Daily voice-MINUTES cap (Batch AN, owner order 2026-11-05):
+        # the job-count caps above throttle job frequency, but the
+        # scarce resource behind voice is HF caller quota measured in
+        # audio time — one user submitting a few very long jobs could
+        # still burn the pool in a day. The cap is split by tier
+        # (FREE 5 min/day, PURCHASED 30 min/day by default; 0 =
+        # unlimited for that tier) and counts today's VOICE_CLONE jobs
+        # only, inside the same per-user lock and with the same UTC
+        # day boundary as the count checks: SUCCESS jobs count their
+        # recorded actual seconds (seconds_consumed — the billing
+        # source of truth the worker writes on completion), falling
+        # back to the submit-time estimate when no actual was recorded
+        # (the same consumed→estimated fallback the bot history
+        # display uses); QUEUED/RUNNING jobs count their estimate;
+        # FAILED and CANCELLED jobs consume nothing. Aggregation is
+        # per-row in Python (no func.sum under app/, Batch R rule).
+        _limit_minutes = (
+            settings.voice_daily_limit_minutes_paid
+            if user.account_category == AccountCategory.PURCHASED.value
+            else settings.voice_daily_limit_minutes_free
+        )
+        if _limit_minutes > 0:
+            today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+            _limit_seconds = _limit_minutes * 60
+            _minute_stmt = (
+                select(Job)
+                .where(
+                    Job.user_id == user_id,
+                    Job.job_type == JobType.VOICE_CLONE.value,
+                    Job.created_at >= today_start,
+                    Job.status.in_(
+                        [
+                            JobStatus.SUCCESS.value,
+                            JobStatus.QUEUED.value,
+                            JobStatus.RUNNING.value,
+                        ]
+                    ),
+                )
+            )
+            _consumed_seconds = 0.0
+            for _prev in (await session.execute(_minute_stmt)).scalars().all():
+                if _prev.status == JobStatus.SUCCESS.value and (_prev.seconds_consumed or 0) > 0:
+                    _consumed_seconds += float(_prev.seconds_consumed)
+                else:
+                    _consumed_seconds += estimate_voice_job_seconds(
+                        _prev.input_text or "", _prev.speed_preset
+                    )
+            _new_estimate = estimate_voice_job_seconds(text or "", speed_preset)
+            if _consumed_seconds + _new_estimate > _limit_seconds:
+                logger.info(
+                    "Voice job daily-minutes cap rejected for user %s: %.1fs consumed + ~%.1fs new > %ss limit",
+                    user_id,
+                    _consumed_seconds,
+                    _new_estimate,
+                    _limit_seconds,
+                )
+                return None, "DAILY_MINUTE_LIMIT_EXCEEDED"
+
     # 3. Check character limits and audio file existence defense-in-depth
     valid_text = (text or "").strip()
     if valid_text:
