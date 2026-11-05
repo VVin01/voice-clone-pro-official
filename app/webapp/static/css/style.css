@@ -3453,37 +3453,69 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     flex: 1 1 auto; overflow: visible; text-overflow: clip;
 }
 
-/* ── Batch AV: Recap step flow ─────────────────────────────────────
-   Four collapsible steps under a step indicator. Strip headers are
-   full-width buttons with a ≥48px touch target; summaries truncate
-   with an ellipsis instead of pushing the chevron off the card;
-   nav labels wrap rather than squeeze at 360–420px widths. */
-.recap-steps-nav { display: flex; align-items: stretch; gap: 4px; margin-bottom: var(--s2); }
-.recap-steps-nav-item {
-    flex: 1 1 0; min-width: 0; min-height: 48px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-    padding: 6px 4px; border-radius: var(--r-md, 12px);
-    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.09);
-    color: var(--text-2); cursor: pointer;
+/* ── Batch AX: Recap wizard ────────────────────────────────────────
+   One step at a time (owner direction 2026-11-06): exactly one step
+   card is visible; completed steps disappear. The indicator is a
+   designed progress piece (AX-2R): a track behind four nodes, its
+   completed portion filled with the app's blue gradient; nodes are
+   38px circles with shadow and ring; the current node carries the
+   gradient + a gentle pulsing halo; ONLY the current step's name
+   renders, as a one-line caption under the track — no text inside
+   the chips (the AV labels squeezed and clipped at phone widths). */
+.recap-steps-nav { margin-bottom: var(--s2); }
+.recap-steps-track { position: relative; display: flex; justify-content: space-between; align-items: center; padding: 0 3px; }
+.recap-steps-track-bg {
+    position: absolute; top: 50%; left: 22px; right: 22px; height: 4px;
+    transform: translateY(-50%); border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
 }
-.recap-steps-nav-item.is-active { border-color: rgba(96, 165, 250, 0.55); color: var(--text-1); background: rgba(96, 165, 250, 0.10); }
+.recap-steps-track-fill {
+    position: absolute; top: 50%; left: 22px; height: 4px; width: 16.6%;
+    transform: translateY(-50%); border-radius: 999px;
+    background: linear-gradient(90deg, #2563eb, #60a5fa);
+    transition: width 0.25s ease;
+}
+.recap-steps-nav-item {
+    position: relative; z-index: 1; flex: 0 0 auto;
+    min-width: 44px; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 3px; border: none; background: none; cursor: pointer;
+}
 .recap-steps-nav-num {
     display: inline-flex; align-items: center; justify-content: center;
-    min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
-    background: rgba(255, 255, 255, 0.14); font-size: 12px; font-weight: 700;
+    width: 38px; height: 38px; border-radius: 999px;
+    background: #fff; border: 1.5px solid rgba(15, 23, 42, 0.22); color: var(--text-3);
+    box-shadow: 0 2px 8px rgba(2, 6, 23, 0.35), 0 0 0 3px rgba(255, 255, 255, 0.10);
+    font-size: 15px; font-weight: 700;
 }
-.recap-steps-nav-item.is-active .recap-steps-nav-num { background: #2563eb; color: #fff; }
-.recap-steps-nav-label { font-size: 11.5px; line-height: 1.35; text-align: center; overflow-wrap: anywhere; }
-.recap-steps-nav-sep { align-self: center; color: var(--text-3); font-size: 12px; }
+.recap-steps-nav-item.is-done .recap-steps-nav-num,
+.recap-steps-nav-item.is-active .recap-steps-nav-num {
+    background: linear-gradient(135deg, #2563eb, #60a5fa); border-color: transparent; color: #fff;
+}
+.recap-steps-nav-item.is-active .recap-steps-nav-num { animation: recap-step-halo 2.2s ease-in-out infinite; }
+.recap-steps-nav-item.pop .recap-steps-nav-num { animation: recap-step-pop 0.28s ease, recap-step-halo 2.2s ease-in-out 0.3s infinite; }
+@keyframes recap-step-halo {
+    0%, 100% { box-shadow: 0 2px 8px rgba(2, 6, 23, 0.35), 0 0 0 3px rgba(96, 165, 250, 0.35); }
+    50% { box-shadow: 0 2px 8px rgba(2, 6, 23, 0.35), 0 0 0 7px rgba(96, 165, 250, 0.12); }
+}
+@keyframes recap-step-pop {
+    0% { transform: scale(0.82); }
+    55% { transform: scale(1.14); }
+    100% { transform: scale(1); }
+}
+.recap-steps-caption {
+    margin-top: 6px; text-align: center; font-size: 13.5px; font-weight: 600;
+    color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+    .recap-steps-nav-item.is-active .recap-steps-nav-num,
+    .recap-steps-nav-item.pop .recap-steps-nav-num { animation: none; }
+    .recap-steps-track-fill { transition: none; }
+}
 
-.recap-step-strip { width: 100%; min-height: 48px; background: none; border: none; cursor: pointer; text-align: left; padding: 4px 2px; font: inherit; color: inherit; }
-.recap-step-strip .recap-step-summary {
-    flex: 1 1 auto; min-width: 0; margin-left: var(--s2);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: var(--text-3); font-size: 12.5px; font-weight: 400;
-}
-.recap-step-chevron { flex-shrink: 0; margin-left: var(--s2); color: var(--text-3); font-size: 13px; transition: transform 0.18s ease; }
-.recap-step-collapsed .recap-step-chevron { transform: rotate(-90deg); }
+.recap-step-head { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 4px 2px; font-weight: 700; }
+.recap-step-word { color: var(--text-2); font-size: 14px; }
+.recap-step-dot { color: var(--text-3); }
 .recap-step-body { padding-top: var(--s1, 4px); }
 .recap-step-next-row { display: flex; justify-content: flex-end; }
 .recap-step-next { min-height: 48px; padding: 0 22px; }
@@ -3502,6 +3534,23 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-detail-group { padding: var(--s2) 0; border-top: 1px dashed rgba(255, 255, 255, 0.10); }
 .recap-detail-group:first-child { border-top: none; padding-top: 0; }
 .recap-detail-group-title { font-size: 13.5px; font-weight: 700; color: var(--text-1); margin-bottom: var(--s1, 4px); }
+
+/* Step 4 choices line (AX-4): title · voice · aspect in ONE compact
+   line above the quote — the title segment truncates with an
+   ellipsis so the line never overflows. */
+.recap-step4-choices {
+    display: flex; align-items: center; gap: 6px; min-width: 0;
+    margin-bottom: var(--s2); font-size: 13px; color: var(--text-2);
+    white-space: nowrap; overflow: hidden;
+}
+.recap-step4-choice-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recap-step4-choice-voice, .recap-step4-choice-ratio { flex: 0 0 auto; }
+.recap-step4-choice-voice::before, .recap-step4-choice-ratio::before { content: "·"; margin-right: 6px; color: var(--text-3); }
+.recap-step4-choice-voice:empty::before, .recap-step4-choice-ratio:empty::before { content: none; }
+
+/* Compact language control (AX-5): the full 18-value list as a
+   select under the frequent pills. */
+.recap-lang-more { width: 100%; min-width: 0; }
 
 /* Step 4 review: preview thumbnail + the large credit quote. */
 .recap-step4-review { display: flex; align-items: center; gap: var(--s3, 14px); }
@@ -3525,3 +3574,131 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 /* Cramped-spot guard (parent inventory): the custom-crop label and
    the sync lock pill wrap onto two lines instead of colliding. */
 #recap-preview-transform-group .card-header-row { flex-wrap: wrap; row-gap: var(--s2); }
+
+/* ── Batch AX-4R + AX-6: Step 4 output preview + tab-wide polish ────
+   AX-4R: Step 4 opens with a LARGE output-preview card — the same
+   engine composite the Step 2 stage shows — so the user sees the
+   finished video's form (a still at the current seek position,
+   captioned honestly as such) and can go back and fix things before
+   the job starts. AX-6: one design language across the whole Recap
+   tab — card headers, buttons, pills, toggles, sliders, section
+   labels, empty states and the quote card all share it. Polish
+   only: no behaviour, payload or id changes; the AU quality lock
+   keeps its shipped gold look (restated after the pill rule). */
+
+/* Output preview card (AX-4R). The frame is a fixed aspect box
+   (JS sets aspect-ratio from the chosen canvas), so swapping frames
+   never jumps the layout; the previous frame stays visible until
+   the refreshed composite lands — no blank flash. */
+.recap-output-card { margin-bottom: var(--s3); }
+.recap-output-frame {
+    position: relative; width: 100%; margin: 0 auto;
+    border-radius: var(--r-md); overflow: hidden;
+    background: rgba(8, 10, 16, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    display: flex; align-items: center; justify-content: center;
+}
+.recap-output-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; display: block; }
+.recap-output-empty { padding: 24px 16px; color: rgba(255, 255, 255, 0.92); }
+.recap-output-empty .preview-empty-desc { color: rgba(255, 255, 255, 0.75); opacity: 1; }
+.recap-output-caption { margin-top: var(--s2); font-size: 12.5px; line-height: 1.7; color: var(--text-2); text-align: center; }
+.recap-output-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--s2); justify-content: center; }
+.recap-fact-chip {
+    display: inline-flex; align-items: center; min-height: 30px; padding: 3px 10px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+    font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap;
+}
+
+/* Card headers (AX-6): one pattern — the step number as a badge in
+   the indicator node's style (blue gradient, white number, soft
+   shadow + ring), title beside it, consistent padding. */
+.recap-step-head { gap: var(--s2); padding: var(--s2) 2px var(--s3); min-height: 52px; }
+.recap-step-head .step-num-pill {
+    width: 30px; height: 30px; font-size: 14px; color: #fff;
+    background: linear-gradient(135deg, #2563eb, #60a5fa);
+    box-shadow: 0 2px 8px rgba(2, 6, 23, 0.30), 0 0 0 3px rgba(96, 165, 250, 0.18);
+}
+
+/* Buttons (AX-6): Continue = full-width primary in the blue
+   gradient language with a soft shadow (the "→" affordance is in
+   the markup); secondary actions stay quiet. */
+.recap-step-next-row { justify-content: stretch; margin-top: var(--s3); }
+.recap-step-next {
+    width: 100%; min-height: 52px; padding: 0 22px;
+    background: linear-gradient(135deg, #2563eb, #60a5fa);
+    color: #fff; border-color: transparent; font-weight: 700;
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.32);
+}
+
+/* Pickers (AX-6): ONE selected language across the tab — blue
+   gradient fill, white text, soft shadow. */
+#tab-recap .pill-btn.active,
+#tab-recap .style-chip.active,
+#tab-recap .ratio-btn.active {
+    background: linear-gradient(135deg, #2563eb, #60a5fa);
+    color: #fff; border-color: transparent;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.32);
+}
+/* The AU render-quality lock keeps its shipped gold look — do not
+   restyle (AX-6 explicit exclusion). */
+#recap-quality-picker .pill-btn.active {
+    background: linear-gradient(180deg, #ffd968, #f5b921);
+    color: #221a04; border-color: #d99a06;
+    box-shadow: 0 2px 8px rgba(217, 154, 6, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+/* Toggles (AX-6): one switch language across Steps 2–4 — the
+   switch-track component and the checkbox rows share the blue
+   on-state of the new primary language. */
+#tab-recap .toggle-pill-btn.active .switch-track {
+    background: linear-gradient(135deg, #2563eb, #60a5fa); border-color: transparent;
+}
+#tab-recap .script-review-row input[type="checkbox"] { accent-color: #2563eb; }
+
+/* Sliders (AX-6): the value readout is a fixed-width right-aligned
+   chip, so rows never jitter while sliding. (Track/thumb already
+   share the one .studio-slider component.) */
+#tab-recap .slider-val {
+    min-width: 58px; text-align: right; padding: 2px 8px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+}
+
+/* Detail-group titles (AX-6): one section-label pattern — icon +
+   label over a hairline divider, identical rhythm above/below. */
+.recap-detail-group { padding: var(--s4) 0 var(--s3); }
+.recap-detail-group-title {
+    padding-bottom: var(--s2); margin-bottom: var(--s3);
+    border-bottom: 1px solid rgba(127, 148, 179, 0.22);
+}
+
+/* Empty stage (AX-6): soft dashed inner frame, centred icon and
+   one guidance line; same padding as the loaded stage's card so
+   the card does not jump when a source lands. */
+.preview-empty-state {
+    border: 1.5px dashed rgba(127, 148, 179, 0.45);
+    border-radius: var(--r-lg); padding: 24px 16px;
+    background: rgba(127, 148, 179, 0.06);
+}
+
+/* Step 4 summary (AX-6): choices as a tidy chip row (title chip
+   truncates), and the credit quote in a subtle gradient-bordered
+   summary card. */
+.recap-step4-choices { flex-wrap: wrap; overflow: visible; white-space: normal; row-gap: 6px; }
+.recap-step4-choices > span {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 12px;
+}
+.recap-step4-choice-voice::before, .recap-step4-choice-ratio::before { content: none; }
+.recap-step4-quote {
+    border-radius: var(--r-md); padding: var(--s3) var(--s4); margin-bottom: var(--s3);
+    border: 1px solid transparent;
+    background: linear-gradient(var(--surface), var(--surface)) padding-box,
+                linear-gradient(135deg, #2563eb, #60a5fa) border-box;
+}
+
+/* 1-Click CTA (AX-6): exact behaviour/ids untouched; its gradient
+   and shadow join the new primary-button language. */
+#btn-start-recap {
+    background: linear-gradient(135deg, #2563eb, #60a5fa);
+    color: #fff; box-shadow: 0 8px 24px rgba(37, 99, 235, 0.38);
+}

@@ -6,6 +6,14 @@ is a DOM relocation ONLY: every pre-AV control id must still exist
 (except the documented structural removals below), the submit payload
 keeps its exact 42 keys, and the prefs keys are untouched.
 
+Batch AX note (2026-11-06): the owner rejected the stacked accordion
+this file's layout pins described. The pins that asserted the stacked
+model (summary-strip presence, toggle/open functions, strip + label
+CSS guards, token) were rewritten in place citing the AX spec; the
+inventory / payload / prefs / placement pins below are UNCHANGED —
+the wizard removes no control the AV inventory protected (only the
+recap-summary-1..4 strips, which AX documents as its own removal).
+
 Documented removals (spec + parent ground-truth addendum):
 - tab-btn-seek / tab-btn-mask / tab-btn-style: the toolbar tab nav is
   replaced by a visible seek cluster + frequent row + the fine
@@ -135,6 +143,7 @@ PAYLOAD_KEYS = [
 
 NEW_I18N_KEYS = [
     "recap_step_nav_preview", "recap_step_nav_voice", "recap_step4_title",
+    "recap_step_word", "recap_lang_more_label",
     "recap_fine_title", "recap_step_continue", "recap_summary_no_source",
     "recap_step4_quote_label", "recap_subtitle_group_title",
     "recap_blur_group_title",
@@ -183,17 +192,29 @@ def test_av_submit_payload_keys_unchanged():
 
 
 def test_av_prefs_keys_unchanged():
-    for key in ("vcp_recap_prefs", "vcp_recap_settings"):
-        assert key in APP_JS, key
+    # Batch AX rewrite (AX-3R): the vcp_recap_prefs key's ONLY app.js
+    # reference was AV's completion read — the key was never written
+    # by any code (checked: it exists in no other file either), so
+    # removing that read retires a dead key, it does not change a
+    # live prefs key. The live settings key is asserted in its real
+    # form; the AX file pins the full story.
+    assert 'RECAP_SETTINGS_KEY = "vcp_recap_settings"' in APP_JS
+    assert 'localStorage.getItem("vcp_recap_prefs")' not in APP_JS
 
 
 # ── Step structure and deliberate placement ──
 
 def test_av_step_structure_and_nav():
+    # Batch AX rewrite (owner direction 2026-11-06): the AV stacked
+    # model — four rendered cards whose bodies collapse to summary
+    # strips — is replaced by the one-step-at-a-time wizard. The
+    # summary strips are REMOVED (asserted absent here and owned by
+    # test_batch_ax_2026_11_06); the chips carry number/✓ only; steps
+    # 2–4 start hidden so exactly one card is visible in markup state.
     for n in (1, 2, 3, 4):
         assert f'id="recap-step-{n}"' in TAB
         assert f'id="recap-step-{n}-body"' in TAB
-        assert f'id="recap-summary-{n}"' in TAB
+        assert f'id="recap-summary-{n}"' not in TAB
         assert f'data-step-toggle="{n}"' in TAB
         assert f'data-step-pill="{n}"' in TAB
     assert 'id="recap-steps-nav"' in TAB
@@ -271,12 +292,20 @@ def test_av_info_tail_below_the_step_flow():
 
 
 def test_av_step_module_behaviour():
-    for marker in ("function initRecapSteps(", "function toggleRecapStep(",
-                   "function openRecapStep(", "function markRecapStepDone(",
+    # Batch AX rewrite: toggleRecapStep/openRecapStep (the collapse
+    # model) are replaced by showRecapStep — the wizard's one door.
+    # The AV prefs-read marker is superseded by AX-3R: the literal
+    # getItem("vcp_recap_prefs") read for completion is REMOVED (it
+    # was the key's only reference in the codebase — see the prefs
+    # test above).
+    for marker in ("function initRecapSteps(", "function showRecapStep(",
+                   "function markRecapStepDone(",
                    "function toggleRecapFineSettings(", "syncRecapStepsWithSource(ready)",
-                   'localStorage.getItem("vcp_recap_prefs")',
                    "initRecapSteps();"):
         assert marker in APP_JS, marker
+    assert 'localStorage.getItem("vcp_recap_prefs")' not in APP_JS
+    assert "function toggleRecapStep(" not in APP_JS
+    assert "function openRecapStep(" not in APP_JS
     # The retired accordion toggler is gone with its markup.
     assert "window.toggleAdvancedRecapStudio = function" not in APP_JS
 
@@ -307,14 +336,16 @@ def test_av_new_i18n_keys_in_both_locales():
 # ── Acceptance-criteria guards (owner, 2026-11-05 23:34) ──
 
 def test_av_touch_targets_and_text_fit_guards():
-    # Buttons tidy: strips and nav items carry a ≥48px touch target.
-    assert re.search(r"\.recap-step-strip \{[^}]*min-height: 48px", STYLE_CSS)
-    assert re.search(r"\.recap-steps-nav-item \{[^}]*min-height: 48px", STYLE_CSS)
+    # Batch AX rewrite: the strip headers are gone (wizard cards have
+    # plain, non-interactive headers) and the nav chips carry NO text
+    # labels at all — the owner's screenshot showed them squeezed and
+    # clipping. Chips are ≥44px targets (AX-2); the fine header keeps
+    # its 48px target; the Step-4 choices line truncates with an
+    # ellipsis instead of the removed summaries.
+    assert re.search(r"\.recap-steps-nav-item \{[^}]*min-height: 44px", STYLE_CSS)
     assert re.search(r"\.recap-fine-header \{[^}]*min-height: 48px", STYLE_CSS)
-    # Text never clipped: collapsed summaries truncate with ellipsis;
-    # nav labels wrap instead of squeezing at phone widths.
-    assert re.search(r"\.recap-step-summary \{[^}]*text-overflow: ellipsis", STYLE_CSS)
-    assert re.search(r"\.recap-steps-nav-label \{[^}]*overflow-wrap: anywhere", STYLE_CSS)
+    assert ".recap-steps-nav-label" not in STYLE_CSS
+    assert re.search(r"\.recap-step4-choice-title \{[^}]*text-overflow: ellipsis", STYLE_CSS)
     # Step-4 quote is genuinely large.
     assert re.search(r"\.recap-step4-quote-value \{[^}]*font-size: 30px", STYLE_CSS)
     # URL field uses the card's full width (flex guard + shrink-0 button).
@@ -326,5 +357,6 @@ def test_av_touch_targets_and_text_fit_guards():
 
 
 def test_av_cache_token_bumped():
-    assert INDEX_HTML.count("r69") == 4
-    assert "r68" not in INDEX_HTML
+    # Token swept per batch: r69 (AV) → r70 (AX).
+    assert INDEX_HTML.count("r70") == 4
+    assert "r69" not in INDEX_HTML
