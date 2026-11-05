@@ -18,7 +18,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from recap_planner import RecapPlanBuilder
-from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, user_blur_box_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, ensure_plate_contains_anchor, _layout_content_box
+from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, user_blur_box_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, subtitle_anchor_x, ensure_plate_contains_anchor, _layout_content_box
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,7 @@ def assemble_blur_boxes(
     canvas_w: int = 1920,
     canvas_h: int = 1080,
     anchor_y: Optional[float] = None,
+    anchor_x: Optional[float] = None,
 ) -> tuple[list[dict], bool]:
     """One canonical blur-box assembly for the render AND the preview.
 
@@ -231,8 +232,9 @@ def assemble_blur_boxes(
         # Belt-and-braces (R40 item 3): the shipped plate must contain
         # the subtitle anchor. Applied to the reconciled plate,
         # before the final merge pass, exactly where the render path
-        # always applied it.
-        plate_out = ensure_plate_contains_anchor(plate_out, anchor_y)
+        # always applied it. Batch AG: anchor_x (given only when the
+        # user set sub_x) extends the same containment sideways.
+        plate_out = ensure_plate_contains_anchor(plate_out, anchor_y, anchor_x)
 
     boxes: list[dict] = []
     if include_plate:
@@ -273,11 +275,15 @@ def run_recap_pipeline(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
+    blur_x: Optional[float] = None,
+    blur_w: Optional[float] = None,
     blur_box_explicit: bool = False,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
     blur_watermark: bool = False,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
+    sub_x: Optional[float] = None,
+    sub_w: Optional[float] = None,
     sub_lines: int = 1,
     sub_font_size: int = 16,
     sub_style: str = "yellow",
@@ -410,6 +416,7 @@ def run_recap_pipeline(
                 _layout["cw"], _layout["ch"], _layout,
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
                 sub_y=_anchor_sub_y, min_h=blur_h,
+                sub_x=sub_x, sub_w=sub_w,
             )
         else:
             _plate = {"x": 0.05, "y": _anchor_sub_y, "w": 0.90, "h": float(blur_h)}
@@ -419,7 +426,7 @@ def run_recap_pipeline(
     # detection entirely (detection is not even run below).
     _user_box = None
     if blur_subtitles and blur_box_explicit:
-        _user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _layout)
+        _user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _layout, blur_x=blur_x, blur_w=blur_w)
     # Auto-cover the SOURCE video's own burned-in subtitle band. The
     # plate only covers the Myanmar subtitle position (y≈0.85); source
     # dialogue subs usually sit higher (≈0.70) and would otherwise
@@ -472,6 +479,14 @@ def run_recap_pipeline(
             sub_y=float(sub_y) if sub_y is not None else float(blur_y),
             raw_font_size=sub_font_size, sub_lines=sub_lines,
         )
+    # Batch AG: the horizontal anchor exists only when the user set
+    # sub_x — an unset sub_x keeps the plate containment vertical-only,
+    # exactly as before.
+    _anchor_x = None
+    if _layout is not None and sub_x is not None:
+        _anchor_x = subtitle_anchor_x(
+            _layout["cw"], _layout["ch"], _layout, sub_x=float(sub_x),
+        )
     _asm_layout = _band_layout or _layout or {}
     blur_boxes, _band_covered = assemble_blur_boxes(
         blur_subtitles=blur_subtitles,
@@ -485,6 +500,7 @@ def run_recap_pipeline(
         canvas_w=int(_asm_layout.get("cw") or 1920),
         canvas_h=int(_asm_layout.get("ch") or 1080),
         anchor_y=_anchor,
+        anchor_x=_anchor_x,
     )
     # No-coverage warning (blur safefix item 6): blur was requested
     # but nothing covers a source band — detection found no band and
@@ -526,6 +542,14 @@ def run_recap_pipeline(
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
         overlays["sub_y"] = float(sub_y)
+    # Batch AG: horizontal subtitle placement rides the same overlays
+    # dict — EdgeSmartSync reads sub_x for the ASS \pos tag and sub_w
+    # for the cue-wrap budgets; apply_production_overlays reads sub_x
+    # for the PNG overlay x expression.
+    if sub_x is not None:
+        overlays["sub_x"] = float(sub_x)
+    if sub_w is not None:
+        overlays["sub_w"] = float(sub_w)
     overlays["sub_lines"] = int(sub_lines)
     overlays["subtitles_font_size"] = int(sub_font_size)
     overlays["sub_style"] = str(sub_style or "yellow")
@@ -678,10 +702,14 @@ def generate_recap_preview(
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
+    blur_x: Optional[float] = None,
+    blur_w: Optional[float] = None,
     blur_box_explicit: bool = False,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
+    sub_x: Optional[float] = None,
+    sub_w: Optional[float] = None,
     sub_lines: int = 1,
     sub_font_size: int = 16,
     sub_style: str = "yellow",
@@ -741,6 +769,7 @@ def generate_recap_preview(
                 _p_layout["cw"], _p_layout["ch"], _p_layout,
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
                 sub_y=float(sub_y) if sub_y is not None else float(blur_y), min_h=blur_h,
+                sub_x=sub_x, sub_w=sub_w,
             )
         except Exception:
             _p_plate = {"x": 0.05, "y": float(sub_y) if sub_y is not None else float(blur_y), "w": 0.90, "h": float(blur_h)}
@@ -748,7 +777,7 @@ def generate_recap_preview(
         # is authoritative and detection is not run at all.
         _p_user_box = None
         if blur_box_explicit:
-            _p_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout)
+            _p_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout, blur_x=blur_x, blur_w=blur_w)
         _p_bands: Optional[list[dict]] = None
         _p_band_layout = _p_layout
         if _p_user_box is None:
@@ -780,6 +809,11 @@ def generate_recap_preview(
                 sub_y=float(sub_y) if sub_y is not None else float(blur_y),
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
             )
+        _p_anchor_x = None
+        if _p_layout is not None and sub_x is not None:
+            _p_anchor_x = subtitle_anchor_x(
+                _p_layout["cw"], _p_layout["ch"], _p_layout, sub_x=float(sub_x),
+            )
         _p_asm_layout = _p_band_layout or _p_layout or {}
         blur_boxes, _p_covered = assemble_blur_boxes(
             blur_subtitles=blur_subtitles,
@@ -793,6 +827,7 @@ def generate_recap_preview(
             canvas_w=int(_p_asm_layout.get("cw") or 1920),
             canvas_h=int(_p_asm_layout.get("ch") or 1080),
             anchor_y=_p_anchor,
+            anchor_x=_p_anchor_x,
         )
     if blur_boxes:
         overlays["blur_boxes"] = blur_boxes
@@ -800,6 +835,13 @@ def generate_recap_preview(
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
         overlays["sub_y"] = float(sub_y)
+    # Batch AG: the preview's sample subtitle honours sub_x through
+    # the same overlays dict (extract_preview_with_overlays resolves
+    # it via the shared centre-X resolver).
+    if sub_x is not None:
+        overlays["sub_x"] = float(sub_x)
+    if sub_w is not None:
+        overlays["sub_w"] = float(sub_w)
     overlays["sub_lines"] = int(sub_lines)
     overlays["subtitles_font_size"] = int(sub_font_size)
     overlays["sub_style"] = str(sub_style or "yellow")

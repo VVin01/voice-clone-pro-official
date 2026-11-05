@@ -728,7 +728,8 @@ USER_BLUR_BOX_WIDTH_FRACTION = 0.92
 
 
 def user_blur_box_to_canvas_box(
-    blur_y: float, blur_h: float, layout: dict[str, Any] | None = None
+    blur_y: float, blur_h: float, layout: dict[str, Any] | None = None,
+    blur_x: float | None = None, blur_w: float | None = None,
 ) -> dict[str, float]:
     """Map the user's blur box from PICTURE fractions to a canvas box.
 
@@ -746,26 +747,59 @@ def user_blur_box_to_canvas_box(
     the canvas, matching the plate's no-layout fallback. The box is
     returned verbatim — consumers clamp the drawn rectangle into
     the canvas exactly as they do for every other box.
+
+    Batch AG: ``blur_x`` / ``blur_w`` add the horizontal axis in the
+    same picture basis (fractions of the PICTURE width, converted
+    exactly like source_band_to_canvas_box: x = (ox + bx × pw) / cw,
+    w = bw × pw / cw). Both None — every pre-AG caller and stored
+    config — keeps the legacy centred 92%-of-canvas width
+    byte-identical; a lone blur_w stays centred at that width.
     """
     by = _clamp01(blur_y, 0.85)
     bh = _clamp01(blur_h, 0.07)
-    w_frac = USER_BLUR_BOX_WIDTH_FRACTION
-    x_frac = (1.0 - w_frac) / 2.0
+    if blur_x is None and blur_w is None:
+        w_frac = USER_BLUR_BOX_WIDTH_FRACTION
+        x_frac = (1.0 - w_frac) / 2.0
+        if layout is not None:
+            cw = int(layout.get("cw") or 0)
+            ch = int(layout.get("ch") or 0)
+            if cw > 0 and ch > 0:
+                _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
+                return {
+                    "x": round(x_frac, 4),
+                    "y": round((oy + by * ph) / ch, 4),
+                    "w": round(w_frac, 4),
+                    "h": round(bh * ph / ch, 4),
+                }
+        return {
+            "x": round(x_frac, 4),
+            "y": round(by, 4),
+            "w": round(w_frac, 4),
+            "h": round(bh, 4),
+        }
+    bw_frac = (
+        _clamp01(blur_w, USER_BLUR_BOX_WIDTH_FRACTION)
+        if blur_w is not None else USER_BLUR_BOX_WIDTH_FRACTION
+    )
+    bx_frac = (
+        _clamp01(blur_x, (1.0 - bw_frac) / 2.0)
+        if blur_x is not None else (1.0 - bw_frac) / 2.0
+    )
     if layout is not None:
         cw = int(layout.get("cw") or 0)
         ch = int(layout.get("ch") or 0)
         if cw > 0 and ch > 0:
-            _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
+            pw, ph, ox, oy = _layout_content_box(layout, cw, ch)
             return {
-                "x": round(x_frac, 4),
+                "x": round((ox + bx_frac * pw) / cw, 4),
                 "y": round((oy + by * ph) / ch, 4),
-                "w": round(w_frac, 4),
+                "w": round(bw_frac * pw / cw, 4),
                 "h": round(bh * ph / ch, 4),
             }
     return {
-        "x": round(x_frac, 4),
+        "x": round(bx_frac, 4),
         "y": round(by, 4),
-        "w": round(w_frac, 4),
+        "w": round(bw_frac, 4),
         "h": round(bh, 4),
     }
 
@@ -897,6 +931,176 @@ def subtitle_centre_px(cw: int, ch: int, layout: dict[str, Any] | None,
     return sy * ch
 
 
+def subtitle_centre_x_px(cw: int, ch: int, layout: dict[str, Any] | None,
+                         sub_x: float | None) -> float | None:
+    """Subtitle centre X in canvas px (from the left) for a sub_x
+    fraction, or None when sub_x is None (caller keeps the centred
+    placement).
+
+    Batch AG mirror of subtitle_centre_px on the horizontal axis:
+    on pillarboxed layouts (padding at the sides, pw < cw) sub_x is
+    a percent of the CONTENT width — centre = ox + sub_x × pw. On
+    full-width layouts sub_x is a percent of the canvas width. The
+    PNG burn, the ASS writer, subtitle_anchor_x and the subtitle
+    plate all resolve through this one function so they can never
+    drift apart (the Batch P invariant, extended sideways).
+    """
+    if sub_x is None:
+        return None
+    sx = _clamp01(float(sub_x), 0.5)
+    pw, _ph, ox, _oy = _layout_content_box(layout, cw, ch)
+    if pw < cw:
+        return ox + sx * pw
+    return sx * cw
+
+
+def _subtitle_overlay_x_expr(cw: int, ch: int, layout: dict[str, Any] | None,
+                             sub_x: float | None) -> str:
+    """ffmpeg overlay ``x`` expression for a subtitle PNG (Batch AG).
+
+    The default (sub_x None or exactly centred) keeps the historical
+    centred expression verbatim — default renders stay byte-identical.
+    An explicit sub_x resolves through subtitle_centre_x_px (the one
+    shared resolver) and clamps the PNG inside the frame edges.
+    """
+    if sub_x is None:
+        return "(W-w)/2"
+    try:
+        sx = float(sub_x)
+    except (TypeError, ValueError):
+        return "(W-w)/2"
+    if abs(sx - 0.5) < 1e-9:
+        return "(W-w)/2"
+    centre_px = subtitle_centre_x_px(cw, ch, layout, sx)
+    if centre_px is None:
+        return "(W-w)/2"
+    return f"max(0,min(W-w,{int(round(centre_px))}-w/2))"
+
+
+def _sub_w_fraction(overlays: dict[str, Any] | None) -> float:
+    """The effective wrap/fit width as a fraction of the picture
+    width: overlays["sub_w"] when the user set one, else the
+    historical 0.92 the plate and cue budgets were tuned for."""
+    try:
+        w = float((overlays or {}).get("sub_w") or 0.92)
+    except (TypeError, ValueError):
+        w = 0.92
+    return max(0.10, min(1.0, w))
+
+
+def _scaled_png_visuals(visuals: dict[str, Any], from_px: int, to_px: int) -> dict[str, Any]:
+    """Visuals for a shrunk cue: the stroke scales with the font so
+    a fitted cue keeps the preset's perceived outline weight. Same
+    size in → the SAME dict out (fitting cues render byte-identical)."""
+    if int(to_px) == int(from_px):
+        return visuals
+    out = dict(visuals)
+    out["stroke_px"] = max(
+        1, int(round(int(visuals.get("stroke_px", 1)) * int(to_px) / max(1, int(from_px))))
+    )
+    return out
+
+
+def _wrap_cue_lines_to_width(renderer, text: str, font_px: int, font_path,
+                             stroke_px: int, ink_budget_px: int) -> list[str]:
+    """Greedy wrap into the FEWEST lines whose measured ink widths
+    fit the budget. Breaks only at syllable boundaries
+    (split_into_burmese_syllables — the same indivisible atoms the
+    cue splitter uses), so a break can never split a shaped cluster.
+    A single atom wider than the budget stays whole on its own line
+    (the caller's shrink loop then reduces the font)."""
+    tokens = split_into_burmese_syllables(text)
+    if not tokens:
+        return []
+    lines: list[str] = []
+    cur = ""
+    for tok in tokens:
+        cand = cur + tok if cur else tok
+        if cur and renderer.text_width(cand, font_px, font_path, stroke_px) > ink_budget_px:
+            lines.append(cur)
+            cur = tok
+        else:
+            cur = cand
+    if cur:
+        lines.append(cur)
+    return [ln.strip() for ln in lines if ln.strip()]
+
+
+def fit_png_cue_lines(renderer, text, sub_lines, font_px, font_path,
+                      visuals, max_width_px):
+    """Batch AG: sub_w as a HARD fit constraint on the PNG burn.
+
+    The pre-AG burn trusted the cue splitter's CHARACTER budget
+    (45 chars vertical / 1 line) to keep cues on-canvas — but char
+    count is not pixel width: a max-length cue at the rendered font
+    size ran wider than the 1080px canvas and was clipped at BOTH
+    edges (verified on the 2026-11-04 eyes-on render, cue at 65.7s).
+    This fit is measured with the actual font at the actual size:
+
+    * lines that already fit render EXACTLY as before — same lines,
+      same size, same visuals (the returned tuple feeds
+      render_lines, which is what render_text itself calls, so the
+      cached PNG is byte-identical);
+    * otherwise the cue is re-wrapped at syllable boundaries into
+      the allowed line count (sub_lines), and if it still cannot
+      fit, the font shrinks (proportionally, stroke scaled with it)
+      until it does — down to SUBTITLE_FONT_MIN_PX, where the
+      width-fitted wrap ships even if it needs an extra line:
+      spilling off-canvas is the one outcome never accepted.
+
+    Returns (lines, effective_font_px, effective_visuals); lines is
+    [] for a cue with no visible text.
+    """
+    base_lines = _png_subs.normalize_cue_lines(text, sub_lines)
+    if not base_lines:
+        return [], int(font_px), visuals
+    max_lines = 2 if int(sub_lines or 1) != 1 else 1
+    full_text = " ".join(base_lines)
+    start_px = int(font_px)
+    floor = SUBTITLE_FONT_MIN_PX
+
+    def _png_width(lines, at_px, vis) -> int:
+        st = int(vis.get("stroke_px", 1))
+        pad = _png_subs.png_pad_x(vis, at_px, st)
+        widest = max(
+            (renderer.text_width(ln, at_px, font_path, st) for ln in lines),
+            default=0,
+        )
+        return widest + 2 * pad
+
+    # Fast path: the cue already fits — today's rendering, untouched.
+    if len(base_lines) <= max_lines and _png_width(base_lines, start_px, visuals) <= max_width_px:
+        return base_lines, start_px, visuals
+
+    px = start_px
+    while px > floor:
+        vis = _scaled_png_visuals(visuals, start_px, px)
+        st = int(vis.get("stroke_px", 1))
+        pad = _png_subs.png_pad_x(vis, px, st)
+        ink_budget = max(8, int(max_width_px) - 2 * pad)
+        wrapped = _wrap_cue_lines_to_width(renderer, full_text, px, font_path, st, ink_budget)
+        if wrapped and len(wrapped) <= max_lines and _png_width(wrapped, px, vis) <= max_width_px:
+            return wrapped, px, vis
+        # Shrink toward the worst overflow (an over-wide single line
+        # when the line COUNT is the binding constraint, else the
+        # widest wrapped line) and retry at the smaller size. The
+        # step is capped at ×0.85 per pass so the loop re-wraps at
+        # intermediate sizes and settles on the LARGEST fitting size
+        # (e.g. two lines at ~46px beats one line at ~24px).
+        need = _png_width(wrapped or base_lines, px, vis)
+        if len(wrapped) > max_lines:
+            need = max(need, renderer.text_width(full_text, px, font_path, st) + 2 * pad)
+        ratio = (max_width_px / need) if need > 0 else 0.9
+        factor = max(0.85, min(0.95, ratio * 0.98))
+        px = max(floor, min(px - 1, int(px * factor)))
+    vis = _scaled_png_visuals(visuals, start_px, floor)
+    st = int(vis.get("stroke_px", 1))
+    pad = _png_subs.png_pad_x(vis, floor, st)
+    ink_budget = max(8, int(max_width_px) - 2 * pad)
+    wrapped = _wrap_cue_lines_to_width(renderer, full_text, floor, font_path, st, ink_budget)
+    return (wrapped or base_lines), floor, vis
+
+
 def _subtitle_block_top_px(
     cw: int, ch: int, layout: dict[str, Any] | None, *,
     sub_y: float | None, subtitles_margin_v: float | None,
@@ -932,7 +1136,9 @@ def _subtitle_block_top_px(
 
 def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
                        raw_font_size: int = 16, sub_lines: int = 1,
-                       sub_y: float = 0.85, min_h: float | None = None) -> dict[str, float]:
+                       sub_y: float = 0.85, min_h: float | None = None,
+                       sub_x: float | None = None,
+                       sub_w: float | None = None) -> dict[str, float]:
     """Canvas-fraction blur plate behind the burned subtitles.
 
     Fixed ~92%-of-frame-width band, horizontally centred; height fits
@@ -943,6 +1149,15 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
     on letterboxed layouts, the caller's sub_y on full-frame ones —
     where it is additionally clamped so the plate bottom respects
     an ~8% canvas-height safe margin.
+
+    Batch AG: with sub_x / sub_w set, the plate FOLLOWS the text —
+    its width derives from sub_w (percent of the PICTURE width, in
+    canvas fractions) and its centre X is the subtitle's centre X
+    (subtitle_centre_x_px), shifted only as far as needed to stay
+    inside the frame. Both None — every pre-AG caller — reproduces
+    the historical centred 0.92 band exactly; an explicit sub_w of
+    0.92 on a full-width picture reproduces it too. The height is
+    unchanged (text-fit; no user height control).
     """
     cw = max(320, int(cw))
     ch = max(240, int(ch))
@@ -953,8 +1168,16 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
     if min_h:
         h_frac = max(h_frac, float(min_h))
     h_frac = max(0.01, min(0.50, h_frac))
-    w_frac = SUBTITLE_PLATE_WIDTH_FRACTION
-    x_frac = (1.0 - w_frac) / 2.0
+    if sub_w is None:
+        w_frac = SUBTITLE_PLATE_WIDTH_FRACTION
+    else:
+        _pw0, _ph0, _ox0, _oy0 = _layout_content_box(layout, cw, ch)
+        w_frac = max(0.05, min(1.0, _clamp01(sub_w, SUBTITLE_PLATE_WIDTH_FRACTION) * _pw0 / cw))
+    centre_x_px = subtitle_centre_x_px(cw, ch, layout, sub_x)
+    if centre_x_px is None:
+        x_frac = (1.0 - w_frac) / 2.0
+    else:
+        x_frac = max(0.0, min(1.0 - w_frac, centre_x_px / cw - w_frac / 2.0))
     centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
     y_frac = (centre_px if centre_px is not None else 0.85 * ch) / ch
     if content_rim_y(layout, cw, ch) is None:
@@ -999,6 +1222,23 @@ def subtitle_anchor_y(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
     if centre_px is None:
         centre_px = 0.85 * ch
     return centre_px / ch
+
+
+def subtitle_anchor_x(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
+                      sub_x: float | None = 0.5) -> float:
+    """Canvas-fraction centre X where the burned subtitle will sit.
+
+    Batch AG mirror of subtitle_anchor_y through
+    subtitle_centre_x_px: picture-relative on pillarboxed layouts
+    (centre inside the content box at ox + sub_x × pw); otherwise
+    the caller's sub_x of the canvas width (50% centred default).
+    """
+    cw = max(320, int(cw))
+    ch = max(240, int(ch))
+    centre_px = subtitle_centre_x_px(cw, ch, layout, sub_x)
+    if centre_px is None:
+        centre_px = 0.5 * cw
+    return centre_px / cw
 
 
 def reconcile_source_bands(plate: dict[str, float] | None,
@@ -1051,11 +1291,15 @@ def reconcile_source_bands(plate: dict[str, float] | None,
     return plate, extras
 
 
-def ensure_plate_contains_anchor(plate: dict[str, float], anchor_y: float) -> dict[str, float]:
-    """Shift the plate (height unchanged) until it contains the
+def ensure_plate_contains_anchor(plate: dict[str, float], anchor_y: float,
+                                 anchor_x: float | None = None) -> dict[str, float]:
+    """Shift the plate (size unchanged) until it contains the
     subtitle anchor centre. Belt-and-braces for item 3: even if a
     future client sends divergent geometry again, the subtitle can
-    never ship floating off its plate."""
+    never ship floating off its plate. Batch AG: the horizontal
+    twin — with anchor_x given, the plate also shifts sideways
+    (width unchanged) until it contains the anchor's centre X;
+    anchor_x=None keeps the pre-AG behaviour exactly."""
     plate = dict(plate)
     top = plate["y"] - plate["h"] / 2.0
     bot = plate["y"] + plate["h"] / 2.0
@@ -1065,6 +1309,14 @@ def ensure_plate_contains_anchor(plate: dict[str, float], anchor_y: float) -> di
         plate["y"] = anchor_y - plate["h"] / 2.0
     half = plate["h"] / 2.0
     plate["y"] = round(max(half, min(1.0 - half, plate["y"])), 4)
+    if anchor_x is not None:
+        left = plate["x"]
+        right = plate["x"] + plate["w"]
+        if anchor_x < left:
+            plate["x"] = anchor_x
+        elif anchor_x > right:
+            plate["x"] = anchor_x - plate["w"]
+        plate["x"] = round(max(0.0, min(1.0 - plate["w"], plate["x"])), 4)
     return plate
 
 
@@ -2244,6 +2496,7 @@ def write_synced_ass_file(
     sub_style: str = "yellow",
     sub_lines: int = 1,
     sub_y: float | None = None,
+    sub_x: float | None = None,
     subtitles_margin_v: float | None = None,
     boxes: list[dict[str, Any]] | None = None,
     layout: dict[str, Any] | None = None,
@@ -2283,6 +2536,17 @@ def write_synced_ass_file(
         pixels_from_bottom = max(20, int(round(ch * 0.12)))
 
     margin_v = max(10, min(ch - 80, int(round(pixels_from_bottom))))
+
+    # Batch AG: an explicit non-centred sub_x pins every dialogue
+    # with a \pos tag at the shared resolver's centre X (the
+    # baseline Y is exactly where MarginV already places it, so the
+    # vertical geometry is untouched). sub_x None or centred emits
+    # no tag — the file stays byte-identical to the pre-AG writer.
+    pos_tag = ""
+    if sub_x is not None and abs(float(sub_x) - 0.5) > 1e-9:
+        centre_x_px = subtitle_centre_x_px(cw, ch, layout, sub_x)
+        if centre_x_px is not None:
+            pos_tag = f"{{\\pos({int(round(centre_x_px))},{ch - margin_v})}}"
 
     st_key = str(sub_style or "yellow").lower()
     st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
@@ -2329,7 +2593,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ass_line_text = c_text.replace("\r\n", r"\N").replace("\n", r"\N").strip()
         st_str = _fmt_ass_time(st_sec)
         en_str = _fmt_ass_time(en_sec)
-        dialogues.append(f"Dialogue: 0,{st_str},{en_str},Default,,0,0,0,,{ass_line_text}")
+        dialogues.append(f"Dialogue: 0,{st_str},{en_str},Default,,0,0,0,,{pos_tag}{ass_line_text}")
 
     ass_path.write_text(header + "\n".join(dialogues) + "\n", encoding="utf-8")
     return ass_path
@@ -2657,6 +2921,29 @@ def _format_cue_lines(text: str, lines_cnt: int) -> str:
     return text
 
 
+def _subtitle_max_chars(is_vert: bool, lines_per_cue: int,
+                        sub_w: float | None = None) -> int:
+    """Per-cue character budget for split_burmese_subtitle_cues.
+
+    The legacy table — 45/52 chars for one line, 80/96 for two
+    (vertical / horizontal canvas) — was tuned for the historical
+    92%-of-picture wrap width. Batch AG: sub_w (the user's wrap
+    width as a fraction of the picture width) scales the budget
+    linearly against that 0.92 reference, so a narrower column
+    wraps into more, shorter cues and a wider one into fewer.
+    sub_w None or exactly 0.92 reproduces the table byte-identically.
+    """
+    base = (45 if is_vert else 52) if int(lines_per_cue or 1) == 1 else (80 if is_vert else 96)
+    if sub_w is None:
+        return base
+    try:
+        w = float(sub_w)
+    except (TypeError, ValueError):
+        return base
+    w = max(0.10, min(1.0, w))
+    return max(8, int(round(base * w / 0.92)))
+
+
 def split_burmese_subtitle_cues(
     start_sec: float,
     end_sec: float,
@@ -2929,22 +3216,35 @@ def apply_production_overlays(
         blur_current = f"[{out}]"
 
     # Batch Q cue PNGs, rendered up front (the renderer cache lives in
-    # work_dir as before): (png_path, block_top_px, cue_start, cue_end).
-    cue_inputs: list[tuple[Path, int, float, float]] = []
+    # work_dir as before): (png_path, block_top_px, x_expr, cue_start,
+    # cue_end). Batch AG: the x expression comes from the one shared
+    # horizontal resolver — centred verbatim by default.
+    cue_inputs: list[tuple[Path, int, str, float, float]] = []
     if sub_job is not None:
         renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
         lay_dict = {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
+        x_expr = _subtitle_overlay_x_expr(cw, ch, lay_dict, overlays.get("sub_x"))
+        # Batch AG hard fit bound: no cue PNG may exceed sub_w of
+        # the picture width — fit_png_cue_lines wraps each cue into
+        # the allowed line count and shrinks the font only when
+        # wrapping cannot make it fit; cues that already fit render
+        # exactly as before.
+        fit_max_w = int(round(_sub_w_fraction(overlays) * pw))
         for cue_start, cue_end, cue_text in sub_job["cues"]:
-            rendered = renderer.render_text(
+            fit_lines, fit_px, fit_visuals = fit_png_cue_lines(
+                renderer,
                 cue_text,
                 sub_job["sub_lines"],
                 sub_job["font_px"],
                 sub_job["font_path"],
                 sub_job["visuals"],
+                fit_max_w,
             )
-            if rendered is None:
+            if not fit_lines:
                 continue
-            png_path, _png_w, png_h = rendered
+            png_path, _png_w, png_h = renderer.render_lines(
+                fit_lines, fit_px, sub_job["font_path"], fit_visuals
+            )
             top = _subtitle_block_top_px(
                 cw, ch, lay_dict,
                 sub_y=overlays.get("sub_y"),
@@ -2954,7 +3254,7 @@ def apply_production_overlays(
                 sub_lines=sub_job["sub_lines"],
                 block_h=png_h,
             )
-            cue_inputs.append((png_path, top, float(cue_start), float(cue_end)))
+            cue_inputs.append((png_path, top, x_expr, float(cue_start), float(cue_end)))
 
     def _build_step2_cmd(step_encoder: str) -> list[str]:
         cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(step2_input)]
@@ -2980,7 +3280,7 @@ def apply_production_overlays(
             cmd += ["-i", str(pattern_file)]
             input_index += 1
         cue_indices: list[int] = []
-        for png_path, _top, _cs, _ce in cue_inputs:
+        for png_path, _top, _xe, _cs, _ce in cue_inputs:
             cue_indices.append(input_index)
             cmd += ["-i", str(png_path)]
             input_index += 1
@@ -3026,14 +3326,16 @@ def apply_production_overlays(
         # Batch Q: burn each cue as a Pillow+raqm PNG overlay in the
         # same graph position the libass burn occupied (after title /
         # logo / extra text, before the watermark pattern). The blur
-        # chains ran in step 1; placement is unchanged — horizontally
-        # centred on the canvas, vertical position from
+        # chains ran in step 1; vertical position from
         # subtitle_centre_px via _subtitle_block_top_px (the Batch P
-        # anchor), computed when the cue PNGs were rendered above.
-        for (png_path, top, cue_start, cue_end), idx in zip(cue_inputs, cue_indices):
+        # anchor), computed when the cue PNGs were rendered above;
+        # horizontal placement is the centred expression by default,
+        # or the Batch AG sub_x resolver expression when the user
+        # moved the subtitle sideways.
+        for (png_path, top, x_expr, cue_start, cue_end), idx in zip(cue_inputs, cue_indices):
             out = f"vsub{idx}"
             graph.append(
-                f"{current}[{idx}:v]overlay=x='(W-w)/2':y={top}:"
+                f"{current}[{idx}:v]overlay=x='{x_expr}':y={top}:"
                 f"eof_action=repeat:enable='between(t,{cue_start:.3f},{cue_end:.3f})'[{out}]"
             )
             current = f"[{out}]"
@@ -3273,10 +3575,22 @@ def extract_preview_with_overlays(
         preset = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
         visuals = _png_subs.preset_visuals(preset, ch, font_px)
         renderer = _png_subs.PngSubtitleRenderer(temp_dir / "subtitle_png_cache")
-        rendered = renderer.render_text(
-            canonicalize_burmese_text(sample), sub_lines, font_px,
+        # Batch AG: the sample goes through the same hard fit as the
+        # production burn (same bound: sub_w of the picture width),
+        # so the preview frame never shows a wider line than the
+        # finished video will carry.
+        fit_lines, fit_px, fit_visuals = fit_png_cue_lines(
+            renderer,
+            canonicalize_burmese_text(sample),
+            sub_lines, font_px,
             subtitle_font_file(sub_font), visuals,
+            int(round(_sub_w_fraction(overlays) * pw)),
         )
+        rendered = None
+        if fit_lines:
+            rendered = renderer.render_lines(
+                fit_lines, fit_px, subtitle_font_file(sub_font), fit_visuals
+            )
         if rendered is not None:
             png_path, _png_w, png_h = rendered
             sub_idx = 2 if logo_idx is not None else 1
@@ -3291,7 +3605,7 @@ def extract_preview_with_overlays(
                 block_h=png_h,
             )
             out = "vsub"
-            graph.append(f"{current}[{sub_idx}:v]overlay=x='(W-w)/2':y={top}[{out}]")
+            graph.append(f"{current}[{sub_idx}:v]overlay=x='{_subtitle_overlay_x_expr(cw, ch, layout, overlays.get('sub_x'))}':y={top}[{out}]")
             current = f"[{out}]"
 
     graph.append(f"{current}format=yuv420p[vout]")
@@ -3975,7 +4289,7 @@ class EdgeSmartSync:
             ch_val = int(layout.get("ch", 1080))
             is_vert = (ch_val > cw_val) or (self.output_ratio == "9:16")
             lines_per_cue = int(self.overlays.get("sub_lines", 1))
-            max_chars = (45 if is_vert else 52) if lines_per_cue == 1 else (80 if is_vert else 96)
+            max_chars = _subtitle_max_chars(is_vert, lines_per_cue, self.overlays.get("sub_w"))
 
             for s_item in timing:
                 raw_st = float(s_item.get("audio_start", 0.0))
@@ -4017,6 +4331,7 @@ class EdgeSmartSync:
                 sub_style=str(self.overlays.get("sub_style") or self.overlays.get("subtitles_style") or "yellow"),
                 sub_lines=lines_per_cue,
                 sub_y=self.overlays.get("sub_y"),
+                sub_x=self.overlays.get("sub_x"),
                 subtitles_margin_v=self.overlays.get("subtitles_margin_v"),
                 boxes=self.overlays.get("boxes"),
                 layout=layout,
