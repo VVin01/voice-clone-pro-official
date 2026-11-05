@@ -118,6 +118,17 @@ def visuals_from_ass_style(
     }
 
 
+def png_pad_x(visuals: dict[str, Any], font_px: int, stroke_px: int) -> int:
+    """Horizontal padding (ONE side, px) render_lines adds around
+    the text ink: band styles get a generous inset, plain styles
+    just the stroke plus a small margin. Factored out of
+    render_lines so the Batch AG fit measurer predicts a cue's
+    rendered width from the same numbers the renderer will use."""
+    if visuals.get("band") is not None:
+        return max(stroke_px + 4, int(round(font_px * 0.35)))
+    return stroke_px + max(2, int(font_px) // 24)
+
+
 def normalize_cue_lines(text: Any, sub_lines: int) -> list[str]:
     """Display lines for a cue — the same text the ASS path burned.
 
@@ -306,11 +317,11 @@ class PngSubtitleRenderer:
         ink_w = max(1, bbox[2] - bbox[0])
         ink_h = max(1, bbox[3] - bbox[1])
         band = visuals.get("band")
+        pad_x = png_pad_x(visuals, font_px, stroke)
         if band is not None:
-            pad_x = max(stroke + 4, int(round(font_px * 0.35)))
             pad_y = max(stroke + 3, int(round(font_px * 0.16)))
         else:
-            pad_x = pad_y = stroke + max(2, font_px // 24)
+            pad_y = pad_x
         w = ink_w + 2 * pad_x
         h = ink_h + 2 * pad_y
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -348,3 +359,20 @@ class PngSubtitleRenderer:
         if not lines:
             return None
         return self.render_lines(lines, font_px, font_path, visuals)
+
+    def text_width(
+        self, line: str, font_px: int, font_path: Path, stroke_px: int = 0
+    ) -> int:
+        """Ink width (px) of ONE display line at a given size.
+
+        The Batch AG fit measurer: uses the same font cache and the
+        same textbbox call render_lines measures with, so a width
+        predicted here is the width the render produces (the PNG's
+        total width is this plus 2 × png_pad_x)."""
+        from PIL import Image, ImageDraw
+
+        font = self._font(Path(font_path), int(font_px))
+        dummy = Image.new("RGBA", (1, 1))
+        d = ImageDraw.Draw(dummy)
+        bbox = d.textbbox((0, 0), str(line), font=font, stroke_width=int(stroke_px))
+        return max(0, int(round(bbox[2] - bbox[0])))

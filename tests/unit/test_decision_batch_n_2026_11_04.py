@@ -588,7 +588,12 @@ def test_dead_viral_recap_chain_removed():
     assert callable(gemini_recap._resolve_primary_model)
 
 
-def test_blur_x_w_params_removed():
+def test_blur_x_w_params_present_batch_ag():
+    # Batch N removed blur_x/blur_w as DEAD params (accepted but
+    # never wired). Batch AG (2026-11-05, Ulfa-approved) re-adds
+    # them as LIVE params threaded to the one conversion point, so
+    # the pin flips: all four entry points accept them alongside
+    # blur_y/blur_h. The AG file pins the wiring itself.
     from app.services.downloader import MediaDownloader
     from app.services.recap_engine import recap_pipeline
 
@@ -599,5 +604,5 @@ def test_blur_x_w_params_removed():
         MediaDownloader.generate_recap_preview,
     ):
         params = inspect.signature(fn).parameters
-        assert "blur_x" not in params and "blur_w" not in params
+        assert "blur_x" in params and "blur_w" in params
         assert "blur_y" in params and "blur_h" in params

@@ -263,14 +263,15 @@ def test_blur_box_basis_canvas_on_both_sides():
     # …but the USER-facing basis changed in Batch AA: blur_y/blur_h
     # are picture-relative, the preview paints through
     # blurBoxCanvasGeom, and an explicit box is converted by
-    # user_blur_box_to_canvas_box (full pins in the Batch AA file).
+    # user_blur_box_to_canvas_box (full pins in the Batch AA file;
+    # Batch AG threads blur_x/blur_w through the same call).
     sync_body = APP_JS.split("function syncBlurBoxVisual()", 1)[1].split("\n    }", 1)[0]
-    assert "blurBoxCanvasGeom(y, h)" in sync_body
-    assert "user_blur_box_to_canvas_box(blur_y, blur_h, _layout)" in pipeline_py
+    assert "blurBoxCanvasGeom(y, h, x, w)" in sync_body
+    assert "user_blur_box_to_canvas_box(blur_y, blur_h, _layout, blur_x=blur_x, blur_w=blur_w)" in pipeline_py
 
 
 # ── 7. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261104_r58") == 4
+    assert INDEX_HTML.count("?v=20261104_r59") == 4
     assert "20261104_r48" not in INDEX_HTML
