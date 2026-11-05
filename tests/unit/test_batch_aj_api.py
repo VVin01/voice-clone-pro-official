@@ -9,7 +9,9 @@ M3 (Mini App approve surfaces the claim conflict),
 M5 (admin adjust idempotency + recap ledger + honest delta),
 M6 (dynamic-settings bounds), L5 (streaming cleanup on cancel),
 L6 (outputs/ orphan sweep), L11 (banned user + stream token),
-L12 (Telegram delivery sends audio + script), L13 (active-job count
+L12 (Telegram delivery extras — the send-everything behaviour was
+deliberately reversed by Batch AP's video-only order; see the
+replacement test below), L13 (active-job count
 must not silently degrade), L16 (notification log honesty — source
 pin), L17 (broadcast delivery retention), L18 (registry caps).
 
@@ -566,62 +568,73 @@ async def test_batch_aj_l11_blocked_user_token_download_refused(db_session, tmp_
         api_mod.RECAP_JOBS_REGISTRY.pop("rc_aj_l11", None)
 
 
-# ── L12: Telegram delivery actually sends audio + script ─────────────
+# ── L12 → Batch AP: Telegram delivery is video only ────────────────
 
 
 @pytest.mark.asyncio
-async def test_batch_aj_l12_delivery_sends_audio_and_script(tmp_path, monkeypatch):
-    """The sender accepted audio_path/script_path and silently never
-    sent either — full-mode users on Telegram got video + SRT only,
-    unlike the segmented path which sends everything."""
+async def test_batch_aj_l12_superseded_by_batch_ap_video_only(tmp_path, monkeypatch):
+    """DELIBERATE BEHAVIOUR REVERSAL (Batch AP, owner order 2026-11-05).
+
+    AJ L12 made this sender deliver the narration audio and script as
+    extras (the SRT already went along). The owner has since ordered
+    the opposite default: Telegram recap delivery is the video only,
+    and each companion file is sent solely when the user presses its
+    own button on the bot completion message. The helper therefore no
+    longer accepts companion paths at all. Batch AP's own test file
+    pins the button handlers that replaced this behaviour.
+    """
+    import inspect
+
+    assert "audio_path" not in inspect.signature(
+        api_mod._send_recap_telegram_delivery
+    ).parameters
+    assert "srt_path" not in inspect.signature(
+        api_mod._send_recap_telegram_delivery
+    ).parameters
+    assert "script_path" not in inspect.signature(
+        api_mod._send_recap_telegram_delivery
+    ).parameters
+
     monkeypatch.setattr(settings, "bot_token", "x")
     delivered_dir = tmp_path / "outputs"
     delivered_dir.mkdir()
     video = delivered_dir / "VoiceClonePro_RecapVideo_x.mp4"
     video.write_bytes(b"v" * 2048)
-    srt = delivered_dir / "VoiceClonePro_RecapSubs_x.srt"
-    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
-    audio = delivered_dir / "VoiceClonePro_RecapAudio_x.mp3"
-    audio.write_bytes(b"a" * 2048)
-    script = delivered_dir / "VoiceClonePro_RecapScript_x.txt"
-    script.write_text("script body")
 
-    sent_paths = []
+    calls = []
 
     class _FakeBot:
         def __init__(self, *a, **k):
             self.session = SimpleNamespace(close=AsyncMock())
 
-        async def _record(self, **kwargs):
-            for v in kwargs.values():
-                p = getattr(v, "path", None)
-                if p is not None:
-                    sent_paths.append(str(p))
+        async def _record(self, method, **kwargs):
+            paths = [
+                str(v.path) for v in kwargs.values()
+                if getattr(v, "path", None) is not None
+            ]
+            calls.append((method, paths))
 
         async def send_video(self, **kwargs):
-            await self._record(**kwargs)
+            await self._record("send_video", **kwargs)
 
         async def send_document(self, **kwargs):
-            await self._record(**kwargs)
+            await self._record("send_document", **kwargs)
 
         async def send_audio(self, **kwargs):
-            await self._record(**kwargs)
+            await self._record("send_audio", **kwargs)
 
         async def send_message(self, **kwargs):
-            pass
+            await self._record("send_message", **kwargs)
 
     with patch("aiogram.Bot", _FakeBot):
         delivered, _reason = await api_mod._send_recap_telegram_delivery(
             424242,
-            str(video), str(audio), str(srt), str(script),
+            str(video),
             "Some Title", "style", "Ko Min", 60,
             job_id="rc_aj_l12",
         )
     assert delivered is True
-    assert str(video) in sent_paths
-    assert str(srt) in sent_paths
-    assert str(audio) in sent_paths
-    assert str(script) in sent_paths
+    assert calls == [("send_video", [str(video)])]
 
 
 # ── L13: active-job count must fail visibly, not silently undercount ──
