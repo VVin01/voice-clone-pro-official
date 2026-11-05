@@ -64,12 +64,12 @@ def test_toolbar_group_starts_hidden_but_other_settings_do_not():
     assert "hidden" in group_tag
     # Non-preview settings stay reachable without a source: the language
     # picker group must NOT be swept into the hidden set. (Recap tidy-up:
-    # the picker now sits flattened in the Advanced "Other" section —
-    # no nested card — and is still not preview-gated.)
+    # the picker sat flattened in the Advanced "Other" section; Batch AV
+    # moved it into Step 3 — still a plain block, still not
+    # preview-gated, and its Step-3 body is the collapsible surface.)
     assert 'id="recap-lang-picker"' in html
-    lang_wrap = html.split('id="recap-lang-picker"')[0].rsplit('<section', 1)[1]
-    assert 'recap-adv-section-other' in lang_wrap
-    assert "hidden" not in lang_wrap
+    lang_block_tag = html.split('id="recap-lang-picker"')[0].rsplit('<div class="recap-lang-block', 1)[1].split(">", 1)[0]
+    assert "hidden" not in lang_block_tag
 
 
 def test_state_machine_toggles_all_preview_surfaces():

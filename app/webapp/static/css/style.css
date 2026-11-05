@@ -2677,9 +2677,8 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
    ellipsized at 390px ("Movie Recap ဖန်တီးနည်း…") — an ellipsized
    label is exactly what the owner rejects, so the text now wraps
    inside the same 46% cap instead of being cut. */
-#recap-step1-tut-btn {
-    max-width: 46%; white-space: normal; text-align: center; line-height: 1.45;
-}
+/* Batch AV: the #recap-step1-tut-btn sizing rule was retired with the
+   button itself (duplicate of the header guide — parent dedupe). */
 
 /* P10 — slip upload: styled label button (the input itself is the
    standard visually-hidden file input used across the app). */
@@ -2779,9 +2778,8 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .preview-logo-watermark { font-size: 12px; }
 .mockup-orig-sub { font-size: 12px; }
 
-/* E2 — Step-1 tutorial pill sits on its own quiet row under the title. */
-.step1-tut-row { display: flex; margin-top: var(--s2); }
-#recap-step1-tut-btn { max-width: 100%; }
+/* E2 — (Batch AV) the Step-1 tutorial pill and its row were removed:
+   the header 📚 guide is the single tutorial entry point. */
 
 /* B2 — the sticky bar is the single Recap CTA: the tab keeps enough
    bottom room that the bar + dock never sit on top of content. */
@@ -3454,3 +3452,76 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .persona-filter-row .filter-chip {
     flex: 1 1 auto; overflow: visible; text-overflow: clip;
 }
+
+/* ── Batch AV: Recap step flow ─────────────────────────────────────
+   Four collapsible steps under a step indicator. Strip headers are
+   full-width buttons with a ≥48px touch target; summaries truncate
+   with an ellipsis instead of pushing the chevron off the card;
+   nav labels wrap rather than squeeze at 360–420px widths. */
+.recap-steps-nav { display: flex; align-items: stretch; gap: 4px; margin-bottom: var(--s2); }
+.recap-steps-nav-item {
+    flex: 1 1 0; min-width: 0; min-height: 48px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    padding: 6px 4px; border-radius: var(--r-md, 12px);
+    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.09);
+    color: var(--text-2); cursor: pointer;
+}
+.recap-steps-nav-item.is-active { border-color: rgba(96, 165, 250, 0.55); color: var(--text-1); background: rgba(96, 165, 250, 0.10); }
+.recap-steps-nav-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14); font-size: 12px; font-weight: 700;
+}
+.recap-steps-nav-item.is-active .recap-steps-nav-num { background: #2563eb; color: #fff; }
+.recap-steps-nav-label { font-size: 11.5px; line-height: 1.35; text-align: center; overflow-wrap: anywhere; }
+.recap-steps-nav-sep { align-self: center; color: var(--text-3); font-size: 12px; }
+
+.recap-step-strip { width: 100%; min-height: 48px; background: none; border: none; cursor: pointer; text-align: left; padding: 4px 2px; font: inherit; color: inherit; }
+.recap-step-strip .recap-step-summary {
+    flex: 1 1 auto; min-width: 0; margin-left: var(--s2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-3); font-size: 12.5px; font-weight: 400;
+}
+.recap-step-chevron { flex-shrink: 0; margin-left: var(--s2); color: var(--text-3); font-size: 13px; transition: transform 0.18s ease; }
+.recap-step-collapsed .recap-step-chevron { transform: rotate(-90deg); }
+.recap-step-body { padding-top: var(--s1, 4px); }
+.recap-step-next-row { display: flex; justify-content: flex-end; }
+.recap-step-next { min-height: 48px; padding: 0 22px; }
+
+/* Fine-tune expandable inside Step 2 (mirrors the house accordion). */
+.recap-fine-header {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+    width: 100%; min-height: 48px; padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: var(--r-md, 12px); color: var(--text-1); cursor: pointer;
+}
+.recap-fine-title { font-size: 14px; font-weight: 600; }
+.recap-fine-chevron { color: var(--text-3); font-size: 12px; flex-shrink: 0; }
+.recap-fine-body { padding-top: var(--s2); }
+
+.recap-detail-group { padding: var(--s2) 0; border-top: 1px dashed rgba(255, 255, 255, 0.10); }
+.recap-detail-group:first-child { border-top: none; padding-top: 0; }
+.recap-detail-group-title { font-size: 13.5px; font-weight: 700; color: var(--text-1); margin-bottom: var(--s1, 4px); }
+
+/* Step 4 review: preview thumbnail + the large credit quote. */
+.recap-step4-review { display: flex; align-items: center; gap: var(--s3, 14px); }
+.recap-step4-thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; flex-shrink: 0; border: 1px solid rgba(255, 255, 255, 0.15); }
+.recap-step4-quote { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.recap-step4-quote-label { font-size: 12.5px; color: var(--text-3); }
+.recap-step4-quote-value { font-size: 30px; font-weight: 800; line-height: 1.1; color: var(--gold, #f5c451); }
+.recap-step4-quote-unit { font-size: 15px; font-weight: 600; }
+
+/* Grip offset (owner 9:16 finding): the subtitle/title drag handles
+   float just ABOVE their box's top edge instead of lying over the
+   subtitle text's first characters. The stage clips at its own edge
+   (.mockup-inner-movie overflow:hidden), so nothing can leak out. */
+.preview-sub-box .sub-grip,
+.preview-title-box .title-grip {
+    position: absolute; top: 0; left: 50%;
+    transform: translate(-50%, calc(-100% - 3px));
+    margin: 0; z-index: 6; white-space: nowrap;
+}
+
+/* Cramped-spot guard (parent inventory): the custom-crop label and
+   the sync lock pill wrap onto two lines instead of colliding. */
+#recap-preview-transform-group .card-header-row { flex-wrap: wrap; row-gap: var(--s2); }

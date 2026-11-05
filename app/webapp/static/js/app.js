@@ -1915,20 +1915,9 @@ function updateTutorialUI(data) {
         }
     }
 
-    // Recap Step-1 mini button: uses the configured recap title and
-    // respects tutorial_recap_enabled (hidden when disabled, like the
-    // Voice banner). (The old dead block that managed a non-existent
-    // recap banner element has been removed.)
-    const recapStepBtn = document.getElementById("recap-step1-tut-btn");
-    if (recapStepBtn) {
-        if (tutorialConfig.recap.enabled) {
-            recapStepBtn.classList.remove("hidden");
-            recapStepBtn.textContent = tutorialDisplayTitle(tutorialConfig.recap.title, "recap_tutorial_title");
-            recapStepBtn.title = tutorialDisplayTitle(tutorialConfig.recap.title, "recap_tutorial_title");
-        } else {
-            recapStepBtn.classList.add("hidden");
-        }
-    }
+    // Batch AV: the Recap Step-1 mini tutorial button was removed as a
+    // duplicate of the header guide (btn-tutorial-top, which honours
+    // the same enabled flags below) — its management block went with it.
 
     // Apply visibility to Top Nav Button
     const topTutBtn = document.getElementById("btn-tutorial-top");
@@ -3780,12 +3769,14 @@ function updateRecapSplitCostHint() {
         hint.textContent = text;
         hint.style.color = lowBalance ? "#f87171" : "";
         hint.classList.remove("hidden");
+        setRecapStep4Quote(total);
         return;
     }
     if (!show) {
         hint.classList.add("hidden");
         hint.textContent = "";
         if (ctaText) ctaText.textContent = t("btn_start_recap");
+        setRecapStep4Quote(1);
         return;
     }
     const est = estimateRecapSegmentParts(dur, state.recapSplitMinutes || 3);
@@ -3798,6 +3789,7 @@ function updateRecapSplitCostHint() {
     hint.textContent = text;
     hint.style.color = lowBalance ? "#f87171" : "";
     hint.classList.remove("hidden");
+    setRecapStep4Quote(est);
 }
 
 // Batch K: setLanguage's static sweep resets the CTA label — this
@@ -3848,6 +3840,9 @@ function setRecapPreviewState(mode) {
     if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
     if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
     if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
+    // Batch AV: when a source becomes ready, Step 1 checks off and
+    // collapses to its summary strip and Step 2 opens for the user.
+    syncRecapStepsWithSource(ready);
 }
 window.setRecapPreviewState = setRecapPreviewState;
 
@@ -3868,6 +3863,187 @@ function recapHasSource() {
     );
 }
 window.recapHasSource = recapHasSource;
+
+// ── Batch AV: Recap step flow ─────────────────────────────────────
+// Four collapsible steps (1 Source → 2 Preview → 3 Voice → 4 Create).
+// Steps are stages, not a locked wizard: any header strip or nav item
+// toggles its step open/closed, completed steps collapse to a ✓
+// summary strip, and every control keeps working from any state.
+// DOM relocation only — no state, payload or prefs keys change here.
+const RECAP_STEP_DONE = { 1: false, 2: false, 3: false, 4: false };
+
+function recapStepEls(n) {
+    return {
+        card: document.getElementById("recap-step-" + n),
+        body: document.getElementById("recap-step-" + n + "-body"),
+        summary: document.getElementById("recap-summary-" + n),
+        strip: document.querySelector('#recap-step-' + n + ' [data-step-toggle]'),
+    };
+}
+
+function setRecapStepOpen(n, open) {
+    const els = recapStepEls(n);
+    if (!els.body) return;
+    els.body.classList.toggle("hidden", !open);
+    if (els.strip) els.strip.setAttribute("aria-expanded", open ? "true" : "false");
+    if (els.card) els.card.classList.toggle("recap-step-collapsed", !open);
+    document.querySelectorAll('#recap-steps-nav [data-step-toggle="' + n + '"]')
+        .forEach(item => item.classList.toggle("is-active", open));
+    if (open && n === 4) refreshRecapStep4Thumb();
+}
+
+function isRecapStepOpen(n) {
+    const els = recapStepEls(n);
+    return !!(els.body && !els.body.classList.contains("hidden"));
+}
+
+function markRecapStepDone(n, done) {
+    RECAP_STEP_DONE[n] = !!done;
+    document.querySelectorAll('[data-step-pill="' + n + '"]')
+        .forEach(pill => { pill.textContent = done ? "✓" : String(n); });
+    refreshRecapStepSummary(n);
+}
+
+function recapStepSummaryText(n) {
+    if (n === 1) {
+        const info = document.getElementById("recap-video-info-box");
+        const titleEl = document.getElementById("recap-info-title");
+        if (info && !info.classList.contains("hidden") && titleEl && titleEl.textContent.trim()) {
+            return titleEl.textContent.trim();
+        }
+        return t("recap_summary_no_source");
+    }
+    if (n === 2) {
+        const active = document.querySelector("#recap-preview-ratio-group .ratio-card.active");
+        return active ? (active.getAttribute("data-label") || active.textContent.trim()) : "";
+    }
+    if (n === 3) {
+        const card = document.querySelector("#recap-persona-area .voice-card.active .v-name")
+            || document.querySelector("#recap-top-voices .voice-card.active .v-name");
+        return card ? card.textContent.trim() : "";
+    }
+    return "";
+}
+
+function refreshRecapStepSummary(n) {
+    const els = recapStepEls(n);
+    if (!els.summary) return;
+    const show = RECAP_STEP_DONE[n] && !isRecapStepOpen(n);
+    els.summary.textContent = show ? recapStepSummaryText(n) : "";
+    els.summary.classList.toggle("hidden", !show);
+}
+
+function refreshAllRecapStepSummaries() {
+    [1, 2, 3, 4].forEach(refreshRecapStepSummary);
+}
+
+function toggleRecapStep(n, forceOpen) {
+    const open = typeof forceOpen === "boolean" ? forceOpen : !isRecapStepOpen(n);
+    setRecapStepOpen(n, open);
+    if (!open && !RECAP_STEP_DONE[n] && (n === 2 || n === 3)) {
+        // Leaving a settings step by collapsing it counts as reviewed.
+        markRecapStepDone(n, true);
+    }
+    refreshAllRecapStepSummaries();
+}
+
+function openRecapStep(n) {
+    [1, 2, 3, 4].forEach(m => { if (m !== n) setRecapStepOpen(m, false); });
+    setRecapStepOpen(n, true);
+    refreshAllRecapStepSummaries();
+    const els = recapStepEls(n);
+    if (els.card) els.card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncRecapStepsWithSource(ready) {
+    if (!ready || !document.getElementById("recap-step-1")) return;
+    if (!RECAP_STEP_DONE[1]) markRecapStepDone(1, true);
+    if (!state.recapStepsSourceFlowDone) {
+        state.recapStepsSourceFlowDone = true;
+        openRecapStep(2);
+    } else {
+        refreshAllRecapStepSummaries();
+    }
+}
+
+function setRecapStep4Quote(credits) {
+    const el = document.getElementById("recap-step4-quote-credits");
+    if (el) el.textContent = String(Math.max(1, parseInt(credits, 10) || 1));
+}
+window.setRecapStep4Quote = setRecapStep4Quote;
+
+function refreshRecapStep4Thumb() {
+    const thumb = document.getElementById("recap-step4-thumb");
+    if (!thumb) return;
+    const img = document.getElementById("canvas-composite-img");
+    const src = (img && img.src) || state.recapThumbnailUrl || "";
+    if (src) {
+        if (thumb.getAttribute("src") !== src) thumb.src = src;
+        thumb.classList.remove("hidden");
+    } else {
+        thumb.classList.add("hidden");
+    }
+}
+window.refreshRecapStep4Thumb = refreshRecapStep4Thumb;
+
+function toggleRecapFineSettings(force) {
+    const body = document.getElementById("recap-fine-body");
+    if (!body) return;
+    const open = typeof force === "boolean" ? force : body.classList.contains("hidden");
+    body.classList.toggle("hidden", !open);
+    const chevron = document.getElementById("recap-fine-chevron");
+    if (chevron) chevron.textContent = open ? "▲" : "▼";
+    const btn = document.getElementById("btn-toggle-recap-fine");
+    if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+    // The transform group syncs its own visibility from the preview
+    // state machine; expanding the fine panel is the user asking for
+    // it — reveal the group while the panel is open (Batch AK gating
+    // for the collapsed state is unchanged).
+    if (open) {
+        const tg = document.getElementById("recap-preview-transform-group");
+        if (tg && recapHasSource()) tg.classList.remove("hidden");
+    }
+    // F1 (Batch AV rewire): the blur box's label is an editing
+    // affordance — it paints while the detail panel holding the blur
+    // group is open (previously: while the Mask toolbar tab was
+    // active; the tabs are gone, the behaviour is preserved).
+    const blurBox = document.getElementById("preview-blur-box");
+    if (blurBox) blurBox.classList.toggle("label-on", open);
+}
+window.toggleRecapFineSettings = toggleRecapFineSettings;
+
+function initRecapSteps() {
+    if (state.recapStepsInitialised) return;
+    if (!document.getElementById("recap-steps-nav")) return;
+    state.recapStepsInitialised = true;
+    document.querySelectorAll("[data-step-toggle]").forEach(el => {
+        el.addEventListener("click", () => toggleRecapStep(parseInt(el.getAttribute("data-step-toggle"), 10)));
+    });
+    document.querySelectorAll("[data-step-next]").forEach(el => {
+        el.addEventListener("click", () => {
+            const target = parseInt(el.getAttribute("data-step-next"), 10);
+            const from = target - 1;
+            if ((from === 2 || from === 3) && !RECAP_STEP_DONE[from]) markRecapStepDone(from, true);
+            openRecapStep(target);
+        });
+    });
+    const img = document.getElementById("canvas-composite-img");
+    if (img && "MutationObserver" in window) {
+        new MutationObserver(() => { if (isRecapStepOpen(4)) refreshRecapStep4Thumb(); })
+            .observe(img, { attributes: true, attributeFilter: ["src"] });
+    }
+    // Returning users (saved recap prefs exist): Steps 2–4 read as
+    // already-completed summaries; a fresh user sees plain numbers.
+    try {
+        if (localStorage.getItem("vcp_recap_prefs")) {
+            markRecapStepDone(2, true);
+            markRecapStepDone(3, true);
+            markRecapStepDone(4, true);
+        }
+    } catch (e) { /* storage unavailable — fresh-user defaults */ }
+    refreshAllRecapStepSummaries();
+}
+window.initRecapSteps = initRecapSteps;
 
 // ── TAB 2: Recap Studio Configuration & Visual Mockup ──────────────────────
 function setupRecapVisualEditor() {
@@ -5540,38 +5716,16 @@ function setupRecapVisualEditor() {
     syncSubBoxVisual();
     syncTitleBoxVisual();
 
-    // ── Setup Compact Live Canvas Toolbar Tabs ──
-    const tbTabBtns = document.querySelectorAll(".tb-tab-btn");
-    const tbPanels = {
-        seek: document.getElementById("tb-panel-seek"),
-        mask: document.getElementById("tb-panel-mask"),
-        style: document.getElementById("tb-panel-style"),
-    };
-
-    tbTabBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
-            const target = btn.getAttribute("data-tb-tab");
-            if (!target) return;
-            haptic("selection");
-            tbTabBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-
-            // F1: the blur box's label is an editing affordance — it
-            // paints only while its own toolbar tab (Mask) is active.
-            if (previewBlur) previewBlur.classList.toggle("label-on", target === "mask");
-
-            Object.entries(tbPanels).forEach(([key, panel]) => {
-                if (panel) {
-                    if (key === target) panel.classList.remove("hidden");
-                    else panel.classList.add("hidden");
-                }
-            });
-        });
-    });
+    // Batch AV: the compact-toolbar tab binding was retired with the
+    // tab nav itself — the seek panel is always visible, and the
+    // mask/style controls live in the fine expandable. The F1
+    // blur-label behaviour moved to toggleRecapFineSettings: the
+    // label paints while the detail panel (which holds the blur
+    // group) is open.
 
     // ── Helper: Real-time Live Canvas Mockup Visual Updater ──
-    // Exposed on window: toggleAdvancedRecapStudio() (top-level) calls it
-    // when the settings accordion opens; without this it throws ReferenceError.
+    // Exposed on window for the top-level callers (Batch AV retired
+    // the accordion caller; the exposure stays for the others).
     window.updateCanvasMockupVisuals = updateCanvasMockupVisuals;
 
     // Batch AS (AS-2): ONE stage-shape authority. The preview stage
@@ -7241,16 +7395,9 @@ window.toggleRecapCropDetail = function() {
     if (chevron) chevron.innerText = isHidden ? "▼" : "▲";
 };
 
-window.toggleAdvancedRecapStudio = function() {
-    const body = document.getElementById("recap-advanced-body");
-    const chevron = document.getElementById("accordion-chevron");
-    if (!body) return;
-    const isHidden = body.classList.toggle("hidden");
-    if (chevron) chevron.innerText = isHidden ? "▼" : "▲";
-    if (!isHidden) {
-        updateCanvasMockupVisuals();
-    }
-};
+// Batch AV: window.toggleAdvancedRecapStudio was retired with the
+// advanced accordion — its sections now live inside Steps 2–4 and the
+// accordion's only caller (its header button) is gone from the markup.
 
 // A recap job is active while its status-polling timer runs: the
 // timer is created in startRecapJobPolling and cleared on every
@@ -11255,6 +11402,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupTabs();
     setupVoiceStudio();
     setupRecapVisualEditor();
+    initRecapSteps();
     setupAlertCarousel();
     setupDownloader();
     setupSlipPreview();

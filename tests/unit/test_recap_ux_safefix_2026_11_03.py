@@ -459,11 +459,13 @@ def test_script_review_single_toggle_only():
     # …and no mirror-sync remains.
     assert "srMainToggle" not in APP_JS
     assert "srAdvToggle" not in APP_JS
-    # The toggle sits next to the primary CTA, outside the accordion.
+    # The toggle is reachable before the primary CTA.
+    # Batch AV: the advanced accordion no longer exists — the toggle
+    # lives in Step 3 (Voice) and the CTA in Step 4 (Create).
     cta = INDEX_HTML.index('id="btn-start-recap"')
     toggle = INDEX_HTML.index('id="recap-script-review-toggle"')
-    accordion = INDEX_HTML.index('id="recap-advanced-accordion"')
-    assert accordion < toggle < cta
+    assert 'id="recap-advanced-accordion"' not in INDEX_HTML
+    assert INDEX_HTML.index('id="recap-step-3"') < toggle < cta
 
 
 # ── (2) expiry disclosure on the result card ─────────────────────────
@@ -552,5 +554,5 @@ def test_batch_k_key_sets_stay_symmetric():
 # ── static version lockstep ──────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261104_r68") == 4
+    assert INDEX_HTML.count("?v=20261104_r69") == 4
     assert "20261103_r42" not in INDEX_HTML
