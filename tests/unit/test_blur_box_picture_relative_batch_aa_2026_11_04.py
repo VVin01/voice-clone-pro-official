@@ -27,7 +27,7 @@ letterboxed layout (16:9 source in a 9:16 canvas), drag/resize in
 picture fractions, plate-growth cap, new-source reset, the explicit
 rule both ways (including values equal to the defaults), detection
 not consulted when a user box is present, the legacy path's
-byte-identical assembly, Blur OFF ⇒ zero boxes, and the r58 cache
+byte-identical assembly, Blur OFF ⇒ zero boxes, and the r59 cache
 bump.
 """
 from __future__ import annotations
@@ -140,12 +140,12 @@ def test_user_box_clamps_out_of_range_inputs():
 # ── 2. Preview paint mirrors the conversion ────────────────────────
 
 def test_preview_paints_picture_relative():
-    assert "function blurBoxCanvasGeom(yPercent, hPercent)" in APP_JS
+    assert "function blurBoxCanvasGeom(yPercent, hPercent, xPercent, wPercent)" in APP_JS
     geom_body = APP_JS.split("function blurBoxCanvasGeom(", 1)[1].split("\n    }", 1)[0]
     assert "centre: r.oy + y * r.ph" in geom_body
     assert "height: h * r.ph" in geom_body
     sync_body = APP_JS.split("function syncBlurBoxVisual()", 1)[1].split("\n    }", 1)[0]
-    assert "blurBoxCanvasGeom(y, h)" in sync_body
+    assert "blurBoxCanvasGeom(y, h, x, w)" in sync_body
     assert "previewBlur.style.top = `${(geom.centre * 100).toFixed(3)}%`;" in sync_body
     assert "previewBlur.style.height = `${(geom.height * 100).toFixed(3)}%`;" in sync_body
     # The old canvas-% paint is gone.
@@ -162,9 +162,10 @@ def test_preview_and_engine_agree_exactly(y_pct, h_pct):
 
 def test_engine_helper_is_the_single_conversion_point():
     assert "def user_blur_box_to_canvas_box(" in CORE_PY
-    # Both pipeline paths convert through it.
-    assert PIPELINE_PY.count("user_blur_box_to_canvas_box(blur_y, blur_h, _layout)") == 1
-    assert PIPELINE_PY.count("user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout)") == 1
+    # Both pipeline paths convert through it (Batch AG: with the
+    # horizontal geometry threaded through the same call).
+    assert PIPELINE_PY.count("user_blur_box_to_canvas_box(blur_y, blur_h, _layout, blur_x=blur_x, blur_w=blur_w)") == 1
+    assert PIPELINE_PY.count("user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout, blur_x=blur_x, blur_w=blur_w)") == 1
 
 
 # ── 3. Drag / resize operate in picture fractions ──────────────────
@@ -398,12 +399,12 @@ def test_detection_not_run_when_user_box_present():
     render_body = PIPELINE_PY.split("def run_recap_pipeline(", 1)[1]
     render_body = render_body.split("\ndef ", 1)[0]
     assert "if blur_subtitles and blur_box_explicit:" in render_body
-    assert "_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _layout)" in render_body
+    assert "_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _layout, blur_x=blur_x, blur_w=blur_w)" in render_body
     assert "if blur_subtitles and _user_box is None:" in render_body
     assert "user_box=_user_box," in render_body
     preview_body = PIPELINE_PY.split("def generate_recap_preview(", 1)[1]
     preview_body = preview_body.split("\ndef ", 1)[0]
-    assert "_p_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout)" in preview_body
+    assert "_p_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout, blur_x=blur_x, blur_w=blur_w)" in preview_body
     assert "if _p_user_box is None:" in preview_body
     assert "user_box=_p_user_box," in preview_body
 
@@ -455,6 +456,6 @@ def test_legacy_fallback_hint_construction_unchanged():
 
 # ── 9. Cache version ───────────────────────────────────────────────
 
-def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261104_r58") == 4
+def test_cache_version_r59():
+    assert INDEX_HTML.count("?v=20261104_r59") == 4
     assert "20261104_r53" not in INDEX_HTML

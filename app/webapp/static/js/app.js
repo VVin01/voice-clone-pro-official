@@ -377,6 +377,14 @@ const state = {
     // explicit box is authoritative at render. Reset by
     // resetBlurBoxForNewSource() whenever a NEW source loads.
     recapBlurBoxTouched: false,
+    // Batch AG: free 2-axis adjustment defaults — blur box left /
+    // width and subtitle centre / wrap width, all percents of the
+    // PICTURE width. The sliders are the live source of truth; these
+    // mirror them for the snapshot / prefs / payload fallbacks.
+    recapBlurX: 4,
+    recapBlurW: 92,
+    recapSubX: 50,
+    recapSubW: 92,
     // Batch AA: identity of the last successfully loaded source
     // ("url:<url>" / "file:<server path>") — the new-source reset
     // fires only when a success event brings a DIFFERENT source.
@@ -1143,6 +1151,8 @@ let userPrefsSaveTimer = null;
 function collectAccountPrefs() {
     const bs = document.getElementById("slider-blur-strength");
     const sy = document.getElementById("slider-sub-y");
+    const sxEl = document.getElementById("slider-sub-x");
+    const swEl = document.getElementById("slider-sub-w");
     const splitToggle = document.getElementById("recap-split-toggle");
     return {
         voice_persona: state.selectedPersona,
@@ -1171,6 +1181,11 @@ function collectAccountPrefs() {
         recapLines: state.recapLines || 1,
         recapSplitMinutes: state.recapSplitMinutes || 3,
         recapSubY: sy ? parseInt(sy.value) : (state.recapSubY || 85),
+        // Batch AG: sub_x / sub_w are account preferences like
+        // recapSubY (NOT per-source — the blur box's horizontal
+        // geometry stays out, exactly like its vertical geometry).
+        recapSubX: sxEl ? parseInt(sxEl.value) : (state.recapSubX || 50),
+        recapSubW: swEl ? parseInt(swEl.value) : (state.recapSubW || 92),
         recapBlurStrength: bs ? parseInt(bs.value) : (state.recapBlurStrength || 18),
         recapZoom: state.recapZoom,
         recapVoice: state.recapVoice,
@@ -1208,6 +1223,7 @@ function applyAccountPrefs(prefs) {
         "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapCropTop",
         "recapCropBottom", "recapCropLeft", "recapCropRight", "recapFontSize",
         "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
+        "recapSubX", "recapSubW",
         "recapZoom", "recapVoice", "recapGeminiVoice",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
@@ -3570,13 +3586,21 @@ window.recapHasSource = recapHasSource;
 function setupRecapVisualEditor() {
     const sliderBlurY = document.getElementById("slider-blur-y");
     const sliderBlurH = document.getElementById("slider-blur-h");
+    const sliderBlurX = document.getElementById("slider-blur-x");
+    const sliderBlurW = document.getElementById("slider-blur-w");
     const sliderBlurStrength = document.getElementById("slider-blur-strength");
     const sliderSubY = document.getElementById("slider-sub-y");
+    const sliderSubX = document.getElementById("slider-sub-x");
+    const sliderSubW = document.getElementById("slider-sub-w");
 
     const valBlurY = document.getElementById("val-blur-y");
     const valBlurH = document.getElementById("val-blur-h");
+    const valBlurX = document.getElementById("val-blur-x");
+    const valBlurW = document.getElementById("val-blur-w");
     const valBlurStrength = document.getElementById("val-blur-strength");
     const valSubY = document.getElementById("val-sub-y");
+    const valSubX = document.getElementById("val-sub-x");
+    const valSubW = document.getElementById("val-sub-w");
 
     const previewBlur = document.getElementById("preview-blur-box");
     const previewPlate = document.getElementById("preview-plate-box");
@@ -4329,6 +4353,24 @@ function setupRecapVisualEditor() {
         return sy;
     }
 
+    // Batch AG: subtitle centre X as a fraction of the canvas width
+    // — the mirror of subtitle_centre_x_px in core.py:
+    // ox + sub_x × pw on pillarboxed layouts, sub_x full-frame.
+    function subtitleCentreXCanvasFrac(subXPercent) {
+        const r = recapPictureRect();
+        const sx = Math.max(0, Math.min(100, subXPercent)) / 100.0;
+        if (r.pw < 1 - 0.002) return r.ox + sx * r.pw;
+        return sx;
+    }
+
+    // Batch AG: subtitle wrap width (sub_w, percent of the PICTURE
+    // width) as a fraction of the canvas width.
+    function subtitleWidthCanvasFrac(subWPercent) {
+        const r = recapPictureRect();
+        const sw = Math.max(0, Math.min(100, subWPercent)) / 100.0;
+        return sw * r.pw;
+    }
+
     // Batch AA: the blur box is drawn on the PICTURE, exactly like
     // the subtitle (recapter standard) — blur_y is the box centre as
     // a fraction of the PICTURE height and blur_h its height as a
@@ -4338,14 +4380,26 @@ function setupRecapVisualEditor() {
     // fractions of the CANVAS height for painting: centre =
     // oy + blur_y × ph, height = blur_h × ph on letterboxed layouts;
     // identity on full-frame layouts. Width stays 92% centred (CSS).
-    function blurBoxCanvasGeom(yPercent, hPercent) {
+    // Batch AG: with xPercent / wPercent given, the horizontal axis
+    // joins the same picture basis — left = ox + blur_x × pw,
+    // width = blur_w × pw (canvas fractions) — and is returned as
+    // left/width for explicit painting; without them the legacy
+    // centred 92% paint is returned (left 0.04, width 0.92).
+    function blurBoxCanvasGeom(yPercent, hPercent, xPercent, wPercent) {
         const r = recapPictureRect();
         const y = Math.max(0, Math.min(100, yPercent)) / 100.0;
         const h = Math.max(0, Math.min(100, hPercent)) / 100.0;
-        if ((r.oy + r.ph) < 1 - 0.002) {
-            return { centre: r.oy + y * r.ph, height: h * r.ph };
+        let left = 0.04, width = 0.92;
+        if (xPercent !== undefined || wPercent !== undefined) {
+            const wF = (wPercent === undefined ? 92 : Math.max(0, Math.min(100, wPercent))) / 100.0;
+            const xF = (xPercent === undefined ? (1 - wF) * 50 : Math.max(0, Math.min(100, xPercent))) / 100.0;
+            left = r.ox + xF * r.pw;
+            width = wF * r.pw;
         }
-        return { centre: y, height: h };
+        if ((r.oy + r.ph) < 1 - 0.002) {
+            return { centre: r.oy + y * r.ph, height: h * r.ph, left, width };
+        }
+        return { centre: y, height: h, left, width };
     }
 
     // Batch AA: a NEW source starts from the tight defaults — the
@@ -4361,10 +4415,20 @@ function setupRecapVisualEditor() {
         state.recapBlurY = 85;
         state.recapBlurH = 7;
         state.recapSubY = 85;
+        // Batch AG: the horizontal blur geometry is per-source like
+        // Y/H and resets with it; sub_x follows sub_y's reset rule.
+        // sub_w does NOT reset — like the font size, it is a style
+        // choice that carries across sources.
+        state.recapBlurX = 4;
+        state.recapBlurW = 92;
+        state.recapSubX = 50;
         state.recapBlurBoxTouched = false;
         if (sliderBlurY) sliderBlurY.value = 85;
         if (sliderBlurH) sliderBlurH.value = 7;
         if (sliderSubY) sliderSubY.value = 85;
+        if (sliderBlurX) sliderBlurX.value = 4;
+        if (sliderBlurW) sliderBlurW.value = 92;
+        if (sliderSubX) sliderSubX.value = 50;
         syncBlurBoxVisual();
         syncSubBoxVisual();
         saveRecapSettings();
@@ -4406,17 +4470,27 @@ function setupRecapVisualEditor() {
         if (!previewBlur) return;
         const y = sliderBlurY ? parseFloat(sliderBlurY.value) : 85;
         const h = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
+        const x = sliderBlurX ? parseFloat(sliderBlurX.value) : 4;
+        const w = sliderBlurW ? parseFloat(sliderBlurW.value) : 92;
         if (valBlurY) valBlurY.innerText = `${Math.round(y)}%`;
         if (valBlurH) valBlurH.innerText = `${Math.round(h)}%`;
+        if (valBlurX) valBlurX.innerText = `${Math.round(x)}%`;
+        if (valBlurW) valBlurW.innerText = `${Math.round(w)}%`;
         // Batch AA: the box is painted PICTURE-relative (Batch P
         // machinery): with translateY(-50%) the centre lands at
         // oy + blur_y × ph of the canvas and the height is
         // blur_h × ph — the same conversion the render applies
         // (core.user_blur_box_to_canvas_box), so the drawn box is
         // the rendered box.
-        const geom = blurBoxCanvasGeom(y, h);
+        // Batch AG: left/width are painted EXPLICITLY from the same
+        // conversion (ox + blur_x × pw, blur_w × pw) instead of the
+        // CSS pin (left/right 4%) the box used to rely on.
+        const geom = blurBoxCanvasGeom(y, h, x, w);
         previewBlur.style.top = `${(geom.centre * 100).toFixed(3)}%`;
         previewBlur.style.height = `${(geom.height * 100).toFixed(3)}%`;
+        previewBlur.style.left = `${(geom.left * 100).toFixed(3)}%`;
+        previewBlur.style.width = `${(geom.width * 100).toFixed(3)}%`;
+        previewBlur.style.right = "auto";
         previewBlur.style.bottom = "auto";
         fitBlurPlateToCaption();
     }
@@ -4492,12 +4566,26 @@ function setupRecapVisualEditor() {
     function syncSubBoxVisual() {
         if (!previewSub) return;
         const y = sliderSubY ? parseFloat(sliderSubY.value) : 85;
+        const x = sliderSubX ? parseFloat(sliderSubX.value) : 50;
+        const w = sliderSubW ? parseFloat(sliderSubW.value) : 92;
         if (valSubY) valSubY.innerText = `${Math.round(y)}%`;
+        if (valSubX) valSubX.innerText = `${Math.round(x)}%`;
+        if (valSubW) valSubW.innerText = `${Math.round(w)}%`;
         // Batch P: the sample sits at the RENDER's anchor — sub_y is
         // a percent of the PICTURE height on letterboxed layouts
         // (subtitle_centre_px in core.py), not of the whole canvas,
         // so what the user sees is where the render will burn it.
         previewSub.style.top = `${(subtitleAnchorCanvasFrac(y) * 100).toFixed(3)}%`;
+        // Batch AG: the sample is centred on sub_x (the shared
+        // centre-X resolver) with its width set from sub_w, so the
+        // caption can be moved sideways and narrowed/widened exactly
+        // as the render will place and wrap it; the plate fit below
+        // measures the text rect, so the plate follows the moved
+        // caption just like the render's plate follows the text.
+        previewSub.style.left = `${(subtitleCentreXCanvasFrac(x) * 100).toFixed(3)}%`;
+        previewSub.style.width = `${(subtitleWidthCanvasFrac(w) * 100).toFixed(3)}%`;
+        previewSub.style.right = "auto";
+        previewSub.style.transform = "translate(-50%, -50%)";
         previewSub.style.bottom = "auto";
         // Keep the sample size on the render's formula after layout
         // settles change the canvas height.
@@ -4523,6 +4611,31 @@ function setupRecapVisualEditor() {
         });
     }
 
+    // Batch AG: the horizontal blur sliders are deliberate sets too
+    // (same explicit marker as Y/H). X and W clamp against each
+    // other so the box always stays inside the picture: widening W
+    // past the right edge pulls X back, and X stops at 100 − W.
+    if (sliderBlurX && previewBlur && valBlurX) {
+        sliderBlurX.addEventListener("input", () => {
+            state.recapBlurBoxTouched = true;
+            const w = sliderBlurW ? parseFloat(sliderBlurW.value) : 92;
+            const maxX = Math.max(0, 100 - w);
+            if (parseFloat(sliderBlurX.value) > maxX) sliderBlurX.value = maxX;
+            syncBlurBoxVisual();
+        });
+    }
+
+    if (sliderBlurW && previewBlur && valBlurW) {
+        sliderBlurW.addEventListener("input", () => {
+            state.recapBlurBoxTouched = true;
+            const w = parseFloat(sliderBlurW.value);
+            if (sliderBlurX && parseFloat(sliderBlurX.value) + w > 100) {
+                sliderBlurX.value = Math.max(0, 100 - w);
+            }
+            syncBlurBoxVisual();
+        });
+    }
+
     // Batch O: blur strength slider — the value rides the submit
     // payload into the engine's boxblur radius; the canvas mockup's
     // backdrop blur scales with it so the preview hints at the
@@ -4543,6 +4656,18 @@ function setupRecapVisualEditor() {
 
     if (sliderSubY && previewSub && valSubY) {
         sliderSubY.addEventListener("input", () => {
+            syncSubBoxVisual();
+        });
+    }
+
+    if (sliderSubX && previewSub && valSubX) {
+        sliderSubX.addEventListener("input", () => {
+            syncSubBoxVisual();
+        });
+    }
+
+    if (sliderSubW && previewSub && valSubW) {
+        sliderSubW.addEventListener("input", () => {
             syncSubBoxVisual();
         });
     }
@@ -4631,6 +4756,87 @@ function setupRecapVisualEditor() {
         boxElement.addEventListener("touchcancel", endDrag);
     }
 
+    // Batch AG: horizontal twin of enableVerticalDrag — same
+    // deliberate-grab rules (mouse anywhere on the box, touch only
+    // via the ⠿ grip), with the delta measured against the canvas
+    // WIDTH and scaled by 1/pw on pillarboxed layouts so the box
+    // follows the finger 1:1, mirroring the vertical 1/ph rule.
+    // Attached alongside the vertical drag, a diagonal drag moves
+    // both axes at once. getClampRange returns [min, max] percents
+    // for the axis value (blur_x is a left edge clamped by the
+    // width; sub_x is a centre clamped to [10, 90]).
+    function enableHorizontalDrag(boxElement, onUpdateX, getInitialX, getDeltaScaleX, getClampRange) {
+        if (!boxElement || !canvas) return;
+
+        let isDragging = false;
+        let startClientX = 0;
+        let startPercent = 50;
+
+        function startDrag(clientX) {
+            isDragging = true;
+            startClientX = clientX;
+            startPercent = getInitialX ? getInitialX() : 50;
+            boxElement.classList.add("is-dragging");
+            haptic("light");
+        }
+
+        function moveDrag(clientX) {
+            if (!isDragging) return;
+            const canvasRect = canvas.getBoundingClientRect();
+            if (canvasRect.width <= 0) return;
+            const deltaPx = clientX - startClientX;
+            const deltaPercent = (deltaPx / canvasRect.width) * 100;
+            const deltaScale = getDeltaScaleX ? (getDeltaScaleX() || 1) : 1;
+            const range = getClampRange ? getClampRange() : [0, 100];
+            const clampedX = Math.max(range[0], Math.min(range[1], Math.round(startPercent + deltaPercent * deltaScale)));
+            onUpdateX(clampedX);
+        }
+
+        function endDrag() {
+            if (!isDragging) return;
+            isDragging = false;
+            boxElement.classList.remove("is-dragging");
+        }
+
+        boxElement.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startDrag(e.clientX);
+
+            const onMouseMove = (ev) => {
+                ev.preventDefault();
+                moveDrag(ev.clientX);
+            };
+            const onMouseUp = () => {
+                endDrag();
+                window.removeEventListener("mousemove", onMouseMove);
+                window.removeEventListener("mouseup", onMouseUp);
+            };
+            window.addEventListener("mousemove", onMouseMove);
+            window.addEventListener("mouseup", onMouseUp);
+        });
+
+        const grip = boxElement.querySelector(".drag-grip-icon");
+        const touchTarget = grip || boxElement;
+        touchTarget.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length > 0) {
+                e.stopPropagation();
+                startDrag(e.touches[0].clientX);
+            }
+        }, { passive: true });
+
+        boxElement.addEventListener("touchmove", (e) => {
+            if (isDragging && e.touches && e.touches.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                moveDrag(e.touches[0].clientX);
+            }
+        }, { passive: false });
+
+        boxElement.addEventListener("touchend", endDrag);
+        boxElement.addEventListener("touchcancel", endDrag);
+    }
+
     // Attach dragging to Blur Box
     enableVerticalDrag(previewBlur, (y) => {
         // Batch AA: dragging the box is a deliberate set.
@@ -4658,6 +4864,28 @@ function setupRecapVisualEditor() {
         const r = recapPictureRect();
         return ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
     });
+
+    // Batch AG: horizontal drag for both boxes (2-axis with the
+    // vertical drags above). The blur box's left edge clamps
+    // against its width; the subtitle centre clamps to [10, 90] —
+    // the same ranges the API enforces.
+    enableHorizontalDrag(previewBlur, (x) => {
+        // Dragging the box sideways is a deliberate set.
+        state.recapBlurBoxTouched = true;
+        if (sliderBlurX) sliderBlurX.value = x;
+        syncBlurBoxVisual();
+    }, () => sliderBlurX ? parseFloat(sliderBlurX.value) : 4, () => {
+        const r = recapPictureRect();
+        return (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
+    }, () => [0, Math.max(0, 100 - (sliderBlurW ? parseFloat(sliderBlurW.value) : 92))]);
+
+    enableHorizontalDrag(previewSub, (x) => {
+        if (sliderSubX) sliderSubX.value = x;
+        syncSubBoxVisual();
+    }, () => sliderSubX ? parseFloat(sliderSubX.value) : 50, () => {
+        const r = recapPictureRect();
+        return (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
+    }, () => [10, 90]);
 
     // ── Resize Handles for Blur Box Height ──
     const blurResizeTop = previewBlur ? previewBlur.querySelector(".box-resize-handle.top") : null;
@@ -4731,6 +4959,84 @@ function setupRecapVisualEditor() {
     }
     attachBlurResize(blurResizeTop, true);
     attachBlurResize(blurResizeBottom, false);
+
+    // ── Resize Handles for Blur Box Width (Batch AG) ──
+    const blurResizeLeft = previewBlur ? previewBlur.querySelector(".box-resize-handle.left") : null;
+    const blurResizeRight = previewBlur ? previewBlur.querySelector(".box-resize-handle.right") : null;
+
+    function attachBlurResizeX(handle, isLeft) {
+        if (!handle) return;
+        let startX = 0;
+        let startLeft = 4;
+        let startW = 92;
+        let isResizing = false;
+
+        function startResize(x) {
+            isResizing = true;
+            startX = x;
+            startLeft = sliderBlurX ? parseFloat(sliderBlurX.value) : 4;
+            startW = sliderBlurW ? parseFloat(sliderBlurW.value) : 92;
+            if (previewBlur) previewBlur.classList.add("is-dragging");
+            haptic("light");
+        }
+        function moveResize(x) {
+            if (!isResizing) return;
+            const canvasRect = canvas ? canvas.getBoundingClientRect() : null;
+            const canvasW = (canvasRect && canvasRect.width > 0) ? canvasRect.width : 360;
+            const deltaPct = ((x - startX) / canvasW) * 100;
+            // blur_x / blur_w are % of the PICTURE width, so a
+            // canvas-% finger delta converts by 1/pw on pillarboxed
+            // layouts (the horizontal twin of the 1/ph rule above).
+            const r = recapPictureRect();
+            const deltaScale = (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
+            const delta = deltaPct * deltaScale;
+            // Resizing is a deliberate set.
+            state.recapBlurBoxTouched = true;
+            if (isLeft) {
+                // The right edge stays put: X and W move together.
+                const newLeft = Math.max(0, Math.min(startLeft + startW - 10, Math.round(startLeft + delta)));
+                if (sliderBlurX) sliderBlurX.value = newLeft;
+                if (sliderBlurW) sliderBlurW.value = startW + (startLeft - newLeft);
+            } else {
+                const newW = Math.max(10, Math.min(100 - startLeft, Math.round(startW + delta)));
+                if (sliderBlurW) sliderBlurW.value = newW;
+            }
+            syncBlurBoxVisual();
+        }
+        function endResize() {
+            isResizing = false;
+            if (previewBlur) previewBlur.classList.remove("is-dragging");
+        }
+
+        handle.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+            startResize(e.clientX);
+            const mm = (ev) => { ev.preventDefault(); moveResize(ev.clientX); };
+            const mu = () => { endResize(); window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); };
+            window.addEventListener("mousemove", mm);
+            window.addEventListener("mouseup", mu);
+        });
+
+        handle.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length > 0) {
+                e.stopPropagation();
+                startResize(e.touches[0].clientX);
+            }
+        }, { passive: true });
+
+        handle.addEventListener("touchmove", (e) => {
+            if (isResizing && e.touches && e.touches.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                moveResize(e.touches[0].clientX);
+            }
+        }, { passive: false });
+
+        handle.addEventListener("touchend", endResize);
+        handle.addEventListener("touchcancel", endResize);
+    }
+    attachBlurResizeX(blurResizeLeft, true);
+    attachBlurResizeX(blurResizeRight, false);
     syncBlurBoxVisual();
     syncSubBoxVisual();
 
@@ -5363,6 +5669,12 @@ function setupRecapVisualEditor() {
         haptic("medium");
         if (sliderBlurY) sliderBlurY.value = "85";
         if (sliderBlurH) sliderBlurH.value = "7";
+        // Batch AG: the layout reset also returns the horizontal
+        // geometry to the centred defaults (sub_w is a style width,
+        // not a position — it is NOT reset, like the font size).
+        if (sliderBlurX) sliderBlurX.value = "4";
+        if (sliderBlurW) sliderBlurW.value = "92";
+        if (sliderSubX) sliderSubX.value = "50";
         if (sliderBlurStrength) { sliderBlurStrength.value = "18"; syncBlurStrengthVisual(); }
         if (sliderSubY) sliderSubY.value = "85";
         syncBlurBoxVisual();
@@ -5908,6 +6220,8 @@ function setupRecapVisualEditor() {
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
         recapFontSize: [12, 30], recapLines: [1, 2], recapSplitMinutes: [1, 10],
         recapBlurY: [0, 100], recapBlurH: [1, 50], recapSubY: [0, 100],
+        recapBlurX: [0, 100], recapBlurW: [10, 100],
+        recapSubX: [10, 90], recapSubW: [10, 100],
         recapBlurStrength: [4, 40],
     };
 
@@ -5929,6 +6243,14 @@ function setupRecapVisualEditor() {
         snap.recapBlurH = bh ? parseInt(bh.value) : 7;
         snap.recapBlurStrength = bs ? parseInt(bs.value) : 18;
         snap.recapSubY = sy ? parseInt(sy.value) : 85;
+        const bx = document.getElementById("slider-blur-x");
+        const bw = document.getElementById("slider-blur-w");
+        const sx = document.getElementById("slider-sub-x");
+        const sw = document.getElementById("slider-sub-w");
+        snap.recapBlurX = bx ? parseInt(bx.value) : 4;
+        snap.recapBlurW = bw ? parseInt(bw.value) : 92;
+        snap.recapSubX = sx ? parseInt(sx.value) : 50;
+        snap.recapSubW = sw ? parseInt(sw.value) : 92;
         return snap;
     }
 
@@ -6043,6 +6365,14 @@ function setupRecapVisualEditor() {
             bs.dispatchEvent(new Event("input"));
         }
         if (sy && Number.isFinite(state.recapSubY)) sy.value = state.recapSubY;
+        const bx = document.getElementById("slider-blur-x");
+        const bw = document.getElementById("slider-blur-w");
+        const sx = document.getElementById("slider-sub-x");
+        const sw = document.getElementById("slider-sub-w");
+        if (bx && Number.isFinite(state.recapBlurX)) bx.value = state.recapBlurX;
+        if (bw && Number.isFinite(state.recapBlurW)) bw.value = state.recapBlurW;
+        if (sx && Number.isFinite(state.recapSubX)) sx.value = state.recapSubX;
+        if (sw && Number.isFinite(state.recapSubW)) sw.value = state.recapSubW;
         syncSubtitleFontSize(state.recapFontSize || 16);
         syncSubtitleLines(state.recapLines || 1);
         syncBlurBoxVisual();
@@ -6082,6 +6412,12 @@ function setupRecapVisualEditor() {
             recapFontSize: cfg.sub_font_size, recapLines: cfg.sub_lines,
             recapSplitMinutes: cfg.split_minutes,
             recapBlurY: cfg.blur_y, recapBlurH: cfg.blur_h, recapSubY: cfg.sub_y,
+            // Batch AG: horizontal geometry round-trips too — a job
+            // rendered with an off-centre box / subtitle re-runs with
+            // the same placement (pre-AG configs carry none of these
+            // keys and restore keeps the current values).
+            recapBlurX: cfg.blur_x, recapBlurW: cfg.blur_w,
+            recapSubX: cfg.sub_x, recapSubW: cfg.sub_w,
             // Batch AA: a job whose blur box was explicit re-runs
             // with an explicit box — authoritativeness is preserved
             // through the prefill (pre-AA configs have no marker and
@@ -6304,8 +6640,12 @@ async function handleStartRecap() {
     try {
         const sliderBlurY = document.getElementById("slider-blur-y");
         const sliderBlurH = document.getElementById("slider-blur-h");
+        const sliderBlurX = document.getElementById("slider-blur-x");
+        const sliderBlurW = document.getElementById("slider-blur-w");
         const sliderBlurStrength = document.getElementById("slider-blur-strength");
         const sliderSubY = document.getElementById("slider-sub-y");
+        const sliderSubX = document.getElementById("slider-sub-x");
+        const sliderSubW = document.getElementById("slider-sub-w");
 
         const payload = {
             url: url,
@@ -6324,12 +6664,21 @@ async function handleStartRecap() {
             blur_subtitles: state.recapBlurSubs !== false,
             blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
             blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 7,
+            // Batch AG: horizontal blur geometry, percents of the
+            // picture width — the engine converts them through the
+            // same single conversion point as blur_y/blur_h.
+            blur_x: sliderBlurX ? parseInt(sliderBlurX.value) : 4,
+            blur_w: sliderBlurW ? parseInt(sliderBlurW.value) : 92,
             // Batch AA: the explicit-set marker rides along — the
             // engine treats a marked box as authoritative.
             blur_box_explicit: !!state.recapBlurBoxTouched,
             blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
             burn_subtitles: state.recapBurnSubs !== false,
             sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
+            // Batch AG: subtitle centre X + wrap width (picture
+            // width percents), mirroring sub_y's centre semantics.
+            sub_x: sliderSubX ? parseInt(sliderSubX.value) : 50,
+            sub_w: sliderSubW ? parseInt(sliderSubW.value) : 92,
             sub_style: state.recapSubStyle || "yellow",
             sub_font_size: state.recapFontSize || 16,
             sub_font: state.recapSubFont || "padauk",
