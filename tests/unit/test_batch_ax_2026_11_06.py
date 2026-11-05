@@ -289,8 +289,8 @@ def test_ax_payload_and_prefs_invariants_hold():
     assert 'RECAP_SETTINGS_KEY = "vcp_recap_settings"' in APP_JS
 
 
-def test_ax_cache_token_r70():
-    assert INDEX_HTML.count("20261104_r70") == 4
+def test_ax_cache_token_r71():
+    assert INDEX_HTML.count("20261104_r71") == 4
     assert "20261104_r69" not in INDEX_HTML
 
 

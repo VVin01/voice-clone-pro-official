@@ -189,7 +189,11 @@ def test_t2_home_tutorials_list_covers_all_ten():
     # inside the new Refer & Support card. Full-app polish (2026-11-01)
     # adds TWO more: the Downloader + History rows of Home's new
     # Tools / Library card (they replaced the bottom-nav entries).
-    assert INDEX_HTML.count('class="home-tut-row"') == 15
+    # Batch AY (2026-11-06): the 2 start-creating + 2 tools entries
+    # become .home-tile tiles (spec AY-1) and the Support row moves
+    # to its own slim card — rows are now 10 tutorials + 1 support;
+    # the four tile actions are pinned in the Batch AY test file.
+    assert INDEX_HTML.count('class="home-tut-row"') == 11
 
 
 def test_t3_studio_banners_removed_originals_kept():
