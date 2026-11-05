@@ -2599,6 +2599,112 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return ass_path
 
 
+def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
+    """Turn per-frame row glyph scores into subtitle band boxes.
+
+    ``scores`` is an (n_frames, h_px) matrix whose rows are the per-frame
+    "bright glyph pixels with a dark outline nearby" density of every
+    image row (see detect_source_subtitle_bands). The aggregation is
+    Batch AI (2026-11-05), shaped by a proven miss on a real recap
+    source (YouTube GlunZpix30I): its caption strip at ~0.91 of the
+    picture scored pers 0.33 / mean-agg 0.015 per row — under every
+    per-row gate of the old mean-based detector — while a static title
+    card mid-picture scored pers 1.00 / agg 0.174 and was the only band
+    returned, so the real captions shipped uncovered as mirror-writing.
+
+    Three changes, one per failure mechanism:
+
+    * The temporal aggregate is the 75th percentile, not the mean.
+      Dialogue is intermittent — a caption row is empty in most sampled
+      frames — so the mean dilutes a genuine band below threshold;
+      persistence (fraction of frames over the hit score) already
+      measures "how often", the percentile measures "how strong when
+      present".
+    * Candidates are two-tier: strict rows (pers >= 0.35, agg >= 0.012)
+      seed a band, loose rows (pers >= 0.15, agg >= 0.006) extend it.
+      One-line and two-line captions put their glyphs on DIFFERENT
+      rows, so no single row carries the whole band's evidence; the
+      seed rule keeps scene noise from forming bands on its own, and
+      the hairline guard (group extent < 0.015 of height) still kills
+      thin bright lines, whose neighbours carry no loose evidence.
+    * A band whose glyph pattern is (near-)identical in every sample
+      is a static overlay — title card, channel banner, watermark —
+      not dialogue: dialogue text changes between samples. Static
+      bands are dropped ONLY when at least one genuinely changing
+      band survives (dyn ratio = mean per-frame score change / mean
+      score at the band's peak row; static measured <= 0.10 on the
+      GlunZpix30I card vs >= 0.19 for real dialogue). When every band
+      is static (looped image, slideshow), all are kept, as before.
+    """
+    import numpy as np
+
+    S = np.asarray(scores, dtype=float)
+    if S.ndim != 2 or S.shape[0] == 0 or S.shape[1] == 0:
+        return []
+    n_frames, h_px = S.shape
+    pers = (S > 0.02).mean(axis=0)
+    agg = np.percentile(S, 75, axis=0)
+    agg_mean = S.mean(axis=0)
+    dyn = np.abs(np.diff(S, axis=0)).mean(axis=0) if n_frames > 1 else np.zeros(h_px)
+    strict = (pers >= 0.35) & (agg >= 0.012)
+    loose = (pers >= 0.15) & (agg >= 0.006)
+    if not strict.any():
+        return []
+    # Scan the FULL frame height (blur safefix 2026-11-03): source
+    # captions also sit at the TOP of the frame in short dramas and
+    # social clips, and a scan that started at 40% of the height
+    # could never cover them — they ghosted through under the new
+    # subtitle line. The persistence/peak thresholds are what reject
+    # scene noise, not the scan range.
+    gap = max(3, int(0.013 * h_px))
+    groups: list[list[int]] = []
+    for y in range(h_px):
+        if not loose[y]:
+            continue
+        if groups and y - groups[-1][-1] <= gap:
+            groups[-1].append(y)
+        else:
+            groups.append([y])
+    kept: list[tuple[dict[str, float], float]] = []
+    for grp in groups:
+        if not any(strict[y] for y in grp):
+            continue  # loose smear with no seed row — scene noise
+        peak_row = max(grp, key=lambda y: float(agg[y]))
+        if float(agg[peak_row]) < 0.02:
+            continue  # weak smear, not a subtitle band
+        top = grp[0] / h_px
+        bot = (grp[-1] + 1) / h_px
+        core_h = bot - top
+        if core_h < 0.015:
+            # Hairline row noise (1-3 rows at sample scale), never a
+            # text line: a real subtitle glyph band is several times
+            # taller. Round-4 evidence: on a subtitle-free cartoon
+            # the bright exhibit rows at y~0.48 formed a 0.5%-tall
+            # group that passed every other threshold and blurred a
+            # strip across the middle of the finished movie.
+            continue
+        # Pad: dialogue subs often have a second line ABOVE the persistent one,
+        # and the renderer's zoom shifts the band slightly — cover both.
+        top = max(0.0, top - 1.4 * core_h)
+        bot = min(1.0, bot + 0.6 * core_h)
+        if bot - top > 0.16:  # safety cap: never blur a huge slab on a guess
+            mid = (top + bot) / 2.0
+            top, bot = mid - 0.08, mid + 0.08
+        box = {"x": 0.0, "y": round((top + bot) / 2.0, 4), "w": 1.0, "h": round(bot - top, 4)}
+        dyn_ratio = float(dyn[peak_row]) / (float(agg_mean[peak_row]) + 1e-9)
+        kept.append((box, dyn_ratio))
+    if not kept:
+        return []
+    dynamic = [box for box, ratio in kept if ratio > 0.10]
+    if dynamic and len(dynamic) < len(kept):
+        dropped = [box for box, ratio in kept if ratio <= 0.10]
+        log("🔍 Static text band(s) ignored (unchanging across samples — "
+            "title-card-like, while dialogue bands were found): "
+            + ", ".join(f"y={b['y']:.2f} h={b['h']:.2f}" for b in dropped))
+        return dynamic
+    return [box for box, _ratio in kept]
+
+
 def detect_source_subtitle_bands(
     ffmpeg: str,
     ffprobe: str,
@@ -2617,8 +2723,9 @@ def detect_source_subtitle_bands(
     unreadable mirror-writing right above the Myanmar line.
 
     Method: sample frames across the video, score every image row by "bright glyph pixels
-    with a dark outline nearby" (the classic hard-sub look), aggregate across frames.
-    A genuine subtitle band is text-dense in most frames; scene brightness is not.
+    with a dark outline nearby" (the classic hard-sub look), then aggregate the per-frame
+    row scores with _subtitle_band_boxes (Batch AI: percentile aggregate, two-tier
+    candidates, static-overlay demotion — see its docstring).
     Returns blur-box dicts in SOURCE-frame fractions ({x, y=center, w, h} of the
     source picture) — NOT canvas fractions. Callers must map each box through
     source_band_to_canvas_box() with the render layout before adding it to
@@ -2634,9 +2741,7 @@ def detect_source_subtitle_bands(
             return []
         frame_dir = work_dir / "subband_frames"
         frame_dir.mkdir(parents=True, exist_ok=True)
-        agg = None
-        pers = None
-        used = 0
+        frame_scores: list = []
         for i in range(max(4, samples)):
             t = duration * (i + 0.5) / max(4, samples)
             fp = frame_dir / f"band_{i:02d}.png"
@@ -2656,54 +2761,12 @@ def detect_source_subtitle_bands(
                 near_dark[:, dx:] |= dark[:, :-dx]
                 near_dark[:, :-dx] |= dark[:, dx:]
             row_score = (bright & near_dark).sum(axis=1) / float(w_px)
-            agg = row_score if agg is None else agg + row_score
-            hit = (row_score > 0.02).astype(float)
-            pers = hit if pers is None else pers + hit
-            used += 1
-        if not used or agg is None or pers is None:
+            if frame_scores and row_score.shape != frame_scores[0].shape:
+                continue  # inconsistent sample geometry — skip the odd frame
+            frame_scores.append(row_score)
+        if not frame_scores:
             return []
-        agg /= used
-        pers /= used
-        h_px = agg.shape[0]
-        # Scan the FULL frame height (blur safefix 2026-11-03): source
-        # captions also sit at the TOP of the frame in short dramas and
-        # social clips, and a scan that started at 40% of the height
-        # could never cover them — they ghosted through under the new
-        # subtitle line. The persistence/peak thresholds below are
-        # what reject scene noise, not the scan range.
-        y_lo = 0
-        cand = [y for y in range(y_lo, h_px) if pers[y] >= 0.35 and agg[y] >= 0.012]
-        if not cand:
-            return []
-        groups: list[list[int]] = []
-        for y in cand:
-            if groups and y - groups[-1][-1] <= max(3, int(0.013 * h_px)):
-                groups[-1].append(y)
-            else:
-                groups.append([y])
-        boxes: list[dict[str, float]] = []
-        for grp in groups:
-            if max(float(agg[y]) for y in grp) < 0.03:
-                continue  # weak smear, not a subtitle band
-            top = grp[0] / h_px
-            bot = (grp[-1] + 1) / h_px
-            core_h = bot - top
-            if core_h < 0.015:
-                # Hairline row noise (1-3 rows at sample scale), never a
-                # text line: a real subtitle glyph band is several times
-                # taller. Round-4 evidence: on a subtitle-free cartoon
-                # the bright exhibit rows at y~0.48 formed a 0.5%-tall
-                # group that passed every other threshold and blurred a
-                # strip across the middle of the finished movie.
-                continue
-            # Pad: dialogue subs often have a second line ABOVE the persistent one,
-            # and the renderer's zoom shifts the band slightly — cover both.
-            top = max(0.0, top - 1.4 * core_h)
-            bot = min(1.0, bot + 0.6 * core_h)
-            if bot - top > 0.16:  # safety cap: never blur a huge slab on a guess
-                mid = (top + bot) / 2.0
-                top, bot = mid - 0.08, mid + 0.08
-            boxes.append({"x": 0.0, "y": round((top + bot) / 2.0, 4), "w": 1.0, "h": round(bot - top, 4)})
+        boxes = _subtitle_band_boxes(np.stack(frame_scores), log=log)
         if boxes:
             log("🔍 Source subtitle band(s) detected: " + ", ".join(f"y={b['y']:.2f} h={b['h']:.2f}" for b in boxes))
         return boxes
