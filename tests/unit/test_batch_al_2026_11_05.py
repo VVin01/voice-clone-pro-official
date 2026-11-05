@@ -149,7 +149,15 @@ def test_gate_rejection_is_remembered_for_the_job(tmp_path, monkeypatch):
 
     out = engine.synthesize(text="first line", output_wav=tmp_path / "o1.wav", allow_fallback=False)
     assert out.is_file()
-    assert record == [("spaceA", "hf_aaa"), ("spaceA", None), ("spaceB", "hf_aaa")]
+    # SUPERSEDED by Batch AT (AT-1, spec ~/workspace/batch-at-spec-2026-11-05.md):
+    # the pre-AT pin expected the space-major walk
+    # [("spaceA", "hf_aaa"), ("spaceA", None), ("spaceB", "hf_aaa")] —
+    # spaceA was exhausted before spaceB got its first attempt. The
+    # walk is now space-first round-robin, so spaceB serves the line
+    # on its first round and the anonymous spaceA pair is never
+    # reached. The AL invariant this test exists for (the gate
+    # pair is remembered, below) is unchanged.
+    assert record == [("spaceA", "hf_aaa"), ("spaceB", "hf_aaa")]
 
     record.clear()
     out = engine.synthesize(text="second line", output_wav=tmp_path / "o2.wav", allow_fallback=False)
