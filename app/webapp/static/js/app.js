@@ -2257,6 +2257,7 @@ async function loadUserProfile() {
         state.logoCanUse = !!data.can_use_logo;
         state.logoHas = !!data.has_custom_logo;
         refreshLogoUi();
+        refreshRecapQualityLock();
         if (data.can_use_logo || data.has_custom_logo) fetchLogoState();
         // Cache the last good profile so the NEXT open paints real
         // balances instantly instead of flashing the gate + 0.0m/0c
@@ -3236,6 +3237,7 @@ function paintCachedUserHeader(data) {
     state.logoCanUse = !!data.can_use_logo;
     state.logoHas = !!data.has_custom_logo;
     refreshLogoUi();
+    refreshRecapQualityLock();
 }
 
 // Custom channel logo (paid-only, owner decision 2026-11-02): the
@@ -3300,6 +3302,38 @@ function refreshLogoUi() {
         status.innerText = !canUse ? "" : (has ? t("recap_logo_ready") : t("recap_logo_none"));
     }
 }
+
+// Batch AU: render quality follows the same purchased-or-admin tier
+// as the custom-logo gate. /user/me carries the authoritative
+// account_category; while that profile is unknown the picker is left
+// untouched (the server clamp is the enforcement), and once a FREE
+// profile is known its High/Max pills are disabled and any restored
+// high/max preference resolves to Standard.
+function canUseRecapRenderQuality() {
+    const u = state.user || {};
+    return !!(u.is_admin || u.account_category === "PURCHASED");
+}
+function refreshRecapQualityLock() {
+    const u = state.user;
+    const tierKnown = !!(
+        u && (u.is_admin !== undefined || typeof u.account_category === "string")
+    );
+    const canUse = canUseRecapRenderQuality();
+    if (tierKnown && !canUse && state.recapRenderQuality !== "standard") {
+        state.recapRenderQuality = "standard";
+    }
+    document.querySelectorAll("#recap-quality-picker .pill-btn").forEach(btn => {
+        const quality = btn.getAttribute("data-quality");
+        if (quality === "high" || quality === "max") {
+            const locked = tierKnown && !canUse;
+            btn.disabled = locked;
+            btn.classList.toggle("quality-locked", locked);
+            btn.setAttribute("aria-disabled", locked ? "true" : "false");
+        }
+        btn.classList.toggle("active", quality === state.recapRenderQuality);
+    });
+}
+window.refreshRecapQualityLock = refreshRecapQualityLock;
 
 // Fetch the authoritative logo state (the profile payload carries
 // the flags but not the signed preview URL).
@@ -6254,12 +6288,14 @@ function setupRecapVisualEditor() {
     const qualityBtns = document.querySelectorAll("#recap-quality-picker .pill-btn");
     qualityBtns.forEach(btn => {
         btn.addEventListener("click", () => {
+            if (btn.disabled) return;
             haptic("selection");
             qualityBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapRenderQuality = btn.getAttribute("data-quality") || "standard";
         });
     });
+    refreshRecapQualityLock();
 
     // 6e. Narration engine pills (VoxCPM persona / Gemini TTS) + Gemini voice select
     const engineBtns = document.querySelectorAll("#recap-engine-picker .pill-btn");
@@ -6987,6 +7023,7 @@ function setupRecapVisualEditor() {
             if (wrap) wrap.classList.toggle("hidden", !splitToggleEl.checked);
         }
         syncPillGroup("#recap-lang-picker .pill-btn", "data-lang", state.recapSourceLanguage);
+        refreshRecapQualityLock();
         syncPillGroup("#recap-quality-picker .pill-btn", "data-quality", state.recapRenderQuality);
         syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine);
         const gv = document.getElementById("recap-gemini-voice-wrap");

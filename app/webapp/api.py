@@ -541,6 +541,38 @@ def _can_use_custom_logo(user: User) -> bool:
     )
 
 
+def _clamp_recap_render_quality(
+    req: "RecapConfigRequest",
+    *,
+    user: Optional[User] = None,
+    user_id: Optional[int] = None,
+    is_vip: Optional[bool] = None,
+) -> str:
+    """Batch AU: render quality is a paid-tier benefit.
+
+    FREE users always render with ``standard``; PURCHASED users and
+    admins keep the quality they selected. This is a clamp, never a
+    rejection: the requested job still runs, just with the free tier's
+    encoder preset. ``is_vip`` is the execution paths' existing
+    purchased-or-admin flag; submit paths pass the user and reuse the
+    same tier test as the custom-logo gate above.
+    """
+    if req is None:
+        return "standard"
+    if is_vip is None:
+        is_vip = _can_use_custom_logo(user) if user is not None else False
+    requested = req.render_quality
+    if is_vip or requested == "standard":
+        return requested
+    req.render_quality = "standard"
+    logger.info(
+        "Recap render quality clamped for user %s: requested=%s applied=standard",
+        user_id if user_id is not None else (user.id if user is not None else None),
+        requested,
+    )
+    return req.render_quality
+
+
 def _user_logo_dir(user_id: int) -> Path:
     return settings.storage_root / "user_logos" / str(int(user_id))
 
@@ -5985,6 +6017,12 @@ async def _execute_recap_background_job(
     if not entry:
         return
 
+    # Batch AU: the execution choke point for both render-quality
+    # usages below (the main render and the optional post-render
+    # split). Clamping the shared request here also covers configs
+    # restored from a persisted job or a script-review snapshot.
+    _clamp_recap_render_quality(req, user_id=user_id, is_vip=is_vip)
+
     # Credit accounting for this job (older registry entries — e.g.
     # admin re-queues — may predate these keys): the amount actually
     # charged so far, which the failure paths refund in full.
@@ -7407,6 +7445,10 @@ async def create_recap_job(
         )
 
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
+    # Batch AU: clamp before the config is persisted or dispatched,
+    # so the registry, Job row and background runner all carry the
+    # quality this tier may actually use.
+    _clamp_recap_render_quality(req, user=user, user_id=user.id, is_vip=is_vip)
     credits = getattr(user, "recap_credits", 0) or 0
 
     # Credit gate (money fix 2026-10-31): EVERY non-admin needs at
