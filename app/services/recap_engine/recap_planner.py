@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import gc
 import hashlib
 import importlib.util
@@ -14,6 +15,7 @@ import sys
 import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -365,7 +367,9 @@ def _configure_gemini_key_pool(
     # rebuilds it per call around the rotated starting model.
     visit_order = list(range(len(models)))
     visit_pos = 0
-    timeout_seconds = max(25, min(int(request_timeout_seconds), 90))
+    # Batch AL-P: per-request timeout trimmed 90 s → 60 s — with
+    # parallel translate batches a hung request must fail over sooner.
+    timeout_seconds = max(25, min(int(request_timeout_seconds), 60))
     http_options = {
         "timeout": timeout_seconds * 1000,
         "retryOptions": {"attempts": 1},
@@ -1628,6 +1632,7 @@ def translate_batch(
     narrative_style: str = "narrator",
     is_female: bool = False,
     _split_depth: int = 0,
+    previous_context_is_source: bool = False,
 ) -> list[dict[str, Any]]:
     style = str(narrative_style or "viral").lower().strip()
     is_very_first_batch = not previous_context and bool(current) and int(current[0].get("id", 0)) == 1
@@ -1758,14 +1763,29 @@ HARD RULES:
 11. NEVER return placeholders such as "...", "…", dashes, or empty text.
 """
     title_block = f"\nVIDEO TITLE / PREMISE (အဓိက ခေါင်းစဉ်နှင့် ဇာတ်လမ်းနောက်ခံ):\n{source_title.strip()}\n" if source_title.strip() else ""
+    # Batch AL-P: parallel batches (all but the first pending one) are
+    # translated before their predecessor's translation exists, so
+    # their previous context is the predecessor's SOURCE lines. The
+    # header says so plainly and the lines render as source, never as
+    # fake SOURCE/OUTPUT pairs.
+    if previous_context_is_source:
+        prev_header = (
+            "PREVIOUS CONTEXT (READ-ONLY — ORIGINAL SOURCE LINES, NOT YET TRANSLATED):\n"
+            "These are the lines immediately before CURRENT in the original transcript. "
+            "Use them ONLY for scene, names and continuity — do NOT translate them."
+        )
+        prev_block = _source_lines(previous_context) if previous_context else "(none)"
+    else:
+        prev_header = "PREVIOUS CONTEXT (READ-ONLY):"
+        prev_block = _translation_lines(previous_context) if previous_context else "(none)"
     prompt = f"""
 {task_rules}{title_block}
 
 STORY CONTEXT MEMORY:
 {json.dumps(story_context, ensure_ascii=False)}
 
-PREVIOUS CONTEXT (READ-ONLY):
-{_translation_lines(previous_context) if previous_context else '(none)'}
+{prev_header}
+{prev_block}
 
 CURRENT ITEMS — CONVERT ALL OF THESE, ONE-FOR-ONE:
 {_source_lines(current)}
@@ -2137,6 +2157,162 @@ def make_translation_plan(units: list[dict[str, Any]], video_duration: float, *,
     }
 
 
+def _batch_audit_flags(
+    translated: list[dict[str, Any]],
+    previous_rows: list[dict[str, Any]],
+    next_units: list[dict[str, Any]],
+) -> list[str]:
+    """Batch AL-P audit-on-flag: the free local detectors (the same
+    ones translate_batch validates with and build() warns with) over
+    one translated batch. A non-empty result means the batch deserves
+    the paid audit_and_repair pass; clean batches skip it."""
+    flags: list[str] = []
+    for row in translated:
+        text = row.get("translation")
+        if _foreign_letters(text):
+            flags.append(f"foreign letters (ID {int(row['id'])})")
+        if _latin_words(text):
+            flags.append(f"English words kept (ID {int(row['id'])})")
+        if _note_text(text):
+            flags.append(f"note-like text (ID {int(row['id'])})")
+    if find_repeated_next_lines(translated, previous_rows):
+        flags.append("repeated seam line")
+    if find_near_duplicates(translated, previous_rows):
+        flags.append("near-duplicate seam line")
+    if _slid_runs(translated, next_units[0].get("source_text") if next_units else None):
+        flags.append("slid translation run")
+    return flags
+
+
+def translate_batches_in_parallel(
+    *,
+    ai: Any,
+    worker_ai_factory: Callable[[], Any],
+    batches: list[list[dict[str, Any]]],
+    pending: list[int],
+    units: list[dict[str, Any]],
+    unit_index: dict[int, int],
+    initial_translated: list[dict[str, Any]],
+    story_context: dict[str, Any],
+    source_title: str = "",
+    log: LogFn,
+    should_stop: Callable[[], bool],
+    context_overlap: int = 6,
+    lookahead: int = 6,
+    translation_audit: bool = True,
+    narrative_style: str = "narrator",
+    is_female: bool = False,
+    max_workers: int = 3,
+    on_commit: Callable[[list[dict[str, Any]]], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Batch AL-P: translate the pending batches concurrently (max 3),
+    then commit them strictly in batch order.
+
+    Phase 1 (parallel): each batch is translated on its OWN ai facade
+    from ``worker_ai_factory`` — the shared ``ai`` object carries
+    stateful key-pool closures and is not safe for concurrent calls.
+    A batch's previous context is the previous PENDING batch's SOURCE
+    units (its translation does not exist yet); the story-context
+    memory is shared by all batches, and the first pending batch keeps
+    the serial context (the resumed prefix's true translations).
+
+    Phase 2 (serial commit): identical semantics to the pre-AL loop —
+    audit (on flag, or every 4th batch) against TRUE neighbouring
+    translations, foreign-letter drop, seam warnings, then
+    ``on_commit`` with the full prefix so the checkpoint on disk is
+    always a valid resume prefix. A failure surfaces only after every
+    earlier batch has committed, exactly like the serial loop.
+    """
+    translated_all = list(initial_translated)
+    if not pending:
+        return translated_all
+    workers = max(1, min(int(max_workers or 1), 3, len(pending)))
+
+    def _next_units(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        last_index = unit_index[int(batch[-1]["id"])]
+        return units[last_index + 1: last_index + 1 + lookahead] if lookahead else []
+
+    results: dict[int, list[dict[str, Any]]] = {}
+    errors: dict[int, BaseException] = {}
+
+    def _task(pos: int, bi: int) -> None:
+        batch = batches[bi]
+        if pos == 0:
+            prev = translated_all[-context_overlap:] if context_overlap else []
+            prev_is_source = False
+        else:
+            prev = batches[pending[pos - 1]][-context_overlap:] if context_overlap else []
+            prev_is_source = True
+        try:
+            if should_stop():
+                raise InterruptedError("STOP requested during timestamp translation")
+            log(f"🌐 Translate batch {bi + 1}/{len(batches)} — IDs {batch[0]['id']:05d}–{batch[-1]['id']:05d}")
+            results[bi] = translate_batch(
+                worker_ai_factory(),
+                source_title=source_title,
+                story_context=story_context,
+                previous_context=prev,
+                current=batch,
+                next_context=_next_units(batch),
+                log=log,
+                narrative_style=narrative_style,
+                is_female=is_female,
+                previous_context_is_source=prev_is_source,
+            )
+        except BaseException as exc:
+            errors[bi] = exc
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="recap-plan") as pool:
+        futures = [pool.submit(_task, pos, bi) for pos, bi in enumerate(pending)]
+        for fut in futures:
+            fut.result()
+
+    for pos, bi in enumerate(pending):
+        batch = batches[bi]
+        if bi in errors:
+            exc = errors[bi]
+            if isinstance(exc, GeminiKeyPoolExhaustedError):
+                saved = len(translated_all)
+                remaining = len(units) - saved
+                log(f"💾 Translation checkpoint safe — {saved}/{len(units)} units saved; {remaining} remaining")
+                raise GeminiKeyPoolExhaustedError(
+                    f"{exc}\n\nSaved progress: {saved}/{len(units)} units; "
+                    f"remaining: {remaining}. Resume will start at ID {int(batch[0]['id']):05d}."
+                ) from exc
+            raise exc
+        if should_stop():
+            raise InterruptedError("STOP requested during timestamp translation")
+        translated = results[bi]
+        prev_committed = translated_all[-context_overlap:] if context_overlap else []
+        nxt = _next_units(batch)
+        if translation_audit:
+            flags = _batch_audit_flags(translated, prev_committed, nxt)
+            if flags or (bi + 1) % 4 == 0:
+                if flags:
+                    log(f"🔎 Translate batch {bi + 1}/{len(batches)} audit — flags: {', '.join(flags)}")
+                translated = audit_and_repair_batch(
+                    ai,
+                    translated,
+                    story_context=story_context,
+                    previous_context=prev_committed,
+                    next_context=nxt,
+                    log=log,
+                    narrative_style=narrative_style,
+                    is_female=is_female,
+                )
+        translated = _drop_foreign_letters(translated, log)
+        for row in translated:
+            if _latin_words(row.get("translation")):
+                log(f"⚠️ ID {int(row['id']):05d}: English words kept ({', '.join(_latin_words(row['translation']))}); "
+                    "Edit Text can fix the line")
+        for a, b in find_repeated_next_lines(translated, translated_all[-1:]) + find_near_duplicates(translated, translated_all[-2:]):
+            log(f"⚠️ IDs {a:05d}/{b:05d} may say the same thing twice; Edit Text can fix the lines")
+        translated_all.extend(translated)
+        if on_commit is not None:
+            on_commit(list(translated_all))
+    return translated_all
+
+
 def _job_segmentation_profile(state_file: Path, translations_file: Path) -> str:
     """Whole sentences for a new job; a job whose translation was started with 4-6 s lines keeps them."""
     for path in (translations_file,):
@@ -2168,11 +2344,12 @@ class RecapPlanBuilder:
         translation_audit: bool = True,
         atomic_max_duration: float = 5.6,
         atomic_target_duration: float = 4.2,
-        gemini_request_timeout_seconds: int = 120,
+        gemini_request_timeout_seconds: int = 60,
         gemini_text_model: str = "gemini-3.6-flash",
         narrative_style: str = "narrator",
         is_female: bool = False,
         source_language: str = "",
+        translate_workers: int | None = None,
     ):
         self.runtime_root = Path(runtime_root).resolve()
         self.gemini_env_path = Path(gemini_env_path).expanduser().resolve() if str(gemini_env_path or "").strip() else None
@@ -2197,6 +2374,16 @@ class RecapPlanBuilder:
         self.atomic_target_duration = max(2.5, min(float(atomic_target_duration), self.atomic_max_duration))
         self.gemini_request_timeout_seconds = max(30, min(int(gemini_request_timeout_seconds), 600))
         self.gemini_text_model = _clean(gemini_text_model) or "gemini-3.6-flash"
+        # Batch AL-P: parallel translate batches (hard cap 3 — the
+        # Gemini key pool is the real limit). RECAP_PLANNER_TRANSLATE_WORKERS=1
+        # restores the exact pre-AL serial loop.
+        if translate_workers is None:
+            _env_tw = str(os.getenv("RECAP_PLANNER_TRANSLATE_WORKERS", "") or "").strip()
+            try:
+                translate_workers = int(_env_tw) if _env_tw else 3
+            except ValueError:
+                translate_workers = 3
+        self.translate_workers = max(1, min(int(translate_workers), 3))
 
     def _validate_runtime(self) -> None:
         required = [
@@ -2503,8 +2690,37 @@ class RecapPlanBuilder:
                     translated_all = []
 
             unit_index = {int(x["id"]): idx for idx, x in enumerate(units)}
+
+            def _write_translations_checkpoint(rows: list[dict[str, Any]]) -> None:
+                _atomic_json(translations_file, {
+                    "planner_mode": PLANNER_MODE,
+                    "segmentation_profile": segmentation_profile,
+                    "source_fingerprint": fp,
+                    "translation_direction": TRANSLATION_DIRECTION,
+                    "completed": len(rows),
+                    "total": len(units),
+                    "items": list(rows),
+                })
+
+            def _make_worker_ai() -> Any:
+                # Batch AL-P: a shallow copy of the shared ai carrying
+                # its OWN key-pool closures — _gemini_json drives
+                # ai.client/ai.text_model through those closures, so
+                # concurrent translate batches must never share one
+                # ai object.
+                facade = copy.copy(ai)
+                _configure_gemini_key_pool(
+                    facade,
+                    key_pool,
+                    client_factory=ai_mod.genai.Client,
+                    log=self.log,
+                    request_timeout_seconds=self.gemini_request_timeout_seconds,
+                )
+                return facade
+
             completed_ids = {int(x["id"]) for x in translated_all}
-            for bi, batch in enumerate(batches, 1):
+            pending: list[int] = []
+            for bi0, batch in enumerate(batches):
                 batch_ids = [int(x["id"]) for x in batch]
                 if all(uid in completed_ids for uid in batch_ids):
                     continue
@@ -2512,61 +2728,82 @@ class RecapPlanBuilder:
                     # Checkpoints are written at complete-batch boundaries; a partial batch is unsafe to reuse.
                     translated_all = [x for x in translated_all if int(x["id"]) < batch_ids[0]]
                     completed_ids = {int(x["id"]) for x in translated_all}
-                if self.should_stop():
-                    raise InterruptedError("STOP requested during timestamp translation")
-                last_index = unit_index[int(batch[-1]["id"])]
-                prev = translated_all[-self.context_overlap:] if self.context_overlap else []
-                nxt = units[last_index + 1:last_index + 1 + self.lookahead] if self.lookahead else []
-                self.log(f"🌐 Translate batch {bi}/{len(batches)} — IDs {batch[0]['id']:05d}–{batch[-1]['id']:05d}")
-                try:
-                    translated = translate_batch(
-                        ai,
-                        source_title=source_title,
-                        story_context=story_context,
-                        previous_context=prev,
-                        current=batch,
-                        next_context=nxt,
-                        log=self.log,
-                        narrative_style=self.narrative_style,
-                        is_female=self.is_female,
-                    )
-                except GeminiKeyPoolExhaustedError as exc:
-                    saved = len(translated_all)
-                    remaining = len(units) - saved
-                    self.log(f"💾 Translation checkpoint safe — {saved}/{len(units)} units saved; {remaining} remaining")
-                    raise GeminiKeyPoolExhaustedError(
-                        f"{exc}\n\nSaved progress: {saved}/{len(units)} units; "
-                        f"remaining: {remaining}. Resume will start at ID {batch_ids[0]:05d}."
-                    ) from exc
-                if self.translation_audit:
-                    translated = audit_and_repair_batch(
-                        ai,
-                        translated,
-                        story_context=story_context,
-                        previous_context=prev,
-                        next_context=nxt,
-                        log=self.log,
-                        narrative_style=self.narrative_style,
-                        is_female=self.is_female,
-                    )
-                translated = _drop_foreign_letters(translated, self.log)
-                for row in translated:
-                    if _latin_words(row.get("translation")):
-                        self.log(f"⚠️ ID {int(row['id']):05d}: English words kept ({', '.join(_latin_words(row['translation']))}); "
-                                 "Edit Text can fix the line")
-                for a, b in find_repeated_next_lines(translated, translated_all[-1:]) + find_near_duplicates(translated, translated_all[-2:]):
-                    self.log(f"⚠️ IDs {a:05d}/{b:05d} may say the same thing twice; Edit Text can fix the lines")
-                translated_all.extend(translated)
-                completed_ids.update(int(x["id"]) for x in translated)
-                _atomic_json(translations_file, {
-                    "planner_mode": PLANNER_MODE,
-                    "segmentation_profile": segmentation_profile,
-                    "source_fingerprint": fp,
-                    "translation_direction": TRANSLATION_DIRECTION,
-                    "completed": len(translated_all),
-                    "total": len(units),
-                    "items": translated_all,
-                })
+                pending.append(bi0)
+
+            if self.translate_workers > 1 and len(pending) > 1:
+                translated_all = translate_batches_in_parallel(
+                    ai=ai,
+                    worker_ai_factory=_make_worker_ai,
+                    batches=batches,
+                    pending=pending,
+                    units=units,
+                    unit_index=unit_index,
+                    initial_translated=translated_all,
+                    story_context=story_context,
+                    source_title=source_title,
+                    log=self.log,
+                    should_stop=self.should_stop,
+                    context_overlap=self.context_overlap,
+                    lookahead=self.lookahead,
+                    translation_audit=self.translation_audit,
+                    narrative_style=self.narrative_style,
+                    is_female=self.is_female,
+                    max_workers=self.translate_workers,
+                    on_commit=_write_translations_checkpoint,
+                )
+            else:
+                for bi0 in pending:
+                    bi = bi0 + 1
+                    batch = batches[bi0]
+                    batch_ids = [int(x["id"]) for x in batch]
+                    if self.should_stop():
+                        raise InterruptedError("STOP requested during timestamp translation")
+                    last_index = unit_index[int(batch[-1]["id"])]
+                    prev = translated_all[-self.context_overlap:] if self.context_overlap else []
+                    nxt = units[last_index + 1:last_index + 1 + self.lookahead] if self.lookahead else []
+                    self.log(f"🌐 Translate batch {bi}/{len(batches)} — IDs {batch[0]['id']:05d}–{batch[-1]['id']:05d}")
+                    try:
+                        translated = translate_batch(
+                            ai,
+                            source_title=source_title,
+                            story_context=story_context,
+                            previous_context=prev,
+                            current=batch,
+                            next_context=nxt,
+                            log=self.log,
+                            narrative_style=self.narrative_style,
+                            is_female=self.is_female,
+                        )
+                    except GeminiKeyPoolExhaustedError as exc:
+                        saved = len(translated_all)
+                        remaining = len(units) - saved
+                        self.log(f"💾 Translation checkpoint safe — {saved}/{len(units)} units saved; {remaining} remaining")
+                        raise GeminiKeyPoolExhaustedError(
+                            f"{exc}\n\nSaved progress: {saved}/{len(units)} units; "
+                            f"remaining: {remaining}. Resume will start at ID {batch_ids[0]:05d}."
+                        ) from exc
+                    if self.translation_audit:
+                        translated = audit_and_repair_batch(
+                            ai,
+                            translated,
+                            story_context=story_context,
+                            previous_context=prev,
+                            next_context=nxt,
+                            log=self.log,
+                            narrative_style=self.narrative_style,
+                            is_female=self.is_female,
+                        )
+                    translated = _drop_foreign_letters(translated, self.log)
+                    for row in translated:
+                        if _latin_words(row.get("translation")):
+                            self.log(f"⚠️ ID {int(row['id']):05d}: English words kept ({', '.join(_latin_words(row['translation']))}); "
+                                     "Edit Text can fix the line")
+                    for a, b in find_repeated_next_lines(translated, translated_all[-1:]) + find_near_duplicates(translated, translated_all[-2:]):
+                        self.log(f"⚠️ IDs {a:05d}/{b:05d} may say the same thing twice; Edit Text can fix the lines")
+                    translated_all.extend(translated)
+                    completed_ids.update(int(x["id"]) for x in translated)
+                    _write_translations_checkpoint(translated_all)
+
 
         if [int(x["id"]) for x in translated_all] != [int(x["id"]) for x in units]:
             raise RuntimeError("Final translation ID sequence mismatch")
