@@ -313,8 +313,12 @@ def test_engine_title_lands_at_title_position(tmp_path, ty, lo, hi):
 # ── 2e. Title: frontend wiring ─────────────────────────────────────
 
 def test_title_controls_markup():
+    # Batch AM (M2 residual): the title drag handle is grip-only —
+    # 'id="preview-title-text-el"' was removed from this list because
+    # the ellipsized text span inside the handle is gone; the real
+    # title renders in the composited frame.
     for el in ('id="recap-title-toggle"', 'id="recap-title-text"',
-               'id="preview-title-box"', 'id="preview-title-text-el"',
+               'id="preview-title-box"',
                'id="slider-title-x"', 'id="slider-title-y"',
                'id="val-title-x"', 'id="val-title-y"'):
         assert el in INDEX_HTML, el

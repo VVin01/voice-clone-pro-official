@@ -1345,6 +1345,18 @@ function applyAccountPrefs(prefs) {
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
     cacheAccountPrefs(prefs);
+    // Batch AM (M8ii): the recap controls were synced at boot from
+    // the LOCAL snapshot; the server prefs above may differ (another
+    // device, an admin-side change). Re-run the restore's control
+    // sync — it re-reads the snapshot cacheAccountPrefs has just
+    // rewritten from these same prefs — so toggles, pills and
+    // sliders can never display one thing while payloads use
+    // another. Guarded + idempotent: local reads only, no fetch,
+    // and the hook exists once the recap editor has been set up
+    // (boot order: setupRecapVisualEditor before loadAccountPrefs).
+    if (typeof window.resyncRecapControlsAfterPrefs === "function") {
+        try { window.resyncRecapControlsAfterPrefs(); } catch (e) {}
+    }
 }
 async function loadAccountPrefs() {
     try {
@@ -4444,13 +4456,23 @@ function setupRecapVisualEditor() {
         const hash = JSON.stringify(payload);
         if (hash === recapCompositeHash) return; // nothing changed
         const mySeq = ++recapCompositeSeq;
+        // Batch AM (M3 residual): until the FIRST composite lands,
+        // the canvas would otherwise sit on its bare backdrop with
+        // no hint that a render is in flight — show the explicit
+        // preparing state for exactly that window. Later refreshes
+        // keep the stale frame (Batch AK), so no indicator then.
+        const showLoading = !state.recapCompositeUrl;
+        if (showLoading) setRecapPreviewLoading(true);
         try {
             const res = await fetch("/api/recap/preview-composite", {
                 method: "POST",
                 headers: getAuthHeaders(),
                 body: hash,
             });
-            if (!res.ok) return;
+            if (!res.ok) {
+                if (showLoading && mySeq === recapCompositeSeq) setRecapPreviewLoading(false);
+                return;
+            }
             const blob = await res.blob();
             if (mySeq !== recapCompositeSeq) return; // a newer refresh won
             recapCompositeHash = hash;
@@ -4458,7 +4480,16 @@ function setupRecapVisualEditor() {
             if (state.recapCompositeUrl) URL.revokeObjectURL(state.recapCompositeUrl);
             state.recapCompositeUrl = objUrl;
             updateCanvasMockupVisuals();
-        } catch (e) { /* keep the existing canvas visuals */ }
+            if (showLoading) setRecapPreviewLoading(false);
+        } catch (e) { /* keep the existing canvas visuals */
+            if (showLoading && mySeq === recapCompositeSeq) setRecapPreviewLoading(false);
+        }
+    }
+    // Batch AM (M3 residual): the canvas's explicit preparing state,
+    // shown only while the first engine composite is in flight.
+    function setRecapPreviewLoading(on) {
+        const el = document.getElementById("canvas-preview-loading");
+        if (el) el.classList.toggle("hidden", !on);
     }
     window.refreshRecapCompositePreview = refreshRecapCompositePreview;
 
@@ -5584,6 +5615,12 @@ function setupRecapVisualEditor() {
             const backdropEl = document.getElementById("video-backdrop-blur");
             const noThumbEl = document.getElementById("canvas-no-thumb");
             const compositeImg = document.getElementById("canvas-composite-img");
+            // Batch AM (M4): the raw <video> surface letterboxes flat
+            // black by design and is NOT the styled preview — label it
+            // as the source original for exactly the branch that shows
+            // it; every other surface keeps the label hidden.
+            const sourceLabel = document.getElementById("canvas-source-label");
+            if (sourceLabel) sourceLabel.classList.add("hidden");
             let mediaVisible = false;
             if (compositeImg && state.recapCompositeUrl) {
                 // Batch AK: the engine composite IS the canvas — it
@@ -5611,6 +5648,7 @@ function setupRecapVisualEditor() {
                 if (fillBadge) fillBadge.style.display = "none";
             } else if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
                 mediaVisible = true;
+                if (sourceLabel) sourceLabel.classList.remove("hidden");
                 if (noThumbEl) noThumbEl.classList.add("hidden");
                 innerMovie.style.backgroundImage = "none";
                 // Fill the letterbox area with a blurred copy of the source
@@ -6100,6 +6138,12 @@ function setupRecapVisualEditor() {
         if (sliderBlurStrength) { sliderBlurStrength.value = "18"; syncBlurStrengthVisual(); }
         // Batch AK: the sub slider resets to the 5% bottom margin.
         if (sliderSubY) sliderSubY.value = "5";
+        // Batch AM (M8i): match the per-source reset — a layout
+        // reset returns the box to the DEFAULT geometry, so the
+        // stale user-touched flag must go too; otherwise the default
+        // box still submits as blur_box_explicit and keeps
+        // suppressing the engine's source-band detection.
+        state.recapBlurBoxTouched = false;
         syncBlurBoxVisual();
         syncSubBoxVisual();
 
@@ -6152,6 +6196,13 @@ function setupRecapVisualEditor() {
             const tVal = btnToggleBlur.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapBlurSubs ? t("toggle_on") : t("toggle_off");
             if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
+            // Batch AM (M7): the blur lives in the composited frame
+            // now — re-render it, like every other payload-affecting
+            // control does, or the picture keeps the old blur until
+            // an unrelated change refreshes it.
+            scheduleRecapCompositeRefresh();
+            // Batch AM (S9 cosmetic): grey the inert sliders while OFF.
+            syncBlurSlidersEnabled();
         });
     }
 
@@ -6164,6 +6215,10 @@ function setupRecapVisualEditor() {
             const tVal = btnToggleLogo.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapLogo ? t("toggle_on") : t("toggle_off");
             refreshLogoUi();
+            // Batch AM (M7): include_logo rides the composite
+            // payload — re-render so the picture follows the toggle
+            // immediately (refreshLogoUi only moves the chip).
+            scheduleRecapCompositeRefresh();
         });
     }
 
@@ -6667,6 +6722,22 @@ function setupRecapVisualEditor() {
         const val = btn.querySelector(".t-val");
         if (val) val.innerText = on ? t("toggle_on") : t("toggle_off");
     }
+    // Batch AM (S9 cosmetic): while the source-subtitle Blur toggle
+    // is OFF, the geometry/strength sliders cannot affect anything —
+    // the submit payload sends blur_subtitles=false and the engine's
+    // master gate turns that into ZERO boxes (recap_pipeline) — so
+    // grey them out instead of letting the panel assert live values.
+    // Display-only: slider values, state and payloads are untouched,
+    // and the sliders keep their values for when the toggle returns.
+    function syncBlurSlidersEnabled() {
+        const off = state.recapBlurSubs === false;
+        ["slider-blur-y", "slider-blur-h", "slider-blur-x",
+         "slider-blur-w", "slider-blur-strength"].forEach(id => {
+            const el = document.getElementById(id);
+            const group = el && el.closest ? el.closest(".slider-group") : null;
+            if (group) group.classList.toggle("blur-off", off);
+        });
+    }
 
     function restoreRecapSettings() {
         let saved = null;
@@ -6749,6 +6820,9 @@ function setupRecapVisualEditor() {
         syncToggleBtn("btn-toggle-subs", state.recapBurnSubs);
         syncToggleBtn("btn-toggle-blur", state.recapBlurSubs);
         syncToggleBtn("btn-toggle-logo", state.recapLogo);
+        // Batch AM (S9 cosmetic): the greyed-slider state follows
+        // the restored Blur toggle, here and on every re-sync.
+        syncBlurSlidersEnabled();
         if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
         if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
         // The plate exists only where the render draws one: blur on
@@ -6808,6 +6882,18 @@ function setupRecapVisualEditor() {
             recapTabEl.addEventListener(evt, saveRecapSettingsSoon));
     }
     restoreRecapSettings();
+
+    // Batch AM (M8ii): account prefs land AFTER this boot restore
+    // (loadAccountPrefs resolves async). applyAccountPrefs calls
+    // this hook after overwriting state from the server and writing
+    // the same values through into the snapshot, so re-running the
+    // restore re-syncs every recap control from the merged result.
+    // Idempotent by construction: it performs exactly the reads and
+    // control syncs the boot restore already performed — no fetch,
+    // no submit, no state writes beyond the restore's own.
+    window.resyncRecapControlsAfterPrefs = function () {
+        restoreRecapSettings();
+    };
 
     // Batch L: "Re-run with these settings" (History detail) — map a
     // stored RecapConfigRequest back into the settings-snapshot space

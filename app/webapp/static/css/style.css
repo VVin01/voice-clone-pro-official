@@ -939,7 +939,13 @@ select.studio-input { min-height: 50px; }
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     border: 1.5px dashed rgba(255, 255, 255, 0.55); border-radius: 6px;
     display: flex; align-items: center; justify-content: center; gap: 5px;
-    min-height: 22px;
+    /* Batch AM (M1): NO min-height floor. The old 22px floor painted
+       the handle ~1.7x taller than small H settings (H=7% of the
+       picture ≈ 15px at phone width; the slider minimum H=3% ≈ 6px).
+       Any floor above ~6px overstates a legitimate setting, and the
+       box stays grabbable without one: the whole surface drags, the
+       grip pill overflows symmetrically by design (negative margins),
+       and the resize handles extend ±5px past the box edges. */
 }
 /* The blur label is an editing affordance, not a standing caption:
    hidden by default in every state (media or not) — at the shared
@@ -977,19 +983,16 @@ select.studio-input { min-height: 50px; }
 .preview-sub-box .sub-grip { text-shadow: 0 1px 2px rgba(0,0,0,0.8); padding-top: 2px; }
 
 /* Batch AH: the recap title overlay box — centred on (title_x,
-   title_y) of the picture, like the engine's title_position; the
-   text mirrors the render's title PNG (bold, dark outline, capped
-   at 78% of the picture width). */
+   title_y) of the picture, like the engine's title_position, and
+   capped at 78% of the picture width. Batch AM (M2 residual): the
+   handle is GRIP-ONLY — the title itself renders inside the
+   composited frame, so the old ellipsized text span and its rule
+   are gone; nothing paints a fake one-line title here. */
 .preview-title-box {
     z-index: 7; text-align: center; padding: 4px 10px; pointer-events: auto;
     display: flex; align-items: center; justify-content: center; gap: 6px;
     border: 1.5px dashed rgba(255, 255, 255, 0.45); border-radius: 8px;
     background: rgba(10, 12, 18, 0.25);
-}
-.preview-title-box .preview-title-text {
-    font-weight: 800; color: #ffffff; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; min-width: 0; flex: 1 1 auto;
-    text-shadow: 0 1px 0 #000, 0 0 8px rgba(0,0,0,0.9), 1px 0 0 #000, -1px 0 0 #000;
 }
 .recap-title-input { width: 100%; box-sizing: border-box; }
 
@@ -1039,6 +1042,11 @@ select.studio-input { min-height: 50px; }
 .mini-toggle.active .t-val { color: var(--green); }
 .editor-controls { display: flex; flex-direction: column; gap: var(--s3); }
 .slider-group { display: flex; flex-direction: column; gap: 2px; }
+/* Batch AM (S9 cosmetic): a slider group whose feature toggle is
+   OFF (today: the blur geometry/strength group while the Blur
+   toggle is off) renders greyed and inert — display-only; the
+   values stay in place for when the toggle returns. */
+.slider-group.blur-off { opacity: 0.45; filter: grayscale(0.5); pointer-events: none; }
 .slider-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); font-size: 13px; color: var(--text-2); font-weight: 600; }
 .slider-val { font-size: 12.5px; font-weight: 700; color: var(--gold-2); white-space: nowrap; }
 .studio-slider {
@@ -3361,6 +3369,31 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     position: absolute; inset: 0; width: 100%; height: 100%;
     object-fit: fill; display: block;
 }
+
+/* Batch AM (M3 residual): explicit preparing state while the first
+   engine composite is in flight — the canvas never sits on a bare
+   unexplained backdrop in that window. */
+.canvas-preview-loading {
+    position: absolute; inset: 0; z-index: 4;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 10, 16, 0.45); pointer-events: none;
+}
+.canvas-preview-loading.hidden { display: none; }
+.canvas-preview-loading-text {
+    font-size: 12.5px; font-weight: 700; color: rgba(255, 255, 255, 0.92);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+/* Batch AM (M4): the raw source-video surface carries this label so
+   its native black letterbox is not read as the styled preview. */
+.canvas-source-label {
+    position: absolute; top: 8px; left: 8px; z-index: 4;
+    padding: 3px 8px; border-radius: 999px; pointer-events: none;
+    background: rgba(10, 12, 18, 0.62); border: 1px solid rgba(255, 255, 255, 0.3);
+    font-size: 10.5px; font-weight: 700; color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+.canvas-source-label.hidden { display: none; }
 
 /* S6: the step-2 hint tag gets its own row under the header. */
 .visual-editor-card .hint-tag { display: inline-block; margin-top: 6px; }
