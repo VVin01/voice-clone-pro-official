@@ -61,7 +61,9 @@ def test_restore_resyncs_ui_controls():
         'syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio)',
         'syncPillGroup("#recap-fill-picker .pill-btn", "data-fill", state.recapRatioFill)',
         'syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine)',
-        'syncPillGroup("#sub-style-picker .style-chip", "data-style", state.recapSubStyle)',
+        # Batch AZ-11: the subtitle-style picker is a <select> now —
+        # the restore re-sync sets its value directly (same state).
+        'if (subStyleSel) subStyleSel.value = state.recapSubStyle;',
         "applyCropValues(state.recapCropTop || 0",
         "splitToggleEl.checked = !!saved.recapSplitEnabled",
         "syncSubtitleFontSize(state.recapFontSize || 16)",
@@ -84,5 +86,5 @@ def test_snapshot_covers_payload_fields():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r71") == 4
+    assert INDEX_HTML.count("?v=20261104_r72") == 4
     assert "?v=20261102_rs1" not in INDEX_HTML

@@ -106,7 +106,9 @@ SURVIVING_IDS = [
     "slider-crop-bottom", "val-crop-bottom", "slider-crop-left",
     "val-crop-left", "slider-crop-right", "val-crop-right",
     "recap-preview-speed-group", "recap-speed-picker",
-    "recap-lang-picker", "recap-split-toggle", "recap-split-minutes-wrap",
+    # Batch AZ-11: "recap-lang-picker" (the AX-5 pill group) is
+    # retired — the surviving language control is "recap-lang-more".
+    "recap-lang-more", "recap-split-toggle", "recap-split-minutes-wrap",
     "recap-split-minutes-picker", "recap-split-cost-hint",
     "recap-title-controls", "recap-title-toggle", "recap-title-text",
     "recap-title-fallback-hint", "recap-script-review-toggle",
@@ -270,7 +272,9 @@ def test_av_step3_holds_voice_speed_language_script_review():
     step3 = _step_slice(3)
     for marker in ('id="recap-engine-picker"', 'id="recap-persona-area"',
                    'id="story-style-picker-quick"', 'id="recap-speed-picker"',
-                   'id="recap-lang-picker"', 'id="recap-script-review-toggle"'):
+                   # AZ-11: the language control in Step 3 is the one
+                   # compact dropdown (the pill group is retired).
+                   'id="recap-lang-more"', 'id="recap-script-review-toggle"'):
         assert marker in step3, marker
 
 
@@ -357,6 +361,6 @@ def test_av_touch_targets_and_text_fit_guards():
 
 
 def test_av_cache_token_bumped():
-    # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY).
-    assert INDEX_HTML.count("r71") == 4
+    # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ).
+    assert INDEX_HTML.count("r72") == 4
     assert "r70" not in INDEX_HTML

@@ -60,7 +60,7 @@ def _css_rule(selector: str) -> str:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_r37():
-    assert HTML.count("?v=20261104_r71") == 4
+    assert HTML.count("?v=20261104_r72") == 4
     assert "20261102_ma1" not in HTML
 
 
@@ -130,14 +130,18 @@ def test_d2_upload_ready_refits_plate():
     assert "scheduleRecapCompositeRefresh();" in body
 
 
-def test_d2_style_chip_change_refits_plate():
+def test_d2_style_select_change_refits_plate():
+    # Batch AZ-11: the 7 style chips are ONE compact dropdown (a
+    # <select> carrying the picker's id) — the write path is the
+    # same state field + composite refresh this test always pinned.
     body = _js_slice(
-        'const styleChips = document.querySelectorAll("#sub-style-picker .style-chip");',
+        'const styleSel = document.getElementById("sub-style-picker");',
         "// 10. Subtitle Live Preview Renderer",
     )
     # Batch AK: a style change re-renders the composited frame (the
     # engine draws every style; the JS chips no longer fit a plate).
     assert "scheduleRecapCompositeRefresh();" in body
+    assert 'state.recapSubStyle = styleSel.value || "yellow";' in body
 
 
 # ── D3/E1: bot_blocked provenance in admin payloads + UI ────────────

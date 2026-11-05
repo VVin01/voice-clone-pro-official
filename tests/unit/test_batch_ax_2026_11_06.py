@@ -13,6 +13,11 @@ Invariants pinned here (spec ~/workspace/batch-ax-spec-2026-11-06.md):
 - Chips carry number/✓ only — no text labels, no AV summary strips.
 - Language: Auto + the six frequent languages as pills; all 18 values
   in ONE dropdown; both views write the same single state key.
+  (Batch AZ-9/AZ-11, 2026-11-06: the indicator is rebuilt as a
+  liquid segmented capsule and the language pills are retired for
+  ONE compact dropdown — the affected pins below are rewritten to
+  the AZ structure, citing the AZ spec; session-truth, navigation,
+  write-path, payload and prefs pins are unchanged.)
 - Payload (42 keys) and prefs keys unchanged (asserted in the AV file
   and re-asserted here); api.py untouched by the batch.
 """
@@ -79,22 +84,29 @@ def test_ax_show_step_is_the_one_door():
 
 
 # ── AX-2: indicator chips — number/✓ only, no text labels ──
+# Batch AZ-9 (owner, 2026-11-06 01:13): the AX-2R numbered circles
+# were rejected as dated and REBUILT as a liquid segmented capsule.
+# The two AX-2 tests below and the two AX-2R tests under them are
+# rewritten to pin the capsule (spec AZ-9); AX-3R's session-truth
+# and navigation pins further down are NOT touched.
 
 def test_ax_chips_carry_number_or_check_only():
     # No label spans, no separator glyphs from the AV nav.
     assert "recap-steps-nav-label" not in TAB
     assert "recap-steps-nav-sep" not in TAB
     assert "recap-steps-nav-label" not in STYLE_CSS
-    # Chips: four real buttons, each with exactly one pill span whose
-    # entire text is its step number.
+    # Segments (AZ-9): four real buttons, each carrying its number
+    # span (the ✓/number surface) plus a name span that only the
+    # expanded current segment displays.
     chips = re.findall(
-        r'<button[^>]*data-step-toggle="(\d)"[^>]*>\s*<span class="recap-steps-nav-num" data-step-pill="\d">(\d)</span>\s*</button>',
+        r'<button[^>]*data-step-toggle="(\d)"[^>]*>\s*<span class="recap-steps-nav-num" data-step-pill="\d">(\d)</span>\s*<span class="recap-steps-nav-name" data-i18n="([a-z0-9_]+)">',
         NAV)
-    assert chips == [("1", "1"), ("2", "2"), ("3", "3"), ("4", "4")], chips
-    # No step NAME renders inside any chip (that was the cramping);
-    # the names live in the card headers (4× recap_step_word) plus the
-    # single indicator caption (1×).
-    assert TAB.count('data-i18n="recap_step_word"') == 5
+    assert chips == [("1", "1", "recap_step1_title"), ("2", "2", "recap_step_nav_preview"),
+                     ("3", "3", "recap_step_nav_voice"), ("4", "4", "recap_step4_title")], chips
+    # The step WORD now renders only in the four card headers — the
+    # AZ-9 capsule carries names, not the word, and the AX-2R
+    # caption (the former 5th use) is removed.
+    assert TAB.count('data-i18n="recap_step_word"') == 4
     # The ✓ state is painted by markRecapStepDone on the same spans.
     assert 'pill.textContent = done ? "✓" : String(n);' in APP_JS
 
@@ -102,50 +114,62 @@ def test_ax_chips_carry_number_or_check_only():
 def test_ax_indicator_css_states_and_touch_targets():
     item = re.search(r"\.recap-steps-nav-item \{([^}]+)\}", STYLE_CSS)
     assert item and "min-width: 44px" in item.group(1) and "min-height: 44px" in item.group(1)
-    num = re.search(r"\.recap-steps-nav-num \{([^}]+)\}", STYLE_CSS)
-    assert num and "border-radius: 999px" in num.group(1)
+    # AZ-9: segments are pills inside the capsule (no more circles).
+    assert item and "border-radius: 999px" in item.group(1)
+    capsule = re.search(r"\.recap-steps-capsule \{([^}]+)\}", STYLE_CSS)
+    assert capsule and "border-radius: 999px" in capsule.group(1)
     # The AV stacked-model CSS is gone with its markup.
     for dead in (".recap-step-strip", ".recap-step-summary", ".recap-step-chevron",
                  ".recap-step-collapsed", ".recap-steps-nav-line"):
         assert dead not in STYLE_CSS, dead
 
 
-# ── AX-2R: premium progress-track indicator ──
+# ── AZ-9: liquid segmented capsule (supersedes AX-2R) ──
 
 def test_ax2r_track_nodes_and_single_caption():
-    # Track + gradient fill elements exist behind the four nodes.
-    assert 'id="recap-steps-track-fill"' in NAV
-    assert 'class="recap-steps-track-bg"' in NAV
-    # ONLY the current step's name renders in the indicator area: one
-    # caption line, holding word + position + name spans.
-    assert 'id="recap-steps-caption"' in NAV
-    assert 'id="recap-steps-caption-pos"' in NAV
-    assert 'id="recap-steps-caption-name"' in NAV
-    assert NAV.count("recap-steps-caption") >= 3
-    # The caption is driven from showRecapStep's one door.
+    # AZ-9: the AX-2R track, fill and caption elements are REMOVED —
+    # progress reads from the tinted ✓ segments + the expanded
+    # gradient segment; there is no separate bar and no caption.
+    assert 'class="recap-steps-capsule"' in NAV
+    assert 'id="recap-steps-track-fill"' not in NAV
+    assert 'class="recap-steps-track-bg"' not in NAV
+    assert 'id="recap-steps-caption"' not in NAV
+    assert "recap-steps-caption" not in TAB
+    assert ".recap-steps-track" not in STYLE_CSS
+    assert ".recap-steps-caption" not in STYLE_CSS
+    # The indicator refresh is driven from showRecapStep's one door
+    # and only re-paints state classes; the caption's name-key table
+    # is gone (segment names are static data-i18n spans now).
     assert "function refreshRecapStepIndicator()" in APP_JS
-    assert 'RECAP_STEP_NAME_KEYS' in APP_JS
-    assert 'name.setAttribute("data-i18n", RECAP_STEP_NAME_KEYS[recapCurrentStep]);' in APP_JS
-    assert 'pos.textContent = recapCurrentStep + "/4";' in APP_JS
+    assert 'RECAP_STEP_NAME_KEYS' not in APP_JS
+    assert 'item.classList.toggle("is-active", m === recapCurrentStep);' in APP_JS
+    assert 'item.classList.toggle("is-done", !!RECAP_STEP_DONE[m]);' in APP_JS
 
 
 def test_ax2r_indicator_design_css():
-    fill = re.search(r"\.recap-steps-track-fill \{([^}]+)\}", STYLE_CSS)
-    assert fill and "linear-gradient(90deg, #2563eb, #60a5fa)" in fill.group(1)
-    assert fill and "transition: width 0.25s ease" in fill.group(1)
-    # Nodes: 36–40px circles with shadow + ring.
-    num = re.search(r"\.recap-steps-nav-num \{([^}]+)\}", STYLE_CSS)
-    assert num and "width: 38px" in num.group(1) and "height: 38px" in num.group(1)
-    assert num and "box-shadow:" in num.group(1) and "border:" in num.group(1)
-    # Completed + current = gradient fill, white glyph.
-    both = re.search(r"\.recap-steps-nav-item\.is-done \.recap-steps-nav-num,\s*\.recap-steps-nav-item\.is-active \.recap-steps-nav-num \{([^}]+)\}", STYLE_CSS)
-    assert both and "linear-gradient(135deg, #2563eb, #60a5fa)" in both.group(1)
-    # Current step pulses gently (transform/opacity-family only: the
-    # halo animates box-shadow); advance pops the node once.
-    assert "@keyframes recap-step-halo" in STYLE_CSS
+    # AZ-9 capsule proportions (owner-approved mock): padding 6px,
+    # segment height 44px, current segment flex ≈ 2.4 expanding
+    # into the 90deg #0a84ff → #38bdf8 gradient pill, white text.
+    capsule = re.search(r"\.recap-steps-capsule \{([^}]+)\}", STYLE_CSS)
+    assert capsule and "padding: 6px" in capsule.group(1)
+    assert capsule and "display: flex" in capsule.group(1)
+    item = re.search(r"\.recap-steps-nav-item \{([^}]+)\}", STYLE_CSS)
+    assert item and "height: 44px" in item.group(1)
+    active = re.search(r"\.recap-steps-nav-item\.is-active \{([^}]+)\}", STYLE_CSS)
+    assert active and "flex-grow: 2.4" in active.group(1)
+    assert active and "linear-gradient(90deg, #0a84ff, #38bdf8)" in active.group(1)
+    assert active and "color: #ffffff" in active.group(1)
+    # Completed segments: soft blue-tinted glass (the ✓ itself is
+    # painted by markRecapStepDone, pinned above).
+    done = re.search(r"\.recap-steps-nav-item\.is-done \{([^}]+)\}", STYLE_CSS)
+    assert done and "rgba(10, 132, 255, 0.12)" in done.group(1)
+    # The name shows only inside the expanded (current) segment.
+    assert re.search(r"\.recap-steps-nav-item\.is-active \.recap-steps-nav-name \{[^}]*display: inline", STYLE_CSS)
+    # Advance pops the segment once; the AX-2R halo is retired.
     assert "@keyframes recap-step-pop" in STYLE_CSS
-    assert re.search(r"\.recap-steps-nav-item\.pop \.recap-steps-nav-num \{[^}]*animation: recap-step-pop", STYLE_CSS)
-    # Tasteful limits: reduced-motion users get no halo/pop/fill motion.
+    assert "@keyframes recap-step-halo" not in STYLE_CSS
+    assert re.search(r"\.recap-steps-nav-item\.pop \{[^}]*animation: recap-step-pop", STYLE_CSS)
+    # Tasteful limits: reduced-motion users get no capsule motion.
     assert "prefers-reduced-motion: reduce" in STYLE_CSS
 
 
@@ -219,29 +243,37 @@ def test_ax_step4_choices_line():
 # ── AX-5: compact source-language picker ──
 
 def _lang_block() -> str:
-    return TAB[TAB.index('id="recap-lang-picker"'):TAB.index('id="recap-script-review-toggle"')]
+    return TAB[TAB.index('class="recap-lang-block'):TAB.index('id="recap-script-review-toggle"')]
 
 
 def test_ax_language_pills_are_auto_plus_the_frequent_six():
+    # Batch AZ-11 (owner, 2026-11-06 01:18): the AX-5 frequent pills
+    # are RETIRED — the language control is ONE compact dropdown.
+    # This pin now asserts the single-control state: no pill group,
+    # no pill buttons anywhere in the language block.
     block = _lang_block()
-    pills = block[:block.index('id="recap-lang-more"')]
-    codes = re.findall(r'data-lang="([a-z]+)"', pills)
-    assert codes == ["auto"] + FREQUENT_LANGS, codes
-    # None of the other 11 languages renders as a pill any more.
-    for code in ALL_LANGS:
-        if code not in FREQUENT_LANGS and code != "auto":
-            assert f'data-lang="{code}"' not in pills, code
+    assert 'id="recap-lang-picker"' not in TAB
+    assert 'id="recap-lang-picker"' not in INDEX_HTML
+    assert "pill-btn" not in block
+    assert block.count("<select") == 1
 
 
 def test_ax_language_dropdown_lists_all_eighteen():
     block = _lang_block()
     select = block[block.index('id="recap-lang-more"'):]
     values = re.findall(r'<option value="([a-z]*)"', select)
-    assert values[0] == "", "first option is the affordance placeholder"
-    assert values[1:] == ["auto", "my", "en", "th", "zh", "ko", "ja", "hi",
-                           "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"]
-    assert sorted(values[1:]) == sorted(ALL_LANGS)
-    assert 'data-i18n="recap_lang_more_label"' in select
+    # AZ-11: no placeholder option — the select IS the control, so
+    # its first option is the default selection (auto) itself.
+    assert "" not in values, "the AZ-11 control has no placeholder option"
+    assert values == ["auto", "my", "en", "th", "zh", "ko", "ja", "hi",
+                      "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"]
+    assert sorted(values) == sorted(ALL_LANGS)
+    # AK language parity: every option still carries its data-lang.
+    assert re.findall(r'data-lang="([a-z]+)"', select) == values
+    # The one control wears the AZ-11 glass-dropdown pattern and is
+    # labelled by the field's own key.
+    assert 'class="studio-select glass-dropdown recap-lang-more mt-2"' in select
+    assert 'data-i18n-aria="recap_lang_label"' in select
 
 
 def test_ax_language_two_views_one_state():
@@ -289,8 +321,8 @@ def test_ax_payload_and_prefs_invariants_hold():
     assert 'RECAP_SETTINGS_KEY = "vcp_recap_settings"' in APP_JS
 
 
-def test_ax_cache_token_r71():
-    assert INDEX_HTML.count("20261104_r71") == 4
+def test_ax_cache_token_r72():
+    assert INDEX_HTML.count("20261104_r72") == 4
     assert "20261104_r69" not in INDEX_HTML
 
 

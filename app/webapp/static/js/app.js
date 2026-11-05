@@ -17,10 +17,14 @@ function showStudioToast(message, type = 'info', duration = 3500) {
     const toast = document.createElement('div');
     toast.id = 'studio-toast-el';
     toast.className = `studio-toast ${type}`;
+    // Batch AZ-12: the close button's aria-label resolves through
+    // i18n like every other UI string (was a hardcoded "Close").
+    const closeLabel = typeof t === "function" ? t("toast_close") : "Close";
     toast.innerHTML = `
         <span class="toast-icon">${icons[type] || icons.info}</span>
         <span class="toast-msg"></span>
-        <button class="toast-close" onclick="this.parentNode.remove()" aria-label="Close">✕</button>
+        <button class="toast-close" onclick="this.parentNode.remove()" aria-label="${closeLabel}">✕</button>
+        <span class="toast-progress" aria-hidden="true"></span>
     `;
     // The message is COPY, never markup (hunt X2): it is rendered via
     // textContent so no caller- or server-supplied string can inject
@@ -29,7 +33,19 @@ function showStudioToast(message, type = 'info', duration = 3500) {
     toast.querySelector('.toast-msg').textContent = message;
 
     document.body.appendChild(toast);
-    if (duration > 0) setTimeout(() => toast && toast.remove(), duration);
+    if (duration > 0) {
+        // Batch AZ-7 (presentation only): the progress hairline's
+        // lifetime comes from this call's own duration via the
+        // --toast-life property, and the exit (fade + sink) plays
+        // INSIDE the same budget — the .leaving class lands 200 ms
+        // before the unchanged removal timeout, so the total
+        // on-screen time is exactly what it was.
+        toast.style.setProperty('--toast-life', duration + 'ms');
+        if (duration > 200) {
+            setTimeout(() => toast && toast.classList.add('leaving'), duration - 200);
+        }
+        setTimeout(() => toast && toast.remove(), duration);
+    }
 }
 
 /**
@@ -1416,11 +1432,13 @@ async function loadAccountPrefs() {
 }
 window.loadAccountPrefs = loadAccountPrefs;
 function showPrefsSavedNote() {
-    const note = document.getElementById("prefs-saved-note");
-    if (!note) return;
-    note.innerText = t("live_prefs_saved");
-    note.classList.remove("hidden");
-    setTimeout(() => { note.classList.add("hidden"); }, 3000);
+    // Batch AZ-10.7: the save confirmation is a TOAST now (AZ-7) —
+    // it used to appear in #prefs-saved-note, a line sitting in the
+    // wizard's indicator area where it read as step feedback. The
+    // indicator area carries step state only. (The #prefs-saved-note
+    // element stays in the markup, unused and hidden, so its id and
+    // the Batch AC pin on it survive.)
+    try { showStudioToast(t("live_prefs_saved"), "success", 2200); } catch (e) {}
 }
 async function saveAccountPrefsNow() {
     const prefs = collectAccountPrefs();
@@ -2170,6 +2188,34 @@ function closeFloatingAlert() {
 }
 window.closeFloatingAlert = closeFloatingAlert;
 
+// ── Batch AZ-4: sliding liquid nav pill + tab-enter ─────────────
+// ONE pill sits behind the active nav item; the mover is
+// data-driven — it reads whichever .nav-item currently carries
+// .active and matches the pill to that item's own box, so a future
+// nav item (e.g. AW's TTS tab) joins with no code change. If the
+// active item has no layout yet (pre-paint, hidden nav), the pill
+// keeps its last position under the previous item.
+function moveNavPill() {
+    const pill = document.getElementById("nav-active-pill");
+    const active = document.querySelector(".bottom-nav .nav-item.active");
+    if (!pill || !active || !active.offsetWidth) return;
+    pill.style.width = active.offsetWidth + "px";
+    pill.style.height = active.offsetHeight + "px";
+    pill.style.transform = "translate(" + active.offsetLeft + "px, " + active.offsetTop + "px)";
+}
+window.moveNavPill = moveNavPill;
+
+// Tab-enter (AZ-4): the incoming pane carries .tab-enter for one
+// crossfade + 6px rise (see style.css); the class is re-armed on
+// every switch so the motion replays.
+function markPaneEnter(pane) {
+    if (!pane) return;
+    pane.classList.remove("tab-enter");
+    void pane.offsetWidth;
+    pane.classList.add("tab-enter");
+}
+window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} });
+
 function switchTab(tabId) {
     const navButtons = document.querySelectorAll(".nav-item");
     const targetBtn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
@@ -2191,9 +2237,11 @@ function switchTab(tabId) {
     });
     const activePane = document.getElementById(tabId);
     if (activePane) activePane.classList.add("active");
+    markPaneEnter(activePane);
     // Tab switches start at the top of the new pane (premium polish).
     window.scrollTo({ top: 0, behavior: "auto" });
     refreshStickyCtas();
+    moveNavPill();
 }
 window.switchTab = switchTab;
 
@@ -2238,9 +2286,11 @@ function setupTabs() {
             });
             const activePane = document.getElementById(targetTab);
             if (activePane) activePane.classList.add("active");
+            markPaneEnter(activePane);
             // Tab switches start at the top of the new pane (premium polish).
             window.scrollTo({ top: 0, behavior: "auto" });
             refreshStickyCtas();
+            moveNavPill();
 
             if (targetTab === "tab-history") {
                 loadUserHistory();
@@ -2375,6 +2425,9 @@ async function loadUserProfile() {
         // Enable Admin Tab if user is administrator
         if (data.is_admin) {
             if (adminNavBtn) adminNavBtn.classList.remove("hidden");
+            // AZ-4: a newly-visible nav item re-flows the dock —
+            // re-measure the sliding pill against the active item.
+            try { moveNavPill(); } catch (e) {}
             if (adminTab) adminTab.classList.remove("hidden");
         }
 
@@ -2873,10 +2926,10 @@ function paintGateChip(el, label, ok) {
 
 function renderGateChips(channelOk, groupOk) {
     // Same chips, two surfaces: the top banner and the entry-gate lock.
-    paintGateChip(document.getElementById("gate-chip-channel"), "📢 Channel", channelOk);
-    paintGateChip(document.getElementById("gate-chip-group"), "👥 Group", groupOk);
-    paintGateChip(document.getElementById("gate-lock-chip-channel"), "📢 Channel", channelOk);
-    paintGateChip(document.getElementById("gate-lock-chip-group"), "👥 Group", groupOk);
+    paintGateChip(document.getElementById("gate-chip-channel"), t("gate_chip_channel"), channelOk);
+    paintGateChip(document.getElementById("gate-chip-group"), t("gate_chip_group"), groupOk);
+    paintGateChip(document.getElementById("gate-lock-chip-channel"), t("gate_chip_channel"), channelOk);
+    paintGateChip(document.getElementById("gate-lock-chip-group"), t("gate_chip_group"), groupOk);
 }
 window.renderGateChips = renderGateChips;
 
@@ -3934,10 +3987,14 @@ function isRecapStepOpen(n) {
     return recapCurrentStep === n;
 }
 
-// Indicator caption (AX-2R): "အဆင့် N/4 · <name>" — the CURRENT
-// step's name is the only name the indicator ever renders.
-const RECAP_STEP_NAME_KEYS = { 1: "recap_step1_title", 2: "recap_step_nav_preview", 3: "recap_step_nav_voice", 4: "recap_step4_title" };
-
+// Indicator (Batch AZ-9): one liquid segmented capsule. The
+// current segment expands into the gradient pill and shows its
+// step name (a static data-i18n span in the markup — the i18n
+// sweep keeps it in the UI language); completed segments show ✓
+// via markRecapStepDone. The AX-2R track/fill/caption are gone:
+// progress reads from the tinted ✓ segments + the expanded one.
+// This refresh only re-paints the state classes — session-truth
+// (AX-3R) lives in RECAP_STEP_DONE and its earners, untouched.
 function refreshRecapStepIndicator() {
     document.querySelectorAll('#recap-steps-nav [data-step-toggle]')
         .forEach(item => {
@@ -3945,27 +4002,6 @@ function refreshRecapStepIndicator() {
             item.classList.toggle("is-active", m === recapCurrentStep);
             item.classList.toggle("is-done", !!RECAP_STEP_DONE[m]);
         });
-    // Track fill (AX-2R): the gradient covers every completed step
-    // plus half the leg into the current one — it grows as steps
-    // complete and never claims progress that has not happened.
-    const fill = document.getElementById("recap-steps-track-fill");
-    if (fill) {
-        // Node centres sit at 1/6, 3/6, 5/6 of the track (nodes are
-        // distributed space-between within the 44px-inset track), so
-        // the fill reaches the current node, plus one leg per step
-        // honestly completed this session.
-        const doneCount = [1, 2, 3].filter(m => RECAP_STEP_DONE[m]).length;
-        const currentIdx = recapCurrentStep - 1;
-        const reachIdx = Math.max(currentIdx, doneCount);
-        fill.style.width = ((2 * reachIdx + 1) * (100 / 6)) + "%";
-    }
-    const pos = document.getElementById("recap-steps-caption-pos");
-    if (pos) pos.textContent = recapCurrentStep + "/4";
-    const name = document.getElementById("recap-steps-caption-name");
-    if (name) {
-        name.setAttribute("data-i18n", RECAP_STEP_NAME_KEYS[recapCurrentStep]);
-        name.textContent = t(RECAP_STEP_NAME_KEYS[recapCurrentStep]);
-    }
 }
 window.refreshRecapStepIndicator = refreshRecapStepIndicator;
 
@@ -3979,7 +4015,8 @@ function showRecapStep(n) {
         if (els.card) els.card.classList.toggle("hidden", m !== n);
     });
     refreshRecapStepIndicator();
-    // Advance animation (AX-2R): the newly-current node pops once.
+    // Advance animation (AZ-9): the newly-current segment pops once
+    // as it expands into the gradient pill.
     const currentBtn = document.querySelector('#recap-steps-nav [data-step-toggle="' + n + '"]');
     if (currentBtn) {
         currentBtn.classList.remove("pop");
@@ -6573,19 +6610,16 @@ function setupRecapVisualEditor() {
     // directly. No mirroring remains to disagree.
 
     // 6c. Source language (auto = detect; else a Whisper code).
-    // Batch AX: the picker shows Auto + the six frequent languages
-    // as pills; all 18 values also live in the "more languages"
-    // dropdown. ONE state (state.recapSourceLanguage), two views —
-    // both controls write through setRecapSourceLanguage, which
-    // re-syncs the other view.
+    // Batch AZ-11: ONE compact dropdown lists all 18 values — the
+    // AX-5 frequent pills are retired. The write path is unchanged:
+    // ONE state (state.recapSourceLanguage), written only through
+    // setRecapSourceLanguage; the sync paints the one control, so a
+    // saved value (any of the 18) displays correctly on load.
     const langSel = document.getElementById("recap-lang-more");
     function syncRecapLangViews() {
-        document.querySelectorAll("#recap-lang-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-lang") === state.recapSourceLanguage);
-        });
         if (langSel) {
             const has = Array.from(langSel.options).some(o => o.value === state.recapSourceLanguage);
-            langSel.value = has ? state.recapSourceLanguage : "";
+            langSel.value = has ? state.recapSourceLanguage : "auto";
         }
     }
     window.syncRecapLangViews = syncRecapLangViews;
@@ -6594,12 +6628,6 @@ function setupRecapVisualEditor() {
         syncRecapLangViews();
     }
     window.setRecapSourceLanguage = setRecapSourceLanguage;
-    document.querySelectorAll("#recap-lang-picker .pill-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-            haptic("selection");
-            setRecapSourceLanguage(btn.getAttribute("data-lang") || "auto");
-        });
-    });
     if (langSel) {
         langSel.addEventListener("change", () => {
             if (!langSel.value) return;
@@ -6761,21 +6789,21 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // 9. Subtitle Style Presets (Yellow, White, Boxed, Neon)
-    const styleChips = document.querySelectorAll("#sub-style-picker .style-chip");
-    styleChips.forEach(chip => {
-        chip.addEventListener("click", () => {
+    // 9. Subtitle Style Presets (Yellow, White, Boxed, Neon, …)
+    // Batch AZ-11: the 7 chips are ONE compact dropdown now (a
+    // <select> carrying the picker's id). The write path is the
+    // same: state.recapSubStyle + a composite refresh.
+    const styleSel = document.getElementById("sub-style-picker");
+    if (styleSel) {
+        styleSel.addEventListener("change", () => {
             haptic("selection");
-            styleChips.forEach(c => c.classList.remove("active"));
-            chip.classList.add("active");
-            const style = chip.getAttribute("data-style") || "yellow";
-            state.recapSubStyle = style;
+            state.recapSubStyle = styleSel.value || "yellow";
             // Batch AK: the style renders in the composited frame —
             // refresh it; the drag handle keeps a neutral outline
             // (no per-style CSS classes to keep in sync any more).
             scheduleRecapCompositeRefresh();
         });
-    });
+    }
 
     // 10. Subtitle Live Preview Renderer
     function updateSubtitleVisualPreview() {
@@ -7347,7 +7375,8 @@ function setupRecapVisualEditor() {
             const wrap = document.getElementById("recap-split-minutes-wrap");
             if (wrap) wrap.classList.toggle("hidden", !splitToggleEl.checked);
         }
-        syncPillGroup("#recap-lang-picker .pill-btn", "data-lang", state.recapSourceLanguage);
+        // AZ-11: the language pills are retired — the one dropdown
+        // is painted by syncRecapLangViews (called just below).
         if (window.syncRecapLangViews) syncRecapLangViews();
         refreshRecapQualityLock();
         syncPillGroup("#recap-quality-picker .pill-btn", "data-quality", state.recapRenderQuality);
@@ -7373,7 +7402,10 @@ function setupRecapVisualEditor() {
         if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
         // The plate exists only where the render draws one: blur on
         // AND burn on (blur safefix 2026-11-03).
-        syncPillGroup("#sub-style-picker .style-chip", "data-style", state.recapSubStyle);
+        // AZ-11: the subtitle-style picker is a <select> now — sync
+        // its value directly (same state field as before).
+        const subStyleSel = document.getElementById("sub-style-picker");
+        if (subStyleSel) subStyleSel.value = state.recapSubStyle;
         // Batch AK: the handle's classes are fixed (the style lives
         // in the composited frame, not in CSS classes).
         if (previewSub) previewSub.className = "preview-sub-box draggable-box";
@@ -11572,6 +11604,9 @@ document.addEventListener("DOMContentLoaded", () => {
     initEntryGate();
     setLanguage(currentLang);
     setupTabs();
+    // AZ-4: park the sliding nav pill under the initially-active
+    // item once first layout exists.
+    requestAnimationFrame(() => { try { moveNavPill(); } catch (e) {} });
     setupVoiceStudio();
     setupRecapVisualEditor();
     initRecapSteps();
