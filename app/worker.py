@@ -8,7 +8,7 @@ import re
 import shutil
 from aiogram import Bot
 from aiogram.types import FSInputFile
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -144,6 +144,24 @@ async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
                     logger.warning("Cloud upload for job %s returned status %s: %s", job_id, resp.status_code, resp.text)
     except Exception as e:
         logger.warning("Failed to sync output to cloud for job %s: %s", job_id, e)
+
+
+async def _voice_job_cancelled(session: AsyncSession, job: Job) -> bool:
+    """Batch AJ (H5): re-read the job's status from the DB.
+
+    The cancel endpoints (user + admin) flip the row to CANCELLED and
+    refund while the worker is mid-flight; the worker's in-memory copy
+    never sees that write. Before AJ the worker billed the full
+    duration anyway and overwrote the row to SUCCESS — the user was
+    told "cancelled + refunded" and charged in full. The worker now
+    re-reads at the two points where money/delivery commit: before
+    billing, and after the billing commit before delivery.
+    """
+    try:
+        await session.refresh(job)
+    except Exception:
+        return False
+    return job.status == JobStatus.CANCELLED.value
 
 
 async def process_single_job(
@@ -393,23 +411,21 @@ async def process_single_job(
         if implausible:
             raise RuntimeError(implausible)
 
-        # Preserve the generated audio in permanent outputs storage for Mini App & API downloads
-        outputs_dir = settings.storage_root / "outputs"
-        outputs_dir.mkdir(parents=True, exist_ok=True)
-        permanent_wav_path = outputs_dir / f"{job.id}_{out_filename}"
-        try:
-            if converted_wav_path.resolve() != permanent_wav_path.resolve():
-                shutil.copy2(converted_wav_path, permanent_wav_path)
-            job.result_path = str(permanent_wav_path)
-        except Exception as copy_err:
-            logger.warning("Could not persist generated audio to %s: %s", permanent_wav_path, copy_err)
-            job.result_path = str(converted_wav_path)
+        # Batch AJ (H5): cancel re-check BEFORE billing. A cancel that
+        # landed during synthesis has already flipped the row to
+        # CANCELLED (and the cancel path owns the refund semantics —
+        # nothing has been charged yet, so there is nothing to
+        # refund). Honour it: no charge, no delivery, no SUCCESS.
+        if await _voice_job_cancelled(session, job):
+            logger.info("Voice job %s was cancelled before billing; not charging or delivering.", job.id)
+            await session.commit()
+            return False
 
-        # Upload audio result to Render Cloud server so Mini App & Bot can stream / download it
-        final_audio_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
-        await sync_output_to_cloud(job.id, final_audio_path)
-
-        # Deduct actual generated duration (idempotent per job.id)
+        # Batch AJ (H7): billing comes FIRST now. The old order copied
+        # the audio into outputs/, set result_path and uploaded it to
+        # the cloud BEFORE consume_seconds ran — a job whose charge
+        # then failed (or a cancel that landed mid-flight) still
+        # carried a downloadable result. Charge → persist → deliver.
         if not settings.is_admin(job.user_id):
             await consume_seconds(
                 session=session,
@@ -436,12 +452,40 @@ async def process_single_job(
             # job status/history can show the fallback notice as well.
             job.engine = "edge_fallback"
 
+        # Preserve the generated audio in permanent outputs storage for Mini App & API downloads.
+        # A persistence failure now FAILS the job (the failure path
+        # refunds the charge above) instead of pointing result_path at
+        # the temp file the finally-block is about to delete.
+        outputs_dir = settings.storage_root / "outputs"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        permanent_wav_path = outputs_dir / f"{job.id}_{out_filename}"
+        if converted_wav_path.resolve() != permanent_wav_path.resolve():
+            shutil.copy2(converted_wav_path, permanent_wav_path)
+        job.result_path = str(permanent_wav_path)
+
+        # Upload audio result to Render Cloud server so Mini App & Bot can stream / download it
+        final_audio_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
+        await sync_output_to_cloud(job.id, final_audio_path)
+
         # Persist the billing + result state and end the transaction
         # BEFORE delivery (audit fix 2026-11-03): the Telegram sends
         # below are network I/O and must not hold the billing
         # transaction's pooled connection open. The SUCCESS status
         # write after delivery gets its own short transaction.
         await session.commit()
+
+        # Batch AJ (H5): cancel re-check AFTER the billing commit,
+        # before delivery. A cancel in this window was told the job
+        # was cancelled; the charge above is refunded in full and the
+        # row stays CANCELLED — never delivered, never SUCCESS.
+        if await _voice_job_cancelled(session, job):
+            logger.info("Voice job %s was cancelled after billing; refunding and not delivering.", job.id)
+            from app.services.ledger import refund_job_seconds
+
+            await refund_job_seconds(session, job.user_id, str(job.id))
+            job.result_path = None
+            await session.commit()
+            return False
 
         # Send completion audio or notification alert to user via Telegram Bot
         if bot and target_chat_id:
@@ -541,14 +585,58 @@ async def process_single_job(
                 if target_msg_id:
                     await safe_edit_status(bot, target_chat_id, target_msg_id, t("status_completed", lang))
 
-        job.status = JobStatus.SUCCESS.value
-        job.finished_at = utc_now()
-        await session.commit()
+        # Batch AJ (H5): the SUCCESS write is CONDITIONAL on the row
+        # still being RUNNING — a cancel that landed during delivery
+        # must never be overwritten back to SUCCESS.
+        _succ_res = await session.execute(
+            update(Job)
+            .where(Job.id == job.id, Job.status == JobStatus.RUNNING.value)
+            .values(status=JobStatus.SUCCESS.value, finished_at=utc_now())
+            .execution_options(synchronize_session=False)
+        )
+        if not _succ_res.rowcount:
+            await session.rollback()
+            if await _voice_job_cancelled(session, job):
+                logger.info("Voice job %s was cancelled during delivery; refunding instead of SUCCESS.", job.id)
+                if not settings.is_admin(job.user_id):
+                    from app.services.ledger import refund_job_seconds
+
+                    await refund_job_seconds(session, job.user_id, str(job.id))
+                job.result_path = None
+                await session.commit()
+                return False
+            # Not a cancel (unexpected state): keep the job completable
+            # rather than stranding it — fall back to the plain write.
+            job.status = JobStatus.SUCCESS.value
+            job.finished_at = utc_now()
+            await session.commit()
+        else:
+            await session.commit()
+            job.status = JobStatus.SUCCESS.value
+            job.finished_at = utc_now()
 
         logger.info("Successfully completed voice job %s (duration=%ss)", job.id, duration_seconds)
         return True
 
     except Exception as exc:
+        # Batch AJ (H5): a failure racing a cancel must not overwrite
+        # CANCELLED with FAILED either — the cancel path already
+        # refunded and told the user; the refund attempt below stays
+        # (net-aware: it can only return the unrefunded delta).
+        try:
+            await session.refresh(job)
+        except Exception:
+            pass
+        if job.status == JobStatus.CANCELLED.value:
+            if not settings.is_admin(job.user_id):
+                from app.services.ledger import refund_job_seconds
+
+                try:
+                    await refund_job_seconds(session, job.user_id, str(job.id))
+                    await session.commit()
+                except Exception:
+                    pass
+            return False
         logger.exception("Voice job %s failed: %s", job.id, exc)
         # Store/post only the curated message (audit fix 2026-11-03):
         # the raw exception text is in the log line above; the stored
@@ -584,6 +672,37 @@ async def process_single_job(
                 pass
 
 
+# Batch AJ (M11): a single voice job may run at most this long.
+# Synthesis normally takes seconds-to-minutes; a hung engine call
+# previously pinned the ONLY worker slot (and the job, and its
+# concurrency slot) forever — the worker loop is serial.
+VOICE_JOB_DEADLINE_SECONDS = 1800
+
+
+async def _fail_timed_out_job(job_id: str) -> None:
+    """Mark a deadline-killed job FAILED and refund any partial
+    charge, in a fresh session (the processing session was cancelled
+    mid-flight and cannot be trusted)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.status not in (
+                JobStatus.QUEUED.value,
+                JobStatus.RUNNING.value,
+            ):
+                return
+            job.status = JobStatus.FAILED.value
+            job.error_message = "Voice job timed out (worker deadline exceeded)"
+            job.finished_at = utc_now()
+            if not settings.is_admin(job.user_id):
+                from app.services.ledger import refund_job_seconds
+
+                await refund_job_seconds(session, job.user_id, str(job.id))
+            await session.commit()
+    except Exception as exc:
+        logger.warning("Could not fail timed-out job %s: %s", job_id, exc)
+
+
 async def claim_and_process_next_job(
     session: AsyncSession | None = None,
     bot: Bot | None = None,
@@ -605,7 +724,15 @@ async def claim_and_process_next_job(
         job = await claim_next_queued_job(session, engine_filter=engine_filter)
         if not job:
             return False
-        return await process_single_job(session=session, job=job, bot=bot)
+        try:
+            return await asyncio.wait_for(
+                process_single_job(session=session, job=job, bot=bot),
+                timeout=VOICE_JOB_DEADLINE_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Voice job %s exceeded the %ss worker deadline; failing it.", job.id, VOICE_JOB_DEADLINE_SECONDS)
+            await _fail_timed_out_job(str(job.id))
+            return False
 
     async with AsyncSessionLocal() as claim_session:
         job = await claim_next_queued_job(claim_session, engine_filter=engine_filter)
@@ -617,7 +744,15 @@ async def claim_and_process_next_job(
         job = await process_session.get(Job, job_id)
         if job is None:
             return False
-        return await process_single_job(session=process_session, job=job, bot=bot)
+        try:
+            return await asyncio.wait_for(
+                process_single_job(session=process_session, job=job, bot=bot),
+                timeout=VOICE_JOB_DEADLINE_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Voice job %s exceeded the %ss worker deadline; failing it.", job_id, VOICE_JOB_DEADLINE_SECONDS)
+            await _fail_timed_out_job(str(job_id))
+            return False
 
 
 def _boot_cutoff_sweep_due(

@@ -32,7 +32,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import case, select, func, update, or_, text
+from sqlalchemy import case, delete, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -44,7 +44,11 @@ from app.services.models import get_authorized_model, get_available_models_for_u
 from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.download_names import branded_download_filename
 from app.services.curated_voices import list_curated_voices, get_curated_voice
-from app.webapp.auth import parse_and_verify_init_data
+from app.webapp.auth import (
+    ADMIN_INIT_DATA_MAX_AGE_SECONDS,
+    init_data_auth_date,
+    parse_and_verify_init_data,
+)
 
 logger = logging.getLogger(__name__)
 api_router = APIRouter(prefix="/api")
@@ -240,6 +244,16 @@ def require_admin(
     verified_data = parse_and_verify_init_data(x_telegram_init_data)
     if not verified_data or int(verified_data.get("id", 0)) != user.id:
         raise HTTPException(status_code=403, detail="Invalid Telegram authentication signature")
+    # Batch AJ (M8): admin actions require FRESH initData (≤ 12 h),
+    # not the 24 h window user reads tolerate — a day-old leaked
+    # admin session must not drive admin actions. Reopening the Mini
+    # App mints fresh initData, so this only bites stale sessions.
+    _auth_date = init_data_auth_date(x_telegram_init_data)
+    if _auth_date is None or time.time() - _auth_date > ADMIN_INIT_DATA_MAX_AGE_SECONDS:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin session expired — reopen the Mini App and try again",
+        )
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin authorization required")
     return user
@@ -397,16 +411,55 @@ async def _save_upload_streaming(upload_file, dest_path, max_bytes: int) -> int:
         except Exception:
             pass
         raise
-    except Exception as exc:
+    except BaseException as exc:
+        # Batch AJ L5: asyncio.CancelledError is a BaseException — the
+        # old `except Exception` cleanup let a client disconnect (or a
+        # task cancel) mid-upload leave the partial file behind.
         try:
             dest_path.unlink(missing_ok=True)
         except Exception:
             pass
+        if not isinstance(exc, Exception):
+            raise
         # Never leak the raw exception (paths/internals) to the client:
         # log it server-side, return a clean user-safe detail.
         logger.warning("Failed to save uploaded file %s: %s", dest_path, exc)
         raise HTTPException(status_code=500, detail="ဖိုင် သိမ်းဆည်းရာတွင် အဆင်မပြေ ဖြစ်သွားပါသည် — ခဏနေ ပြန်ကြိုးစားပါ")
     return total
+
+
+# ── Batch AJ M1: disk headroom gate ──────────────────────────────────
+# The 2026-11-04 production incident was a FULL 10 GB disk: every job
+# failed after charging until the retention sweep landed. The admin
+# overview displayed free space, but nothing REFUSED new work. Upload
+# and job-submission entry points now check headroom BEFORE accepting
+# bytes or charging, so a filling disk degrades to a clear refusal
+# instead of charged-then-failed jobs.
+DISK_HEADROOM_MIN_FREE_BYTES = 512 * 1024 * 1024
+
+
+def _require_disk_headroom() -> None:
+    import shutil
+
+    try:
+        free = shutil.disk_usage(settings.storage_root).free
+    except Exception:
+        return  # cannot measure → do not block legitimate work
+    if free < DISK_HEADROOM_MIN_FREE_BYTES:
+        raise HTTPException(
+            status_code=507,
+            detail="ဆာဗာ သိုလှောင်နေရာ ပြည့်လုနီးပါး ဖြစ်နေပါသည်။ ခဏနေ ပြန်ကြိုးစားပေးပါ ခင်ဗျာ။",
+        )
+
+
+# ── Batch AJ L18: bounded in-memory registries ───────────────────────
+def _remember_bounded(mapping: dict, key, value, *, cap: int = 2048) -> None:
+    """Insert into an in-memory registry dict, evicting oldest entries
+    (insertion order) once *cap* is exceeded. The upload title/owner
+    registries previously grew for the life of the process."""
+    mapping[key] = value
+    while len(mapping) > cap:
+        mapping.pop(next(iter(mapping)), None)
 
 
 # ── Custom channel logo (owner decision 2026-11-02) ─────────────────
@@ -528,8 +581,14 @@ async def _recap_active_job_count(db, user_id: int) -> int:
             )
         )
         ids.update(str(row[0]) for row in res.all())
-    except Exception:
-        pass
+    except Exception as exc:
+        # Batch AJ L13: silently swallowing a DB error here returned a
+        # registry-only count — exactly while the database was
+        # struggling, the per-user concurrency cap degraded invisibly.
+        # The only production caller is the submit path (under the
+        # user-row lock): fail the submit visibly instead.
+        logger.warning("Recap active-job count failed for user %s: %s", user_id, exc)
+        raise
     return len(ids)
 
 
@@ -750,6 +809,8 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
         return False
     if settings.is_admin(user_id):
         return False
+    from sqlalchemy.exc import IntegrityError
+
     try:
         from app.db.session import AsyncSessionLocal
         from app.services.ledger import record_recap_credit_event, recap_refund_event_exists
@@ -777,6 +838,15 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
                 )
             await session.commit()
             return True
+    except IntegrityError as exc:
+        # Batch AJ (H8): the recap REFUND unique index fired — a
+        # concurrent refund for this job committed first. That is
+        # "already refunded", not a failure: log it distinctly so it
+        # is never mistaken for a lost refund in the logs.
+        logger.info(
+            f"Recap credit refund for user {user_id} job {job_id} already on the ledger (unique index): {exc}"
+        )
+        return False
     except Exception as exc:
         logger.warning(f"Recap credit refund failed for user {user_id}: {exc}")
         return False
@@ -1185,50 +1255,102 @@ async def _claim_persisted_recap_refund(job_id: str, amount: int) -> tuple[str, 
     refund, otherwise write the claim BEFORE the balance refund is
     issued — closes that gap. Returns ("claimed", amount),
     ("already", recorded_amount) or ("error", 0).
-    """
-    try:
-        from app.db.session import AsyncSessionLocal
 
-        async with AsyncSessionLocal() as session:
-            job = await session.get(Job, job_id)
-            if job is None:
-                return ("error", 0)
-            state = _load_persisted_recap_state(job)
-            if state is None:
-                return ("error", 0)
-            if state.get("credit_refunded"):
-                return ("already", int(state.get("credits_refunded") or 0))
-            state["credit_refunded"] = True
-            state["credits_refunded"] = int(amount)
-            job.recap_config = json.dumps(state, ensure_ascii=False)
-            await session.commit()
-            return ("claimed", int(amount))
-    except Exception as exc:
-        logger.warning(f"Could not claim persisted recap refund for {job_id}: {exc}")
-        return ("error", 0)
+    Batch AJ (H8): the write is a COMPARE-AND-SWAP — the UPDATE only
+    lands when the row's recap_config is byte-identical to the blob
+    just read. The old read-modify-write let two concurrent claimers
+    (a user cancel racing the runner's failure tail across a restart
+    boundary) both read credit_refunded=False and both refund. The
+    loser of the CAS re-reads: the winner's claim then reads as
+    "already". Bounded retries cover unrelated blob writes (progress
+    persists) landing between the read and the write.
+    """
+    for _attempt in range(3):
+        try:
+            from app.db.session import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Job, job_id)
+                if job is None:
+                    return ("error", 0)
+                raw = job.recap_config
+                state = _load_persisted_recap_state(job)
+                if state is None:
+                    return ("error", 0)
+                if state.get("credit_refunded"):
+                    return ("already", int(state.get("credits_refunded") or 0))
+                state["credit_refunded"] = True
+                state["credits_refunded"] = int(amount)
+                new_raw = json.dumps(state, ensure_ascii=False)
+                res = await session.execute(
+                    update(Job)
+                    .where(Job.id == job_id, Job.recap_config == raw)
+                    .values(recap_config=new_raw)
+                    .execution_options(synchronize_session=False)
+                )
+                if res.rowcount:
+                    await session.commit()
+                    return ("claimed", int(amount))
+                await session.rollback()
+        except Exception as exc:
+            logger.warning(f"Could not claim persisted recap refund for {job_id}: {exc}")
+            return ("error", 0)
+    # Three lost races without ever seeing a claim: another writer is
+    # actively rewriting this blob. Refusing (as "already") is the
+    # safe direction — a missed refund is recoverable by a later
+    # sweep; a double refund is not.
+    logger.warning(f"Persisted recap refund claim for {job_id} lost repeated CAS races; treating as already-claimed.")
+    return ("already", 0)
 
 
 async def _release_persisted_recap_refund_claim(job_id: str) -> None:
     """Undo a _claim_persisted_recap_refund claim whose refund failed,
-    so a later sweep run can retry it."""
-    try:
-        from app.db.session import AsyncSessionLocal
+    so a later sweep run can retry it.
 
-        async with AsyncSessionLocal() as session:
-            job = await session.get(Job, job_id)
-            if job is None:
-                return
-            state = _load_persisted_recap_state(job)
-            if state is None:
-                return
-            state["credit_refunded"] = False
-            state["credits_refunded"] = 0
-            job.recap_config = json.dumps(state, ensure_ascii=False)
-            await session.commit()
-    except Exception as exc:
-        logger.warning(
-            f"Could not release persisted recap refund claim for {job_id}: {exc}"
-        )
+    Batch AJ (H8): CAS-guarded like the claim — if the blob moved on
+    since the read (e.g. a fresh claim by another path), the release
+    leaves it alone instead of clearing someone else's claim with a
+    stale whole-blob write.
+    """
+    _claim_signature: int | None = None
+    for _attempt in range(3):
+        try:
+            from app.db.session import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Job, job_id)
+                if job is None:
+                    return
+                raw = job.recap_config
+                state = _load_persisted_recap_state(job)
+                if state is None:
+                    return
+                if not state.get("credit_refunded"):
+                    return
+                if _claim_signature is None:
+                    _claim_signature = int(state.get("credits_refunded") or 0)
+                elif int(state.get("credits_refunded") or 0) != _claim_signature:
+                    # The blob now carries a DIFFERENT claim than the
+                    # one this release belongs to — not ours to clear.
+                    return
+                state["credit_refunded"] = False
+                state["credits_refunded"] = 0
+                new_raw = json.dumps(state, ensure_ascii=False)
+                res = await session.execute(
+                    update(Job)
+                    .where(Job.id == job_id, Job.recap_config == raw)
+                    .values(recap_config=new_raw)
+                    .execution_options(synchronize_session=False)
+                )
+                if res.rowcount:
+                    await session.commit()
+                    return
+                await session.rollback()
+        except Exception as exc:
+            logger.warning(
+                f"Could not release persisted recap refund claim for {job_id}: {exc}"
+            )
+            return
 
 
 async def expire_abandoned_script_ready_jobs() -> int:
@@ -1516,10 +1638,11 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
     to the historical reconstruction (URL/title/voice from the row,
     defaults for everything else, no credit state).
 
-    ``restore_credit_state=False`` is for admin retries of FAILED /
-    CANCELLED jobs: their original charge was already refunded by the
-    failure/cancel paths, so the retry runs uncharged — exactly how
-    retries behaved before persistence existed.
+    ``restore_credit_state=False`` forces an uncharged entry (kept
+    for callers that manage billing themselves). Admin retries pass
+    True since Batch AJ H6: retry_queued_job reconciles the persisted
+    state with the recap ledger (re-charging a refunded job) BEFORE
+    building the plan, so the restored state is the billed truth.
     """
     source_url = getattr(job, "source_audio_path", None) or job.input_text or ""
     # Encoding repair (hunt #4 A1): rows created before the intake
@@ -1603,10 +1726,36 @@ async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: i
     total charged credits.
     """
     already = int(entry.get("credits_charged") or 0)
+    # Batch AJ (H11): the entry/blob total is only a cache. The
+    # submit charge commits to the recap ledger in the same
+    # transaction as the balance, but the blob persist that records
+    # the topped-up total is a separate best-effort write — a restart
+    # between them rebuilt the entry with the stale submit-time total
+    # and this top-up then charged the difference a SECOND time. The
+    # ledger is the durable truth: never charge for parts the ledger
+    # says are already paid for (net of refunds).
+    _job_id = entry.get("id")
+    if _job_id:
+        try:
+            from app.db.session import AsyncSessionLocal
+            from app.services.ledger import (
+                recap_debit_total_for_job,
+                recap_refund_total_for_job,
+            )
+
+            async with AsyncSessionLocal() as _ledger_session:
+                _net_charged = await recap_debit_total_for_job(
+                    _ledger_session, _job_id
+                ) - await recap_refund_total_for_job(_ledger_session, _job_id)
+            already = max(already, int(_net_charged))
+        except Exception as exc:
+            logger.warning(
+                f"Could not reconcile recap charge total from the ledger for {_job_id}: {exc}"
+            )
     extra = int(total_parts) - already
     if extra > 0 and not await _charge_recap_credits(user_id, extra, job_id=entry.get("id")):
         raise _RecapInsufficientCreditsError(total_parts)
-    entry["credits_charged"] = int(total_parts)
+    entry["credits_charged"] = max(int(total_parts), already)
     entry["credit_deducted"] = True
     entry["parts_count"] = int(total_parts)
     # Keep the Job row's persisted total in step, so a restart after
@@ -1629,6 +1778,28 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     amount = int(entry.get("credits_charged") or 0)
     if amount <= 0 and entry.get("credit_deducted"):
         amount = 1
+    # Batch AJ (H11): mirror of the top-up fix — refund what the
+    # LEDGER says was charged (net), not just what the entry/blob
+    # remembers. A restart that lost a top-up persist otherwise
+    # short-changed the user by the forgotten parts.
+    _job_id = entry.get("id")
+    if _job_id:
+        try:
+            from app.db.session import AsyncSessionLocal
+            from app.services.ledger import (
+                recap_debit_total_for_job,
+                recap_refund_total_for_job,
+            )
+
+            async with AsyncSessionLocal() as _ledger_session:
+                _net_charged = await recap_debit_total_for_job(
+                    _ledger_session, _job_id
+                ) - await recap_refund_total_for_job(_ledger_session, _job_id)
+            amount = max(amount, int(_net_charged))
+        except Exception as exc:
+            logger.warning(
+                f"Could not reconcile recap refund total from the ledger for {_job_id}: {exc}"
+            )
     if amount <= 0:
         return False
     # Claim BEFORE the first await (final-audit batch M): the old
@@ -2259,6 +2430,9 @@ async def get_user_logo_file(
             user = await db.get(User, token_uid)
     if user is None:
         raise HTTPException(status_code=401, detail="Telegram authentication required")
+    # Batch AJ L11: same ban discipline as the recap token downloads.
+    if getattr(user, "status", None) == "BLOCKED" and not settings.is_admin(user.id):
+        raise HTTPException(status_code=404, detail="Logo မတင်ရသေးပါ")
     found = _find_user_logo(user.id)
     if found is None:
         raise HTTPException(status_code=404, detail="Logo မတင်ရသေးပါ")
@@ -2586,21 +2760,34 @@ async def create_voice_job_with_audio(
 
     ref_audio_path = None
     if reference_audio and reference_audio.filename:
+        # Batch AJ H3 + M1: the old code did `await
+        # reference_audio.read()` — the WHOLE upload buffered in RAM —
+        # and only then compared its length to 50 MB, so one oversized
+        # request could OOM the 2 GB instance before the check ran
+        # (this route is also outside the JSON Content-Length
+        # middleware's coverage). Stream to disk with the cap enforced
+        # DURING the write, behind the disk-headroom gate.
+        _require_disk_headroom()
         ref_dir = settings.storage_root / "temp" / "voxcpm_refs"
         ref_dir.mkdir(parents=True, exist_ok=True)
         ext = Path(reference_audio.filename).suffix or ".wav"
         clean_ext = ext if ext.lower() in (".wav", ".mp3", ".ogg", ".m4a") else ".wav"
         save_file = ref_dir / f"webapp_ref_{uuid.uuid4().hex[:12]}{clean_ext}"
-        content = await reference_audio.read()
-        if len(content) > 50 * 1024 * 1024:
-            raise HTTPException(
-                status_code=413,
-                detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါသည်",
+        try:
+            saved_bytes = await _save_upload_streaming(
+                reference_audio, save_file, 50 * 1024 * 1024
             )
-        if len(content) > 100:
-            with open(save_file, "wb") as f:
-                f.write(content)
+        except HTTPException as exc:
+            if exc.status_code == 413:
+                raise HTTPException(
+                    status_code=413,
+                    detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါသည်",
+                )
+            raise
+        if saved_bytes > 100:
             ref_audio_path = str(save_file)
+        else:
+            save_file.unlink(missing_ok=True)
 
     # Dynamically resolve edge_voice from preset_voice or gender_preset
     resolved_edge_voice = "my-MM-ThihaNeural"
@@ -3177,6 +3364,14 @@ async def download_job_audio(
     """Stream or download the completed generated voice clone audio file."""
     job = await _require_job_owner(db, job_id, user)
 
+    # Batch AJ (H7): only a SUCCESS job has a deliverable. The worker
+    # now charges before it persists any result, but rows written by
+    # older paths (and any future regression) must not leak audio for
+    # jobs whose charge failed, that were cancelled, or that never
+    # ran — same 404 discipline as a missing file.
+    if job.status != JobStatus.SUCCESS.value:
+        raise HTTPException(status_code=404, detail="Audio file not ready or expired")
+
     target_path = None
     if job.result_path and Path(job.result_path).is_file():
         target_path = Path(job.result_path)
@@ -3246,6 +3441,23 @@ async def upload_worker_job_result(
     job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    # Batch AJ (H5): a terminal job must not be resurrected by a late
+    # upload — the user may have cancelled (and been refunded) while
+    # the laptop worker was rendering. Only a live job accepts a
+    # result; anything else is a conflict, and nothing is written.
+    if job.status in (
+        JobStatus.CANCELLED.value,
+        JobStatus.FAILED.value,
+        JobStatus.SUCCESS.value,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is {job.status}; upload rejected",
+        )
+
+    # Batch AJ M1: no new result bytes land on a nearly-full disk.
+    _require_disk_headroom()
 
     outputs_dir = settings.storage_root / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -3584,6 +3796,9 @@ async def fetch_downloader_format(
     if fmt not in _DL_FORMATS:
         raise HTTPException(status_code=400, detail="Unknown format")
 
+    # Batch AJ M1: downloads write real bytes to the same disk.
+    _require_disk_headroom()
+
     from app.services.downloader import MediaDownloader, extract_first_url, unshorten_url
 
     raw_url = req.url.strip()
@@ -3737,6 +3952,10 @@ async def upload_recap_video(
     if not video_file.filename:
         raise HTTPException(status_code=400, detail="ဗီဒီယိုဖိုင် ရွေးချယ်ပေးပါခင်ဗျာ")
 
+    # Batch AJ M1: refuse the upload up front when the disk is nearly
+    # full instead of writing up to 1 GB into a dying filesystem.
+    _require_disk_headroom()
+
     clean_name = Path(video_file.filename).name
     ext = Path(clean_name).suffix.lower()
     if ext not in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m4v"}:
@@ -3772,12 +3991,13 @@ async def upload_recap_video(
 
     thumb_url = f"/api/recap/frame?path={file_id}_thumb.jpg" if thumb_path.is_file() else ""
     display_title = Path(clean_name).stem or "Uploaded Movie Video"
-    UPLOADED_VIDEO_TITLES[str(saved_path)] = display_title
-    UPLOADED_VIDEO_TITLES[saved_path.name] = display_title
-    UPLOADED_VIDEO_OWNERS[str(saved_path)] = user.id
-    UPLOADED_VIDEO_OWNERS[str(saved_path.resolve())] = user.id
-    UPLOADED_VIDEO_OWNERS[saved_path.name] = user.id
-    UPLOADED_VIDEO_OWNERS[thumb_path.name] = user.id
+    # Batch AJ L18: bounded registries (oldest evicted past the cap).
+    _remember_bounded(UPLOADED_VIDEO_TITLES, str(saved_path), display_title)
+    _remember_bounded(UPLOADED_VIDEO_TITLES, saved_path.name, display_title)
+    _remember_bounded(UPLOADED_VIDEO_OWNERS, str(saved_path), user.id)
+    _remember_bounded(UPLOADED_VIDEO_OWNERS, str(saved_path.resolve()), user.id)
+    _remember_bounded(UPLOADED_VIDEO_OWNERS, saved_path.name, user.id)
+    _remember_bounded(UPLOADED_VIDEO_OWNERS, thumb_path.name, user.id)
 
     return {
         "success": True,
@@ -3960,7 +4180,11 @@ async def recap_preview_frame(
     if frame_path.is_file() and frame_path.stat().st_size > 500:
         return FileResponse(frame_path, media_type="image/jpeg")
 
-    lock = _PREVIEW_SOURCE_LOCKS.setdefault(url_key, asyncio.Lock())
+    # Batch AJ L18: bound the per-URL lock registry too (evicting a
+    # lock only loses mutual exclusion for an idle URL, never data).
+    if url_key not in _PREVIEW_SOURCE_LOCKS:
+        _remember_bounded(_PREVIEW_SOURCE_LOCKS, url_key, asyncio.Lock(), cap=512)
+    lock = _PREVIEW_SOURCE_LOCKS[url_key]
     async with lock:
         # Re-check inside the lock: a concurrent request may have
         # produced this exact frame while we waited.
@@ -4983,6 +5207,37 @@ async def _send_recap_telegram_delivery(
                 )
                 await bot.send_document(chat_id=chat_id, document=sf, caption=t("clone_caption_subtitles", lang), parse_mode="HTML")
 
+            # Batch AJ L12: the narration audio and the script were
+            # accepted as parameters and silently never sent — full
+            # mode users got video + SRT only (the segmented path
+            # sends everything). Both go out as extras; a failure of
+            # an extra never undoes the main delivery above.
+            if audio_path and os.path.isfile(audio_path):
+                try:
+                    if os.path.getsize(audio_path) <= 50 * 1024 * 1024:
+                        af = FSInputFile(
+                            audio_path,
+                            filename=branded_download_filename(
+                                "RecapAudio", Path(audio_path).suffix.lstrip(".") or "mp3",
+                                title=title, job_id=job_id,
+                            ),
+                        )
+                        await bot.send_audio(chat_id=chat_id, audio=af, caption=t("clone_caption_recap_audio", lang), parse_mode="HTML")
+                except Exception as audio_err:
+                    logger.warning(f"Recap delivery: audio extra failed for job {job_id}: {audio_err}")
+            if script_path and os.path.isfile(script_path):
+                try:
+                    tf = FSInputFile(
+                        script_path,
+                        filename=branded_download_filename(
+                            "RecapScript", Path(script_path).suffix.lstrip(".") or "txt",
+                            title=title, job_id=job_id,
+                        ),
+                    )
+                    await bot.send_document(chat_id=chat_id, document=tf, caption=t("clone_caption_recap_script", lang), parse_mode="HTML")
+                except Exception as script_err:
+                    logger.warning(f"Recap delivery: script extra failed for job {job_id}: {script_err}")
+
             # Split jobs: every part is delivered too (when the full video
             # was oversized, or the job is segmented, the parts already
             # went out above as the main delivery — don't send twice).
@@ -5151,6 +5406,41 @@ async def _send_recap_failure_dm(
     return True
 
 
+# ── Batch AJ M10(c): arm the recap job deadline before download ─────
+# The engine's 3600 s deadline is cooperative and boundary-only, and
+# it arms when the ENGINE starts — the download and planning phases
+# before it sat outside any budget, so a slow source could pin one of
+# only two recap slots indefinitely before the clock even started.
+RECAP_JOB_DEADLINE_SECONDS = 3600
+
+
+def _recap_deadline_exceeded(created_at, *, now_ts: Optional[float] = None) -> bool:
+    """True when a job submitted at *created_at* (the Job row's
+    timestamp) is already past the whole-job deadline. The registry
+    entry's created_at is NOT used: re-dispatch resets it, which
+    would quietly re-arm the budget."""
+    if created_at is None:
+        return False
+    try:
+        created_ts = created_at.timestamp()
+    except Exception:
+        return False
+    now = now_ts if now_ts is not None else time.time()
+    return (now - created_ts) > RECAP_JOB_DEADLINE_SECONDS
+
+
+async def _recap_job_deadline_exceeded(job_id: str) -> bool:
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            created_at = getattr(job, "created_at", None) if job else None
+    except Exception:
+        return False
+    return _recap_deadline_exceeded(created_at)
+
+
 async def _run_recap_background_job(
     job_id: str,
     req: RecapConfigRequest,
@@ -5228,6 +5518,16 @@ async def _execute_recap_background_job(
         from app.services.downloader import MediaDownloader
         from app.db.session import AsyncSessionLocal
         downloader = MediaDownloader()
+
+        # Batch AJ M10(c): the whole-job deadline is armed from the
+        # Job row's submit time and checked BEFORE the download /
+        # planning phases — previously those phases had no budget at
+        # all. Render-resume runs (resume_source set, after SCRIPT_READY
+        # parking) are exempt: the parking window has its own 24 h TTL.
+        if resume_source is None and await _recap_job_deadline_exceeded(job_id):
+            raise RuntimeError(
+                "Recap job exceeded its 1-hour deadline before processing started"
+            )
 
         # Update Job in database
         try:
@@ -5715,6 +6015,7 @@ async def _execute_recap_background_job(
             return
 
         # Update Job in database
+        _succ_written = False
         try:
             # R40 item 15c: record the REAL output duration so history
             # rows show actual seconds instead of the creation estimate.
@@ -5726,8 +6027,16 @@ async def _execute_recap_background_job(
             except Exception:
                 _real_seconds = 0
             async with AsyncSessionLocal() as session:
-                await session.execute(
-                    update(Job).where(Job.id == job_id).values(
+                # Batch AJ H5: the SUCCESS write is conditioned on the
+                # row still being active — a cancel landing between
+                # the check above and this write flips the row to a
+                # terminal state first, and the cancel (with its
+                # refund) must win over a late SUCCESS + delivery.
+                _succ_res = await session.execute(
+                    update(Job).where(
+                        Job.id == job_id,
+                        Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                    ).values(
                         status=JobStatus.SUCCESS.value,
                         result_path=video_path,
                         finished_at=func.now(),
@@ -5735,8 +6044,18 @@ async def _execute_recap_background_job(
                     )
                 )
                 await session.commit()
+                _succ_written = bool(_succ_res.rowcount)
         except Exception as db_succ_err:
             logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
+
+        if not _succ_written:
+            entry["status"] = "FAILED"
+            entry["error_message"] = "Cancelled by Administrator"
+            logger.info(
+                f"Recap job {job_id} finished rendering but its row is no "
+                "longer active (cancelled); not delivering."
+            )
+            return
 
         # Batch AB: terminal state clears the stranded-reset count.
         await _clear_recap_stranded_reset_count(job_id)
@@ -5806,12 +6125,17 @@ async def _execute_recap_background_job(
                         text=notify_text,
                         reply_markup=kb,
                     )
+                    # Batch AJ L16: this log line used to sit AFTER the
+                    # whole notify try/except, printing "Notification
+                    # sent" even when the send had failed (and been
+                    # swallowed into the warning below) or was skipped.
+                    logger.info(f"Recap job {job_id} successfully finished. Notification sent to Telegram.")
                 finally:
                     await bot_inst.session.close()
             except Exception as notify_err:
                 logger.warning(f"Could not send recap completion notification to user {chat_id}: {notify_err}")
 
-        logger.info(f"Recap job {job_id} successfully finished. Notification sent to Telegram.")
+        logger.info(f"Recap job {job_id} successfully finished.")
 
     except asyncio.CancelledError:
         # Cancellation is BaseException, not Exception: without this the
@@ -6105,9 +6429,17 @@ async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
             rows = (await session.execute(
                 select(Job.id, Job.status, Job.source_audio_path, Job.result_path)
             )).all()
+            # Batch AJ M1: slip files a surviving PaymentRequest still
+            # references are audit evidence, never orphans.
+            slip_rows = (await session.execute(
+                select(PaymentRequest.slip_url)
+            )).all()
     except Exception as e:
         logger.warning(f"Storage orphan sweep skipped (job index unavailable): {e}")
         return stats
+    referenced_slip_names: set[str] = {
+        Path(url).name for (url,) in slip_rows if url
+    }
 
     status_by_id: dict[str, str] = {}
     referenced_names: set[str] = set()
@@ -6208,6 +6540,50 @@ async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
                     continue
                 st = f.stat()
                 if now_ts - st.st_mtime > _FAILED_STRIP_AGE_SECONDS:
+                    f.unlink(missing_ok=True)
+                    stats["files"] += 1
+                    stats["bytes"] += st.st_size
+            except OSError:
+                continue
+
+    # 6. Batch AJ M1: receipts/ — slip images no surviving
+    #    PaymentRequest references (deleted rows, rejected-then-purged
+    #    submissions) older than the retention window. Referenced
+    #    slips are kept regardless of age (audit evidence for the
+    #    request they belong to).
+    receipts_root = storage_root / "receipts"
+    if receipts_root.is_dir() and not receipts_root.is_symlink():
+        for f in list(receipts_root.iterdir()):
+            try:
+                if f.is_symlink() or not f.is_file():
+                    continue
+                if f.name in referenced_slip_names:
+                    continue
+                st = f.stat()
+                if st.st_mtime < retention_cutoff_ts:
+                    f.unlink(missing_ok=True)
+                    stats["files"] += 1
+                    stats["bytes"] += st.st_size
+            except OSError:
+                continue
+
+    # 7. Batch AJ L6: outputs/ and audio_out/ — result files whose
+    #    owning row is gone (e.g. a worker upload-result whose DB
+    #    commit then failed) were previously permanent. Same rule:
+    #    unreferenced by any surviving Job row AND older than the
+    #    retention window.
+    for out_name in ("outputs", "audio_out"):
+        out_root = storage_root / out_name
+        if not out_root.is_dir() or out_root.is_symlink():
+            continue
+        for f in list(out_root.iterdir()):
+            try:
+                if f.is_symlink() or not f.is_file():
+                    continue
+                if f.name in referenced_names or f.stem in referenced_stems:
+                    continue
+                st = f.stat()
+                if st.st_mtime < retention_cutoff_ts:
                     f.unlink(missing_ok=True)
                     stats["files"] += 1
                     stats["bytes"] += st.st_size
@@ -6373,6 +6749,25 @@ async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
     except Exception as e:
         logger.warning(f"Storage orphan sweep failed: {e}")
 
+    # Batch AJ L17: broadcast delivery rows grew one row per recipient
+    # per campaign forever (the FAQ cache in the same family is capped
+    # by the GroupAI cluster). Campaign summaries keep the counts;
+    # per-recipient rows older than 90 days are purged.
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.models.schema import BroadcastDelivery
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(BroadcastDelivery).where(
+                    BroadcastDelivery.sent_at.is_not(None),
+                    BroadcastDelivery.sent_at < datetime.now(timezone.utc) - timedelta(days=90),
+                )
+            )
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"Broadcast delivery retention purge failed: {e}")
+
     if deleted_count > 0:
         logger.info(f"Auto-cleaned {deleted_count} expired (>{days}d) jobs and media files.")
     if orphan_count > 0:
@@ -6416,12 +6811,25 @@ async def create_recap_job(
         try:
             _resolved = Path(_req_url.strip("'\"")).resolve()
             _storage = settings.storage_root.resolve()
-            if not str(_resolved).startswith(str(_storage)):
+            if not _resolved.is_relative_to(_storage):
                 raise HTTPException(status_code=400, detail="Local video path is not allowed")
+            # Batch AJ H4: containment alone is not ownership — any
+            # authenticated user could name ANOTHER user's uploaded
+            # file (paths are guessable) and recap it. Non-admins may
+            # only use sources they own (same resolver the frame
+            # endpoint uses); admins keep the service-wide exemption.
+            if not settings.is_admin(user.id):
+                _owner_id = await _recap_frame_owner_id(db, _resolved)
+                if _owner_id != user.id:
+                    raise HTTPException(status_code=400, detail="Local video path is not allowed")
         except HTTPException:
             raise
         except Exception:
             raise HTTPException(status_code=400, detail="Local video path is not allowed")
+
+    # Batch AJ M1: refuse new recap work when the disk is nearly full
+    # (before any charge) — see _require_disk_headroom.
+    _require_disk_headroom()
 
     # Narrator slug allowlist (stored-XSS fix, hunt #2 X1): voice_slug
     # is persisted as the job's preset_voice and rendered in the admin
@@ -7047,8 +7455,9 @@ async def retry_recap_job(
     same balance gate, same atomic charge, same refund-on-failure.
     A retry is a NEW charge at the normal price — the failed job's
     charge was already refunded by the failure path, which the UI
-    copy states honestly. (The admin queue retry is a different,
-    deliberately uncharged re-dispatch; this endpoint never uses it.)
+    copy states honestly. (Since Batch AJ H6 the admin queue retry
+    matches this honesty: it re-charges a refunded job from the
+    ledger before re-dispatching, or refuses with 402.)
 
     Owner-only: _require_job_owner admits admins for reads, but a
     retry acts (and charges) as the job's owner, so ownership must be
@@ -7252,6 +7661,10 @@ async def download_recap_file(
             user = await db.get(User, token_uid)
     if user is None:
         raise HTTPException(status_code=401, detail="Telegram authentication required")
+    # Batch AJ L11: a stream token is a 2 h bearer credential — a user
+    # banned AFTER it was minted must not keep downloading with it.
+    if getattr(user, "status", None) == "BLOCKED" and not settings.is_admin(user.id):
+        raise HTTPException(status_code=404, detail="Recap file not found")
     # Ownership first, before any file is resolved from disk: a registry
     # entry or a DB job must belong to the requester (or the requester
     # must be an admin). Files on disk with no job record are not served.
@@ -8251,6 +8664,9 @@ async def submit_payment_slip(
     _gate: User = Depends(require_gate_verified),
 ):
     """Submit a payment transfer receipt screenshot for VIP upgrade."""
+    # Batch AJ M1: refuse the slip up front when the disk is nearly
+    # full instead of writing into a dying filesystem.
+    _require_disk_headroom()
     receipts_dir = settings.storage_root / "receipts"
     receipts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -8283,6 +8699,32 @@ async def submit_payment_slip(
         return h.hexdigest()
 
     new_slip_hash = await asyncio.to_thread(_sha256_of, dest_path)
+    slip_fingerprint = f"sha256:{new_slip_hash}"
+
+    # Batch AJ H1: the file-hash guard below only covers this user's
+    # PENDING rows whose slip FILES still exist — after an approval
+    # the file is deleted and the row is APPROVED, so the identical
+    # image minted a second credit; the same image sent from a second
+    # account was never checked at all. The stored content
+    # fingerprint is checked GLOBALLY: APPROVED anywhere blocks
+    # forever; PENDING by another user blocks; REJECTED never blocks
+    # (a rejected slip may be legitimately re-sent after fixing the
+    # submission). A partial UNIQUE index on the column (created at
+    # startup) backstops races the SELECT cannot see.
+    prior_rows = (await db.execute(
+        select(PaymentRequest).where(
+            PaymentRequest.slip_fingerprint == slip_fingerprint,
+            PaymentRequest.status != PaymentStatus.REJECTED.value,
+        )
+    )).scalars().all()
+    for prior in prior_rows:
+        if prior.status == PaymentStatus.APPROVED.value or prior.user_id != user.id:
+            dest_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=409,
+                detail="ဒီ ပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ ထပ်မပို့ဘဲ စောင့်ပေးပါ ခင်ဗျာ။",
+            )
+
     pending_slips = (await db.execute(
         select(PaymentRequest).where(
             PaymentRequest.user_id == user.id,
@@ -8299,45 +8741,68 @@ async def submit_payment_slip(
                 detail="ဒီ ပြေစာပုံကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ စစ်ဆေးနေဆဲ ဖြစ်လို့ ထပ်မပို့ဘဲ ခဏ စောင့်ပေးပါ ခင်ဗျာ။",
             )
 
-    # Resolve the plan EXACTLY like the bot flow
-    # (payments.create_payment_request): the DB PricingPlan row wins,
-    # the static catalogue is the fallback. The webapp previously read
-    # the catalogue only, so an admin price edit (which writes the DB
-    # row) made bot slips and webapp slips for the same code disagree
-    # on minutes/price. Unknown codes are rejected instead of silently
-    # defaulting to 250 min.
-    from app.models.schema import PricingPlan
-    from app.services.payments import get_plan_by_code
+    # Batch AJ M1: everything from plan resolution to the commit is
+    # wrapped — the old code saved the slip BEFORE resolving the plan,
+    # so a rejected submission (unknown package, DB error) orphaned
+    # the image in receipts/ forever.
+    from sqlalchemy.exc import IntegrityError as _IntegrityError
 
-    _db_plan = (
-        await db.execute(select(PricingPlan).where(PricingPlan.code == package_code))
-    ).scalar_one_or_none()
-    if _db_plan is not None:
-        minutes = _db_plan.minutes
-        amount_mmk = _db_plan.price_mmk
-    else:
-        _plan = get_plan_by_code(package_code)
-        if _plan is None:
-            raise HTTPException(status_code=400, detail="Unknown plan code")
-        minutes = _plan["minutes"]
-        # The amount is plan-derived (deep-hunt #4 A6), exactly like
-        # the bot flow: the client-typed amount_mmk form field is
-        # attacker-controlled, and the stored value is the number the
-        # admin sees in the pending list and the Telegram alert — so
-        # it must be the plan's real price, never what was typed.
-        amount_mmk = _plan["price_mmk"]
+    try:
+        # Resolve the plan EXACTLY like the bot flow
+        # (payments.create_payment_request): the DB PricingPlan row wins,
+        # the static catalogue is the fallback. The webapp previously read
+        # the catalogue only, so an admin price edit (which writes the DB
+        # row) made bot slips and webapp slips for the same code disagree
+        # on minutes/price. Unknown codes are rejected instead of silently
+        # defaulting to 250 min.
+        from app.models.schema import PricingPlan
+        from app.services.payments import get_plan_by_code
 
-    pay_req = PaymentRequest(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        package_code=package_code,
-        minutes=minutes,
-        amount_mmk=amount_mmk,
-        slip_url=f"/api/receipts/{clean_name}",
-        status=PaymentStatus.PENDING.value,
-    )
-    db.add(pay_req)
-    await db.commit()
+        _db_plan = (
+            await db.execute(select(PricingPlan).where(PricingPlan.code == package_code))
+        ).scalar_one_or_none()
+        if _db_plan is not None:
+            minutes = _db_plan.minutes
+            amount_mmk = _db_plan.price_mmk
+        else:
+            _plan = get_plan_by_code(package_code)
+            if _plan is None:
+                raise HTTPException(status_code=400, detail="Unknown plan code")
+            minutes = _plan["minutes"]
+            # The amount is plan-derived (deep-hunt #4 A6), exactly like
+            # the bot flow: the client-typed amount_mmk form field is
+            # attacker-controlled, and the stored value is the number the
+            # admin sees in the pending list and the Telegram alert — so
+            # it must be the plan's real price, never what was typed.
+            amount_mmk = _plan["price_mmk"]
+
+        pay_req = PaymentRequest(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            package_code=package_code,
+            minutes=minutes,
+            amount_mmk=amount_mmk,
+            slip_url=f"/api/receipts/{clean_name}",
+            status=PaymentStatus.PENDING.value,
+            slip_fingerprint=slip_fingerprint,
+        )
+        db.add(pay_req)
+        await db.commit()
+    except HTTPException:
+        dest_path.unlink(missing_ok=True)
+        raise
+    except _IntegrityError:
+        # The startup-created partial unique index fired: a concurrent
+        # submission of the same slip won the race (AJ H1 backstop).
+        await db.rollback()
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=409,
+            detail="ဒီ ပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ ထပ်မပို့ဘဲ စောင့်ပေးပါ ခင်ဗျာ။",
+        )
+    except Exception:
+        dest_path.unlink(missing_ok=True)
+        raise
 
     # Instant alert to admins via Telegram. Batch I: the alert now
     # carries the same three-action review keyboard as the bot slip
@@ -9126,7 +9591,18 @@ async def retry_queued_job(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Re-enqueue a failed or cancelled job so it will be claimed and re-executed."""
+    """Re-enqueue a failed or cancelled job so it will be claimed and re-executed.
+
+    Batch AJ H6: a recap job whose charge was REFUNDED (failure /
+    cancel paths refund in full) is RE-CHARGED from the recap ledger
+    before requeueing — the old behaviour re-dispatched it uncharged,
+    so every refunded failure could be re-run free from this button.
+    If the user can no longer cover the original charge, the retry is
+    refused (402) and the job stays FAILED/CANCELLED. A job whose
+    charge was never refunded keeps its charge (no double charge).
+    Voice jobs need nothing here: the worker's consume is net-aware
+    and re-bills exactly the unrefunded remainder on completion.
+    """
     job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -9139,6 +9615,55 @@ async def retry_queued_job(
             status_code=400,
             detail=f"Only FAILED or CANCELLED jobs can be retried (this job is {job.status})",
         )
+
+    _is_recap_retry = (
+        job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap"
+    )
+    if _is_recap_retry:
+        from app.services.ledger import (
+            recap_debit_total_for_job,
+            recap_refund_total_for_job,
+            record_recap_credit_event,
+        )
+
+        _debit_total = await recap_debit_total_for_job(db, job_id)
+        _refund_total = await recap_refund_total_for_job(db, job_id)
+        if _debit_total > 0 and _debit_total - _refund_total <= 0:
+            # Fully refunded: re-charge the original amount in THIS
+            # transaction (same commit as the status flip below).
+            _owner = await db.get(User, job.user_id)
+            if _owner is None or int(_owner.recap_credits or 0) < _debit_total:
+                raise HTTPException(
+                    status_code=402,
+                    detail="အသုံးပြုသူ၏ Recap Credit မလုံလောက်သောကြောင့် ဒီအလုပ်ကို ပြန်စရန် မဖြစ်နိုင်ပါ။",
+                )
+            _owner.recap_credits = int(_owner.recap_credits or 0) - _debit_total
+            await record_recap_credit_event(
+                db,
+                user_id=job.user_id,
+                direction="DEBIT",
+                credits=_debit_total,
+                reference_id=job_id,
+                note="Admin queue retry re-charge (Batch AJ H6)",
+            )
+            _state = _load_persisted_recap_state(job)
+            if _state is not None:
+                _state["credit_deducted"] = True
+                _state["credits_charged"] = _debit_total
+                _state["credit_refunded"] = False
+                _state["credits_refunded"] = 0
+                job.recap_config = json.dumps(_state, ensure_ascii=False)
+        elif _debit_total > 0:
+            # Charged and NOT (fully) refunded: make the persisted
+            # credit state match the ledger truth so the re-dispatched
+            # runner neither re-charges nor refunds a phantom amount.
+            _state = _load_persisted_recap_state(job)
+            if _state is not None:
+                _state["credit_deducted"] = True
+                _state["credits_charged"] = _debit_total
+                _state["credit_refunded"] = _refund_total >= _debit_total
+                _state["credits_refunded"] = _refund_total
+                job.recap_config = json.dumps(_state, ensure_ascii=False)
 
     job.status = JobStatus.QUEUED.value
     job.started_at = None
@@ -9157,16 +9682,15 @@ async def retry_queued_job(
         try:
             from app.webapp.api import _run_recap_background_job, _recap_redispatch_plan
             u = await db.get(User, job.user_id)
-            # Restore the persisted submit-time config like the queue
-            # worker does — but NOT the credit state: a FAILED/CANCELLED
-            # job's charge was already refunded by the failure/cancel
-            # paths, so the retry runs uncharged (historical behaviour).
-            plan = _recap_redispatch_plan(job, u, restore_credit_state=False)
+            # Batch AJ H6: restore the credit state — the block above
+            # has already reconciled it with the ledger (re-charged if
+            # the original charge was refunded, kept if it was not).
+            plan = _recap_redispatch_plan(job, u, restore_credit_state=True)
             plan["entry"]["progress_label"] = t("recap_progress_requeued", getattr(u, "language_code", None) or "my")
             RECAP_JOBS_REGISTRY[job_id] = plan["entry"]
             asyncio.create_task(_run_recap_background_job(
                 job_id, plan["cfg"], job.user_id, job.chat_id or job.user_id,
-                is_vip=plan["is_vip"], credit_deducted=False, phase=plan["phase"],
+                is_vip=plan["is_vip"], credit_deducted=plan["credit_deducted"], phase=plan["phase"],
             ))
         except Exception as e:
             logger.warning(f"Could not re-dispatch recap job background task: {e}")
@@ -9486,6 +10010,36 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = limit_val
+        elif key in (
+            "free_monthly_allowance_seconds",
+            "free_daily_job_limit",
+            "recap_free_max_duration_seconds",
+            "recap_max_duration_seconds",
+        ):
+            # Batch AJ M6: the money-adjacent settings were stored
+            # verbatim — a free_monthly_allowance_seconds of -1 wrapped
+            # the free allowance to an absurd value, and zero/negative
+            # recap durations bricked or unbound the recap tiers.
+            _bounds = {
+                "free_monthly_allowance_seconds": (0, 31_536_000),
+                "free_daily_job_limit": (0, 1000),
+                "recap_free_max_duration_seconds": (0, 86400),
+                "recap_max_duration_seconds": (60, 86400),
+            }
+            lo, hi = _bounds[key]
+            try:
+                limit_val = int(value)
+            except (TypeError, ValueError):
+                limit_val = lo - 1
+            if limit_val < lo or limit_val > hi:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"ဆက်တင် ({key}) သည် {lo} မှ {hi} အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = limit_val
     return cleaned
 
 
@@ -9630,11 +10184,23 @@ async def approve_payment_slip(
 
     ok, p_req, _code = await approve_payment_request(db, req.request_id, admin_id=admin.id)
     if not ok or p_req is None:
+        # Batch AJ M3: a live review claim held by ANOTHER admin is a
+        # conflict, not "not found" — surface it as 409 so this admin
+        # knows to wait instead of hunting for a vanished slip.
+        if _code == "CLAIMED_BY_OTHER":
+            raise HTTPException(
+                status_code=409,
+                detail="အခြား Admin တစ်ဦးက ဒီပြေစာကို စစ်ဆေးနေပါသည်။ ခဏ စောင့်ပေးပါ ခင်ဗျာ။",
+            )
         raise HTTPException(status_code=404, detail="Pending payment request not found")
     await db.commit()
 
     _plan = _get_plan(p_req.package_code)
     recap_added = _plan["recap_credits"] if _plan else 0
+    # Batch AJ M4: an edited approval grants the CORRECTED recap
+    # credits — report what was actually granted.
+    if getattr(p_req, "edited_recap_credits", None) is not None:
+        recap_added = p_req.edited_recap_credits
     target_user = await db.get(User, p_req.user_id)
 
     # Instant Telegram notification to the approved user
@@ -9708,6 +10274,11 @@ async def reject_payment_slip(
         db, req.request_id, admin_id=admin.id, reason=req.reason
     )
     if not ok or p_req is None:
+        if _code == "CLAIMED_BY_OTHER":
+            raise HTTPException(
+                status_code=409,
+                detail="အခြား Admin တစ်ဦးက ဒီပြေစာကို စစ်ဆေးနေပါသည်။ ခဏ စောင့်ပေးပါ ခင်ဗျာ။",
+            )
         raise HTTPException(status_code=404, detail="Pending payment request not found")
     await db.commit()
 
@@ -9762,6 +10333,10 @@ class AdjustUserRequest(BaseModel):
     add_seconds: int = Field(0, ge=-6_000_000, le=6_000_000)
     add_recap_credits: int = Field(0, ge=-100_000, le=100_000)
     reason: str = ""
+    # Batch AJ M5: the Mini App sends one key per adjust-dialog intent;
+    # a double-tap / client retry replays the SAME key and must not
+    # apply the adjustment twice. None = legacy client (no dedupe).
+    idempotency_key: Optional[str] = None
 
 
 @api_router.post("/admin/adjust-user")
@@ -9806,6 +10381,7 @@ async def adjust_user_status(
                 source=LedgerSource.PURCHASE,
                 direction=LedgerDirection.CREDIT if seconds_delta > 0 else LedgerDirection.DEBIT,
                 reason=reason,
+                idempotency_key=req.idempotency_key or None,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -9843,6 +10419,7 @@ async def adjust_user_status(
                     source=LedgerSource.PURCHASE,
                     direction=LedgerDirection.DEBIT,
                     reason=reason,
+                    idempotency_key=f"{req.idempotency_key}:drain" if req.idempotency_key else None,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
@@ -9851,22 +10428,57 @@ async def adjust_user_status(
     if category_change:
         target_user.account_category = req.account_category
 
+    recap_credits_applied = 0
     if credits_delta != 0:
-        # Atomic floor-guarded update (hunt F5): same max(0, …)
-        # semantics as before, but as a single conditional UPDATE so a
-        # concurrent charge/refund can no longer be overwritten by a
-        # stale read-modify-write.
-        await db.execute(
-            update(User)
-            .where(User.id == target_user.id)
-            .values(
-                recap_credits=case(
-                    (User.recap_credits + credits_delta < 0, 0),
-                    else_=User.recap_credits + credits_delta,
+        # Batch AJ M5: recap adjustments previously moved the balance
+        # with NO recap-ledger event (admin adjusts were invisible in
+        # the recap ledger), and the floor clamp silently applied less
+        # than requested while the response/audit reported the FULL
+        # delta. Now: dedupe by the client's idempotency key, record
+        # the event with the ACTUALLY-applied (floor-clamped) delta,
+        # and report that same applied delta.
+        from app.services.ledger import record_recap_credit_event
+
+        adj_ref = (
+            f"ADMINADJ:{req.idempotency_key}" if req.idempotency_key
+            else f"ADMINADJ:{uuid.uuid4().hex}"
+        )
+        prior_event = (await db.execute(
+            select(RecapCreditLedgerEvent).where(
+                RecapCreditLedgerEvent.reference_id == adj_ref
+            )
+        )).scalars().first()
+        if prior_event is not None:
+            recap_credits_applied = (
+                int(prior_event.credits) if prior_event.direction == "CREDIT"
+                else -int(prior_event.credits)
+            )
+        else:
+            credits_before = int(target_user.recap_credits or 0)
+            # Atomic floor-guarded update (hunt F5): same max(0, …)
+            # semantics as before, but as a single conditional UPDATE so a
+            # concurrent charge/refund can no longer be overwritten by a
+            # stale read-modify-write.
+            await db.execute(
+                update(User)
+                .where(User.id == target_user.id)
+                .values(
+                    recap_credits=case(
+                        (User.recap_credits + credits_delta < 0, 0),
+                        else_=User.recap_credits + credits_delta,
+                    )
                 )
             )
-        )
-        await db.refresh(target_user)
+            await db.refresh(target_user)
+            recap_credits_applied = int(target_user.recap_credits or 0) - credits_before
+            if recap_credits_applied != 0:
+                await record_recap_credit_event(
+                    db,
+                    user_id=target_user.id,
+                    direction="CREDIT" if recap_credits_applied > 0 else "DEBIT",
+                    credits=abs(recap_credits_applied),
+                    reference_id=adj_ref,
+                )
 
     db.add(AuditLog(
         admin_id=admin.id,
@@ -9878,6 +10490,7 @@ async def adjust_user_status(
             "via": "miniapp",
             "seconds_delta": seconds_delta,
             "recap_credits_delta": credits_delta,
+            "recap_credits_applied": recap_credits_applied,
             "account_category": req.account_category if category_change else None,
             "purchased_seconds_zeroed": purchased_seconds_zeroed,
         }),
@@ -9887,6 +10500,7 @@ async def adjust_user_status(
         "success": True,
         "message": f"အသုံးပြုသူ {req.user_id} ကို ပြင်ဆင်ပြီးပါပြီ",
         "purchased_seconds_zeroed": purchased_seconds_zeroed,
+        "recap_credits_applied": recap_credits_applied,
     }
 
 
@@ -9927,11 +10541,12 @@ async def send_admin_broadcast(
     user_ids = res.scalars().all()
     db_blocked_count = total_db_users - len(user_ids)
 
-    # Deliver via Telegram Bot
+    # Deliver via Telegram Bot. Batch AJ M2: with no bot token the
+    # endpoint previously fell through to a {"success": True,
+    # "queued"} return having sent NOTHING — it now raises 503 at
+    # the end of the function instead (see below).
     if settings.bot_token:
         from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
         from aiogram.exceptions import (
             TelegramForbiddenError,
             TelegramBadRequest,
@@ -9939,44 +10554,59 @@ async def send_admin_broadcast(
             TelegramAPIError,
         )
 
-        bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        # Batch AJ M2: plain text, exactly like the bot broadcast
+        # path — the old HTML default parse mode let a stray "<" in
+        # the admin's text break or silently reformat the message.
+        bot = Bot(token=settings.bot_token)
         sent_count = 0
         blocked_by_user_count = 0
         deactivated_or_not_found_count = 0
         invalid_test_id_count = 0
         other_error_count = 0
         newly_blocked_ids = []
+        # Batch AJ M2: per-recipient outcomes, persisted as
+        # BroadcastDelivery rows below — the Mini App path previously
+        # kept no delivery records at all (the bot path did).
+        delivery_outcomes: dict[int, tuple[str, str | None]] = {}
 
         for uid in user_ids:
             # Detect legacy dummy/test IDs (< 8 digits)
             if len(str(uid)) < 8:
                 invalid_test_id_count += 1
+                delivery_outcomes[uid] = ("SKIPPED", "invalid test id")
                 continue
 
             try:
-                await bot.send_message(chat_id=uid, text=text, parse_mode="HTML")
+                await bot.send_message(chat_id=uid, text=text)
                 sent_count += 1
+                delivery_outcomes[uid] = ("SENT", None)
                 await asyncio.sleep(0.05)
             except TelegramForbiddenError:
                 # User has blocked the bot
                 blocked_by_user_count += 1
                 newly_blocked_ids.append(uid)
+                delivery_outcomes[uid] = ("FAILED", "blocked")
             except TelegramBadRequest:
                 # Chat not found, user deactivated, or account deleted
                 deactivated_or_not_found_count += 1
+                delivery_outcomes[uid] = ("FAILED", "deactivated or not found")
             except TelegramRetryAfter as e:
                 # Handle flood rate limits gracefully
                 await asyncio.sleep(e.retry_after)
                 try:
-                    await bot.send_message(chat_id=uid, text=text, parse_mode="HTML")
+                    await bot.send_message(chat_id=uid, text=text)
                     sent_count += 1
+                    delivery_outcomes[uid] = ("SENT", None)
                 except TelegramForbiddenError:
                     blocked_by_user_count += 1
                     newly_blocked_ids.append(uid)
+                    delivery_outcomes[uid] = ("FAILED", "blocked")
                 except Exception:
                     other_error_count += 1
+                    delivery_outcomes[uid] = ("FAILED", "error after retry")
             except Exception:
                 other_error_count += 1
+                delivery_outcomes[uid] = ("FAILED", "error")
 
         await bot.session.close()
 
@@ -9993,12 +10623,41 @@ async def send_admin_broadcast(
 
         failed_count = len(user_ids) - sent_count
 
+        # Batch AJ M2: persist the campaign + per-recipient delivery
+        # records (the schema the bot broadcast path uses), so Mini
+        # App broadcasts are auditable and counted the same way.
+        from app.models.schema import BroadcastCampaign, BroadcastDelivery
+        from app.models.enums import BroadcastCampaignStatus, BroadcastDeliveryStatus
+
+        campaign = BroadcastCampaign(
+            admin_id=admin.id,
+            confirmation_token=str(uuid.uuid4()),
+            message_text=text,
+            status=BroadcastCampaignStatus.COMPLETED.value,
+            total_recipients=len(user_ids),
+            sent_count=sent_count,
+            failed_count=failed_count,
+            skipped_count=invalid_test_id_count,
+            finished_at=utc_now(),
+        )
+        db.add(campaign)
+        await db.flush()
+        for uid, (d_status, d_err) in delivery_outcomes.items():
+            db.add(BroadcastDelivery(
+                campaign_id=campaign.id,
+                user_id=uid,
+                status=d_status,
+                attempts=1,
+                error_message=d_err,
+                sent_at=utc_now() if d_status == BroadcastDeliveryStatus.SENT.value else None,
+            ))
+
         # Log broadcast to audit log with granular delivery telemetry
         db.add(AuditLog(
             admin_id=admin.id,
             action="broadcast.send_webapp",
             target_type="broadcast_campaign",
-            target_id=f"WEBAPP_BC_{int(time.time())}",
+            target_id=campaign.id,
             details_json=json.dumps({
                 "snippet": text[:80],
                 "total_db_users": total_db_users,
@@ -10015,6 +10674,7 @@ async def send_admin_broadcast(
 
         return {
             "success": True,
+            "campaign_id": campaign.id,
             "total_users_in_db": total_db_users,
             "total_targeted": len(user_ids),
             "sent_count": sent_count,
@@ -10029,4 +10689,9 @@ async def send_admin_broadcast(
             },
         }
 
-    return {"success": True, "message": f"အသုံးပြုသူ {len(user_ids)} ဦးထံ Broadcast ပို့ရန် တန်းစီပြီးပါပြီ"}
+    # Batch AJ M2: no bot token → nothing was sent; say so (503)
+    # instead of the old false {"success": True, "queued"}.
+    raise HTTPException(
+        status_code=503,
+        detail="Bot token မရှိသေးသောကြောင့် Broadcast ပို့၍ မရပါ။",
+    )

@@ -87,6 +87,24 @@ def part_label(template: str, n: int, total: int) -> str:
 
 AUDIO_LEVELS_TIMEOUT_SECONDS = 1800  # hang backstop; the 8 kHz decode runs far faster than realtime
 
+# Batch AJ / M10b: hard cap for the audio_levels watchdog. Callers
+# used to pass timeout=ffmpeg_timeout(duration) — 18,000 s (5 h) for
+# a 600 s source — pinning a recap slot during source splitting,
+# outside the job deadline. The decode runs far faster than
+# realtime, so 1800 s is a generous ceiling, and audio_levels
+# clamps any larger caller value to it.
+AUDIO_LEVELS_MAX_TIMEOUT_SECONDS = 1800
+
+# Batch AJ / L21: ffmpeg/ffprobe may only open local files and
+# pipes — never network protocols (see core.MEDIA_PROTOCOL_WHITELIST).
+MEDIA_PROTOCOL_WHITELIST = "file,pipe"
+
+
+def split_audio_levels_timeout(duration: float | None) -> float:
+    """Watchdog for an audio_levels pass over this much media:
+    ffmpeg_timeout(duration) capped at AUDIO_LEVELS_MAX_TIMEOUT_SECONDS."""
+    return min(float(ffmpeg_timeout(duration)), float(AUDIO_LEVELS_MAX_TIMEOUT_SECONDS))
+
 
 def audio_levels(ffmpeg: str, source: str | Path, *, timeout: float | None = None) -> Optional[np.ndarray]:
     """Loudness (dBFS) of every 50 ms of the video's sound; None when it has no sound.
@@ -94,13 +112,19 @@ def audio_levels(ffmpeg: str, source: str | Path, *, timeout: float | None = Non
     The decode is bounded (audit fix 2026-11-03): a watchdog kills
     ffmpeg after ``timeout`` seconds and the call raises RuntimeError
     instead of blocking the job forever on a wedged decoder."""
-    cmd = [ffmpeg, "-v", "error", "-i", str(source), "-vn", "-ac", "1", "-ar", str(LEVEL_RATE),
+    # Batch AJ / M10b: clamp — no caller may re-arm the 5 h watchdog.
+    effective_timeout = (
+        AUDIO_LEVELS_TIMEOUT_SECONDS if timeout is None
+        else min(float(timeout), float(AUDIO_LEVELS_MAX_TIMEOUT_SECONDS))
+    )
+    cmd = [ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+           "-v", "error", "-i", str(source), "-vn", "-ac", "1", "-ar", str(LEVEL_RATE),
            "-f", "s16le", "pipe:1"]
     hop = int(LEVEL_RATE * LEVEL_FRAME)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     timed_out = threading.Event()
     watchdog = threading.Timer(
-        AUDIO_LEVELS_TIMEOUT_SECONDS if timeout is None else float(timeout),
+        effective_timeout,
         lambda: (timed_out.set(), proc.kill()),
     )
     watchdog.daemon = True
@@ -125,7 +149,7 @@ def audio_levels(ffmpeg: str, source: str | Path, *, timeout: float | None = Non
     if timed_out.is_set():
         raise RuntimeError(
             f"audio_levels timed out after "
-            f"{AUDIO_LEVELS_TIMEOUT_SECONDS if timeout is None else float(timeout):.0f}s "
+            f"{effective_timeout:.0f}s "
             f"decoding {source} — failing instead of hanging."
         )
     if not levels:
@@ -231,7 +255,8 @@ def size_capped_part_seconds(duration: float, total_bytes: int, part_seconds: fl
 
 
 def _has_audio(ffprobe: str, source: str | Path) -> bool:
-    p = subprocess.run([ffprobe, "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of",
+    p = subprocess.run([ffprobe, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+                        "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of",
                         "csv=p=0", str(source)], capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=PROBE_TIMEOUT_SECONDS)
     return bool(p.stdout.strip())
@@ -268,7 +293,8 @@ def render_part(ffmpeg: str, source: str | Path, start: float, end: float, outpu
     """One part: exact start/end re-encode of the finished video, with the
     part label PNG overlaid at its 0..1 centre position. NVENC failure
     falls back to libx264 (same pattern as the overlay renderer)."""
-    cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+    cmd = [ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+           "-y", "-hide_banner", "-loglevel", "error",
            "-ss", f"{float(start):.3f}", "-t", f"{max(0.05, float(end) - float(start)):.3f}",
            "-i", str(source)]
     if label_png is not None and Path(label_png).is_file():
@@ -369,7 +395,7 @@ def split_rendered_video(
     levels = None
     if smart_cut and has_audio:
         log("🔊 Splitter: reading the sound to find the pauses…")
-        levels = audio_levels(ffmpeg, source, timeout=ffmpeg_timeout(duration))
+        levels = audio_levels(ffmpeg, source, timeout=split_audio_levels_timeout(duration))
     elif smart_cut:
         log("ℹ️ Splitter: no sound in this video — exact cuts")
 
@@ -515,7 +541,7 @@ def split_source_into_segments(
                  "end": round(duration, 3), "cut": "end"}]
 
     has_audio = _has_audio(ffprobe, source)
-    levels = audio_levels(ffmpeg, source, timeout=ffmpeg_timeout(duration)) if has_audio else None
+    levels = audio_levels(ffmpeg, source, timeout=split_audio_levels_timeout(duration)) if has_audio else None
     plan = plan_parts(duration, part_seconds, smart=True, levels=levels)
     encoders = ffmpeg_encoders(ffmpeg)
     encoder = "h264_nvenc" if ("h264_nvenc" in encoders and nvenc_usable(ffmpeg)) else "libx264"

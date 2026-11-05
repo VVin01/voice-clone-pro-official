@@ -38,6 +38,63 @@ LOCAL_MEDIA_TIMEOUT_FLOOR_SECONDS = 600
 LOCAL_MEDIA_TIMEOUT_PER_SECOND = 30.0
 THUMBNAIL_TIMEOUT_SECONDS = 60
 
+# Batch AJ / L21: every ffprobe/ffmpeg invocation in this module may
+# only open local files and pipes — never network protocols. The
+# hunt confirmed (crafted ffconcat file with a video extension,
+# probed through probe_local_media below) that playlist/concat-style
+# inputs can make the demuxer follow embedded references; with no
+# whitelist ffmpeg's protocol surface was unrestricted. `file` is
+# required for every legitimate local input and `pipe` for the
+# engine's pipe workflows; http/https/tcp/udp/... are refused.
+MEDIA_PROTOCOL_WHITELIST = "file,pipe"
+
+# Batch AJ / M10a: TOTAL wall-clock budget for one logical media
+# download (all client attempts of it combined). The base yt-dlp
+# opts carry retries:10 / fragment_retries:10 and a 20 s
+# socket_timeout that only fires on an IDLE socket — a slow-drip
+# host that keeps sending bytes could hold a download, and the
+# recap slot behind it, indefinitely. The budget is enforced by a
+# progress hook shared by every attempt of the download (see
+# _attempt_plans): yt-dlp calls it as bytes arrive, and it raises
+# MediaDownloadTimeoutError once the budget is spent.
+MEDIA_DOWNLOAD_TOTAL_TIMEOUT_SECONDS = 1800
+
+
+class MediaDownloadTimeoutError(RuntimeError):
+    """A media download exceeded its total wall-clock budget."""
+
+
+def _media_deadline_progress_hook(*, started: float, budget_seconds: float,
+                                  clock: Callable[[], float] = time.monotonic):
+    """yt-dlp progress hook enforcing a total download budget.
+
+    ``started``/``clock`` are injectable for tests. The hook raises
+    MediaDownloadTimeoutError as soon as the elapsed wall clock
+    exceeds the budget, aborting the in-flight download.
+    """
+    def _hook(_status: Dict[str, Any]) -> None:
+        if clock() - started > budget_seconds:
+            raise MediaDownloadTimeoutError(
+                f"Media download exceeded its total time budget of "
+                f"{int(budget_seconds)}s — aborting instead of holding "
+                "the download slot indefinitely."
+            )
+    return _hook
+
+
+def _default_download_dir() -> str:
+    """Batch AJ / L7: the default download directory lives under
+    settings.storage_root (covered by the storage sweeps), not in
+    os.getcwd()/downloads where nothing ever cleaned it. Falls back
+    to the old cwd location only when the app settings package is
+    unavailable (standalone engine use)."""
+    try:
+        from app.config import settings
+
+        return str(settings.storage_root / "downloads")
+    except Exception:
+        return os.path.join(os.getcwd(), "downloads")
+
 
 def _local_media_timeout(duration_seconds) -> int:
     """Wall-clock timeout (seconds) for an ffmpeg pass over this media."""
@@ -74,7 +131,8 @@ def probe_local_media(file_path: str) -> Dict[str, Any]:
     }
     try:
         cmd = [
-            "ffprobe", "-v", "quiet",
+            "ffprobe", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+            "-v", "quiet",
             "-print_format", "json",
             "-show_format", "-show_streams",
             file_path
@@ -122,7 +180,7 @@ def extract_thumbnail_from_media(file_path: str, output_path: str, timestamp_sec
     try:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         cmd = [
-            "ffmpeg", "-y",
+            "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
             "-ss", str(max(0.1, timestamp_sec)),
             "-i", file_path,
             "-vframes", "1",
@@ -878,7 +936,7 @@ def find_best_preview_timestamp(video_path: str, target_dir: Optional[str] = Non
     if os.path.isfile(video_path):
         try:
             cmd = [
-                "ffprobe", "-v", "error",
+                "ffprobe", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-v", "error",
                 "-select_streams", "s",
                 "-show_entries", "stream=index",
                 "-of", "csv=p=0",
@@ -887,7 +945,7 @@ def find_best_preview_timestamp(video_path: str, target_dir: Optional[str] = Non
             res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
             if res.returncode == 0 and res.stdout.strip():
                 cmd2 = [
-                    "ffprobe", "-v", "error",
+                    "ffprobe", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-v", "error",
                     "-select_streams", "s:0",
                     "-show_entries", "packet=pts_time",
                     "-of", "default=noprint_wrappers=1:nokey=1",
@@ -926,7 +984,7 @@ def find_best_preview_timestamp(video_path: str, target_dir: Optional[str] = Non
 class MediaDownloader:
     find_best_preview_timestamp = staticmethod(find_best_preview_timestamp)
     def __init__(self, download_dir: Optional[str] = None):
-        self.download_dir = download_dir or os.path.join(os.getcwd(), "downloads")
+        self.download_dir = download_dir or _default_download_dir()
         os.makedirs(self.download_dir, exist_ok=True)
 
     def _get_base_opts(self, target_url: str = "") -> Dict[str, Any]:
@@ -1064,9 +1122,31 @@ class MediaDownloader:
         Token provider args (see _with_pot / _pot_extractor_args):
         the provider base_url and the scoped POT log shim — plus the
         WARP egress proxy (see _warp_proxy_url) when not disabled.
+
+        Batch AJ / M10a: media-stage attempts additionally share ONE
+        total-deadline progress hook (armed here, when the plan list
+        is first consumed) so client rotation cannot reset the clock
+        and a slow-drip host cannot pin the download forever. The
+        info stage carries no hook: it has its own trimmed budget.
         """
+        deadline_hook = None
+        if stage == "media":
+            deadline_hook = _media_deadline_progress_hook(
+                started=time.monotonic(),
+                budget_seconds=MEDIA_DOWNLOAD_TOTAL_TIMEOUT_SECONDS,
+            )
+
+        def _with_deadline(opts: Dict[str, Any]) -> Dict[str, Any]:
+            if deadline_hook is None:
+                return opts
+            o = dict(opts)
+            hooks = list(o.get('progress_hooks') or [])
+            hooks.append(deadline_hook)
+            o['progress_hooks'] = hooks
+            return o
+
         if not _is_youtube_url(expanded_url):
-            yield "default", base_opts
+            yield "default", _with_deadline(base_opts)
             return
 
         def _staged(opts: Dict[str, Any]) -> Dict[str, Any]:
@@ -1119,10 +1199,10 @@ class MediaDownloader:
                 o['proxy'] = proxy
             return o
 
-        yield "web_embedded", _with_pot(_staged(_with_client(base_opts, "web_embedded")))
-        yield "default", _with_pot(_staged(dict(base_opts)))
-        yield "android", _with_pot(_staged(_with_client(base_opts, "android")))
-        yield "mweb", _with_pot(_staged(_with_client(base_opts, "mweb")))
+        yield "web_embedded", _with_deadline(_with_pot(_staged(_with_client(base_opts, "web_embedded"))))
+        yield "default", _with_deadline(_with_pot(_staged(dict(base_opts))))
+        yield "android", _with_deadline(_with_pot(_staged(_with_client(base_opts, "android"))))
+        yield "mweb", _with_deadline(_with_pot(_staged(_with_client(base_opts, "mweb"))))
 
     def _tikwm_resolve(self, page_url: str) -> Optional[Dict[str, Any]]:
         """Guarded tikwm resolver lookup for a TikTok page URL.
@@ -1163,6 +1243,23 @@ class MediaDownloader:
         if not _valid_tikwm_play_url(play_url):
             _TIKWM_BREAKER.record_failure()
             logger.warning(f"tikwm play URL failed validation for {page_url}: {play_url!r}")
+            return None
+
+        # Batch AJ L19: the play URL is extractor-supplied, so it also
+        # goes through the shared SSRF validator (scheme/credentials/
+        # DNS answers must all be public) before any byte is fetched.
+        # The host allowlist above already constrains it to TikTok CDN
+        # names; this adds the DNS-answer check those names resolve
+        # to. (The residual DNS-rebinding TOCTOU against yt-dlp's own
+        # fetching is documented in url_safety.py — accepted, with the
+        # recap path re-validating immediately before download.)
+        try:
+            from app.services.url_safety import validate_public_url
+
+            validate_public_url(play_url)
+        except Exception as e:
+            _TIKWM_BREAKER.record_failure()
+            logger.warning(f"tikwm play URL failed SSRF validation for {page_url}: {e}")
             return None
 
         # Assert the play URL really serves an mp4 of plausible size
@@ -1282,8 +1379,17 @@ class MediaDownloader:
                     logger.warning(f"tikwm download refused: content-type {ctype!r} for {expanded_url}")
                     return None
                 written = 0
+                # Batch AJ / M10a: the same total wall-clock budget
+                # as the yt-dlp media stage — the per-chunk read
+                # timeout alone cannot stop a slow-drip host.
+                _drip_started = time.monotonic()
                 with open(file_path, 'wb') as fh:
                     for chunk in resp.iter_content(chunk_size=256 * 1024):
+                        if time.monotonic() - _drip_started > MEDIA_DOWNLOAD_TOTAL_TIMEOUT_SECONDS:
+                            raise RuntimeError(
+                                f"tikwm download exceeded the "
+                                f"{MEDIA_DOWNLOAD_TOTAL_TIMEOUT_SECONDS}s total budget"
+                            )
                         if chunk:
                             written += len(chunk)
                             if written > MAX_DOWNLOAD_BYTES:
@@ -1915,7 +2021,7 @@ class MediaDownloader:
             vf_args = ["-vf", f"scale=-2:'min({max_height},ih)'"]
 
         cmd = [
-            "ffmpeg", "-y",
+            "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
             "-i", file_path,
             *vf_args,
             "-c:v", "libx264",
@@ -1952,7 +2058,7 @@ class MediaDownloader:
         out_mp3 = os.path.join(dest_dir, f"{info['id']}_{safe_title}.mp3")
 
         cmd = [
-            "ffmpeg", "-y",
+            "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
             "-i", file_path,
             "-vn",
             "-acodec", "libmp3lame",
@@ -1970,7 +2076,7 @@ class MediaDownloader:
             # Generate synthetic silent audio so pipeline does not crash
             dur = max(5.0, float(info.get("duration") or 10.0))
             silent_cmd = [
-                "ffmpeg", "-y",
+                "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
                 "-f", "lavfi",
                 "-i", "anullsrc=r=44100:cl=stereo",
                 "-t", str(dur),

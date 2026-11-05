@@ -37,7 +37,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python packages
-RUN pip install --no-cache-dir -r requirements.txt gradio_client
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Batch V (2026-11-04): bake the local-Whisper fallback model into the
 # image. Transcription tries Groq first; on ANY Groq refusal the local

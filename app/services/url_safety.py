@@ -24,6 +24,13 @@ pinned-IP fetch mode in this codebase. The window is therefore narrowed
 to seconds, not eliminated. A fully pinned fetch would require
 downloading the source through a controlled HTTP client first and
 passing yt-dlp a local file, which is out of scope for this patch.
+
+Batch AJ (L19) re-review: this TOCTOU residual is ACCEPTED and
+documented rather than papered over — no clean pinned-IP fetch exists
+for yt-dlp in this stack. Extractor-discovered media URLs that the
+code fetches ITSELF (the tikwm fallback's play URL) are now passed
+through validate_public_url before fetching, on top of their CDN
+host allowlist; everything else is fetched by yt-dlp internally.
 """
 
 from __future__ import annotations

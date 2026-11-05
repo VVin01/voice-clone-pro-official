@@ -390,6 +390,7 @@ class WhisperTimestampService:
                 [
                     ffprobe,
                     "-v", "error",
+                    "-protocol_whitelist", "file,pipe",
                     "-select_streams", "a:0",
                     "-show_entries", "stream=index",
                     "-of", "csv=p=0",
@@ -523,6 +524,7 @@ class WhisperTimestampService:
                 temp_audio = path.parent / f"_groq_fast_{path.stem}_{int(time.time())}.mp3"
                 cmd = [
                     ff, "-y", "-hide_banner", "-loglevel", "error",
+                    "-protocol_whitelist", "file,pipe",
                     "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
                     str(temp_audio)
                 ]

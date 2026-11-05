@@ -206,9 +206,25 @@ async def deliver_broadcast(
                     campaign_id=campaign.id,
                 )
 
-            # Prevent concurrent execution
+            # Prevent concurrent execution — Batch AJ M2: the old
+            # code logged "already RUNNING" and then delivered ANYWAY,
+            # double-sending to every still-PENDING recipient when two
+            # deliveries raced. A fresh delivery attempt for a RUNNING
+            # campaign now returns its current state unsent; the only
+            # legitimate continuation is resume_broadcast_campaign,
+            # which arrives with an empty recipient list and takes the
+            # PENDING rows from the DB.
             if campaign.status == BroadcastCampaignStatus.RUNNING.value and len(recipient_ids) == campaign.total_recipients:
-                logger.warning("Campaign %s is already RUNNING", campaign_id)
+                logger.warning("Campaign %s is already RUNNING; refusing duplicate delivery", campaign_id)
+                return BroadcastResult(
+                    total=campaign.total_recipients,
+                    sent=campaign.sent_count,
+                    failed=campaign.failed_count,
+                    skipped=campaign.skipped_count,
+                    duration_seconds=campaign.duration_seconds,
+                    status=campaign.status,
+                    campaign_id=campaign.id,
+                )
 
             campaign.status = BroadcastCampaignStatus.RUNNING.value
             if campaign.started_at is None:

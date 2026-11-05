@@ -37,7 +37,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import PaymentStatus
 from app.models.schema import AuditLog, PaymentRequest, utc_now
-from app.services.payments import approve_payment_request
+from app.services.payments import (
+    PAYMENT_REVIEW_CLAIM_TTL,
+    approve_payment_request,
+    payment_claim_is_stale,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,39 +51,11 @@ _TEXT_LIMIT = 4096  # Telegram text message limit
 
 # ── Claim TTL (batch N) ──────────────────────────────────────────────
 
-# An edit-and-approve claim older than this is STALE: the claiming
-# admin has presumably walked away, so the claim stops blocking the
-# other admins (the same lazy-expiry idea as the group-AI escalations'
-# 24h expiry). Live claims (≤ TTL) keep the exact batch-I behaviour —
-# this weakens nothing for an admin who is actively editing.
-PAYMENT_REVIEW_CLAIM_TTL = timedelta(minutes=60)
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    """Normalise a stored timestamp to aware UTC (naive reads as UTC)."""
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def payment_claim_is_stale(
-    payment: PaymentRequest, *, now: datetime | None = None
-) -> bool:
-    """True when the row carries a claim older than the TTL.
-
-    Unclaimed rows are never stale, and neither is a claim with no
-    timestamp (pre-TTL legacy rows): only a positively-aged claim
-    expires.
-    """
-    if getattr(payment, "review_claimed_by", None) is None:
-        return False
-    claimed_at = _as_utc(getattr(payment, "review_claimed_at", None))
-    if claimed_at is None:
-        return False
-    moment = _as_utc(now) if now is not None else utc_now()
-    return moment - claimed_at > PAYMENT_REVIEW_CLAIM_TTL
+# Batch AJ (M3): PAYMENT_REVIEW_CLAIM_TTL and payment_claim_is_stale
+# moved to app.services.payments — the claim is now enforced inside
+# approve/reject_payment_request themselves, and this module already
+# imports that one (the reverse import would be circular). They are
+# re-exported here so every existing import site keeps working.
 
 
 # ── Stored admin copies ──────────────────────────────────────────────
@@ -352,6 +328,7 @@ async def apply_edited_approval(
     payment_id: str,
     admin_id: int,
     corrected_minutes: int,
+    corrected_recap_credits: int | None = None,
 ) -> tuple[bool, PaymentRequest | None, str]:
     """Approve with a corrected minute amount, via the shared service.
 
@@ -362,9 +339,20 @@ async def apply_edited_approval(
     ``payment.minutes``, and then runs the standard
     approve_payment_request() so crediting, recap credits and the
     approval audit log are byte-identical to a plain approval.
+
+    Batch AJ (M4): the bounds live HERE, in the service — previously
+    the 100,000-minute cap existed only in the bot FSM, so any other
+    caller of this function could credit unbounded minutes. The
+    optional recap-credits correction (0 – 1,000) is recorded on the
+    row (edited_recap_credits) and honoured by the approval's recap
+    grant instead of the catalogue amount.
     """
-    if int(corrected_minutes) <= 0:
+    if int(corrected_minutes) <= 0 or int(corrected_minutes) > 100_000:
         return False, None, "INVALID_MINUTES"
+    if corrected_recap_credits is not None and not (
+        0 <= int(corrected_recap_credits) <= 1000
+    ):
+        return False, None, "INVALID_RECAP_CREDITS"
     stmt = select(PaymentRequest).where(PaymentRequest.id == payment_id).with_for_update()
     payment = (await session.execute(stmt)).scalar_one_or_none()
     if payment is None:
@@ -379,6 +367,8 @@ async def apply_edited_approval(
     original = payment.original_minutes
     payment.minutes = int(corrected_minutes)
     payment.edited_by = admin_id
+    if corrected_recap_credits is not None:
+        payment.edited_recap_credits = int(corrected_recap_credits)
     session.add(
         AuditLog(
             admin_id=admin_id,
@@ -390,6 +380,11 @@ async def apply_edited_approval(
                     "user_id": payment.user_id,
                     "original_minutes": original,
                     "corrected_minutes": int(corrected_minutes),
+                    "corrected_recap_credits": (
+                        int(corrected_recap_credits)
+                        if corrected_recap_credits is not None
+                        else None
+                    ),
                     "edited_by": admin_id,
                 }
             ),

@@ -80,10 +80,10 @@ class Settings(BaseSettings):
         default="sqlite+aiosqlite:///./data/voice_clone_v2.db",
         alias="DATABASE_URL",
     )
-    legacy_database_url: str = Field(
-        default="sqlite+aiosqlite:///./data/voice_clone_official.db",
-        alias="LEGACY_DATABASE_URL",
-    )
+    # Batch AJ L14: legacy_database_url removed — it had no reader
+    # anywhere in the codebase (the isolated-v2 database_url above is
+    # the only database setting the app honours). extra="ignore"
+    # means a stale LEGACY_DATABASE_URL env var is harmless.
     expected_db_identity: str = Field(
         default="voice_clone_v2",
         alias="EXPECTED_DB_IDENTITY",

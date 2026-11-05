@@ -247,6 +247,15 @@ async def grant_monthly_free_allowance(
     - Idempotent: protected by MonthlyFreeAllowanceGrant unique constraint (user_id, period).
     - Deductions use monthly_free_seconds first before purchased_seconds.
     """
+    # Batch AJ (L22): serialise on the User row FIRST (the same lock
+    # consume_seconds and award_welcome_bonus take). The grant writes
+    # the monthly bucket ABSOLUTELY from the balance it loaded; a
+    # consume committing between that load and this flush used to be
+    # overwritten by the stale absolute value, resurrecting seconds
+    # the user had already spent.
+    _locked_user = (await session.execute(
+        select(User).where(User.id == user_id).with_for_update()
+    )).scalar_one_or_none()
     balance = await get_minute_balance(session, user_id)
 
     if settings.is_admin(user_id):
@@ -521,28 +530,47 @@ async def consume_seconds(
     if not user:
         raise ValueError(f"User {user_id} not found")
 
-    # Idempotent deduction protection: if this job_id was already debited, skip
+    # Idempotent deduction protection — Batch AJ (H6): NET-aware.
+    # The old check skipped whenever ANY debit row existed for the
+    # job, which also covered a job whose charge had been REFUNDED:
+    # an admin retry of a refunded job then re-ran and completed
+    # without ever being billed again. What matters is the unrefunded
+    # remainder: fully billed (net >= request) → skip as before;
+    # partially billed → charge only the missing delta; fully
+    # refunded (net == 0) → charge in full, like a first run.
+    seconds_to_charge = seconds_to_consume
     if job_id:
-        existing_debit = (
-            await session.execute(
+        billed_rows = (await session.execute(
+            select(MinuteLedgerEvent).where(
+                MinuteLedgerEvent.user_id == user_id,
+                MinuteLedgerEvent.reference_id == job_id,
+                MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
+            )
+        )).scalars().all()
+        if billed_rows:
+            refunded_rows = (await session.execute(
                 select(MinuteLedgerEvent).where(
                     MinuteLedgerEvent.user_id == user_id,
-                    MinuteLedgerEvent.reference_id == job_id,
-                    MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
+                    MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
+                    MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
                 )
+            )).scalars().all()
+            net_billed = sum(int(r.seconds or 0) for r in billed_rows) - sum(
+                int(r.seconds or 0) for r in refunded_rows
             )
-        ).first()
-        if existing_debit:
-            logger.info("Job %s was already deducted for user %s; skipping duplicate deduction.", job_id, user_id)
-            return await get_minute_balance(session, user_id)
+            if net_billed >= seconds_to_consume:
+                logger.info("Job %s was already deducted for user %s; skipping duplicate deduction.", job_id, user_id)
+                return await get_minute_balance(session, user_id)
+            if net_billed > 0:
+                seconds_to_charge = seconds_to_consume - net_billed
 
     balance = await get_minute_balance(session, user_id)
-    if balance.total_usable_seconds < seconds_to_consume:
+    if balance.total_usable_seconds < seconds_to_charge:
         raise ValueError(
-            f"Insufficient balance: requested {seconds_to_consume}s, available {balance.total_usable_seconds}s"
+            f"Insufficient balance: requested {seconds_to_charge}s, available {balance.total_usable_seconds}s"
         )
 
-    remaining_to_deduct = seconds_to_consume
+    remaining_to_deduct = seconds_to_charge
 
     # 1. Deduct from monthly free balance
     if remaining_to_deduct > 0 and balance.monthly_free_seconds > 0:
@@ -608,7 +636,7 @@ async def consume_seconds(
             )
         )
 
-    balance.consumed_seconds += seconds_to_consume
+    balance.consumed_seconds += seconds_to_charge
     balance.updated_at = utc_now()
 
     # Purchased entitlement policy:
@@ -642,44 +670,67 @@ async def refund_job_seconds(
     if not debits:
         return await get_minute_balance(session, user_id)
 
-    # Check if already refunded
+    # Batch AJ (H6 + L3): refund only the UNREFUNDED delta, per
+    # source. The old shape returned early when ANY refund row
+    # existed, so a job that was refunded, retried (and re-billed by
+    # the now net-aware consume_seconds) could never be refunded for
+    # its second charge. And MONTHLY_FREE debits are refundable only
+    # into the period they were charged in: last month's free bucket
+    # no longer exists, so crediting it back this month minted free
+    # seconds on top of this month's fresh allowance (L3).
     refund_ref = f"REFUND:{job_id}"
-    existing_refund = (
-        await session.execute(
-            select(MinuteLedgerEvent).where(
-                MinuteLedgerEvent.user_id == user_id,
-                MinuteLedgerEvent.reference_id == refund_ref,
-                MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
-            )
+    prior_refunds = (await session.execute(
+        select(MinuteLedgerEvent).where(
+            MinuteLedgerEvent.user_id == user_id,
+            MinuteLedgerEvent.reference_id == refund_ref,
+            MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
         )
-    ).first()
-    if existing_refund:
-        logger.info("Job %s was already refunded for user %s; skipping duplicate refund.", job_id, user_id)
+    )).scalars().all()
+    refunded_by_source: dict[str, int] = {}
+    for r in prior_refunds:
+        refunded_by_source[r.source] = refunded_by_source.get(r.source, 0) + int(r.seconds or 0)
+
+    _now = utc_now()
+    current_period = (_now.year, _now.month)
+    debit_by_source: dict[str, int] = {}
+    for debit in debits:
+        if debit.source == LedgerSource.MONTHLY_FREE.value and debit.created_at is not None:
+            if (debit.created_at.year, debit.created_at.month) != current_period:
+                continue
+        debit_by_source[debit.source] = debit_by_source.get(debit.source, 0) + int(debit.seconds or 0)
+
+    refundable = {
+        source: total - refunded_by_source.get(source, 0)
+        for source, total in debit_by_source.items()
+    }
+    refundable = {s: v for s, v in refundable.items() if v > 0}
+    if not refundable:
+        logger.info("Job %s has no unrefunded balance for user %s; skipping refund.", job_id, user_id)
         return await get_minute_balance(session, user_id)
 
     balance = await get_minute_balance(session, user_id)
     user = await session.get(User, user_id)
 
-    for debit in debits:
-        if debit.source == LedgerSource.MONTHLY_FREE.value:
-            balance.monthly_free_seconds += debit.seconds
-        elif debit.source == LedgerSource.WELCOME.value:
-            balance.welcome_seconds += debit.seconds
-        elif debit.source == LedgerSource.REFERRAL.value:
-            balance.referral_seconds += debit.seconds
-        elif debit.source == LedgerSource.PURCHASE.value:
-            balance.purchased_seconds += debit.seconds
+    for source, seconds in refundable.items():
+        if source == LedgerSource.MONTHLY_FREE.value:
+            balance.monthly_free_seconds += seconds
+        elif source == LedgerSource.WELCOME.value:
+            balance.welcome_seconds += seconds
+        elif source == LedgerSource.REFERRAL.value:
+            balance.referral_seconds += seconds
+        elif source == LedgerSource.PURCHASE.value:
+            balance.purchased_seconds += seconds
             if user:
                 user.account_category = AccountCategory.PURCHASED.value
 
         session.add(
             MinuteLedgerEvent(
                 user_id=user_id,
-                source=debit.source,
+                source=source,
                 direction=LedgerDirection.CREDIT.value,
-                seconds=debit.seconds,
+                seconds=seconds,
                 reference_id=refund_ref,
-                note=note or f"Refund for failed job {job_id} ({debit.source})",
+                note=note or f"Refund for failed job {job_id} ({source})",
             )
         )
 
@@ -721,6 +772,32 @@ async def record_recap_credit_event(
             note=note,
         )
     )
+
+
+async def recap_debit_total_for_job(session: AsyncSession, job_id: str) -> int:
+    """Batch AJ (H11): total recap credits EVER charged for a job,
+    from the durable ledger (submit DEBIT reference = the bare job
+    id; top-ups and retry charges share it). Summed in Python — the
+    codebase bans func.sum under app/."""
+    rows = (await session.execute(
+        select(RecapCreditLedgerEvent).where(
+            RecapCreditLedgerEvent.reference_id == job_id,
+            RecapCreditLedgerEvent.direction == LedgerDirection.DEBIT.value,
+        )
+    )).scalars().all()
+    return sum(int(r.credits or 0) for r in rows)
+
+
+async def recap_refund_total_for_job(session: AsyncSession, job_id: str) -> int:
+    """Batch AJ (H11): total recap credits ever refunded for a job
+    (CREDIT events under the REFUND:<job_id> reference)."""
+    rows = (await session.execute(
+        select(RecapCreditLedgerEvent).where(
+            RecapCreditLedgerEvent.reference_id == recap_refund_reference(job_id),
+            RecapCreditLedgerEvent.direction == LedgerDirection.CREDIT.value,
+        )
+    )).scalars().all()
+    return sum(int(r.credits or 0) for r in rows)
 
 
 async def recap_refund_event_exists(

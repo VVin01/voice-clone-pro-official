@@ -103,6 +103,14 @@ ESCALATION_EXPIRY_SECONDS = 24 * 3600  # pending records die after 24h
 FAQ_MATCH_THRESHOLD = 0.8  # token-set Jaccard for a FAQ cache hit
 FAQ_SCAN_LIMIT = 500  # newest FAQ rows considered per lookup
 
+# Batch AJ tuning.
+REPLY_MAX_CHARS = 1000  # M9: hard cap on any AI reply/draft (normal
+# replies run ~200 chars; the fact sheet itself is ~4.5k, so a reply
+# anywhere near this cap is a dump, not an answer)
+FAQ_MAX_ROWS = 500  # L17: FAQ cache cap — oldest rows pruned beyond it
+LIMITER_STATE_KEY = "aj_gai:limiter:v1"  # M12: BotSetting key holding
+# the rate limiter's persisted counters (ids/timestamps only)
+
 # ---------------------------------------------------------------------------
 # Chat resolution
 # ---------------------------------------------------------------------------
@@ -458,6 +466,34 @@ _SENSITIVE_PATTERNS: tuple[str, ...] = (
 )
 
 
+# Batch AJ (M9): matching normalisation for the sensitive-topic
+# floor. Zero-width characters (U+200B/C/D, U+FEFF) are invisible in
+# Telegram clients, so "ref<ZW>und" renders as "refund" to a human
+# while slipping a naive substring check; repeated whitespace and
+# letter-spacing ("i    paid", spaced-out Burmese) do the same.
+# Normalising BOTH the message and the patterns — and also matching
+# against a fully de-spaced form — closes those tricks without
+# widening the pattern list itself.
+_ZERO_WIDTH_CHARS = ("​", "‌", "‍", "﻿")
+
+
+def _sensitive_normalise(text: str | None) -> str:
+    """Case-fold, strip zero-width chars, collapse whitespace."""
+    out = str(text or "")
+    for ch in _ZERO_WIDTH_CHARS:
+        out = out.replace(ch, "")
+    out = out.casefold()
+    return " ".join(out.split())
+
+
+_SENSITIVE_PATTERNS_NORM: tuple[str, ...] = tuple(
+    _sensitive_normalise(pat) for pat in _SENSITIVE_PATTERNS
+)
+_SENSITIVE_PATTERNS_DESPACED: tuple[str, ...] = tuple(
+    pat.replace(" ", "") for pat in _SENSITIVE_PATTERNS_NORM
+)
+
+
 def detect_sensitive_topic(text: str | None) -> bool:
     """True for payment/refund/account-specific topics.
 
@@ -467,8 +503,13 @@ def detect_sensitive_topic(text: str | None) -> bool:
     prompt additionally tells the AI to escalate anything
     account-specific it recognises.
     """
-    low = str(text or "").lower()
-    return any(pat in low for pat in _SENSITIVE_PATTERNS)
+    norm = _sensitive_normalise(text)
+    if not norm:
+        return False
+    if any(pat in norm for pat in _SENSITIVE_PATTERNS_NORM):
+        return True
+    despaced = norm.replace(" ", "")
+    return any(pat in despaced for pat in _SENSITIVE_PATTERNS_DESPACED if pat)
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +862,71 @@ def strip_emoji(text: Any) -> str:
     return cleaned.strip()
 
 
+# ---------------------------------------------------------------------------
+# Batch AJ (M9): post-generation output guard
+#
+# The decision prompt interpolates the member's raw text, so a crafted
+# message can try to make the model echo its instructions / fact sheet
+# or speak far beyond an admin answer. parse_ai_decision previously
+# returned any REPLY body verbatim (minus emoji). The guard below is
+# the deterministic backstop: over-long replies, replies carrying a
+# protocol token ANYWHERE, and replies echoing instruction or
+# fact-sheet markers are void (silence — the same outcome the parser
+# already used for smuggled tokens); HTML/markdown markup is stripped
+# so nothing the model emits can break the group's formatting.
+# ---------------------------------------------------------------------------
+
+_REPLY_LEAK_MARKERS: tuple[str, ...] = (
+    "knowledge sheet",
+    "system_instructions",
+    "system instructions",
+    "===",
+    "【",
+    "】",
+    "အဖြစ် စာပြန်ပေးနေတာ",
+    "ဒီအချက်တွေကလွဲပြီး",
+    "ထုတ်ပေးရမယ့် ပုံစံ",
+    "ဆုံးဖြတ်ချက်:",
+)
+
+_HTML_TAG_RE = re.compile(r"<[^>]{0,300}>")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def _strip_reply_markup(text: str) -> str:
+    """Remove HTML tags, markdown links and code fences from a reply."""
+    cleaned = str(text or "").replace("```", "")
+    cleaned = _MD_LINK_RE.sub(r"\1", cleaned)
+    cleaned = _HTML_TAG_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"[^\S\n]{2,}", " ", cleaned)
+    cleaned = re.sub(r" *\n *", "\n", cleaned)
+    return cleaned.strip()
+
+
+def _guard_reply_text(text: str) -> str | None:
+    """Return the cleaned reply, or None when it must not be posted.
+
+    Void conditions (M9): empty after markup stripping, longer than
+    REPLY_MAX_CHARS, a protocol token anywhere in the body, or an
+    instruction / fact-sheet marker echo.
+    """
+    cleaned = _strip_reply_markup(text)
+    if not cleaned:
+        return None
+    if len(cleaned) > REPLY_MAX_CHARS:
+        logger.debug("group_ai_admin: reply voided by length cap (%d chars)", len(cleaned))
+        return None
+    upper = cleaned.upper()
+    if "NO_REPLY" in upper or "REPLY:" in upper or re.search(r"\bESCALATE\b", upper):
+        logger.debug("group_ai_admin: reply voided by smuggled protocol token")
+        return None
+    low = cleaned.lower()
+    if any(marker in low or marker in cleaned for marker in _REPLY_LEAK_MARKERS):
+        logger.debug("group_ai_admin: reply voided by instruction/sheet echo marker")
+        return None
+    return cleaned
+
+
 def parse_ai_decision(raw: Any) -> tuple[str, str | None]:
     """Parse the model's protocol output. Anything unparseable = silence."""
     text = str(raw or "").strip()
@@ -843,7 +949,12 @@ def parse_ai_decision(raw: Any) -> tuple[str, str | None]:
         reply = strip_emoji(reply)
         if not reply:
             return DECISION_NO_REPLY, None
-        return DECISION_REPLY, reply
+        # Batch AJ (M9): output guard — length cap, leak markers,
+        # protocol tokens anywhere, markup stripped.
+        guarded = _guard_reply_text(reply)
+        if guarded is None:
+            return DECISION_NO_REPLY, None
+        return DECISION_REPLY, guarded
     # Off-protocol output (bare prose, partial tokens): fail silent.
     logger.debug("group_ai_admin: off-protocol AI output ignored: %r", text[:80])
     return DECISION_NO_REPLY, None
@@ -1043,7 +1154,10 @@ async def draft_escalation_answer(
     draft = strip_emoji(str(raw or "").strip().strip("`").strip())
     if not draft or draft.upper().startswith(("NO_REPLY", "ESCALATE", "REPLY:")):
         return None
-    return draft
+    # Batch AJ (M9): drafts get the same output guard as group replies
+    # (length cap + leak markers + markup strip) — a poisoned draft
+    # must never reach an admin DM as a one-tap postable answer.
+    return _guard_reply_text(draft)
 
 
 # ---------------------------------------------------------------------------
@@ -1081,6 +1195,7 @@ class GroupReplyRateLimiter:
         hourly_window_seconds: int = HOURLY_WINDOW_SECONDS,
         daily_window_seconds: int = DAILY_WINDOW_SECONDS,
         now_fn: Callable[[], float] = time.monotonic,
+        wall_now_fn: Callable[[], float] = time.time,
     ) -> None:
         self.user_cooldown_seconds = user_cooldown_seconds
         self.hourly_budget = hourly_budget
@@ -1088,10 +1203,21 @@ class GroupReplyRateLimiter:
         self.hourly_window_seconds = hourly_window_seconds
         self.daily_window_seconds = daily_window_seconds
         self._now = now_fn
+        # Batch AJ (M12): a parallel WALL clock is kept alongside the
+        # monotonic pacing clock. Monotonic values are meaningless in
+        # a new process, so the persisted snapshot is expressed purely
+        # in wall epochs and translated back into the new process's
+        # monotonic frame on restore.
+        self._wall_now = wall_now_fn
         self._last_reply_by_user: dict[int, float] = {}
         self._last_deferral_by_user: dict[int, float] = {}
         self._ai_call_times: list[float] = []
         self._answered_ids: OrderedDict[int, None] = OrderedDict()
+        self._last_reply_wall: dict[int, float] = {}
+        self._last_deferral_wall: dict[int, float] = {}
+        self._ai_call_wall: list[float] = []
+        self._dirty = False  # unsaved changes for the M12 backstop
+        self._restored = False  # persisted state loaded (once per instance)
 
     def update_limits(self, limits: GroupAiLimits) -> None:
         """Apply owner-tuned values (read per message by the handler)."""
@@ -1113,15 +1239,19 @@ class GroupReplyRateLimiter:
     def record_reply(self, user_id: int, message_id: int) -> None:
         now = self._now()
         self._last_reply_by_user[int(user_id)] = now
+        self._last_reply_wall[int(user_id)] = self._wall_now()
         self._answered_ids[int(message_id)] = None
         while len(self._answered_ids) > ANSWERED_IDS_MAX:
             self._answered_ids.popitem(last=False)
+        self._dirty = True
 
     # -- AI-call budgets ----------------------------------------------
 
     def _prune_ai_calls(self, now: float) -> None:
         cutoff = now - self.daily_window_seconds
         self._ai_call_times = [t for t in self._ai_call_times if t > cutoff]
+        wall_cutoff = self._wall_now() - self.daily_window_seconds
+        self._ai_call_wall = [t for t in self._ai_call_wall if t > wall_cutoff]
 
     def ai_budget_available(self) -> bool:
         """True when one more AI call fits BOTH rolling budgets."""
@@ -1133,6 +1263,8 @@ class GroupReplyRateLimiter:
 
     def record_ai_call(self) -> None:
         self._ai_call_times.append(self._now())
+        self._ai_call_wall.append(self._wall_now())
+        self._dirty = True
 
     def can_defer(self, user_id: int) -> bool:
         """Deferral lines + owner DMs share the per-user cooldown so a
@@ -1142,14 +1274,177 @@ class GroupReplyRateLimiter:
 
     def record_deferral(self, user_id: int) -> None:
         self._last_deferral_by_user[int(user_id)] = self._now()
+        self._last_deferral_wall[int(user_id)] = self._wall_now()
+        self._dirty = True
 
     def already_answered(self, message_id: int) -> bool:
         return int(message_id) in self._answered_ids
 
+    # -- Batch AJ (M12) persistence snapshot ---------------------------
+    # The snapshot contains ONLY counters, wall timestamps, user ids
+    # and answered message ids — never message text (the standing
+    # no-storage rule for group messages is untouched).
 
-# Process-wide limiter instance (state is intentionally ephemeral: a
-# restart simply resets the caps, which is the safe direction).
+    def snapshot_state(self) -> dict:
+        """JSON-serialisable wall-clock snapshot of all limiter state."""
+        wall_now = self._wall_now()
+        cutoff = wall_now - self.daily_window_seconds
+        self._ai_call_wall = [t for t in self._ai_call_wall if t > cutoff]
+        return {
+            "v": 1,
+            "ai_calls_wall": [float(t) for t in self._ai_call_wall],
+            "last_reply_wall": {
+                str(uid): float(ts)
+                for uid, ts in self._last_reply_wall.items()
+                if ts > cutoff
+            },
+            "last_deferral_wall": {
+                str(uid): float(ts)
+                for uid, ts in self._last_deferral_wall.items()
+                if ts > cutoff
+            },
+            "answered_ids": [int(mid) for mid in self._answered_ids],
+        }
+
+    def restore_state(self, state: Any) -> None:
+        """Merge a wall-clock snapshot into this (fresh) limiter.
+
+        Wall epochs are translated into the current monotonic frame
+        via the offset between the two clocks at restore time, so a
+        cooldown with 30 wall-seconds left still has 30 seconds left
+        after the restart.
+        """
+        if not isinstance(state, dict):
+            return
+        wall_now = self._wall_now()
+        offset = self._now() - wall_now
+        cutoff = wall_now - self.daily_window_seconds
+        for ts in state.get("ai_calls_wall") or []:
+            try:
+                wall_ts = float(ts)
+            except (TypeError, ValueError):
+                continue
+            if wall_ts > cutoff:
+                self._ai_call_wall.append(wall_ts)
+                self._ai_call_times.append(wall_ts + offset)
+        for attr_wall, attr_mono, raw in (
+            ("_last_reply_wall", "_last_reply_by_user", state.get("last_reply_wall")),
+            ("_last_deferral_wall", "_last_deferral_by_user", state.get("last_deferral_wall")),
+        ):
+            if not isinstance(raw, dict):
+                continue
+            wall_map = getattr(self, attr_wall)
+            mono_map = getattr(self, attr_mono)
+            for uid, ts in raw.items():
+                try:
+                    wall_ts = float(ts)
+                    user_id = int(uid)
+                except (TypeError, ValueError):
+                    continue
+                if wall_ts > cutoff:
+                    wall_map[user_id] = wall_ts
+                    mono_map[user_id] = wall_ts + offset
+        for mid in state.get("answered_ids") or []:
+            try:
+                self._answered_ids[int(mid)] = None
+            except (TypeError, ValueError):
+                continue
+        while len(self._answered_ids) > ANSWERED_IDS_MAX:
+            self._answered_ids.popitem(last=False)
+
+
+# Process-wide limiter instance. Batch AJ (M12): the in-memory state
+# remains the fast path, but it is now backed by a BotSetting snapshot
+# (counters/timestamps/ids only) so a restart no longer resets the
+# hourly/daily budgets, per-user cooldowns or the answered-set.
 rate_limiter = GroupReplyRateLimiter()
+
+# ---------------------------------------------------------------------------
+# Batch AJ (M12): limiter persistence via the BotSetting KV store
+#
+# One row (LIMITER_STATE_KEY) holds the JSON snapshot. Writes are
+# debounced by the handler (flush at most every few seconds, only when
+# dirty); the load happens once per limiter instance. Every helper is
+# best-effort — a store failure degrades to memory-only behaviour.
+# ---------------------------------------------------------------------------
+
+_LIMITER_FLUSH_MIN_INTERVAL_SECONDS = 5.0
+_limiter_last_flush: float = 0.0
+
+
+async def persist_limiter_state(session: Any, *, limiter: GroupReplyRateLimiter | None = None) -> bool:
+    """Write the limiter snapshot to BotSetting. True on success."""
+    import json as _json
+
+    lim = limiter if limiter is not None else rate_limiter
+    try:
+        from sqlalchemy import select
+
+        from app.models.schema import BotSetting
+
+        payload = _json.dumps(lim.snapshot_state())
+        row = (
+            await session.execute(select(BotSetting).where(BotSetting.key == LIMITER_STATE_KEY))
+        ).scalar_one_or_none()
+        if row is not None:
+            row.value = payload
+        else:
+            session.add(BotSetting(key=LIMITER_STATE_KEY, value=payload))
+        await session.commit()
+        lim._dirty = False
+        return True
+    except Exception as exc:
+        logger.warning("group_ai_admin: limiter persist failed: %s", exc)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return False
+
+
+async def restore_limiter_state(session: Any, *, limiter: GroupReplyRateLimiter | None = None) -> bool:
+    """Load the persisted snapshot into `limiter`. True when one existed."""
+    import json as _json
+
+    lim = limiter if limiter is not None else rate_limiter
+    try:
+        from sqlalchemy import select
+
+        from app.models.schema import BotSetting
+
+        row = (
+            await session.execute(select(BotSetting).where(BotSetting.key == LIMITER_STATE_KEY))
+        ).scalar_one_or_none()
+        if row is None or not row.value:
+            lim._restored = True
+            return False
+        lim.restore_state(_json.loads(row.value))
+        lim._restored = True
+        return True
+    except Exception as exc:
+        logger.warning("group_ai_admin: limiter restore failed: %s", exc)
+        lim._restored = True
+        return False
+
+
+async def ensure_limiter_restored(session: Any) -> None:
+    """One-shot restore of the process-wide limiter (per instance)."""
+    if not rate_limiter._restored:
+        await restore_limiter_state(session)
+
+
+async def flush_limiter_state_if_dirty(session: Any, *, force: bool = False) -> bool:
+    """Debounced write-through for the process-wide limiter."""
+    global _limiter_last_flush
+    if not rate_limiter._dirty:
+        return False
+    now = time.monotonic()
+    if not force and now - _limiter_last_flush < _LIMITER_FLUSH_MIN_INTERVAL_SECONDS:
+        return False
+    ok = await persist_limiter_state(session)
+    if ok:
+        _limiter_last_flush = now
+    return ok
 
 
 # ---------------------------------------------------------------------------
@@ -1502,7 +1797,15 @@ async def sweep_stale_escalations() -> int:
         from app.db.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as session:
-            return await expire_stale_escalations(session)
+            swept = await expire_stale_escalations(session)
+            # Batch AJ (L17): the same periodic sweep also enforces
+            # the FAQ cache cap, so growth stays bounded even if
+            # approvals somehow outpace insert-time pruning.
+            try:
+                await prune_faq_cache(session)
+            except Exception as exc:
+                logger.warning("group_ai_admin: FAQ prune in sweep failed: %s", exc)
+            return swept
     except Exception as exc:
         logger.warning("group_ai_admin: escalation sweep failed: %s", exc)
         return 0
@@ -1526,6 +1829,31 @@ def faq_similarity(norm_a: str, norm_b: str) -> float:
     if not tokens_a or not tokens_b:
         return 0.0
     return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+
+async def prune_faq_cache(session: Any, *, max_rows: int = FAQ_MAX_ROWS) -> int:
+    """Delete the oldest FAQ rows beyond `max_rows`. Returns count removed.
+
+    Batch AJ (L17): the cache previously grew without bound — one row
+    per approved answer, forever. The cap keeps the newest FAQ_MAX_ROWS
+    rows (the lookup only ever scans the newest FAQ_SCAN_LIMIT anyway).
+    Caller owns/commit the transaction except this helper commits its
+    own deletions when it removed anything.
+    """
+    from sqlalchemy import delete, select
+
+    from app.models.schema import GroupAiFaq
+
+    ids = (
+        await session.execute(select(GroupAiFaq.id).order_by(GroupAiFaq.id.asc()))
+    ).scalars().all()
+    excess = len(ids) - int(max_rows)
+    if excess <= 0:
+        return 0
+    oldest = list(ids[:excess])
+    await session.execute(delete(GroupAiFaq).where(GroupAiFaq.id.in_(oldest)))
+    await session.commit()
+    return len(oldest)
 
 
 async def save_faq_pair(session: Any, *, question_text: str, answer_text: str) -> int | None:
@@ -1560,7 +1888,17 @@ async def save_faq_pair(session: Any, *, question_text: str, answer_text: str) -
             row.question_text = str(question_text or "")
             row.answer_text = answer
         await session.commit()
-        return int(row.id)
+        saved_id = int(row.id)
+        # Batch AJ (L17): enforce the cache cap on every insert.
+        try:
+            await prune_faq_cache(session)
+        except Exception as exc:
+            logger.warning("group_ai_admin: FAQ prune after save failed: %s", exc)
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+        return saved_id
     except Exception as exc:
         logger.warning("group_ai_admin: FAQ save failed: %s", exc)
         try:

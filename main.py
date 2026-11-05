@@ -70,6 +70,7 @@ async def run_bot_and_worker(mode: str) -> None:
             dp = Dispatcher()
             setup_handlers(dp)
             from app.webapp.telegram_webhook import (
+                UpdateDedupMiddleware,
                 attach_bot,
                 clear_webhook_for_polling,
                 register_webhook,
@@ -90,8 +91,20 @@ async def run_bot_and_worker(mode: str) -> None:
                 # Rollback safety: remove a stale webhook left over from a
                 # previous webhook-mode deploy, or polling receives nothing.
                 await clear_webhook_for_polling(bot)
-                logger.info("Starting Telegram bot polling (drop_pending_updates=True)...")
-                bot_task = asyncio.create_task(dp.start_polling(bot, drop_pending_updates=True))
+                # Batch AJ (H12): drop_pending_updates=False — with
+                # True, every update sent while the service was down
+                # (deploys included) was PERMANENTLY discarded on the
+                # next boot, including payment slips users sent in
+                # good faith. Keeping them means Telegram may also
+                # redeliver updates it thinks were lost, so the
+                # polling path gets the webhook path's dedup memory
+                # (UpdateDedupMiddleware over recent_update_ids);
+                # the slip handlers are additionally idempotent at
+                # the payments-service layer (fingerprint guard +
+                # persisted-intent resume).
+                dp.update.middleware(UpdateDedupMiddleware())
+                logger.info("Starting Telegram bot polling (drop_pending_updates=False)...")
+                bot_task = asyncio.create_task(dp.start_polling(bot, drop_pending_updates=False))
                 tasks.append(bot_task)
 
     # Start FastAPI Telegram Mini App & API Web Server

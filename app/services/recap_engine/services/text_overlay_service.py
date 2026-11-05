@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import html
+import logging
 import os
 from pathlib import Path
 
@@ -11,6 +12,29 @@ try:
     from playwright.sync_api import sync_playwright
 except Exception:
     sync_playwright = None
+
+logger = logging.getLogger(__name__)
+
+# Batch AJ / L15: the Chromium renderer is unavailable in the
+# production image (playwright is not in requirements.txt and no
+# Chromium ships in the Dockerfile), so every title request falls
+# back to Pillow in the caller. That fallback used to be SILENT —
+# nobody could tell from the logs that the browser renderer never
+# runs. Emit exactly one warning per process when the Chromium path
+# is requested but unavailable, so the fallback is visible.
+_CHROMIUM_UNAVAILABLE_WARNED = False
+
+
+def _warn_chromium_unavailable_once(reason: str) -> None:
+    global _CHROMIUM_UNAVAILABLE_WARNED
+    if _CHROMIUM_UNAVAILABLE_WARNED:
+        return
+    _CHROMIUM_UNAVAILABLE_WARNED = True
+    logger.warning(
+        "Chromium title renderer unavailable (%s) — titles will be "
+        "rendered with the Pillow fallback for this process.",
+        reason,
+    )
 
 MY_DIGITS = str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉")
 
@@ -150,6 +174,7 @@ def _launch_browser(playwright):
             return launcher(), label
         except Exception as exc:
             errors.append(f"{label}: {type(exc).__name__}: {str(exc)[-180:]}")
+    _warn_chromium_unavailable_once("no Chromium/Chrome/Edge browser could be launched")
     raise RuntimeError(
         "No Chromium/Chrome/Edge browser could be launched for Myanmar PNG rendering. "
         + " | ".join(errors[-4:])
@@ -180,6 +205,7 @@ def _render_browser_text_png(
     Chromium, which performs Myanmar OpenType shaping and visual line wrapping.
     """
     if sync_playwright is None:
+        _warn_chromium_unavailable_once("playwright package is not installed")
         raise RuntimeError(
             "Playwright is required for Unicode-safe Myanmar rendering. "
             "Install with: python -m pip install playwright"

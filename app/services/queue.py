@@ -194,6 +194,26 @@ async def create_voice_clone_job(
             if daily_count >= settings.free_daily_job_limit:
                 return None, "DAILY_JOB_LIMIT_EXCEEDED"
 
+        # Batch AJ L14: purchased_daily_job_limit existed as a
+        # setting for years but was never read — an admin setting it
+        # changed nothing. It is now enforced for PURCHASED users
+        # exactly like the free limit (0 keeps meaning "unlimited",
+        # so existing deployments are unaffected).
+        if user.account_category == AccountCategory.PURCHASED.value and settings.purchased_daily_job_limit > 0:
+            today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+            daily_stmt = (
+                select(func.count())
+                .select_from(Job)
+                .where(
+                    Job.user_id == user_id,
+                    Job.created_at >= today_start,
+                    Job.status != JobStatus.CANCELLED.value,
+                )
+            )
+            daily_count = (await session.execute(daily_stmt)).scalar() or 0
+            if daily_count >= settings.purchased_daily_job_limit:
+                return None, "DAILY_JOB_LIMIT_EXCEEDED"
+
     # 3. Check character limits and audio file existence defense-in-depth
     valid_text = (text or "").strip()
     if valid_text:

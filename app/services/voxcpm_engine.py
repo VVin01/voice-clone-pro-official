@@ -14,6 +14,7 @@ Features:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -216,6 +217,97 @@ class VoxCPMEngine:
     _token_cooldowns: dict[str, float] = {}
     _token_rr_counter: int = 0
     _lock = threading.Lock()
+    # Batch AJ (M12): cooldown persistence backstop. The in-memory
+    # dict above stays keyed by raw token (existing behaviour/tests),
+    # but the PERSISTED form — BotSetting key "aj_hf:cooldowns" via
+    # key_rotation's sync store — is keyed by token DIGEST only, so no
+    # raw token ever reaches the database. A fresh process maps the
+    # digests back onto its currently configured tokens on first use.
+    _cooldowns_restored: bool = False
+    _cooldown_persist_timer: Any = None
+    _HF_COOLDOWN_STORE_KEY = "aj_hf:cooldowns"
+
+    @classmethod
+    def export_cooldown_state(cls) -> dict:
+        """Digest-keyed snapshot of live token cooldowns (JSON-safe)."""
+        now = time.time()
+        return {
+            "v": 1,
+            "cooldowns": {
+                _key_id(tok): float(until)
+                for tok, until in cls._token_cooldowns.items()
+                if tok and until > now
+            },
+        }
+
+    @classmethod
+    def import_cooldown_state(cls, state: Any, tokens: Any = None) -> int:
+        """Restore a digest-keyed snapshot onto `tokens`. Returns count."""
+        if not isinstance(state, dict):
+            return 0
+        raw = state.get("cooldowns") or {}
+        if not isinstance(raw, dict):
+            return 0
+        pool = list(tokens) if tokens is not None else get_available_hf_tokens()
+        by_digest = {_key_id(tok): tok for tok in pool if tok}
+        now = time.time()
+        restored = 0
+        for digest, until in raw.items():
+            tok = by_digest.get(str(digest))
+            try:
+                expiry = float(until)
+            except (TypeError, ValueError):
+                continue
+            if tok is not None and expiry > now:
+                cls._token_cooldowns[tok] = expiry
+                restored += 1
+        return restored
+
+    @classmethod
+    def persist_cooldowns_now(cls) -> bool:
+        """Write the cooldown snapshot to the BotSetting store."""
+        try:
+            from app.services.key_rotation import botsetting_sync_write
+
+            return botsetting_sync_write(
+                cls._HF_COOLDOWN_STORE_KEY, json.dumps(cls.export_cooldown_state())
+            )
+        except Exception:
+            return False
+
+    @classmethod
+    def load_cooldowns_from_store(cls, tokens: Any = None) -> bool:
+        """Read + apply the persisted snapshot. True when one existed."""
+        try:
+            from app.services.key_rotation import botsetting_sync_read
+
+            raw = botsetting_sync_read(cls._HF_COOLDOWN_STORE_KEY)
+            if not raw:
+                return False
+            cls.import_cooldown_state(json.loads(raw), tokens=tokens)
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def _ensure_cooldowns_restored(cls, tokens: Any = None) -> None:
+        if cls._cooldowns_restored:
+            return
+        cls._cooldowns_restored = True
+        cls.load_cooldowns_from_store(tokens=tokens)
+
+    @classmethod
+    def _schedule_cooldown_persist(cls) -> None:
+        try:
+            timer = cls._cooldown_persist_timer
+            if timer is not None:
+                timer.cancel()
+            timer = threading.Timer(2.0, cls.persist_cooldowns_now)
+            timer.daemon = True
+            cls._cooldown_persist_timer = timer
+            timer.start()
+        except Exception:
+            pass
 
     def __init__(
         self,
@@ -345,6 +437,11 @@ class VoxCPMEngine:
                 shutil.copy2(cached_file, out_path)
                 self._log(f"♻️ VoxCPM 2 Cache Hit: {out_path.name}")
                 return out_path
+
+        # Batch AJ (M12): resume token cooldowns persisted by the
+        # previous process before the pool order is computed, so a
+        # quota/auth-dead token is not retried first after every boot.
+        self._ensure_cooldowns_restored(self.hf_tokens)
 
         from gradio_client import handle_file
 
@@ -580,6 +677,7 @@ class VoxCPMEngine:
                             try:
                                 cmd = [
                                     ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                                    "-protocol_whitelist", "file,pipe",
                                     "-i", str(result_path_str),
                                     "-af", af_candidate,
                                     "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
@@ -618,6 +716,7 @@ class VoxCPMEngine:
                     # Only mark token globally on cooldown if it wasn't just a 180s-decorator rejection
                     if "180s requested" not in err_lower:
                         self._token_cooldowns[active_token] = time.time() + 1800
+                        self._schedule_cooldown_persist()
                     self._log(f"⚠️ Token {tok_masked} hit ZeroGPU quota on '{space_name}'; rotating...")
                 elif active_token and _is_hf_token_auth_failure(err_lower):
                     # Audit fix E: a revoked/invalid token gets the same
@@ -625,6 +724,7 @@ class VoxCPMEngine:
                     # it stays in rotation and fails one pair-attempt per
                     # synthesis indefinitely.
                     self._token_cooldowns[active_token] = time.time() + 1800
+                    self._schedule_cooldown_persist()
                     self._log(f"⚠️ Token {tok_masked} rejected as invalid/unauthorized on '{space_name}'; cooling down for 30m...")
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {e_pair}")
                 time.sleep(0.5)

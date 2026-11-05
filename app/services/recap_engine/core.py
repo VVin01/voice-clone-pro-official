@@ -117,6 +117,21 @@ def is_edge_refused(error: BaseException | str) -> bool:
 # per-call bounds, EdgeSmartSync enforces a whole-job budget checked at
 # segment boundaries (see recap_job_timeout).
 PROBE_TIMEOUT_SECONDS = 120
+# Batch AJ / M11: bound a single Edge TTS save. A stalled
+# third-party socket used to pin the recap slot for the whole
+# segment-retry loop; 120 s sits in the same spirit as the VoxCPM
+# total budget (240 s) for one narration segment.
+EDGE_TTS_TIMEOUT_SECONDS = 120
+# Batch AJ / L21: ffmpeg/ffprobe may only open local files and
+# pipes — never network protocols. The hunt confirmed playlist /
+# concat-style inputs can make the demuxer follow embedded
+# references (a crafted ffconcat file with a video extension was
+# probed through the tree's own probe path and returned the
+# referenced file's streams), and probes accepted http:// inputs.
+# `file` covers every legitimate local input (including the
+# engine's OWN concat list files), `pipe` the pipe workflows, and
+# lavfi sources are unaffected (verified against the real binary).
+MEDIA_PROTOCOL_WHITELIST = "file,pipe"
 RENDER_TIMEOUT_FLOOR_SECONDS = 600
 RENDER_TIMEOUT_PER_SECOND = 30.0
 JOB_TIMEOUT_FLOOR_SECONDS = 3600
@@ -143,9 +158,27 @@ def recap_job_timeout(source_duration: float | None) -> int:
     return int(min(JOB_TIMEOUT_CAP_SECONDS, max(JOB_TIMEOUT_FLOOR_SECONDS, scaled)))
 
 
+def _with_protocol_whitelist(cmd: list[str]) -> list[str]:
+    """Batch AJ / L21: insert ``-protocol_whitelist file,pipe``
+    directly after the binary for media commands that read an input
+    (an ``-i`` argument, or any ffprobe probe, whose input is
+    positional). Pure listing commands (``ffmpeg -encoders``) take
+    no input and are left byte-identical. The option sits before the
+    first ``-i``, so ffmpeg applies it to that input; every engine
+    input after the first is an internally generated file (PNG
+    overlays, WAV parts) on the same `file` protocol anyway."""
+    if not cmd:
+        return cmd
+    binary = Path(str(cmd[0])).name.lower()
+    if "ffprobe" in binary or "-i" in cmd:
+        return [cmd[0], "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, *cmd[1:]]
+    return cmd
+
+
 def _run_media(cmd: list[str], *, timeout: float, what: str) -> subprocess.CompletedProcess:
     """subprocess.run for media tools, with a bounded wait: a timeout
     becomes a clear RuntimeError instead of an unbounded hang."""
+    cmd = _with_protocol_whitelist(cmd)
     try:
         return subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8",
@@ -237,7 +270,13 @@ class EdgeTTSEngine:
             pitch=self.pitch,
             proxy=proxy,
         )
-        await communicate.save(str(mp3))
+        # Batch AJ / M11: per-call timeout — the retry loop in
+        # generate_channel99_voice catches the TimeoutError like any
+        # other route failure, so a stalled socket fails over (and
+        # ultimately fails the segment) instead of hanging forever.
+        await asyncio.wait_for(
+            communicate.save(str(mp3)), timeout=EDGE_TTS_TIMEOUT_SECONDS
+        )
 
     def _synthesize_once(self, text: str, voice: str, mp3: Path, *, direct: bool) -> None:
         # Route selection is per-call (audit fix 2026-11-03). The old
@@ -2486,6 +2525,26 @@ def _fmt_ass_time(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{c:02d}"
 
 
+def _escape_ass_cue_text(text: str) -> str:
+    """Batch AJ / L1: escape cue text for an ASS Dialogue line.
+
+    The .ass file ships to users as a downloadable side file and
+    libass players honour {...} override tags in Dialogue text, so
+    cue text (which can come from user script edits) must never
+    carry live tags: backslashes are doubled FIRST (a cue's literal
+    ``\\N`` must not become a hard line break, nor a trailing ``\\``
+    eat the next character), then braces are backslash-escaped so
+    ``{\\pos(0,0)}`` / ``{\\fs999}`` render as literal text instead
+    of repositioning / resizing the subtitle. The writer's OWN tags
+    (the Batch AG \\pos tag) are generated separately and never pass
+    through here; real newlines in the cue are converted to \\N by
+    the caller AFTER this escaping, so those breaks stay live.
+    """
+    escaped = str(text).replace("\\", "\\\\")
+    escaped = escaped.replace("{", "\\{").replace("}", "\\}")
+    return escaped
+
+
 def write_synced_ass_file(
     cues: list[tuple[float, float, str]],
     ass_path: Path,
@@ -2587,6 +2646,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         c_text = canonicalize_burmese_text(cue_text)
         if not c_text:
             continue
+        # Batch AJ / L1: escape BEFORE the newline conversion below,
+        # so the \N breaks the writer itself inserts stay live while
+        # the cue's own backslashes/braces are neutralised.
+        c_text = _escape_ass_cue_text(c_text)
         if sub_lines == 1:
             ass_line_text = re.sub(r'\s+', ' ', c_text.replace("\r\n", " ").replace("\n", " ")).strip()
         else:
@@ -2746,7 +2809,8 @@ def detect_source_subtitle_bands(
             t = duration * (i + 0.5) / max(4, samples)
             fp = frame_dir / f"band_{i:02d}.png"
             p = subprocess.run(
-                [ffmpeg, "-v", "error", "-ss", f"{t:.2f}", "-i", str(source),
+                [ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+                 "-v", "error", "-ss", f"{t:.2f}", "-i", str(source),
                  "-frames:v", "1", "-vf", "scale=270:-2", str(fp), "-y"],
                 capture_output=True, text=True, timeout=60,
             )
@@ -4640,7 +4704,8 @@ class EdgeSmartSync:
         final_mp3 = paths.final.with_suffix(".mp3")
         try:
             cmd_mp3 = [
-                self.ffmpeg, "-y", "-i", str(paths.voice),
+                self.ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+                "-y", "-i", str(paths.voice),
                 "-vn", "-af", "highpass=f=60,lowpass=f=12000,alimiter=limit=0.95:level=disabled",
                 "-c:a", "libmp3lame", "-b:a", "192k",
                 "-map_metadata", "-1",

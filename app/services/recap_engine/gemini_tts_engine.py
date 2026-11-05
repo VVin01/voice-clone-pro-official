@@ -109,6 +109,20 @@ DEFAULT_DIRECTION = ("An energetic, ALIVE Burmese storyteller PERFORMING the sto
                      "and falls naturally, like someone telling a story they care about. Diction stays crisp and "
                      "the story always stays clear — energy comes from pace, emphasis and timing, never shouting.")
 BUSY_ROUNDS, BUSY_WAIT_SECONDS = 3, 20
+# Batch AJ / L20: hard cap on the HTTP attempts ONE _ask() call may
+# make for ONE narration line. The loop's own structure bounded it
+# only loosely: quota/auth deaths are marked dead, 5xx answers set
+# `busy` and repeat whole rounds, and — confirmed from the code —
+# errors that are NEITHER (e.g. 404/409/422 or code-less transport
+# errors) were logged and retried on every busy round without ever
+# being marked dead, for up to BUSY_ROUNDS x models x keys attempts
+# (60 for a 10-key pool) at the client's 180 s timeout. Unclassified
+# errors are now marked dead for the run exactly like quota deaths,
+# and this cap bounds whatever mix remains.
+GEMINI_TTS_MAX_ATTEMPTS_PER_CALL = 24
+# Batch AJ / L21: the ffmpeg trim/resample below may only open
+# local files and pipes — never network protocols.
+MEDIA_PROTOCOL_WHITELIST = "file,pipe"
 LogFn = Callable[[str], None]
 
 
@@ -255,12 +269,25 @@ class GeminiTTSEngine:
                 pass
         models = _rotated_tts_models()
         last = ""
+        attempts = 0
         for _round in range(BUSY_ROUNDS):
             busy = False
             for model in models:
                 for i in order:
                     if (model, i) in self._dead:
                         continue
+                    # Batch AJ / L20: total-attempt cap (see the
+                    # constant's comment) — checked before every
+                    # request so no error mix can exceed it.
+                    attempts += 1
+                    if attempts > GEMINI_TTS_MAX_ATTEMPTS_PER_CALL:
+                        self.exhausted = True
+                        raise GeminiTTSError(
+                            "Gemini TTS: attempt budget exhausted "
+                            f"({GEMINI_TTS_MAX_ATTEMPTS_PER_CALL} requests for one "
+                            f"line) — remaining lines will use the persona engine "
+                            f"instead. ({last})"
+                        )
                     try:
                         client = _client(self.keys[i])  # kept in a variable: a dropped genai Client closes itself
                         response = client.models.generate_content(model=model, contents=prompt, config=config)
@@ -293,6 +320,15 @@ class GeminiTTSEngine:
                             busy = True
                             self.log(f"⏳ Gemini TTS {model} is busy ({code}) — next key/model")
                             break
+                        # Batch AJ / L20: unclassified errors (not
+                        # 429/auth, not 5xx) used to fall through
+                        # here with NO dead-marking, so the same
+                        # (model, key) was retried on every busy
+                        # round. Mark it dead for this run — the
+                        # request-specific failure gets one try per
+                        # model, exactly like a quota death, and the
+                        # attempt cap above bounds the rest.
+                        self._dead.add((model, i))
                         self.log(f"⚠️ Gemini TTS key {i + 1}: {str(exc)[:100]}")
             if not busy:
                 break
@@ -329,7 +365,8 @@ class GeminiTTSEngine:
         # Bounded like every engine media call (audit fix 2026-11-03;
         # 120s == core.PROBE_TIMEOUT_SECONDS — one TTS line is seconds
         # long, so this is a hang backstop, never a real limit).
-        subprocess.run([self.ffmpeg, "-y", "-v", "error", "-i", str(raw), "-af", trim + tempo, "-ar", "48000",
+        subprocess.run([self.ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+                        "-y", "-v", "error", "-i", str(raw), "-af", trim + tempo, "-ar", "48000",
                         "-ac", "1", "-c:a", "pcm_s16le", str(out)], check=True, timeout=120)
         raw.unlink(missing_ok=True)
         return out

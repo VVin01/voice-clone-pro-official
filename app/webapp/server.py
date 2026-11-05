@@ -367,6 +367,47 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Error restoring script-ready recap jobs on startup: %s", sr_err)
 
+    # Batch AJ M2: resume broadcast campaigns that were mid-delivery
+    # (status RUNNING) when the previous process died.
+    # resume_broadcast_campaign existed but had NO production caller,
+    # so an interrupted campaign's remaining recipients were simply
+    # never sent. PENDING campaigns are NOT touched — those still
+    # await their admin's confirmation tap.
+    async def _resume_interrupted_broadcasts():
+        try:
+            from app.config import settings
+
+            if not settings.bot_token:
+                return
+            from aiogram import Bot
+            from sqlalchemy import select as _select
+
+            from app.db.session import AsyncSessionLocal
+            from app.models.enums import BroadcastCampaignStatus
+            from app.models.schema import BroadcastCampaign
+            from app.services.broadcast import resume_broadcast_campaign
+
+            async with AsyncSessionLocal() as session:
+                rows = (await session.execute(
+                    _select(BroadcastCampaign.id).where(
+                        BroadcastCampaign.status == BroadcastCampaignStatus.RUNNING.value
+                    )
+                )).scalars().all()
+            if not rows:
+                return
+            bot = Bot(token=settings.bot_token)
+            try:
+                for campaign_id in rows:
+                    async with AsyncSessionLocal() as session:
+                        await resume_broadcast_campaign(bot, session, campaign_id)
+            finally:
+                await bot.session.close()
+        except Exception as bc_err:
+            import logging
+            logging.getLogger(__name__).warning("Error resuming interrupted broadcasts on startup: %s", bc_err)
+
+    broadcast_resume_task = asyncio.create_task(_resume_interrupted_broadcasts())
+
     # Periodic background task every 30 minutes
     async def _periodic_cleanup():
         while True:
@@ -467,6 +508,12 @@ webapp_app = FastAPI(
     description="Unified Telegram Mini App for Voice Cloning and AI Movie Recap Generation",
     version="2.0.0",
     lifespan=lifespan,
+    # Batch AJ (L8): the interactive docs + raw schema were publicly
+    # served — a free map of every admin route for an attacker. The
+    # Mini App never uses them; operators have the codebase.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 # CORS Middleware for Telegram Webview compatibility.
@@ -489,6 +536,12 @@ webapp_app.add_middleware(
 # Rate limiting + upload-size gating for selected POST endpoints only.
 # GET/status polling is deliberately not limited (see rate_limit.py).
 webapp_app.add_middleware(RateLimitMiddleware)
+
+# Batch AJ (H3): byte-counting cap for chunked upload bodies, which
+# carry no Content-Length for the gate above to check.
+from app.webapp.rate_limit import ChunkedUploadCapMiddleware
+
+webapp_app.add_middleware(ChunkedUploadCapMiddleware)
 
 # Mount REST API
 webapp_app.include_router(api_router)
@@ -538,7 +591,6 @@ async def telegram_webhook_path_dispatch(request: Request, call_next):
 @webapp_app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
     """Cache policy for the SPA (hunt F14).
-
     - ``/`` (index.html): no-store. It is the asset manifest — the
       ``?v=`` version strings in it decide which asset URLs the
       client requests — so it must always be fresh after a deploy.
@@ -551,6 +603,14 @@ async def add_no_cache_headers(request: Request, call_next):
       Last-Modified 304s, so even an unversioned edit is never
       served stale — repeat opens just stop paying full price.
     """
+    # Batch AJ H9: the curated personas' reference WAVs moved out of
+    # the static tree (they are cloning source material, not public
+    # assets). Defence in depth: even if a stale copy lingers under
+    # the static dir on some deployment, it is never served.
+    if request.url.path.startswith("/static/audio/references/"):
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse({"detail": "Not found"}, status_code=404)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     if request.url.path == "/":
@@ -580,4 +640,29 @@ async def serve_index():
 
 @webapp_app.get("/health")
 async def health_check():
-    return {"status": "ok", "app": "Voice Clone Pro & Recap Studio"}
+    """Batch AJ (L2): health must reflect the DATABASE, not just the
+    process — the old static {"status": "ok"} meant health-based
+    recovery could never notice a dead DB. A bounded SELECT 1; any
+    failure (or a 3 s timeout) answers 503."""
+    import asyncio as _asyncio
+
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import text as _text
+
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async def _ping():
+            async with AsyncSessionLocal() as session:
+                await session.execute(_text("SELECT 1"))
+
+        await _asyncio.wait_for(_ping(), timeout=3.0)
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "db_unavailable", "app": "Voice Clone Pro & Recap Studio"},
+        )
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "app": "Voice Clone Pro & Recap Studio"},
+    )

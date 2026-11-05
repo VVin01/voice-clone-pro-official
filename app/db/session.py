@@ -85,6 +85,58 @@ async def verify_database_safety(session: AsyncSession) -> bool:
     return True
 
 
+async def ensure_batch_aj_unique_indexes(engine) -> None:
+    """Batch AJ: create the two money-safety unique indexes.
+
+    Deliberately NOT declared in the models' ``__table_args__``:
+    ``create_all`` would then try to build them against a production
+    table that may already contain duplicates, and a failure there
+    breaks boot. Instead each index is created here, in its own
+    transaction, with IF NOT EXISTS, and ANY failure (including
+    "existing rows violate it") is logged and skipped — the service-
+    level checks (payments.create_payment_request's fingerprint
+    guard, the recap ledger REFUND existence check) remain the
+    primary enforcement; these indexes are the race backstop for
+    when they do get created.
+
+    * ``uq_pr_slip_fingerprint_live``: one live (PENDING) or APPROVED
+      payment request per slip fingerprint — H1's one-slip-one-credit
+      rule, across users. REJECTED rows are excluded so a rejected
+      slip can legitimately be resubmitted.
+    * ``uq_recap_ledger_refund_ref``: one recap-credit REFUND event
+      per job reference — H8's second door on the refund race.
+    """
+    import logging
+
+    from sqlalchemy import text
+
+    log = logging.getLogger(__name__)
+    statements = (
+        (
+            "uq_pr_slip_fingerprint_live",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_pr_slip_fingerprint_live "
+            "ON payment_requests (slip_fingerprint) "
+            "WHERE slip_fingerprint IS NOT NULL AND status <> 'REJECTED'",
+        ),
+        (
+            "uq_recap_ledger_refund_ref",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_recap_ledger_refund_ref "
+            "ON recap_credit_ledger_events (reference_id) "
+            "WHERE substr(reference_id, 1, 7) = 'REFUND:' AND direction = 'CREDIT'",
+        ),
+    )
+    for name, ddl in statements:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(ddl))
+        except Exception as exc:
+            log.warning(
+                "Batch AJ: could not create unique index %s (%s); "
+                "service-level guards remain in force.",
+                name, exc,
+            )
+
+
 async def init_db() -> None:
     """Create all tables and register database identity metadata."""
     if settings.storage_root:
@@ -114,6 +166,8 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS review_claimed_at TIMESTAMP WITH TIME ZONE"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS original_minutes INTEGER"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS edited_by BIGINT"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_fingerprint VARCHAR(128)"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS edited_recap_credits INTEGER"))
             elif dialect_name == "sqlite":
                 # SQLite PRAGMA check
                 res_users = connection.execute(text("PRAGMA table_info(users)"))
@@ -153,8 +207,16 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE payment_requests ADD COLUMN original_minutes INTEGER"))
                 if "edited_by" not in cols_pay:
                     connection.execute(text("ALTER TABLE payment_requests ADD COLUMN edited_by BIGINT"))
+                if "slip_fingerprint" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN slip_fingerprint VARCHAR(128)"))
+                if "edited_recap_credits" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN edited_recap_credits INTEGER"))
 
         await conn.run_sync(_add_missing_cols)
+
+    # Batch AJ: defensive unique indexes (see the helper). Runs AFTER
+    # the column additions above so slip_fingerprint exists.
+    await ensure_batch_aj_unique_indexes(engine)
 
     # Initialize database identity metadata idempotently
     async with AsyncSessionLocal() as session:

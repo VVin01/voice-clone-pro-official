@@ -68,6 +68,20 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/voices/{job_id}/send-telegram": (20, 60),
     "/api/downloader/{download_id}/send-telegram": (20, 60),
     "/api/history/{job_id}": (30, 60),
+    # Batch AJ (L10): the remaining abusable POSTs join the table —
+    # membership re-verification (Telegram API calls per hit), the
+    # branding-logo upload (disk write), and the voice-job cancel.
+    "/api/user/verify-membership": (20, 60),
+    "/api/user/logo": (20, 60),
+    "/api/jobs/{job_id}/cancel": (30, 60),
+}
+
+# GET endpoints are deliberately NOT rate limited (status polling
+# must stay cheap) — with ONE exception (Batch AJ, L10): the recap
+# frame endpoint runs an ffmpeg extraction per hit, so it is an
+# unauthenticated-cost amplifier without a cap.
+GET_RATE_LIMITS: dict[str, tuple[int, int]] = {
+    "/api/recap/frame": (30, 60),
 }
 
 # path prefix -> max Content-Length in bytes, when the client sends one.
@@ -87,10 +101,15 @@ TOO_LARGE_DETAIL = "ဖိုင်အရွယ်အစား ကန့်သ�
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP: first X-Forwarded-For hop (the address
-    Render's proxy reports), else the direct peer address."""
+    """Best-effort client IP: the LAST X-Forwarded-For hop, else the
+    direct peer address.
+
+    Batch AJ (L10): the first hop used to be trusted, but the first
+    hop is whatever the CLIENT claims — trivially rotatable to
+    escape IP-keyed buckets. The platform proxy (Render) APPENDS the
+    address it observed, so the last hop is the trustworthy one."""
     forwarded = request.headers.get("x-forwarded-for", "")
-    ip = forwarded.split(",")[0].strip() if forwarded else ""
+    ip = forwarded.split(",")[-1].strip() if forwarded else ""
     if not ip and request.client is not None:
         ip = request.client.host or ""
     return ip or "unknown"
@@ -164,6 +183,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 best_len = len(prefix)
         return best
 
+    def _hits_for(self, key: str, limit: tuple[int, int], now: float) -> bool:
+        """Record one hit; return True when the caller is OVER the limit."""
+        max_requests, window = limit
+        hits = self._hits[key]
+        while hits and hits[0] <= now - window:
+            hits.popleft()
+        if len(hits) >= max_requests:
+            return True
+        hits.append(now)
+        return False
+
     async def dispatch(self, request: Request, call_next):
         # Upload-size gate: only when Content-Length is present.
         if request.method == "POST":
@@ -186,17 +216,111 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.method in ("POST", "DELETE"):
             limit = self._is_limited(request.url.path)
             if limit is not None:
-                max_requests, window = limit
                 key = f"{_rate_key(request)}:{request.url.path}"
-                now = time.monotonic()
-                hits = self._hits[key]
-                while hits and hits[0] <= now - window:
-                    hits.popleft()
-                if len(hits) >= max_requests:
+                if self._hits_for(key, limit, time.monotonic()):
                     return JSONResponse(
                         status_code=429,
                         content={"detail": TOO_MANY_DETAIL},
-                        headers={"Retry-After": str(window)},
+                        headers={"Retry-After": str(limit[1])},
                     )
-                hits.append(now)
+        elif request.method == "GET" and request.url.path in GET_RATE_LIMITS:
+            # Batch AJ (L10): the one GET with a real per-hit cost
+            # (ffmpeg frame extraction) gets a bucket too.
+            limit = GET_RATE_LIMITS[request.url.path]
+            key = f"{_rate_key(request)}:{request.url.path}"
+            if self._hits_for(key, limit, time.monotonic()):
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": TOO_MANY_DETAIL},
+                    headers={"Retry-After": str(limit[1])},
+                )
         return await call_next(request)
+
+
+class ChunkedUploadCapMiddleware:
+    """Pure-ASGI byte-counting cap for upload endpoints (Batch AJ, H3).
+
+    The Content-Length gate in RateLimitMiddleware only fires when
+    the client SENDS the header — a chunked transfer (or a lying
+    header) sailed past it, leaving each endpoint's own streaming cap
+    as the only defence. This middleware counts the ACTUAL body bytes
+    for the capped paths:
+
+    * Small caps (≤ 64 MB — slips, reference audio): the body is
+      buffered up to the cap and refused with a clean 413 before the
+      application ever sees it; under-cap bodies replay byte-identical.
+    * Large caps (the 1 GB recap upload, the 100 MB worker result):
+      buffering would defeat the endpoints' streaming design, so the
+      body streams through a counting receive; exceeding the cap
+      converts to a disconnect, and the endpoint's own during-write
+      cap + partial-file cleanup remain the enforcement of record.
+    """
+
+    _BUFFER_LIMIT = 64 * 1024 * 1024
+
+    def __init__(self, app, max_content_length: dict[str, int] | None = None):
+        self.app = app
+        self.caps = max_content_length or MAX_CONTENT_LENGTH
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("method") != "POST":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        cap = None
+        for prefix, max_bytes in self.caps.items():
+            if path.startswith(prefix):
+                cap = max_bytes
+                break
+        if cap is None:
+            await self.app(scope, receive, send)
+            return
+
+        if cap > self._BUFFER_LIMIT:
+            total = 0
+
+            async def counting_receive():
+                nonlocal total
+                message = await receive()
+                if message["type"] == "http.request":
+                    total += len(message.get("body", b""))
+                    if total > cap:
+                        return {"type": "http.disconnect"}
+                return message
+
+            await self.app(scope, counting_receive, send)
+            return
+
+        body_parts: list[bytes] = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            total += len(chunk)
+            if total > cap:
+                response = JSONResponse(
+                    status_code=413, content={"detail": TOO_LARGE_DETAIL}
+                )
+                await response(scope, receive, send)
+                return
+            body_parts.append(chunk)
+            if not message.get("more_body"):
+                break
+
+        replay = list(body_parts)
+
+        async def replay_receive():
+            if replay:
+                chunk = replay.pop(0)
+                return {
+                    "type": "http.request",
+                    "body": chunk,
+                    "more_body": bool(replay),
+                }
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        await self.app(scope, replay_receive, send)
