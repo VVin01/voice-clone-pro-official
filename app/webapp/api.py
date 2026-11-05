@@ -5542,16 +5542,24 @@ async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my",
 async def _send_recap_telegram_delivery(
     chat_id: int,
     video_path: str,
-    audio_path: Optional[str],
-    srt_path: Optional[str],
-    script_path: Optional[str],
     title: str,
     style: str,
     voice_name: str,
     duration_sec: int,
     job_id: Optional[str] = None,
 ) -> tuple:
-    """Deliver completed recap video and media files directly to user's Telegram.
+    """Deliver the completed recap VIDEO directly to user's Telegram.
+
+    Batch AP (owner order 2026-11-05): video ONLY — no companion files.
+    The SRT, narration audio and script are never pushed with the
+    video; the bot completion message carries one button per extra
+    and each is sent only when the user presses for that file (the
+    ``send_recap_srt_`` / ``send_recap_audio_`` / ``send_recap_script_``
+    handlers in app/handlers/clone.py). All three stay downloadable
+    from the Mini App exactly as before. The helper no longer accepts
+    the extra paths at all — the Batch AJ L12 shape (parameters
+    accepted, delivery optional) is what let extras drift in and out
+    of this function unnoticed.
 
     Batch AF: returns ``(delivered, reason)`` instead of swallowing
     every failure into a warning log. ``delivered`` is True only when
@@ -5657,59 +5665,20 @@ async def _send_recap_telegram_delivery(
                 await bot.send_message(chat_id=chat_id, text=over_caption, reply_markup=kb, parse_mode="HTML")
                 delivered = True
 
-            if srt_path and os.path.isfile(srt_path):
-                sf = FSInputFile(
-                    srt_path,
-                    filename=branded_download_filename(
-                        "Subtitles", "srt", title=title, job_id=job_id
-                    ),
-                )
-                await bot.send_document(chat_id=chat_id, document=sf, caption=t("clone_caption_subtitles", lang), parse_mode="HTML")
-
-            # Batch AJ L12: the narration audio and the script were
-            # accepted as parameters and silently never sent — full
-            # mode users got video + SRT only (the segmented path
-            # sends everything). Both go out as extras; a failure of
-            # an extra never undoes the main delivery above.
-            if audio_path and os.path.isfile(audio_path):
-                try:
-                    if os.path.getsize(audio_path) <= 50 * 1024 * 1024:
-                        af = FSInputFile(
-                            audio_path,
-                            filename=branded_download_filename(
-                                "RecapAudio", Path(audio_path).suffix.lstrip(".") or "mp3",
-                                title=title, job_id=job_id,
-                            ),
-                        )
-                        await bot.send_audio(chat_id=chat_id, audio=af, caption=t("clone_caption_recap_audio", lang), parse_mode="HTML")
-                except Exception as audio_err:
-                    logger.warning(f"Recap delivery: audio extra failed for job {job_id}: {audio_err}")
-            if script_path and os.path.isfile(script_path):
-                try:
-                    tf = FSInputFile(
-                        script_path,
-                        filename=branded_download_filename(
-                            "RecapScript", Path(script_path).suffix.lstrip(".") or "txt",
-                            title=title, job_id=job_id,
-                        ),
-                    )
-                    await bot.send_document(chat_id=chat_id, document=tf, caption=t("clone_caption_recap_script", lang), parse_mode="HTML")
-                except Exception as script_err:
-                    logger.warning(f"Recap delivery: script extra failed for job {job_id}: {script_err}")
-
-            # Split jobs: every part is delivered too (when the full video
-            # was oversized, or the job is segmented, the parts already
-            # went out above as the main delivery — don't send twice).
-            if parts_available and not is_segmented and file_size <= 50 * 1024 * 1024:
-                await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
+            # Batch AP: nothing follows the main delivery. The former
+            # duplicate-parts tail (full video AND every part for a
+            # non-segmented job whose render fit in 50 MB) is gone too:
+            # parts are delivered only when they ARE the delivery —
+            # the segmented branch and the oversize-with-parts branch
+            # above.
 
         finally:
             await bot.session.close()
     except Exception as e:
         logger.warning(f"Failed to send recap video to Telegram chat {chat_id}: {e}")
-        # Batch AF: a failure AFTER the main delivery (e.g. the SRT
-        # extra) still counts as delivered — the video the user asked
-        # for did arrive; the reason rides along for the logs.
+        # Batch AF: a failure AFTER the main delivery still counts as
+        # delivered — the video the user asked for did arrive; the
+        # reason rides along for the logs.
         return delivered, type(e).__name__
     return delivered, None
 
@@ -6581,6 +6550,13 @@ async def _execute_recap_background_job(
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
                 app_url = settings.mini_app_url
                 clean_title = _clean_recap_display_title(entry.get("title"), req.url)
+                # Batch AP: the completion message is the ONLY place
+                # the companion files are offered, one button per file.
+                # Nothing is pushed with the video itself; each extra
+                # is sent solely when its button is pressed (handlers
+                # in app/handlers/clone.py). The buttons are always
+                # shown — a job that never produced a given file gets
+                # the honest file-missing reply from its handler.
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -6590,6 +6566,22 @@ async def _execute_recap_background_job(
                         InlineKeyboardButton(
                             text=t("clone_btn_send_video", _recap_notify_lang),
                             callback_data=f"send_recap_{job_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=t("clone_btn_send_srt", _recap_notify_lang),
+                            callback_data=f"send_recap_srt_{job_id}"
+                        ),
+                        InlineKeyboardButton(
+                            text=t("clone_btn_send_recap_audio", _recap_notify_lang),
+                            callback_data=f"send_recap_audio_{job_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=t("clone_btn_send_script", _recap_notify_lang),
+                            callback_data=f"send_recap_script_{job_id}"
                         )
                     ]
                 ])
@@ -8298,7 +8290,12 @@ async def send_recap_to_telegram(
     db: AsyncSession = Depends(get_db_session),
     _gate: User = Depends(require_gate_verified),
 ):
-    """Deliver generated recap video and assets directly to user's Telegram chat on demand."""
+    """Deliver the generated recap video directly to user's Telegram chat on demand.
+
+    Batch AP: video only — the SRT / narration audio / script are
+    never attached here; they are sent solely from the bot completion
+    message's per-file buttons and stay downloadable in the Mini App.
+    """
     db_job = await db.get(Job, job_id)
     if not _recap_registry_owner_ok(job_id, user):
         raise HTTPException(status_code=404, detail="Recap job not found")
@@ -8308,9 +8305,6 @@ async def send_recap_to_telegram(
     db_res_path = db_job.result_path if db_job else None
 
     video_path = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
-    audio_path = resolve_recap_deliverable_path(job_id, "audio")
-    srt_path = resolve_recap_deliverable_path(job_id, "srt")
-    script_path = resolve_recap_deliverable_path(job_id, "script")
 
     if not video_path or not Path(video_path).is_file():
         raise HTTPException(status_code=404, detail="ဗီဒီယို ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
@@ -8333,9 +8327,6 @@ async def send_recap_to_telegram(
     delivered, fail_reason = await _send_recap_telegram_delivery(
         chat_id=user.id,
         video_path=video_path,
-        audio_path=audio_path,
-        srt_path=srt_path,
-        script_path=script_path,
         title=clean_title,
         style="Pro Dubbed",
         voice_name=voice_label,

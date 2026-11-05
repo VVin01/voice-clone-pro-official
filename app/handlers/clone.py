@@ -798,6 +798,176 @@ async def handle_send_audio_callback(callback: CallbackQuery):
             pass
 
 
+async def _send_recap_extra_missing(callback: CallbackQuery, lang: str, job_id: str) -> None:
+    """Honest route for a requested recap companion file that is absent."""
+    app_url = settings.mini_app_url
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=t("clone_btn_miniapp_watch", lang),
+                web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
+            )
+        ]
+    ])
+    await callback.bot.send_message(
+        chat_id=callback.from_user.id,
+        text=t("clone_recap_file_missing_text", lang, job_id=job_id),
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+async def _deliver_recap_extra(callback: CallbackQuery, file_type: str) -> None:
+    """Send exactly one user-requested recap companion file.
+
+    Batch AP: companion files are never pushed with the video. Each
+    completion-message button reaches this helper for its own file only.
+    Ownership deliberately mirrors ``handle_send_recap_callback``,
+    including AJ M7's fail-closed treatment when no Job row remains.
+    """
+    prefix = f"send_recap_{file_type}_"
+    job_id = callback.data.removeprefix(prefix).strip()
+    try:
+        async with AsyncSessionLocal() as _s:
+            _u, _ = await get_or_create_user(_s, callback.from_user.id)
+            lang = _u.language_code
+    except Exception:
+        lang = "my"
+    try:
+        await callback.answer(t("clone_toast_sending_file", lang))
+    except Exception:
+        pass
+
+    try:
+        target_chat_id = callback.from_user.id
+        from app.webapp.api import (
+            RECAP_JOBS_REGISTRY,
+            _clean_recap_display_title,
+            resolve_recap_deliverable_path,
+        )
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            # Ownership: never deliver another user's recap file.
+            if job and job.user_id != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=t("clone_audio_not_found", lang),
+                )
+                return
+            if job is None:
+                # AJ M7, mirrored from the video handler: without a Job
+                # row, the registry entry must prove ownership (admins
+                # exempt); neither source proving it means refuse.
+                _entry_owner = (RECAP_JOBS_REGISTRY.get(job_id) or {}).get("user_id")
+                if _entry_owner != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                    await callback.bot.send_message(
+                        chat_id=target_chat_id,
+                        text=t("clone_audio_not_found", lang),
+                    )
+                    return
+
+            resolved = resolve_recap_deliverable_path(job_id, file_type)
+            file_path = Path(resolved) if resolved and Path(resolved).is_file() else None
+            if file_path is None:
+                await _send_recap_extra_missing(callback, lang, job_id)
+                return
+
+            _recap_entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
+            recap_title = (
+                _clean_recap_display_title(_recap_entry.get("title"))
+                if _recap_entry.get("title")
+                else None
+            )
+            if recap_title and (
+                recap_title.startswith("http") or recap_title == "Movie Recap Video"
+            ):
+                recap_title = None
+
+            if file_type == "srt":
+                await callback.bot.send_document(
+                    chat_id=target_chat_id,
+                    document=FSInputFile(
+                        str(file_path),
+                        filename=branded_download_filename(
+                            "Subtitles", "srt", title=recap_title, job_id=job_id
+                        ),
+                    ),
+                    caption=t("clone_caption_subtitles", lang),
+                    parse_mode="HTML",
+                )
+            elif file_type == "audio":
+                if file_path.stat().st_size > 50 * 1024 * 1024:
+                    app_url = settings.mini_app_url
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=t("clone_btn_miniapp_watch", lang),
+                                web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
+                            )
+                        ]
+                    ])
+                    await callback.bot.send_message(
+                        chat_id=target_chat_id,
+                        text=t("clone_recap_large_app_text", lang, job_id=job_id),
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                    return
+                await callback.bot.send_audio(
+                    chat_id=target_chat_id,
+                    audio=FSInputFile(
+                        str(file_path),
+                        filename=branded_download_filename(
+                            "RecapAudio", file_path.suffix.lstrip(".") or "mp3",
+                            title=recap_title, job_id=job_id,
+                        ),
+                    ),
+                    caption=t("clone_caption_recap_audio", lang),
+                    parse_mode="HTML",
+                )
+            else:  # script
+                await callback.bot.send_document(
+                    chat_id=target_chat_id,
+                    document=FSInputFile(
+                        str(file_path),
+                        filename=branded_download_filename(
+                            "RecapScript", file_path.suffix.lstrip(".") or "txt",
+                            title=recap_title, job_id=job_id,
+                        ),
+                    ),
+                    caption=t("clone_caption_recap_script", lang),
+                    parse_mode="HTML",
+                )
+    except Exception as e:
+        logger.error(f"Error handling send_recap_{file_type} callback for job {job_id}: {e}", exc_info=True)
+        try:
+            await callback.bot.send_message(
+                chat_id=callback.from_user.id,
+                text=t("clone_recap_send_failed", lang),
+            )
+        except Exception:
+            pass
+
+
+# Batch AP: these narrower prefixes MUST be registered before the
+# broader send_recap_ handler below. All start with send_recap_, and
+# aiogram dispatches the first matching callback handler.
+@clone_router.callback_query(F.data.startswith("send_recap_srt_"))
+async def handle_send_recap_srt_callback(callback: CallbackQuery):
+    await _deliver_recap_extra(callback, "srt")
+
+
+@clone_router.callback_query(F.data.startswith("send_recap_audio_"))
+async def handle_send_recap_audio_callback(callback: CallbackQuery):
+    await _deliver_recap_extra(callback, "audio")
+
+
+@clone_router.callback_query(F.data.startswith("send_recap_script_"))
+async def handle_send_recap_script_callback(callback: CallbackQuery):
+    await _deliver_recap_extra(callback, "script")
+
+
 @clone_router.callback_query(F.data.startswith("send_recap_"))
 async def handle_send_recap_callback(callback: CallbackQuery):
     job_id = callback.data.replace("send_recap_", "").strip()
@@ -843,9 +1013,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     return
             db_res_path = job.result_path if job else None
             resolved_vid = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
-            resolved_srt = resolve_recap_deliverable_path(job_id, "srt")
             video_path = Path(resolved_vid) if resolved_vid and Path(resolved_vid).is_file() else None
-            srt_path = Path(resolved_srt) if resolved_srt and Path(resolved_srt).is_file() else None
 
             has_parts = bool(resolve_recap_part_paths(job_id))
             from app.webapp.api import RECAP_JOBS_REGISTRY, _clean_recap_display_title
@@ -867,16 +1035,6 @@ async def handle_send_recap_callback(callback: CallbackQuery):
             if has_parts and is_segmented:
                 # Split/segmented job: the parts ARE the delivery (the
                 # registered "video" is just part 1 — don't send it twice).
-                if srt_path and srt_path.is_file():
-                    try:
-                        await callback.bot.send_document(
-                            chat_id=target_chat_id,
-                            document=FSInputFile(str(srt_path), filename=branded_download_filename("Subtitles", "srt", title=recap_title, job_id=job_id)),
-                            caption=t("clone_caption_subtitles", lang),
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
                 try:
                     from app.webapp.api import _deliver_recap_parts
 
@@ -916,16 +1074,6 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                         reply_markup=kb,
                         parse_mode="HTML",
                     )
-                if srt_path and srt_path.is_file():
-                    try:
-                        await callback.bot.send_document(
-                            chat_id=target_chat_id,
-                            document=FSInputFile(str(srt_path), filename=branded_download_filename("Subtitles", "srt", title=recap_title, job_id=job_id)),
-                            caption=t("clone_caption_subtitles", lang),
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
                 # Split jobs: deliver every part as well. For >10 min
                 # sources the full render usually exceeds the 50 MB bot
                 # limit, so the parts are the actual Telegram delivery.

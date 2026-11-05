@@ -88,12 +88,14 @@ def video_file(tmp_path):
 
 
 async def _call_helper(video_file):
+    # Batch AP signature update (mechanical): the delivery helper no
+    # longer accepts companion-file paths at all, so the former
+    # audio_path / srt_path / script_path=None arguments are gone.
+    # The AF contract under test — (delivered, reason) honesty — is
+    # unchanged.
     return await api_mod._send_recap_telegram_delivery(
         chat_id=OWNER_ID,
         video_path=str(video_file),
-        audio_path=None,
-        srt_path=None,
-        script_path=None,
         title="Some Title",
         style="Pro Dubbed",
         voice_name="Ko Min",
