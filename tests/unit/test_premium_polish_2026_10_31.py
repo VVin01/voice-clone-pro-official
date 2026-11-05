@@ -199,9 +199,12 @@ def test_t3_studio_banners_removed_originals_kept():
                 "tut-banner-customvoice", "tut-banner-scriptedit",
                 "tut-banner-recapadvanced", "tut-banner-support"):
         assert f'id="{bid}"' not in INDEX_HTML, bid
-    # Pre-polish originals survive untouched: Voice banner + Step-1 btn.
+    # Pre-polish originals survive untouched: Voice banner.
     assert 'id="voice-tutorial-banner"' in INDEX_HTML
-    assert 'id="recap-step1-tut-btn"' in INDEX_HTML
+    # Batch AV: the Step-1 tutorial button was removed as a duplicate
+    # of the header guide (parent dedupe) — the guide itself remains.
+    assert 'id="recap-step1-tut-btn"' not in INDEX_HTML
+    assert 'id="btn-tutorial-top"' in INDEX_HTML
 
 
 def test_t4_no_stale_16_and_dead_code_removed():
@@ -210,8 +213,9 @@ def test_t4_no_stale_16_and_dead_code_removed():
         assert "VoiceClonePro/16" not in blob, name
     # dead #recap-tutorial-banner management is gone
     assert "recap-tutorial-banner" not in APP_JS
-    # Step-1 button has an id, uses configured title + enabled flag
-    assert 'id="recap-step1-tut-btn"' in INDEX_HTML
+    # Batch AV: the Step-1 button is gone (dedupe above); the title
+    # helper still serves the surviving Voice banner.
+    assert 'id="recap-step1-tut-btn"' not in INDEX_HTML
     assert "tutorialDisplayTitle" in APP_JS
     # server defaults point at the current posts
     assert 'default="https://t.me/VoiceClonePro/28"' in SETTINGS_PY

@@ -1,0 +1,330 @@
+"""Batch AV — Recap tab step-flow redesign (owner-approved 2026-11-05).
+
+The Recap tab becomes four collapsible steps under a step indicator
+(1 Source ထည့်သွင်းပါ → 2 Preview → 3 Voice → 4 Create). The redesign
+is a DOM relocation ONLY: every pre-AV control id must still exist
+(except the documented structural removals below), the submit payload
+keeps its exact 42 keys, and the prefs keys are untouched.
+
+Documented removals (spec + parent ground-truth addendum):
+- tab-btn-seek / tab-btn-mask / tab-btn-style: the toolbar tab nav is
+  replaced by a visible seek cluster + frequent row + the fine
+  expandable; the tab PANELS' contents all survive in new homes.
+- tb-panel-mask / tb-panel-style: panel wrappers dissolved so each
+  control group is coherent (subtitle group, blur group, logo group);
+  tb-panel-seek survives as the consolidated seek cluster.
+- recap-advanced-accordion / btn-toggle-advanced-recap /
+  recap-advanced-body / accordion-chevron / recap-adv-section-frame /
+  recap-adv-section-speed / recap-adv-section-other: the advanced
+  accordion is replaced by the step structure; every section's
+  contents moved into Steps 2/3/4.
+- recap-step1-tut-btn: duplicate of the header 📚 guide that exits the
+  app (parent dedupe) — the header guide remains.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from app.webapp import api as api_mod
+
+
+STATIC_DIR = Path(api_mod.__file__).resolve().parent / "static"
+APP_JS = (STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
+I18N_JS = (STATIC_DIR / "js" / "i18n.js").read_text(encoding="utf-8")
+STYLE_CSS = (STATIC_DIR / "css" / "style.css").read_text(encoding="utf-8")
+INDEX_HTML = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+TAB = INDEX_HTML[INDEX_HTML.index('id="tab-recap"'):INDEX_HTML.index('id="tab-downloader"')]
+
+# Every id that existed in the Recap tab before AV (measured on main
+# accad5f2: 200 ids) minus the documented removals above.
+REMOVED_IDS = {
+    "tab-btn-seek", "tab-btn-mask", "tab-btn-style",
+    "tb-panel-mask", "tb-panel-style",
+    "recap-advanced-accordion", "btn-toggle-advanced-recap",
+    "recap-advanced-body", "accordion-chevron",
+    "recap-adv-section-frame", "recap-adv-section-speed",
+    "recap-adv-section-other",
+    "recap-step1-tut-btn",
+}
+
+SURVIVING_IDS = [
+    "preview-hint-tag", "recap-preview-empty", "recap-preview-empty-inner",
+    "recap-preview-loading-inner", "recap-mockup-wrap", "recap-mockup-frame",
+    "video-bg-canvas", "video-backdrop-blur", "mockup-inner-movie",
+    "canvas-video-player", "canvas-composite-img", "crop-shade-top",
+    "crop-shade-bottom", "crop-shade-left", "crop-shade-right",
+    "canvas-no-thumb", "canvas-preview-loading", "canvas-source-label",
+    "preview-logo", "preview-blur-box", "preview-sub-box",
+    "preview-title-box", "mockup-fill-badge",
+    "recap-preview-ratio-group", "recap-preview-controls-group",
+    "canvas-compact-toolbar", "tb-panel-seek", "canvas-seek-time-badge",
+    "slider-canvas-seek", "btn-seek-prev-5", "btn-canvas-play-toggle",
+    "btn-seek-next-5", "btn-toggle-subs", "btn-toggle-blur", "btn-toggle-logo",
+    "slider-blur-y", "val-blur-y", "slider-blur-h", "val-blur-h",
+    "slider-blur-x", "val-blur-x", "slider-blur-w", "val-blur-w",
+    "slider-blur-strength", "val-blur-strength",
+    "slider-sub-y", "val-sub-y", "slider-sub-x", "val-sub-x",
+    "slider-sub-w", "val-sub-w", "title-pos-sliders",
+    "slider-title-x", "val-title-x", "slider-title-y", "val-title-y",
+    "btn-reset-canvas-layout",
+    "sub-style-picker", "sub-lines-picker-toolbar", "font-size-picker-toolbar",
+    "recap-sub-font-picker", "recap-quality-picker",
+    "recap-crop-presets-toolbar", "recap-logo-pos-picker",
+    "recap-logo-manager", "recap-logo-controls", "recap-logo-thumb",
+    "btn-logo-upload", "btn-logo-remove", "input-logo-file",
+    "recap-logo-vip-hint", "recap-logo-status",
+    "tab-recap", "recap-demo-card", "btn-recap-demo",
+    "btn-fetch-recap-info", "btn-source-mode-file", "btn-source-mode-url",
+    "panel-source-url", "panel-source-file", "recap-drop-text",
+    "recap-video-drop-zone", "recap-free-terms-note",
+    "recap-upload-progress", "recap-upload-bar", "recap-upload-label",
+    "recap-upload-elapsed", "recap-upload-cancel", "recap-upload-hint",
+    "recap-upload-error", "recap-upload-error-text", "recap-upload-error-hint",
+    "recap-upload-retry", "recap-url-input",
+    "recap-video-file-input", "recap-video-info-box", "recap-info-thumb",
+    "recap-info-title", "recap-info-dur", "recap-info-platform",
+    "recap-info-sub", "recap-limit-pill", "recap-tier-limit-text",
+    "recap-ratio-picker", "recap-fill-picker", "recap-fill-note",
+    "recap-engine-picker", "recap-gemini-voice-wrap",
+    "recap-gemini-voice-select", "btn-preview-gemini-voice",
+    "recap-persona-area", "recap-top-voices", "btn-toggle-all-voices",
+    "all-voices-toggle-text", "all-voices-dropdown-wrap",
+    "recap-all-voices-grid", "story-style-picker-quick",
+    "recap-preview-transform-group", "btn-toggle-mirror", "recap-zoom-picker",
+    "btn-toggle-crop-detail", "crop-detail-chevron", "recap-crop-detail",
+    "btn-sync-crop", "slider-crop-top", "val-crop-top",
+    "slider-crop-bottom", "val-crop-bottom", "slider-crop-left",
+    "val-crop-left", "slider-crop-right", "val-crop-right",
+    "recap-preview-speed-group", "recap-speed-picker",
+    "recap-lang-picker", "recap-split-toggle", "recap-split-minutes-wrap",
+    "recap-split-minutes-picker", "recap-split-cost-hint",
+    "recap-title-controls", "recap-title-toggle", "recap-title-text",
+    "recap-title-fallback-hint", "recap-script-review-toggle",
+    "btn-start-recap", "recap-unverified-warning", "prefs-saved-note",
+    "recap-inline-status", "recap-inline-status-text",
+    "recap-progress-box", "recap-spinner", "recap-status-msg",
+    "recap-stage-stepper", "recap-progress-fill", "recap-step-text",
+    "btn-recap-cancel", "recap-script-box", "recap-script-list",
+    "btn-script-save", "btn-script-render", "btn-script-cancel",
+    "recap-result-box",
+    "recap-result-player", "btn-recap-dl-video", "btn-recap-send-telegram",
+    "recap-oversize-note", "btn-recap-dl-audio", "btn-recap-dl-srt",
+    "btn-recap-dl-script", "recap-parts-wrap", "recap-parts-list",
+    "recap-split-note", "recap-blur-warning", "recap-fallback-note",
+    "recap-cost-line", "recap-expiry-note", "recap-failed-box",
+    "recap-failed-error", "recap-failed-refund", "btn-recap-retry",
+    "recap-retry-note", "recap-retry-upload-missing",
+    "studio-alert-carousel", "carousel-track", "carousel-dots",
+    "btn-carousel-prev", "btn-carousel-next",
+]
+
+PAYLOAD_KEYS = [
+    "url", "title", "voice_slug", "story_style", "ratio", "ratio_fill",
+    "crop_top", "crop_bottom", "crop_left", "crop_right", "mirror_video",
+    "zoom_factor", "voice_speed", "blur_subtitles", "blur_y", "blur_h",
+    "blur_x", "blur_w", "blur_box_explicit", "blur_strength",
+    "burn_subtitles", "sub_bottom_margin", "sub_x", "sub_w", "sub_style",
+    "sub_font_size", "sub_font", "sub_lines", "include_logo", "logo_pos",
+    "title_enabled", "title_text", "title_x", "title_y",
+    "duration_seconds", "script_review", "source_language",
+    "render_quality", "tts_engine", "gemini_voice", "split_video",
+    "split_minutes",
+]
+
+NEW_I18N_KEYS = [
+    "recap_step_nav_preview", "recap_step_nav_voice", "recap_step4_title",
+    "recap_fine_title", "recap_step_continue", "recap_summary_no_source",
+    "recap_step4_quote_label", "recap_subtitle_group_title",
+    "recap_blur_group_title",
+]
+
+
+def _step_slice(n: int, end: int | None = None) -> str:
+    start = TAB.index(f'id="recap-step-{n}"')
+    if end is None:
+        end = TAB.index(f'id="recap-step-{n + 1}"') if n < 4 else len(TAB)
+    return TAB[start:end]
+
+
+# ── Inventory: nothing lost, removals are exactly the documented set ──
+
+def test_av_every_surviving_control_id_still_exists():
+    missing = [i for i in SURVIVING_IDS if f'id="{i}"' not in TAB]
+    assert missing == [], f"controls lost in the AV restructure: {missing}"
+
+
+def test_av_documented_removals_are_absent():
+    present = [i for i in REMOVED_IDS if f'id="{i}"' in TAB]
+    assert present == [], f"documented removals still present: {present}"
+
+
+def test_av_no_duplicate_ids_in_tab():
+    ids = re.findall(r'id="([^"]+)"', TAB)
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    assert dupes == [], f"duplicate ids after restructure: {dupes}"
+
+
+def test_av_submit_payload_keys_unchanged():
+    i = APP_JS.index("const payload = {")
+    depth, j = 0, i
+    while True:
+        c = APP_JS[j]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    keys = re.findall(r"^\s+([a-z_]+):", APP_JS[i:j], re.M)
+    assert keys == PAYLOAD_KEYS
+
+
+def test_av_prefs_keys_unchanged():
+    for key in ("vcp_recap_prefs", "vcp_recap_settings"):
+        assert key in APP_JS, key
+
+
+# ── Step structure and deliberate placement ──
+
+def test_av_step_structure_and_nav():
+    for n in (1, 2, 3, 4):
+        assert f'id="recap-step-{n}"' in TAB
+        assert f'id="recap-step-{n}-body"' in TAB
+        assert f'id="recap-summary-{n}"' in TAB
+        assert f'data-step-toggle="{n}"' in TAB
+        assert f'data-step-pill="{n}"' in TAB
+    assert 'id="recap-steps-nav"' in TAB
+    positions = [TAB.index(f'id="recap-step-{n}"') for n in (1, 2, 3, 4)]
+    assert positions == sorted(positions), "steps must render in order 1→2→3→4"
+    # Step 1 carries the owner-mandated name.
+    assert 'data-i18n="recap_step1_title">Source ထည့်သွင်းပါ<' in TAB
+
+
+def test_av_step2_visible_vs_detail_split():
+    step2 = _step_slice(2)
+    fine_at = step2.index('id="recap-fine-body"')
+    visible, detail = step2[:fine_at], step2[fine_at:]
+    # Visible: stage, aspect/fill dock, ONE consolidated seek cluster,
+    # the frequent blur gate.
+    for marker in ('id="recap-mockup-wrap"', 'id="recap-preview-ratio-group"',
+                   'id="tb-panel-seek"', 'id="slider-canvas-seek"',
+                   'id="btn-seek-prev-5"', 'id="btn-seek-next-5"',
+                   'class="seek-presets-pills"', 'id="btn-toggle-blur"'):
+        assert marker in visible, marker
+    # Detail: the unified subtitle group (toggle, style, lines, size,
+    # font, position sliders together — never split across groups).
+    sub = detail[detail.index('id="recap-subtitle-group"'):detail.index('id="recap-blur-group"')]
+    for marker in ('id="btn-toggle-subs"', 'id="sub-style-picker"',
+                   'id="sub-lines-picker-toolbar"', 'id="font-size-picker-toolbar"',
+                   'id="recap-sub-font-picker"', 'id="slider-sub-y"',
+                   'id="slider-sub-x"', 'id="slider-sub-w"'):
+        assert marker in sub, marker
+    # Blur-box group separate from the subtitle group.
+    blur = detail[detail.index('id="recap-blur-group"'):]
+    for marker in ('id="slider-blur-y"', 'id="slider-blur-h"', 'id="slider-blur-x"',
+                   'id="slider-blur-w"', 'id="slider-blur-strength"'):
+        assert marker in blur, marker
+    assert 'id="slider-sub-y"' not in blur
+    # Title group: toggle + text + X/Y sliders together.
+    for marker in ('id="recap-title-toggle"', 'id="recap-title-text"',
+                   'id="slider-title-x"', 'id="slider-title-y"'):
+        assert marker in detail, marker
+    # Picture/transform group: mirror, zoom, framing presets, custom crop.
+    for marker in ('id="btn-toggle-mirror"', 'id="recap-zoom-picker"',
+                   'id="recap-crop-presets-toolbar"', 'id="btn-sync-crop"',
+                   'id="slider-crop-top"'):
+        assert marker in detail, marker
+    # Logo group.
+    for marker in ('id="btn-toggle-logo"', 'id="recap-logo-pos-picker"',
+                   'id="recap-logo-manager"'):
+        assert marker in detail, marker
+    # Reset Layout closes the detail panel.
+    assert 'id="btn-reset-canvas-layout"' in detail
+
+
+def test_av_step3_holds_voice_speed_language_script_review():
+    step3 = _step_slice(3)
+    for marker in ('id="recap-engine-picker"', 'id="recap-persona-area"',
+                   'id="story-style-picker-quick"', 'id="recap-speed-picker"',
+                   'id="recap-lang-picker"', 'id="recap-script-review-toggle"'):
+        assert marker in step3, marker
+
+
+def test_av_step4_holds_quote_quality_split_and_cta():
+    step4 = _step_slice(4)
+    for marker in ('id="recap-step4-thumb"', 'id="recap-step4-quote-credits"',
+                   'id="recap-quality-picker"', 'id="recap-split-toggle"',
+                   'id="recap-split-minutes-wrap"', 'id="recap-split-cost-hint"',
+                   'id="btn-start-recap"', 'id="recap-unverified-warning"'):
+        assert marker in step4, marker
+    # The large quote is fed by the same function that paints the CTA.
+    assert APP_JS.count("setRecapStep4Quote(") >= 3
+
+
+def test_av_info_tail_below_the_step_flow():
+    rights_at = TAB.index("recap_rights_note")
+    carousel_at = TAB.index('id="studio-alert-carousel"')
+    assert TAB.index('id="recap-step-4"') < rights_at < carousel_at
+
+
+def test_av_step_module_behaviour():
+    for marker in ("function initRecapSteps(", "function toggleRecapStep(",
+                   "function openRecapStep(", "function markRecapStepDone(",
+                   "function toggleRecapFineSettings(", "syncRecapStepsWithSource(ready)",
+                   'localStorage.getItem("vcp_recap_prefs")',
+                   "initRecapSteps();"):
+        assert marker in APP_JS, marker
+    # The retired accordion toggler is gone with its markup.
+    assert "window.toggleAdvancedRecapStudio = function" not in APP_JS
+
+
+# ── Drag handles: differentiated and off the subtitle text ──
+
+def test_av_grips_differentiated_and_offset():
+    assert "📝 ⠿" in TAB and "🏷️ ⠿" in TAB and "🌫️ ⠿" in TAB
+    rule = re.search(r"\.preview-sub-box \.sub-grip,\s*\.preview-title-box \.title-grip \{([^}]+)\}",
+                     STYLE_CSS)
+    assert rule, "grip offset rule missing"
+    assert "position: absolute" in rule.group(1)
+    assert "translate(-50%, calc(-100% - 3px))" in rule.group(1)
+
+
+# ── i18n: new strings exist in BOTH locales ──
+
+def test_av_new_i18n_keys_in_both_locales():
+    my = I18N_JS.index("recap_step1_title")
+    en = I18N_JS.index('"en"') if '"en"' in I18N_JS else I18N_JS.index("en: {")
+    for key in NEW_I18N_KEYS:
+        assert I18N_JS.count(f"{key}:") >= 2, f"{key} missing in one locale"
+    assert 'recap_step1_title: "Source ထည့်သွင်းပါ"' in I18N_JS
+    assert 'recap_step1_title: "Add Source"' in I18N_JS
+    assert my < en  # sanity: my block precedes en block
+
+
+# ── Acceptance-criteria guards (owner, 2026-11-05 23:34) ──
+
+def test_av_touch_targets_and_text_fit_guards():
+    # Buttons tidy: strips and nav items carry a ≥48px touch target.
+    assert re.search(r"\.recap-step-strip \{[^}]*min-height: 48px", STYLE_CSS)
+    assert re.search(r"\.recap-steps-nav-item \{[^}]*min-height: 48px", STYLE_CSS)
+    assert re.search(r"\.recap-fine-header \{[^}]*min-height: 48px", STYLE_CSS)
+    # Text never clipped: collapsed summaries truncate with ellipsis;
+    # nav labels wrap instead of squeezing at phone widths.
+    assert re.search(r"\.recap-step-summary \{[^}]*text-overflow: ellipsis", STYLE_CSS)
+    assert re.search(r"\.recap-steps-nav-label \{[^}]*overflow-wrap: anywhere", STYLE_CSS)
+    # Step-4 quote is genuinely large.
+    assert re.search(r"\.recap-step4-quote-value \{[^}]*font-size: 30px", STYLE_CSS)
+    # URL field uses the card's full width (flex guard + shrink-0 button).
+    assert ".input-with-btn input { flex: 1; min-width: 0; }" in STYLE_CSS
+    assert ".input-with-btn .btn { min-height: 50px; flex-shrink: 0; }" in STYLE_CSS
+    # Cramped spot: crop label vs sync lock pill wrap instead of colliding.
+    assert re.search(r"#recap-preview-transform-group \.card-header-row \{[^}]*flex-wrap: wrap",
+                     STYLE_CSS)
+
+
+def test_av_cache_token_bumped():
+    assert INDEX_HTML.count("r69") == 4
+    assert "r68" not in INDEX_HTML

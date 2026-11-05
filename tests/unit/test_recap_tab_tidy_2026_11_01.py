@@ -60,12 +60,14 @@ console.log(JSON.stringify(translations));
 # ── Layout: the calm 3-step path ─────────────────────────────────────
 
 def test_engine_picker_lives_in_step3_voice_card():
-    step3 = HTML.index('data-i18n="recap_step2_title"')
-    advanced = HTML.index('id="recap-advanced-accordion"')
+    # Batch AV: the bounds are the step cards themselves — the advanced
+    # accordion that used to terminate Step 3 no longer exists.
+    step3 = HTML.index('id="recap-step-3"')
+    step4 = HTML.index('id="recap-step-4"')
     engine = HTML.index('id="recap-engine-picker"')
     gemini = HTML.index('id="recap-gemini-voice-wrap"')
-    assert step3 < engine < advanced
-    assert step3 < gemini < advanced
+    assert step3 < engine < step4
+    assert step3 < gemini < step4
     assert 'id="recap-persona-area"' in HTML
 
 
@@ -80,24 +82,27 @@ def test_canvas_toolbar_and_ratio_docked_in_step2():
     assert 'data-i18n="recap_specs_title"' in HTML
 
 
-def test_advanced_sections_fixed_order_and_flattened():
-    frame = HTML.index('id="recap-adv-section-frame"')
-    speed = HTML.index('id="recap-adv-section-speed"')
-    other = HTML.index('id="recap-adv-section-other"')
-    assert frame < speed < other
-    assert HTML.index('id="recap-preview-transform-group"') > frame
-    assert HTML.index('id="recap-lang-picker"') > other
-    assert HTML.index('id="recap-split-toggle"') > other
-    # No nested .card.glass groups remain inside the accordion body.
-    body = HTML.split('id="recap-advanced-body"', 1)[1].split('id="btn-start-recap"', 1)[0]
-    assert "card glass" not in body
+def test_advanced_sections_redistributed_into_steps():
+    # Batch AV: the advanced accordion was dissolved into the steps —
+    # the transform group into Step 2's detail expandable, source
+    # language into Step 3, split into Step 4 — each section keeping
+    # its place in the overall flow.
+    assert 'id="recap-advanced-accordion"' not in HTML
+    assert 'id="recap-adv-section-frame"' not in HTML
+    step2 = HTML.index('id="recap-step-2"')
+    step3 = HTML.index('id="recap-step-3"')
+    step4 = HTML.index('id="recap-step-4"')
+    assert step2 < HTML.index('id="recap-preview-transform-group"') < step3
+    assert step3 < HTML.index('id="recap-lang-picker"') < step4
+    assert HTML.index('id="recap-split-toggle"') > step4
 
 
 def test_story_style_picker_has_one_home_in_step3():
     assert HTML.count('id="story-style-picker-quick"') == 1
-    step3 = HTML.index('data-i18n="recap_step2_title"')
-    advanced = HTML.index('id="recap-advanced-accordion"')
-    assert step3 < HTML.index('id="story-style-picker-quick"') < advanced
+    # Batch AV: Step 4's card is the upper bound (accordion removed).
+    step3 = HTML.index('id="recap-step-3"')
+    step4 = HTML.index('id="recap-step-4"')
+    assert step3 < HTML.index('id="story-style-picker-quick"') < step4
 
 
 def test_crop_presets_have_one_home_in_toolbar():
@@ -111,7 +116,7 @@ def test_crop_presets_have_one_home_in_toolbar():
 def test_all_voices_expanded_is_twelve_cards_no_select():
     assert 'id="recap-voice-select"' not in HTML
     assert 'id="btn-preview-recap-voice"' not in HTML
-    grid = HTML.split('id="recap-all-voices-grid"', 1)[1].split('id="recap-advanced-accordion"', 1)[0]
+    grid = HTML.split('id="recap-all-voices-grid"', 1)[1].split('id="recap-step-4"', 1)[0]
     slugs = re.findall(r'data-voice="(\w+)"', grid)
     # Batch AK (S6): ONE home per voice — the expanded grid carries
     # only the voices the top-4 grid does not; together they are
@@ -192,13 +197,15 @@ def test_uniform_pill_tiles_and_compact_ratio():
     assert ".ratio-btn { min-height: 44px" in CSS
 
 
-def test_step1_tutorial_pill_has_own_row():
-    assert 'class="step1-tut-row"' in HTML
-    i = HTML.index('data-i18n="recap_step1_title"')
-    j = HTML.index('id="recap-step1-tut-btn"')
-    assert i < j
-    header = HTML[i:j]
-    assert "step1-tut-row" in header  # button no longer shares the title row
+def test_step1_tutorial_pill_removed_as_duplicate():
+    # Batch AV (parent ground-truth dedupe): the Step-1 tutorial pill
+    # duplicated the header 📚 guide and exited the app — it is gone.
+    # The single tutorial entry points remain: the header guide pill
+    # and the Home recap row.
+    assert 'id="recap-step1-tut-btn"' not in HTML
+    assert 'class="step1-tut-row"' not in HTML
+    assert 'id="btn-tutorial-top"' in HTML
+    assert "openTutorialVideo('recap')" in HTML
 
 
 def test_crop_sliders_nested_one_level_deeper():
@@ -249,7 +256,7 @@ def test_cache_buster_bumped_for_tidy():
     # rt4 = full-app polish batch (2026-11-01) superseding rt3.
     # fp1 = admin-demote + voice-picker batch (2026-11-01 late)
     # superseding rt4 (index.html / app.js / style.css changed again).
-    assert HTML.count("?v=20261104_r68") == 4
+    assert HTML.count("?v=20261104_r69") == 4
     assert "?v=20261101_rt4" not in HTML
     assert "?v=20261101_rt3" not in HTML
     assert "?v=20261101_rt2" not in HTML
@@ -298,9 +305,11 @@ def test_blur_label_paints_only_while_editing():
         r"\.preview-blur-box:hover \.blur-label \{([^}]*)\}", CSS)
     assert shown and "position: absolute" in shown.group(1)
     assert shown and "bottom: calc(100% + 1px)" in shown.group(1)
-    # The Mask tab handler drives .label-on; resizing reuses the
-    # drag class so the label paints for the duration.
-    assert 'previewBlur.classList.toggle("label-on", target === "mask")' in APP_JS
+    # Batch AV rewire: the fine-expandable toggle now drives
+    # .label-on (the Mask tab is gone; the blur group lives in the
+    # detail panel, and the label paints while that panel is open).
+    # Resizing still reuses the drag class for the duration.
+    assert 'blurBox.classList.toggle("label-on", open)' in APP_JS
     assert 'previewBlur.classList.add("is-dragging")' in APP_JS
     assert 'previewBlur.classList.remove("is-dragging")' in APP_JS
 
@@ -337,11 +346,13 @@ def test_placeholder_composes_in_short_frames():
     assert ".mockup-screen.ratio-16-9 .canvas-no-thumb-icon { font-size: 24px; }" in CSS
 
 
-def test_toolbar_tabs_single_line_equal_height():
-    btn = re.search(r"\.tb-tab-btn \{([^}]*)\}", CSS)
-    assert btn and "white-space: nowrap" in btn.group(1)
-    assert btn and "align-items: center" in btn.group(1)
-    # Mask label shortened so all three tabs fit one line at 390px
-    # (no ellipsis-clipped Burmese anywhere).
-    assert '<span data-i18n="tb_tab_mask">🌫️ Blur စာတန်း</span>' in HTML
+def test_toolbar_tabs_replaced_by_visible_clusters():
+    # Batch AV: the three toolbar tabs are gone — frame seek is ONE
+    # visible cluster under the stage, and the mask/style controls
+    # live in coherent groups inside the "အသေးစိတ် ပြင်ရန်" expandable.
+    # No tab buttons remain, so no one-line tab label can clip.
+    assert 'class="tb-tab-btn' not in HTML
+    assert 'id="tab-btn-mask"' not in HTML
+    assert 'id="tb-panel-seek"' in HTML
+    assert 'id="recap-fine-body"' in HTML
     assert "Blur & စာတန်း" not in HTML
