@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r59">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r58">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r59" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r58" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -624,10 +624,8 @@
                                     </div>
                                     <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 85%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
                                         <div class="box-resize-handle top"></div>
-                                        <div class="box-resize-handle left"></div>
                                         <span class="drag-grip-icon">⠿</span>
                                         <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
-                                        <div class="box-resize-handle right"></div>
                                         <div class="box-resize-handle bottom"></div>
                                     </div>
                                     <div class="preview-blur-box preview-plate-box" id="preview-plate-box" style="top: 85%; height: 7%; transform: translateY(-50%); pointer-events: none;" aria-hidden="true"></div>
@@ -716,22 +714,6 @@
 
                                             <div class="slider-group">
                                                 <div class="slider-header">
-                                                    <span data-i18n="slider_blur_x">↔️ Blur Box အနေအထား (X):</span>
-                                                    <span class="slider-val" id="val-blur-x">4%</span>
-                                                </div>
-                                                <input type="range" min="0" max="96" value="4" class="studio-slider" id="slider-blur-x">
-                                            </div>
-
-                                            <div class="slider-group">
-                                                <div class="slider-header">
-                                                    <span data-i18n="slider_blur_w">↔️ Blur Box အနံ (W):</span>
-                                                    <span class="slider-val" id="val-blur-w">92%</span>
-                                                </div>
-                                                <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-blur-w">
-                                            </div>
-
-                                            <div class="slider-group">
-                                                <div class="slider-header">
                                                     <span data-i18n="slider_blur_strength">🌫️ Blur အား (Strength):</span>
                                                     <span class="slider-val" id="val-blur-strength">18</span>
                                                 </div>
@@ -744,22 +726,6 @@
                                                     <span class="slider-val" id="val-sub-y">85%</span>
                                                 </div>
                                                 <input type="range" min="10" max="95" value="85" class="studio-slider" id="slider-sub-y">
-                                            </div>
-
-                                            <div class="slider-group">
-                                                <div class="slider-header">
-                                                    <span data-i18n="slider_sub_x">📝 မြန်မာစာတန်း အနေအထား (Sub X):</span>
-                                                    <span class="slider-val" id="val-sub-x">50%</span>
-                                                </div>
-                                                <input type="range" min="10" max="90" value="50" class="studio-slider" id="slider-sub-x">
-                                            </div>
-
-                                            <div class="slider-group">
-                                                <div class="slider-header">
-                                                    <span data-i18n="slider_sub_w">↔️ စာတန်း အနံ (Sub W):</span>
-                                                    <span class="slider-val" id="val-sub-w">92%</span>
-                                                </div>
-                                                <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-sub-w">
                                             </div>
                                             <div class="reset-row mt-2">
                                                 <button type="button" class="mini-btn-seek sm" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title" data-i18n="btn_reset_layout">
@@ -2422,7 +2388,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r59"></script>
-    <script src="/static/js/app.js?v=20261104_r59"></script>
+    <script src="/static/js/i18n.js?v=20261104_r58"></script>
+    <script src="/static/js/app.js?v=20261104_r58"></script>
 </body>
 </html>

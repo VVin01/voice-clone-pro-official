@@ -31,7 +31,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import case, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2716,12 +2716,9 @@ async def get_job_status(
 #
 # The field list below is the COMPLETE stored set. Deliberately NOT
 # preferences (Batch AA semantics, respected before AA merges):
-# per-source blur-box geometry — blur_y / blur_h (Batch AG: and
-# blur_x / blur_w) for a specific source and the blur_box_explicit
-# marker — stays per-source and is dropped by the sanitizer if a
-# client sends it. The subtitle's horizontal placement (recapSubX /
-# recapSubW, Batch AG) is NOT per-source — like recapSubY it follows
-# the account.
+# per-source blur-box geometry — blur_y / blur_h for a specific
+# source and the blur_box_explicit marker — stays per-source and is
+# dropped by the sanitizer if a client sends it.
 USER_PREF_ENUMS: Dict[str, List[str]] = {
     "voice_speed": ["slow", "normal", "fast"],
     "recapRatio": ["9:16", "16:9", "1:1", "Original"],
@@ -2744,7 +2741,6 @@ USER_PREF_INTS: Dict[str, tuple] = {
     "recapCropLeft": (0, 35), "recapCropRight": (0, 35),
     "recapFontSize": (12, 30), "recapLines": (1, 2),
     "recapSplitMinutes": (1, 10), "recapSubY": (0, 100),
-    "recapSubX": (10, 90), "recapSubW": (10, 100),
     "recapBlurStrength": (4, 40),
 }
 # Free-string preferences, length-capped; voice slugs are additionally
@@ -2781,8 +2777,6 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapLines": 1,
     "recapSplitMinutes": 3,
     "recapSubY": 85,
-    "recapSubX": 50,
-    "recapSubW": 92,
     "recapBlurStrength": 18,
     "recapZoom": 1.06,
     "recapVoice": "komin",
@@ -2794,9 +2788,8 @@ def _sanitize_user_prefs(raw) -> Dict[str, Any]:
     """Keep only known preference fields with valid values.
 
     Unknown keys (including per-source blur geometry: recapBlurY,
-    recapBlurH, recapBlurX, recapBlurW, blur_box_explicit) are
-    dropped, never stored. Legacy subtitle-font aliases migrate
-    exactly like the client does.
+    recapBlurH, blur_box_explicit) are dropped, never stored. Legacy
+    subtitle-font aliases migrate exactly like the client does.
     """
     out: Dict[str, Any] = {}
     if not isinstance(raw, dict):
@@ -4234,16 +4227,6 @@ class RecapConfigRequest(BaseModel):
     blur_subtitles: bool = True
     blur_y: int = Field(85, ge=0, le=100)
     blur_h: int = Field(7, ge=1, le=50)
-    # Batch AG: horizontal blur-box geometry — percents of the
-    # PICTURE width (the blur_y/blur_h basis, rotated). Optional:
-    # absent (every pre-AG client and stored config) keeps the
-    # legacy centred 92%-of-canvas box byte-identical. blur_w is
-    # bounded to [10, 100]; blur_x is CLAMPED against the effective
-    # width by the model validator below (the blur_strength
-    # precedent) so the box always stays inside the picture instead
-    # of failing the submit.
-    blur_x: Optional[int] = Field(None, ge=0, le=100)
-    blur_w: Optional[int] = Field(None, ge=10, le=100)
     # Batch AA: blur_y/blur_h are percents of the PICTURE height
     # (Batch P's sub_y basis), and this marker records that the user
     # DELIBERATELY set the blur box (slider / drag / resize in the
@@ -4262,14 +4245,6 @@ class RecapConfigRequest(BaseModel):
     blur_strength: int = 18
     burn_subtitles: bool = True
     sub_y: int = Field(85, ge=0, le=100)
-    # Batch AG: subtitle horizontal placement — sub_x is the cue
-    # CENTRE as a percent of the picture width (sub_y's centre
-    # semantics, rotated; bounded to [10, 90] so a cue can never be
-    # centred off-frame), sub_w the wrap/plate width in the same
-    # basis. Optional, like blur_x/blur_w: absent keeps today's
-    # centred rendering byte-identical.
-    sub_x: Optional[int] = Field(None, ge=10, le=90)
-    sub_w: Optional[int] = Field(None, ge=10, le=100)
     sub_style: str = "yellow"         # yellow, white, boxed, neon
     sub_font_size: int = Field(16, ge=12, le=30)
     sub_lines: int = Field(1, ge=1, le=2)
@@ -4311,17 +4286,6 @@ class RecapConfigRequest(BaseModel):
         except (TypeError, ValueError):
             return 18
         return max(4, min(40, strength))
-
-    @model_validator(mode="after")
-    def _clamp_blur_x(self):
-        # Batch AG: keep the blur box inside the picture — blur_x is
-        # clamped against the effective width (the submitted blur_w,
-        # or the legacy 92 default when blur_w is absent) instead of
-        # rejecting the submit.
-        if self.blur_x is not None:
-            w_eff = self.blur_w if self.blur_w is not None else 92
-            self.blur_x = max(0, min(100 - w_eff, int(self.blur_x)))
-        return self
 
     @field_validator("sub_font")
     @classmethod
@@ -5510,14 +5474,10 @@ async def _execute_recap_background_job(
             blur_subtitles=req.blur_subtitles,
             blur_y=float(req.blur_y) / 100.0,
             blur_h=float(req.blur_h) / 100.0,
-            blur_x=(float(req.blur_x) / 100.0) if req.blur_x is not None else None,
-            blur_w=(float(req.blur_w) / 100.0) if req.blur_w is not None else None,
             blur_box_explicit=bool(req.blur_box_explicit),
             blur_strength=req.blur_strength,
             burn_subtitles=req.burn_subtitles,
             sub_y=float(req.sub_y) / 100.0,
-            sub_x=(float(req.sub_x) / 100.0) if req.sub_x is not None else None,
-            sub_w=(float(req.sub_w) / 100.0) if req.sub_w is not None else None,
             sub_lines=req.sub_lines,
             sub_font_size=req.sub_font_size,
             sub_style=req.sub_style,

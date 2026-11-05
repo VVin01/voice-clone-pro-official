@@ -138,22 +138,14 @@ def test_prefs_sanitizer_drops_blur_geometry_and_unknowns():
         "recapBlurY": 40, "recapBlurH": 30, "blur_box_explicit": True,
         "recapBlurBoxTouched": True, "evil_key": "x",
         "recapFontSize": 24, "recapRatio": "16:9",
-        # Batch AG: blur x/w are per-source like blur y/h — dropped;
-        # sub x/w are account preferences like recapSubY — kept.
-        "recapBlurX": 20, "recapBlurW": 60,
-        "recapSubX": 65, "recapSubW": 70,
     })
     assert "recapBlurY" not in clean
     assert "recapBlurH" not in clean
-    assert "recapBlurX" not in clean
-    assert "recapBlurW" not in clean
     assert "blur_box_explicit" not in clean
     assert "recapBlurBoxTouched" not in clean
     assert "evil_key" not in clean
     assert clean["recapFontSize"] == 24
     assert clean["recapRatio"] == "16:9"
-    assert clean["recapSubX"] == 65
-    assert clean["recapSubW"] == 70
 
 
 def test_prefs_sanitizer_validates_ranges_enums_and_slugs():
@@ -508,10 +500,6 @@ def test_prefs_frontend_pins():
     # Per-source blur geometry is never collected for the account.
     assert "recapBlurY" not in collect and "recapBlurH" not in collect
     assert "blur_box_explicit" not in collect
-    # Batch AG: blur x/w stay per-source (never collected); sub x/w
-    # ARE collected, like recapSubY.
-    assert "recapBlurX" not in collect and "recapBlurW" not in collect
-    assert "recapSubX" in collect and "recapSubW" in collect
     assert 'id="prefs-saved-note"' in INDEX_HTML
 
 
@@ -520,8 +508,8 @@ def test_new_i18n_keys_in_both_languages():
         assert I18N_JS.count(key + ":") >= 2, key
 
 
-def test_cache_bump_r59():
-    assert INDEX_HTML.count("?v=20261104_r59") == 4
+def test_cache_bump_r58():
+    assert INDEX_HTML.count("?v=20261104_r58") == 4
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────
