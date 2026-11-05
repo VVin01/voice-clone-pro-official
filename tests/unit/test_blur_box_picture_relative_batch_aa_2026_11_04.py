@@ -199,45 +199,47 @@ def test_blur_sliders_mark_the_box_explicit():
 # ── 4. Plate growth is capped (no centre-delta inflation) ──────────
 
 def test_plate_fit_has_no_centre_delta_term():
-    fit_body = APP_JS.split("function fitBlurPlateToCaption()", 1)[1]
-    fit_body = fit_body.split("function refitBlurPlateAfterSettle()", 1)[0]
-    assert "centreDelta" not in fit_body
-    assert "2 * centreDelta" not in fit_body
-    # Growth is the caption's real need: text height + 8px padding.
-    assert "text.height + 8" in fit_body
+    # Batch AK rewrite: the JS plate fit (fitBlurPlateToCaption) is
+    # RETIRED — the Mini App preview is the engine-composited frame,
+    # so the plate the user sees is the engine's own. The centre-
+    # delta inflation term is gone with the function.
+    assert "function fitBlurPlateToCaption()" not in APP_JS
+    assert "centreDelta" not in APP_JS
 
 
 def test_plate_fit_growth_is_capped_at_a_quarter_canvas():
-    fit_body = APP_JS.split("function fitBlurPlateToCaption()", 1)[1]
-    fit_body = fit_body.split("function refitBlurPlateAfterSettle()", 1)[0]
-    # The ceiling: 25% of canvas height — above the largest
-    # legitimate plate (~17–20%: two lines at the largest font) and
-    # half the engine's own 50% plate clamp.
-    assert "const PLATE_MAX_HEIGHT_FRAC = 0.25;" in fit_body
-    assert "Math.min(text.height + 8, canvasH * PLATE_MAX_HEIGHT_FRAC)" in fit_body
+    # Batch AK rewrite: the cap now lives where the plate is really
+    # built — the engine. Even the largest legitimate plate (22pt,
+    # two lines, full-frame) stays under a quarter of the canvas,
+    # and the engine's absolute plate clamp is half the canvas.
+    font_px = core.subtitle_font_px(1080, 1920, 22, 2, None)
+    plate_h = core._plate_height_px(font_px, 2, 1920)
+    assert plate_h <= 0.25 * 1920
+    assert core._plate_height_px(400, 2, 1920) <= 0.50 * 1920
     assert core.SUBTITLE_PLATE_WIDTH_FRACTION == 0.92  # sanity anchor
 
 
 def test_plate_initial_height_uses_picture_relative_floor():
-    fit_body = APP_JS.split("function fitBlurPlateToCaption()", 1)[1]
-    fit_body = fit_body.split("function refitBlurPlateAfterSettle()", 1)[0]
-    assert "blurBoxCanvasGeom(plateY, plateH).height" in fit_body
-    # …and it still anchors at the subtitle (Batch P pin, kept).
-    assert "subtitleAnchorCanvasFrac(plateY)" in fit_body
+    # Batch AK rewrite: the subtitle drag handle's height comes from
+    # the picture-relative plate fraction (the same formula the
+    # engine uses at the 608px reference picture height).
+    sub_body = APP_JS.split("function syncSubBoxVisual()", 1)[1].split("\n    }", 1)[0]
+    assert "subtitlePlateHeightFracOfPicture()" in sub_body
+    assert "subtitleAnchorCanvasFrac(centre)" in sub_body
 
-
-# ── 5. Reset on new source ─────────────────────────────────────────
 
 def test_reset_function_restores_tight_defaults():
     body = APP_JS.split("function resetBlurBoxForNewSource()", 1)[1]
     body = body.split("\n    }", 1)[0]
     assert "state.recapBlurY = 85;" in body
     assert "state.recapBlurH = 7;" in body
-    assert "state.recapSubY = 85;" in body
+    # Batch AK: the reset restores the 5% bottom-margin default
+    # (the centre mirror is re-derived by syncSubBoxVisual).
+    assert "state.recapSubMargin = 5;" in body
     assert "state.recapBlurBoxTouched = false;" in body
     assert "sliderBlurY.value = 85;" in body
     assert "sliderBlurH.value = 7;" in body
-    assert "sliderSubY.value = 85;" in body
+    assert "sliderSubY.value = 5;" in body
     assert "syncBlurBoxVisual();" in body
     assert "syncSubBoxVisual();" in body
     assert "saveRecapSettings();" in body
@@ -449,13 +451,18 @@ def test_legacy_assembly_unchanged_without_user_box():
 def test_legacy_fallback_hint_construction_unchanged():
     # The legacy hint keeps its historical canvas-fraction shape and
     # its |blur_y − sub_y| gate (Batch J / Batch P pins).
+    # Batch AK: the gate now compares against the EFFECTIVE centre
+    # (_sub_centre_eff / _p_centre_eff), which IS sub_y whenever
+    # sub_margin is None — the legacy gate is byte-equivalent — and
+    # is the margin-derived centre in bottom-margin mode.
     assert '_fallback_box = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}' in PIPELINE_PY
     assert '_p_fallback = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}' in PIPELINE_PY
-    assert "abs(float(blur_y) - float(sub_y)) > 0.01" in PIPELINE_PY
+    assert "abs(float(blur_y) - float(_sub_centre_eff)) > 0.01" in PIPELINE_PY
+    assert "abs(float(blur_y) - float(_p_centre_eff)) > 0.01" in PIPELINE_PY
 
 
 # ── 9. Cache version ───────────────────────────────────────────────
 
-def test_cache_version_r62():
-    assert INDEX_HTML.count("?v=20261104_r62") == 4
+def test_cache_version_r63():
+    assert INDEX_HTML.count("?v=20261104_r63") == 4
     assert "20261104_r53" not in INDEX_HTML

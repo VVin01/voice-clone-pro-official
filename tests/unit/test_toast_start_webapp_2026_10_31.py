@@ -269,8 +269,9 @@ def test_api_upload_error_no_longer_leaks_exception():
 def test_api_url_block_detail_user_safe():
     assert "This URL is not allowed" not in API_PY
     # R40: the preview-frame endpoint reuses the same user-safe detail
-    # (4 sites now: extract, upload-url, script-phase, preview-frame).
-    assert API_PY.count('detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ"') == 4
+    # (Batch AK: 5 sites now — extract, upload-url, script-phase,
+    # preview-frame and the preview-composite endpoint).
+    assert API_PY.count('detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ"') == 5
     # coded gate details are untouched (client gate logic depends on them)
     for code in ("USER_BANNED:", "GATE_NOT_CONFIGURED:", "MEMBERSHIP_REQUIRED:"):
         assert code in API_PY

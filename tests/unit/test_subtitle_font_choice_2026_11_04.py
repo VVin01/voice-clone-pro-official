@@ -176,8 +176,11 @@ def test_appjs_wiring_uses_the_four_keys():
     assert 'recapSubFont: "padauk"' in APP_JS
     assert 'recapSubFont: ["padauk", "noto_sans", "pyidaungsu", "noto_serif"]' in APP_JS
     assert 'sub_font: state.recapSubFont || "padauk"' in APP_JS
-    for family in FAMILIES.values():
-        assert f"'{family}'" in APP_JS  # preview fontMap covers all four
+    # Batch AK: the JS preview fontMap is retired with the CSS
+    # preview — the engine resolves the font for the composited
+    # frame; every key must resolve to its bundled file.
+    for key in FAMILIES:
+        assert subtitle_font_file(key).name == FILES[key]
     # Saved snapshots from before the rename are migrated on
     # restore: "Serif" keeps its font; "Default" savers move to
     # Padauk (Batch T, Ulfa 2026-11-04).

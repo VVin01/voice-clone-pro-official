@@ -2930,7 +2930,13 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
     "recapSubStyle": ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"],
     "recapSubFont": ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
     "recapLogoPos": ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
-    "recapSourceLanguage": ["auto", "en", "zh", "ko", "th", "ja"],
+    # Batch AK (premium audit S6/N2): every language the backend
+    # accepts (RECAP_SOURCE_LANGUAGE_CODES) is pickable and
+    # persistable — the picker used to offer only 6 of the 19.
+    "recapSourceLanguage": [
+        "auto", "en", "zh", "ko", "th", "ja", "hi", "my", "es",
+        "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr",
+    ],
     "recapRenderQuality": ["standard", "high", "max"],
     "recapTtsEngine": ["voxcpm", "gemini"],
 }
@@ -2943,6 +2949,10 @@ USER_PREF_INTS: Dict[str, tuple] = {
     "recapCropLeft": (0, 35), "recapCropRight": (0, 35),
     "recapFontSize": (12, 30), "recapLines": (1, 2),
     "recapSplitMinutes": (1, 10), "recapSubY": (0, 100),
+    # Batch AK: bottom-edge subtitle margin (% of picture height)
+    # and the settings-schema version that gates the one-time
+    # centre-% → margin conversion in _effective_user_prefs.
+    "recapSubMargin": (0, 95), "recapSettingsVersion": (0, 10),
     "recapSubX": (10, 90), "recapSubW": (10, 100),
     "recapTitleX": (0, 100), "recapTitleY": (0, 100),
     "recapBlurStrength": (4, 40),
@@ -2982,6 +2992,8 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapLines": 1,
     "recapSplitMinutes": 3,
     "recapSubY": 85,
+    "recapSubMargin": 5,
+    "recapSettingsVersion": 2,
     "recapSubX": 50,
     "recapSubW": 92,
     "recapTitleEnabled": False,
@@ -2989,7 +3001,10 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapTitleX": 50,
     "recapTitleY": 12,
     "recapBlurStrength": 18,
-    "recapZoom": 1.06,
+    # Batch AK (premium audit S1): the shipped default Micro-Zoom
+    # is 1.00 — 1.06 silently cropped ≈11% of the picture in the
+    # fill modes. Saved user values persist untouched.
+    "recapZoom": 1.0,
     "recapVoice": "komin",
     "recapGeminiVoice": "",
 }
@@ -3049,8 +3064,28 @@ def _sanitize_user_prefs(raw) -> Dict[str, Any]:
 
 def _effective_user_prefs(stored) -> Dict[str, Any]:
     """Server-wins merge: today's defaults under the stored values."""
+    clean = _sanitize_user_prefs(stored)
     merged = dict(DEFAULT_USER_PREFS)
-    merged.update(_sanitize_user_prefs(stored))
+    merged.update(clean)
+    # Batch AK settings migration — runs once, versioned. Pre-AK
+    # accounts stored the subtitle anchor as a centre-% of the
+    # picture (recapSubY); the anchor is now a bottom-edge margin
+    # (recapSubMargin, % of picture height). Convert ONLY when the
+    # account actually stored a recapSubY and has not been migrated
+    # (stored recapSettingsVersion < 2): the conversion is
+    # plate-height-aware (the user's own font size / line count),
+    # so the subtitle stays at the same visual position. Accounts
+    # that never stored a position keep the fresh 5% default, and
+    # migrated accounts are stamped version 2 so it never re-runs.
+    if int(clean.get("recapSettingsVersion") or 0) < 2 and "recapSubY" in clean:
+        from app.services.recap_engine.core import sub_centre_to_bottom_margin
+
+        merged["recapSubMargin"] = int(round(sub_centre_to_bottom_margin(
+            float(clean["recapSubY"]) / 100.0,
+            raw_font_size=int(merged.get("recapFontSize") or 16),
+            sub_lines=int(merged.get("recapLines") or 1),
+        ) * 100))
+    merged["recapSettingsVersion"] = 2
     return merged
 
 
@@ -4230,6 +4265,204 @@ async def recap_preview_frame(
         if res and Path(res).is_file():
             return FileResponse(res, media_type="image/jpeg")
     raise HTTPException(status_code=404, detail="Frame not found")
+
+
+# ── 4.06. Recap composited preview (Batch AK — preview unification) ──
+# The Mini App's Live Canvas used to re-draw the frame with a
+# hand-mirrored JS/CSS approximation of the engine: three of the
+# seven subtitle styles (band / heavy / soft) had no CSS rendering
+# at all, the plate sizing was a second implementation, and the
+# title badge never appeared. This endpoint serves the ENGINE's own
+# composited preview (the same generate_recap_preview the bot flow
+# uses) for the Mini App's exact settings, so what the user sees is
+# what the render burns. Source handling mirrors /recap/preview-
+# frame (per-URL cache, 720p cap) and /recap/frame (containment +
+# owner-or-admin) — no new trust surface.
+class RecapPreviewCompositeRequest(BaseModel):
+    url: Optional[str] = None
+    uploaded_path: Optional[str] = None
+    t: float = 5.0
+    # The settings subset the composite depends on; field names and
+    # bounds mirror RecapConfigRequest so a stored config / submit
+    # payload maps 1:1.
+    ratio: str = "9:16"
+    ratio_fill: str = "blur"
+    crop_top: int = Field(0, ge=0, le=35)
+    crop_bottom: int = Field(0, ge=0, le=35)
+    crop_left: int = Field(0, ge=0, le=35)
+    crop_right: int = Field(0, ge=0, le=35)
+    mirror_video: bool = True
+    zoom_factor: float = 1.0
+    blur_subtitles: bool = True
+    blur_y: int = Field(85, ge=0, le=100)
+    blur_h: int = Field(7, ge=1, le=50)
+    blur_x: Optional[int] = Field(None, ge=0, le=100)
+    blur_w: Optional[int] = Field(None, ge=10, le=100)
+    blur_box_explicit: bool = False
+    blur_strength: int = 18
+    burn_subtitles: bool = True
+    sub_y: int = Field(85, ge=0, le=100)
+    sub_bottom_margin: Optional[int] = Field(None, ge=0, le=95)
+    sub_x: Optional[int] = Field(None, ge=10, le=90)
+    sub_w: Optional[int] = Field(None, ge=10, le=100)
+    sub_lines: int = Field(1, ge=1, le=2)
+    sub_font_size: int = Field(16, ge=12, le=30)
+    sub_style: str = "yellow"
+    sub_font: str = "padauk"
+    sample_text: Optional[str] = Field(None, max_length=300)
+    # The client sends the EFFECTIVE title text (its custom text, or
+    # the video's own title when the custom text is empty — the
+    # client holds the title in form state), so the preview burns
+    # exactly what the render will. The submit gate is unchanged.
+    title_enabled: bool = False
+    title_text: Optional[str] = Field(None, max_length=200)
+    title_x: int = Field(50, ge=0, le=100)
+    title_y: int = Field(12, ge=0, le=100)
+    include_logo: bool = True
+    logo_pos: str = "top-right"
+
+
+@api_router.post("/recap/preview-composite")
+async def recap_preview_composite(
+    req: RecapPreviewCompositeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    from app.services.downloader import (
+        MediaDownloader,
+        classify_source_error,
+        extract_first_url,
+        unshorten_url,
+    )
+
+    seek_sec = max(0.1, min(float(req.t or 5.0), 3600.0))
+    source_path: Optional[Path] = None
+
+    if req.uploaded_path:
+        cand_path = Path(req.uploaded_path)
+        actual_path = cand_path if cand_path.is_absolute() else (settings.storage_root / cand_path)
+        if not actual_path.is_file():
+            raise HTTPException(status_code=404, detail="Frame not found")
+        try:
+            res_actual = actual_path.resolve()
+            res_storage = settings.storage_root.resolve()
+            if not str(res_actual).startswith(str(res_storage)):
+                raise HTTPException(status_code=403, detail="Access denied")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=403, detail="Access denied")
+        if not settings.is_admin(user.id):
+            owner_id = await _recap_frame_owner_id(db, res_actual)
+            if owner_id is None or owner_id != user.id:
+                raise HTTPException(status_code=404, detail="Frame not found")
+        source_path = res_actual
+    elif req.url:
+        raw_url = (req.url or "").strip()
+        url = extract_first_url(raw_url) or raw_url
+        if not url.startswith("http"):
+            raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+        try:
+            canonical_url = await asyncio.to_thread(unshorten_url, url)
+            from app.services.url_safety import validate_public_url
+
+            canonical_url = validate_public_url(canonical_url)
+        except Exception:
+            raise HTTPException(status_code=400, detail="ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ")
+
+        import hashlib
+
+        url_key = hashlib.md5(canonical_url.encode("utf-8")).hexdigest()[:16]
+        cache_dir = settings.storage_root / "temp" / "recap_preview_src" / url_key
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        if url_key not in _PREVIEW_SOURCE_LOCKS:
+            _remember_bounded(_PREVIEW_SOURCE_LOCKS, url_key, asyncio.Lock(), cap=512)
+        lock = _PREVIEW_SOURCE_LOCKS[url_key]
+        async with lock:
+            source_files = [
+                p for p in cache_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in {".mp4", ".mkv", ".mov", ".webm", ".m4v", ".ts"}
+            ]
+            source_path = source_files[0] if source_files else None
+            if source_path is None:
+                downloader = MediaDownloader()
+                try:
+                    downloaded, _info = await asyncio.to_thread(
+                        downloader.download_video,
+                        canonical_url,
+                        target_dir=str(cache_dir),
+                        max_height=720,
+                    )
+                except Exception as e:
+                    logger.warning(f"preview-composite download failed for {canonical_url}: {e}")
+                    detail = classify_source_error(str(e), canonical_url) or (
+                        "⚠️ ဒီ လင့်ခ်မှ နမူနာပုံ မရယူနိုင်ပါ။ ဗီဒီယိုဖိုင်ကို Mini App ရှိ "
+                        "'📁 Video Upload' မှ တိုက်ရိုက် တင်၍ ပြုလုပ်နိုင်ပါသည် ခင်ဗျာ။"
+                    )
+                    raise HTTPException(status_code=422, detail=detail)
+                source_path = Path(downloaded)
+    else:
+        raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+
+    is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
+    logo_path_arg = _resolve_recap_logo_path(user.id, req.include_logo, is_vip)
+    logo_pos_map = {
+        "top-right": [0.82, 0.04],
+        "top-left": [0.04, 0.04],
+        "bottom-right": [0.82, 0.88],
+        "bottom-left": [0.04, 0.88],
+        "top-center": [0.42, 0.04],
+    }
+    logo_pos_coords = logo_pos_map.get(req.logo_pos, [0.82, 0.04])
+
+    out_dir = settings.storage_root / "temp" / "recap_preview_composite"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    downloader = MediaDownloader()
+    try:
+        out_img = await asyncio.to_thread(
+            downloader.generate_recap_preview,
+            str(source_path),
+            target_dir=str(out_dir),
+            blur_subtitles=req.blur_subtitles,
+            blur_y=float(req.blur_y) / 100.0,
+            blur_h=float(req.blur_h) / 100.0,
+            blur_x=(float(req.blur_x) / 100.0) if req.blur_x is not None else None,
+            blur_w=(float(req.blur_w) / 100.0) if req.blur_w is not None else None,
+            blur_box_explicit=bool(req.blur_box_explicit),
+            blur_strength=req.blur_strength,
+            burn_subtitles=req.burn_subtitles,
+            sub_y=float(req.sub_y) / 100.0,
+            sub_margin=(float(req.sub_bottom_margin) / 100.0) if req.sub_bottom_margin is not None else None,
+            sub_x=(float(req.sub_x) / 100.0) if req.sub_x is not None else None,
+            sub_w=(float(req.sub_w) / 100.0) if req.sub_w is not None else None,
+            sub_lines=req.sub_lines,
+            sub_font_size=req.sub_font_size,
+            sub_style=req.sub_style,
+            sub_font=req.sub_font,
+            sample_text=(req.sample_text or ""),
+            title_text=((req.title_text or None) if req.title_enabled else None),
+            title_position=[req.title_x / 100.0, req.title_y / 100.0],
+            output_ratio=req.ratio,
+            frame_fill=req.ratio_fill,
+            crop_top=float(req.crop_top) / 100.0,
+            crop_bottom=float(req.crop_bottom) / 100.0,
+            crop_left=float(req.crop_left) / 100.0,
+            crop_right=float(req.crop_right) / 100.0,
+            mirror_video=req.mirror_video,
+            zoom_factor=req.zoom_factor,
+            at_seconds=seek_sec,
+            logo_enabled=bool(logo_path_arg),
+            logo_path=logo_path_arg,
+            logo_position=logo_pos_coords if logo_path_arg else None,
+            is_vip=is_vip,
+        )
+    except Exception as e:
+        logger.warning(f"preview-composite render failed: {e}")
+        raise HTTPException(status_code=422, detail="နမူနာပုံ မရယူနိုင်ပါ ခင်ဗျာ")
+    if out_img and Path(out_img).is_file():
+        return FileResponse(out_img, media_type="image/jpeg")
+    raise HTTPException(status_code=404, detail="Frame not found")
 # ── 5. Recap Studio Configuration & Background Pipeline ─────────────────────
 RECAP_JOBS_REGISTRY: Dict[str, Dict[str, Any]] = {}
 # Global recap execution cap (deep-hunt #4 D2): the per-user cap (1
@@ -4471,7 +4704,11 @@ class RecapConfigRequest(BaseModel):
     crop_left: int = Field(0, ge=0, le=35)
     crop_right: int = Field(0, ge=0, le=35)
     mirror_video: bool = True
-    zoom_factor: float = 1.06
+    # Batch AK (premium audit S1): default Micro-Zoom is 1.00 — the
+    # old 1.06 default silently cropped ≈11% of the picture area in
+    # the Blur/Black fill modes. Explicit client values are
+    # honoured exactly as before.
+    zoom_factor: float = 1.0
     voice_speed: str = "+12%"         # +0%, +8%, +12%, +18%, +22%
     blur_subtitles: bool = True
     blur_y: int = Field(85, ge=0, le=100)
@@ -4504,6 +4741,14 @@ class RecapConfigRequest(BaseModel):
     blur_strength: int = 18
     burn_subtitles: bool = True
     sub_y: int = Field(85, ge=0, le=100)
+    # Batch AK (premium audit S3 / Addition D): the subtitle anchor
+    # as a BOTTOM-EDGE margin — percent of the picture height from
+    # the picture's bottom edge to the subtitle plate's bottom
+    # edge (the Recapter standard). Optional like blur_x/sub_x:
+    # absent (every pre-AK client and stored config) keeps the
+    # legacy centre-% sub_y path byte-identical; present, it wins
+    # over sub_y in the engine.
+    sub_bottom_margin: Optional[int] = Field(None, ge=0, le=95)
     # Batch AG: subtitle horizontal placement — sub_x is the cue
     # CENTRE as a percent of the picture width (sub_y's centre
     # semantics, rotated; bounded to [10, 90] so a cue can never be
@@ -5848,6 +6093,9 @@ async def _execute_recap_background_job(
             blur_strength=req.blur_strength,
             burn_subtitles=req.burn_subtitles,
             sub_y=float(req.sub_y) / 100.0,
+            # Batch AK: bottom-edge margin wins over sub_y in the
+            # engine when present; None keeps the legacy path.
+            sub_margin=(float(req.sub_bottom_margin) / 100.0) if req.sub_bottom_margin is not None else None,
             sub_x=(float(req.sub_x) / 100.0) if req.sub_x is not None else None,
             sub_w=(float(req.sub_w) / 100.0) if req.sub_w is not None else None,
             sub_lines=req.sub_lines,
@@ -8093,6 +8341,7 @@ async def get_user_history(
                         "voice": _cfg.get("voice_slug"),
                         "story_style": _cfg.get("story_style"),
                         "sub_y": _cfg.get("sub_y"),
+                        "sub_bottom_margin": _cfg.get("sub_bottom_margin"),
                         "blur_y": _cfg.get("blur_y"),
                         "sub_style": _cfg.get("sub_style"),
                         "sub_font": _cfg.get("sub_font"),

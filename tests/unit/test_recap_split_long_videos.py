@@ -399,5 +399,7 @@ def test_miniapp_toast_and_header_typography_contract():
     assert 'classList.toggle("lang-my"' in i18n_js
     # Header: brand track may shrink so pills never overflow the edge
     assert "grid-template-columns: minmax(0, 1fr) auto" in css
-    # Subtitle sample span can shrink so its line-clamp engages
-    assert ".preview-sub-box .preview-sub-text { min-width: 0; flex: 1 1 auto; }" in css
+    # Batch AK: the subtitle sample span is retired with the CSS
+    # preview (the composited frame renders the subtitle); its
+    # shrink rule is gone with the element.
+    assert ".preview-sub-text" not in css

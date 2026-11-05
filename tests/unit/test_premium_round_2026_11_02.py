@@ -60,7 +60,7 @@ def _css_rule(selector: str) -> str:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_r37():
-    assert HTML.count("?v=20261104_r62") == 4
+    assert HTML.count("?v=20261104_r63") == 4
     assert "20261102_ma1" not in HTML
 
 
@@ -97,12 +97,17 @@ def test_d1_sweep_no_sql_sum_sites_remain():
 # ── D2: plate fit engages at the settle points ──────────────────────
 
 def test_d2_refit_helper_defined():
+    # Batch AK rewrite: the rAF refit helper is retired with the JS
+    # plate — the settle mechanism is now the debounced composite
+    # refresh (the engine frame replaces the CSS plate wholesale).
+    assert "function refitBlurPlateAfterSettle()" not in APP_JS
+    assert "function fitBlurPlateToCaption()" not in APP_JS
     body = _js_slice(
-        "function refitBlurPlateAfterSettle()",
-        "function syncSubBoxVisual()",
+        "function scheduleRecapCompositeRefresh()",
+        "function refreshRecapCompositePreview()",
     )
-    assert "requestAnimationFrame" in body
-    assert "fitBlurPlateToCaption()" in body
+    assert "setTimeout" in body
+    assert "refreshRecapCompositePreview" in body
 
 
 def test_d2_analyze_completion_refits_plate():
@@ -111,7 +116,8 @@ def test_d2_analyze_completion_refits_plate():
         "// Auto-detect on input / paste",
     )
     finally_at = body.index("} finally {")
-    assert "refitBlurPlateAfterSettle();" in body[finally_at:]
+    # Batch AK: the analyze settle schedules the composite frame.
+    assert "scheduleRecapCompositeRefresh();" in body[finally_at:]
 
 
 def test_d2_upload_ready_refits_plate():
@@ -120,7 +126,8 @@ def test_d2_upload_ready_refits_plate():
         'if (els.cancelBtn) els.cancelBtn.classList.add("hidden");',
     )
     assert 'setRecapPreviewState("ready");' in body
-    assert "refitBlurPlateAfterSettle();" in body
+    # Batch AK: the upload settle schedules the composite frame.
+    assert "scheduleRecapCompositeRefresh();" in body
 
 
 def test_d2_style_chip_change_refits_plate():
@@ -128,7 +135,9 @@ def test_d2_style_chip_change_refits_plate():
         'const styleChips = document.querySelectorAll("#sub-style-picker .style-chip");',
         "// 10. Subtitle Live Preview Renderer",
     )
-    assert "fitBlurPlateToCaption();" in body
+    # Batch AK: a style change re-renders the composited frame (the
+    # engine draws every style; the JS chips no longer fit a plate).
+    assert "scheduleRecapCompositeRefresh();" in body
 
 
 # ── D3/E1: bot_blocked provenance in admin payloads + UI ────────────

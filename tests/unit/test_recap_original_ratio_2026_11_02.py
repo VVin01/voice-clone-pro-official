@@ -148,10 +148,12 @@ async def test_extract_fallback_payload_shape_is_explicit(monkeypatch):
 def test_original_ratio_no_longer_hardcodes_169_frame():
     assert 'state.recapRatio === "Original") ratioClass = "ratio-16-9"' not in APP_JS
     # The only rCanvas landscape assignments are the explicit
-    # user-chosen 16:9 ratio branches — the mockup's and the Batch P
-    # geometry mirror's (recapPictureRect); "Original" still never
-    # asserts 16:9 without dimensions.
-    assert APP_JS.count("rCanvas = 16 / 9") == 2
+    # user-chosen 16:9 ratio branches — the mockup's, the Batch P
+    # geometry mirror's (recapPictureRect) and Batch AK's fill-loss
+    # note; "Original" still never asserts 16:9 without dimensions
+    # (Batch AK: the unknown-dims fallback is rSource = rCanvas).
+    assert APP_JS.count("rCanvas = 16 / 9") == 3
+    assert "rSource = rCanvas;" in APP_JS
     assert 'if (state.recapRatio === "16:9") rCanvas = 16 / 9;' in APP_JS
 
 
@@ -182,4 +184,4 @@ def test_analyze_catch_paints_unverified_info_card():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r62") == 4
+    assert INDEX_HTML.count("?v=20261104_r63") == 4

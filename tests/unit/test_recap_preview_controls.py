@@ -162,7 +162,8 @@ def test_hidden_cards_keep_their_default_values():
     assert '<button class="ratio-btn active" data-ratio="9:16">' in html
     assert '<button class="pill-btn active" data-fill="blur"' in html
     assert '<button class="pill-btn active" data-speed="+12%"' in html
-    assert '<button class="pill-btn active" data-zoom="1.06"' in html
+    # Batch AK (S1): the shipped Micro-Zoom default is 1.00.
+    assert '<button class="pill-btn active" data-zoom="1.00"' in html
     assert 'class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true"' in html
 
 

@@ -310,19 +310,18 @@ def test_both_pipeline_paths_use_the_shared_assembly():
 
 
 def test_canvas_draws_plate_and_hint_as_separate_boxes():
-    # The canvas keeps the draggable Blur Y hint box and gains a
-    # passive plate overlay anchored at Sub Y (fit function retarget).
-    assert 'id="preview-plate-box"' in INDEX_HTML
-    assert 'getElementById("preview-plate-box")' in APP_JS
-    fit_body = APP_JS.split("function fitBlurPlateToCaption()", 1)[1].split("\n    }", 1)[0]
-    assert "previewPlate" in fit_body
-    assert "sliderSubY" in fit_body  # plate anchored at the subtitle Y
+    # Batch AK rewrite: the passive CSS plate box is GONE — the
+    # engine-composited frame carries the real plate, so the canvas
+    # holds only the draggable hint box plus the outline handles.
+    assert 'id="preview-plate-box"' not in INDEX_HTML
+    assert 'getElementById("preview-plate-box")' not in APP_JS
+    assert "function fitBlurPlateToCaption()" not in APP_JS
     # The hint box still follows the Blur sliders (unchanged wiring;
     # Batch AA deliberate pin update: the paint is now
     # picture-relative via blurBoxCanvasGeom).
     sync_body = APP_JS.split("function syncBlurBoxVisual()", 1)[1].split("\n    }", 1)[0]
     assert "previewBlur.style.height = `${(geom.height * 100).toFixed(3)}%`;" in sync_body
-    assert "fitBlurPlateToCaption();" in sync_body
+    assert "scheduleRecapCompositeRefresh();" in sync_body
 
 
 # ── Item 6: no-coverage warning plumbing ───────────────────────────

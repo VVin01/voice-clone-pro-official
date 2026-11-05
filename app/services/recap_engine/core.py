@@ -742,7 +742,11 @@ def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
         c_x, c_y = 0, 0
         crop_filter = ""
 
-    if fill == "crop" or (not has_crop and abs(sw / sh - cw / ch) < 0.01):
+    # Batch AK (premium audit P7): the near-aspect shortcut tests
+    # the CROPPED aspect (c_sw/c_sh — what the fit scale below
+    # actually scales), not the uncropped source aspect; with crop
+    # margins set the two could disagree about the same frame.
+    if fill == "crop" or (not has_crop and abs(c_sw / c_sh - cw / ch) < 0.01):
         pw, ph = cw, ch
         ox, oy = 0, 0
     else:
@@ -939,14 +943,14 @@ def content_rim_y(layout: dict[str, Any] | None, cw: int, ch: int) -> int | None
     return rim if rim < ch - 4 else None
 
 
-# Picker size (pt) → fraction of the canvas height. One shared
-# table: subtitle_font_px below and the Mini App preview
+# Picker size (pt) → fraction of the PICTURE height (Batch AK;
+# Batch P/Q measured it against the canvas — see subtitle_font_px).
+# One shared table: subtitle_font_px below and the Mini App preview
 # (subtitleFontFraction in app.js) both read it, so the size the
 # user sees is the size the render burns. Batch Q raised every
-# anchor one notch (16pt default 3.2% → 4.0% of canvas height —
-# the recapter readability zone) after the shaping diagnosis
-# showed small captions, not wrong text, caused the "misspelled"
-# look (~/workspace/subtitle-compare/shaping).
+# anchor one notch (16pt default 3.2% → 4.0%) after the shaping
+# diagnosis showed small captions, not wrong text, caused the
+# "misspelled" look (~/workspace/subtitle-compare/shaping).
 SUBTITLE_FONT_HEIGHT_FRACTIONS = (
     (13, 0.032),
     (16, 0.040),
@@ -973,20 +977,30 @@ def _subtitle_font_fraction(raw_font_size: int) -> float:
 
 def subtitle_font_px(cw: int, ch: int, raw_font_size: int = 16, sub_lines: int = 1,
                      layout: dict[str, Any] | None = None) -> int:
-    """ASS font size in px for a canvas (Batch P: one formula).
+    """Subtitle font size in px (Batch P: one formula; Batch AK:
+    the basis is the PICTURE height — the Recapter standard).
 
-    rendered px = canvas_height × the picker's height fraction
-    (×1.25 in two-line mode), minimum 18px. The layout NEVER scales
-    the size — the R39 content-box scaling (which compressed 22pt
-    to ~1.8% of the canvas height on letterboxed jobs) is gone, so
-    the four picker sizes stay distinct at any canvas height. The
-    ``layout`` parameter is kept for call-site compatibility only.
+    rendered px = picture_height × the picker's height fraction
+    (×1.25 in two-line mode), minimum 18px. Batch P sized from the
+    CANVAS height, so on letterboxed layouts the caption (and its
+    plate) ballooned relative to the picture the viewer actually
+    watches — 24.7% of the picture height for a 1-line plate on the
+    flagship 16:9→9:16 flow (premium audit S3). Sizing from the
+    picture height keeps the caption a constant share of the picture
+    at every layout; full-frame layouts (picture == canvas) are
+    byte-identical to Batch P. With no layout the picture IS the
+    canvas, so legacy no-layout callers are unchanged too.
     """
     ch = max(240, int(ch))
+    if layout is not None:
+        _pw, ph, _ox, _oy = _layout_content_box(layout, cw, ch)
+        basis = max(120, int(ph))
+    else:
+        basis = ch
     frac = _subtitle_font_fraction(raw_font_size)
     if int(sub_lines or 1) != 1:
         frac *= SUBTITLE_TWO_LINE_FONT_FACTOR
-    return max(SUBTITLE_FONT_MIN_PX, int(round(ch * frac)))
+    return max(SUBTITLE_FONT_MIN_PX, int(round(basis * frac)))
 
 
 def subtitle_centre_px(cw: int, ch: int, layout: dict[str, Any] | None,
@@ -1010,6 +1024,84 @@ def subtitle_centre_px(cw: int, ch: int, layout: dict[str, Any] | None,
         _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
         return oy + sy * ph
     return sy * ch
+
+
+# ── Batch AK: bottom-edge subtitle anchor (Recapter standard) ─────
+#
+# The centre-% anchor (subtitle_centre_px above) made the SAME
+# settings land at a different effective bottom margin on every
+# layout (≈11% of frame height full-frame vs ≈2.5% of picture
+# height on the flagship letterbox flow — premium audit S3). The
+# Recapter standard anchors the subtitle PLATE to the picture's
+# BOTTOM edge: sub_margin is the gap between the plate's bottom
+# edge and the picture's bottom edge, as a fraction of the picture
+# height (5% default). New clients send sub_margin; every resolver
+# below accepts BOTH semantics so pre-AK jobs, stored configs and
+# the bot flow keep their historical centre placement untouched.
+
+def _plate_height_px(font_px: int, sub_lines: int, ch: int) -> float:
+    """The subtitle plate's fitted height in px for a resolved font
+    size — the exact formula subtitle_plate_box has always used
+    (wrapped text height + padding, clamped to [1%, 50%] of the
+    canvas height). One implementation so the plate box, the PNG
+    block top and the anchor resolver can never disagree."""
+    text_h = float(font_px) * (1.15 if int(sub_lines or 1) == 1 else 2.3)
+    pad = max(10.0, float(font_px) * 0.40)
+    return max(0.01 * ch, min(0.50 * ch, text_h + 2.0 * pad))
+
+
+def subtitle_anchor_centre_px(cw: int, ch: int, layout: dict[str, Any] | None,
+                              *, sub_y: float | None = None,
+                              sub_margin: float | None = None,
+                              raw_font_size: int = 16, sub_lines: int = 1,
+                              font_px: int | None = None) -> float | None:
+    """The subtitle plate's centre Y in canvas px under EITHER
+    anchor semantics. With ``sub_margin`` set (Batch AK clients)
+    the plate's bottom edge sits ``sub_margin`` of the picture
+    height above the picture's bottom edge, so the margin is the
+    same on every layout by construction; the centre is derived
+    from the plate's fitted height. Without it, this is exactly
+    subtitle_centre_px (legacy centre-% semantics, unchanged).
+    Returns None only when both are None."""
+    if sub_margin is not None:
+        _pw, ph, _ox, oy = _layout_content_box(layout, cw, ch)
+        if font_px is None:
+            font_px = subtitle_font_px(cw, ch, raw_font_size, sub_lines, layout)
+        plate_h = _plate_height_px(int(font_px), sub_lines, ch)
+        m = _clamp01(float(sub_margin), 0.05)
+        centre = (oy + ph) - m * ph - plate_h / 2.0
+        # The plate never leaves the canvas (only binds when the
+        # plate is taller than the picture itself).
+        centre = max(plate_h / 2.0, min(ch - plate_h / 2.0, centre))
+        return centre
+    return subtitle_centre_px(cw, ch, layout, sub_y)
+
+
+# Reference picture height for the saved-settings conversion: the
+# flagship 16:9→9:16 layout's picture (1080×608). The plate-height
+# fraction is nearly layout-independent (the px floors in the
+# formula move it by <0.2pt between 608 and 1920), so one constant
+# keeps converted positions within a fraction of a percent of the
+# original on any layout the user opens next.
+SUB_MARGIN_CONVERT_REF_PICTURE_H = 608
+
+
+def sub_centre_to_bottom_margin(centre: float, raw_font_size: int = 16,
+                                sub_lines: int = 1,
+                                picture_h: int = SUB_MARGIN_CONVERT_REF_PICTURE_H) -> float:
+    """Convert a legacy centre-% sub_y (fraction of picture height,
+    from the top) to the Batch AK bottom-margin fraction that puts
+    the plate at the SAME visual position: margin = 1 − centre −
+    plate_height/2, with the plate height computed from the user's
+    own font size and line count (plate-height-aware). Clamped to
+    [0, 0.95]. Used by the one-time settings migration (server
+    prefs in api.py; mirrored in app.js for the local snapshot and
+    History prefill)."""
+    ph = max(120, int(picture_h))
+    font_px = subtitle_font_px(ph, ph, raw_font_size, sub_lines, None)
+    plate_h = _plate_height_px(font_px, sub_lines, ph)
+    margin = 1.0 - float(centre) - (plate_h / ph) / 2.0
+    return max(0.0, min(0.95, margin))
 
 
 def subtitle_centre_x_px(cw: int, ch: int, layout: dict[str, Any] | None,
@@ -1187,6 +1279,7 @@ def _subtitle_block_top_px(
     sub_y: float | None, subtitles_margin_v: float | None,
     boxes: list[dict[str, Any]] | None, font_px: int, sub_lines: int,
     block_h: int,
+    sub_margin: float | None = None,
 ) -> int:
     """Top Y (canvas px) for a subtitle block of height ``block_h``
     (Batch Q PNG placement).
@@ -1199,7 +1292,17 @@ def _subtitle_block_top_px(
     block's bottom edge where those rules placed the text block's
     bottom (they were computed against the estimated text height,
     font_px × 1.15 per line).
+
+    Batch AK: with sub_margin set, the block centres on the
+    bottom-edge anchor instead (subtitle_anchor_centre_px) — the
+    plate and the text block share the one anchor, as before.
     """
+    if sub_margin is not None:
+        centre_px = subtitle_anchor_centre_px(
+            cw, ch, layout, sub_margin=sub_margin,
+            font_px=font_px, sub_lines=sub_lines,
+        )
+        return int(round(centre_px - block_h / 2.0))
     centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
     if centre_px is not None:
         return int(round(centre_px - block_h / 2.0))
@@ -1219,7 +1322,8 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
                        raw_font_size: int = 16, sub_lines: int = 1,
                        sub_y: float = 0.85, min_h: float | None = None,
                        sub_x: float | None = None,
-                       sub_w: float | None = None) -> dict[str, float]:
+                       sub_w: float | None = None,
+                       sub_margin: float | None = None) -> dict[str, float]:
     """Canvas-fraction blur plate behind the burned subtitles.
 
     Fixed ~92%-of-frame-width band, horizontally centred; height fits
@@ -1239,6 +1343,14 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
     the historical centred 0.92 band exactly; an explicit sub_w of
     0.92 on a full-width picture reproduces it too. The height is
     unchanged (text-fit; no user height control).
+
+    Batch AK: with sub_margin set, the plate anchors to the
+    picture's BOTTOM edge instead (subtitle_anchor_centre_px): its
+    bottom edge sits sub_margin of the picture height above the
+    picture's bottom rim on every layout, and the legacy safe-bottom
+    clamp does not apply — the margin is explicit. Height fitting
+    (including the min_h settle contract, growing UPWARD from the
+    anchored bottom) and the horizontal rules are unchanged.
     """
     cw = max(320, int(cw))
     ch = max(240, int(ch))
@@ -1259,11 +1371,18 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
         x_frac = (1.0 - w_frac) / 2.0
     else:
         x_frac = max(0.0, min(1.0 - w_frac, centre_x_px / cw - w_frac / 2.0))
-    centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
-    y_frac = (centre_px if centre_px is not None else 0.85 * ch) / ch
-    if content_rim_y(layout, cw, ch) is None:
-        if y_frac + h_frac / 2.0 > SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION:
-            y_frac = SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION - h_frac / 2.0
+    if sub_margin is not None:
+        centre_m = subtitle_anchor_centre_px(
+            cw, ch, layout, sub_margin=sub_margin,
+            raw_font_size=raw_font_size, sub_lines=sub_lines, font_px=font_px,
+        )
+        y_frac = centre_m / ch
+    else:
+        centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
+        y_frac = (centre_px if centre_px is not None else 0.85 * ch) / ch
+        if content_rim_y(layout, cw, ch) is None:
+            if y_frac + h_frac / 2.0 > SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION:
+                y_frac = SUBTITLE_PLATE_SAFE_BOTTOM_FRACTION - h_frac / 2.0
     half = h_frac / 2.0
     y_frac = max(half, min(1.0 - half, y_frac))
     return {
@@ -1287,7 +1406,8 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
 
 def subtitle_anchor_y(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
                       sub_y: float | None = 0.85, raw_font_size: int = 16,
-                      sub_lines: int = 1) -> float:
+                      sub_lines: int = 1,
+                      sub_margin: float | None = None) -> float:
     """Canvas-fraction centre Y where the burned subtitle will sit.
 
     Mirrors write_synced_ass_file through subtitle_centre_px: on
@@ -1296,9 +1416,20 @@ def subtitle_anchor_y(cw: int, ch: int, layout: dict[str, Any] | None = None, *,
     caller's sub_y of the canvas height (85% default). The
     raw_font_size/sub_lines parameters are kept for call-site
     compatibility; the Batch P anchor no longer depends on them.
+
+    Batch AK: with sub_margin set, the centre comes from the
+    bottom-edge anchor (subtitle_anchor_centre_px) — here the font
+    size and line count DO matter, because the centre is derived
+    from the plate's fitted height above the anchored bottom edge.
     """
     cw = max(320, int(cw))
     ch = max(240, int(ch))
+    if sub_margin is not None:
+        centre_px = subtitle_anchor_centre_px(
+            cw, ch, layout, sub_margin=sub_margin,
+            raw_font_size=raw_font_size, sub_lines=sub_lines,
+        )
+        return centre_px / ch
     centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
     if centre_px is None:
         centre_px = 0.85 * ch
@@ -1419,9 +1550,20 @@ def _visual_filters(mirror_video: bool, zoom_factor: float,
     crop_filt = str(lay.get("crop_filter") or "").strip()
     prefix = f"{crop_filt}," if crop_filt else ""
     head = f"{prefix}hflip," if mirror_video else prefix
-    color_grade = ",eq=contrast=1.03:brightness=-0.01:saturation=1.05" if mirror_video else ""
+    # Batch AK (premium audit P5): the colour grade is NOT part of
+    # the mirror — it used to ride the mirror flag, so turning
+    # Mirror off silently un-graded the picture too. The grade is
+    # the product's standard look and now applies unconditionally;
+    # Mirror is purely the left/right flip its label claims.
+    # Mirror-ON renders (the shipped default) are byte-identical.
+    color_grade = ",eq=contrast=1.03:brightness=-0.01:saturation=1.05"
 
-    if lay.get("fill") == "crop" or (not crop_filt and abs(sw / sh - cw / ch) < 0.01):
+    # Batch AK (premium audit P7): the full-frame test uses the
+    # CROPPED dims (c_sw/c_sh) — the same dims the fit scale uses —
+    # not the uncropped source aspect frame_layout used to test, so
+    # the branch decision and the scale can never disagree about
+    # the same frame when crop margins are set.
+    if lay.get("fill") == "crop" or (not crop_filt and abs(c_sw / c_sh - cw / ch) < 0.01):
         fill_w, fill_h = max(cw, _even(cw * zoom)), max(ch, _even(ch * zoom))
         return (f"{head}scale={fill_w}:{fill_h}:force_original_aspect_ratio=increase,"
                 f"crop={cw}:{ch},setsar=1{color_grade},format=yuv420p"), zoom
@@ -1735,20 +1877,11 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _render_text_with_pillow(
-    text: str,
-    output: Path,
-    font_size: int = 46,
-    max_width: int = 1500,
-    bg_alpha: float = 0.75,
-    border_color: tuple = (255, 215, 0, 180),
-    font_path: str = ""
-) -> Path:
-    """Render Myanmar text onto a transparent PNG badge with dark pill and gold/white styling."""
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-    except ImportError:
-        raise RuntimeError("Pillow is required for rendering title text. Install with: pip install pillow")
+def _load_title_font(font_size: int, font_path: str = ""):
+    """The title renderer's font resolution (bundled Myanmar fonts
+    first) — shared by the Pillow renderer and the panel metrics so
+    both measure with the SAME font the pixels are drawn with."""
+    from PIL import ImageFont
 
     fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
     cand_fonts = [
@@ -1763,33 +1896,43 @@ def _render_text_with_pillow(
         r"C:\Windows\Fonts\Pyidaungsu.ttf",
         r"C:\Windows\Fonts\arial.ttf",
     ]
-    font = None
     for cf in cand_fonts:
         if cf and os.path.exists(cf):
             try:
-                font = ImageFont.truetype(cf, font_size)
-                break
+                return ImageFont.truetype(cf, font_size)
             except Exception:
                 pass
-    if font is None:
-        font = ImageFont.load_default()
+    return ImageFont.load_default()
 
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    if not lines:
-        lines = [text.strip()]
 
+def _wrap_title_lines(text: str, font_size: int, max_width: int, font_path: str = "") -> list[str]:
+    """Wrap a title into the lines the Pillow renderer will draw:
+    word wrap at spaces, then a syllable-atom rewrap for any line
+    still wider than max_width (Myanmar titles often have no
+    spaces, so a single 'word' can span the whole string — it used
+    to stay whole and overflow the panel). Breaks only at syllable
+    boundaries, never inside a shaped cluster."""
+    from PIL import Image, ImageDraw
+
+    font = _load_title_font(font_size, font_path)
     dummy = Image.new("RGBA", (1, 1))
     d = ImageDraw.Draw(dummy)
 
-    # Wrap long lines
-    wrapped_lines = []
+    def _w(s: str) -> int:
+        b = d.textbbox((0, 0), s, font=font)
+        return b[2] - b[0]
+
+    lines = [l.strip() for l in str(text or "").split("\n") if l.strip()]
+    if not lines:
+        lines = [str(text or "").strip()]
+
+    wrapped_lines: list[str] = []
     for line in lines:
         words = line.split(" ")
         curr = ""
         for w in words:
             test = (curr + " " + w).strip()
-            bbox = d.textbbox((0, 0), test, font=font)
-            if bbox[2] - bbox[0] > max_width and curr:
+            if curr and _w(test) > max_width:
                 wrapped_lines.append(curr)
                 curr = w
             else:
@@ -1797,16 +1940,61 @@ def _render_text_with_pillow(
         if curr:
             wrapped_lines.append(curr)
 
-    if not wrapped_lines:
-        wrapped_lines = [text]
+    fitted: list[str] = []
+    for l in wrapped_lines:
+        if _w(l) <= max_width or len(l) <= 1:
+            fitted.append(l)
+            continue
+        atoms = split_into_burmese_syllables(l) or list(l)
+        cur = ""
+        for a in atoms:
+            cand = cur + a
+            if cur and _w(cand) > max_width:
+                fitted.append(cur)
+                cur = a
+            else:
+                cur = cand
+        if cur:
+            fitted.append(cur)
+    return [l for l in fitted if l] or [str(text or "").strip()]
+
+
+def _render_text_with_pillow(
+    text: str,
+    output: Path,
+    font_size: int = 46,
+    max_width: int = 1500,
+    bg_alpha: float = 0.75,
+    border_color: tuple = (255, 215, 0, 180),
+    font_path: str = ""
+) -> Path:
+    """Render Myanmar text onto a transparent PNG badge with dark pill and gold/white styling.
+
+    Batch AK (Addition A): the panel height is computed from the
+    REAL per-line ink boxes and each line is drawn at its measured
+    bbox offset, so the box always fits the wrapped text — the old
+    version allocated max(font_size, ink height) per line but drew
+    at the raw anchor, so tall Myanmar stacks on later lines ran
+    past the panel's bottom edge and the last line was clipped
+    (confirmed on the 2026-11-05 AL verification job's 4-line
+    title)."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        raise RuntimeError("Pillow is required for rendering title text. Install with: pip install pillow")
+
+    font = _load_title_font(font_size, font_path)
+    wrapped_lines = _wrap_title_lines(text, font_size, max_width, font_path)
+
+    dummy = Image.new("RGBA", (1, 1))
+    d = ImageDraw.Draw(dummy)
 
     line_bboxes = [d.textbbox((0, 0), l, font=font) for l in wrapped_lines]
     line_widths = [max(1, b[2] - b[0]) for b in line_bboxes]
-    line_heights = [max(font_size, b[3] - b[1]) for b in line_bboxes]
+    line_heights = [max(1, b[3] - b[1]) for b in line_bboxes]
     max_tw = max(line_widths) if line_widths else 200
-    line_h = max(line_heights) if line_heights else font_size
     spacing = int(font_size * 0.25)
-    total_th = len(wrapped_lines) * line_h + (len(wrapped_lines) - 1) * spacing
+    total_th = sum(line_heights) + (len(wrapped_lines) - 1) * spacing
 
     pad_x = int(font_size * 0.8)
     pad_y = int(font_size * 0.35)
@@ -1822,13 +2010,18 @@ def _render_text_with_pillow(
 
     curr_y = pad_y
     for i, l in enumerate(wrapped_lines):
+        b = line_bboxes[i]
         lw = line_widths[i]
-        curr_x = (w - lw) // 2
+        # Draw so the line's INK lands in its allocated slot: PIL's
+        # anchor sits at the ascender, and the bbox offset (b[0],
+        # b[1]) is where the ink actually starts relative to it.
+        curr_x = (w - lw) // 2 - b[0]
+        draw_y = curr_y - b[1]
         # Drop shadow
-        draw.text((curr_x + 2, curr_y + 2), l, font=font, fill=(0, 0, 0, 220))
+        draw.text((curr_x + 2, draw_y + 2), l, font=font, fill=(0, 0, 0, 220))
         # Main text in rich luxury gold
-        draw.text((curr_x, curr_y), l, font=font, fill=(255, 225, 120, 255))
-        curr_y += line_h + spacing
+        draw.text((curr_x, draw_y), l, font=font, fill=(255, 225, 120, 255))
+        curr_y += line_heights[i] + spacing
 
     output.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(output), "PNG")
@@ -1848,10 +2041,20 @@ def _render_title_png(text: str, output: Path, font_path: str, font_size: int, m
 
     try:
         from services.text_overlay_service import make_video_title_png
+        # Batch AK (Addition A): size the Chromium panel from the
+        # measured wrap — the service's defaults (170px / 2 lines)
+        # clipped any title wrapping past two lines. The panel now
+        # fits however many lines the wrap produces at this width,
+        # with the service's own padding accounted for.
+        _lines = _wrap_title_lines(text, int(font_size), int(max_width), font_path)
+        _line_h = int(round(int(font_size) * 1.30))  # the renderer's CSS line-height
         cfg = {
             "font_path": str(font_path or ""),
             "font_size": int(font_size),
             "max_width": int(max_width),
+            "panel_width": int(max_width) + 2 * 44 + 8,
+            "video_title_panel_height": max(110, len(_lines) * _line_h + 2 * 18 + 12),
+            "max_title_lines": max(2, len(_lines)),
         }
         return make_video_title_png(text, output, cfg)
     except Exception:
@@ -2601,6 +2804,7 @@ def write_synced_ass_file(
     subtitles_margin_v: float | None = None,
     boxes: list[dict[str, Any]] | None = None,
     layout: dict[str, Any] | None = None,
+    sub_margin: float | None = None,
 ) -> Path:
     """Generate a pixel-accurate ASS subtitle file with complex Myanmar script text shaping."""
     cw = max(320, int(cw))
@@ -2619,7 +2823,16 @@ def write_synced_ass_file(
     # ASS Alignment 2 (bottom-center) positions text baseline at margin_v.
     # To place the subtitle center exactly at sy*ch, subtract half the rendered text height:
     text_half_height = (font_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
-    centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
+    # Batch AK: sub_margin (bottom-edge anchor) wins over the legacy
+    # centre when both ride the overlays dict.
+    centre_px = (
+        subtitle_anchor_centre_px(
+            cw, ch, layout, sub_margin=sub_margin,
+            raw_font_size=raw_font_size, sub_lines=sub_lines, font_px=font_size,
+        )
+        if sub_margin is not None
+        else subtitle_centre_px(cw, ch, layout, sub_y)
+    )
     if centre_px is not None:
         # Batch P: picture-relative on letterboxed layouts (centre =
         # oy + sub_y × ph), sub_y of the canvas height full-frame —
@@ -3480,6 +3693,7 @@ def apply_production_overlays(
                 font_px=sub_job["font_px"],
                 sub_lines=sub_job["sub_lines"],
                 block_h=png_h,
+                sub_margin=overlays.get("sub_margin"),
             )
             cue_inputs.append((png_path, top, x_expr, float(cue_start), float(cue_end)))
 
@@ -3683,6 +3897,13 @@ def apply_production_overlays(
     return output_video
 
 
+# Batch AK (premium audit P2/N4): ONE sample sentence for every
+# preview surface — the engine preview's default and the fallback
+# below both use it, and the Mini App no longer keeps a different
+# sentence of its own (its canvas shows this engine composite).
+PREVIEW_SAMPLE_TEXT = "ဒီတစ်ခါမှာတော့ ဘယ်သူမှ မထင်မှတ်ထားတဲ့ အဖြစ်အပျက် ဖြစ်လာပါတယ်"
+
+
 def extract_preview_with_overlays(
     ffmpeg: str,
     source_video: Path | str,
@@ -3692,8 +3913,8 @@ def extract_preview_with_overlays(
     output_ratio: str = "Original",
     frame_fill: str = "blur",
     mirror_video: bool = True,
-    zoom_factor: float = 1.06,
-    sample_text: str = "ဒီဇာတ်လမ်းမှာတော့ အဓိကဇာတ်ကောင်ဟာ မမျှော်လင့်ဘဲ...",
+    zoom_factor: float = 1.0,
+    sample_text: str = PREVIEW_SAMPLE_TEXT,
     work_dir: Path | str | None = None,
     ffprobe: str | None = None,
     crop_top: float = 0.0,
@@ -3785,11 +4006,44 @@ def extract_preview_with_overlays(
         if lp and Path(lp).is_file():
             logo_file = Path(lp)
 
-    logo_idx: int | None = None
+    # Batch AK: the title badge joins the preview — production has
+    # always burned it (apply_production_overlays) but the preview
+    # never showed it, so a wrapped/clipped title was invisible
+    # until the render shipped. Same renderer, same placement
+    # expression as production.
+    title_file = None
+    _title_text_p = str(overlays.get("title_text") or "").strip()
+    if _title_text_p:
+        try:
+            title_file = _render_title_png(
+                _title_text_p, temp_dir / "preview_title.png",
+                str(overlays.get("title_font_path") or ""),
+                int(overlays.get("title_font_size", 54)),
+                max_width=int(pw * 0.78),
+            )
+        except Exception:
+            title_file = None
+
     cmd_inputs: list[str] = ["-ss", f"{seek_sec:.2f}", "-i", str(source)]
+    _next_idx = 1
+    title_idx: int | None = None
+    if title_file is not None:
+        title_idx = _next_idx
+        _next_idx += 1
+        cmd_inputs += ["-i", str(title_file)]
+    logo_idx: int | None = None
     if logo_file:
-        logo_idx = 1
+        logo_idx = _next_idx
+        _next_idx += 1
         cmd_inputs += ["-i", str(logo_file)]
+
+    if title_idx is not None:
+        tpos = overlays.get("title_position") or [0.5, 0.12]
+        tx = _clamp01(tpos[0] if len(tpos) > 0 else 0.5, 0.5)
+        ty = _clamp01(tpos[1] if len(tpos) > 1 else 0.12, 0.12)
+        out = "vtitle"
+        graph.append(f"{current}[{title_idx}:v]overlay=x='{ox}+({pw}*{tx:.6f}-w/2)':y='{oy}+({ph}*{ty:.6f}-h/2)'[{out}]")
+        current = f"[{out}]"
 
     if logo_idx is not None:
         pos = overlays.get("logo_position") or [0.80, 0.05]
@@ -3813,11 +4067,8 @@ def extract_preview_with_overlays(
         sub_lines = int(overlays.get("sub_lines", 1))
         sample = str(sample_text or "").strip()
         if not sample:
-            if sub_lines == 2:
-                sample = "မူရင်းဇာတ်လမ်းကို မြန်မာဘာသာဖြင့်\nအချိန်ကိုက် ပြန်လည်တင်ဆက်ထားပါသည်"
-            else:
-                sample = "မြန်မာဘာသာဖြင့် ပြန်လည်တင်ဆက်ထားပါသည်"
-        elif sub_lines == 2 and "\n" not in sample and len(sample) > 20:
+            sample = PREVIEW_SAMPLE_TEXT
+        if sub_lines == 2 and "\n" not in sample and len(sample) > 20:
             syls = split_into_burmese_syllables(sample)
             if len(syls) > 1:
                 half = len(sample) // 2
@@ -3881,7 +4132,8 @@ def extract_preview_with_overlays(
             )
         if rendered is not None:
             png_path, _png_w, png_h = rendered
-            sub_idx = 2 if logo_idx is not None else 1
+            sub_idx = _next_idx
+            _next_idx += 1
             cmd_inputs += ["-i", str(png_path)]
             top = _subtitle_block_top_px(
                 cw, ch, layout,
@@ -3891,6 +4143,7 @@ def extract_preview_with_overlays(
                 font_px=font_px,
                 sub_lines=sub_lines,
                 block_h=png_h,
+                sub_margin=overlays.get("sub_margin"),
             )
             out = "vsub"
             graph.append(f"{current}[{sub_idx}:v]overlay=x='{_subtitle_overlay_x_expr(cw, ch, layout, overlays.get('sub_x'))}':y={top}[{out}]")
@@ -4970,6 +5223,7 @@ class EdgeSmartSync:
                 sub_style=str(self.overlays.get("sub_style") or self.overlays.get("subtitles_style") or "yellow"),
                 sub_lines=lines_per_cue,
                 sub_y=self.overlays.get("sub_y"),
+                sub_margin=self.overlays.get("sub_margin"),
                 sub_x=self.overlays.get("sub_x"),
                 subtitles_margin_v=self.overlays.get("subtitles_margin_v"),
                 boxes=self.overlays.get("boxes"),

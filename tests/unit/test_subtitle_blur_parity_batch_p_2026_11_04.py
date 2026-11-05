@@ -138,13 +138,20 @@ def test_font_fraction_table(pt, frac):
 
 def test_font_sizes_distinct_and_exact():
     sizes = {pt: subtitle_font_px(CW, CH, pt, 1, LB) for pt in (13, 16, 19, 22)}
-    assert sizes == {13: 61, 16: 77, 19: 92, 22: 108}
+    # Batch AK: picture-relative basis (608px picture) — Batch P's
+    # canvas-basis {61, 77, 92, 108} is superseded on letterboxed
+    # layouts; full-frame values are unchanged.
+    assert sizes == {13: 19, 16: 24, 19: 29, 22: 34}
     assert len(set(sizes.values())) == 4  # no compression
 
 
 def test_font_no_letterbox_scaling():
+    # Batch AK supersedes Batch P's "no letterbox scaling" rule:
+    # the font IS picture-relative now, so a letterboxed layout's
+    # font equals the font on a canvas of the picture's own height
+    # (608), not the 1920 canvas's font.
     for pt in (13, 16, 19, 22):
-        assert subtitle_font_px(CW, CH, pt, 1, LB) == subtitle_font_px(CW, CH, pt, 1, None)
+        assert subtitle_font_px(CW, CH, pt, 1, LB) == subtitle_font_px(1080, 608, pt, 1, None)
 
 
 def test_font_two_line_factor():
@@ -217,8 +224,10 @@ def test_default_subtitle_landing_letterbox():
     # Default sub_y=85, 16pt, 1 line — where a default job's
     # subtitle lands now (centre 61.1% of canvas, inside the
     # picture near its bottom; font 77px since Batch Q's bump).
+    # Batch AK: the anchor centre is unchanged; the FONT is now
+    # picture-relative (24px = 4.0% of the 608px picture height).
     assert subtitle_anchor_y(CW, CH, LB, sub_y=0.85) == pytest.approx(0.6108, abs=0.001)
-    assert subtitle_font_px(CW, CH, 16, 1, LB) == 77
+    assert subtitle_font_px(CW, CH, 16, 1, LB) == 24
 
 
 # ── 5. Preview mirrors the same geometry (no mockup) ───────────────
@@ -238,13 +247,17 @@ def test_preview_anchor_and_size_helpers():
 
 
 def test_preview_sub_and_plate_use_anchor():
+    # Batch AK rewrite: the sub HANDLE still positions through the
+    # shared anchor helper (with the centre derived from the bottom
+    # margin), but the plate + sample text are no longer drawn by JS
+    # at all — the engine-composited frame is the preview, and
+    # updateSubtitleVisualPreview is a retired stub.
     sub_body = APP_JS.split("function syncSubBoxVisual()", 1)[1].split("\n    }", 1)[0]
-    assert "subtitleAnchorCanvasFrac(y)" in sub_body
-    fit_body = APP_JS.split("function fitBlurPlateToCaption()", 1)[1].split("\n    }", 1)[0]
-    assert "subtitleAnchorCanvasFrac(plateY)" in fit_body
-    preview_body = APP_JS.split("function updateSubtitleVisualPreview()", 1)[1]
-    preview_body = preview_body.split("// 11. Font Size Picker", 1)[0]
-    assert "subtitlePreviewFontPx()" in preview_body
+    assert "subtitleAnchorCanvasFrac(centre)" in sub_body
+    assert "scheduleRecapCompositeRefresh()" in sub_body
+    assert "function fitBlurPlateToCaption()" not in APP_JS
+    stub = APP_JS.split("function updateSubtitleVisualPreview()", 1)[1].split("\n    }", 1)[0]
+    assert "return;" in stub
 
 
 # ── 6. Blur box basis audit ────────────────────────────────────────
@@ -273,5 +286,5 @@ def test_blur_box_basis_canvas_on_both_sides():
 # ── 7. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261104_r62") == 4
+    assert INDEX_HTML.count("?v=20261104_r63") == 4
     assert "20261104_r48" not in INDEX_HTML

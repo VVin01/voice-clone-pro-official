@@ -965,18 +965,16 @@ select.studio-input { min-height: 50px; }
    legitimately reach 100% of the picture), so the shared
    .draggable-box 92% cap does not apply to them. */
 .preview-blur-box.draggable-box, .preview-sub-box.draggable-box { max-width: 100%; }
+/* Batch AK: the sub box is an OUTLINE-ONLY drag handle over the
+   engine-composited frame (which renders the real subtitle in the
+   real style) — the per-style CSS text rules are retired. */
 .preview-sub-box {
-    z-index: 7; text-align: center; padding: 3px 8px; pointer-events: auto;
-    display: flex; align-items: center; justify-content: center; gap: 5px;
+    z-index: 7; pointer-events: auto;
+    display: flex; align-items: flex-start; justify-content: center;
+    border: 1.5px dashed rgba(255, 217, 59, 0.9); border-radius: 6px;
+    background: rgba(255, 217, 59, 0.07);
 }
-.preview-sub-box .preview-sub-text {
-    font-weight: 700; line-height: 1.5; word-break: break-word;
-    color: #ffd93b; text-shadow: 0 1px 0 #000, 0 0 6px rgba(0,0,0,0.85), 1px 0 0 #000, -1px 0 0 #000;
-}
-.preview-sub-box.white .preview-sub-text { color: #ffffff; }
-.preview-sub-box.boxed .preview-sub-text { color: #ffffff; background: rgba(0,0,0,0.72); padding: 2px 8px; border-radius: 6px; text-shadow: none; }
-.preview-sub-box.neon .preview-sub-text { color: #4be1ff; }
-.preview-sub-box .sub-grip { text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
+.preview-sub-box .sub-grip { text-shadow: 0 1px 2px rgba(0,0,0,0.8); padding-top: 2px; }
 
 /* Batch AH: the recap title overlay box — centred on (title_x,
    title_y) of the picture, like the engine's title_position; the
@@ -1575,12 +1573,6 @@ select.studio-input { min-height: 50px; }
 .btn-file-upload.has-file { border-color: var(--gold-border); color: var(--gold-2); background: var(--gold-soft); }
 .queue-section-header.history { color: var(--text-3); }
 .master-price .price-val { color: var(--gold-2); }
-.preview-sub-box.one-line .preview-sub-text {
-    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
-}
-.preview-sub-box.two-lines .preview-sub-text {
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
 .floating-alert-container.show { display: block; }
 .tier-badge.tier-fb1 { color: var(--sky); }
 .tier-badge.tier-fb2 { color: var(--violet); }
@@ -1590,7 +1582,6 @@ select.studio-input { min-height: 50px; }
 .badge-status.cancelled { background: var(--gold-soft); color: var(--gold-2); }
 .badge-engine.voxcpm { background: var(--violet-soft); color: var(--violet); }
 .preview-logo-watermark.top-right { position: static; }
-.preview-sub-box.yellow .preview-sub-text { color: #ffd93b; }
 
 /* ── Narrow screens: header tutorial pill collapses to icon-only ────── */
 @media (max-width: 480px) {
@@ -2047,14 +2038,10 @@ input[type="search"]:focus, input[type="tel"]:focus {
 }
 
 /* ── Recap script review / edit (two-phase flow) ─────────────────────── */
-.script-review-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 14px; border-radius: 12px; cursor: pointer;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 14px; line-height: 1.6;
-}
-.script-review-row input[type="checkbox"] { width: 20px; height: 20px; flex: 0 0 auto; accent-color: #d4af37; }
+/* Batch AK (P8): .script-review-row is defined ONCE (the Liquid
+   Glass block below carries layout + theme; the switch treatment
+   lives in the ONE-switch section). The stale dark-theme first
+   definition is gone. */
 .script-hint { font-size: 13px; line-height: 1.7; opacity: 0.75; margin-top: 6px; }
 .script-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; max-height: 55vh; overflow-y: auto; }
 .script-seg { padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); }
@@ -2093,6 +2080,8 @@ input[type="search"]:focus, input[type="tel"]:focus {
     box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.15);
 }
 .script-review-row {
+    display: flex; align-items: center; gap: 10px;
+    cursor: pointer; font-size: 14px; line-height: 1.6;
     background: var(--surface-2);
     border: 1px solid var(--border);
     box-shadow: var(--glass-hi);
@@ -2291,7 +2280,6 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .brand-title-wrap { min-width: 0; }
 .sub-brand { overflow: hidden; text-overflow: ellipsis; }
 .tutorial-pill-btn, .lang-pill-btn { flex-shrink: 0; }
-.preview-sub-box .preview-sub-text { min-width: 0; flex: 1 1 auto; }
 body.lang-my .studio-toast { line-height: 1.95; }
 body.lang-my .studio-toast .toast-icon { line-height: 1.95; }
 body.lang-my .studio-confirm-msg { line-height: 1.95; }
@@ -2980,8 +2968,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-cost-hint { font-size: 12px; opacity: 0.9; }
 .recap-unverified-warning { font-size: 12.5px; line-height: 1.55; color: #d97706; font-weight: 600; }
 
-/* Subtitle sample on the canvas: soft shadow, no hard black quad. */
-.preview-sub-box .preview-sub-text { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55); }
 
 /* AGY-4 — slider thumbs lose the dark-theme black rim; blur box gets
    the glass specular highlight like every other frosted surface. */
@@ -3237,17 +3223,42 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-detail-toggle { flex: 1 1 auto; min-width: 0; }
 
 /* ── Batch AC: live jobs pill + sheet, prefs saved note ─────────── */
+/* Batch AK (Addition C): the pill is a full-width status BAR —
+   stacked lines with room to read (the old single-row pill was too
+   narrow for its two Burmese lines, which interleaved into
+   unreadable columns), a full-width progress track, and a dismiss
+   button. Anchored above the bottom nav, it never floats over
+   interactive content mid-screen. */
 .live-jobs-pill {
     position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: 86px; z-index: 900; display: flex; align-items: center; gap: 8px;
-    max-width: min(92vw, 430px); padding: 8px 14px; border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.35); cursor: pointer;
-    background: rgba(23, 32, 54, 0.92); color: #fff; font-size: 12px;
+    bottom: 86px; z-index: 900; display: flex; align-items: stretch; gap: 6px;
+    width: min(96vw, 480px); padding: 10px 8px 10px 14px; border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.35);
+    background: rgba(23, 32, 54, 0.95); color: #fff; font-size: 12px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.35);
 }
+.live-jobs-pill-main {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;
+    background: none; border: none; color: inherit; font: inherit;
+    text-align: left; cursor: pointer; padding: 0;
+}
+.live-jobs-pill-count {
+    font-weight: 700; font-size: 13px; line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.live-jobs-pill-stage {
+    font-size: 12px; opacity: 0.88; line-height: 1.5;
+    white-space: normal; overflow-wrap: break-word;
+}
+.live-jobs-pill-dismiss {
+    flex: 0 0 auto; align-self: flex-start; width: 26px; height: 26px;
+    border-radius: 50%; border: 1px solid rgba(255,255,255,0.35);
+    background: rgba(255,255,255,0.10); color: #fff; font-size: 12px;
+    cursor: pointer; line-height: 1;
+}
 .live-jobs-pill-bar {
-    flex: 1 1 70px; height: 6px; border-radius: 999px;
-    background: rgba(255,255,255,0.22); overflow: hidden;
+    flex: none; width: 100%; height: 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.22); overflow: hidden; margin-top: 2px;
 }
 .live-jobs-pill-fill {
     display: block; height: 100%; width: 0%;
@@ -3271,12 +3282,21 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     font-weight: 700; margin-bottom: 10px;
 }
 .live-job-row {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
     padding: 10px 0; border-top: 1px solid #e6ebf2;
 }
-.live-job-row-main { flex: 1; min-width: 0; }
+.live-job-row-main { flex: 1 1 180px; min-width: 0; }
 .live-job-row-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.live-job-row-meta { font-size: 12px; opacity: 0.75; }
+/* Batch AK (Addition C): the meta line wraps normally across the
+   row's full width — it used to be squeezed into a narrow column
+   that stacked word-by-word at Mini App widths. */
+.live-job-row-meta { font-size: 12px; opacity: 0.75; white-space: normal; overflow-wrap: break-word; line-height: 1.55; }
+.live-job-row-actions { display: flex; gap: 6px; align-items: center; }
+@media (max-width: 480px) {
+    /* Actions get their own full row at phone widths so nothing
+       competes with the title/meta column. */
+    .live-job-row-actions { flex: 1 0 100%; justify-content: flex-end; }
+}
 .live-job-row-bar { height: 5px; border-radius: 999px; background: #e6ebf2; overflow: hidden; margin-top: 4px; }
 .live-job-row-fill { display: block; height: 100%; background: linear-gradient(90deg, #57c7ff, #ffd257); }
 .prefs-saved-note { font-size: 12px; opacity: 0.8; margin: 4px 0 8px; }
@@ -3296,3 +3316,69 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .submit-confirm-icon { font-size: 34px; }
 .submit-confirm-hint { font-size: 12px; opacity: 0.8; margin-top: 10px; }
 .submit-confirm-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Batch AK — premium-standard fixes (2026-11-05)
+   ════════════════════════════════════════════════════════════════════ */
+
+/* P1: the fill picker's selected state is unmistakable — a filled
+   gold pill, not a faint tint (the ratio/fill/style pickers share
+   .pill-btn). */
+.pill-btn.active {
+    background: linear-gradient(180deg, #ffd968, #f5b921);
+    color: #221a04; border-color: #d99a06;
+    box-shadow: 0 2px 8px rgba(217, 154, 6, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    font-weight: 700;
+}
+/* S4: when the fill cannot change anything the picker greys out. */
+.fill-picker-disabled { opacity: 0.45; filter: grayscale(0.6); }
+.fill-picker-disabled .pill-btn { pointer-events: none; }
+/* S5/N5: the honest note under the fill picker. */
+.fill-note {
+    margin-top: 8px; font-size: 12.5px; line-height: 1.55;
+    color: var(--text-2);
+}
+
+/* N1: output dimensions on the ratio pills. */
+.ratio-btn .ratio-dims {
+    display: block; font-size: 11px; font-weight: 600;
+    color: var(--text-3); margin-top: 2px; letter-spacing: 0.02em;
+}
+.ratio-btn.active .ratio-dims { color: var(--gold-2); }
+
+/* S6: the language picker — label outside the group, a real grid
+   (the label used to sit INSIDE the pill row as a non-button). */
+.recap-lang-block .spec-lbl { display: block; }
+.lang-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 6px;
+}
+.lang-grid .pill-btn { width: 100%; justify-content: center; text-align: center; }
+
+/* Preview unification: the engine-composited frame fills the inner
+   movie plainly (it is already the exact render frame). */
+.canvas-composite-img {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: fill; display: block;
+}
+
+/* S6: the step-2 hint tag gets its own row under the header. */
+.visual-editor-card .hint-tag { display: inline-block; margin-top: 6px; }
+.visual-editor-card .hint-tag.hidden { display: none; }
+
+/* Addition B: the title fallback hint (toggle ON + empty text). */
+.recap-title-fallback-hint {
+    font-size: 12.5px; line-height: 1.6; color: #d97706; font-weight: 600;
+}
+
+/* S6/P8: ONE switch language for every toggle component. The
+   checkbox rows, .toggle-pill-btn (.switch-track) and .mini-toggle
+   (.t-val) already share the track+knob treatment in the sections
+   above; .chip-toggle joins the same family here — a status dot
+   that fills gold when on, over the shared active colours. */
+.chip-toggle::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--surface-3); border: 1px solid var(--border-strong);
+    flex: 0 0 auto; transition: background 0.18s ease;
+}
+.chip-toggle.active::before { background: var(--gold); border-color: var(--gold-border); }
