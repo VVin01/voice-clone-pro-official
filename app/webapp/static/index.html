@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r65">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r66">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r65" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r66" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -2467,10 +2467,14 @@
          Full-screen lock shown from first paint (body starts .gate-locked).
          The app behind it stays unusable until a LIVE check via
          POST /api/user/verify-membership returns verified=true; a member
-         who later leaves either chat is locked again on the next check. -->
+         who later leaves either chat is locked again on the next check.
+         Batch AR (2026-11-05): the same lock renders the MAINTENANCE
+         screen (mode "maintenance" in app.js) — while maintenance mode
+         is on, non-admins get this screen with the admin's note and
+         nothing else; admins pass through as always. -->
     <div id="gate-lock" class="gate-lock" role="alertdialog" aria-modal="true">
         <div class="gate-lock-card">
-            <div class="modal-emoji">🔐</div>
+            <div class="modal-emoji" id="gate-lock-emoji">🔐</div>
             <h3 id="gate-lock-title" data-i18n="gate_lock_title">🔐 Channel နဲ့ Group Join ပြီးမှ သုံးနိုင်ပါမယ်</h3>
             <p id="gate-lock-desc" class="modal-desc" data-i18n="gate_lock_desc">Voice Clone Pro ကို အသုံးပြုဖို့ Channel နဲ့ Group နှစ်ခုလုံးကို Join ထားဖို့ လိုပါတယ်။ Join ပြီးရင် «ပြန်စစ်မည်» ကို နှိပ်လိုက်ရုံနဲ့ ချက်ချင်း ဖွင့်ပေးပါမယ်။ နောက်ပိုင်း တစ်ခုခုကနေ ပြန်ထွက်သွားရင် App က ပြန်ပိတ်သွားပါမယ်။</p>
             <div class="gate-banner-chips gate-lock-chips">
@@ -2501,7 +2505,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r65"></script>
-    <script src="/static/js/app.js?v=20261104_r65"></script>
+    <script src="/static/js/i18n.js?v=20261104_r66"></script>
+    <script src="/static/js/app.js?v=20261104_r66"></script>
 </body>
 </html>

@@ -1516,7 +1516,13 @@ window.showGateReminder = showGateReminder;
             if (res.status === 403 && url.includes("/api/") && !url.includes("/api/user/verify-membership")) {
                 res.clone().json().then((data) => {
                     const detail = (data && data.detail) || "";
-                    if (detail.includes("MEMBERSHIP_REQUIRED") || detail.includes("GATE_NOT_CONFIGURED")) {
+                    if (detail.includes("MAINTENANCE_MODE")) {
+                        // Batch AR: maintenance was switched on while
+                        // the app was open — its own calls now refuse.
+                        // Swap straight to the maintenance screen; the
+                        // join banner would be the wrong way forward.
+                        if (window.enterMaintenanceLock) enterMaintenanceLock();
+                    } else if (detail.includes("MEMBERSHIP_REQUIRED") || detail.includes("GATE_NOT_CONFIGURED")) {
                         showGateReminder();
                     }
                 }).catch(() => {});
@@ -2949,6 +2955,11 @@ window.verifyMembership = verifyMembershipFromBanner; // compat: old voice2 veri
 // GATE_NOT_CONFIGURED stays a distinct lock (contact admin), it never
 // silently unlocks. A failed check (network/401) also stays locked —
 // fail-closed, mirroring the server's gated writes.
+// Batch AR (2026-11-05): the lock also renders the MAINTENANCE screen
+// (mode "maintenance") — while maintenance mode is on, the server
+// refuses every non-admin call with MAINTENANCE_MODE, the boot path
+// checks /api/config before any cached unlock, and the screen shows
+// only the maintenance title + the admin's note.
 const entryGate = { locked: true, checking: false, lastCheckAt: 0, mode: "member" };
 
 function lockEntryGate() {
@@ -2970,10 +2981,33 @@ function setEntryGateMode(mode, data) {
     entryGate.mode = mode;
     const title = document.getElementById("gate-lock-title");
     const desc = document.getElementById("gate-lock-desc");
+    const emoji = document.getElementById("gate-lock-emoji");
     const chips = document.querySelector(".gate-lock-chips");
     const chLink = document.getElementById("gate-lock-link-channel");
     const grLink = document.getElementById("gate-lock-link-group");
     const verifyBtn = document.getElementById("gate-lock-btn-verify");
+    if (mode === "maintenance") {
+        // Batch AR (2026-11-05): the maintenance screen. Title + the
+        // admin's maintenance_note verbatim (or the default text when
+        // no note is set) — no join chips, no links, no verify button:
+        // there is nothing for the user to do but wait. The note is
+        // admin copy, so while it is shown the desc element must NOT
+        // carry a data-i18n attribute (a language re-apply would
+        // overwrite the note with the translated default).
+        if (emoji) emoji.innerText = "🛠️";
+        if (title) { title.setAttribute("data-i18n", "maintenance_title"); title.innerText = t("maintenance_title"); }
+        const note = (data && data.maintenance_note) ? String(data.maintenance_note).trim() : "";
+        if (desc) {
+            if (note) { desc.removeAttribute("data-i18n"); desc.innerText = note; }
+            else { desc.setAttribute("data-i18n", "maintenance_default_desc"); desc.innerText = t("maintenance_default_desc"); }
+        }
+        if (chips) chips.classList.add("hidden");
+        if (chLink) chLink.classList.add("hidden");
+        if (grLink) grLink.classList.add("hidden");
+        if (verifyBtn) verifyBtn.classList.add("hidden");
+        return;
+    }
+    if (emoji) emoji.innerText = "🔐";
     if (mode === "not-configured") {
         if (title) { title.setAttribute("data-i18n", "gate_not_configured_title"); title.innerText = t("gate_not_configured_title"); }
         if (desc) { desc.setAttribute("data-i18n", "gate_not_configured_desc"); desc.innerText = t("gate_not_configured_desc"); }
@@ -3039,6 +3073,32 @@ function applyEntryGateVerdict(data, reason) {
     }
 }
 
+let maintenanceLockFetchAt = 0;
+async function enterMaintenanceLock() {
+    // Batch AR: swap the entry gate to the maintenance screen and
+    // lock. The note is re-read from /api/config (the one endpoint
+    // that stays open) so an admin edit to the note reaches
+    // already-open apps on their next refused call; a short re-fetch
+    // window keeps a burst of refused calls from refetching it.
+    const now = Date.now();
+    if (entryGate.mode === "maintenance" && now - maintenanceLockFetchAt < 5000) {
+        lockEntryGate();
+        return;
+    }
+    maintenanceLockFetchAt = now;
+    let note = "";
+    try {
+        const res = await fetchWithTimeout("/api/config", { headers: getAuthHeaders() });
+        if (res && res.ok) {
+            const cfg = await res.json();
+            if (cfg) note = cfg.maintenance_note || "";
+        }
+    } catch (e) { /* the lock matters most; the default text covers a missing note */ }
+    setEntryGateMode("maintenance", { maintenance_note: note });
+    lockEntryGate();
+}
+window.enterMaintenanceLock = enterMaintenanceLock;
+
 async function runEntryGateCheck(reason) {
     const force = reason === "startup" || reason === "manual" || reason === "gate-403";
     if (entryGate.checking) return;
@@ -3060,6 +3120,20 @@ async function runEntryGateCheck(reason) {
             const status = document.getElementById("gate-lock-status");
             if (status) status.innerText = t("gate_check_failed");
             return;
+        }
+        if (res.status === 403) {
+            // Batch AR: while maintenance is on, the server refuses
+            // even this check with MAINTENANCE_MODE — for a non-admin
+            // that refusal IS the verdict: show the maintenance
+            // screen. (Admins are exempt server-side and receive the
+            // normal verified verdict, so a 403 here is never an
+            // admin.) Other 403s (gate not configured) fall through
+            // to the existing verdict handling untouched.
+            const errData = await res.clone().json().catch(() => null);
+            if (errData && String(errData.detail || "").includes("MAINTENANCE_MODE")) {
+                await enterMaintenanceLock();
+                return;
+            }
         }
         const data = await res.json();
         applyEntryGateVerdict(data, reason);
@@ -3270,8 +3344,28 @@ function bootFromCachedProfile() {
     return !!(data.is_admin || data.membership_verified);
 }
 
-function initEntryGate() {
-    if (bootFromCachedProfile()) unlockEntryGate(); else lockEntryGate();
+async function initEntryGate() {
+    // Batch AR: maintenance is checked BEFORE the cached-profile
+    // unlock. While maintenance is on, a non-admin must land on the
+    // maintenance screen directly — the page already loads locked,
+    // and a cached "verified" paint must not flash the app first.
+    // /api/config is unauthenticated, so this works before any
+    // identity call; if the fetch fails, boot falls back to the
+    // normal path (the startup gate check below still runs, and the
+    // server refuses every authenticated call anyway). Admins are
+    // recognised by that startup check and unlock as always.
+    let maintenanceCfg = null;
+    try {
+        const cfgRes = await fetchWithTimeout("/api/config", { headers: getAuthHeaders() });
+        if (cfgRes && cfgRes.ok) {
+            const cfg = await cfgRes.json();
+            if (cfg && cfg.maintenance_mode) maintenanceCfg = cfg;
+        }
+    } catch (e) { /* fall through to the normal boot path */ }
+    if (maintenanceCfg) {
+        setEntryGateMode("maintenance", maintenanceCfg);
+        lockEntryGate();
+    } else if (bootFromCachedProfile()) unlockEntryGate(); else lockEntryGate();
     runEntryGateCheck("startup");
     document.addEventListener("visibilitychange", () => {
         if (!document.hidden) runEntryGateCheck("visibility");
