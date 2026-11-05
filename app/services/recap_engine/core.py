@@ -5,13 +5,16 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import shutil
 import socket
 import subprocess
 import re
 import sys
+import threading
 import unicodedata
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -32,6 +35,15 @@ try:
     from app.services.recap_engine import png_subtitles as _png_subs
 except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
     import png_subtitles as _png_subs  # type: ignore[no-redef]
+
+try:
+    from app.services.voxcpm_engine import (
+        JobQuotaMemory as _JobQuotaMemory,
+        VoxCPMQuotaExhaustedError as _VoxCPMQuotaExhaustedError,
+    )
+except Exception:  # pragma: no cover - standalone load without the app package
+    _JobQuotaMemory = None  # type: ignore[assignment]
+    _VoxCPMQuotaExhaustedError = None  # type: ignore[assignment]
 
 
 LogFn = Callable[[str], None]
@@ -158,6 +170,30 @@ def recap_job_timeout(source_duration: float | None) -> int:
     return int(min(JOB_TIMEOUT_CAP_SECONDS, max(JOB_TIMEOUT_FLOOR_SECONDS, scaled)))
 
 
+# Batch AL: default width of the recap TTS worker pool. Chosen by the
+# local 4/6/8 benchmark recorded in the Batch AL PR (pool overhead is
+# negligible; the pick is bounded by the 15-account HF pool and the
+# 4 Space queues, not by this box's CPU — synthesis is network-bound).
+# RECAP_TTS_WORKERS=1 restores the exact pre-AL serial stage.
+DEFAULT_TTS_WORKERS = 6
+
+
+def vox_failover_budget(window_seconds: float, text_chars: int) -> float:
+    """Batch AL: per-segment VoxCPM failover budget, scaled to the
+    segment instead of the old flat 240 s for every line.
+
+    A ~4 s narration line does not merit a 240 s space/token walk:
+    budget = 30 s base + 20 s per second of narration window, floored
+    at 45 s and capped at the historical 240 s (long segments keep the
+    full old headroom). text_chars is accepted for future tuning and
+    for call-site clarity; the window is the load-bearing input."""
+    try:
+        window = float(window_seconds or 0.0)
+    except (TypeError, ValueError):
+        window = 0.0
+    return float(min(240.0, max(45.0, 30.0 + 20.0 * max(0.0, window))))
+
+
 def _with_protocol_whitelist(cmd: list[str]) -> list[str]:
     """Batch AJ / L21: insert ``-protocol_whitelist file,pipe``
     directly after the binary for media commands that read an input
@@ -238,6 +274,10 @@ class EdgeTTSEngine:
         self.log = log
         self.VOICE_DATABASE: dict[str, dict[str, Any]] = {}
         self._counter = 0
+        # Batch AL: the TTS worker pool shares this engine; the stem
+        # counter must advance atomically or two concurrent calls with
+        # the same text could mint the same temp file stem.
+        self._counter_lock = threading.Lock()
         try:
             from importlib.metadata import version as _pkg_version
             edge_ver = _pkg_version("edge-tts")
@@ -297,8 +337,10 @@ class EdgeTTSEngine:
 
     def generate_channel99_voice(self, text: str, voice: str):
         clean_text = self._clean_text(text)
-        self._counter += 1
-        stem = f"edge_{self._counter:05d}_{hashlib.sha1(clean_text.encode('utf-8')).hexdigest()[:10]}"
+        with getattr(self, "_counter_lock", threading.Lock()):
+            self._counter += 1
+            counter_value = self._counter
+        stem = f"edge_{counter_value:05d}_{hashlib.sha1(clean_text.encode('utf-8')).hexdigest()[:10]}"
         mp3 = self.work_dir / f"{stem}.mp3"
         wav = self.work_dir / f"{stem}.wav"
         mp3.unlink(missing_ok=True)
@@ -3211,7 +3253,65 @@ def _resolve_png_subtitle_job(
 # overlay steps append "-threads 2" AFTER the quality args (the last
 # -threads wins in ffmpeg) to bound peak RSS, with negligible speed
 # cost on a ≤2 vCPU instance.
+# Batch AL-R re-measured on the 4 GB instance (1080×1920, 2 vCPU
+# pinned): threads 4 vs 2 — wall 30.5 s vs 32.3 s two-step and
+# 25.1 s vs 24.5 s single-pass (within run noise), peak RSS 376-379 MB
+# vs 336-337 MB. The +40 MB is real, the speed gain is not: 2 stays.
 OVERLAY_FFMPEG_THREADS = 2
+
+
+# Batch AL-R: the combined single-pass overlay (blur + titles + cues in
+# ONE encode) is used only when a short per-job probe encode proves its
+# peak RSS fits this ceiling — the 4 GB instance must keep headroom for
+# the bot/worker in the same process space. Probe failure, an over-cap
+# probe, or a failed single pass all fall back to the Batch AB
+# two-step path automatically.
+OVERLAY_SINGLE_PASS_MAX_RSS_BYTES = int(3.2 * 1024 * 1024 * 1024)
+# Only one job may single-pass at a time (the job semaphore admits 2).
+_OVERLAY_SINGLE_PASS_SLOT = threading.Lock()
+
+
+def _run_overlay_probe(cmd: list[str], *, timeout: float = 180.0) -> tuple[int, int, str]:
+    """Run a short encode directly (NOT via _run_media) while sampling
+    the child's peak RSS from /proc VmHWM. Returns (returncode,
+    peak_rss_bytes, stderr_tail). Any spawn/sampling failure yields a
+    non-zero rc / zero peak so callers fall back safely."""
+    argv = [str(c) for c in cmd]
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except Exception as exc:
+        return 1, 0, f"probe spawn failed: {exc}"
+    peak = 0
+    deadline = time.monotonic() + max(5.0, float(timeout))
+    while proc.poll() is None:
+        try:
+            with open(f"/proc/{proc.pid}/status", "r", encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    if line.startswith("VmHWM:"):
+                        peak = max(peak, int(line.split()[1]) * 1024)
+                        break
+        except Exception:
+            pass
+        if time.monotonic() > deadline:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            break
+        time.sleep(0.02)
+    try:
+        _, stderr = proc.communicate(timeout=10)
+    except Exception:
+        stderr = b""
+    if peak <= 0:
+        try:
+            import resource
+
+            peak = int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss) * 1024
+        except Exception:
+            peak = 0
+    rc = proc.returncode if proc.returncode is not None else 1
+    return rc, peak, (stderr or b"").decode("utf-8", "ignore")[-500:]
 
 
 def apply_production_overlays(
@@ -3383,8 +3483,19 @@ def apply_production_overlays(
             )
             cue_inputs.append((png_path, top, x_expr, float(cue_start), float(cue_end)))
 
-    def _build_step2_cmd(step_encoder: str) -> list[str]:
-        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(step2_input)]
+    def _build_step2_cmd(
+        step_encoder: str,
+        *,
+        input_path: Any = None,
+        graph_head: list[str] | None = None,
+        start_label: str = "[0:v]",
+    ) -> list[str]:
+        # Batch AL-R: with graph_head/start_label the SAME builder
+        # produces the combined single-pass command (blur chains first,
+        # then this step's overlays continuing from the blur output
+        # label, reading the original input). Defaults reproduce the
+        # classic step-2 command byte for byte.
+        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_path if input_path is not None else step2_input)]
         input_index = 1
         title_idx: int | None = None
         logo_idx: int | None = None
@@ -3412,8 +3523,8 @@ def apply_production_overlays(
             cmd += ["-i", str(png_path)]
             input_index += 1
 
-        graph: list[str] = []
-        current = "[0:v]"
+        graph: list[str] = list(graph_head or [])
+        current = start_label
         if title_idx is not None and title_file is not None:
             pos = overlays.get("title_position") or [0.5, 0.12]
             tx = _clamp01(pos[0] if len(pos) > 0 else 0.5, 0.5)
@@ -3490,30 +3601,80 @@ def apply_production_overlays(
             return "libx264", p
         return step_encoder, p
 
+    def _attempt_single_pass() -> bool:
+        """Batch AL-R: combined blur+overlay encode, gated by a short
+        RAM probe. Returns True only when the single pass produced the
+        final output; every failure path returns False and the caller
+        runs the Batch AB two-step path unchanged."""
+        nonlocal used_encoder
+        if not _OVERLAY_SINGLE_PASS_SLOT.acquire(blocking=False):
+            log("🧪 Overlay: single-pass slot busy (another job) — two-step path")
+            return False
+        try:
+            def _single_cmd(enc: str) -> list[str]:
+                return _build_step2_cmd(
+                    enc, input_path=input_video,
+                    graph_head=blur_graph, start_label=blur_current,
+                )
+
+            work_dir.mkdir(parents=True, exist_ok=True)
+            probe_path = work_dir / "overlay_probe.mp4"
+            probe_seconds = 10.0
+            if duration:
+                probe_seconds = min(10.0, max(1.0, float(duration)))
+            probe_cmd = _single_cmd(used_encoder)[:-1] + ["-t", f"{probe_seconds:.3f}", str(probe_path)]
+            rc, peak, _tail = _run_overlay_probe(probe_cmd, timeout=180)
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            cap = OVERLAY_SINGLE_PASS_MAX_RSS_BYTES
+            if rc != 0 or peak <= 0 or peak > cap:
+                log(
+                    f"🧪 Overlay probe: rc={rc}, peak RSS {peak / 1048576:.0f} MB "
+                    f"(cap {cap / 1048576:.0f} MB) — two-step path"
+                )
+                return False
+            log(f"🧪 Overlay probe OK: peak RSS {peak / 1048576:.0f} MB — single-pass overlay")
+            used_encoder, p_single = _run_overlay_step(_single_cmd, used_encoder)
+            if p_single.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
+                log("⚠️ Overlay single pass failed — two-step fallback")
+                return False
+            return True
+        except Exception as single_exc:
+            log(f"⚠️ Overlay single-pass attempt error ({single_exc}) — two-step fallback")
+            return False
+        finally:
+            _OVERLAY_SINGLE_PASS_SLOT.release()
+
     used_encoder = encoder
     intermediate: Path | None = None
     step2_input = input_video
+    single_done = False
     if boxes:
-        # STEP 1: blur boxes only, into a scratch intermediate (no
-        # +faststart — it is re-read immediately by step 2 and deleted
-        # on success; a failed pass re-runs both steps from scratch).
-        intermediate = work_dir / "overlay_step1_blurred.mp4"
-        work_dir.mkdir(parents=True, exist_ok=True)
+        single_done = _attempt_single_pass()
+        if not single_done:
+            # STEP 1: blur boxes only, into a scratch intermediate (no
+            # +faststart — it is re-read immediately by step 2 and deleted
+            # on success; a failed pass re-runs both steps from scratch).
+            intermediate = work_dir / "overlay_step1_blurred.mp4"
+            work_dir.mkdir(parents=True, exist_ok=True)
 
-        def _build_step1_cmd(step_encoder: str) -> list[str]:
-            graph1 = blur_graph + [f"{blur_current}format=yuv420p[vout]"]
-            return [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_video)] + ["-filter_complex", ";".join(graph1), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(step_encoder, render_quality) + ["-threads", str(OVERLAY_FFMPEG_THREADS), str(intermediate)]
+            def _build_step1_cmd(step_encoder: str) -> list[str]:
+                graph1 = blur_graph + [f"{blur_current}format=yuv420p[vout]"]
+                return [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_video)] + ["-filter_complex", ";".join(graph1), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(step_encoder, render_quality) + ["-threads", str(OVERLAY_FFMPEG_THREADS), str(intermediate)]
 
-        used_encoder, p1 = _run_overlay_step(_build_step1_cmd, used_encoder)
-        if p1.returncode != 0:
-            raise RuntimeError("Production overlay render failed: " + p1.stderr[-3000:])
-        step2_input = intermediate
+            used_encoder, p1 = _run_overlay_step(_build_step1_cmd, used_encoder)
+            if p1.returncode != 0:
+                raise RuntimeError("Production overlay render failed: " + p1.stderr[-3000:])
+            step2_input = intermediate
 
-    # STEP 2: title / logo / extra text / subtitle cues / watermark
-    # pattern over the (possibly pre-blurred) video.
-    used_encoder, p = _run_overlay_step(_build_step2_cmd, used_encoder)
-    if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
-        raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
+    if not single_done:
+        # STEP 2: title / logo / extra text / subtitle cues / watermark
+        # pattern over the (possibly pre-blurred) video.
+        used_encoder, p = _run_overlay_step(_build_step2_cmd, used_encoder)
+        if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
+            raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
     if intermediate is not None:
         try:
             intermediate.unlink()
@@ -3819,6 +3980,7 @@ class EdgeSmartSync:
         progress: Callable[[int, int, str], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
         max_run_seconds: float | None = None,
+        tts_workers: int | None = None,
     ) -> None:
         self.job_dir = Path(job_dir).resolve()
         self.source_path = Path(source_path).resolve() if source_path else (self.job_dir / "source.mp4")
@@ -3862,6 +4024,212 @@ class EdgeSmartSync:
         self.max_run_seconds = max_run_seconds
         self._run_started: float | None = None
         self._run_budget: float | None = None
+        # Batch AL: TTS worker-pool width. Explicit argument wins, then
+        # the RECAP_TTS_WORKERS env override, then DEFAULT_TTS_WORKERS.
+        # 1 = the pre-AL strictly serial stage (same code path, one
+        # worker), kept as the operational rollback.
+        if tts_workers is None:
+            _env_workers = str(os.getenv("RECAP_TTS_WORKERS", "") or "").strip()
+            try:
+                tts_workers = int(_env_workers) if _env_workers else DEFAULT_TTS_WORKERS
+            except ValueError:
+                tts_workers = DEFAULT_TTS_WORKERS
+        self.tts_workers = max(1, min(int(tts_workers), 16))
+
+    def _produce_segment_audio(
+        self,
+        idx: int,
+        seg: dict[str, Any],
+        *,
+        paths: Any,
+        checkpoint: dict[str, Any],
+        fingerprint_voice: str,
+        engine_provider: str,
+        use_gemini: bool,
+        gem_engine: Any,
+        gemini_voice_name: str,
+        use_voxcpm: bool,
+        vox_engine: Any,
+        persona_ref_wav: Any,
+        persona_ref_text: str,
+        _global_preset_v: Any,
+        voxcpm_speed_float: float,
+        effective_rate: str,
+        effective_pitch: str,
+        base_edge_voice: str,
+        engine: Any,
+        short_pauses: bool,
+        total_segments: int,
+    ) -> dict[str, Any]:
+        """Produce ONE segment's narration audio (Batch AL extraction).
+
+        This is the pre-AL serial loop body, moved verbatim so the TTS
+        worker pool can run it concurrently: it only READS the shared
+        checkpoint (reuse check) and produces the segment file; the
+        caller (single committer thread) owns checkpoint writes,
+        fallback bookkeeping and timing assembly, so per-segment audio
+        content, durations and subtitle timing are identical to the
+        serial stage — only WHEN each file arrives changes.
+
+        Returns {"raw_duration", "duration", "part", "record",
+        "fell_back"}: ``record`` is the checkpoint row to store (None
+        on a cache reuse), ``raw_duration`` the pre-trim probed
+        duration (the serial loop's tts_total input).
+        """
+        base = segment_basename(seg)
+        dst = paths.tts_parts / f"{base}.wav"
+        fp = segment_fingerprint(seg, fingerprint_voice)
+        rec = checkpoint["audio"].get(base, {})
+        reusable = rec.get("fingerprint") == fp and dst.is_file() and dst.stat().st_size > 1000
+        record: dict[str, Any] | None = None
+        fell_back = False
+        if reusable:
+            duration = probe_duration(self.ffprobe, dst)
+            self.log(f"♻️ [{idx}/{total_segments}] {base}.wav reuse ({duration:.2f}s)")
+        else:
+            speak = spoken_text(seg["narration"])
+            produced = None
+            preset_v = _global_preset_v  # always defined for both VoxCPM and fallback paths
+
+            # 0. Gemini TTS if selected (production-grade option).
+            # Success: the WAV is copied onto dst here so the
+            # common tail below treats it like any other produced
+            # file (and never deletes the engine's own cache).
+            # Failure: ONLY this segment falls back to the persona
+            # path below and is recorded in fallback_segments —
+            # the same transparency rule as VoxCPM fallbacks.
+            seg_provider = "edge_tts"
+            if use_gemini:
+                if gem_engine is not None:
+                    self.progress(idx - 1, total_segments, f"Gemini TTS {idx}/{total_segments}")
+                    self.log(f"✨ [{idx}/{total_segments}] {base} generate via Gemini TTS ({gemini_voice_name})")
+                    try:
+                        _gem_wav = gem_engine.generate_channel99_voice(speak, gemini_voice_name)
+                        shutil.copy2(_gem_wav, dst)
+                        produced = dst
+                        seg_provider = "gemini"
+                    except Exception as gem_err:
+                        self.log(
+                            f"⚠️ GEMINI_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona "
+                            f"({gem_err}); other lines keep Gemini TTS where possible"
+                        )
+                        fell_back = True
+                        seg_provider = "edge_fallback"
+                else:
+                    fell_back = True
+                    seg_provider = "edge_fallback"
+
+            # 1. Try VoxCPM 2 if selected — per-segment retry with
+            # space failover inside the engine (fix 2026-10-29).
+            # A single failing line must NOT switch the whole recap
+            # to Edge TTS: only THIS segment falls back, and only
+            # after its retries are exhausted. Other segments keep
+            # using VoxCPM.
+            # Skipped entirely when Gemini TTS is the selected
+            # engine: use_voxcpm is also true for persona voices
+            # (voice starts with "voxcpm"), and without this gate
+            # VoxCPM would overwrite the Gemini segment produced
+            # above and misreport the provider.
+            if use_voxcpm and vox_engine and not use_gemini:
+                self.progress(idx - 1, total_segments, f"VoxCPM 2 {idx}/{total_segments}")
+                self.log(f"🎙️ [{idx}/{total_segments}] {base} generate via VoxCPM 2 Cloud AI")
+                ctrl_prompt = (
+                    self.overlays.get("voxcpm_control")
+                    or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
+                )
+                produced, vox_err = self._vox_synthesize_with_retry(
+                    vox_engine,
+                    speak=speak,
+                    dst=dst,
+                    ctrl_prompt=ctrl_prompt,
+                    persona_ref_wav=persona_ref_wav,
+                    persona_ref_text=persona_ref_text,
+                    preset_v=preset_v,
+                    speed_float=voxcpm_speed_float,
+                    budget_seconds=vox_failover_budget(
+                        float(seg["video_end"]) - float(seg["video_start"]), len(speak)
+                    ),
+                )
+                if vox_err is not None:
+                    self.log(
+                        f"⚠️ EDGE_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona (Edge TTS) "
+                        f"after retries ({vox_err}); other lines keep VoxCPM 2"
+                    )
+                    fell_back = True
+                    seg_provider = "edge_fallback"
+                else:
+                    seg_provider = "voxcpm"
+
+            # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
+            if not produced or not Path(produced).is_file():
+                curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
+                self.progress(idx - 1, total_segments, f"Studio TTS {idx}/{total_segments}")
+                self.log(f"🗣️ [{idx}/{total_segments}] {base} generate via Studio Persona ({curr_persona})")
+                try:
+                    from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
+                    if get_curated_voice(curr_persona):
+                        synthesize_curated_persona(
+                            text=speak,
+                            persona_id=curr_persona,
+                            output_wav=dst,
+                            speed=effective_rate or 1.10,
+                            log_fn=self.log,
+                        )
+                        produced = dst
+                    else:
+                        produced = engine.generate_channel99_voice(speak, base_edge_voice)
+                except Exception as persona_err:
+                    self.log(f"⚠️ Persona TTS notice: {persona_err} — using standard engine")
+                    try:
+                        produced = engine.generate_channel99_voice(speak, base_edge_voice)
+                    except Exception as first:
+                        plain = without_english(speak)
+                        if is_edge_refused(first) or plain == speak or not any(ch.isalpha() for ch in plain):
+                            raise
+                        # A line mixing English and Burmese sometimes gets no audio at all
+                        self.log(f"⚠️ [{idx}/{total_segments}] no audio — trying again without the English words "
+                                 "(Edit Text can rewrite the line)")
+                        produced = engine.generate_channel99_voice(plain, base_edge_voice)
+                    if not produced or not Path(produced).is_file():
+                        raise RuntimeError("TTS output path မရပါ။")
+                except Exception as exc:
+                    if is_edge_refused(exc):
+                        raise RuntimeError(f"TTS stopped at line {idx}/{total_segments}.\n\n{exc}") from exc
+                    raise RuntimeError(f"TTS FAILED at segment {idx} ({base}): {exc}\n\n"
+                                       f"Text: {seg['narration'][:200]}") from exc
+            produced_path = Path(produced).resolve()
+            if produced_path != dst.resolve():
+                shutil.copy2(produced_path, dst)
+                produced_path.unlink(missing_ok=True)
+            duration = probe_duration(self.ffprobe, dst)
+            if duration <= 0.05:
+                raise RuntimeError(f"Generated audio duration invalid: {dst}")
+            record = {
+                "fingerprint": fp,
+                "provider": seg_provider if (use_voxcpm or use_gemini) else "edge_tts",
+                "fallback": bool((use_voxcpm or use_gemini) and seg_provider == "edge_fallback"),
+                "file": str(dst),
+                "duration": round(duration, 3),
+                "video_start": seg["video_start"],
+                "video_end": seg["video_end"],
+                "text": seg["narration"],
+            }
+            self.log(f"✅ {base}.wav = {duration:.2f}s")
+
+        part = dst
+        raw_duration = duration
+        if short_pauses:
+            window = float(seg["video_end"]) - float(seg["video_start"])
+            part, duration = trim_edge_silence(dst, paths.tts_parts.parent / "tts_parts_short" / dst.name,
+                                               min_duration=window / self.max_video_speed)
+        return {
+            "raw_duration": raw_duration,
+            "duration": duration,
+            "part": part,
+            "record": record,
+            "fell_back": fell_back,
+        }
+
 
     def _check_run_deadline(self, stage: str) -> None:
         if self._run_started is None or self._run_budget is None:
@@ -3920,6 +4288,7 @@ class EdgeSmartSync:
         preset_v: Any,
         speed_float: float,
         attempts: int = 2,
+        budget_seconds: float | None = None,
     ) -> tuple[Any, Exception | None]:
         """Per-segment VoxCPM attempt with retries (fix 2026-10-29).
 
@@ -3927,6 +4296,12 @@ class EdgeSmartSync:
         segment-level retry on top. Returns (produced_path, None) on
         success or (None, last_error) when the segment — and ONLY this
         segment — should fall back to the Studio Persona engine.
+
+        Batch AL: a quota-exhaustion failure gets NO second walk — the
+        job's accounts are all ruled out, so re-walking could only burn
+        the same refusals again; the segment falls back immediately.
+        ``budget_seconds`` (scaled to the segment by the caller) is
+        passed through as the engine's total failover budget.
         """
         last_err: Exception | None = None
         for attempt in range(attempts):
@@ -3942,10 +4317,20 @@ class EdgeSmartSync:
                     timeout=75,
                     retries=2,
                     allow_fallback=False,
+                    total_timeout=budget_seconds,
                 )
                 return produced, None
             except Exception as exc:
                 last_err = exc
+                if (
+                    _VoxCPMQuotaExhaustedError is not None
+                    and isinstance(exc, _VoxCPMQuotaExhaustedError)
+                ):
+                    self.log(
+                        "🚫 VoxCPM 2 quota exhausted for this job — segment falls "
+                        "back without a second failover walk"
+                    )
+                    break
                 self.log(f"⚠️ VoxCPM 2 segment attempt {attempt + 1}/{attempts} failed ({exc})")
         return None, last_err
 
@@ -4146,6 +4531,182 @@ class EdgeSmartSync:
         audio_parts: list[Path] = []
         cursor = 0.0
         tts_total = 0.0
+        # Batch AL: job-scoped VoxCPM quota memory + per-slot worker
+        # engines. Worker slot N binds to HF account N (token_bind_index)
+        # and all slots share ONE JobQuotaMemory, so a quota refusal
+        # learned by any worker is honoured by every later segment.
+        vox_job_memory = None
+        _vox_engines_by_slot: dict[int, Any] = {}
+        if use_voxcpm and vox_engine is not None:
+            _vox_engines_by_slot[0] = vox_engine
+            if _JobQuotaMemory is not None:
+                vox_job_memory = _JobQuotaMemory()
+                if hasattr(vox_engine, "job_memory"):
+                    vox_engine.job_memory = vox_job_memory
+                    vox_engine.token_bind_index = 0
+
+        def _vox_engine_for_slot(_slot: int) -> Any:
+            _eng = _vox_engines_by_slot.get(_slot)
+            if _eng is None:
+                try:
+                    _eng = VoxCPMEngine(
+                        work_dir=paths.work / "voxcpm_temp", log_fn=self.log,
+                        job_memory=vox_job_memory, token_bind_index=_slot,
+                    )
+                except TypeError:
+                    _eng = VoxCPMEngine(work_dir=paths.work / "voxcpm_temp", log_fn=self.log)
+                    if vox_job_memory is not None and hasattr(_eng, "job_memory"):
+                        _eng.job_memory = vox_job_memory
+                        _eng.token_bind_index = _slot
+                _vox_engines_by_slot[_slot] = _eng
+            return _eng
+
+        # Batch AL: pipelined part rendering state. One renderer thread
+        # consumes parts in segment order while TTS continues; encodes
+        # stay strictly one-at-a-time (4 GB instance RAM safety).
+        _checkpoint_lock = threading.Lock()
+        _render_queue: "queue.Queue[Any] | None" = None
+        _render_abort = threading.Event()
+        _render_state: dict[str, Any] = {"error": None}
+        _renderer_thread: threading.Thread | None = None
+        render_pipelined = bool(self.render_final_video)
+        # Batch AB: NVENC must be listed AND probe-usable — the
+        # listing alone lies on GPU-less hosts (see _select_render_encoder).
+        # (Selected before the TTS stage so the pipelined renderer can
+        # start as soon as the first part's audio lands.)
+        encoder = _select_render_encoder(self.ffmpeg, checkpoint) if render_pipelined else "libx264"
+        video_parts: list[Path] = []
+        # Cumulative frame lock: each part gets round(audio_end*30) - frames_so_far
+        # frames, so video never drifts more than half a frame from the narration.
+        audio_cursor = 0.0
+        frames_done = 0
+
+        def _render_parts_from_queue(_q: "queue.Queue[Any]") -> None:
+            """Render video parts from (idx, seg, timing_item) entries.
+
+            This is the pre-AL serial video-parts loop, verbatim: the
+            frame-count/cursor math, fingerprinting, NVENC first-part
+            fallback and checkpoint rows are unchanged — only the
+            source of work items differs (a queue filled in segment
+            order by the TTS committer, or by the video stage itself
+            when no renderer thread is running).
+            """
+            nonlocal encoder, audio_cursor, frames_done
+            while True:
+                _entry = _q.get()
+                if _entry is None:
+                    return
+                idx, seg, item = _entry
+                if _render_abort.is_set():
+                    continue
+                if self.should_stop():
+                    raise InterruptedError("STOP requested — video parts checkpoint ထဲကနေ Resume လုပ်နိုင်ပါတယ်။")
+                self._check_run_deadline("video render")
+                base = segment_basename(seg)
+                dst = paths.video_parts / f"{base}.mp4"
+                target = float(item["audio_duration"])
+                audio_cursor += target
+                frame_count = max(1, int(round(audio_cursor * 30)) - frames_done)
+                frames_done += frame_count
+                vfp_raw = json.dumps({
+                    "frame_count": frame_count,
+                    "source": str(source.resolve()),
+                    "source_mtime": source.stat().st_mtime_ns,
+                    "start": seg["video_start"], "end": seg["video_end"],
+                    "target": target, "sync_mode": "hybrid_recap_distributed_freeze",
+                    "max_speed": self.max_video_speed, "max_slow": self.max_video_slow,
+                    "smooth_freeze": self.smooth_freeze_fallback, "max_freeze_hold": self.max_freeze_hold,
+                    "mirror": self.mirror_video, "zoom": self.zoom_factor, "encoder": encoder,
+                    "quality": self.render_quality,
+                    "frame": [layout["ratio"], layout["fill"], layout["cw"], layout["ch"]],
+                }, sort_keys=True).encode()
+                vfp = hashlib.sha256(vfp_raw).hexdigest()
+                rec = checkpoint["video"].get(base, {})
+                reusable = rec.get("fingerprint") == vfp and dst.is_file() and dst.stat().st_size > 5000
+                if reusable:
+                    self.log(f"♻️ VIDEO [{idx}/{len(segments)}] {base}.mp4 reuse")
+                else:
+                    self.progress(idx - 1, len(segments), f"Smart Sync video {idx}/{len(segments)}")
+                    self.log(f"🎞️ VIDEO [{idx}/{len(segments)}] {base} → {target:.2f}s")
+                    try:
+                        metrics = render_video_part(
+                            self.ffmpeg, source, dst, seg, target, encoder,
+                            self.mirror_video, self.zoom_factor,
+                            self.max_video_speed, self.max_video_slow,
+                            self.smooth_freeze_fallback, self.max_freeze_hold,
+                            frame_count=frame_count, layout=layout,
+                            render_quality=self.render_quality,
+                        )
+                    except Exception:
+                        # Only on the first non-reused part, allow global NVENC -> CPU fallback.
+                        if encoder == "h264_nvenc" and not video_parts:
+                            self.log("⚠️ NVENC မရပါ — libx264 CPU encoder ကို fallback လုပ်မယ်။")
+                            encoder = "libx264"
+                            # Encoder changed, invalidate any video checkpoint rows to avoid mixed codecs.
+                            checkpoint["video"] = {}
+                            for old in paths.video_parts.glob("*.mp4"):
+                                old.unlink(missing_ok=True)
+                            metrics = render_video_part(
+                                self.ffmpeg, source, dst, seg, target, encoder,
+                                self.mirror_video, self.zoom_factor,
+                                self.max_video_speed, self.max_video_slow,
+                                self.smooth_freeze_fallback, self.max_freeze_hold,
+                                frame_count=frame_count, layout=layout,
+                                render_quality=self.render_quality,
+                            )
+                            # Recompute fingerprint with CPU encoder.
+                            vfp_raw = json.dumps({
+                                "frame_count": frame_count,
+                                "source": str(source.resolve()),
+                                "source_mtime": source.stat().st_mtime_ns,
+                                "start": seg["video_start"], "end": seg["video_end"],
+                                "target": target, "sync_mode": "hybrid_recap_distributed_freeze",
+                                "max_speed": self.max_video_speed, "max_slow": self.max_video_slow,
+                                "smooth_freeze": self.smooth_freeze_fallback, "max_freeze_hold": self.max_freeze_hold,
+                                "mirror": self.mirror_video, "zoom": self.zoom_factor, "encoder": encoder,
+                                "quality": self.render_quality,
+                                "frame": [layout["ratio"], layout["fill"], layout["cw"], layout["ch"]],
+                            }, sort_keys=True).encode()
+                            vfp = hashlib.sha256(vfp_raw).hexdigest()
+                        else:
+                            raise
+                    if metrics.get("hybrid_used", 0.0) >= 0.5:
+                        self.log(
+                            f"   ↳ Hybrid: slow {metrics['applied_factor']:.3f}x + "
+                            f"{int(metrics.get('freeze_count', 0))} short holds "
+                            f"({metrics.get('freeze_duration', 0.0):.2f}s total)"
+                        )
+                    checkpoint["video"][base] = {
+                        "fingerprint": vfp,
+                        "file": str(dst),
+                        "target_duration": round(target, 3),
+                        "encoder": encoder,
+                        "sync": {k: round(v, 6) for k, v in metrics.items()},
+                    }
+                    checkpoint["selected_encoder"] = encoder
+                    with _checkpoint_lock:
+                        atomic_write_json(paths.checkpoint, checkpoint)
+                video_parts.append(dst)
+                self.progress(idx, len(segments), f"Video {idx}/{len(segments)}")
+
+        def _render_parts_guarded(_q: "queue.Queue[Any]") -> None:
+            try:
+                _render_parts_from_queue(_q)
+            except BaseException as _exc:  # surfaced by the video stage
+                _render_state["error"] = _exc
+
+        def _start_part_renderer() -> None:
+            nonlocal _render_queue, _renderer_thread
+            _q: "queue.Queue[Any]" = queue.Queue()
+            _t = threading.Thread(
+                target=_render_parts_guarded, args=(_q,),
+                name="recap-part-renderer", daemon=True,
+            )
+            _t.start()
+            _render_queue = _q
+            _renderer_thread = _t
+
+
         for _tts_pass in range(2):
             engine_provider = "gemini" if use_gemini else ("voxcpm" if use_voxcpm else "edge_tts")
             if use_gemini:
@@ -4170,182 +4731,133 @@ class EdgeSmartSync:
             restart_uniform = False
             fallback_segments: list[int] = []
 
-            for idx, seg in enumerate(segments, 1):
-                if self.should_stop():
-                    raise InterruptedError("STOP requested — လက်ရှိပြီးထားတာတွေ checkpoint ထဲသိမ်းထားပါတယ်။")
-                self._check_run_deadline("TTS")
-                base = segment_basename(seg)
-                dst = paths.tts_parts / f"{base}.wav"
-                fp = segment_fingerprint(seg, fingerprint_voice)
-                rec = checkpoint["audio"].get(base, {})
-                reusable = rec.get("fingerprint") == fp and dst.is_file() and dst.stat().st_size > 1000
-                if reusable:
-                    duration = probe_duration(self.ffprobe, dst)
-                    self.log(f"♻️ [{idx}/{len(segments)}] {base}.wav reuse ({duration:.2f}s)")
-                else:
-                    speak = spoken_text(seg["narration"])
-                    produced = None
-                    preset_v = _global_preset_v  # always defined for both VoxCPM and fallback paths
+            if render_pipelined and _tts_pass == 0 and _renderer_thread is None:
+                _start_part_renderer()
 
-                    # 0. Gemini TTS if selected (production-grade option).
-                    # Success: the WAV is copied onto dst here so the
-                    # common tail below treats it like any other produced
-                    # file (and never deletes the engine's own cache).
-                    # Failure: ONLY this segment falls back to the persona
-                    # path below and is recorded in fallback_segments —
-                    # the same transparency rule as VoxCPM fallbacks.
-                    seg_provider = "edge_tts"
-                    if use_gemini:
-                        if gem_engine is not None:
-                            self.progress(idx - 1, len(segments), f"Gemini TTS {idx}/{len(segments)}")
-                            self.log(f"✨ [{idx}/{len(segments)}] {base} generate via Gemini TTS ({gemini_voice_name})")
-                            try:
-                                _gem_wav = gem_engine.generate_channel99_voice(speak, gemini_voice_name)
-                                shutil.copy2(_gem_wav, dst)
-                                produced = dst
-                                seg_provider = "gemini"
-                            except Exception as gem_err:
-                                self.log(
-                                    f"⚠️ GEMINI_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona "
-                                    f"({gem_err}); other lines keep Gemini TTS where possible"
-                                )
-                                fallback_segments.append(idx)
-                                seg_provider = "edge_fallback"
-                        else:
-                            fallback_segments.append(idx)
-                            seg_provider = "edge_fallback"
+            _tts_results: dict[int, dict[str, Any]] = {}
+            _tts_errors: dict[int, BaseException] = {}
+            _tts_abort = threading.Event()
+            _commit_lock = threading.Lock()
+            _assemble_next = [1]
 
-                    # 1. Try VoxCPM 2 if selected — per-segment retry with
-                    # space failover inside the engine (fix 2026-10-29).
-                    # A single failing line must NOT switch the whole recap
-                    # to Edge TTS: only THIS segment falls back, and only
-                    # after its retries are exhausted. Other segments keep
-                    # using VoxCPM.
-                    # Skipped entirely when Gemini TTS is the selected
-                    # engine: use_voxcpm is also true for persona voices
-                    # (voice starts with "voxcpm"), and without this gate
-                    # VoxCPM would overwrite the Gemini segment produced
-                    # above and misreport the provider.
-                    if use_voxcpm and vox_engine and not use_gemini:
-                        self.progress(idx - 1, len(segments), f"VoxCPM 2 {idx}/{len(segments)}")
-                        self.log(f"🎙️ [{idx}/{len(segments)}] {base} generate via VoxCPM 2 Cloud AI")
-                        ctrl_prompt = (
-                            self.overlays.get("voxcpm_control")
-                            or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
-                        )
-                        produced, vox_err = self._vox_synthesize_with_retry(
-                            vox_engine,
-                            speak=speak,
-                            dst=dst,
-                            ctrl_prompt=ctrl_prompt,
-                            persona_ref_wav=persona_ref_wav,
-                            persona_ref_text=persona_ref_text,
-                            preset_v=preset_v,
-                            speed_float=voxcpm_speed_float,
-                        )
-                        if vox_err is not None:
-                            self.log(
-                                f"⚠️ EDGE_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona (Edge TTS) "
-                                f"after retries ({vox_err}); other lines keep VoxCPM 2"
-                            )
-                            fallback_segments.append(idx)
-                            seg_provider = "edge_fallback"
-                        else:
-                            seg_provider = "voxcpm"
-
-                    # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
-                    if not produced or not Path(produced).is_file():
-                        curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
-                        self.progress(idx - 1, len(segments), f"Studio TTS {idx}/{len(segments)}")
-                        self.log(f"🗣️ [{idx}/{len(segments)}] {base} generate via Studio Persona ({curr_persona})")
-                        try:
-                            from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
-                            if get_curated_voice(curr_persona):
-                                synthesize_curated_persona(
-                                    text=speak,
-                                    persona_id=curr_persona,
-                                    output_wav=dst,
-                                    speed=effective_rate or 1.10,
-                                    log_fn=self.log,
-                                )
-                                produced = dst
-                            else:
-                                produced = engine.generate_channel99_voice(speak, base_edge_voice)
-                        except Exception as persona_err:
-                            self.log(f"⚠️ Persona TTS notice: {persona_err} — using standard engine")
-                            try:
-                                produced = engine.generate_channel99_voice(speak, base_edge_voice)
-                            except Exception as first:
-                                plain = without_english(speak)
-                                if is_edge_refused(first) or plain == speak or not any(ch.isalpha() for ch in plain):
-                                    raise
-                                # A line mixing English and Burmese sometimes gets no audio at all
-                                self.log(f"⚠️ [{idx}/{len(segments)}] no audio — trying again without the English words "
-                                         "(Edit Text can rewrite the line)")
-                                produced = engine.generate_channel99_voice(plain, base_edge_voice)
-                            if not produced or not Path(produced).is_file():
-                                raise RuntimeError("TTS output path မရပါ။")
-                        except Exception as exc:
-                            if is_edge_refused(exc):
-                                raise RuntimeError(f"TTS stopped at line {idx}/{len(segments)}.\n\n{exc}") from exc
-                            raise RuntimeError(f"TTS FAILED at segment {idx} ({base}): {exc}\n\n"
-                                               f"Text: {seg['narration'][:200]}") from exc
-                    produced_path = Path(produced).resolve()
-                    if produced_path != dst.resolve():
-                        shutil.copy2(produced_path, dst)
-                        produced_path.unlink(missing_ok=True)
-                    duration = probe_duration(self.ffprobe, dst)
-                    if duration <= 0.05:
-                        raise RuntimeError(f"Generated audio duration invalid: {dst}")
-                    checkpoint["audio"][base] = {
-                        "fingerprint": fp,
-                        "provider": seg_provider if (use_voxcpm or use_gemini) else "edge_tts",
-                        "fallback": bool((use_voxcpm or use_gemini) and seg_provider == "edge_fallback"),
-                        "file": str(dst),
-                        "duration": round(duration, 3),
-                        "video_start": seg["video_start"],
-                        "video_end": seg["video_end"],
-                        "text": seg["narration"],
+            def _drain_timing() -> None:
+                # Timing assembly stays strictly in segment order with
+                # the serial loop's exact cursor math; a part is handed
+                # to the pipelined renderer the moment its timing row
+                # exists (Batch AL-C).
+                nonlocal cursor, tts_total
+                while _assemble_next[0] in _tts_results:
+                    _idx = _assemble_next[0]
+                    _seg = segments[_idx - 1]
+                    _res = _tts_results[_idx]
+                    _dur = float(_res["duration"])
+                    tts_total += float(_res["raw_duration"])
+                    _start = cursor
+                    _end = _start + _dur
+                    cursor = _end
+                    _item = {
+                        "segment_id": _seg["segment_id"],
+                        "source_index": _seg["source_index"],
+                        "video_start": _seg["video_start"],
+                        "video_end": _seg["video_end"],
+                        "audio_start": round(_start, 3),
+                        "audio_end": round(_end, 3),
+                        "audio_duration": round(_dur, 3),
+                        "text": _seg["narration"],
+                        "audio_file": str(_res["part"]),
                     }
-                    atomic_write_json(paths.checkpoint, checkpoint)
-                    self.log(f"✅ {base}.wav = {duration:.2f}s")
+                    timing.append(_item)
+                    audio_parts.append(_res["part"])
+                    if _render_queue is not None:
+                        _render_queue.put((_idx, _seg, _item))
+                    _assemble_next[0] += 1
 
-                part = dst
-                tts_total += duration
-                if short_pauses:
-                    window = float(seg["video_end"]) - float(seg["video_start"])
-                    part, duration = trim_edge_silence(dst, paths.tts_parts.parent / "tts_parts_short" / dst.name,
-                                                       min_duration=window / self.max_video_speed)
-                start = cursor
-                end = cursor + duration
-                timing.append({
-                    "segment_id": seg["segment_id"],
-                    "source_index": seg["source_index"],
-                    "video_start": seg["video_start"],
-                    "video_end": seg["video_end"],
-                    "audio_start": round(start, 3),
-                    "audio_end": round(end, 3),
-                    "audio_duration": round(duration, 3),
-                    "text": seg["narration"],
-                    "audio_file": str(part),
-                })
-                cursor = end
-                audio_parts.append(part)
-                self.progress(idx, len(segments), f"Audio {idx}/{len(segments)}")
+            def _produce_and_commit(_slot: int, _idx: int, _seg: dict[str, Any]) -> None:
+                if _tts_abort.is_set():
+                    return
+                try:
+                    if self.should_stop():
+                        raise InterruptedError("STOP requested — လက်ရှိပြီးထားတာတွေ checkpoint ထဲသိမ်းထားပါတယ်။")
+                    self._check_run_deadline("TTS")
+                    _worker_vox = _vox_engine_for_slot(_slot) if use_voxcpm else None
+                    _res = self._produce_segment_audio(
+                        _idx, _seg,
+                        paths=paths, checkpoint=checkpoint,
+                        fingerprint_voice=fingerprint_voice,
+                        engine_provider=engine_provider,
+                        use_gemini=use_gemini, gem_engine=gem_engine,
+                        gemini_voice_name=gemini_voice_name,
+                        use_voxcpm=use_voxcpm, vox_engine=_worker_vox,
+                        persona_ref_wav=persona_ref_wav,
+                        persona_ref_text=persona_ref_text,
+                        _global_preset_v=_global_preset_v,
+                        voxcpm_speed_float=voxcpm_speed_float,
+                        effective_rate=effective_rate,
+                        effective_pitch=effective_pitch,
+                        base_edge_voice=base_edge_voice,
+                        engine=engine, short_pauses=short_pauses,
+                        total_segments=len(segments),
+                    )
+                except BaseException as _exc:
+                    _tts_errors[_idx] = _exc
+                    _tts_abort.set()
+                    return
+                with _commit_lock:
+                    _tts_results[_idx] = _res
+                    _record = _res.get("record")
+                    if _record is not None:
+                        with _checkpoint_lock:
+                            checkpoint["audio"][segment_basename(_seg)] = _record
+                            atomic_write_json(paths.checkpoint, checkpoint)
+                    if _res.get("fell_back"):
+                        fallback_segments.append(_idx)
+                    self.progress(_idx, len(segments), f"Audio {_idx}/{len(segments)}")
+                    _drain_timing()
 
+            _worker_count = max(1, min(self.tts_workers, len(segments)))
+            if _worker_count <= 1:
+                for _idx, _seg in enumerate(segments, 1):
+                    _produce_and_commit(0, _idx, _seg)
+                    if _tts_abort.is_set():
+                        break
+            else:
+                _free_slots: "queue.Queue[int]" = queue.Queue()
+                for _slot in range(_worker_count):
+                    _free_slots.put(_slot)
+
+                def _pool_task(_idx: int, _seg: dict[str, Any]) -> None:
+                    _slot = _free_slots.get()
+                    try:
+                        _produce_and_commit(_slot, _idx, _seg)
+                    finally:
+                        _free_slots.put(_slot)
+
+                with ThreadPoolExecutor(max_workers=_worker_count, thread_name_prefix="recap-tts") as _pool:
+                    _futures = [_pool.submit(_pool_task, _i, _s) for _i, _s in enumerate(segments, 1)]
+                    for _fut in as_completed(_futures):
+                        _fut.result()
+            fallback_segments.sort()
+            if _tts_errors:
+                if _renderer_thread is not None:
+                    _render_abort.set()
+                    if _render_queue is not None:
+                        _render_queue.put(None)
+                    _renderer_thread.join(timeout=30)
+                raise _tts_errors[min(_tts_errors)]
 
             if not restart_uniform:
                 break
-        checkpoint["fallback_used"] = bool(fallback_segments)
-        checkpoint["fallback_segments"] = list(fallback_segments)
-        checkpoint["tts_provider"] = (
-            "gemini" if use_gemini and not fallback_segments
-            else "gemini+persona_fallback" if use_gemini
-            else "voxcpm" if use_voxcpm and not fallback_segments
-            else "voxcpm+edge_fallback" if use_voxcpm
-            else "edge_tts"
-        )
-        atomic_write_json(paths.checkpoint, checkpoint)
+        with _checkpoint_lock:
+            checkpoint["fallback_used"] = bool(fallback_segments)
+            checkpoint["fallback_segments"] = list(fallback_segments)
+            checkpoint["tts_provider"] = (
+                "gemini" if use_gemini and not fallback_segments
+                else "gemini+persona_fallback" if use_gemini
+                else "voxcpm" if use_voxcpm and not fallback_segments
+                else "voxcpm+edge_fallback" if use_voxcpm
+                else "edge_tts"
+            )
+            atomic_write_json(paths.checkpoint, checkpoint)
 
         if short_pauses:
             self.log(f"✂️ Short pauses: Edge TTS silence trimmed · voice {tts_total / 60:.1f} → {cursor / 60:.1f} min "
@@ -4488,104 +5000,20 @@ class EdgeSmartSync:
             }
 
         self.log("🎬 Smart Sync video parts render စမယ်...")
-        # Batch AB: NVENC must be listed AND probe-usable — the
-        # listing alone lies on GPU-less hosts (see _select_render_encoder).
-        encoder = _select_render_encoder(self.ffmpeg, checkpoint)
-        video_parts: list[Path] = []
-        # Cumulative frame lock: each part gets round(audio_end*30) - frames_so_far
-        # frames, so video never drifts more than half a frame from the narration.
-        audio_cursor = 0.0
-        frames_done = 0
-
-        for idx, (seg, item) in enumerate(zip(segments, timing), 1):
-            if self.should_stop():
-                raise InterruptedError("STOP requested — video parts checkpoint ထဲကနေ Resume လုပ်နိုင်ပါတယ်။")
-            self._check_run_deadline("video render")
-            base = segment_basename(seg)
-            dst = paths.video_parts / f"{base}.mp4"
-            target = float(item["audio_duration"])
-            audio_cursor += target
-            frame_count = max(1, int(round(audio_cursor * 30)) - frames_done)
-            frames_done += frame_count
-            vfp_raw = json.dumps({
-                "frame_count": frame_count,
-                "source": str(source.resolve()),
-                "source_mtime": source.stat().st_mtime_ns,
-                "start": seg["video_start"], "end": seg["video_end"],
-                "target": target, "sync_mode": "hybrid_recap_distributed_freeze",
-                "max_speed": self.max_video_speed, "max_slow": self.max_video_slow,
-                "smooth_freeze": self.smooth_freeze_fallback, "max_freeze_hold": self.max_freeze_hold,
-                "mirror": self.mirror_video, "zoom": self.zoom_factor, "encoder": encoder,
-                "quality": self.render_quality,
-                "frame": [layout["ratio"], layout["fill"], layout["cw"], layout["ch"]],
-            }, sort_keys=True).encode()
-            vfp = hashlib.sha256(vfp_raw).hexdigest()
-            rec = checkpoint["video"].get(base, {})
-            reusable = rec.get("fingerprint") == vfp and dst.is_file() and dst.stat().st_size > 5000
-            if reusable:
-                self.log(f"♻️ VIDEO [{idx}/{len(segments)}] {base}.mp4 reuse")
-            else:
-                self.progress(idx - 1, len(segments), f"Smart Sync video {idx}/{len(segments)}")
-                self.log(f"🎞️ VIDEO [{idx}/{len(segments)}] {base} → {target:.2f}s")
-                try:
-                    metrics = render_video_part(
-                        self.ffmpeg, source, dst, seg, target, encoder,
-                        self.mirror_video, self.zoom_factor,
-                        self.max_video_speed, self.max_video_slow,
-                        self.smooth_freeze_fallback, self.max_freeze_hold,
-                        frame_count=frame_count, layout=layout,
-                        render_quality=self.render_quality,
-                    )
-                except Exception:
-                    # Only on the first non-reused part, allow global NVENC -> CPU fallback.
-                    if encoder == "h264_nvenc" and not video_parts:
-                        self.log("⚠️ NVENC မရပါ — libx264 CPU encoder ကို fallback လုပ်မယ်။")
-                        encoder = "libx264"
-                        # Encoder changed, invalidate any video checkpoint rows to avoid mixed codecs.
-                        checkpoint["video"] = {}
-                        for old in paths.video_parts.glob("*.mp4"):
-                            old.unlink(missing_ok=True)
-                        metrics = render_video_part(
-                            self.ffmpeg, source, dst, seg, target, encoder,
-                            self.mirror_video, self.zoom_factor,
-                            self.max_video_speed, self.max_video_slow,
-                            self.smooth_freeze_fallback, self.max_freeze_hold,
-                            frame_count=frame_count, layout=layout,
-                            render_quality=self.render_quality,
-                        )
-                        # Recompute fingerprint with CPU encoder.
-                        vfp_raw = json.dumps({
-                            "frame_count": frame_count,
-                            "source": str(source.resolve()),
-                            "source_mtime": source.stat().st_mtime_ns,
-                            "start": seg["video_start"], "end": seg["video_end"],
-                            "target": target, "sync_mode": "hybrid_recap_distributed_freeze",
-                            "max_speed": self.max_video_speed, "max_slow": self.max_video_slow,
-                            "smooth_freeze": self.smooth_freeze_fallback, "max_freeze_hold": self.max_freeze_hold,
-                            "mirror": self.mirror_video, "zoom": self.zoom_factor, "encoder": encoder,
-                            "quality": self.render_quality,
-                            "frame": [layout["ratio"], layout["fill"], layout["cw"], layout["ch"]],
-                        }, sort_keys=True).encode()
-                        vfp = hashlib.sha256(vfp_raw).hexdigest()
-                    else:
-                        raise
-                if metrics.get("hybrid_used", 0.0) >= 0.5:
-                    self.log(
-                        f"   ↳ Hybrid: slow {metrics['applied_factor']:.3f}x + "
-                        f"{int(metrics.get('freeze_count', 0))} short holds "
-                        f"({metrics.get('freeze_duration', 0.0):.2f}s total)"
-                    )
-                checkpoint["video"][base] = {
-                    "fingerprint": vfp,
-                    "file": str(dst),
-                    "target_duration": round(target, 3),
-                    "encoder": encoder,
-                    "sync": {k: round(v, 6) for k, v in metrics.items()},
-                }
-                checkpoint["selected_encoder"] = encoder
-                atomic_write_json(paths.checkpoint, checkpoint)
-            video_parts.append(dst)
-            self.progress(idx, len(segments), f"Video {idx}/{len(segments)}")
+        if _renderer_thread is not None:
+            # Batch AL: parts were rendered pipelined during the TTS
+            # stage; collect the thread and surface any render error.
+            if _render_queue is not None:
+                _render_queue.put(None)
+            _renderer_thread.join()
+            if _render_state.get("error") is not None:
+                raise _render_state["error"]
+        else:
+            _serial_q: "queue.Queue[Any]" = queue.Queue()
+            for _i, (_s, _it) in enumerate(zip(segments, timing), 1):
+                _serial_q.put((_i, _s, _it))
+            _serial_q.put(None)
+            _render_parts_from_queue(_serial_q)
 
         # Late stages (concat -> overlay -> mux) are checkpointed by
         # input fingerprint (audit fix 2026-11-03): a resumed run whose

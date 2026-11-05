@@ -123,6 +123,91 @@ def _is_hf_token_auth_failure(error_text: str) -> bool:
     return bool(re.search(r"\b(?:401|403)\b", text))
 
 
+class VoxCPMQuotaExhaustedError(RuntimeError):
+    """Every reachable (space, token) pair failed quota-class, or the
+    job's quota memory has already ruled every pair out.
+
+    Batch AL: callers (the recap per-segment retry) must NOT retry-walk
+    on this error — a second walk inside the same job can only re-hit
+    the same exhausted accounts. Plain RuntimeError failures (space
+    down, bad response) keep the historical retry behaviour.
+    """
+
+
+_QUOTA_ERROR_MARKERS = ("zerogpu", "quota", "runs limit", "402", "payment required")
+_GATE_REQUEST_RE = re.compile(r"\d+\s*s requested")
+
+
+def _quota_failure_kind(error_text: str) -> Optional[str]:
+    """Classify an error as a quota failure: "gate" for the per-space
+    admission rejection (the space asked for more GPU-seconds than the
+    token's account has left — space-specific, the account may still
+    serve on a space requesting less), "dead" for account-level quota
+    exhaustion, or None when the error is not quota-class."""
+    text = str(error_text or "").lower()
+    if not any(marker in text for marker in _QUOTA_ERROR_MARKERS):
+        return None
+    if _GATE_REQUEST_RE.search(text):
+        return "gate"
+    return "dead"
+
+
+def _job_token_key(token: Optional[str]) -> str:
+    """Stable, non-reversible key for one caller identity in job memory."""
+    if not token:
+        return "anonymous"
+    return _key_id(str(token))
+
+
+class JobQuotaMemory:
+    """Job-scoped quota memory (Batch AL), shared by every worker
+    engine serving ONE job (e.g. the recap TTS pool).
+
+    The pre-AL engine learned quota state only globally: a token whose
+    account fell under a space's 180 s admission gate was deliberately
+    NOT cooled down (the rejection is space-specific), so EVERY later
+    segment re-walked that (space, token) pair and burned failover
+    budget re-discovering the same refusal. This memory fixes the
+    re-walk for the lifetime of one job:
+
+    - ``record_gate(space, token)`` — the pair was refused at the
+      space's admission gate; skip that PAIR for the rest of the job
+      (the token may still work on other spaces).
+    - ``record_dead_token(token)`` — the token's account quota is gone;
+      skip the token on EVERY space for the rest of the job.
+
+    Keys are token digests (never raw tokens). Thread-safe.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._gate_pairs: set[tuple[str, str]] = set()
+        self._dead_tokens: set[str] = set()
+
+    def gate_blocked(self, space_name: str, token: Optional[str]) -> bool:
+        with self._lock:
+            return (str(space_name), _job_token_key(token)) in self._gate_pairs
+
+    def token_dead(self, token: Optional[str]) -> bool:
+        with self._lock:
+            return _job_token_key(token) in self._dead_tokens
+
+    def record_gate(self, space_name: str, token: Optional[str]) -> None:
+        with self._lock:
+            self._gate_pairs.add((str(space_name), _job_token_key(token)))
+
+    def record_dead_token(self, token: Optional[str]) -> None:
+        with self._lock:
+            self._dead_tokens.add(_job_token_key(token))
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "gate_pairs": sorted(f"{sp}::{tok}" for sp, tok in self._gate_pairs),
+                "dead_tokens": sorted(self._dead_tokens),
+            }
+
+
 def mask_hf_token(tok: Optional[str]) -> str:
     """Non-reversible HF token identifier for logging.
 
@@ -314,6 +399,8 @@ class VoxCPMEngine:
         space_name: Optional[str] = None,
         work_dir: Optional[Path | str] = None,
         log_fn: Optional[Callable[[str], None]] = None,
+        job_memory: Optional[JobQuotaMemory] = None,
+        token_bind_index: Optional[int] = None,
     ):
         self.spaces = get_configured_spaces()
         if space_name and space_name not in self.spaces:
@@ -323,6 +410,12 @@ class VoxCPMEngine:
         self.work_dir = Path(work_dir) if work_dir else Path(os.environ.get("TEMP", ".")) / "voxcpm_cache"
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.log_fn = log_fn
+        # Batch AL: quota learning scoped to one job, shared across the
+        # job's worker engines; a standalone engine gets a private one.
+        self.job_memory = job_memory if job_memory is not None else JobQuotaMemory()
+        # Batch AL: parallel-pool workers bind to a starting token so
+        # concurrent syntheses do not all queue on the same account.
+        self.token_bind_index = token_bind_index
 
     def _log(self, msg: str) -> None:
         logger.info(msg)
@@ -331,6 +424,15 @@ class VoxCPMEngine:
                 self.log_fn(msg)
             except Exception:
                 pass
+
+    def _pair_blocked_by_job(self, space_name: str, token: Optional[str]) -> bool:
+        """True when this job's quota memory has ruled the pair out:
+        the token is quota-dead (every space) or this exact
+        (space, token) pair was refused at the admission gate."""
+        mem = self.job_memory
+        if mem is None:
+            return False
+        return mem.token_dead(token) or mem.gate_blocked(space_name, token)
 
     @classmethod
     def get_client(cls, space_name: str, hf_token: Optional[str] = None) -> Any:
@@ -485,16 +587,40 @@ class VoxCPMEngine:
         # Rotate healthy tokens across requests while keeping primary space priority
         healthy_auth = [t for t in tokens_pool if t is not None and self._token_cooldowns.get(t, 0) <= now]
         if len(healthy_auth) > 1:
-            with self._lock:
-                shift = self._token_rr_counter % len(healthy_auth)
-                self._token_rr_counter += 1
+            if self.token_bind_index is not None:
+                # Batch AL: a bound pool worker starts at its OWN token
+                # every call, so N concurrent workers spread over N
+                # different accounts instead of contending on one.
+                shift = int(self.token_bind_index) % len(healthy_auth)
+            else:
+                with self._lock:
+                    shift = self._token_rr_counter % len(healthy_auth)
+                    self._token_rr_counter += 1
             rotated_auth = healthy_auth[shift:] + healthy_auth[:shift]
             other_toks = [t for t in tokens_pool if t not in healthy_auth]
             ordered_toks = rotated_auth + other_toks
             pairs = [(sp, tok) for sp in candidate_spaces for tok in ordered_toks]
 
+        # Batch AL: pairs this job has already ruled out (token quota
+        # dead on every space, or the (space, token) pair refused at the
+        # space's admission gate) are not walked again — pre-AL, every
+        # later segment re-discovered the same refusals at full price.
+        total_pairs = len(pairs)
+        pairs = [
+            (sp, tok) for sp, tok in pairs
+            if not self._pair_blocked_by_job(sp, tok)
+        ]
+        all_pairs_blocked = total_pairs > 0 and not pairs
+        if all_pairs_blocked:
+            self._log(
+                "🚫 VoxCPM 2: every (space, token) pair is ruled out by this "
+                "job's quota memory — failing fast instead of re-walking."
+            )
+
         last_err: Exception | None = None
         max_attempts = len(pairs)
+        attempts_made = 0
+        quota_failures = 0
 
         # Failover budget (fix 2026-10-29): each attempt keeps the
         # configured per-attempt timeout (VOXCPM_TIMEOUT / settings,
@@ -510,6 +636,11 @@ class VoxCPMEngine:
             if time.time() > synth_deadline:
                 self._log(f"⏱️ VoxCPM total failover budget ({total_budget:.0f}s) exhausted; stopping further space attempts")
                 break
+            if self._pair_blocked_by_job(space_name, active_token):
+                # Ruled out by an earlier failure in THIS walk (e.g. the
+                # token died on another space a moment ago).
+                continue
+            attempts_made += 1
             tok_masked = mask_hf_token(active_token)
             try:
                 self._log(
@@ -712,9 +843,26 @@ class VoxCPMEngine:
                 # (fix 2026-10-29: 402s carry none of the quota words, so
                 # they previously recorded no cooldown and the exhausted
                 # account kept being picked early on later calls).
-                if active_token and ("zerogpu" in err_lower or "quota" in err_lower or "runs limit" in err_lower or "402" in err_lower or "payment required" in err_lower):
-                    # Only mark token globally on cooldown if it wasn't just a 180s-decorator rejection
-                    if "180s requested" not in err_lower:
+                quota_kind = _quota_failure_kind(err_lower)
+                if quota_kind is not None:
+                    quota_failures += 1
+                if quota_kind == "gate":
+                    # Batch AL: the admission-gate rejection is
+                    # space-specific, so the token correctly stays OUT
+                    # of the global cooldown (pre-AL behaviour) — but
+                    # the (space, token) pair is now remembered for the
+                    # rest of this job instead of being re-walked by
+                    # every later segment.
+                    if self.job_memory is not None:
+                        self.job_memory.record_gate(space_name, active_token)
+                    self._log(f"⚠️ Token {tok_masked} refused at '{space_name}' admission gate (GPU-seconds requested > balance); pair memoised for this job, rotating...")
+                elif quota_kind == "dead":
+                    # Account quota is gone: cool the token globally as
+                    # before, and mark it dead for this job on ALL
+                    # spaces so the walk never tries it again today.
+                    if self.job_memory is not None:
+                        self.job_memory.record_dead_token(active_token)
+                    if active_token:
                         self._token_cooldowns[active_token] = time.time() + 1800
                         self._schedule_cooldown_persist()
                     self._log(f"⚠️ Token {tok_masked} hit ZeroGPU quota on '{space_name}'; rotating...")
@@ -732,6 +880,13 @@ class VoxCPMEngine:
         # Fallback to the Edge-TTS studio persona engine — ONLY after
         # every suitable space has been tried (fix 2026-10-29).
         if not allow_fallback:
+            if all_pairs_blocked or (attempts_made > 0 and quota_failures >= attempts_made):
+                # Batch AL: purely quota-class failure — a caller-side
+                # retry would re-walk the same exhausted accounts, so
+                # this gets its own error type (see the class docstring).
+                raise VoxCPMQuotaExhaustedError(
+                    f"VoxCPM 2 quota exhausted on every space/token available to this job: {last_err}"
+                )
             raise RuntimeError(
                 f"VoxCPM 2 speech synthesis failed after retrying all tokens and spaces: {last_err}"
             )
@@ -772,4 +927,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens", "space_supports_clone", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens", "space_supports_clone", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "VoxCPMQuotaExhaustedError"]

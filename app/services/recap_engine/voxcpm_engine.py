@@ -9,6 +9,8 @@ from app.services.voxcpm_engine import (
     VoxCPMEngine,
     DEFAULT_VOXCPM_SPACE,
     DEFAULT_BURMESE_CONTROL,
+    JobQuotaMemory,
+    VoxCPMQuotaExhaustedError,
 )
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "JobQuotaMemory", "VoxCPMQuotaExhaustedError"]
