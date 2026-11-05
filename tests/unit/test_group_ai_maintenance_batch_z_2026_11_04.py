@@ -205,4 +205,4 @@ def test_admin_form_has_maintenance_note_input():
     assert i18n_js.count("settings_maintenance_note:") == 2
     assert i18n_js.count("settings_maintenance_note_hint:") == 2
     # Statics cache token bumped for this batch.
-    assert index_html.count("?v=20261104_r59") == 4
+    assert index_html.count("?v=20261104_r60") == 4

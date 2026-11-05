@@ -17,7 +17,7 @@ This pins the fill end to end for the nine gap keys:
   in-memory apply + AuditLog + GET read-back) for every key;
 - purchased-limit validation bounds mirroring the free limit;
 - the Admin → Settings UI: controls, load/save wiring, my+en i18n;
-- the statics token bump (?v=20261104_r59).
+- the statics token bump (?v=20261104_r60).
 
 gemini_fallback_2 / gemini_fallback_3 were audited too: they are
 already on the payload and in the GET response, so they are
@@ -320,5 +320,5 @@ def test_api_source_carries_gap_keys():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r59") == 4
+    assert INDEX_HTML.count("?v=20261104_r60") == 4
     assert "20261102_ga1" not in INDEX_HTML

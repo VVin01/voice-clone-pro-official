@@ -520,8 +520,8 @@ def test_new_i18n_keys_in_both_languages():
         assert I18N_JS.count(key + ":") >= 2, key
 
 
-def test_cache_bump_r59():
-    assert INDEX_HTML.count("?v=20261104_r59") == 4
+def test_cache_bump_r60():
+    assert INDEX_HTML.count("?v=20261104_r60") == 4
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────

@@ -444,22 +444,26 @@ def test_pre_submit_source_facts_present():
     assert panel < note
 
 
-# ── (1) script-review twin toggle ────────────────────────────────────
+# ── (1) script-review toggle (Batch AH: de-duplicated) ──────────────
 
-def test_script_review_main_toggle_wired_to_same_state():
-    assert 'id="recap-script-review-toggle-main"' in INDEX_HTML
+def test_script_review_single_toggle_only():
+    # Batch AH (owner report 2026-11-05): the Batch K twin toggles
+    # are gone — exactly ONE script-review checkbox exists, carrying
+    # the canonical id, the hint text, next to the primary CTA.
+    assert INDEX_HTML.count('id="recap-script-review-toggle"') == 1
+    assert "recap-script-review-toggle-main" not in INDEX_HTML
+    assert "recap-script-review-toggle-main" not in APP_JS
     assert 'data-i18n="recap_script_review_hint"' in INDEX_HTML
-    # The payload still reads the advanced checkbox…
+    # The payload reads the one toggle…
     assert 'getElementById("recap-script-review-toggle")' in APP_JS
-    # …and app.js binds the twins so both reflect/set one state.
-    assert 'getElementById("recap-script-review-toggle-main")' in APP_JS
-    assert "srMainToggle.checked = srAdvToggle.checked" in APP_JS
-    assert "srAdvToggle.checked = srMainToggle.checked" in APP_JS
-    # Main toggle sits next to the primary CTA, outside the accordion.
+    # …and no mirror-sync remains.
+    assert "srMainToggle" not in APP_JS
+    assert "srAdvToggle" not in APP_JS
+    # The toggle sits next to the primary CTA, outside the accordion.
     cta = INDEX_HTML.index('id="btn-start-recap"')
-    twin = INDEX_HTML.index('id="recap-script-review-toggle-main"')
+    toggle = INDEX_HTML.index('id="recap-script-review-toggle"')
     accordion = INDEX_HTML.index('id="recap-advanced-accordion"')
-    assert accordion < twin < cta
+    assert accordion < toggle < cta
 
 
 # ── (2) expiry disclosure on the result card ─────────────────────────
@@ -548,5 +552,5 @@ def test_batch_k_key_sets_stay_symmetric():
 # ── static version lockstep ──────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261104_r59") == 4
+    assert INDEX_HTML.count("?v=20261104_r60") == 4
     assert "20261103_r42" not in INDEX_HTML
