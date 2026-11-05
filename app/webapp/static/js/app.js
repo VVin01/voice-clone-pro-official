@@ -3611,6 +3611,12 @@ function estimateRecapSegmentParts(durationSec, splitMinutes) {
     return parts + 1;
 }
 
+// Batch AO: the pre-submit quote's duration format ("5:24").
+function formatRecapQuoteDuration(durationSec) {
+    const totalSec = Math.max(0, Math.round(durationSec || 0));
+    return `${Math.floor(totalSec / 60)}:${String(totalSec % 60).padStart(2, "0")}`;
+}
+
 function updateRecapSplitCostHint() {
     const hint = document.getElementById("recap-split-cost-hint");
     if (!hint) return;
@@ -3627,6 +3633,27 @@ function updateRecapSplitCostHint() {
     // otherwise it falls back to the plain label. Display-only — the
     // submit/charging path never reads the CTA text.
     const ctaText = document.querySelector("#btn-start-recap .btn-text");
+    // Batch AO: while tiered pricing is armed (server switch, mirrored
+    // on /user/me) the per-part estimate is replaced wholesale by the
+    // duration-band quote: ceil(duration / 180) over the probed
+    // duration — the same formula and the same duration the server
+    // charges from, and the submit response's credits_total confirms
+    // the identical number after submit. Shown whenever a duration
+    // is known, for every non-admin (band 1 at ≤3 min, the free
+    // lane's ≤2 min included, so free users see "→ 1 Credit").
+    if (state.user?.tiered_pricing_enabled && dur > 0 && !state.user?.is_admin) {
+        const total = Math.max(1, Math.ceil(dur / 180));
+        if (ctaText) ctaText.textContent = total > 1
+            ? tf("btn_start_recap_credits", { credits: total })
+            : t("btn_start_recap");
+        let text = tf("recap_tiered_cost_estimate", { duration: formatRecapQuoteDuration(dur), credits: total });
+        const lowBalance = (state.user?.recap_credits ?? 0) < total;
+        if (lowBalance) text += " " + t("recap_split_cost_low_balance");
+        hint.textContent = text;
+        hint.style.color = lowBalance ? "#f87171" : "";
+        hint.classList.remove("hidden");
+        return;
+    }
     if (!show) {
         hint.classList.add("hidden");
         hint.textContent = "";
@@ -7247,11 +7274,17 @@ async function handleStartRecap() {
         // for THIS configuration (guard) — it is NOT re-enabled here.
         studioSubmitSuccess("recap");
         LiveJobs.track({ id: data.recap_id, kind: "recap", status: "QUEUED", progress_percent: 5, stage_index: 0, stage_total: 4, title: state.recapVideoTitle || "" });
-        const confirmCostText = (data.estimated_parts && data.estimated_parts > 1)
-            ? tf("confirm_cost_recap_segmented", { parts: data.estimated_parts })
-            : (data.credits_charged
-                ? tf("confirm_cost_recap", { credits: data.credits_charged })
-                : t("confirm_cost_none"));
+        // Batch AO: while tiered pricing is armed, the response's
+        // credits_total (the band total the job will be charged) is
+        // the quoted cost. The key is absent in the legacy world,
+        // where the chain below is exactly the historical one.
+        const confirmCostText = data.credits_total
+            ? tf("confirm_cost_recap", { credits: data.credits_total })
+            : ((data.estimated_parts && data.estimated_parts > 1)
+                ? tf("confirm_cost_recap_segmented", { parts: data.estimated_parts })
+                : (data.credits_charged
+                    ? tf("confirm_cost_recap", { credits: data.credits_charged })
+                    : t("confirm_cost_none")));
         showSubmitConfirmation("recap", data.recap_id, confirmCostText);
 
     } catch (err) {

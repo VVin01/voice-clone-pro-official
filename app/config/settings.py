@@ -120,6 +120,13 @@ class Settings(BaseSettings):
     # 0 = unlimited for that tier.
     voice_daily_limit_minutes_free: int = Field(default=5, alias="VOICE_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
     voice_daily_limit_minutes_paid: int = Field(default=30, alias="VOICE_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
+    # Batch AO: tiered recap pricing kill switch (owner decision
+    # 2026-11-05 — credits = ceil(source duration / 180s), one credit
+    # per started 3-minute band). Ships DARK: default False, and OFF
+    # every recap charge/quote/label is exactly the legacy per-part
+    # behaviour. Arming is a separate, later, announced step — the
+    # owner flips this only at the announced effective date.
+    tiered_recap_pricing_enabled: bool = Field(default=False, alias="TIERED_RECAP_PRICING_ENABLED")
     max_concurrent_jobs_per_user: int = Field(default=1, alias="MAX_CONCURRENT_JOBS_PER_USER")
     maintenance_mode: bool = Field(default=False, alias="MAINTENANCE_MODE")
     # Admin-written announcement the Group AI quotes verbatim from

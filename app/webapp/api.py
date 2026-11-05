@@ -25,6 +25,7 @@ import functools
 import hashlib
 import hmac
 import html
+import math
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -919,6 +920,22 @@ def _segmented_credits_message(total_parts: int, balance: int | None = None) -> 
     return f"💳 Recap Credit မလုံလောက်ပါ — {base}Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
 
 
+def _tiered_credits_message(total_credits: int, balance: int | None = None) -> str:
+    """Batch AO: the tiered-pricing sibling of _segmented_credits_message
+    — same shape and suffixes, but the amount is the duration-band total
+    (1 Credit per started 3-minute band), not a per-part count. Used by
+    the submit-time pre-check and the worker top-up exception whenever
+    tiered pricing priced the job."""
+    base = (
+        f"ဒီဗီဒီယိုရဲ့ ကြာချိန်အလိုက် (၃ မိနစ် တစ်ပိုင်း 1 Credit နှုန်း) "
+        f"စုစုပေါင်း {int(total_credits)} Credits "
+        "လိုအပ်ပါတယ်။ "
+    )
+    if balance is not None:
+        return f"💳 {base}လက်ကျန် Credit ({balance}c) မလုံလောက်ပါ — Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
+    return f"💳 Recap Credit မလုံလောက်ပါ — {base}Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။"
+
+
 # R40 deck M6: one canonical script-review + split hint (the submit
 # path and the background-job path worded the same rule two ways).
 _SCRIPT_REVIEW_SPLIT_HINT = (
@@ -934,9 +951,17 @@ class _RecapInsufficientCreditsError(Exception):
     normal failure path refunds that, leaving the user exactly whole.
     """
 
-    def __init__(self, total_parts: int):
+    def __init__(self, total_parts: int, *, total_credits: int | None = None):
         self.total_parts = int(total_parts)
-        super().__init__(_segmented_credits_message(self.total_parts))
+        # Batch AO: when tiered pricing priced the job, the message
+        # names the band total instead of the per-part count.
+        self.total_credits = (
+            int(total_credits) if total_credits is not None else None
+        )
+        if self.total_credits is not None:
+            super().__init__(_tiered_credits_message(self.total_credits))
+        else:
+            super().__init__(_segmented_credits_message(self.total_parts))
 
 
 def _persisted_recap_state(
@@ -949,6 +974,8 @@ def _persisted_recap_state(
     estimated_parts=None,
     credit_refunded: bool = False,
     credits_refunded: int = 0,
+    source_duration_seconds: float = 0.0,
+    tiered_pricing: bool = False,
 ) -> str:
     """Serialize everything a recap job needs to survive a restart.
 
@@ -975,6 +1002,13 @@ def _persisted_recap_state(
             "credits_estimated": estimated_parts,
             "credit_refunded": bool(credit_refunded),
             "credits_refunded": int(credits_refunded),
+            # Batch AO: the submit-resolved source duration and the
+            # job's pinned pricing mode ride along, so a re-dispatched
+            # worker prices the band from the SAME duration the
+            # submit quote used (and under the mode in force at
+            # submit), never a second probe or a flipped switch.
+            "source_duration_seconds": float(source_duration_seconds or 0),
+            "tiered_pricing": bool(tiered_pricing),
         },
         ensure_ascii=False,
     )
@@ -1019,6 +1053,16 @@ async def _persist_recap_credits_charged(entry: dict) -> None:
             state["credit_deducted"] = bool(entry.get("credit_deducted"))
             state["credit_refunded"] = bool(entry.get("credit_refunded"))
             state["credits_refunded"] = int(entry.get("credits_refunded") or 0)
+            # Batch AO: keep the pinned pricing mode + pricing
+            # duration in step with the live entry when it carries
+            # them (the segmented path stamps the worker-probed
+            # duration as a fallback pricing source).
+            if entry.get("tiered_pricing") is not None:
+                state["tiered_pricing"] = bool(entry.get("tiered_pricing"))
+            if entry.get("probed_duration_seconds"):
+                state["probed_duration_seconds"] = float(
+                    entry["probed_duration_seconds"]
+                )
             job.recap_config = json.dumps(state, ensure_ascii=False)
             await session.commit()
     except Exception as exc:
@@ -1179,6 +1223,10 @@ def _restore_script_ready_from_db(job, user=None) -> Optional[dict]:
         "credit_refunded": bool(state.get("credit_refunded")),
         "credits_refunded": int(state.get("credits_refunded") or 0),
         "credits_estimated": state.get("credits_estimated"),
+        # Batch AO: pricing mode + durations (see _recap_redispatch_plan).
+        "source_duration_seconds": float(state.get("source_duration_seconds") or 0),
+        "probed_duration_seconds": float(state.get("probed_duration_seconds") or 0),
+        "tiered_pricing": state.get("tiered_pricing"),
         "parts_count": None,
         "source_path": state.get("source_path"),
         "req_snapshot": state["config"],
@@ -1660,6 +1708,14 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         credit_refunded = bool(state.get("credit_refunded")) if restore_credit_state else False
         credits_refunded = int(state.get("credits_refunded") or 0) if restore_credit_state else 0
         credits_estimated = state.get("credits_estimated")
+        # Batch AO: the pinned pricing mode + pricing durations are
+        # part of the credit state — a re-dispatch must price (and
+        # refund) exactly the job that was submitted. Pre-AO blobs
+        # lack the keys: durations default to 0 and the mode to None
+        # (= no stamp, live-switch fallback).
+        source_duration_seconds = float(state.get("source_duration_seconds") or 0) if restore_credit_state else 0.0
+        probed_duration_seconds = float(state.get("probed_duration_seconds") or 0) if restore_credit_state else 0.0
+        tiered_pricing = state.get("tiered_pricing") if restore_credit_state else None
     else:
         cfg = RecapConfigRequest(
             url=source_url,
@@ -1675,6 +1731,9 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         credit_refunded = False
         credits_refunded = 0
         credits_estimated = None
+        source_duration_seconds = 0.0
+        probed_duration_seconds = 0.0
+        tiered_pricing = None
 
     entry = {
         "id": job.id,
@@ -1702,6 +1761,9 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         "credit_refunded": credit_refunded,
         "credits_refunded": credits_refunded,
         "credits_estimated": credits_estimated,
+        "source_duration_seconds": source_duration_seconds,
+        "probed_duration_seconds": probed_duration_seconds,
+        "tiered_pricing": tiered_pricing,
         "parts_count": None,
     }
     return {
@@ -1713,17 +1775,83 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
     }
 
 
-async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: int) -> int:
-    """Bring a segmented recap job's charge to 1 credit PER PART.
+# ── Batch AO: tiered recap pricing (owner decision 2026-11-05) ──────
+# Credits = ceil(total source duration / 180) — one credit per started
+# 3-minute band — replacing the per-part formula WHEN the
+# tiered_recap_pricing_enabled switch is on. The build ships dark:
+# with the switch off, every helper below is inert and the charge,
+# quote and label behaviour is byte-identical to the legacy per-part
+# world. A job's pricing mode is PINNED at submit (stamped on the
+# registry entry and the persisted Job-row state), so the price the
+# submit flow quoted is the price the worker charges even if the
+# switch flips while the job is in flight; entries predating the
+# stamp (legacy rows) fall back to the live switch.
 
-    Owner decision 2026-10-30: a >10-minute recap split into parts
-    costs 1 credit per part, not 1 credit for the whole job. The first
-    credit was already taken at submit (the normal recap charge); once
-    the worker knows the exact part count N this charges the remaining
-    N − already_charged in ONE ledger action, before any part renders.
-    Raises _RecapInsufficientCreditsError — charging nothing extra —
-    when the balance cannot cover the difference. Returns the job's
-    total charged credits.
+_RECAP_BAND_SECONDS = 180
+
+
+def _tiered_recap_pricing_enabled() -> bool:
+    """The Batch AO arming switch (dynamic setting, default False)."""
+    return bool(getattr(settings, "tiered_recap_pricing_enabled", False))
+
+
+def _recap_band_credits(duration_seconds) -> int:
+    """Credits for a source of `duration_seconds` under tiered pricing:
+    ceil(duration / 180), minimum 1. Unknown/zero duration defensively
+    prices as a single band — the same posture _recap_estimate_part_count
+    takes for an unknown duration (1 part)."""
+    try:
+        duration = float(duration_seconds or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 0:
+        return 1
+    return max(1, math.ceil(duration / _RECAP_BAND_SECONDS))
+
+
+def _entry_tiered_pricing(entry: dict) -> bool:
+    """Whether THIS job is priced by duration bands: the submit-time
+    stamp when present, else the live switch (legacy entries)."""
+    stamped = entry.get("tiered_pricing")
+    if stamped is not None:
+        return bool(stamped)
+    return _tiered_recap_pricing_enabled()
+
+
+def _recap_entry_pricing_duration(entry: dict) -> float:
+    """The ONE duration a job's band is priced from, in resolution
+    order: the submit-resolved duration (client probe verified /
+    replaced by the server probe in create_recap_job — the value the
+    pre-submit quote was computed from, so quote and charge can never
+    disagree), then the worker's own probe of the downloaded source
+    (segmented path, stamped on the entry before the top-up). 0 when
+    no probe ever produced a value."""
+    for key in ("source_duration_seconds", "probed_duration_seconds"):
+        try:
+            value = float(entry.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            return value
+    return 0.0
+
+
+async def _top_up_recap_charge_to_total(
+    user_id: int,
+    entry: dict,
+    target_total: int,
+    *,
+    total_parts: int,
+    tiered: bool,
+) -> int:
+    """Bring a recap job's charge to `target_total` credits — the
+    shared core of the segmented per-part top-up (legacy target: the
+    part count) and the Batch AO band top-up (target: the duration
+    band total). The first credit was already taken at submit; this
+    charges only the difference, in ONE ledger action, before any
+    part renders. Raises _RecapInsufficientCreditsError — charging
+    nothing extra — when the balance cannot cover the difference.
+    Returns the job's total charged credits.
     """
     already = int(entry.get("credits_charged") or 0)
     # Batch AJ (H11): the entry/blob total is only a cache. The
@@ -1752,17 +1880,74 @@ async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: i
             logger.warning(
                 f"Could not reconcile recap charge total from the ledger for {_job_id}: {exc}"
             )
-    extra = int(total_parts) - already
+    extra = int(target_total) - already
     if extra > 0 and not await _charge_recap_credits(user_id, extra, job_id=entry.get("id")):
+        if tiered:
+            raise _RecapInsufficientCreditsError(
+                total_parts, total_credits=int(target_total)
+            )
         raise _RecapInsufficientCreditsError(total_parts)
-    entry["credits_charged"] = max(int(total_parts), already)
+    entry["credits_charged"] = max(int(target_total), already)
     entry["credit_deducted"] = True
-    entry["parts_count"] = int(total_parts)
     # Keep the Job row's persisted total in step, so a restart after
-    # this top-up restores N (not the submit-time 1) and can neither
-    # double-charge the parts nor lose track of the refund amount.
+    # this top-up restores the real total (not the submit-time 1) and
+    # can neither double-charge nor lose track of the refund amount.
     await _persist_recap_credits_charged(entry)
-    return int(total_parts)
+    return int(entry["credits_charged"])
+
+
+async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: int) -> int:
+    """Bring a segmented recap job's charge to its exact total.
+
+    Legacy (switch off / job not tier-stamped): 1 credit PER PART
+    (owner decision 2026-10-30) — the target is the part count.
+    Tiered (Batch AO): the target is the duration-band total over the
+    job's TOTAL source duration — the band replaces the per-part
+    formula, so the split size a user picked can no longer change
+    the price. Either way the charge lands before any part renders.
+    Returns the job's total charged credits.
+    """
+    tiered = _entry_tiered_pricing(entry)
+    target = int(total_parts)
+    if tiered:
+        entry["tiered_pricing"] = True
+        duration = _recap_entry_pricing_duration(entry)
+        if duration > 0:
+            target = _recap_band_credits(duration)
+        # else: no probe ever produced a duration — keep the legacy
+        # part-count target; an unpriceable job is never charged LESS
+        # than the legacy formula would have charged it.
+    total = await _top_up_recap_charge_to_total(
+        user_id, entry, target, total_parts=int(total_parts), tiered=tiered
+    )
+    entry["parts_count"] = int(total_parts)
+    # The core persisted the credit state before parts_count was set;
+    # parts_count is registry/display state (the status endpoint reads
+    # the live entry), so no second persist is needed for it.
+    return total
+
+
+async def _apply_recap_band_top_up(user_id: int, entry: dict, *, is_admin_user: bool) -> int:
+    """Batch AO: bring a NON-segmented recap job's charge to its
+    duration-band total before it renders. The segmented path prices
+    itself in _top_up_recap_segment_charge; this is the same top-up
+    for the single-job path (and the script-review render phase),
+    which the legacy world never topped up at all. Inert unless the
+    job is tier-priced: switch off, admin jobs and unpaid entries
+    return immediately, and a band of 1 (any source ≤3 min — the free
+    lane's ≤2 min included) never reaches the charge helper.
+    """
+    if is_admin_user or not entry.get("credit_deducted"):
+        return int(entry.get("credits_charged") or 0)
+    if not _entry_tiered_pricing(entry):
+        return int(entry.get("credits_charged") or 0)
+    target = _recap_band_credits(_recap_entry_pricing_duration(entry))
+    if target <= int(entry.get("credits_charged") or 0):
+        return int(entry.get("credits_charged") or 0)
+    entry["tiered_pricing"] = True
+    return await _top_up_recap_charge_to_total(
+        user_id, entry, target, total_parts=0, tiered=True
+    )
 
 
 async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
@@ -2249,6 +2434,9 @@ async def get_user_profile(
         "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
         "recap_max_duration_seconds": 600 if is_vip else 120,
         "recap_max_duration_minutes": 10 if is_vip else 2,
+        # Batch AO: the Mini App's recap quote display follows the
+        # tiered-pricing switch (off = the legacy per-part estimate).
+        "tiered_pricing_enabled": _tiered_recap_pricing_enabled(),
         "has_recap_watermark": not is_vip,
         # Custom channel logo (owner decision 2026-11-02): paid-only,
         # the user's own upload — see /api/user/logo endpoints.
@@ -6006,6 +6194,11 @@ async def _execute_recap_background_job(
             _src_dur = float(
                 probe_local_media(local_source).get("duration", 0.0) or 0.0
             )
+            # Batch AO: the worker's own probe of the downloaded
+            # source is the FALLBACK pricing duration (the submit-
+            # resolved duration outranks it — see
+            # _recap_entry_pricing_duration).
+            entry["probed_duration_seconds"] = _src_dur
             if _recap_should_segment(
                 is_vip=is_vip,
                 is_admin=is_admin_user,
@@ -6068,12 +6261,36 @@ async def _execute_recap_background_job(
                         # submit credit, leaving the user exactly whole.
                         await _top_up_recap_segment_charge(user_id, entry, total_parts)
                         credit_deducted = True
-                        _recap_set_entry_label(
-                            entry,
-                            f"💳 အပိုင်း {total_parts} ပိုင်း × 1 Credit = {total_parts} Credits "
-                            "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
-                        )
+                        if entry.get("tiered_pricing"):
+                            # Batch AO: the charge followed the
+                            # duration band, not the part count — the
+                            # label must say what was actually charged.
+                            _recap_set_entry_label(
+                                entry,
+                                f"💳 ဗီဒီယို ကြာချိန်အလိုက် စုစုပေါင်း {int(entry.get('credits_charged') or 0)} Credits "
+                                "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
+                            )
+                        else:
+                            _recap_set_entry_label(
+                                entry,
+                                f"💳 အပိုင်း {total_parts} ပိုင်း × 1 Credit = {total_parts} Credits "
+                                "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
+                            )
             canonical_source_url = local_source
+
+        # Batch AO: a NON-segmented tier-priced job is topped up to
+        # its duration-band total here — after the split decision (so
+        # segmented jobs, priced above, are skipped) and before any
+        # render. Inert for legacy-priced jobs, admins and unpaid
+        # entries; a band of 1 never moves money (see
+        # _apply_recap_band_top_up). A balance that cannot cover the
+        # band fails the job here and the failure path refunds the
+        # submit credit, exactly like the segmented top-up.
+        if not segmented_mode:
+            await _apply_recap_band_top_up(
+                user_id, entry, is_admin_user=is_admin_user
+            )
+            credit_deducted = bool(entry.get("credit_deducted"))
 
         def _make_recap_fn(source, target_dir):
             return functools.partial(
@@ -6216,16 +6433,25 @@ async def _execute_recap_background_job(
             entry["parts"] = part_urls
             entry["download_urls"]["parts"] = part_urls
             _seg_charged = int(entry.get("credits_charged") or 0)
+            if _seg_charged <= 0:
+                # Admin segmented run (owner ruling 2026-11-02):
+                # never charged — the note must not claim a cost.
+                _seg_cost_note = "(Admin — Credit မကောက်ခံထားပါ။)"
+            elif entry.get("tiered_pricing"):
+                # Batch AO: the charge followed the duration band,
+                # not the part count — the note must not claim a
+                # per-part rate the user did not pay.
+                _seg_cost_note = (
+                    f"(ဗီဒီယို ကြာချိန်အလိုက် စုစုပေါင်း {_seg_charged} Credits သုံးခဲ့ပါတယ်။)"
+                )
+            else:
+                _seg_cost_note = (
+                    f"(အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {_seg_charged} Credits သုံးခဲ့ပါတယ်။)"
+                )
             entry["split_note"] = (
                 f"မူရင်းဗီဒီယို ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်း {len(part_urls)} ပိုင်း "
                 "ခွဲပြီး လုပ်ပေးထားပါတယ် — အပိုင်းအားလုံး ဒေါင်းလုဒ်ရယူနိုင်ပါတယ်။ "
-                + (
-                    f"(အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {_seg_charged} Credits သုံးခဲ့ပါတယ်။)"
-                    if _seg_charged > 0
-                    # Admin segmented run (owner ruling 2026-11-02):
-                    # never charged — the note must not claim a cost.
-                    else "(Admin — Credit မကောက်ခံထားပါ။)"
-                )
+                + _seg_cost_note
             )
 
         # Optional Video Splitter post-process (Recapter parity): cut the
@@ -7165,6 +7391,13 @@ async def create_recap_job(
 
     submit_decision = "ok"
     estimated_parts = None
+    # Batch AO: the tiered-pricing switch state at submit pins this
+    # job's pricing mode (stamped on the registry entry and the
+    # persisted state below); the balance pre-checks and the response
+    # quote follow it. While the switch is off, quoted_total_credits
+    # stays None and every check below is the legacy one, untouched.
+    tiered_on = _tiered_recap_pricing_enabled()
+    quoted_total_credits = None
     if checked_duration and checked_duration > max_duration_allowed:
         submit_decision = _recap_submit_duration_decision(
             is_vip=is_vip,
@@ -7200,7 +7433,25 @@ async def create_recap_job(
             float(req.split_minutes),
             float(max_duration_allowed),
         )
-        if not _recap_segment_balance_ok(
+        if tiered_on:
+            # Batch AO: the balance must cover the BAND total over the
+            # total duration — under tiered pricing the split size
+            # (and thus the part estimate) no longer sets the price,
+            # so the pre-check and the quote use the band total, the
+            # exact number the worker will charge.
+            required_credits = _recap_band_credits(float(checked_duration))
+            if not is_admin_user:
+                quoted_total_credits = required_credits
+            if not _recap_segment_balance_ok(
+                is_admin=is_admin_user,
+                balance=credits,
+                estimated_parts=required_credits,
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail=_tiered_credits_message(required_credits, balance=credits),
+                )
+        elif not _recap_segment_balance_ok(
             is_admin=is_admin_user,
             balance=credits,
             estimated_parts=estimated_parts,
@@ -7208,6 +7459,21 @@ async def create_recap_job(
             raise HTTPException(
                 status_code=403,
                 detail=_segmented_credits_message(estimated_parts, balance=credits),
+            )
+    elif tiered_on and checked_duration and not is_admin_user:
+        # Batch AO: single-job path (duration within the cap). The
+        # worker tops the submit credit up to the band total before
+        # rendering, so the balance must cover that total BEFORE any
+        # credit moves — the same number the pre-submit quote shows
+        # and the worker charges. Free-lane sources (≤2 min) always
+        # price as band 1, which the credit gate above already
+        # required, so this check can never newly block them.
+        required_credits = _recap_band_credits(float(checked_duration))
+        quoted_total_credits = required_credits
+        if credits < required_credits:
+            raise HTTPException(
+                status_code=403,
+                detail=_tiered_credits_message(required_credits, balance=credits),
             )
 
     # Concurrency: at most settings.max_concurrent_jobs_per_user (default
@@ -7291,6 +7557,10 @@ async def create_recap_job(
         "credit_deducted": deducted_credit,
         "credits_charged": 1 if deducted_credit else 0,
         "credits_estimated": estimated_parts,
+        # Batch AO: the pricing inputs — the submit-resolved duration
+        # the quote was computed from, and the pinned pricing mode.
+        "source_duration_seconds": float(checked_duration or 0),
+        "tiered_pricing": tiered_on,
         "parts_count": None,
     }
 
@@ -7319,6 +7589,8 @@ async def create_recap_job(
             is_vip=is_vip,
             phase="script" if req.script_review else "full",
             estimated_parts=estimated_parts,
+            source_duration_seconds=float(checked_duration or 0),
+            tiered_pricing=tiered_on,
         ),
     )
     if deducted_credit:
@@ -7380,7 +7652,7 @@ async def create_recap_job(
                 await _refund_recap_credits(user.id, 1, job_id=job_id)
         raise
 
-    return {
+    response = {
         "success": True,
         "recap_id": job_id,
         "status": "QUEUED",
@@ -7391,6 +7663,15 @@ async def create_recap_job(
         "credits_charged": 1 if deducted_credit else 0,
         "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
     }
+    if tiered_on:
+        # Batch AO: the authoritative total this submission will be
+        # charged (the band total, when the duration is known) — the
+        # confirmation the Mini App shows quotes exactly this number,
+        # computed by the same helper the worker charges with. The key
+        # is omitted entirely while the switch is off, so the legacy
+        # response shape is byte-identical.
+        response["credits_total"] = quoted_total_credits
+    return response
 
 
 async def _deferred_db_session() -> Optional[AsyncSession]:
@@ -10087,6 +10368,9 @@ class AdminSettingsPayload(BaseModel):
     free_daily_job_limit: Optional[int] = None
     voice_daily_limit_minutes_free: Optional[int] = None
     voice_daily_limit_minutes_paid: Optional[int] = None
+    # Batch AO: tiered recap pricing arming switch (ships dark; the
+    # owner flips it only at the announced effective date).
+    tiered_recap_pricing_enabled: Optional[bool] = None
     recap_free_max_duration_seconds: Optional[int] = None
     recap_max_duration_seconds: Optional[int] = None
     required_channel_id: Optional[str] = None
@@ -10137,6 +10421,7 @@ async def get_admin_settings(
         "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
         "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 5)),
         "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 30)),
+        "tiered_recap_pricing_enabled": bool(getattr(settings, "tiered_recap_pricing_enabled", False)),
         "recap_free_max_duration_seconds": int(getattr(settings, "recap_free_max_duration_seconds", 120)),
         "recap_max_duration_seconds": int(getattr(settings, "recap_max_duration_seconds", 600)),
         "required_channel_id": str(getattr(settings, "required_channel_id", "") or ""),
