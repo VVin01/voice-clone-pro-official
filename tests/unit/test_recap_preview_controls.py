@@ -67,8 +67,10 @@ def test_toolbar_group_starts_hidden_but_other_settings_do_not():
     # the picker sat flattened in the Advanced "Other" section; Batch AV
     # moved it into Step 3 — still a plain block, still not
     # preview-gated, and its Step-3 body is the collapsible surface.)
-    assert 'id="recap-lang-picker"' in html
-    lang_block_tag = html.split('id="recap-lang-picker"')[0].rsplit('<div class="recap-lang-block', 1)[1].split(">", 1)[0]
+    # AZ-11: the language control is the compact dropdown (the
+    # pill group is retired) — still in the same plain block.
+    assert 'id="recap-lang-more"' in html
+    lang_block_tag = html.split('id="recap-lang-more"')[0].rsplit('<div class="recap-lang-block', 1)[1].split(">", 1)[0]
     assert "hidden" not in lang_block_tag
 
 

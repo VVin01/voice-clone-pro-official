@@ -93,7 +93,9 @@ def test_advanced_sections_redistributed_into_steps():
     step3 = HTML.index('id="recap-step-3"')
     step4 = HTML.index('id="recap-step-4"')
     assert step2 < HTML.index('id="recap-preview-transform-group"') < step3
-    assert step3 < HTML.index('id="recap-lang-picker"') < step4
+    # AZ-11: the language control is the compact dropdown now (the
+    # pill group is retired); it still lives in Step 3.
+    assert step3 < HTML.index('id="recap-lang-more"') < step4
     assert HTML.index('id="recap-split-toggle"') > step4
 
 
@@ -137,10 +139,16 @@ def test_all_voices_expanded_is_twelve_cards_no_select():
 def test_gemini_select_full_width_with_auto_hint():
     m = re.search(r'<select id="recap-gemini-voice-select"[^>]*>(.*?)</select>', HTML, re.S)
     assert m
-    first = re.search(r'<option value="">([^<]*)</option>', m.group(1))
+    # AZ-12: the Auto option carries its i18n key like its siblings.
+    first = re.search(r'<option value="" data-i18n="recap_gemini_auto">([^<]*)</option>', m.group(1))
     assert first and first.group(1) == "Auto"
     assert 'data-i18n="recap_gemini_auto_hint"' in HTML
-    assert 'class="studio-select recap-gemini-select"' in HTML
+    # AZ-11: the Gemini select joins the shared glass-dropdown
+    # pattern (restyle only — same id, same classes plus the new one).
+    tag = re.search(r'<select id="recap-gemini-voice-select"[^>]*>', HTML)
+    assert tag and 'studio-select' in tag.group(0)
+    assert tag and 'glass-dropdown' in tag.group(0)
+    assert tag and 'recap-gemini-select' in tag.group(0)
 
 
 # ── CTA: one visible (sticky), in-flow retired by the observer ───────
@@ -188,10 +196,11 @@ def test_one_switch_component():
 
 
 def test_uniform_pill_tiles_and_compact_ratio():
+    # AZ-11: "#sub-style-picker .style-chip" left this list — the
+    # subtitle-style picker is a compact dropdown now, not tiles.
     for sel in ("#story-style-picker-quick .style-select-pill",
                 "#recap-logo-pos-picker .pill-btn",
-                "#recap-crop-presets-toolbar .pill-btn",
-                "#sub-style-picker .style-chip"):
+                "#recap-crop-presets-toolbar .pill-btn"):
         assert sel in CSS, sel
     assert "flex: 1 1 42%" in CSS and "flex: 1 1 26%" in CSS
     assert ".ratio-btn { min-height: 44px" in CSS
@@ -256,7 +265,7 @@ def test_cache_buster_bumped_for_tidy():
     # rt4 = full-app polish batch (2026-11-01) superseding rt3.
     # fp1 = admin-demote + voice-picker batch (2026-11-01 late)
     # superseding rt4 (index.html / app.js / style.css changed again).
-    assert HTML.count("?v=20261104_r71") == 4
+    assert HTML.count("?v=20261104_r72") == 4
     assert "?v=20261101_rt4" not in HTML
     assert "?v=20261101_rt3" not in HTML
     assert "?v=20261101_rt2" not in HTML

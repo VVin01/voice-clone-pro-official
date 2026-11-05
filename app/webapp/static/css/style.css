@@ -2806,9 +2806,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
    Buttons grow to fill their row, so Burmese and EN render the same
    systematic grid instead of ragged one-per-row stacks. */
 #story-style-picker-quick .style-select-pill,
-#recap-lang-picker .pill-btn,
 #recap-crop-presets-toolbar .pill-btn,
-#sub-style-picker .style-chip,
 #recap-logo-pos-picker .pill-btn,
 #recap-fill-picker .pill-btn,
 #recap-speed-picker .pill-btn {
@@ -3190,13 +3188,10 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 #recap-speed-picker .pill-btn { grid-column: span 2; }
 #recap-speed-picker .pill-btn:nth-child(4),
 #recap-speed-picker .pill-btn:nth-child(5) { grid-column: span 3; }
-#sub-style-picker {
-    display: grid; grid-template-columns: repeat(2, 1fr);
-    grid-auto-rows: 1fr; gap: var(--s2); align-items: stretch;
-}
-#sub-style-picker .style-chip {
-    display: flex; align-items: center; justify-content: center; text-align: center;
-}
+/* Batch AZ-11: #sub-style-picker is a <select> now (one compact
+   dropdown) — the chip-grid rules that stood here are retired; the
+   select is styled by .studio-select + the AZ glass-dropdown
+   pattern at the end of this file. */
 #story-style-picker-quick {
     display: grid; grid-template-columns: repeat(2, 1fr);
     grid-auto-rows: 1fr; gap: var(--s2); align-items: stretch;
@@ -3455,63 +3450,22 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 
 /* ── Batch AX: Recap wizard ────────────────────────────────────────
    One step at a time (owner direction 2026-11-06): exactly one step
-   card is visible; completed steps disappear. The indicator is a
+   card is visible; completed steps disappear. The indicator was a
    designed progress piece (AX-2R): a track behind four nodes, its
    completed portion filled with the app's blue gradient; nodes are
    38px circles with shadow and ring; the current node carries the
    gradient + a gentle pulsing halo; ONLY the current step's name
    renders, as a one-line caption under the track — no text inside
-   the chips (the AV labels squeezed and clipped at phone widths). */
+   the chips (the AV labels squeezed and clipped at phone widths).
+   SUPERSEDED by Batch AZ-9 (owner rejected the numbered circles as
+   dated): the indicator is a liquid segmented capsule — see the
+   Batch AZ section at the end of this file. */
 .recap-steps-nav { margin-bottom: var(--s2); }
-.recap-steps-track { position: relative; display: flex; justify-content: space-between; align-items: center; padding: 0 3px; }
-.recap-steps-track-bg {
-    position: absolute; top: 50%; left: 22px; right: 22px; height: 4px;
-    transform: translateY(-50%); border-radius: 999px;
-    background: rgba(255, 255, 255, 0.12);
-}
-.recap-steps-track-fill {
-    position: absolute; top: 50%; left: 22px; height: 4px; width: 16.6%;
-    transform: translateY(-50%); border-radius: 999px;
-    background: linear-gradient(90deg, #2563eb, #60a5fa);
-    transition: width 0.25s ease;
-}
-.recap-steps-nav-item {
-    position: relative; z-index: 1; flex: 0 0 auto;
-    min-width: 44px; min-height: 44px;
-    display: inline-flex; align-items: center; justify-content: center;
-    padding: 3px; border: none; background: none; cursor: pointer;
-}
-.recap-steps-nav-num {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 38px; height: 38px; border-radius: 999px;
-    background: #fff; border: 1.5px solid rgba(15, 23, 42, 0.22); color: var(--text-3);
-    box-shadow: 0 2px 8px rgba(2, 6, 23, 0.35), 0 0 0 3px rgba(255, 255, 255, 0.10);
-    font-size: 15px; font-weight: 700;
-}
-.recap-steps-nav-item.is-done .recap-steps-nav-num,
-.recap-steps-nav-item.is-active .recap-steps-nav-num {
-    background: linear-gradient(135deg, #2563eb, #60a5fa); border-color: transparent; color: #fff;
-}
-.recap-steps-nav-item.is-active .recap-steps-nav-num { animation: recap-step-halo 2.2s ease-in-out infinite; }
-.recap-steps-nav-item.pop .recap-steps-nav-num { animation: recap-step-pop 0.28s ease, recap-step-halo 2.2s ease-in-out 0.3s infinite; }
-@keyframes recap-step-halo {
-    0%, 100% { box-shadow: 0 2px 8px rgba(2, 6, 23, 0.35), 0 0 0 3px rgba(96, 165, 250, 0.35); }
-    50% { box-shadow: 0 2px 8px rgba(2, 6, 23, 0.35), 0 0 0 7px rgba(96, 165, 250, 0.12); }
-}
-@keyframes recap-step-pop {
-    0% { transform: scale(0.82); }
-    55% { transform: scale(1.14); }
-    100% { transform: scale(1); }
-}
-.recap-steps-caption {
-    margin-top: 6px; text-align: center; font-size: 13.5px; font-weight: 600;
-    color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-@media (prefers-reduced-motion: reduce) {
-    .recap-steps-nav-item.is-active .recap-steps-nav-num,
-    .recap-steps-nav-item.pop .recap-steps-nav-num { animation: none; }
-    .recap-steps-track-fill { transition: none; }
-}
+/* Batch AZ-9: the AX-2R track/nodes/caption rules that stood here
+   are retired — the indicator is now a liquid segmented capsule
+   whose full CSS lives in the Batch AZ section at the end of this
+   file. (@keyframes recap-step-pop is redefined there for the
+   segment pop.) */
 
 .recap-step-head { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 4px 2px; font-weight: 700; }
 .recap-step-word { color: var(--text-2); font-size: 14px; }
@@ -3548,8 +3502,9 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-step4-choice-voice::before, .recap-step4-choice-ratio::before { content: "·"; margin-right: 6px; color: var(--text-3); }
 .recap-step4-choice-voice:empty::before, .recap-step4-choice-ratio:empty::before { content: none; }
 
-/* Compact language control (AX-5): the full 18-value list as a
-   select under the frequent pills. */
+/* Language control (AX-5 → AZ-11): the full 18-value list as ONE
+   compact dropdown — since AZ-11 it is the only language control
+   (the frequent pills are retired). */
 .recap-lang-more { width: 100%; min-width: 0; }
 
 /* Step 4 review: preview thumbnail + the large credit quote. */
@@ -3803,4 +3758,435 @@ body.lang-my .home-tut-count { line-height: 1.7; }
 
 @media (prefers-reduced-motion: reduce) {
     #tab-home .home-tile, .home-tut-expand-chevron, .sample-progress-fill { transition: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   BATCH AZ — GLASSMORPHISM 2.0 / LIQUIDMORPHISM (2026-11-06)
+   Spec: ~/workspace/batch-az-spec-2026-11-06.md (AZ-1…AZ-12).
+   The app already had glass 1.0 (translucent surfaces, static
+   ambient, flat 1px edges, fade-only motion). This pass adds the
+   2.0/Liquid layer: a LIVING ambient, specular gradient rims,
+   three separated depth tiers, fluid motion, tinted-glass accents,
+   rebuilt toasts (AZ-7), the liquid segmented step capsule (AZ-9),
+   the AZ-10 text-defect fixes, the AZ-11 compact dropdowns and the
+   AZ-12 i18n/spacing rules. CSS-first; the only JS is AZ-4's
+   nav-pill mover + tab-enter toggles and AZ-7's toast exit hook.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── AZ-3 · Depth tiers + AZ-2 · specular rim tokens ─────────────
+   Three named tiers with distinct blur / alpha / shadow. The
+   legacy token names are re-pointed at the tiers, so every
+   component that references them keeps working and inherits the
+   separation. --rim-shadow is the shared specular edge: a bright
+   top hairline (white .92) fading to a faint bottom reflection,
+   with soft side light — the "liquid glass" rim, applied through
+   the shadow stack so it composes with every surface's own
+   shadow instead of forking per component. */
+:root {
+    --glass-1-bg: rgba(255, 255, 255, 0.50);
+    --glass-2-bg: rgba(255, 255, 255, 0.65);
+    --glass-3-bg: rgba(255, 255, 255, 0.78);
+    --glass-1-blur: blur(18px) saturate(1.5);
+    --glass-2-blur: blur(22px) saturate(1.6);
+    --glass-3-blur: blur(28px) saturate(1.55);
+    --rim-hi: rgba(255, 255, 255, 0.92);
+    --rim-lo: rgba(255, 255, 255, 0.16);
+    --rim-shadow: inset 0 1px 0 var(--rim-hi),
+                  inset 0 -1px 0 rgba(255, 255, 255, 0.28),
+                  inset 1px 0 0 rgba(255, 255, 255, 0.30),
+                  inset -1px 0 0 rgba(255, 255, 255, 0.30);
+    --shadow-1: var(--rim-shadow), 0 8px 24px rgba(70, 110, 160, 0.10);
+    --shadow-2: var(--rim-shadow), 0 14px 34px rgba(70, 110, 160, 0.20);
+    --shadow-3: var(--rim-shadow), 0 22px 54px rgba(70, 110, 160, 0.30);
+    /* Tier mapping — legacy names resolve to the tiers. */
+    --surface: var(--glass-1-bg);
+    --blur-card: var(--glass-1-blur);
+    --blur-chrome: var(--glass-2-blur);
+    --blur-overlay: var(--glass-3-blur);
+    --glass-strong: var(--glass-3-bg);
+    --shadow-card: var(--shadow-1);
+    --shadow-pop: var(--shadow-3);
+}
+
+/* ── AZ-2 · Gradient hairline rims on the major surfaces ─────────
+   The border becomes a gradient (white .92 at the top → .16 at
+   the bottom) via the border-box layer; the padding-box layer
+   carries the surface's tier fill (each surface names its tier
+   through --az-bg). Surfaces with their own higher-specificity
+   tinted backgrounds (e.g. .pricing-card.featured-master) keep
+   them — this recipe only claims the plain glass surfaces. */
+.card, .top-nav, .bottom-nav, .modal-content, .studio-confirm-card,
+.gate-lock-card, .studio-toast, .floating-alert-card, .sticky-cta-bar,
+.submit-confirm-card, .live-jobs-sheet-card, .advanced-studio-accordion,
+.tutorial-banner-card, .studio-alert-carousel {
+    border: 1px solid transparent;
+    background:
+        linear-gradient(var(--az-bg, var(--glass-1-bg)), var(--az-bg, var(--glass-1-bg))) padding-box,
+        linear-gradient(180deg, var(--rim-hi), var(--rim-lo)) border-box;
+}
+/* Tier assignment per surface (AZ-3). */
+.top-nav { --az-bg: rgba(255, 255, 255, 0.62); }
+.bottom-nav { --az-bg: rgba(255, 255, 255, 0.88); } /* nav keeps its
+    readability floor (the polish pass's .9-opacity verdict) while
+    joining tier 2's blur + rim. */
+.sticky-cta-bar { --az-bg: var(--glass-2-bg); }
+.modal-content, .studio-confirm-card, .gate-lock-card, .studio-toast,
+.floating-alert-card, .submit-confirm-card, .live-jobs-sheet-card {
+    --az-bg: var(--glass-3-bg);
+}
+/* Tier blur completion: the surfaces the older layers did not
+   already cover at their tier. (Cards/header/nav/modals/toasts
+   already resolve through --blur-card/--blur-chrome/--blur-overlay,
+   which now point at tiers 1/2/3.) */
+.sticky-cta-bar {
+    backdrop-filter: var(--glass-2-blur);
+    -webkit-backdrop-filter: var(--glass-2-blur);
+}
+.gate-lock-card, .submit-confirm-card, .live-jobs-sheet-card {
+    backdrop-filter: var(--glass-3-blur);
+    -webkit-backdrop-filter: var(--glass-3-blur);
+}
+/* The live-jobs status pill is a DARK glass surface by design
+   (white text over jobs content): it joins tier 2 by blur + rim,
+   its colours stay. */
+.live-jobs-pill {
+    backdrop-filter: var(--glass-2-blur);
+    -webkit-backdrop-filter: var(--glass-2-blur);
+    box-shadow: var(--rim-shadow), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* ── AZ-1 · Liquid ambient ───────────────────────────────────────
+   The existing fixed ambient layer (body::before) starts LIVING:
+   its pastel blobs shift toward the brand family (blue / sky /
+   violet) and the whole field drifts slowly — transform-only,
+   56 s alternate, overscanned (inset -8%) so the drift never
+   exposes an edge. The glass above it now refracts something
+   that moves. Static under prefers-reduced-motion. */
+body::before {
+    inset: -8%;
+    background:
+        radial-gradient(420px 340px at 8% 6%, rgba(196, 181, 253, 0.80), rgba(196, 181, 253, 0) 70%),
+        radial-gradient(460px 380px at 95% 22%, rgba(140, 205, 255, 0.9), rgba(140, 205, 255, 0) 70%),
+        radial-gradient(520px 420px at 15% 88%, rgba(125, 211, 252, 0.80), rgba(125, 211, 252, 0) 70%),
+        radial-gradient(420px 360px at 88% 95%, rgba(167, 139, 250, 0.78), rgba(167, 139, 250, 0) 70%),
+        linear-gradient(160deg, #eaf3fb, #dcebf7);
+    animation: azAmbientDrift 56s ease-in-out infinite alternate;
+}
+@keyframes azAmbientDrift {
+    from { transform: translate3d(-1.6%, -1%, 0) scale(1); }
+    to { transform: translate3d(1.6%, 1.4%, 0) scale(1.05); }
+}
+
+/* ── AZ-4 · Liquid motion ────────────────────────────────────────
+   Tab switch: crossfade + 6px rise (~220 ms), driven by the
+   .tab-enter class the switch paths toggle (the old always-on
+   paneIn is retired so the motion is exactly the AZ-4 one). */
+.tab-pane.active { animation: none; }
+.tab-pane.tab-enter { animation: azPaneIn 0.22s ease; }
+@keyframes azPaneIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+/* The sliding nav pill: ONE element behind the active item,
+   positioned by moveNavPill() from the active item's own box. */
+.nav-pill {
+    position: absolute; left: 0; top: 0; z-index: 0;
+    border-radius: 999px; pointer-events: none;
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow: var(--rim-shadow), 0 2px 8px rgba(70, 110, 160, 0.18);
+    transition: transform 0.34s cubic-bezier(0.34, 1.2, 0.4, 1),
+                width 0.34s cubic-bezier(0.34, 1.2, 0.4, 1),
+                height 0.34s ease;
+}
+.bottom-nav .nav-item { position: relative; z-index: 1; }
+.nav-item.active { background: transparent; box-shadow: none; }
+/* Sheets + modals: gentle spring entrances (transform/opacity). */
+.live-jobs-sheet-card, .submit-confirm-card { animation: azSheetIn 0.38s cubic-bezier(0.34, 1.25, 0.4, 1); }
+.modal-content, .studio-confirm-card, .gate-lock-card { animation: azPopIn 0.32s cubic-bezier(0.34, 1.2, 0.4, 1); }
+@keyframes azSheetIn {
+    from { opacity: 0; transform: translateY(26px); }
+    to { opacity: 1; transform: none; }
+}
+@keyframes azPopIn {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to { opacity: 1; transform: none; }
+}
+/* Presses: squash to 0.97 and recover; primary buttons also get
+   a sheen sweep while pressed. */
+.pill-btn, .seg-btn, .filter-chip, .style-select-pill { transition: transform 0.1s ease; }
+.pill-btn:active, .seg-btn:active, .filter-chip:active, .style-select-pill:active { transform: scale(0.97); }
+.gold-gradient-btn, .primary-btn { position: relative; overflow: hidden; }
+.gold-gradient-btn::after, .primary-btn::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.45) 50%, transparent 60%);
+    transform: translateX(-120%);
+}
+.gold-gradient-btn:active::after, .primary-btn:active::after {
+    transform: translateX(120%); transition: transform 0.45s ease;
+}
+
+/* ── AZ-5 · Tinted glass accents ─────────────────────────────────
+   Primary buttons: the shipped blue gradient becomes glass —
+   brighter inner top highlight + a soft inner floor reflection
+   under a glass-bright border. Selected pills outside the Recap
+   tab's own blue language gain the rim. */
+.gold-gradient-btn, .primary-btn {
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55),
+                inset 0 -10px 18px rgba(255, 255, 255, 0.10),
+                0 12px 28px rgba(10, 132, 255, 0.35);
+}
+.seg-btn.active, .pill-btn.active, .tb-tab-btn.active {
+    box-shadow: var(--rim-shadow), 0 2px 8px rgba(70, 110, 160, 0.18);
+}
+/* Warm-gold glass variant: the AU quality pill keeps its shipped
+   gold and gains the rim; the featured Master plan card trades
+   its blue tint for the warm gold glass its name promises. */
+#recap-quality-picker .pill-btn.active {
+    box-shadow: var(--rim-shadow), 0 2px 8px rgba(217, 154, 6, 0.35);
+}
+.pricing-card.featured-master {
+    background: linear-gradient(180deg, rgba(245, 185, 33, 0.14), var(--glass-1-bg) 55%);
+    border-color: rgba(217, 154, 6, 0.45);
+    box-shadow: var(--rim-shadow), 0 10px 34px rgba(217, 154, 6, 0.16);
+}
+/* Semantic tints raised to the same recipe (specular + rim). */
+.btn-approve, .btn-reject { box-shadow: var(--rim-shadow); }
+/* Media frames sit INTO the glass: deep inner shadow + edge
+   light on the two stage surfaces. */
+.mockup-screen, .recap-output-frame {
+    box-shadow: inset 0 2px 14px rgba(2, 6, 23, 0.45),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+                0 14px 34px rgba(70, 110, 160, 0.25);
+}
+
+/* ── AZ-7 · Toasts — presentation rebuilt ────────────────────────
+   Tier-3 glass + the AZ-2 rim (the surface recipe above), a
+   type-tinted inner wash, the icon in a tinted glass circle chip,
+   a liquid entrance (fade + rise + spring settle), a designed
+   exit (.leaving, applied by showStudioToast inside the existing
+   timeout budget — total on-screen time unchanged), and a slim
+   progress hairline in the type colour whose lifetime is the
+   call's own duration via --toast-life. Messages, durations,
+   close behaviour and the single-toast mechanism are unchanged;
+   the Myanmar line-height patches (1.95) stand untouched. */
+.studio-toast {
+    --toast-accent: var(--violet);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-3);
+    animation: studioToastIn 0.32s cubic-bezier(0.34, 1.25, 0.4, 1);
+}
+.studio-toast.success { --toast-accent: var(--green); box-shadow: var(--shadow-3), inset 0 0 28px rgba(11, 122, 85, 0.08); }
+.studio-toast.error { --toast-accent: var(--red); box-shadow: var(--shadow-3), inset 0 0 28px rgba(217, 45, 32, 0.07); }
+.studio-toast.warning { --toast-accent: #d99a06; box-shadow: var(--shadow-3), inset 0 0 28px rgba(217, 154, 6, 0.09); }
+.studio-toast.info { --toast-accent: var(--violet); box-shadow: var(--shadow-3), inset 0 0 28px rgba(91, 91, 214, 0.08); }
+@keyframes studioToastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(-10px) scale(0.96); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+.studio-toast.leaving {
+    opacity: 0; transform: translateX(-50%) translateY(6px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.studio-toast .toast-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; border-radius: 50%;
+    font-size: 15px; line-height: 1;
+    box-shadow: var(--glass-hi-soft);
+}
+.studio-toast.success .toast-icon { background: rgba(11, 122, 85, 0.16); box-shadow: inset 0 0 0 1px rgba(11, 122, 85, 0.35), var(--glass-hi-soft); }
+.studio-toast.error .toast-icon { background: rgba(217, 45, 32, 0.13); box-shadow: inset 0 0 0 1px rgba(217, 45, 32, 0.35), var(--glass-hi-soft); }
+.studio-toast.warning .toast-icon { background: rgba(217, 154, 6, 0.18); box-shadow: inset 0 0 0 1px rgba(217, 154, 6, 0.40), var(--glass-hi-soft); }
+.studio-toast.info .toast-icon { background: rgba(91, 91, 214, 0.13); box-shadow: inset 0 0 0 1px rgba(91, 91, 214, 0.35), var(--glass-hi-soft); }
+.studio-toast .toast-progress {
+    position: absolute; left: 0; bottom: 0; height: 2.5px; width: 100%;
+    background: var(--toast-accent); transform-origin: left center;
+    animation: toastProgressShrink linear forwards;
+    animation-duration: var(--toast-life, 3500ms);
+}
+@keyframes toastProgressShrink {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+}
+/* The toast's sibling surface speaks the same language. */
+.floating-alert-card {
+    box-shadow: var(--shadow-3);
+    animation: azAlertIn 0.32s cubic-bezier(0.34, 1.25, 0.4, 1);
+}
+@keyframes azAlertIn {
+    from { opacity: 0; transform: translateY(10px) scale(0.97); }
+    to { opacity: 1; transform: none; }
+}
+
+/* ── AZ-9 · Step indicator — liquid segmented capsule ────────────
+   One floating tier-2 glass capsule holding four segment buttons.
+   The CURRENT segment expands (flex-grow ≈ 2.4, springy) into the
+   gradient pill and shows number + step name in white — the name
+   lives only where there is room, which kills the AV/AX cramping
+   structurally. Completed segments are blue-tinted glass ✓ chips;
+   upcoming are frosted with a muted number. Session-truth and
+   tap-to-jump behaviour are AX-3R's, unchanged. */
+.recap-steps-capsule {
+    display: flex; align-items: stretch; gap: 6px;
+    padding: 6px; border-radius: 999px;
+    background: var(--glass-2-bg);
+    backdrop-filter: var(--glass-2-blur);
+    -webkit-backdrop-filter: var(--glass-2-blur);
+    border: 1px solid var(--glass-line);
+    box-shadow: var(--shadow-2);
+}
+.recap-steps-nav-item {
+    flex: 1 1 0; min-width: 44px; min-height: 44px; height: 44px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 0 8px; border: none; border-radius: 999px;
+    background: transparent; color: var(--text-3);
+    font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: flex-grow 0.38s cubic-bezier(0.34, 1.25, 0.4, 1),
+                background 0.25s ease, color 0.25s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.recap-steps-nav-num { font-size: 14px; font-weight: 800; line-height: 1.4; flex-shrink: 0; }
+.recap-steps-nav-name {
+    display: none; min-width: 0;
+    font-size: 13px; font-weight: 700; line-height: 1.5;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.recap-steps-nav-item.is-done {
+    background: rgba(10, 132, 255, 0.12); color: var(--gold-2);
+}
+.recap-steps-nav-item.is-active {
+    flex-grow: 2.4; color: #ffffff;
+    background: linear-gradient(90deg, #0a84ff, #38bdf8);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 4px 14px rgba(10, 132, 255, 0.35);
+}
+.recap-steps-nav-item.is-active .recap-steps-nav-name { display: inline; }
+.recap-steps-nav-item.pop { animation: recap-step-pop 0.28s ease; }
+@keyframes recap-step-pop {
+    0% { transform: scale(0.94); }
+    55% { transform: scale(1.03); }
+    100% { transform: scale(1); }
+}
+
+/* ── AZ-10 · Text-defect fixes (live-observed on r70) ────────────
+   The class fix first: controls carrying Myanmar text get
+   min-height (never a fixed height), line-height ≥ 1.6 and
+   descender-clearing padding. Instances follow. */
+/* Class: pill labels never starve their glyph stacks. */
+.pill-btn { line-height: 1.6; }
+/* Class: pills break only at word boundaries — never mid-word
+   (the "Korean (ကိုရီး / ယား)" failure). */
+.pill-btn, .style-select-pill, .filter-chip { word-break: keep-all; overflow-wrap: normal; }
+/* 1 · Header balance chips: proper glass pills — icon + value,
+   vertically centred, fully inside the header. */
+.balance-chips { align-items: center; }
+.bal-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    min-height: 34px; padding: 6px 12px;
+    font-size: 13px; line-height: 1.6; vertical-align: middle;
+    background: var(--glass-2-bg);
+    border: 1px solid var(--glass-line);
+    box-shadow: var(--glass-hi-soft);
+}
+/* 2 · Voice speed pills: full height + descender room. */
+#speed-selector .pill-btn {
+    min-height: 44px; padding: 7px 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+/* 3 · VIP plan buttons + card lines: numerals and ဝယ်မည် clear. */
+.pricing-card .btn { min-height: 56px; line-height: 1.7; padding: 12px 18px; }
+.plan-name { line-height: 1.6; }
+/* 4 · Bottom-nav labels: raised line-height + bottom clearance
+   inside the pill (the sliding AZ-4 pill matches the item box, so
+   labels stay clear of it by construction). */
+.nav-item { line-height: 1.6; }
+.nav-label { line-height: 1.6; padding-bottom: 2px; }
+body.lang-my .nav-label { line-height: 1.75; }
+/* 5 · CTA/nav occlusion: the Voice pane gains the same order of
+   bottom room the Recap pane already carries (B2: 120px), so at
+   full scroll nothing rests under the sticky CTA bar + floating
+   nav. Sticky-bar zone ≈ 86px offset + ~70px bar; the viewport's
+   own ~118px clearance + this 72px clears it with a gap. */
+#tab-voice { padding-bottom: 72px; }
+/* 8 · Admin sub-texts + card labels: descender clearance. */
+.stat-lbl { line-height: 1.65; }
+.card-label { line-height: 1.6; }
+/* 9 · Welcome-strip touch targets ≥ 44px. */
+.welcome-strip-btn { min-height: 44px; display: inline-flex; align-items: center; }
+.welcome-strip-x {
+    min-width: 44px; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* ── AZ-11 · Compact dropdown pattern ────────────────────────────
+   One glass dropdown row for every choice set with >5 options:
+   tier-1 glass fill, the rim, an inset well shadow and a chevron
+   (the queue-engine-select asset family). The Recap language
+   select and the subtitle-style select carry .glass-dropdown;
+   the Gemini voice select joins the same pattern; admin selects
+   (select.studio-input) get the chevron treatment — restyle
+   only, no structure change anywhere. */
+.glass-dropdown {
+    appearance: none; -webkit-appearance: none;
+    min-height: 50px; padding: 10px 40px 10px 14px;
+    background-color: var(--glass-1-bg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath d='M1.5 1.5L6 5.5L10.5 1.5' stroke='%2347617c' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 14px center;
+    border: 1px solid var(--glass-line); border-radius: var(--r-md);
+    box-shadow: var(--rim-shadow), var(--shadow-inset);
+    font-size: 14.5px; font-weight: 600; line-height: 1.6; color: var(--text);
+}
+select.studio-input {
+    appearance: none; -webkit-appearance: none;
+    padding-right: 36px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath d='M1.5 1.5L6 5.5L10.5 1.5' stroke='%2347617c' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+}
+/* Voice persona picker (already the compact pattern — selected
+   row + expand-in-place grid): restyle only, into the glass
+   language. */
+.voice-selected-row {
+    border-color: var(--glass-line);
+    box-shadow: var(--shadow-tile);
+}
+
+/* ── AZ fallbacks: extend the no-backdrop-filter + reduced-
+   transparency nets to every new layer ────────────────────────── */
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+    :root {
+        --glass-1-bg: rgba(255, 255, 255, 0.96);
+        --glass-2-bg: rgba(255, 255, 255, 0.97);
+        --glass-3-bg: #ffffff;
+    }
+    .card, .top-nav, .bottom-nav, .modal-content, .studio-confirm-card,
+    .gate-lock-card, .studio-toast, .floating-alert-card, .sticky-cta-bar,
+    .submit-confirm-card, .live-jobs-sheet-card, .advanced-studio-accordion,
+    .tutorial-banner-card, .studio-alert-carousel, .recap-steps-capsule {
+        background: #ffffff; border-color: var(--border-strong);
+    }
+    .top-nav { --az-bg: #ffffff; }
+    .bottom-nav { --az-bg: #ffffff; }
+}
+@media (prefers-reduced-transparency: reduce) {
+    :root {
+        --glass-1-bg: rgba(255, 255, 255, 0.96);
+        --glass-2-bg: rgba(255, 255, 255, 0.97);
+        --glass-3-bg: #ffffff;
+    }
+    .recap-steps-capsule, .live-jobs-pill, .sticky-cta-bar,
+    .gate-lock-card, .submit-confirm-card, .live-jobs-sheet-card {
+        backdrop-filter: none; -webkit-backdrop-filter: none;
+    }
+    .top-nav { --az-bg: rgba(255, 255, 255, 0.97); }
+    .bottom-nav { --az-bg: rgba(255, 255, 255, 0.97); }
+    .recap-steps-capsule { background: rgba(255, 255, 255, 0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+    body::before { animation: none; }
+    .recap-steps-nav-item { transition: none; }
+    .nav-pill { transition: none; }
+    .studio-toast, .floating-alert-card, .modal-content,
+    .studio-confirm-card, .gate-lock-card, .live-jobs-sheet-card,
+    .submit-confirm-card { animation: none; }
+    .studio-toast .toast-progress { animation: none; }
 }

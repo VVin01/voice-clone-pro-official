@@ -71,9 +71,11 @@ def test_rs7_column_counts_divide_evenly():
     assert "#font-size-picker-toolbar { grid-template-columns: repeat(4, 1fr)" in block
     # Logo Position: 4 options as 2x2.
     assert "#recap-logo-pos-picker { grid-template-columns: repeat(2, 1fr)" in block
-    # Subtitle Style: 7 chips in 2 columns — the 7th is a normal cell,
-    # no longer stretched full-width by flex-grow.
-    assert "#sub-style-picker {" in block and "repeat(2, 1fr)" in block
+    # Subtitle Style: Batch AZ-11 retired the 7-chip grid for ONE
+    # compact dropdown — there is no chip grid left to divide; the
+    # picker is a <select> (its options are pinned in the AZ tests).
+    assert "#sub-style-picker .style-chip" not in block
+    assert "#sub-style-picker { display: grid" not in block
     # Speed: 5 options as 3+2 across a 6-column grid.
     assert "#recap-speed-picker { grid-template-columns: repeat(6, 1fr)" in block
     assert "#recap-speed-picker .pill-btn { grid-column: span 2; }" in block
@@ -136,5 +138,5 @@ def test_rs7_mirror_single_label():
 
 
 def test_cache_buster_bumped_for_settings_ui():
-    assert HTML.count("?v=20261104_r71") == 4
+    assert HTML.count("?v=20261104_r72") == 4
     assert "?v=20261102_rr1" not in HTML

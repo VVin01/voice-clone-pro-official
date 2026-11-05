@@ -111,8 +111,10 @@ def test_admin_force_unlock_from_profile():
 def test_lock_chips_share_banner_chip_semantics():
     js = _js()
     # renderGateChips paints BOTH surfaces (banner + lock) from one call.
-    assert 'paintGateChip(document.getElementById("gate-lock-chip-channel"), "📢 Channel", channelOk)' in js
-    assert 'paintGateChip(document.getElementById("gate-lock-chip-group"), "👥 Group", groupOk)' in js
+    # Batch AZ-12: the chip labels resolve through i18n keys now
+    # (gate_chip_channel / gate_chip_group, both locales).
+    assert 'paintGateChip(document.getElementById("gate-lock-chip-channel"), t("gate_chip_channel"), channelOk)' in js
+    assert 'paintGateChip(document.getElementById("gate-lock-chip-group"), t("gate_chip_group"), groupOk)' in js
     # ...and the verdict path repaints them from the live response.
     assert "renderGateChips(data.channel_verified, data.group_verified)" in js
 

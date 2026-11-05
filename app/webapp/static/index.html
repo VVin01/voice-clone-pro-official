@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r71">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r72">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r71" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r72" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -38,8 +38,8 @@
                 <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free">FREE</span>
                 <span class="live-dot" title="Live"><span class="live-dot-pulse"></span>LIVE</span>
                 <div class="balance-chips">
-                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes">🎙️ 0.0m</span>
-                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits">🎬 0c</span>
+                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title">🎙️ 0.0m</span>
+                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title">🎬 0c</span>
                 </div>
             </div>
         </header>
@@ -52,8 +52,8 @@
                 <span id="gate-banner-desc" data-i18n="gate_banner_desc">Channel နဲ့ Group ကို Join လိုက်ရင် Voice / Recap အကုန် သုံးနိုင်ပါပြီ။ Join ပြီးရင် «ပြန်စစ်မည်» ကို နှိပ်လိုက်ရုံပါပဲ။</span>
             </div>
             <div class="gate-banner-chips">
-                <span id="gate-chip-channel" class="gate-chip">📢 Channel</span>
-                <span id="gate-chip-group" class="gate-chip">👥 Group</span>
+                <span id="gate-chip-channel" class="gate-chip" data-i18n="gate_chip_channel">📢 Channel</span>
+                <span id="gate-chip-group" class="gate-chip" data-i18n="gate_chip_group">👥 Group</span>
             </div>
             <div class="gate-banner-actions">
                 <a id="gate-link-channel" class="btn mini-btn" data-i18n="gate_join_channel" href="#" target="_blank" rel="noopener">📢 Channel ကို Join မည်</a>
@@ -470,24 +470,30 @@
 
                 <!-- 🎬 STREAMLINED STUDIO UX: 3-STEP PRIMARY FLOW + ADVANCED ACCORDION -->
                 <div class="recap-streamlined-container">
+<!-- Batch AZ-9: the indicator is ONE liquid segmented capsule —
+     the current segment expands into a gradient pill carrying its
+     step name; completed segments are tinted-glass ✓ chips; the
+     AX-2R track/fill/caption are gone (the name lives in the
+     expanded segment, and in full in the step card head below). -->
 <div class="recap-steps-nav" id="recap-steps-nav">
-    <div class="recap-steps-track">
-        <span class="recap-steps-track-bg" aria-hidden="true"></span>
-        <span class="recap-steps-track-fill" id="recap-steps-track-fill" aria-hidden="true"></span>
+    <div class="recap-steps-capsule">
         <button type="button" class="recap-steps-nav-item is-active" data-step-toggle="1" aria-label="1">
             <span class="recap-steps-nav-num" data-step-pill="1">1</span>
+            <span class="recap-steps-nav-name" data-i18n="recap_step1_title">Source ထည့်သွင်းပါ</span>
         </button>
         <button type="button" class="recap-steps-nav-item" data-step-toggle="2" aria-label="2">
             <span class="recap-steps-nav-num" data-step-pill="2">2</span>
+            <span class="recap-steps-nav-name" data-i18n="recap_step_nav_preview">အစမ်းကြည့်ရှုမှု</span>
         </button>
         <button type="button" class="recap-steps-nav-item" data-step-toggle="3" aria-label="3">
             <span class="recap-steps-nav-num" data-step-pill="3">3</span>
+            <span class="recap-steps-nav-name" data-i18n="recap_step_nav_voice">အသံ</span>
         </button>
         <button type="button" class="recap-steps-nav-item" data-step-toggle="4" aria-label="4">
             <span class="recap-steps-nav-num" data-step-pill="4">4</span>
+            <span class="recap-steps-nav-name" data-i18n="recap_step4_title">ဖန်တီးရန်</span>
         </button>
     </div>
-    <div class="recap-steps-caption" id="recap-steps-caption"><span data-i18n="recap_step_word">အဆင့်</span> <span id="recap-steps-caption-pos">1/4</span> · <span id="recap-steps-caption-name" data-i18n="recap_step1_title">Source ထည့်သွင်းပါ</span></div>
 </div>
                             <p class="prefs-saved-note hidden" id="prefs-saved-note"></p>
 <div class="card glass recap-step-card recap-step" id="recap-step-1" data-step="1">
@@ -561,7 +567,7 @@
                 <div class="recap-info-tags">
                     <span class="mini-tag" id="recap-info-dur">⏱️ 00:00</span>
                     <span class="mini-tag" id="recap-info-platform">YouTube</span>
-                    <span class="mini-tag text-green" id="recap-info-sub">✅ Ready for 1080p Recap</span>
+                    <span class="mini-tag text-green" id="recap-info-sub" data-i18n="recap_info_ready">✅ Recap အတွက် အဆင်သင့်</span>
                 </div>
             </div>
         </div>
@@ -781,22 +787,25 @@
                         </div>
                         <div class="style-selector-row">
                             <span class="style-lbl" data-i18n="sub_style_label">စာတန်း စတိုင်လ်:</span>
-                            <div class="chip-options" id="sub-style-picker">
-                                <button class="style-chip active" data-style="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</button>
-                                <button class="style-chip" data-style="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</button>
-                                <button class="style-chip" data-style="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</button>
-                                <button class="style-chip" data-style="neon" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</button>
-                                <button class="style-chip" data-style="band" data-i18n="recap_sub_band">⬛ Band (အပြည့်ပတ်)</button>
-                                <button class="style-chip" data-style="heavy" data-i18n="recap_sub_heavy">🔲 Heavy (နောက်ခံထူ)</button>
-                                <button class="style-chip" data-style="soft" data-i18n="recap_sub_soft">🌫️ Soft (နောက်ခံပါး)</button>
-                            </div>
+                            <!-- Batch AZ-11: 7 styles (>5) become ONE compact
+                                 dropdown row; the select keeps the picker's id
+                                 and writes the same state.recapSubStyle. -->
+                            <select id="sub-style-picker" class="studio-select glass-dropdown" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
+                                <option value="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</option>
+                                <option value="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</option>
+                                <option value="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</option>
+                                <option value="neon" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</option>
+                                <option value="band" data-i18n="recap_sub_band">⬛ Band (အပြည့်ပတ်)</option>
+                                <option value="heavy" data-i18n="recap_sub_heavy">🔲 Heavy (နောက်ခံထူ)</option>
+                                <option value="soft" data-i18n="recap_sub_soft">🌫️ Soft (နောက်ခံပါး)</option>
+                            </select>
                         </div>
                         <div class="style-selector-grid-2 mt-2">
                             <div class="spec-col-half">
                                 <span class="style-lbl" data-i18n="recap_sub_lines_label">စာကြောင်းရေ (Lines):</span>
                                 <div class="pill-group sm" id="sub-lines-picker-toolbar">
-                                    <button class="pill-btn active" data-lines="1">1 Line</button>
-                                    <button class="pill-btn" data-lines="2">2 Lines</button>
+                                    <button class="pill-btn active" data-lines="1" data-i18n="sub_lines_one">၁ ကြောင်း</button>
+                                    <button class="pill-btn" data-lines="2" data-i18n="sub_lines_two">၂ ကြောင်း</button>
                                 </div>
                             </div>
                             <div class="spec-col-half">
@@ -1058,8 +1067,8 @@
                                             </div>
                                             <div class="recap-gemini-wrap hidden mt-2" id="recap-gemini-voice-wrap">
                                                 <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
-                                                <select id="recap-gemini-voice-select" class="studio-select recap-gemini-select">
-                                                    <option value="">Auto</option>
+                                                <select id="recap-gemini-voice-select" class="studio-select glass-dropdown recap-gemini-select">
+                                                    <option value="" data-i18n="recap_gemini_auto">Auto</option>
                                                     <option value="Charon" data-i18n="gem_voice_charon">ကိုသီဟ (ကျား)</option>
                                                     <option value="Algenib" data-i18n="gem_voice_algenib">ကိုအာကာ (ကျား)</option>
                                                     <option value="Orus" data-i18n="gem_voice_orus">ကိုမင်းခန့် (ကျား)</option>
@@ -1225,17 +1234,12 @@
         </div>
         <div class="recap-lang-block mt-3">
                                             <span class="spec-lbl" data-i18n="recap_lang_label">မူရင်းဗီဒီယို ဘာသာစကား:</span>
-                                            <div class="pill-group sm lang-grid mt-2" id="recap-lang-picker">
-                                            <button type="button" class="pill-btn active" data-lang="auto" data-i18n="recap_lang_auto">Auto (အလိုအလျောက်)</button>
-                                            <button type="button" class="pill-btn" data-lang="my" data-i18n="recap_lang_my">Myanmar (မြန်မာ)</button>
-                                            <button type="button" class="pill-btn" data-lang="en" data-i18n="recap_lang_en">English (အင်္ဂလိပ်)</button>
-                                            <button type="button" class="pill-btn" data-lang="th" data-i18n="recap_lang_th">Thai (ထိုင်း)</button>
-                                            <button type="button" class="pill-btn" data-lang="zh" data-i18n="recap_lang_zh">Chinese (တရုတ်)</button>
-                                            <button type="button" class="pill-btn" data-lang="ko" data-i18n="recap_lang_ko">Korean (ကိုရီးယား)</button>
-                                            <button type="button" class="pill-btn" data-lang="ja" data-i18n="recap_lang_ja">Japanese (ဂျပန်)</button>
-                                            </div>
-                                            <select id="recap-lang-more" class="studio-select recap-lang-more mt-2" data-i18n-aria="recap_lang_more_label" aria-label="နောက်ထပ် ဘာသာများ">
-                                                <option value="" data-i18n="recap_lang_more_label">နောက်ထပ် ဘာသာများ…</option>
+                                            <!-- Batch AZ-11: ONE compact dropdown row — the
+                                                 AX-5 frequent pills are retired; this select
+                                                 is the only control and lists all 18 values.
+                                                 It still writes through setRecapSourceLanguage
+                                                 (single state, single payload field). -->
+                                            <select id="recap-lang-more" class="studio-select glass-dropdown recap-lang-more mt-2" data-i18n-aria="recap_lang_label" aria-label="မူရင်းဗီဒီယို ဘာသာစကား:">
                                                 <option value="auto" data-lang="auto" data-i18n="recap_lang_auto">Auto (အလိုအလျောက်)</option>
                                                 <option value="my" data-lang="my" data-i18n="recap_lang_my">Myanmar (မြန်မာ)</option>
                                                 <option value="en" data-lang="en" data-i18n="recap_lang_en">English (အင်္ဂလိပ်)</option>
@@ -1302,7 +1306,7 @@
         </div>
         <div class="recap-step4-quote">
             <span class="recap-step4-quote-label" data-i18n="recap_step4_quote_label">ကုန်ကျမည့် Credit</span>
-            <span class="recap-step4-quote-value"><span id="recap-step4-quote-credits">1</span> <span class="recap-step4-quote-unit">Credit</span></span>
+            <span class="recap-step4-quote-value"><span id="recap-step4-quote-credits">1</span> <span class="recap-step4-quote-unit" data-i18n="recap_step4_quote_unit">Credit</span></span>
         </div>
         <div class="style-selector-row mt-2">
             <span class="style-lbl" data-i18n="recap_quality_label">Render အရည်အသွေး:</span>
@@ -2451,6 +2455,11 @@
         <!-- ════ BOTTOM LUXURY FLOATING DOCK ════ -->
         <div class="nav-scrim" aria-hidden="true"></div>
         <nav class="bottom-nav">
+            <!-- Batch AZ-4: ONE sliding liquid pill sits behind the
+                 active item; moveNavPill() positions it from the
+                 active item's own box, so any future nav item joins
+                 automatically. -->
+            <span class="nav-pill" id="nav-active-pill" aria-hidden="true"></span>
             <button class="nav-item active" data-tab="tab-home">
                 <span class="nav-icon">🏠</span>
                 <span class="nav-label" data-i18n="tab_home">ပင်မ</span>
@@ -2522,8 +2531,8 @@
             <h3 id="gate-lock-title" data-i18n="gate_lock_title">🔐 Channel နဲ့ Group Join ပြီးမှ သုံးနိုင်ပါမယ်</h3>
             <p id="gate-lock-desc" class="modal-desc" data-i18n="gate_lock_desc">Voice Clone Pro ကို အသုံးပြုဖို့ Channel နဲ့ Group နှစ်ခုလုံးကို Join ထားဖို့ လိုပါတယ်။ Join ပြီးရင် «ပြန်စစ်မည်» ကို နှိပ်လိုက်ရုံနဲ့ ချက်ချင်း ဖွင့်ပေးပါမယ်။ နောက်ပိုင်း တစ်ခုခုကနေ ပြန်ထွက်သွားရင် App က ပြန်ပိတ်သွားပါမယ်။</p>
             <div class="gate-banner-chips gate-lock-chips">
-                <span id="gate-lock-chip-channel" class="gate-chip">📢 Channel</span>
-                <span id="gate-lock-chip-group" class="gate-chip">👥 Group</span>
+                <span id="gate-lock-chip-channel" class="gate-chip" data-i18n="gate_chip_channel">📢 Channel</span>
+                <span id="gate-lock-chip-group" class="gate-chip" data-i18n="gate_chip_group">👥 Group</span>
             </div>
             <div class="gate-lock-actions">
                 <a id="gate-lock-link-channel" class="btn mini-btn" data-i18n="gate_join_channel" href="#" target="_blank" rel="noopener">📢 Channel ကို Join မည်</a>
@@ -2549,7 +2558,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r71"></script>
-    <script src="/static/js/app.js?v=20261104_r71"></script>
+    <script src="/static/js/i18n.js?v=20261104_r72"></script>
+    <script src="/static/js/app.js?v=20261104_r72"></script>
 </body>
 </html>
