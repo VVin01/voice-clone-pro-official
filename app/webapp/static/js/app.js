@@ -615,6 +615,52 @@ function setupSamplePlayers() {
         const authUrl = await fetchAuthImageUrl(url);
         if (authUrl) el.src = authUrl;
     });
+    // Batch AY: branded mini-player buttons drive the SAME elements
+    // (native controls are gone). Button state is rendered FROM the
+    // media events, never from the click, so the one-at-a-time pause
+    // above also resets the other row's button + progress.
+    const wireSampleButton = (el, btnId, fillId) => {
+        const btn = document.getElementById(btnId);
+        if (!el || !btn) return;
+        const icon = btn.querySelector(".sample-play-icon");
+        const fill = document.getElementById(fillId);
+        const render = () => {
+            const playing = !el.paused && !el.ended;
+            if (icon) icon.textContent = playing ? "⏸" : "▶";
+            btn.classList.toggle("playing", playing);
+            btn.setAttribute("aria-label", t(playing ? "sample_pause" : "sample_play"));
+            if (el.ended && fill) fill.style.width = "0%";
+        };
+        btn.addEventListener("click", () => {
+            if (el.paused || el.ended) {
+                const p = el.play();
+                if (p && p.catch) p.catch(() => {});
+            } else {
+                el.pause();
+            }
+        });
+        ["play", "pause", "ended"].forEach((ev) => el.addEventListener(ev, render));
+        el.addEventListener("timeupdate", () => {
+            if (fill && el.duration > 0) {
+                fill.style.width = `${Math.min(100, (el.currentTime / el.duration) * 100)}%`;
+            }
+        });
+        render();
+    };
+    wireSampleButton(a, "sample-btn-voice", "sample-progress-voice");
+    wireSampleButton(b, "sample-btn-recap", "sample-progress-recap");
+}
+
+// ── Home tutorials accordion (Batch AY + owner addendum): the
+// card's header row is the toggle; the full guide list unfolds in
+// place inside the card and collapses again on the next tap. ──────
+function toggleHomeTutorials() {
+    const more = document.getElementById("home-tut-more");
+    const btn = document.getElementById("home-tut-expand");
+    if (!more || !btn) return;
+    const open = more.classList.toggle("hidden") === false;
+    btn.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function getAuthHeaders(includeContentType = true) {

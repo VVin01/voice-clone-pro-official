@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r70">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r71">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r70" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r71" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -67,7 +67,7 @@
         <!-- ════ MAIN CONTENT VIEWPORT ════ -->
         <main class="content-viewport">
             
-            <!-- ════ TAB: HOME (landing — samples, tutorials, start) ════ -->
+            <!-- ════ TAB: HOME (landing — start, tools, samples, tutorials, refer, support) ════ -->
             <section id="tab-home" class="tab-pane active">
                 <!-- One-time welcome strip: shown by refreshWelcomeStrip()
                      ONLY to a Free-plan account with zero completed jobs
@@ -79,95 +79,171 @@
                     <button type="button" class="welcome-strip-btn" data-i18n="welcome_strip_btn" onclick="switchTab('tab-recap')">🎬 Recap စလုပ်မည်</button>
                     <button type="button" class="welcome-strip-x" aria-label="Dismiss" onclick="dismissWelcomeStrip()">✕</button>
                 </div>
+                <!-- Start creating (Batch AY hero): the two studios as
+                     large side-by-side tiles — the tab's primary visual.
+                     Same destinations as the stacked rows they replace
+                     (Batch AY-1); hints reuse the rows' desc strings. -->
+                <div class="card glass" id="home-start-card">
+                    <div class="card-label" data-i18n="home_start_title">စတင် ဖန်တီးရန်</div>
+                    <div class="home-tile-grid">
+                        <button type="button" class="home-tile" onclick="switchTab('tab-voice')">
+                            <span class="home-tile-icon">🎙️</span>
+                            <span class="home-tile-name-row">
+                                <span class="home-tile-name" data-i18n="home_start_voice_name">Voice Studio</span>
+                                <span class="home-tile-chevron">›</span>
+                            </span>
+                            <span class="home-tile-hint" data-i18n="home_start_voice_desc">စာသားမှ အသံတူ Clone ဖန်တီးရန်</span>
+                        </button>
+                        <button type="button" class="home-tile" onclick="switchTab('tab-recap')">
+                            <span class="home-tile-icon">🎬</span>
+                            <span class="home-tile-name-row">
+                                <span class="home-tile-name" data-i18n="home_start_recap_name">Recap Maker</span>
+                                <span class="home-tile-chevron">›</span>
+                            </span>
+                            <span class="home-tile-hint" data-i18n="home_start_recap_desc">ဗီဒီယိုမှ Recap ဇာတ်လမ်း ဖန်တီးရန်</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tools / Library: Downloader + History live here now
+                     (owner decision 2026-11-01) — the bottom nav carries
+                     only the four primary destinations; these two views
+                     keep their panes, deep links and in-studio links.
+                     Batch AY: the two rows become half-width tiles in
+                     the same tile language as the Start hero. -->
+                <div class="card glass" id="home-tools-card">
+                    <div class="card-label" data-i18n="home_tools_title">🧰 ကိရိယာ နှင့် မှတ်တမ်း</div>
+                    <div class="home-tile-grid">
+                        <button type="button" class="home-tile" onclick="switchTab('tab-downloader')">
+                            <span class="home-tile-icon">📥</span>
+                            <span class="home-tile-name-row">
+                                <span class="home-tile-name" data-i18n="home_tools_dl_name">ဗီဒီယို ဒေါင်းလုဒ်</span>
+                                <span class="home-tile-chevron">›</span>
+                            </span>
+                            <span class="home-tile-hint" data-i18n="home_tools_dl_desc">YouTube၊ TikTok၊ Facebook link တို့မှ ဗီဒီယို/အသံ ဆွဲယူရန်</span>
+                        </button>
+                        <button type="button" class="home-tile" onclick="openHistoryHub()">
+                            <span class="home-tile-icon">📜</span>
+                            <span class="home-tile-name-row">
+                                <span class="home-tile-name" data-i18n="home_tools_history_name">ကျွန်ုပ်၏ မှတ်တမ်း</span>
+                                <span class="home-tile-chevron">›</span>
+                            </span>
+                            <span class="home-tile-hint" data-i18n="home_tools_history_desc">ဖန်တီးခဲ့သော အသံနှင့် Recap အလုပ်များ အားလုံး</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Samples card: real persona samples served by the app's
                      own /api/voices/sample route — komin for the Voice
                      Clone sample, mahnin (a Recap Studio narrator) for
-                     the Recap narration sample. Playable inline. -->
+                     the Recap narration sample. Playable inline.
+                     Batch AY: branded mini-player rows — a round gradient
+                     play/pause button drives the SAME <audio> elements
+                     (native controls hidden; setupSamplePlayers() keeps
+                     the auth blob-src loading + one-at-a-time rule). -->
                 <div class="card glass home-samples-card" id="home-samples-card">
                     <div class="card-label" data-i18n="samples_title">🎧 နမူနာ နားထောင်ကြည့်ပါ</div>
                     <div class="sample-row">
-                        <div class="sample-meta">
-                            <span class="sample-name" data-i18n="sample_voice_name">🎙️ ကိုမင်း (Ko Min)</span>
-                            <span class="sample-desc" data-i18n="sample_voice_desc">Voice Clone နမူနာ အသံ</span>
+                        <div class="sample-main">
+                            <button type="button" class="sample-play-btn" id="sample-btn-voice" data-sample-toggle="sample-audio-voice" aria-label="နမူနာ ဖွင့်မည်" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
+                            <div class="sample-meta">
+                                <span class="sample-name" data-i18n="sample_voice_name">🎙️ ကိုမင်း (Ko Min)</span>
+                                <span class="sample-desc" data-i18n="sample_voice_desc">Voice Clone နမူနာ အသံ</span>
+                            </div>
                         </div>
-                        <audio id="sample-audio-voice" class="sample-audio" controls preload="none" data-sample-url="/api/voices/sample/komin"></audio>
+                        <div class="sample-progress" aria-hidden="true"><span class="sample-progress-fill" id="sample-progress-voice"></span></div>
+                        <audio id="sample-audio-voice" class="sample-audio" preload="none" data-sample-url="/api/voices/sample/komin"></audio>
                     </div>
                     <div class="sample-row">
-                        <div class="sample-meta">
-                            <span class="sample-name" data-i18n="sample_recap_name">🎬 မနှင်း (Ma Hnin)</span>
-                            <span class="sample-desc" data-i18n="sample_recap_desc">Recap ဇာတ်လမ်းပြော နမူနာ အသံ</span>
+                        <div class="sample-main">
+                            <button type="button" class="sample-play-btn" id="sample-btn-recap" data-sample-toggle="sample-audio-recap" aria-label="နမူနာ ဖွင့်မည်" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
+                            <div class="sample-meta">
+                                <span class="sample-name" data-i18n="sample_recap_name">🎬 မနှင်း (Ma Hnin)</span>
+                                <span class="sample-desc" data-i18n="sample_recap_desc">Recap ဇာတ်လမ်းပြော နမူနာ အသံ</span>
+                            </div>
                         </div>
-                        <audio id="sample-audio-recap" class="sample-audio" controls preload="none" data-sample-url="/api/voices/sample/mahnin"></audio>
+                        <div class="sample-progress" aria-hidden="true"><span class="sample-progress-fill" id="sample-progress-recap"></span></div>
+                        <audio id="sample-audio-recap" class="sample-audio" preload="none" data-sample-url="/api/voices/sample/mahnin"></audio>
                     </div>
                 </div>
 
-                <!-- Tutorials card: all 10 channel tutorials in one tidy
-                     list; every row resolves settings-first via
-                     openTutorialVideo(). The header chip opens the index
-                     post (msg 38) which links the whole set. -->
+                <!-- Tutorials card: all 10 channel tutorials; every
+                     row resolves settings-first via openTutorialVideo().
+                     Owner addendum (Batch AY, 2026-11-06 01:18): long
+                     lists become compact dropdowns — the card collapses
+                     to ONE header row (title + count + chevron) and the
+                     full list, index chip included, unfolds in place
+                     inside the card (accordion) on tap. No link removed. -->
                 <div class="card glass" id="home-tutorials-card">
-                    <div class="card-header-row">
-                        <div class="card-label" data-i18n="tutorials_card_title">📚 Tutorial လမ်းညွှန်များ</div>
-                        <button type="button" class="mini-chip" onclick="openTutorialVideo('index')"><span data-i18n="tut_all_title">Tutorial အားလုံး</span></button>
-                    </div>
-                    <div class="home-tut-list">
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('bot')">
-                            <span class="home-tut-icon">🤖</span>
-                            <span class="home-tut-name" data-i18n="tut_bot_title">Bot အသုံးပြုနည်း လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('voice')">
-                            <span class="home-tut-icon">🎙️</span>
-                            <span class="home-tut-name" data-i18n="tut_voice_title">Voice Clone ပြုလုပ်နည်း လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('recap')">
-                            <span class="home-tut-icon">🎬</span>
-                            <span class="home-tut-name" data-i18n="tut_recap_title">Movie Recap ပြုလုပ်နည်း လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('plans')">
-                            <span class="home-tut-icon">💎</span>
-                            <span class="home-tut-name" data-i18n="tut_plans_title">Plans ဝယ်နည်း လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('customvoice')">
-                            <span class="home-tut-icon">👤</span>
-                            <span class="home-tut-name" data-i18n="tut_custom_title">Custom Voice လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('downloader')">
-                            <span class="home-tut-icon">📥</span>
-                            <span class="home-tut-name" data-i18n="tut_downloader_title">Downloader လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('scriptedit')">
-                            <span class="home-tut-icon">📝</span>
-                            <span class="home-tut-name" data-i18n="tut_script_title">Script ပြင်နည်း လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('recapadvanced')">
-                            <span class="home-tut-icon">⚙️</span>
-                            <span class="home-tut-name" data-i18n="tut_advanced_title">Recap Advanced လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('refer')">
-                            <span class="home-tut-icon">🎁</span>
-                            <span class="home-tut-name" data-i18n="tut_refer_title">Refer &amp; Earn လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openTutorialVideo('support')">
-                            <span class="home-tut-icon">🛟</span>
-                            <span class="home-tut-name" data-i18n="tut_support_title">အကူအညီ လမ်းညွှန်</span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
+                    <button type="button" class="home-tut-head" id="home-tut-expand" aria-expanded="false" onclick="toggleHomeTutorials()">
+                        <span class="card-label" data-i18n="tutorials_card_title">📚 Tutorial လမ်းညွှန်များ</span>
+                        <span class="home-tut-count" data-i18n="home_tut_count">၁၀ ခု</span>
+                        <span class="home-tut-expand-chevron" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="home-tut-more hidden" id="home-tut-more">
+                        <div class="home-tut-index-row">
+                            <button type="button" class="mini-chip" onclick="openTutorialVideo('index')"><span data-i18n="tut_all_title">Tutorial အားလုံး</span></button>
+                        </div>
+                        <div class="home-tut-list">
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('bot')">
+                                <span class="home-tut-icon">🤖</span>
+                                <span class="home-tut-name" data-i18n="tut_bot_title">Bot အသုံးပြုနည်း လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('voice')">
+                                <span class="home-tut-icon">🎙️</span>
+                                <span class="home-tut-name" data-i18n="tut_voice_title">Voice Clone ပြုလုပ်နည်း လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('recap')">
+                                <span class="home-tut-icon">🎬</span>
+                                <span class="home-tut-name" data-i18n="tut_recap_title">Movie Recap ပြုလုပ်နည်း လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('plans')">
+                                <span class="home-tut-icon">💎</span>
+                                <span class="home-tut-name" data-i18n="tut_plans_title">Plans ဝယ်နည်း လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('customvoice')">
+                                <span class="home-tut-icon">👤</span>
+                                <span class="home-tut-name" data-i18n="tut_custom_title">Custom Voice လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('downloader')">
+                                <span class="home-tut-icon">📥</span>
+                                <span class="home-tut-name" data-i18n="tut_downloader_title">Downloader လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('scriptedit')">
+                                <span class="home-tut-icon">📝</span>
+                                <span class="home-tut-name" data-i18n="tut_script_title">Script ပြင်နည်း လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('recapadvanced')">
+                                <span class="home-tut-icon">⚙️</span>
+                                <span class="home-tut-name" data-i18n="tut_advanced_title">Recap Advanced လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('refer')">
+                                <span class="home-tut-icon">🎁</span>
+                                <span class="home-tut-name" data-i18n="tut_refer_title">Refer &amp; Earn လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                            <button type="button" class="home-tut-row" onclick="openTutorialVideo('support')">
+                                <span class="home-tut-icon">🛟</span>
+                                <span class="home-tut-name" data-i18n="tut_support_title">အကူအညီ လမ်းညွှန်</span>
+                                <span class="home-tut-chevron">›</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Refer & Support (round-6 P2): the referral programme
-                     lives in the bot; this card exposes the user's own
-                     link + counts in-app, and Support is one tap to the
-                     admin handle instead of only a tutorial post. -->
+                <!-- Refer (round-6 P2): the referral programme lives in
+                     the bot; this card exposes the user's own link +
+                     counts in-app. Batch AY: the Support contact row
+                     moved out into its own slim card below — this
+                     card's copy and bindings are untouched. -->
                 <div class="card glass" id="home-refer-card">
                     <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု &amp; အကူအညီ</div>
                     <p class="ref-desc" data-i18n="ref_desc">သူငယ်ချင်း တစ်ယောက် ဒီ link နဲ့ ဝင်၍ Channel + Group join လိုက်တာနဲ့ အသံအချိန် +30 စက္ကန့် ရပါမည် (အများဆုံး မိတ်ဆွေ 20 ယောက် = 10 မိနစ် အထိ)။</p>
@@ -179,61 +255,18 @@
                         <button type="button" class="mini-chip" onclick="shareReferralLink()" data-i18n="ref_share_btn">↗️ မျှဝေမည်</button>
                     </div>
                     <p class="ref-stats" id="referral-stats-line"></p>
+                </div>
+
+                <!-- Support (Batch AY): the contact row in its own slim
+                     card at the bottom of Home — same destination as
+                     before (openSupportContact → the admin handle). -->
+                <div class="card glass home-support-card">
                     <div class="home-tut-list">
                         <button type="button" class="home-tut-row" onclick="openSupportContact()">
                             <span class="home-tut-icon">🛟</span>
                             <span class="home-tut-text">
                                 <span class="home-tut-name" data-i18n="support_contact_title">Support သို့ ဆက်သွယ်ရန်</span>
                                 <span class="home-tut-desc" data-i18n="support_contact_desc">@VoiceCloneProAdmin — ပြဿနာ ရှိရင် ဆက်သွယ်ပါ</span>
-                            </span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Start creating: jump straight into a studio. -->
-                <div class="card glass" id="home-start-card">
-                    <div class="card-label" data-i18n="home_start_title">စတင် ဖန်တီးရန်</div>
-                    <div class="home-tut-list">
-                        <button type="button" class="home-tut-row" onclick="switchTab('tab-voice')">
-                            <span class="home-tut-icon">🎙️</span>
-                            <span class="home-tut-text">
-                                <span class="home-tut-name" data-i18n="home_start_voice_name">Voice Studio</span>
-                                <span class="home-tut-desc" data-i18n="home_start_voice_desc">စာသားမှ အသံတူ Clone ဖန်တီးရန်</span>
-                            </span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="switchTab('tab-recap')">
-                            <span class="home-tut-icon">🎬</span>
-                            <span class="home-tut-text">
-                                <span class="home-tut-name" data-i18n="home_start_recap_name">Recap Maker</span>
-                                <span class="home-tut-desc" data-i18n="home_start_recap_desc">ဗီဒီယိုမှ Recap ဇာတ်လမ်း ဖန်တီးရန်</span>
-                            </span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Tools / Library: Downloader + History live here now
-                     (owner decision 2026-11-01) — the bottom nav carries
-                     only the four primary destinations; these two views
-                     keep their panes, deep links and in-studio links. -->
-                <div class="card glass" id="home-tools-card">
-                    <div class="card-label" data-i18n="home_tools_title">🧰 ကိရိယာ နှင့် မှတ်တမ်း</div>
-                    <div class="home-tut-list">
-                        <button type="button" class="home-tut-row" onclick="switchTab('tab-downloader')">
-                            <span class="home-tut-icon">📥</span>
-                            <span class="home-tut-text">
-                                <span class="home-tut-name" data-i18n="home_tools_dl_name">ဗီဒီယို ဒေါင်းလုဒ်</span>
-                                <span class="home-tut-desc" data-i18n="home_tools_dl_desc">YouTube၊ TikTok၊ Facebook link တို့မှ ဗီဒီယို/အသံ ဆွဲယူရန်</span>
-                            </span>
-                            <span class="home-tut-chevron">›</span>
-                        </button>
-                        <button type="button" class="home-tut-row" onclick="openHistoryHub()">
-                            <span class="home-tut-icon">📜</span>
-                            <span class="home-tut-text">
-                                <span class="home-tut-name" data-i18n="home_tools_history_name">ကျွန်ုပ်၏ မှတ်တမ်း</span>
-                                <span class="home-tut-desc" data-i18n="home_tools_history_desc">ဖန်တီးခဲ့သော အသံနှင့် Recap အလုပ်များ အားလုံး</span>
                             </span>
                             <span class="home-tut-chevron">›</span>
                         </button>
@@ -2516,7 +2549,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r70"></script>
-    <script src="/static/js/app.js?v=20261104_r70"></script>
+    <script src="/static/js/i18n.js?v=20261104_r71"></script>
+    <script src="/static/js/app.js?v=20261104_r71"></script>
 </body>
 </html>
