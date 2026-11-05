@@ -315,7 +315,11 @@ def test_e3_e4_index_fallbacks():
     assert "အစမ်းကြည့်ရှုမှု (Preview)" in INDEX_HTML
     assert "စာတန်းထိုး အနေအထားချိန်ရန်" not in INDEX_HTML
     assert "စကွဲယား" not in INDEX_HTML
-    assert "1:1 (Square)" in INDEX_HTML
+    # Batch AS (AS-1): the ratio card's static fallback is split into
+    # the stacked name + usage spans — both halves still paint the
+    # dictionary's own words ("1:1" / "Square").
+    assert 'data-i18n="ratio_1_1">1:1<' in INDEX_HTML
+    assert 'data-i18n="ratio_1_1_sub">Square<' in INDEX_HTML
 
 
 def test_e9_persona_display_names_unified():
@@ -393,7 +397,7 @@ def test_cache_buster_bumped():
     # voice preview feature) -> rt1 (Recap tab tidy, all three statics)
     # -> rt3 (tidy return pass 2) -> rt4 (full-app polish batch)
     # -> fp1 (admin-demote + voice-picker batch).
-    assert INDEX_HTML.count("?v=20261104_r66") == 4
+    assert INDEX_HTML.count("?v=20261104_r67") == 4
     assert "?v=20261101_rt4" not in INDEX_HTML
     assert "?v=20261101_rt3" not in INDEX_HTML
     assert "?v=20261101_rt1" not in INDEX_HTML

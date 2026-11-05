@@ -158,10 +158,14 @@ def test_original_ratio_no_longer_hardcodes_169_frame():
 
 
 def test_original_ratio_still_derives_from_real_dimensions():
-    # The known-dimensions derivation is untouched: class from the
-    # source aspect + exact inline aspect from the reported dims.
-    assert 'if (rSource > 1.3) ratioClass = "ratio-16-9";' in APP_JS
-    assert "mockupFrame.style.aspectRatio = `${state.recapSourceWidth} / ${state.recapSourceHeight}`;" in APP_JS
+    # The known-dimensions derivation stands: class from the source
+    # aspect + exact inline aspect from the reported dims.
+    # Batch AS (AS-2): the derivation moved into the single stage
+    # authority recapStageAspect() — same bucket thresholds, same
+    # exact W / H inline aspect — so the needles name the new shape.
+    assert 'const cls = r > 1.3 ? "ratio-16-9" : (r >= 0.8 ? "ratio-1-1" : "ratio-9-16");' in APP_JS
+    assert "return { cls, css: `${w} / ${h}` };" in APP_JS
+    assert "mockupFrame.style.aspectRatio = stage.css;" in APP_JS
     assert "state.recapSourceWidth = data.width;" in APP_JS
 
 
@@ -184,4 +188,4 @@ def test_analyze_catch_paints_unverified_info_card():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r66") == 4
+    assert INDEX_HTML.count("?v=20261104_r67") == 4

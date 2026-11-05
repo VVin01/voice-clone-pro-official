@@ -64,6 +64,24 @@ def clamp_blur_strength(value) -> int:
     return max(BLUR_STRENGTH_MIN, min(BLUR_STRENGTH_MAX, strength))
 
 
+def _boxes_strictly_overlap(a: dict, b: dict) -> bool:
+    """Positive-area intersection test (boxes are {x: left, y: CENTRE,
+    w, h} canvas fractions). Unlike _boxes_near_or_overlapping there is
+    no slack: boxes that merely touch or sit within the merge slack do
+    NOT count as overlapping."""
+    a_l, a_r = float(a["x"]), float(a["x"]) + float(a["w"])
+    b_l, b_r = float(b["x"]), float(b["x"]) + float(b["w"])
+    a_t = float(a["y"]) - float(a["h"]) / 2.0
+    a_b = float(a["y"]) + float(a["h"]) / 2.0
+    b_t = float(b["y"]) - float(b["h"]) / 2.0
+    b_b = float(b["y"]) + float(b["h"]) / 2.0
+    eps = 1e-9  # fraction arithmetic: 0.1 + 0.2 must not "overlap" 0.3
+    return (
+        min(a_r, b_r) > max(a_l, b_l) + eps
+        and min(a_b, b_b) > max(a_t, b_t) + eps
+    )
+
+
 def _boxes_near_or_overlapping(a: dict, b: dict) -> bool:
     """Merge predicate for the final pass, mirroring the centre-gap
     convention reconcile_source_bands uses against the plate
@@ -141,13 +159,18 @@ def assemble_blur_boxes(
     band: it is the sole source-band box — detection results and the
     fallback hint are not consulted, and the reconcile can neither
     merge it into the plate, drop it into letterbox padding, nor
-    move it. It ships exactly as drawn; the only pass that can still
-    touch it is the final Batch J overlap merge, which folds it with
-    the plate/watermark ONLY when they actually overlap (the overlay
-    pass blurs once per box, so an overlap would double-blur) — the
-    union still covers the drawn box exactly. The own-subtitle plate
-    continues through the normal path below. Callers skip detection
-    entirely when a user box is present.
+    move it. It ships exactly as drawn. Batch AS (AS-4): the final
+    Batch J overlap merge must NOT fold it into the plate either —
+    the union made the shipped blur WIDER than the box the user set
+    the moment his box overlapped the caption band (owner report,
+    2026-11-05). Instead, when the user box strictly overlaps the
+    plate, the PLATE yields (it is not shipped — the user has taken
+    manual control of that band, the same authority rule that
+    suppresses detection), and the user box is appended after the
+    merge pass so nothing can absorb it. The own-subtitle plate
+    continues through the normal path below when it does not
+    overlap the user box. Callers skip detection entirely when a
+    user box is present.
 
     Returns ``(boxes, source_band_covered)``:
 
@@ -185,10 +208,17 @@ def assemble_blur_boxes(
         # blur — verbatim, as the sole extra. It bypasses the
         # reconcile (which could merge it into the plate, drop it
         # into letterbox padding, or shift it) and the plate is
-        # never fed into it; the final overlap-merge below still
-        # applies, exactly as for every other shipped box.
+        # never fed into it.
+        # Batch AS (AS-4): if the user box overlaps the plate, the
+        # plate YIELDS — shipping both would let the final union
+        # merge widen the blur past the user's box exactly where he
+        # placed it on the caption band (owner report). The plate's
+        # job (backing the burned subtitles) is inside the band the
+        # user just claimed; his box is the backing now.
         covered = True
         extras = [dict(user_box)]
+        if plate_out is not None and _boxes_strictly_overlap(user_box, plate_out):
+            plate_out = None
     elif detected_bands:
         covered = True
         if plate_out is not None:
@@ -241,6 +271,12 @@ def assemble_blur_boxes(
         boxes.append(plate_out)
     if blur_watermark:
         boxes.append(dict(_WATERMARK_BLUR_BOX))
+    if user_box is not None:
+        # Batch AS (AS-4): the plate/watermark boxes merge among
+        # themselves as before; the user box is appended AFTER the
+        # merge, verbatim — the Batch J union (including its 0.02
+        # near-touch slack) can never widen the box the user set.
+        return merge_overlapping_blur_boxes(boxes) + extras, covered
     boxes.extend(extras)
     return merge_overlapping_blur_boxes(boxes), covered
 

@@ -362,10 +362,15 @@ def test_assembly_offcentre_user_box_and_plate_ship_verbatim():
     assert user in boxes and plate in boxes
 
 
-def test_assembly_overlap_merge_with_offcentre_box():
-    # An off-centre user box overlapping the (also off-centre) plate
-    # folds into ONE union covering both — the Batch J no-double-blur
-    # rule on the new axis.
+def test_assembly_overlap_user_box_wins_batch_as():
+    # SUPERSEDED by Batch AS (AS-4, owner report 2026-11-05): this
+    # test used to pin the Batch J union — an off-centre user box
+    # overlapping the plate folded into ONE union covering both.
+    # The owner found that union is exactly what made his blur
+    # WIDER than the box he set whenever it overlapped the caption
+    # band. The AS rule: the plate YIELDS to an overlapping user
+    # box and the user box ships VERBATIM — the box set is the box
+    # rendered, on the new axis too.
     plate = subtitle_plate_box(
         CW, CH, LB, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=0.07,
         sub_x=0.30, sub_w=0.40,
@@ -378,12 +383,7 @@ def test_assembly_overlap_merge_with_offcentre_box():
         anchor_y=0.6108, anchor_x=None,
     )
     assert anchor is not None  # (anchor_x unused in this scenario)
-    assert len(boxes) == 1
-    merged = boxes[0]
-    assert merged["x"] <= min(plate["x"], user["x"]) + 1e-9
-    assert merged["x"] + merged["w"] >= max(
-        plate["x"] + plate["w"], user["x"] + user["w"]
-    ) - 1e-9
+    assert boxes == [user]
 
 
 # ── 9. API model ───────────────────────────────────────────────────
@@ -561,7 +561,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261104_r66") == 4
+    assert INDEX_HTML.count("?v=20261104_r67") == 4
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────

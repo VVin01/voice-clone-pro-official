@@ -139,8 +139,11 @@ def test_loading_state_wired_to_first_composite():
 
 
 def test_source_label_only_on_video_branch():
+    # Batch AS: span widened 14000 → 20000 — updateCanvasMockupVisuals
+    # grew (AS-2 stage authority + AS-3a mirror strip + composite
+    # onload); the assertions below are unchanged.
     block = _function_block("function updateCanvasMockupVisuals() {",
-                            span=14000)
+                            span=20000)
     assert 'getElementById("canvas-source-label")' in block
     # Default-hidden for every surface, shown only where the raw
     # <video> branch becomes the visible surface.
@@ -183,5 +186,5 @@ def test_blur_payload_master_gate_unchanged():
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_r64():
-    assert INDEX_HTML.count("?v=20261104_r66") == 4
+    assert INDEX_HTML.count("?v=20261104_r67") == 4
     assert "r63" not in INDEX_HTML

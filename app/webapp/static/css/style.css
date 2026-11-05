@@ -1570,7 +1570,6 @@ select.studio-input { min-height: 50px; }
 .preview-icon { font-size: 15px; }
 .preview-btn-label { line-height: 1.45; }
 .pill-main { line-height: 1.45; }
-.ratio-title { line-height: 1.5; }
 .toggle-status { line-height: 1.45; }
 .t-icon { font-size: 14px; }
 .t-lbl { line-height: 1.45; }
@@ -3415,3 +3414,40 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     flex: 0 0 auto; transition: background 0.18s ease;
 }
 .chip-toggle.active::before { background: var(--gold); border-color: var(--gold-border); }
+
+/* ── Batch AS (2026-11-05): preview-truth + overflow fixes ─────────── */
+
+/* AS-1: the aspect cards are CARDS again, not pills — each stacks its
+   name, usage line and dimensions on their own lines with comfortable
+   padding, so nothing touches a border and no separator hangs alone
+   (the C8 pill compaction above squeezed all three onto shared lines:
+   the selected card's dimensions pressed past its right edge and the
+   Original card wrapped edge-to-edge). The 2×2 grid and the selected
+   styling are unchanged. */
+.ratio-pills-grid .ratio-btn {
+    flex-direction: column; align-items: flex-start; justify-content: center;
+    gap: 1px; min-height: 0; padding: 10px 12px;
+    border-radius: var(--r-md); text-align: left;
+}
+.ratio-btn .ratio-name { font-size: 13.5px; font-weight: 700; line-height: 1.35; }
+.ratio-btn .ratio-sub {
+    font-size: 11.5px; font-weight: 500; line-height: 1.45; color: var(--text-3);
+}
+.ratio-btn.active .ratio-sub { color: var(--gold-2); }
+
+/* AS-6: bottom clearance for the fixed CTA band. The sticky CTA bar
+   floats with its top edge ≈156px above the viewport bottom (86px
+   offset incl. the nav + ≈70px bar) over the shared 118px viewport
+   clearance, so a tab without its own extra padding strands its last
+   ~38px under the bar forever. The Voice tab gets the missing room
+   (118 + 72 = 190 ≥ 156 + margin); the Recap tab's existing 120px
+   (238 total) already clears it and is unchanged. */
+#tab-voice { padding-bottom: 72px; }
+
+/* AS-6: the Voice persona filter chips size to their content and
+   WRAP instead of squeezing — the equal-flex nowrap row ellipsised
+   the last chip ("မိန်းကလေး") at phone widths. */
+.persona-filter-row { flex-wrap: wrap; }
+.persona-filter-row .filter-chip {
+    flex: 1 1 auto; overflow: visible; text-overflow: clip;
+}
