@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r59">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r60">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r59" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r60" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -635,6 +635,15 @@
                                         <span class="drag-grip-icon sub-grip">⠿</span>
                                         <span class="preview-sub-text" id="preview-sub-text-el" data-i18n="sub_sample_text">ဒီတစ်ခါမှာတော့ ဘယ်သူမှ မထင်မှတ်ထားတဲ့ အဖြစ်အပျက် ဖြစ်လာပါတယ်</span>
                                     </div>
+                                    <!-- Batch AH: the recap title overlay box. Hidden
+                                         unless the title toggle is on; drag it (grip
+                                         or mouse) to place the title — the position
+                                         is the title centre, picture-relative, the
+                                         same basis the engine burns title_position. -->
+                                    <div class="preview-title-box draggable-box hidden" id="preview-title-box" style="top: 12%; transform: translate(-50%, -50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
+                                        <span class="drag-grip-icon title-grip">⠿</span>
+                                        <span class="preview-title-text" id="preview-title-text-el" data-i18n="recap_title_sample">ခေါင်းစဉ်</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -760,6 +769,22 @@
                                                     <span class="slider-val" id="val-sub-w">92%</span>
                                                 </div>
                                                 <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-sub-w">
+                                            </div>
+
+                                            <div class="slider-group" id="title-pos-sliders">
+                                                <div class="slider-header">
+                                                    <span data-i18n="slider_title_x">🏷️ ခေါင်းစဉ် အနေအထား (Title X):</span>
+                                                    <span class="slider-val" id="val-title-x">50%</span>
+                                                </div>
+                                                <input type="range" min="0" max="100" value="50" class="studio-slider" id="slider-title-x">
+                                            </div>
+
+                                            <div class="slider-group">
+                                                <div class="slider-header">
+                                                    <span data-i18n="slider_title_y">🏷️ ခေါင်းစဉ် အမြင့် (Title Y):</span>
+                                                    <span class="slider-val" id="val-title-y">12%</span>
+                                                </div>
+                                                <input type="range" min="0" max="100" value="12" class="studio-slider" id="slider-title-y">
                                             </div>
                                             <div class="reset-row mt-2">
                                                 <button type="button" class="mini-btn-seek sm" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title" data-i18n="btn_reset_layout">
@@ -1168,11 +1193,7 @@
                                     <button type="button" class="pill-btn" data-lang="th" data-i18n="recap_lang_th">Thai</button>
                                     <button type="button" class="pill-btn" data-lang="ja" data-i18n="recap_lang_ja">Japanese</button>
                                 </div>
-<label class="script-review-row mt-3" for="recap-script-review-toggle">
-                                    <input type="checkbox" id="recap-script-review-toggle">
-                                    <span data-i18n="recap_script_review_label">📝 Script ကို အရင် စစ်ပြင်မည် (အသံ မထုတ်ခင်)</span>
-                                </label>
-                                <label class="script-review-row mt-2" for="recap-split-toggle">
+<label class="script-review-row mt-3" for="recap-split-toggle">
                                     <input type="checkbox" id="recap-split-toggle">
                                     <span data-i18n="recap_split_label">✂️ ဗီဒီယိုကို အပိုင်းခွဲ ထုတ်မည်</span>
                                 </label>
@@ -1189,8 +1210,30 @@
                         </div>
                     </div>
 
-                    <label class="script-review-row recap-script-review-main mt-3" for="recap-script-review-toggle-main">
-                        <input type="checkbox" id="recap-script-review-toggle-main">
+                    <!-- Batch AH: recap title overlay controls — an
+                         enable toggle + custom text. Placement is the
+                         Live Canvas title box (drag) with X/Y sliders
+                         in the mask panel. Default OFF reproduces the
+                         historical behaviour exactly: Mini App jobs
+                         rendered no title badge. -->
+                    <div class="recap-title-controls mt-3" id="recap-title-controls">
+                        <label class="script-review-row" for="recap-title-toggle">
+                            <input type="checkbox" id="recap-title-toggle">
+                            <span class="script-review-main-text">
+                                <span data-i18n="recap_title_toggle_label">🏷️ ခေါင်းစဉ် စာတန်း ထည့်မည်</span>
+                                <span class="script-review-hint" data-i18n="recap_title_hint">ဗီဒီယိုပေါ်တွင် ခေါင်းစဉ် ပြပေးပါတယ် — Live Canvas မှာ ဖိဆွဲပြီး နေရာ ရွှေ့နိုင်ပါတယ်</span>
+                            </span>
+                        </label>
+                        <input type="text" id="recap-title-text" class="studio-input recap-title-input hidden mt-2" maxlength="200" data-i18n-ph="recap_title_placeholder" placeholder="ခေါင်းစဉ် စာသား (ဘာမှ မရေးရင် ဗီဒီယို ခေါင်းစဉ်ကို သုံးပါမယ်)">
+                    </div>
+
+                    <!-- Batch AH: this is now the ONE script-review toggle.
+                         Batch K had added it as a mirrored twin of the
+                         advanced-section checkbox; the twin is gone and
+                         this control (the one with the hint text) carries
+                         the canonical id every read site uses. -->
+                    <label class="script-review-row recap-script-review-main mt-3" for="recap-script-review-toggle">
+                        <input type="checkbox" id="recap-script-review-toggle">
                         <span class="script-review-main-text">
                             <span data-i18n="recap_script_review_label">📝 Script ကို အရင် စစ်ပြင်မည် (အသံ မထုတ်ခင်)</span>
                             <span class="script-review-hint" data-i18n="recap_script_review_hint">အသံမထုတ်ခင် Script ကို ကိုယ်တိုင် စစ်ပြီး ပြင်နိုင်ပါတယ်</span>
@@ -2422,7 +2465,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r59"></script>
-    <script src="/static/js/app.js?v=20261104_r59"></script>
+    <script src="/static/js/i18n.js?v=20261104_r60"></script>
+    <script src="/static/js/app.js?v=20261104_r60"></script>
 </body>
 </html>

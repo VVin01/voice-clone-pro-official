@@ -10,6 +10,9 @@ Pins for the audit-driven fixes in the Recap tab's detailed settings
   evenly; even heights are additionally proven by DOM measurement in
   the fix record (the pytest stack is static-only).
 - RS-2: the canvas subtitle SAMPLE preview is never line-clamped.
+  (Superseded by Batch AH, 2026-11-05: the owner requires the
+  preview to honour the Lines setting like the render — see
+  test_rs2_superseded_by_batch_ah below.)
 - RS-7 minors: seek panel lines both span the full width; the
   crop-sync chip label stays on one line; the Mirror control carries
   a single label (row label above, state-only text in the toggle).
@@ -88,11 +91,15 @@ def test_rs6_fine_pickers_not_converted():
         assert pid not in block, pid
 
 
-def test_rs2_subtitle_sample_never_clamped():
+def test_rs2_superseded_by_batch_ah():
+    # Batch AH (owner report 2026-11-05): RS-2's neutralisation of
+    # the line clamps is REMOVED — the preview must show exactly the
+    # selected line count (Batch P preview/render parity). The clamp
+    # rules themselves stand in the base stylesheet.
     block = _rs_block()
-    assert ".preview-sub-box.one-line .preview-sub-text" in block
-    assert ".preview-sub-box.two-lines .preview-sub-text" in block
-    assert "display: block; overflow: visible;" in block
+    assert "display: block; overflow: visible;" not in block
+    assert "-webkit-line-clamp: 1" in CSS
+    assert "-webkit-line-clamp: 2" in CSS
     # The Lines setting itself still drives the real render payload.
     assert "sub_lines: state.recapLines || 1" in APP_JS
 
@@ -126,5 +133,5 @@ def test_rs7_mirror_single_label():
 
 
 def test_cache_buster_bumped_for_settings_ui():
-    assert HTML.count("?v=20261104_r59") == 4
+    assert HTML.count("?v=20261104_r60") == 4
     assert "?v=20261102_rr1" not in HTML
