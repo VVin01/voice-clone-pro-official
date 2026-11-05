@@ -709,8 +709,16 @@ async def test_b2_webapp_broadcast_at_limit_accepted(db_session, monkeypatch):
     monkeypatch.setattr(settings, "bot_token", "")
     admin = await _make_user(db_session, 882302)
     req = api_mod.BroadcastRequest(message="x" * 4096)
-    resp = await api_mod.send_admin_broadcast(req, admin=admin, db=db_session)
-    assert resp["success"] is True
+    # The property pinned here is unchanged: a message AT the 4096
+    # limit is ACCEPTED by the length gate (its sibling test pins
+    # 4097 → 400). What Batch AJ (M2) deliberately changed is the
+    # outcome after acceptance: with no bot token the endpoint used
+    # to return a false {"success": True, "queued"} having sent
+    # nothing; it now refuses honestly with 503. Reaching the 503
+    # proves the at-limit message passed validation.
+    with pytest.raises(HTTPException) as exc:
+        await api_mod.send_admin_broadcast(req, admin=admin, db=db_session)
+    assert exc.value.status_code == 503
 
 
 class _FakeFSMContext:

@@ -1778,6 +1778,23 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     amount = int(entry.get("credits_charged") or 0)
     if amount <= 0 and entry.get("credit_deducted"):
         amount = 1
+    # Claim BEFORE the first await (final-audit batch M): the old
+    # check-then-await-then-set let two concurrent callers sharing
+    # this entry (double-tap cancel, cancel racing the runner's
+    # failure tail) both pass the check and refund twice. Setting the
+    # flag synchronously makes the second caller a no-op; the claim
+    # is rolled back if the refund itself fails so a later retry can
+    # still refund.
+    # Batch AJ repair (verification round): the H11 ledger
+    # reconciliation below AWAITS, so the claim must be taken BEFORE
+    # it — AJ's original ordering (reconcile first, claim after) put
+    # an await ahead of the flag and silently reopened the batch-M
+    # double-refund race (caught by
+    # test_concurrent_refund_calls_refund_exactly_once). The claim
+    # starts with the entry's amount; reconciliation may only RAISE
+    # it, and the recorded claim follows the reconciled figure.
+    entry["credit_refunded"] = True
+    entry["credits_refunded"] = amount
     # Batch AJ (H11): mirror of the top-up fix — refund what the
     # LEDGER says was charged (net), not just what the entry/blob
     # remembers. A restart that lost a top-up persist otherwise
@@ -1796,21 +1813,17 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
                     _ledger_session, _job_id
                 ) - await recap_refund_total_for_job(_ledger_session, _job_id)
             amount = max(amount, int(_net_charged))
+            entry["credits_refunded"] = amount
         except Exception as exc:
             logger.warning(
                 f"Could not reconcile recap refund total from the ledger for {_job_id}: {exc}"
             )
     if amount <= 0:
+        # Nothing was ever charged — release the in-memory claim so
+        # the entry is left exactly as it was found.
+        entry["credit_refunded"] = False
+        entry["credits_refunded"] = 0
         return False
-    # Claim BEFORE the first await (final-audit batch M): the old
-    # check-then-await-then-set let two concurrent callers sharing
-    # this entry (double-tap cancel, cancel racing the runner's
-    # failure tail) both pass the check and refund twice. Setting the
-    # flag synchronously makes the second caller a no-op; the claim
-    # is rolled back if the refund itself fails so a later retry can
-    # still refund.
-    entry["credit_refunded"] = True
-    entry["credits_refunded"] = amount
     # Batch O (billing option C): the claim is ALSO taken in the
     # persisted Job-row state BEFORE the balance moves. The in-memory
     # flag alone left a crash window — refund committed, flag persist
@@ -1822,7 +1835,6 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     # falls through to the historical in-memory-only behaviour; the
     # ledger REFUND row written by _refund_recap_credits still guards
     # those refunds against a repeat.
-    _job_id = entry.get("id")
     _claim_state = "error"
     if _job_id:
         _claim_state, _recorded = await _claim_persisted_recap_refund(_job_id, amount)

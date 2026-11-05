@@ -199,6 +199,9 @@ class _FakeUpload:
 async def test_slip_amount_ignores_client_typed_value(db_session, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(settings, "bot_token", "")
+    # Batch AJ (M1): disk-headroom floor off (sandbox /tmp is
+    # smaller than the floor; gate pinned by the AJ M1 tests).
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     user = await _make_user(db_session, 880801)
     plan = get_plan_by_code("MIN_10")
     assert plan is not None
@@ -223,6 +226,9 @@ async def test_slip_amount_ignores_client_typed_value(db_session, monkeypatch, t
 async def test_slip_unknown_plan_still_errors(db_session, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(settings, "bot_token", "")
+    # Batch AJ (M1): disk-headroom floor off — otherwise the
+    # gate's 507 masks the 400 this test pins.
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     user = await _make_user(db_session, 880802)
     with pytest.raises(HTTPException) as exc:
         await api_mod.submit_payment_slip(

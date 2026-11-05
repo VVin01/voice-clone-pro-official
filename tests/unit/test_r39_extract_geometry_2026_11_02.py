@@ -378,6 +378,20 @@ def _good_probe():
     return _Resp(status_code=206, headers={"Content-Type": "video/mp4", "Content-Range": "bytes 0-0/2000000"})
 
 
+def _stub_public_dns(monkeypatch):
+    """Batch AJ (L19): _tikwm_resolve now also runs the extractor-
+    supplied play URL through the shared SSRF validator, whose DNS
+    answers must all be public. This sandbox's DNS answers private
+    addresses for the TikTok CDN host, which would block every
+    resolve before the behaviour under test runs — simulate the
+    production (public) answer instead. The block path itself is
+    pinned by test_tikwm_download_blocked_when_ssrf_validation_fails
+    below."""
+    from app.services import url_safety
+
+    monkeypatch.setattr(url_safety, "validate_public_url", lambda url: url)
+
+
 def _patch_tiktok_blocked(monkeypatch):
     def handler(opts, url, download):
         raise Exception(RAW_IP_BLOCK)
@@ -387,6 +401,7 @@ def _patch_tiktok_blocked(monkeypatch):
 
 def test_tikwm_fallback_resolves_blocked_tiktok(monkeypatch, tmp_path):
     _patch_tiktok_blocked(monkeypatch)
+    _stub_public_dns(monkeypatch)
     record = []
     monkeypatch.setattr(
         dl_mod.requests, "get",
@@ -406,6 +421,7 @@ def test_tikwm_fallback_resolves_blocked_tiktok(monkeypatch, tmp_path):
 
 def test_tikwm_html_probe_rejected_falls_back_to_classified(monkeypatch, tmp_path):
     _patch_tiktok_blocked(monkeypatch)
+    _stub_public_dns(monkeypatch)
     monkeypatch.setattr(
         dl_mod.requests, "get",
         _tikwm_dispatcher(
@@ -460,6 +476,7 @@ def test_tikwm_triggered_by_any_primary_failure(monkeypatch, tmp_path):
         raise Exception("ERROR: [TikTok] 1: No video formats found!")
 
     _patch_chain(monkeypatch, handler)
+    _stub_public_dns(monkeypatch)
     record = []
     monkeypatch.setattr(
         dl_mod.requests, "get",
@@ -500,6 +517,7 @@ def test_tikwm_play_url_validation():
 def test_tikwm_download_refuses_non_mp4_stream(monkeypatch, tmp_path):
     dest = tmp_path / "tk"
     dest.mkdir()
+    _stub_public_dns(monkeypatch)
     monkeypatch.setattr(
         dl_mod.requests, "get",
         _tikwm_dispatcher(
@@ -516,6 +534,7 @@ def test_tikwm_download_refuses_non_mp4_stream(monkeypatch, tmp_path):
 def test_tikwm_download_success(monkeypatch, tmp_path):
     dest = tmp_path / "tk2"
     dest.mkdir()
+    _stub_public_dns(monkeypatch)
     body = b"\x00" * 20000
     monkeypatch.setattr(
         dl_mod.requests, "get",
@@ -531,6 +550,39 @@ def test_tikwm_download_success(monkeypatch, tmp_path):
     file_path, info = out
     assert Path(file_path).stat().st_size == 20000
     assert info["tikwm_fallback"] is True
+
+
+def test_tikwm_download_blocked_when_ssrf_validation_fails(monkeypatch, tmp_path):
+    # Batch AJ (L19) safety pin: the extractor-supplied play URL is
+    # re-validated through the shared SSRF validator before any
+    # byte is fetched. When validation rejects it (e.g. the CDN
+    # name resolves to a private address), the download is refused:
+    # no probe, no media fetch, nothing left on disk.
+    from app.services import url_safety
+    from app.services.url_safety import SSRFBlockedError
+
+    def _blocked(url):
+        raise SSRFBlockedError("URL resolves to a private/internal address")
+
+    monkeypatch.setattr(url_safety, "validate_public_url", _blocked)
+    dest = tmp_path / "tk3"
+    dest.mkdir()
+    record = []
+    monkeypatch.setattr(
+        dl_mod.requests, "get",
+        _tikwm_dispatcher(
+            api_resp=_Resp(json_data=TIKWM_PAYLOAD),
+            probe_resp=_good_probe(),
+            media_resp=_Resp(status_code=200, headers={"Content-Type": "video/mp4"}, chunks=[b"\x00" * 20000]),
+            record=record,
+        ),
+    )
+    dl = MediaDownloader(download_dir=str(tmp_path))
+    assert dl._tikwm_download_video(TIKTOK_URL, TIKTOK_URL, str(dest)) is None
+    assert list(dest.iterdir()) == []
+    # Only the resolver API was consulted — the play URL itself was
+    # never requested.
+    assert [url for url, _kwargs in record] == [dl_mod.TIKWM_API_URL]
 
 
 # ── 4. B: direct-host refusal classification ────────────────────────

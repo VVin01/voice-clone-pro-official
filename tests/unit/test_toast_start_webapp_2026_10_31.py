@@ -287,7 +287,11 @@ def test_api_admin_messages_localized():
         "ငွေပေးချေမှု အတည်ပြုပြီးပါပြီ",
         "ကို ငြင်းပယ်ပြီးပါပြီ",
         "ကို ပြင်ဆင်ပြီးပါပြီ",
-        "Broadcast ပို့ရန် တန်းစီပြီးပါပြီ",
+        # Batch AJ (M2): the Mini App broadcast no longer answers
+        # "queued" — it delivers (and records) for real, and with
+        # no bot token refuses with this localized 503 instead of
+        # the old false success. Pin the new localized message.
+        "Bot token မရှိသေးသောကြောင့် Broadcast ပို့၍ မရပါ။",
     ):
         assert new in API_PY, new
     for stale in (

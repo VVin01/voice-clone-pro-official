@@ -100,8 +100,12 @@ def _request(ip: str | None = None, user_id: int | None = None,
 
 def test_rate_key_combines_ip_and_parsed_id():
     key = rl_mod._rate_key(_request(ip="203.0.113.7, 10.0.0.1", user_id=4242))
-    # First forwarded hop is the client address Render reports.
-    assert key == "ipuser:203.0.113.7:4242"
+    # Batch AJ (L10) deliberately keys on the LAST forwarded hop:
+    # earlier hops are client-controllable, so the first hop let a
+    # caller mint fresh buckets by prepending fake addresses. The
+    # safety property is unchanged — the key still combines the IP
+    # with the parsed user id.
+    assert key == "ipuser:10.0.0.1:4242"
 
 
 def test_rate_key_same_forged_id_from_other_ip_is_a_different_bucket():
@@ -238,6 +242,10 @@ async def test_worker_upload_sanitizes_traversal_filename(
 ):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(settings, "worker_token", TEST_WORKER_TOKEN)
+    # Batch AJ (M1): the disk-headroom gate would 507 here — this
+    # sandbox's /tmp tmpfs is smaller than the 512 MB floor. Floor
+    # off; the gate itself is pinned by the Batch AJ M1 tests.
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     job = await _seed_job(db_session, tmp_path)
 
     res = await api_mod.upload_worker_job_result(
@@ -268,6 +276,8 @@ async def test_worker_upload_unknown_extension_falls_back_to_wav(
 ):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(settings, "worker_token", TEST_WORKER_TOKEN)
+    # Batch AJ (M1): disk-headroom floor off (see traversal test).
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     await _seed_job(db_session, tmp_path)
     res = await api_mod.upload_worker_job_result(
         JOB_ID,
@@ -298,6 +308,9 @@ async def test_worker_upload_rejects_oversized_and_removes_partial(
 ):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(settings, "worker_token", TEST_WORKER_TOKEN)
+    # Batch AJ (M1): disk-headroom floor off (see traversal test) —
+    # otherwise the gate's 507 masks the 413 this test pins.
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     job = await _seed_job(db_session, tmp_path)
 
     oversized = UploadFile(

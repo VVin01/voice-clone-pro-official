@@ -196,6 +196,11 @@ async def test_f8_endpoint_rejects_wrong_and_bot_tokens(db_session, monkeypatch)
 async def test_f8_endpoint_accepts_worker_token(db_session, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "worker_token", "wk-secret")
     monkeypatch.setattr(settings, "storage_root", tmp_path)
+    # Batch AJ (M1): disk-headroom floor off — the sandbox /tmp
+    # tmpfs is smaller than the 512 MB floor and the gate would
+    # 507 before the token behaviour under test runs. The gate
+    # itself is pinned by the Batch AJ M1 tests.
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     user, _ = await get_or_create_user(db_session, telegram_id=7810)
     job = Job(id="job-f8", user_id=user.id, status=JobStatus.RUNNING.value)
     db_session.add(job)
