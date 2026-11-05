@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r66">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r67">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r66" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r67" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -551,24 +551,32 @@
                             <div class="recap-dock-section hidden" id="recap-preview-ratio-group">
                                 <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား:</div>
                                 <div class="ratio-pills-grid" id="recap-ratio-picker">
+                                    <!-- Batch AS (AS-1): each card stacks its
+                                         three lines — name, usage, dimensions —
+                                         instead of squeezing them onto shared
+                                         lines inside a pill. -->
                                     <button class="ratio-btn active" data-ratio="9:16">
                                         <span class="ratio-icon">📱</span>
-                                        <span class="ratio-title" data-i18n="ratio_9_16">9:16 (TikTok / Reels / Shorts)</span>
+                                        <span class="ratio-name" data-i18n="ratio_9_16">9:16</span>
+                                        <span class="ratio-sub" data-i18n="ratio_9_16_sub">TikTok / Reels / Shorts</span>
                                         <span class="ratio-dims">1080×1920</span>
                                     </button>
                                     <button class="ratio-btn" data-ratio="16:9">
                                         <span class="ratio-icon">🖥️</span>
-                                        <span class="ratio-title" data-i18n="ratio_16_9">16:9 (YouTube / အလျားလိုက်)</span>
+                                        <span class="ratio-name" data-i18n="ratio_16_9">16:9</span>
+                                        <span class="ratio-sub" data-i18n="ratio_16_9_sub">YouTube / အလျားလိုက်</span>
                                         <span class="ratio-dims">1920×1080</span>
                                     </button>
                                     <button class="ratio-btn" data-ratio="1:1">
                                         <span class="ratio-icon">⏹️</span>
-                                        <span class="ratio-title" data-i18n="ratio_1_1">1:1 (Square)</span>
+                                        <span class="ratio-name" data-i18n="ratio_1_1">1:1</span>
+                                        <span class="ratio-sub" data-i18n="ratio_1_1_sub">Square</span>
                                         <span class="ratio-dims">1080×1080</span>
                                     </button>
                                     <button class="ratio-btn" data-ratio="Original">
                                         <span class="ratio-icon">🎞️</span>
-                                        <span class="ratio-title" data-i18n="ratio_original">Original (မူရင်းအချိုး)</span>
+                                        <span class="ratio-name" data-i18n="ratio_original">Original</span>
+                                        <span class="ratio-sub" data-i18n="ratio_original_sub">မူရင်းအချိုး</span>
                                         <span class="ratio-dims" data-i18n="ratio_original_dims">အချိုးသာ · native size</span>
                                     </button>
                                 </div>
@@ -2505,7 +2513,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r66"></script>
-    <script src="/static/js/app.js?v=20261104_r66"></script>
+    <script src="/static/js/i18n.js?v=20261104_r67"></script>
+    <script src="/static/js/app.js?v=20261104_r67"></script>
 </body>
 </html>

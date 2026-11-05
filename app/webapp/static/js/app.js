@@ -4801,6 +4801,14 @@ function setupRecapVisualEditor() {
         if (valTitleX) valTitleX.innerText = `${Math.round(x)}%`;
         if (valTitleY) valTitleY.innerText = `${Math.round(y)}%`;
         syncTitleFallbackHint();
+        // Batch AS (AS-3b): the refresh must ALSO fire when the
+        // title is switched OFF — the composited frame burns the
+        // title, so skipping the refresh on the disabled path left
+        // the burned badge in the preview indefinitely (the DOM
+        // handle hid, the picture kept the title). The scheduler is
+        // hash-guarded and source-guarded, so calling it on every
+        // sync is safe.
+        scheduleRecapCompositeRefresh();
         if (!enabled) return;
         const c = titleCentreCanvasFrac(x, y);
         const r = recapPictureRect();
@@ -4811,8 +4819,8 @@ function setupRecapVisualEditor() {
         previewTitle.style.transform = "translate(-50%, -50%)";
         previewTitle.style.maxWidth = `${(0.78 * r.pw * 100).toFixed(3)}%`;
         // Batch AK: the box is an outline handle — the title itself
-        // renders inside the composited frame.
-        scheduleRecapCompositeRefresh();
+        // renders inside the composited frame (the composite refresh
+        // is scheduled above, for BOTH the on and off paths).
     }
 
     // Batch AK (Addition B): the fallback hint — visible exactly
@@ -5531,23 +5539,53 @@ function setupRecapVisualEditor() {
     // Exposed on window: toggleAdvancedRecapStudio() (top-level) calls it
     // when the settings accordion opens; without this it throws ReferenceError.
     window.updateCanvasMockupVisuals = updateCanvasMockupVisuals;
+
+    // Batch AS (AS-2): ONE stage-shape authority. The preview stage
+    // adopts the SELECTED output ratio — 9:16 portrait, 16:9 wide,
+    // 1:1 square — and for "Original" it adopts the SOURCE's own
+    // ratio: the probed source dimensions when known, otherwise the
+    // composited frame's natural aspect (for Original the engine
+    // canvas IS the source shape, so the composite is ground truth).
+    // Before AS, "Original" depended on a bucket re-derivation in
+    // step 4 that never ran when the source dimensions were missing,
+    // so the stage stayed at the 9:16 default while the picture
+    // inside it changed — the stage lied about the output.
+    function recapStageAspect() {
+        if (state.recapRatio === "16:9") return { cls: "ratio-16-9", css: "16 / 9" };
+        if (state.recapRatio === "1:1") return { cls: "ratio-1-1", css: "1 / 1" };
+        if (state.recapRatio === "Original") {
+            let w = state.recapSourceWidth, h = state.recapSourceHeight;
+            if (!(w && h)) {
+                const ci = document.getElementById("canvas-composite-img");
+                if (ci && state.recapCompositeUrl && ci.naturalWidth > 0 && ci.naturalHeight > 0) {
+                    w = ci.naturalWidth; h = ci.naturalHeight;
+                }
+            }
+            if (w && h) {
+                const r = w / h;
+                const cls = r > 1.3 ? "ratio-16-9" : (r >= 0.8 ? "ratio-1-1" : "ratio-9-16");
+                return { cls, css: `${w} / ${h}` };
+            }
+            // Source shape not known yet: keep the neutral default;
+            // the composite's load handler re-runs the visuals and
+            // this resolves to the real shape as soon as it lands.
+            return { cls: "ratio-9-16", css: "" };
+        }
+        return { cls: "ratio-9-16", css: "9 / 16" };
+    }
+
     function updateCanvasMockupVisuals() {
         if (!canvas) return;
 
         const zoom = state.recapZoom || 1.0;
 
-        // 1. Aspect Ratio Frame Class
+        // 1. Aspect Ratio Frame Class — Batch AS (AS-2): the stage
+        // shape comes from the single authority above, for every
+        // selection, so class and inline aspect can never disagree.
         if (mockupFrame) {
-            let ratioClass = "ratio-9-16";
-            if (state.recapRatio === "16:9") ratioClass = "ratio-16-9";
-            else if (state.recapRatio === "1:1") ratioClass = "ratio-1-1";
-            // "Original" gets NO class claim here: step 4 below applies
-            // the source's real aspect once dimensions are known; while
-            // they are unknown the frame keeps this neutral default
-            // instead of silently asserting 16:9 (owner-found bug: a
-            // vertical TikTok source was framed as YouTube landscape).
-            mockupFrame.className = `mockup-screen ${ratioClass}`;
-            mockupFrame.style.aspectRatio = "";
+            const stage = recapStageAspect();
+            mockupFrame.className = `mockup-screen ${stage.cls}`;
+            mockupFrame.style.aspectRatio = stage.css;
         }
 
         // 2. Canvas Base Classes & Fill Mode
@@ -5603,23 +5641,16 @@ function setupRecapVisualEditor() {
             }
 
             // If user selected "Original", canvas dynamically matches the source aspect ratio
-            if (state.recapRatio === "Original") {
-                if (rSource) {
-                    rCanvas = rSource;
-                    if (mockupFrame) {
-                        let ratioClass = "ratio-9-16";
-                        if (rSource > 1.3) ratioClass = "ratio-16-9";
-                        else if (rSource >= 0.8 && rSource <= 1.3) ratioClass = "ratio-1-1";
-                        mockupFrame.className = `mockup-screen ${ratioClass}`;
-                        if (state.recapSourceWidth && state.recapSourceHeight) {
-                            mockupFrame.style.aspectRatio = `${state.recapSourceWidth} / ${state.recapSourceHeight}`;
-                        }
-                    }
-                }
+            if (state.recapRatio === "Original" && rSource) {
+                rCanvas = rSource;
+                // Batch AS (AS-2): the stage's own shape is set once
+                // in step 1 via recapStageAspect() — it is no longer
+                // re-derived here, so the frame and the fit math can
+                // never claim different shapes.
                 // No source dimensions known: rCanvas keeps its neutral
-                // 9/16 default (matching the frame class in step 1)
-                // rather than asserting a landscape canvas we cannot
-                // know — the unverified state is the info card's job.
+                // 9/16 default rather than asserting a landscape canvas
+                // we cannot know — the unverified state is the info
+                // card's job.
             }
 
             // Fallback source ratio if media not yet analyzed
@@ -5750,6 +5781,18 @@ function setupRecapVisualEditor() {
                 // render burns them, so it fills the frame plainly
                 // (no CSS fit math) and every other media layer
                 // hides. The CSS boxes stay on top as drag handles.
+                // Batch AS (AS-3a): the composite ALREADY contains
+                // the engine's mirror flip — the CSS .mirrored flip
+                // (which exists to mirror the RAW layers: video /
+                // thumbnail / frame grab) must not flip it a second
+                // time. While the double flip stood, the picture
+                // silently un-mirrored and every overlay the engine
+                // had burned READABLY — the title above all — showed
+                // MIRRORED in the preview while the real output was
+                // correct. Step 2 rebuilds the class from state on
+                // every call, so stripping it here is deterministic:
+                // raw layers (other branches) keep the flip.
+                canvas.classList.remove("mirrored");
                 mediaVisible = true;
                 if (noThumbEl) noThumbEl.classList.add("hidden");
                 if (backdropEl) backdropEl.classList.remove("on");
@@ -5764,6 +5807,20 @@ function setupRecapVisualEditor() {
                 if (frameImg) frameImg.classList.add("hidden");
                 if (canvasVideo) { canvasVideo.classList.add("hidden"); canvasVideo.style.display = "none"; }
                 if (compositeImg.getAttribute("src") !== state.recapCompositeUrl) compositeImg.src = state.recapCompositeUrl;
+                // Batch AS (AS-2): once the composite has actually
+                // loaded, its natural aspect is ground truth for an
+                // "Original" stage whose source dimensions are still
+                // unknown — re-run the visuals so step 1 can adopt
+                // it (and backfill the drag geometry's source dims:
+                // for Original the canvas shape IS the source shape).
+                compositeImg.onload = () => {
+                    if (state.recapRatio === "Original" && !state.recapSourceWidth &&
+                        compositeImg.naturalWidth > 0 && compositeImg.naturalHeight > 0) {
+                        state.recapSourceWidth = compositeImg.naturalWidth;
+                        state.recapSourceHeight = compositeImg.naturalHeight;
+                    }
+                    updateCanvasMockupVisuals();
+                };
                 compositeImg.classList.remove("hidden");
                 compositeImg.style.display = "block";
                 if (fillBadge) fillBadge.style.display = "none";
@@ -6407,6 +6464,11 @@ function setupRecapVisualEditor() {
             btn.classList.add("active");
             state.recapSubFont = btn.getAttribute("data-font") || "padauk";
             updateSubtitleVisualPreview();
+            // Batch AS (AS-5): the font renders inside the
+            // engine-composited frame, exactly like size/lines —
+            // without this refresh the composite kept the PREVIOUS
+            // font forever, so the picker looked dead in preview.
+            scheduleRecapCompositeRefresh();
         });
     });
 
