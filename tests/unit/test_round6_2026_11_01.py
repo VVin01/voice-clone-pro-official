@@ -69,7 +69,7 @@ def test_p1_auth_media_helpers_exist():
         "async function fetchAuthBlobUrl(url)",
         "async function setAuthMediaSource(el, url)",
         "function clearAuthMediaSource(el)",
-        "async function downloadAuthFile(url, filename)",
+        "async function downloadAuthFile(url, filename, el)",
         "async function openAuthFile(url)",
         'closest("a[data-dl-url], a[data-open-url]")',
         "URL.revokeObjectURL(prev)",
@@ -393,7 +393,7 @@ def test_cache_buster_bumped():
     # voice preview feature) -> rt1 (Recap tab tidy, all three statics)
     # -> rt3 (tidy return pass 2) -> rt4 (full-app polish batch)
     # -> fp1 (admin-demote + voice-picker batch).
-    assert INDEX_HTML.count("?v=20261104_r58") == 4
+    assert INDEX_HTML.count("?v=20261104_r59") == 4
     assert "?v=20261101_rt4" not in INDEX_HTML
     assert "?v=20261101_rt3" not in INDEX_HTML
     assert "?v=20261101_rt1" not in INDEX_HTML
