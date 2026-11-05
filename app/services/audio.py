@@ -17,6 +17,27 @@ logger = logging.getLogger(__name__)
 # voice samples; same 120s scale as recap_engine.core's probe cap).
 NORMALIZE_TIMEOUT_SECONDS = 120
 
+# Batch AJ / M11: bound a single Edge TTS save. A stalled
+# third-party socket used to pin the voice worker forever; 120 s is
+# the same spirit as the VoxCPM budget scale (240 s total) for one
+# short voice line.
+EDGE_TTS_TIMEOUT_SECONDS = 120
+
+# Batch AJ / L21: ffmpeg/ffprobe may only open local files and
+# pipes — never network protocols — for the media handled here.
+MEDIA_PROTOCOL_WHITELIST = "file,pipe"
+
+
+class UnreadableAudioDurationError(RuntimeError):
+    """Batch AJ / L4: the produced audio's duration cannot be read.
+
+    Raised instead of returning a fabricated duration: the caller
+    (app/worker.py process_single_job) calls the duration probe
+    inside its job-level try, whose generic failure path fails and
+    refunds the job — an honest failure instead of a made-up 5 s
+    charge on an unreadable file.
+    """
+
 CURATED_TTS_VOICES = {
     "my-MM-ThihaNeural": {"name": "Thiha (မြန်မာ)", "gender": "male", "lang": "my"},
     "my-MM-NilarNeural": {"name": "Nilar (မြန်မာ)", "gender": "female", "lang": "my"},
@@ -64,7 +85,8 @@ def get_wav_duration_seconds(wav_path: Path) -> int:
         import shutil
         ffprobe_bin = shutil.which("ffprobe") or r"C:\ffmpeg\bin\ffprobe.exe"
         cmd = [
-            ffprobe_bin, "-v", "error", "-show_entries",
+            ffprobe_bin, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+            "-v", "error", "-show_entries",
             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
             str(wav_path)
         ]
@@ -75,7 +97,14 @@ def get_wav_duration_seconds(wav_path: Path) -> int:
     except Exception as e:
         logger.debug("ffprobe duration inspect fallback: %s", e)
 
-    return 5  # Conservative default fallback
+    # Batch AJ / L4: BOTH probes failed — the old code returned a
+    # hard-coded 5, so an unreadable output was billed a fabricated
+    # 5 seconds and delivered as SUCCESS. Fail honestly instead.
+    raise UnreadableAudioDurationError(
+        f"Could not determine the duration of the generated audio at {wav_path} "
+        "(WAV header and ffprobe both failed) — failing the job instead of "
+        "billing a fabricated duration."
+    )
 
 
 async def generate_edge_tts(
@@ -92,7 +121,11 @@ async def generate_edge_tts(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     communicate = edge_tts.Communicate(text, voice, rate=rate_str)
-    await communicate.save(str(out_path))
+    # Batch AJ / M11: a per-call timeout — a stalled Edge socket must
+    # fail the job, not pin the voice worker indefinitely.
+    await asyncio.wait_for(
+        communicate.save(str(out_path)), timeout=EDGE_TTS_TIMEOUT_SECONDS
+    )
 
     if not out_path.is_file() or out_path.stat().st_size == 0:
         raise RuntimeError(f"Edge TTS failed to produce output at {out_path}")
@@ -107,7 +140,7 @@ async def normalize_audio_to_wav(
     """Normalize input audio to 40kHz, 16-bit PCM, mono WAV via FFmpeg."""
     out_wav.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "ffmpeg", "-y",
+        "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
         "-i", str(in_audio),
         "-ar", "40000",
         "-ac", "1",

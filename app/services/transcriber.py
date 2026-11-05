@@ -77,6 +77,7 @@ def _transcribe_with_groq_srt(
                 temp_mp3 = path.parent / f"_groq_srt_{path.stem}_{int(time.time())}.mp3"
                 cmd = [
                     str(ff), "-y", "-hide_banner", "-loglevel", "error",
+                    "-protocol_whitelist", "file,pipe",
                     "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
                     str(temp_mp3)
                 ]

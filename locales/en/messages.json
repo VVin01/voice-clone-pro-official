@@ -483,5 +483,8 @@
   "recap_progress_requeued": "🔄 Re-queued by Administrator...",
   "webapp_status_completed": "Completed",
   "webapp_status_processing": "Processing in background...",
-  "webapp_status_failed": "Failed"
+  "webapp_status_failed": "Failed",
+  "clone_caption_recap_audio": "🎧 <b>Recap Audio</b>",
+  "clone_caption_recap_script": "📄 <b>Recap Script</b>",
+  "pay_slip_already_used": "This receipt has already been submitted. The admins will notify you once it has been reviewed."
 }

@@ -478,6 +478,7 @@ def apply_persona_mastering(
         subprocess.run(
             [
                 ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                "-protocol_whitelist", "file,pipe",
                 "-i", str(src_path),
                 "-af", f"aresample=44100,{prefix}{chain}",
                 "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
@@ -513,13 +514,27 @@ def get_persona_reference(voice_id: str) -> tuple[Optional[str], str]:
             info = ref_info
     pid = info["id"]
     if pid in PERSONA_REFERENCE_SOURCES:
-        refs_dir = Path(__file__).resolve().parent.parent / "webapp" / "static" / "audio" / "references"
-        ref_wav = refs_dir / f"{pid}.wav"
-        ref_txt = refs_dir / f"{pid}.txt"
-        if ref_wav.is_file() and ref_wav.stat().st_size > 1000 and ref_txt.is_file():
-            transcript = ref_txt.read_text(encoding="utf-8").strip()
-            if transcript:
-                return str(ref_wav.resolve()), transcript
+        # Batch AJ H9: the persona reference WAVs are the cloning
+        # source material — they sat under webapp/static, where the
+        # unauthenticated /static mount served them to anyone (free
+        # off-platform cloning of every persona). The HTTP route to
+        # them is now hard-blocked in server.py (404), and resolution
+        # prefers the non-static app/assets location; the legacy
+        # static directory remains only as an on-disk fallback until
+        # the WAV binaries can move through a binary-capable sync
+        # route (the snapshot-push connector carries UTF-8 text
+        # only, no deletions). The Mini App picker never touches
+        # these paths — it uses the API sample endpoint.
+        for refs_dir in (
+            Path(__file__).resolve().parent.parent / "assets" / "audio" / "references",
+            Path(__file__).resolve().parent.parent / "webapp" / "static" / "audio" / "references",
+        ):
+            ref_wav = refs_dir / f"{pid}.wav"
+            ref_txt = refs_dir / f"{pid}.txt"
+            if ref_wav.is_file() and ref_wav.stat().st_size > 1000 and ref_txt.is_file():
+                transcript = ref_txt.read_text(encoding="utf-8").strip()
+                if transcript:
+                    return str(ref_wav.resolve()), transcript
     sample_text = str(info.get("sample_text") or "").strip()
     samples_dir = Path(__file__).resolve().parent.parent / "webapp" / "static" / "audio" / "samples"
     cand = samples_dir / f"{pid}.mp3"
@@ -633,21 +648,31 @@ def _split_persona_text(text: str, max_chars: int = _PERSONA_TTS_CHUNK_CHARS) ->
 
 
 def _edge_tts_to_mp3(text: str, voice: str, rate_str: str, pitch: str, dest_mp3: Path) -> None:
-    """Run one Edge TTS request for *text* and save the MP3 to *dest_mp3*."""
+    """Run one Edge TTS request for *text* and save the MP3 to *dest_mp3*.
+
+    Batch AJ M11: every attempt is bounded (120 s, aligned with the
+    engine's Edge bound). The old code caught the bounded attempt's
+    failure — including its timeout — and fell back to an UNBOUNDED
+    direct run of the same call, so a stalled socket pinned the
+    worker forever; the retry is now bounded too, and a second
+    failure propagates."""
     import edge_tts
 
     async def _run_edge():
         comm = edge_tts.Communicate(text, voice, rate=rate_str, pitch=pitch)
         await comm.save(str(dest_mp3))
 
-    try:
+    def _bounded_attempt() -> None:
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             fut = executor.submit(lambda: asyncio.run(_run_edge()))
-            fut.result(timeout=30)
+            fut.result(timeout=120)
+
+    try:
+        _bounded_attempt()
     except Exception as e_run:
-        logger.warning("ThreadPoolExecutor failed for persona TTS: %s; falling back to direct run", e_run)
-        asyncio.run(_run_edge())
+        logger.warning("Persona TTS attempt failed: %s; one bounded retry", e_run)
+        _bounded_attempt()
 
     if not dest_mp3.is_file() or dest_mp3.stat().st_size < 200:
         raise RuntimeError("Edge TTS failed to synthesize an audio chunk")
@@ -738,6 +763,7 @@ def synthesize_curated_persona(
                 subprocess.run(
                     [
                         ffmpeg_join, "-y", "-hide_banner", "-loglevel", "error",
+                        "-protocol_whitelist", "file,pipe",
                         "-f", "concat", "-safe", "0", "-i", str(list_file),
                         "-c:a", "libmp3lame", "-ar", "24000", "-ac", "1",
                         str(temp_mp3),
@@ -773,6 +799,7 @@ def synthesize_curated_persona(
             try:
                 cmd = [
                     ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                    "-protocol_whitelist", "file,pipe",
                     "-i", str(temp_mp3),
                     "-af", f"aresample=44100,{candidate_af}",
                     "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",

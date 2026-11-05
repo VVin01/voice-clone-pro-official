@@ -19,6 +19,35 @@ from app.config import settings
 # (logs, screenshots, shared links) stays valid forever.
 INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60
 
+# Batch AJ (M8): the future direction was unchecked — an auth_date
+# far ahead of the server clock verified fine. A small skew is
+# legitimate (Telegram/Render clock drift); anything beyond it is
+# not a real client.
+INIT_DATA_FUTURE_SKEW_SECONDS = 300
+
+# Batch AJ (M8): admin actions demand fresher initData than user
+# reads. The 24 h bearer window is a usability trade-off for normal
+# Mini App use; an admin session that old is a leaked-session risk,
+# and reopening the Mini App mints fresh initData anyway.
+ADMIN_INIT_DATA_MAX_AGE_SECONDS = 12 * 60 * 60
+
+
+def init_data_auth_date(init_data: str) -> Optional[int]:
+    """The auth_date carried by an initData string, or None.
+
+    UNVERIFIED parse — only meaningful on a string that has already
+    passed parse_and_verify_init_data (the value is HMAC-covered, so
+    once the signature checks out, the date is trustworthy).
+    """
+    if not init_data:
+        return None
+    try:
+        parsed = urllib.parse.parse_qs(init_data, keep_blank_values=True)
+        raw = parsed.get("auth_date", [None])[0]
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
 
 def parse_and_verify_init_data(init_data: str, bot_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
@@ -27,6 +56,15 @@ def parse_and_verify_init_data(init_data: str, bot_token: Optional[str] = None) 
     """
     token = bot_token or settings.bot_token
     if not init_data:
+        return None
+
+    # Batch AJ (H10): fail closed on an empty token. With no bot
+    # token configured, the HMAC secret is derivable by anyone
+    # (HMAC-SHA256 of the public "WebAppData" label under an empty
+    # key), so initData for ANY user — admins included — would be
+    # forgeable. The webhook and stream-token paths already fail
+    # closed the same way; auth now matches them.
+    if not token:
         return None
 
     try:
@@ -63,12 +101,21 @@ def parse_and_verify_init_data(init_data: str, bot_token: Optional[str] = None) 
             return None
         if time.time() - auth_date > INIT_DATA_MAX_AGE_SECONDS:
             return None
+        # Batch AJ (M8): reject auth_dates implausibly far in the
+        # FUTURE too (beyond a small clock-skew allowance) — the
+        # stale-only check left a pre-minting window wide open.
+        if auth_date - time.time() > INIT_DATA_FUTURE_SKEW_SECONDS:
+            return None
 
-        # Extract authenticated user information
+        # Extract authenticated user information. Batch AJ (L9): a
+        # validly-signed payload WITHOUT a user field used to fall
+        # through and return the raw params dict, which callers then
+        # indexed ["id"] on — a 500 instead of a clean rejection.
+        # No user field means no authenticated user: reject.
         user_str = data_dict.get("user")
-        if user_str:
-            return json.loads(user_str)
-        return data_dict
+        if not user_str:
+            return None
+        return json.loads(user_str)
 
     except Exception:
         return None

@@ -14,6 +14,7 @@ from app.models.schema import PaymentRequest, PricingPlan
 from app.services.i18n import t
 from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.payments import (
+    SlipAlreadyUsedError,
     clear_payment_intent,
     create_payment_request,
     get_active_pricing_plans,
@@ -329,12 +330,22 @@ async def handle_receipt_received(message: Message, state: FSMContext):
     await state.clear()
 
     async with AsyncSessionLocal() as session:
-        payment = await create_payment_request(
-            session=session,
-            user_id=message.from_user.id,
-            package_code=pkg_code,
-            receipt_file_id=file_id,
-        )
+        try:
+            payment = await create_payment_request(
+                session=session,
+                user_id=message.from_user.id,
+                package_code=pkg_code,
+                receipt_file_id=file_id,
+            )
+        except SlipAlreadyUsedError:
+            # Batch AJ H1: this exact slip already bought (or is
+            # already awaiting review for) a package — one slip, one
+            # credit, across accounts and across approval. Tell the
+            # user plainly instead of minting a second request.
+            await clear_payment_intent(session, message.from_user.id)
+            await session.commit()
+            await message.answer(t("pay_slip_already_used", lang), parse_mode="HTML")
+            return
         # The slip exists now; the persisted selection has done its job.
         await clear_payment_intent(session, message.from_user.id)
         await session.commit()
@@ -367,6 +378,7 @@ async def handle_receipt_after_restart(message: Message):
 
     payment = None
     resume_failed = False
+    slip_replayed = False
     lang = "my"
     async with AsyncSessionLocal() as session:
         intent = await get_recent_payment_intent(session, message.from_user.id)
@@ -382,6 +394,15 @@ async def handle_receipt_after_restart(message: Message):
                 package_code=intent_code,
                 receipt_file_id=file_id,
             )
+        except SlipAlreadyUsedError:
+            # Batch AJ H1: NOT a poisoned intent — the slip is simply
+            # already used (its purchase exists). Clear the intent so
+            # later photos are not re-checked against it, and answer
+            # with the replay message, not the restart-failure one.
+            await session.rollback()
+            await clear_payment_intent(session, message.from_user.id)
+            await session.commit()
+            slip_replayed = True
         except Exception as exc:
             # Poisoned intent (hunt #5): the persisted plan no longer
             # exists (removed from the DB/catalogue after the user
@@ -398,9 +419,13 @@ async def handle_receipt_after_restart(message: Message):
             await clear_payment_intent(session, message.from_user.id)
             await session.commit()
             resume_failed = True
-        if not resume_failed:
+        if not resume_failed and not slip_replayed:
             await clear_payment_intent(session, message.from_user.id)
             await session.commit()
+
+    if slip_replayed:
+        await message.answer(t("pay_slip_already_used", lang), parse_mode="HTML")
+        return
 
     if resume_failed:
         await message.answer(t("payment_resume_failed", lang), parse_mode="HTML")

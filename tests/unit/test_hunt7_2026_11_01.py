@@ -57,7 +57,7 @@ from app.db.base import Base
 from app.models.enums import JobStatus, JobType, PaymentStatus
 from app.models.schema import Job, PaymentRequest, Referral, ReferralReward, User, VoiceModel, utc_now
 from app.services.ledger import confirm_referral_and_reward, get_minute_balance, get_or_create_user
-from app.services.payments import create_payment_request
+from app.services.payments import SlipAlreadyUsedError, create_payment_request
 from app.services.queue import create_voice_clone_job
 from app.services.recovery import recover_stale_running_jobs
 from app.webapp import api as webapp_api
@@ -215,19 +215,31 @@ async def test_create_payment_request_duplicate_file_id_idempotent(db_session):
     third = await create_payment_request(db_session, user.id, "MIN_10", receipt_file_id="slip-file-2")
     assert third.id != first.id
 
-    # The guard matches PENDING only: once the first request is
-    # decided, the same evidence belongs to a closed case and a new
-    # submission is a fresh request again.
+    # Batch AJ (H1) deliberately strengthened this: one bank slip =
+    # one credit, GLOBALLY and forever. The pre-AJ guard matched
+    # PENDING only, so once the first request was APPROVED the same
+    # slip could be submitted again (even from a second account)
+    # and credited a second time. Now an APPROVED fingerprint
+    # refuses any later submission outright — the property this
+    # test pins is the stronger one: a duplicate slip can never
+    # mint a second credit.
     first.status = PaymentStatus.APPROVED.value
     await db_session.flush()
-    fourth = await create_payment_request(db_session, user.id, "MIN_10", receipt_file_id="slip-file-1")
-    assert fourth.id != first.id
+    with pytest.raises(SlipAlreadyUsedError):
+        await create_payment_request(db_session, user.id, "MIN_10", receipt_file_id="slip-file-1")
+    count = (await db_session.execute(
+        select(func.count()).select_from(PaymentRequest).where(PaymentRequest.user_id == user.id)
+    )).scalar()
+    assert count == 2  # only the two distinct slips were ever created
 
 
 @pytest.mark.asyncio
 async def test_submit_slip_identical_image_rejected_409(db_session, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(settings, "bot_token", "")  # never alert real admins from a test
+    # Batch AJ (M1): disk-headroom floor off (sandbox /tmp is
+    # smaller than the floor; gate pinned by the AJ M1 tests).
+    monkeypatch.setattr(webapp_api, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     user = User(id=777302, username="slip_user", first_name="Slip")
     db_session.add(user)
     await db_session.flush()

@@ -210,6 +210,9 @@ class _FakeUpload:
 async def test_slip_db_plan_price_wins_over_catalogue(db_session, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(settings, "bot_token", "")
+    # Batch AJ (M1): disk-headroom floor off (sandbox /tmp is
+    # smaller than the floor; gate pinned by the AJ M1 tests).
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     user, _ = await get_or_create_user(db_session, telegram_id=7701)
     await db_session.commit()
 

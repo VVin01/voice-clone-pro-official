@@ -69,6 +69,18 @@ async def _refresh_limits(session: AsyncSession | None) -> None:
     """Apply the owner-tuned BotSetting limits to the shared limiter."""
     async with _session_or_new(session) as s:
         gai.rate_limiter.update_limits(await gai.get_limits(s))
+        # Batch AJ (M12): one-shot restore of the persisted limiter
+        # snapshot (budgets / cooldowns / answered-set) after a restart.
+        await gai.ensure_limiter_restored(s)
+
+
+async def _flush_limiter(session: AsyncSession | None) -> None:
+    """Batch AJ (M12): debounced write-through of limiter state."""
+    try:
+        async with _session_or_new(session) as s:
+            await gai.flush_limiter_state_if_dirty(s)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +416,10 @@ async def handle_group_message(
         gai.rate_limiter.record_reply(user.id, message.message_id)
     except Exception as exc:
         logger.warning("group_ai_admin: handler failed (silence): %s", exc)
+    finally:
+        # Batch AJ (M12): persist any limiter changes from this
+        # message (debounced + dirty-checked; never raises).
+        await _flush_limiter(session)
 
 
 # ---------------------------------------------------------------------------

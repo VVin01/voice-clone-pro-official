@@ -8065,6 +8065,14 @@ async function submitPaymentSlip() {
 const ADM_SECTIONS = ["overview", "payments", "jobs", "users", "broadcast", "activity", "settings"];
 let admCurrentSection = "overview";
 let admCurrentUserId = null;
+// Batch AJ M5: one idempotency key per adjust intent — generated
+// when the user-detail dialog opens, reused if the apply request is
+// retried after a network failure, cleared after a successful apply
+// (a further apply is a NEW intent and must not be deduped).
+let _admAdjustIdemKey = null;
+function _newAdjustIdemKey() {
+    try { return crypto.randomUUID(); } catch (e) { return "adj-" + Date.now() + "-" + Math.floor(Math.random() * 1e9); }
+}
 let admLoadedSections = {};
 
 function admFmtBytes(n) {
@@ -8729,6 +8737,7 @@ window.loadAdminUsersRecent = loadAdminUsersRecent;
 
 async function openAdminUserDetail(uid) {
     admCurrentUserId = uid;
+    _admAdjustIdemKey = _newAdjustIdemKey();
     haptic("light");
     const main = document.getElementById("adm-users-main");
     const detail = document.getElementById("adm-user-detail");
@@ -8846,6 +8855,8 @@ async function adminApplyAdjust() {
         if (applyBtn) applyBtn.disabled = true;
         try {
             const payload = { user_id: uid, add_minutes: minutes, add_seconds: seconds, add_recap_credits: credits, reason };
+            if (!_admAdjustIdemKey) _admAdjustIdemKey = _newAdjustIdemKey();
+            payload.idempotency_key = _admAdjustIdemKey;
             if (tier) payload.account_category = tier;
             const res = await fetch("/api/admin/adjust-user", {
                 method: "POST",
@@ -8854,6 +8865,7 @@ async function adminApplyAdjust() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || "Failed");
+            _admAdjustIdemKey = null; // applied — the next apply is a new intent
             showStudioToast(data.message, "success");
             const reasonEl = document.getElementById("adm-adjust-reason");
             if (reasonEl) reasonEl.value = "";

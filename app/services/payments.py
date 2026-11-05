@@ -4,6 +4,7 @@ import logging
 import uuid
 from datetime import datetime
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -12,6 +13,71 @@ from app.models.schema import AuditLog, BotSetting, PaymentIntent, PaymentReques
 from app.services.ledger import credit_purchased_minutes, get_or_create_user
 
 logger = logging.getLogger(__name__)
+
+
+class SlipAlreadyUsedError(ValueError):
+    """Batch AJ (H1): this payment slip was already submitted and is
+    live (PENDING under another account) or already APPROVED — one
+    bank slip buys exactly one credit, globally. Subclasses ValueError
+    so the pre-existing error handling in the slip handlers (which
+    treat ValueError as "this submission cannot proceed") keeps
+    working; handlers catch this type specifically to show the
+    dedicated already-used message."""
+
+
+# ── Edit-and-approve claim TTL ───────────────────────────────────────
+# Moved here from payment_review (Batch AJ, M3): the claim must be
+# enforced inside approve/reject_payment_request themselves, and
+# payment_review already imports this module — keeping the TTL and
+# the staleness rule here avoids a circular import. payment_review
+# re-exports both names, so existing import sites are unchanged.
+
+from datetime import timedelta, timezone
+
+# An edit-and-approve claim older than this is STALE: the claiming
+# admin has presumably walked away, so the claim stops blocking the
+# other admins (the same lazy-expiry idea as the group-AI escalations'
+# 24h expiry). Live claims (≤ TTL) keep the exact batch-I behaviour —
+# this weakens nothing for an admin who is actively editing.
+PAYMENT_REVIEW_CLAIM_TTL = timedelta(minutes=60)
+
+
+def _claim_as_utc(value: datetime | None) -> datetime | None:
+    """Normalise a stored timestamp to aware UTC (naive reads as UTC)."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def payment_claim_is_stale(
+    payment: PaymentRequest, *, now: datetime | None = None
+) -> bool:
+    """True when the row carries a claim older than the TTL.
+
+    Unclaimed rows are never stale, and neither is a claim with no
+    timestamp (pre-TTL legacy rows): only a positively-aged claim
+    expires.
+    """
+    if getattr(payment, "review_claimed_by", None) is None:
+        return False
+    claimed_at = _claim_as_utc(getattr(payment, "review_claimed_at", None))
+    if claimed_at is None:
+        return False
+    moment = _claim_as_utc(now) if now is not None else utc_now()
+    return moment - claimed_at > PAYMENT_REVIEW_CLAIM_TTL
+
+
+def _claimed_by_other(payment: PaymentRequest, admin_id: int) -> bool:
+    """Batch AJ (M3): True when a LIVE claim on this request belongs
+    to a different admin. Enforced by approve/reject themselves, so
+    every surface (bot handlers, Mini App endpoints, future callers)
+    gets the same protection the bot UI always had."""
+    claimed_by = getattr(payment, "review_claimed_by", None)
+    if claimed_by is None or claimed_by == admin_id:
+        return False
+    return not payment_claim_is_stale(payment)
 
 # Single source of truth for ALL paid plans, in three separate categories.
 # Voice-only: minute packs + Voice Pro. Recap-only: Recap Starter + Recap
@@ -92,6 +158,7 @@ async def create_payment_request(
     user_id: int,
     package_code: str,
     receipt_file_id: str | None = None,
+    slip_fingerprint: str | None = None,
 ) -> PaymentRequest:
     """Create a new pending payment request."""
     # Duplicate-slip guard (hunt #7): the SAME receipt evidence sent
@@ -116,6 +183,42 @@ async def create_payment_request(
                 user_id, existing.id,
             )
             return existing
+    # Batch AJ (H1): one bank slip = one credit, GLOBALLY. The hunt-#7
+    # guard above only covers the same user while PENDING — but the
+    # slip file is deleted at approval and APPROVED rows were never
+    # matched, so re-sending the same slip after approval (or sending
+    # it from a second account) minted a second credit for one
+    # transfer. The durable fingerprint closes both: bot submissions
+    # fingerprint as tg:<file_id> (stable per photo for this bot —
+    # the same photo re-sent or forwarded IS the same slip), Mini App
+    # uploads as sha256:<image bytes>. Any fingerprint already carried
+    # by a PENDING request of another user, or by ANY APPROVED
+    # request, refuses the submission. REJECTED rows do not block: an
+    # admin already judged that attempt, and the legitimate owner may
+    # resubmit (a later approval then blocks everyone, as it should).
+    fingerprint = slip_fingerprint or (f"tg:{receipt_file_id}" if receipt_file_id else None)
+    if fingerprint:
+        clash = (await session.execute(
+            select(PaymentRequest).where(
+                PaymentRequest.slip_fingerprint == fingerprint,
+                PaymentRequest.status != PaymentStatus.REJECTED.value,
+            )
+        )).scalars().all()
+        for prior in clash:
+            if prior.status == PaymentStatus.APPROVED.value:
+                raise SlipAlreadyUsedError(
+                    "This payment slip has already been used for an approved payment."
+                )
+            if prior.user_id != user_id and prior.status == PaymentStatus.PENDING.value:
+                raise SlipAlreadyUsedError(
+                    "This payment slip is already under review from another submission."
+                )
+            if prior.user_id == user_id and prior.status == PaymentStatus.PENDING.value:
+                logger.info(
+                    "Duplicate slip submission by user %s ignored; existing request %s still pending",
+                    user_id, prior.id,
+                )
+                return prior
     # Resolve package details: DB minute packs first, then the plan
     # catalogue (bundles/recap/combined codes are not DB PricingPlan rows,
     # but they are sellable through the bot buy menu and Mini App).
@@ -145,10 +248,32 @@ async def create_payment_request(
         minutes=plan.minutes,
         amount_mmk=plan.price_mmk,
         receipt_file_id=receipt_file_id,
+        slip_fingerprint=fingerprint,
         status=PaymentStatus.PENDING.value,
     )
     session.add(payment)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        # Race backstop (Batch AJ, H1): the defensive partial unique
+        # index fired — a concurrent submission with the same slip
+        # fingerprint committed first. Translate to the domain error
+        # when the winner is a live/approved row; re-raise otherwise.
+        await session.rollback()
+        if fingerprint:
+            winner = (await session.execute(
+                select(PaymentRequest).where(
+                    PaymentRequest.slip_fingerprint == fingerprint,
+                    PaymentRequest.status != PaymentStatus.REJECTED.value,
+                )
+            )).scalars().first()
+            if winner is not None:
+                if winner.user_id == user_id and winner.status == PaymentStatus.PENDING.value:
+                    return winner
+                raise SlipAlreadyUsedError(
+                    "This payment slip has already been submitted."
+                ) from exc
+        raise
     logger.info("Created payment request %s for user %s (%s min)", pay_id, user_id, plan.minutes)
     return payment
 
@@ -237,6 +362,15 @@ async def approve_payment_request(
     if payment.status != PaymentStatus.PENDING.value:
         return False, payment, f"ALREADY_{payment.status}"
 
+    # Batch AJ (M3): the edit-and-approve claim is enforced HERE, in
+    # the service — previously only the bot handlers checked it, so
+    # the Mini App approve endpoint could approve straight over
+    # another admin's in-progress edit. A live claim held by a
+    # different admin blocks the decision; the claim holder and stale
+    # claims proceed exactly as before.
+    if _claimed_by_other(payment, admin_id):
+        return False, payment, "CLAIMED_BY_OTHER"
+
     # Mark approved transactionally
     payment.status = PaymentStatus.APPROVED.value
     payment.reviewed_by = admin_id
@@ -263,8 +397,18 @@ async def approve_payment_request(
     # crediting path: the bot approval handler and the Mini App approval
     # endpoint both call this service, so both credit the same amounts
     # for the same package code.
+    # Batch AJ (M4): an edit-and-approve correction of the recap side
+    # (edited_recap_credits, recorded by apply_edited_approval) wins
+    # over the catalogue amount, exactly like the corrected minutes
+    # above win over the plan minutes.
     cat = get_plan_by_code(payment.package_code)
-    if cat and cat["recap_credits"]:
+    _edited_recap = getattr(payment, "edited_recap_credits", None)
+    _recap_to_credit = (
+        int(_edited_recap)
+        if _edited_recap is not None
+        else (cat["recap_credits"] if cat else 0)
+    )
+    if _recap_to_credit:
         # Atomic increment (hunt F5): a conditional UPDATE instead of
         # read-modify-write, so a concurrent charge/refund on the same
         # user can no longer be silently overwritten by this approval.
@@ -274,7 +418,7 @@ async def approve_payment_request(
             update(User)
             .where(User.id == payment.user_id)
             .values(
-                recap_credits=User.recap_credits + cat["recap_credits"],
+                recap_credits=User.recap_credits + _recap_to_credit,
                 account_category=AccountCategory.PURCHASED.value,
             )
         )
@@ -315,6 +459,10 @@ async def reject_payment_request(
 
     if payment.status != PaymentStatus.PENDING.value:
         return False, payment, f"ALREADY_{payment.status}"
+
+    # Batch AJ (M3): same claim enforcement as approve (above).
+    if _claimed_by_other(payment, admin_id):
+        return False, payment, "CLAIMED_BY_OTHER"
 
     payment.status = PaymentStatus.REJECTED.value
     payment.reviewed_by = admin_id

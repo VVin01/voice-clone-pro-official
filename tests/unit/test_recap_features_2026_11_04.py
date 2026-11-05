@@ -288,6 +288,9 @@ async def test_retry_upload_source_present_succeeds(db_session, tmp_path, monkey
     upload.parent.mkdir(parents=True)
     upload.write_bytes(b"fake video bytes")
     monkeypatch.setattr(settings, "storage_root", storage)
+    # Batch AJ (M1): disk-headroom floor off (sandbox /tmp is
+    # smaller than the floor; gate pinned by the AJ M1 tests).
+    monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
 
     owner, _ = await get_or_create_user(db_session, telegram_id=OWNER_TG)
     owner.recap_credits = 1
@@ -822,7 +825,7 @@ def test_batch_l_frontend_wiring_pins():
     ):
         assert f'id="{element_id}"' in INDEX_HTML, element_id
     # Static assets moved to the batch's cache version.
-    assert "20261104_r61" in INDEX_HTML
+    assert "20261104_r62" in INDEX_HTML
     assert "20261103_r43" not in INDEX_HTML
 
     # Poller renders the server's job-aware position/ETA.

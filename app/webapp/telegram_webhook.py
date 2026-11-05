@@ -195,6 +195,31 @@ _background_tasks: set[asyncio.Task] = set()
 _registration_task: Optional[asyncio.Task] = None
 
 
+class UpdateDedupMiddleware:
+    """aiogram outer middleware: drop redelivered updates (Batch AJ, H12).
+
+    Polling now runs with drop_pending_updates=False so updates sent
+    during downtime are NOT lost — but Telegram also REDELIVERS
+    updates it believes were lost (exactly the restart window), and
+    the webhook path's protection (recent_update_ids) did not exist
+    on the polling path. This gives polling the same memory: an
+    update_id seen before is dropped before any handler runs, which
+    is what makes the slip flow's redelivery safe end-to-end (the
+    payments service guards are the second layer).
+
+    Duck-typed on purpose (no aiogram import at module level, like
+    the rest of this module): aiogram calls it as
+    ``middleware(handler, event, data)`` for update events.
+    """
+
+    async def __call__(self, handler, event, data):
+        update_id = getattr(event, "update_id", None)
+        if update_id is not None and recent_update_ids.seen_or_add(update_id):
+            logger.info("Dropping redelivered update %s (already processed).", update_id)
+            return None
+        return await handler(event, data)
+
+
 def attach_bot(bot: Any, dispatcher: Any) -> None:
     """Hand the process's Bot + Dispatcher to the webhook endpoint.
 

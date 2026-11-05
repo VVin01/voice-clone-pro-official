@@ -813,6 +813,23 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                     text=t("clone_audio_not_found", lang),
                 )
                 return
+            if job is None:
+                # Batch AJ M7: with no Job row, the paths below resolve
+                # from the in-memory registry / disk alone — the old
+                # code skipped ownership entirely in that case, so any
+                # user who learned a job id could pull its files after
+                # the row was swept. Fail closed like the voice
+                # sibling: the registry entry must prove ownership
+                # (admins exempt); neither source proving it = refuse.
+                from app.webapp.api import RECAP_JOBS_REGISTRY as _REG
+
+                _entry_owner = (_REG.get(job_id) or {}).get("user_id")
+                if _entry_owner != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                    await callback.bot.send_message(
+                        chat_id=target_chat_id,
+                        text=t("clone_audio_not_found", lang),
+                    )
+                    return
             db_res_path = job.result_path if job else None
             resolved_vid = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
             resolved_srt = resolve_recap_deliverable_path(job_id, "srt")

@@ -349,6 +349,20 @@ class PaymentRequest(Base):
     # and is what the approval credits).
     original_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     edited_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Batch AJ (H1): durable identity of the payment slip itself —
+    # "tg:<telegram file_id>" for bot submissions, "sha256:<hex of the
+    # image bytes>" for Mini App uploads. One slip = one credit,
+    # globally: creation refuses a fingerprint that any live (PENDING)
+    # or APPROVED request already carries, and a defensive partial
+    # unique index (app.db.session.ensure_batch_aj_unique_indexes)
+    # backstops the check against races. The fingerprint survives the
+    # slip file's deletion at approval, which is the point: replay
+    # detection must not depend on the image still being on disk.
+    slip_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Batch AJ (M4): edit-and-approve may also correct the plan's recap
+    # credits; when set, approval grants THIS value instead of the
+    # catalogue amount (the recap twin of edited minutes).
+    edited_recap_credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()

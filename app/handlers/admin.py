@@ -486,6 +486,9 @@ _EDIT_ALREADY_HANDLED_ALERT = "ဒီ တောင်းဆိုချက်က
 
 class PaymentReviewFSM(StatesGroup):
     waiting_for_corrected_minutes = State()
+    # Batch AJ M4: recap-bearing packages get a second prompt for the
+    # corrected recap credits (the minutes-only flow never shows it).
+    waiting_for_corrected_recap_credits = State()
     confirming_edit = State()
 
 
@@ -926,6 +929,24 @@ async def handle_admin_pay_edit_minutes_input(
         return
 
     await state.update_data(corrected_minutes=value)
+
+    # Batch AJ M4: for recap-bearing packages, the correction is only
+    # half-specified with minutes — prompt for the corrected recap
+    # credits too (they ride to apply_edited_approval and are granted
+    # instead of the catalogue amount). Minutes-only plans keep the
+    # original one-step flow.
+    _pkg_recap_credits = package_recap_credits(payment.package_code)
+    if _pkg_recap_credits > 0:
+        await state.set_state(PaymentReviewFSM.waiting_for_corrected_recap_credits)
+        await message.answer(
+            "✏️ <b>Recap Credit ပြင်ဆင်ရန်</b>\n\n"
+            f"• Package မူလ Recap Credit: <b>{_pkg_recap_credits}</b>\n\n"
+            "ပြင်ဆင်မည့် Recap Credit ပမာဏကို ဂဏန်းဖြင့် ရိုက်ထည့်ပေးပါ (0 – 1000)။",
+            reply_markup=_pay_edit_cancel_kb(pay_id),
+            parse_mode="HTML",
+        )
+        return
+
     await state.set_state(PaymentReviewFSM.confirming_edit)
 
     confirm_text = (
@@ -934,6 +955,71 @@ async def handle_admin_pay_edit_minutes_input(
         f"• မူလ မိနစ်: <b>{payment.minutes} မိနစ်</b>\n"
         f"• ပြင်ဆင်မည့် မိနစ်: <b>{value} မိနစ်</b>\n\n"
         "<i>အတည်ပြုလိုက်ပါက ပြင်ဆင်ထားသော မိနစ်ဖြင့် Credit ထည့်ပေးပါမည်။</i>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ အတည်ပြုမယ်", callback_data=f"admin:pay_edit_confirm:{payment.id}")],
+            [InlineKeyboardButton(text="🚫 ပယ်ဖျက်မယ်", callback_data=f"admin:pay_edit_cancel:{payment.id}")],
+        ]
+    )
+    await message.answer(confirm_text, reply_markup=kb, parse_mode="HTML")
+
+
+@admin_router.message(PaymentReviewFSM.waiting_for_corrected_recap_credits)
+async def handle_admin_pay_edit_recap_credits_input(
+    message: Message, state: FSMContext, session: AsyncSession | None = None
+):
+    """Batch AJ M4: second step of the edited approval for
+    recap-bearing packages — the corrected recap-credit count."""
+    if not settings.is_admin(message.from_user.id if message.from_user else None):
+        return
+
+    data = await state.get_data()
+    pay_id = data.get("payment_id")
+    corrected_minutes = data.get("corrected_minutes")
+    if not pay_id or corrected_minutes is None:
+        await state.clear()
+        return
+
+    raw = (message.text or "").strip().replace(",", "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not (0 <= value <= 1000):
+        await message.answer(
+            "⚠️ Recap Credit ပမာဏကို ဂဏန်း မှန်ကန်စွာ ရိုက်ထည့်ပေးပါ (0 – 1000)။",
+            reply_markup=_pay_edit_cancel_kb(pay_id),
+            parse_mode="HTML",
+        )
+        return
+
+    if session is not None:
+        payment = await session.get(PaymentRequest, pay_id)
+    else:
+        async with AsyncSessionLocal() as s:
+            payment = await s.get(PaymentRequest, pay_id)
+
+    if (
+        payment is None
+        or payment.status != PaymentStatus.PENDING.value
+        or payment.review_claimed_by != message.from_user.id
+    ):
+        await state.clear()
+        await message.answer("ဒီ တောင်းဆိုချက်ကို ကိုင်တွယ်ပြီးသား (သို့) အခြေအနေ ပြောင်းလဲသွားပါပြီ။")
+        return
+
+    await state.update_data(corrected_recap_credits=value)
+    await state.set_state(PaymentReviewFSM.confirming_edit)
+
+    confirm_text = (
+        "✏️ <b>ပြင်ဆင်မှု အတည်ပြုရန်</b>\n\n"
+        f"• Payment ID: <code>{payment.id}</code>\n"
+        f"• မူလ မိနစ်: <b>{payment.minutes} မိနစ်</b>\n"
+        f"• ပြင်ဆင်မည့် မိနစ်: <b>{corrected_minutes} မိနစ်</b>\n"
+        f"• မူလ Recap Credit: <b>{package_recap_credits(payment.package_code)}</b>\n"
+        f"• ပြင်ဆင်မည့် Recap Credit: <b>{value}</b>\n\n"
+        "<i>အတည်ပြုလိုက်ပါက ပြင်ဆင်ထားသော မိနစ် + Recap Credit ဖြင့် ထည့်ပေးပါမည်။</i>"
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -954,6 +1040,7 @@ async def handle_admin_pay_edit_confirm(
     pay_id = callback.data.split(":")[2]
     data = await state.get_data()
     corrected = data.get("corrected_minutes")
+    corrected_credits = data.get("corrected_recap_credits")
     if data.get("payment_id") != pay_id or corrected is None:
         await callback.answer(
             "⏰ ဒီ ပြင်ဆင်မှုကို ဆက်လက် မလုပ်နိုင်တော့ပါ။ Edit ခလုတ်ကို ပြန်နှိပ်ပါ။",
@@ -966,14 +1053,20 @@ async def handle_admin_pay_edit_confirm(
     # approve_payment_request() — crediting stays on the one path.
     target_lang = "my"
     if session is not None:
-        ok, payment, msg = await apply_edited_approval(session, pay_id, callback.from_user.id, int(corrected))
+        ok, payment, msg = await apply_edited_approval(
+            session, pay_id, callback.from_user.id, int(corrected),
+            corrected_recap_credits=corrected_credits,
+        )
         if ok and payment:
             await session.commit()
             target_user = await session.get(User, payment.user_id)
             target_lang = target_user.language_code if target_user else "my"
     else:
         async with AsyncSessionLocal() as s:
-            ok, payment, msg = await apply_edited_approval(s, pay_id, callback.from_user.id, int(corrected))
+            ok, payment, msg = await apply_edited_approval(
+                s, pay_id, callback.from_user.id, int(corrected),
+                corrected_recap_credits=corrected_credits,
+            )
             if ok and payment:
                 await s.commit()
                 target_user = await s.get(User, payment.user_id)
@@ -993,7 +1086,11 @@ async def handle_admin_pay_edit_confirm(
                 "payment_approved_user_notify",
                 target_lang,
                 minutes=payment.minutes,
-                recap_credits=package_recap_credits(payment.package_code),
+                recap_credits=(
+                    payment.edited_recap_credits
+                    if getattr(payment, "edited_recap_credits", None) is not None
+                    else package_recap_credits(payment.package_code)
+                ),
             ),
             parse_mode="HTML",
         )

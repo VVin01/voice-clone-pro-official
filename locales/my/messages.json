@@ -483,5 +483,8 @@
   "recap_progress_requeued": "🔄 စီမံခန့်ခွဲသူက တန်းစီထဲ ပြန်ထည့်ထားပါသည်…",
   "webapp_status_completed": "ပြီးစီးပါပြီ",
   "webapp_status_processing": "နောက်ကွယ်တွင် လုပ်ဆောင်နေပါသည်...",
-  "webapp_status_failed": "မအောင်မြင်ပါ"
+  "webapp_status_failed": "မအောင်မြင်ပါ",
+  "clone_caption_recap_audio": "🎧 <b>Recap အသံဖိုင် (Audio)</b>",
+  "clone_caption_recap_script": "📄 <b>Recap စာသား (Script)</b>",
+  "pay_slip_already_used": "ဒီ ပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ Admin စစ်ဆေးပြီးပါက အကြောင်းကြားပါမည် ခင်ဗျာ။"
 }

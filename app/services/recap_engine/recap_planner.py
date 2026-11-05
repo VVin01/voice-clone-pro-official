@@ -49,6 +49,11 @@ except Exception:  # pragma: no cover - standalone load
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
+# Batch AJ / L21: this module's ffprobe/ffmpeg calls may only open
+# local files and pipes — never network protocols (same constant as
+# core.MEDIA_PROTOCOL_WHITELIST; duplicated because the planner also
+# loads standalone with flat imports).
+MEDIA_PROTOCOL_WHITELIST = "file,pipe"
 PLANNER_MODE = "timestamp_translation_en_to_mm_narrator_v3"
 TRANSLATION_DIRECTION = "en_to_mm"
 # Whole-sentence lines like VOXCPM recap (2026-10-12): a line ends at a sentence end (or a clause after 6.5 s,
@@ -187,6 +192,23 @@ def _is_gemini_transient_model_error(exc: BaseException) -> bool:
         "read timed out",
     )
     return any(marker in text for marker in markers)
+
+
+# Batch AJ / L20: hard bounds for the Gemini worst cases.
+# _gemini_json's failover switches (key rotation, model advance)
+# deliberately do not consume validation retries, so under a total
+# outage one logical call used to walk the whole key pool x the
+# whole model chain (~10 keys x ~5 models = ~50 HTTP attempts, each
+# with a 25-90 s timeout — a ~30 min worst case). The total-attempt
+# budget below caps every logical call; the success path and the
+# rotation/failover ORDER are unchanged (the cap only bites once
+# 24 attempts have already failed).
+GEMINI_JSON_MAX_HTTP_ATTEMPTS = 24
+# translate_batch's split-in-half fallback terminates on its own
+# (batch sizes halve and <=6-item batches never split), but the
+# depth is now explicit: batches are at most 40 items, so depth 3
+# (40 -> 20 -> 10 -> 5) already covers every legitimate split.
+TRANSLATE_BATCH_MAX_SPLIT_DEPTH = 3
 
 
 def _gemini_key_pool_message(pool_size: int, model_count: int) -> str:
@@ -494,7 +516,7 @@ def _probe_video_duration(ffprobe: str, source: Path) -> float:
     Recap sync is visual, so v:0 duration is authoritative.
     """
     cmd = [
-        ffprobe, "-v", "error", "-select_streams", "v:0",
+        ffprobe, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", str(source),
     ]
@@ -512,7 +534,7 @@ def _probe_video_duration(ffprobe: str, source: Path) -> float:
 
     # Fallback for unusual files where stream.duration is unavailable.
     p2 = subprocess.run(
-        [ffprobe, "-v", "error", "-show_entries", "format=duration",
+        [ffprobe, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(source)],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=PROBE_TIMEOUT_SECONDS,
@@ -524,7 +546,7 @@ def _probe_video_duration(ffprobe: str, source: Path) -> float:
 
 def _probe_audio_duration(ffprobe: str, source: Path) -> float | None:
     p = subprocess.run(
-        [ffprobe, "-v", "error", "-select_streams", "a:0",
+        [ffprobe, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(source)],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -552,7 +574,7 @@ def _prepare_whisper_audio(ffmpeg: str, source: Path, job_dir: Path, video_durat
         log(f"♻️ Whisper trimmed audio reuse: {out.name}")
         return out
     cmd = [
-        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y", "-hide_banner", "-loglevel", "error",
         "-i", str(source), "-map", "0:a:0", "-vn",
         "-t", f"{video_duration:.6f}",
         "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(out),
@@ -1319,7 +1341,25 @@ def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = 
         begin(rotation_tier)
     last: Exception | None = None
     attempt = 1
+    http_attempts = 0
     while attempt <= retries:
+        # Batch AJ / L20: total HTTP attempt budget for this logical
+        # call — failover switches below `continue` without consuming
+        # a validation retry, so without this counter the walk is
+        # bounded only by pool x chain size.
+        http_attempts += 1
+        if http_attempts > GEMINI_JSON_MAX_HTTP_ATTEMPTS:
+            pool_size = int(getattr(ai, "_recap_key_pool_size", 1) or 1)
+            model_count = int(getattr(ai, "_recap_model_pool_size", 1) or 1)
+            if log:
+                log(
+                    f"⛔ Gemini attempt budget exhausted "
+                    f"({GEMINI_JSON_MAX_HTTP_ATTEMPTS} HTTP attempts for one "
+                    "logical call) — failing instead of walking the whole pool."
+                )
+            raise GeminiKeyPoolExhaustedError(
+                _gemini_key_pool_message(pool_size, model_count)
+            ) from last
         try:
             ai._enable_proxy()
             try:
@@ -1802,7 +1842,16 @@ CRITICAL OUTPUT ID PROTOCOL:
     # of 401..440).  After the normal retries, split only this failed batch into smaller
     # windows and translate those same source IDs.  Completed checkpoints, timestamps,
     # segmentation, narration mode, TTS, and Smart Sync remain unchanged.
-    if len(current) > 6:
+    # Batch AJ / L20: the split recursion now has an EXPLICIT depth
+    # cap (TRANSLATE_BATCH_MAX_SPLIT_DEPTH) — at the cap the last
+    # validation error is raised instead of splitting further.
+    if len(current) > 6 and _split_depth >= TRANSLATE_BATCH_MAX_SPLIT_DEPTH:
+        log(
+            f"⛔ Translation split depth cap reached "
+            f"({TRANSLATE_BATCH_MAX_SPLIT_DEPTH}) for a {len(current)}-item "
+            "batch — raising the last validation error instead of splitting further."
+        )
+    if len(current) > 6 and _split_depth < TRANSLATE_BATCH_MAX_SPLIT_DEPTH:
         mid = len(current) // 2
         left_rows = current[:mid]
         right_rows = current[mid:]
