@@ -3864,95 +3864,96 @@ function recapHasSource() {
 }
 window.recapHasSource = recapHasSource;
 
-// ── Batch AV: Recap step flow ─────────────────────────────────────
-// Four collapsible steps (1 Source → 2 Preview → 3 Voice → 4 Create).
-// Steps are stages, not a locked wizard: any header strip or nav item
-// toggles its step open/closed, completed steps collapse to a ✓
-// summary strip, and every control keeps working from any state.
-// DOM relocation only — no state, payload or prefs keys change here.
+// ── Batch AX: Recap wizard (owner direction 2026-11-06) ──────────
+// One step at a time: exactly ONE step card is visible; completed
+// steps disappear and their state lives in the 1-2-3-4 indicator
+// chips (number, or ✓ when completed). Navigation is free — tapping
+// any chip shows that step — and no control value is ever touched by
+// navigation. The AV summary strips are gone; their information role
+// moved to the chips and the Step 4 choices line (refreshRecapStep4Choices).
+// DOM visibility only — no state, payload or prefs keys change here.
 const RECAP_STEP_DONE = { 1: false, 2: false, 3: false, 4: false };
+let recapCurrentStep = 1;
 
 function recapStepEls(n) {
     return {
         card: document.getElementById("recap-step-" + n),
-        body: document.getElementById("recap-step-" + n + "-body"),
-        summary: document.getElementById("recap-summary-" + n),
-        strip: document.querySelector('#recap-step-' + n + ' [data-step-toggle]'),
     };
 }
 
-function setRecapStepOpen(n, open) {
-    const els = recapStepEls(n);
-    if (!els.body) return;
-    els.body.classList.toggle("hidden", !open);
-    if (els.strip) els.strip.setAttribute("aria-expanded", open ? "true" : "false");
-    if (els.card) els.card.classList.toggle("recap-step-collapsed", !open);
-    document.querySelectorAll('#recap-steps-nav [data-step-toggle="' + n + '"]')
-        .forEach(item => item.classList.toggle("is-active", open));
-    if (open && n === 4) refreshRecapStep4Thumb();
+// Kept name from Batch AV (call sites: setRecapPreviewState, the
+// MutationObserver below). In the wizard, "open" means "is the
+// current step".
+function isRecapStepOpen(n) {
+    return recapCurrentStep === n;
 }
 
-function isRecapStepOpen(n) {
-    const els = recapStepEls(n);
-    return !!(els.body && !els.body.classList.contains("hidden"));
+// Indicator caption (AX-2R): "အဆင့် N/4 · <name>" — the CURRENT
+// step's name is the only name the indicator ever renders.
+const RECAP_STEP_NAME_KEYS = { 1: "recap_step1_title", 2: "recap_step_nav_preview", 3: "recap_step_nav_voice", 4: "recap_step4_title" };
+
+function refreshRecapStepIndicator() {
+    document.querySelectorAll('#recap-steps-nav [data-step-toggle]')
+        .forEach(item => {
+            const m = parseInt(item.getAttribute("data-step-toggle"), 10);
+            item.classList.toggle("is-active", m === recapCurrentStep);
+            item.classList.toggle("is-done", !!RECAP_STEP_DONE[m]);
+        });
+    // Track fill (AX-2R): the gradient covers every completed step
+    // plus half the leg into the current one — it grows as steps
+    // complete and never claims progress that has not happened.
+    const fill = document.getElementById("recap-steps-track-fill");
+    if (fill) {
+        // Node centres sit at 1/6, 3/6, 5/6 of the track (nodes are
+        // distributed space-between within the 44px-inset track), so
+        // the fill reaches the current node, plus one leg per step
+        // honestly completed this session.
+        const doneCount = [1, 2, 3].filter(m => RECAP_STEP_DONE[m]).length;
+        const currentIdx = recapCurrentStep - 1;
+        const reachIdx = Math.max(currentIdx, doneCount);
+        fill.style.width = ((2 * reachIdx + 1) * (100 / 6)) + "%";
+    }
+    const pos = document.getElementById("recap-steps-caption-pos");
+    if (pos) pos.textContent = recapCurrentStep + "/4";
+    const name = document.getElementById("recap-steps-caption-name");
+    if (name) {
+        name.setAttribute("data-i18n", RECAP_STEP_NAME_KEYS[recapCurrentStep]);
+        name.textContent = t(RECAP_STEP_NAME_KEYS[recapCurrentStep]);
+    }
 }
+window.refreshRecapStepIndicator = refreshRecapStepIndicator;
+
+// The one door (AX-1): hides every step card, shows step n, updates
+// the indicator, scrolls the tab back to the top of the wizard.
+function showRecapStep(n) {
+    if (!document.getElementById("recap-step-" + n)) return;
+    recapCurrentStep = n;
+    [1, 2, 3, 4].forEach(m => {
+        const els = recapStepEls(m);
+        if (els.card) els.card.classList.toggle("hidden", m !== n);
+    });
+    refreshRecapStepIndicator();
+    // Advance animation (AX-2R): the newly-current node pops once.
+    const currentBtn = document.querySelector('#recap-steps-nav [data-step-toggle="' + n + '"]');
+    if (currentBtn) {
+        currentBtn.classList.remove("pop");
+        void currentBtn.offsetWidth;
+        currentBtn.classList.add("pop");
+    }
+    if (n === 4) { refreshRecapStep4Output(); }
+    const nav = document.getElementById("recap-steps-nav");
+    if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+window.showRecapStep = showRecapStep;
 
 function markRecapStepDone(n, done) {
+    // Session-truth (AX-3R): Step 4 never shows ✓, and completion is
+    // only ever earned in this session (see the callers).
+    if (n === 4) done = false;
     RECAP_STEP_DONE[n] = !!done;
     document.querySelectorAll('[data-step-pill="' + n + '"]')
         .forEach(pill => { pill.textContent = done ? "✓" : String(n); });
-    refreshRecapStepSummary(n);
-}
-
-function recapStepSummaryText(n) {
-    if (n === 1) {
-        const info = document.getElementById("recap-video-info-box");
-        const titleEl = document.getElementById("recap-info-title");
-        if (info && !info.classList.contains("hidden") && titleEl && titleEl.textContent.trim()) {
-            return titleEl.textContent.trim();
-        }
-        return t("recap_summary_no_source");
-    }
-    if (n === 2) {
-        const active = document.querySelector("#recap-preview-ratio-group .ratio-card.active");
-        return active ? (active.getAttribute("data-label") || active.textContent.trim()) : "";
-    }
-    if (n === 3) {
-        const card = document.querySelector("#recap-persona-area .voice-card.active .v-name")
-            || document.querySelector("#recap-top-voices .voice-card.active .v-name");
-        return card ? card.textContent.trim() : "";
-    }
-    return "";
-}
-
-function refreshRecapStepSummary(n) {
-    const els = recapStepEls(n);
-    if (!els.summary) return;
-    const show = RECAP_STEP_DONE[n] && !isRecapStepOpen(n);
-    els.summary.textContent = show ? recapStepSummaryText(n) : "";
-    els.summary.classList.toggle("hidden", !show);
-}
-
-function refreshAllRecapStepSummaries() {
-    [1, 2, 3, 4].forEach(refreshRecapStepSummary);
-}
-
-function toggleRecapStep(n, forceOpen) {
-    const open = typeof forceOpen === "boolean" ? forceOpen : !isRecapStepOpen(n);
-    setRecapStepOpen(n, open);
-    if (!open && !RECAP_STEP_DONE[n] && (n === 2 || n === 3)) {
-        // Leaving a settings step by collapsing it counts as reviewed.
-        markRecapStepDone(n, true);
-    }
-    refreshAllRecapStepSummaries();
-}
-
-function openRecapStep(n) {
-    [1, 2, 3, 4].forEach(m => { if (m !== n) setRecapStepOpen(m, false); });
-    setRecapStepOpen(n, true);
-    refreshAllRecapStepSummaries();
-    const els = recapStepEls(n);
-    if (els.card) els.card.scrollIntoView({ behavior: "smooth", block: "start" });
+    refreshRecapStepIndicator();
 }
 
 function syncRecapStepsWithSource(ready) {
@@ -3960,31 +3961,122 @@ function syncRecapStepsWithSource(ready) {
     if (!RECAP_STEP_DONE[1]) markRecapStepDone(1, true);
     if (!state.recapStepsSourceFlowDone) {
         state.recapStepsSourceFlowDone = true;
-        openRecapStep(2);
-    } else {
-        refreshAllRecapStepSummaries();
+        showRecapStep(2);
     }
 }
+
+// Step 4 choices line (AX-4): source title · voice name · aspect —
+// the summary information the AV strips carried, in one compact,
+// never-overflowing line. Purely informational; editing is via the
+// indicator chips.
+function refreshRecapStep4Choices() {
+    const line = document.getElementById("recap-step4-choices");
+    if (!line) return;
+    const titleEl = document.getElementById("recap-info-title");
+    const info = document.getElementById("recap-video-info-box");
+    const title = (info && !info.classList.contains("hidden") && titleEl && titleEl.textContent.trim())
+        ? titleEl.textContent.trim() : t("recap_summary_no_source");
+    const voiceEl = document.getElementById("recap-step4-choice-voice");
+    const voiceCard = document.querySelector("#recap-persona-area .voice-card.active .v-name")
+        || document.querySelector("#recap-top-voices .voice-card.active .v-name");
+    if (voiceEl) voiceEl.textContent = "🎙️ " + (voiceCard ? voiceCard.textContent.trim() : "");
+    const ratioEl = document.getElementById("recap-step4-choice-ratio");
+    const ratioCard = document.querySelector("#recap-preview-ratio-group .ratio-card.active");
+    if (ratioEl) ratioEl.textContent = ratioCard
+        ? (ratioCard.getAttribute("data-label") || ratioCard.textContent.trim()) : "";
+    const titleSpan = document.getElementById("recap-step4-choice-title");
+    if (titleSpan) titleSpan.textContent = "🎬 " + title;
+}
+window.refreshRecapStep4Choices = refreshRecapStep4Choices;
 
 function setRecapStep4Quote(credits) {
     const el = document.getElementById("recap-step4-quote-credits");
     if (el) el.textContent = String(Math.max(1, parseInt(credits, 10) || 1));
+    refreshRecapStep4Choices();
 }
 window.setRecapStep4Quote = setRecapStep4Quote;
 
 function refreshRecapStep4Thumb() {
+    // AX-4R: the Step 4 frame is the SAME engine composite the
+    // Step 2 stage shows (state.recapCompositeUrl), at full card
+    // width in the chosen aspect — a fixed aspect box means the
+    // swap never jumps the layout, and the previous frame stays
+    // until the new one is assigned (no blank flash).
     const thumb = document.getElementById("recap-step4-thumb");
     if (!thumb) return;
+    const empty = document.getElementById("recap-step4-output-empty");
+    const frame = document.getElementById("recap-step4-output-frame");
     const img = document.getElementById("canvas-composite-img");
-    const src = (img && img.src) || state.recapThumbnailUrl || "";
+    const src = state.recapCompositeUrl || (img && img.src) || state.recapThumbnailUrl || "";
+    if (frame) {
+        const r = state.recapRatio || "9:16";
+        let aspect = "9 / 16";
+        if (r === "16:9") aspect = "16 / 9";
+        else if (r === "1:1") aspect = "1 / 1";
+        else if (r === "original" && thumb.naturalWidth > 0 && thumb.naturalHeight > 0) {
+            aspect = thumb.naturalWidth + " / " + thumb.naturalHeight;
+        }
+        frame.style.aspectRatio = aspect;
+        // Portrait frames cap their width so the large preview
+        // stays a preview, not a full-screen poster.
+        frame.style.maxWidth = (r === "16:9" || r === "1:1") ? "100%" : "320px";
+    }
     if (src) {
         if (thumb.getAttribute("src") !== src) thumb.src = src;
         thumb.classList.remove("hidden");
+        if (empty) empty.classList.add("hidden");
     } else {
         thumb.classList.add("hidden");
+        if (empty) empty.classList.remove("hidden");
     }
 }
 window.refreshRecapStep4Thumb = refreshRecapStep4Thumb;
+
+// Output facts chips (AX-4R): every value is derived from the live
+// config/state at refresh time — nothing is hard-coded per job.
+function refreshRecapStep4Facts() {
+    const set = (id, text) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text || "";
+        el.classList.toggle("hidden", !text);
+    };
+    const ratio = state.recapRatio || "9:16";
+    const canvasMap = { "9:16": "1080×1920 · 9:16", "16:9": "1920×1080 · 16:9", "1:1": "1080×1080 · 1:1" };
+    const canvas = canvasMap[ratio] ||
+        ((state.recapSourceWidth && state.recapSourceHeight)
+            ? state.recapSourceWidth + "×" + state.recapSourceHeight + " · Original" : "Original");
+    set("recap-fact-canvas", "📐 " + canvas);
+    const dur = state.recapSourceDuration || 0;
+    set("recap-fact-duration", dur > 0 ? "⏱️ " + formatRecapQuoteDuration(dur) : "");
+    if (state.recapBurnSubs !== false) {
+        const styleKey = "sub_style_" + (state.recapSubStyle || "yellow");
+        const styleName = t(styleKey);
+        set("recap-fact-subs", "📝 " + (styleName && styleName !== styleKey ? styleName : (state.recapSubStyle || "yellow")));
+    } else {
+        set("recap-fact-subs", "📝 " + t("recap_fact_off"));
+    }
+    set("recap-fact-title", "🏷️ " + t(state.recapTitleEnabled ? "recap_fact_on" : "recap_fact_off"));
+    set("recap-fact-blur", "🌫️ " + t(state.recapBlurSubs !== false ? "recap_fact_on" : "recap_fact_off"));
+    const qBtn = document.querySelector("#recap-quality-picker .pill-btn.active");
+    set("recap-fact-quality", "🎞️ " + (qBtn ? qBtn.textContent.trim() : (state.recapRenderQuality || "standard")));
+}
+window.refreshRecapStep4Facts = refreshRecapStep4Facts;
+
+// Step 4 entry (AX-4R): re-request the composite with the CURRENT
+// full config and refresh every summary surface. The composite
+// helper hash-guards its fetch — an unchanged config is already
+// the frame on record; a changed one fetches fresh and the success
+// path swaps the Step 4 frame in when it lands.
+function refreshRecapStep4Output() {
+    if (recapHasSource() && typeof window.refreshRecapCompositePreview === "function") {
+        try { window.refreshRecapCompositePreview(); } catch (e) { /* keep the current frame */ }
+    }
+    refreshRecapStep4Thumb();
+    refreshRecapStep4Facts();
+    refreshRecapStep4Choices();
+}
+window.refreshRecapStep4Output = refreshRecapStep4Output;
 
 function toggleRecapFineSettings(force) {
     const body = document.getElementById("recap-fine-body");
@@ -4016,15 +4108,21 @@ function initRecapSteps() {
     if (state.recapStepsInitialised) return;
     if (!document.getElementById("recap-steps-nav")) return;
     state.recapStepsInitialised = true;
+    // Free navigation (AX-1): tapping any indicator chip shows that
+    // step — no locking, no forced order, no state touched.
     document.querySelectorAll("[data-step-toggle]").forEach(el => {
-        el.addEventListener("click", () => toggleRecapStep(parseInt(el.getAttribute("data-step-toggle"), 10)));
+        el.addEventListener("click", () => showRecapStep(parseInt(el.getAttribute("data-step-toggle"), 10)));
     });
     document.querySelectorAll("[data-step-next]").forEach(el => {
         el.addEventListener("click", () => {
             const target = parseInt(el.getAttribute("data-step-next"), 10);
             const from = target - 1;
-            if ((from === 2 || from === 3) && !RECAP_STEP_DONE[from]) markRecapStepDone(from, true);
-            openRecapStep(target);
+            // Session-truth (AX-3R): a Continue earns its step's ✓
+            // only in this session — and Step 2's Continue counts
+            // only while a source is present.
+            if (from === 2 && recapHasSource() && !RECAP_STEP_DONE[2]) markRecapStepDone(2, true);
+            if (from === 3 && !RECAP_STEP_DONE[3]) markRecapStepDone(3, true);
+            showRecapStep(target);
         });
     });
     const img = document.getElementById("canvas-composite-img");
@@ -4032,16 +4130,11 @@ function initRecapSteps() {
         new MutationObserver(() => { if (isRecapStepOpen(4)) refreshRecapStep4Thumb(); })
             .observe(img, { attributes: true, attributeFilter: ["src"] });
     }
-    // Returning users (saved recap prefs exist): Steps 2–4 read as
-    // already-completed summaries; a fresh user sees plain numbers.
-    try {
-        if (localStorage.getItem("vcp_recap_prefs")) {
-            markRecapStepDone(2, true);
-            markRecapStepDone(3, true);
-            markRecapStepDone(4, true);
-        }
-    } catch (e) { /* storage unavailable — fresh-user defaults */ }
-    refreshAllRecapStepSummaries();
+    // Session-truth (AX-3R, supersedes AX-3): saved prefs pre-fill
+    // control VALUES only — they NEVER mark a step complete. On load
+    // no step shows ✓, fresh or returning; every ✓ is earned in this
+    // session (Step 1 on resolve, Steps 2/3 on their Continue).
+    showRecapStep(1);
 }
 window.initRecapSteps = initRecapSteps;
 
@@ -4811,6 +4904,12 @@ function setupRecapVisualEditor() {
             if (state.recapCompositeUrl) URL.revokeObjectURL(state.recapCompositeUrl);
             state.recapCompositeUrl = objUrl;
             updateCanvasMockupVisuals();
+            // AX-4R: if Step 4 is on screen waiting for this frame,
+            // swap it in now (the old frame stayed up meanwhile).
+            if (typeof isRecapStepOpen === "function" && isRecapStepOpen(4)
+                && typeof window.refreshRecapStep4Thumb === "function") {
+                window.refreshRecapStep4Thumb();
+            }
             if (showLoading) setRecapPreviewLoading(false);
         } catch (e) { /* keep the existing canvas visuals */
             if (showLoading && mySeq === recapCompositeSeq) setRecapPreviewLoading(false);
@@ -6427,16 +6526,41 @@ function setupRecapVisualEditor() {
     // (fingerprint, submit payload, History prefill) reads it
     // directly. No mirroring remains to disagree.
 
-    // 6c. Source language pills (auto = detect; else a Whisper code)
-    const langBtns = document.querySelectorAll("#recap-lang-picker .pill-btn");
-    langBtns.forEach(btn => {
+    // 6c. Source language (auto = detect; else a Whisper code).
+    // Batch AX: the picker shows Auto + the six frequent languages
+    // as pills; all 18 values also live in the "more languages"
+    // dropdown. ONE state (state.recapSourceLanguage), two views —
+    // both controls write through setRecapSourceLanguage, which
+    // re-syncs the other view.
+    const langSel = document.getElementById("recap-lang-more");
+    function syncRecapLangViews() {
+        document.querySelectorAll("#recap-lang-picker .pill-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-lang") === state.recapSourceLanguage);
+        });
+        if (langSel) {
+            const has = Array.from(langSel.options).some(o => o.value === state.recapSourceLanguage);
+            langSel.value = has ? state.recapSourceLanguage : "";
+        }
+    }
+    window.syncRecapLangViews = syncRecapLangViews;
+    function setRecapSourceLanguage(code) {
+        state.recapSourceLanguage = code || "auto";
+        syncRecapLangViews();
+    }
+    window.setRecapSourceLanguage = setRecapSourceLanguage;
+    document.querySelectorAll("#recap-lang-picker .pill-btn").forEach(btn => {
         btn.addEventListener("click", () => {
             haptic("selection");
-            langBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            state.recapSourceLanguage = btn.getAttribute("data-lang") || "auto";
+            setRecapSourceLanguage(btn.getAttribute("data-lang") || "auto");
         });
     });
+    if (langSel) {
+        langSel.addEventListener("change", () => {
+            if (!langSel.value) return;
+            haptic("selection");
+            setRecapSourceLanguage(langSel.value);
+        });
+    }
 
     // 6d. Render quality pills (standard = the historical default encode)
     const qualityBtns = document.querySelectorAll("#recap-quality-picker .pill-btn");
@@ -6447,6 +6571,7 @@ function setupRecapVisualEditor() {
             qualityBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapRenderQuality = btn.getAttribute("data-quality") || "standard";
+            if (typeof window.refreshRecapStep4Facts === "function") window.refreshRecapStep4Facts();
         });
     });
     refreshRecapQualityLock();
@@ -7177,6 +7302,7 @@ function setupRecapVisualEditor() {
             if (wrap) wrap.classList.toggle("hidden", !splitToggleEl.checked);
         }
         syncPillGroup("#recap-lang-picker .pill-btn", "data-lang", state.recapSourceLanguage);
+        if (window.syncRecapLangViews) syncRecapLangViews();
         refreshRecapQualityLock();
         syncPillGroup("#recap-quality-picker .pill-btn", "data-quality", state.recapRenderQuality);
         syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine);
