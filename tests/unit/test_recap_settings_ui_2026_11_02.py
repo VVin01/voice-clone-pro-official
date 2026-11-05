@@ -98,8 +98,11 @@ def test_rs2_superseded_by_batch_ah():
     # rules themselves stand in the base stylesheet.
     block = _rs_block()
     assert "display: block; overflow: visible;" not in block
-    assert "-webkit-line-clamp: 1" in CSS
-    assert "-webkit-line-clamp: 2" in CSS
+    # Batch AK: the clamp rules themselves are retired too — the
+    # preview is the engine-composited frame, which renders exactly
+    # the selected line count; there is no CSS text left to clamp.
+    assert "-webkit-line-clamp: 1" not in CSS
+    assert ".preview-sub-text" not in CSS
     # The Lines setting itself still drives the real render payload.
     assert "sub_lines: state.recapLines || 1" in APP_JS
 
@@ -133,5 +136,5 @@ def test_rs7_mirror_single_label():
 
 
 def test_cache_buster_bumped_for_settings_ui():
-    assert HTML.count("?v=20261104_r62") == 4
+    assert HTML.count("?v=20261104_r63") == 4
     assert "?v=20261102_rr1" not in HTML

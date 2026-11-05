@@ -458,7 +458,10 @@ def test_pipeline_threads_both_paths():
     assert "anchor_x=_anchor_x," in PIPELINE_PY
     assert "anchor_x=_p_anchor_x," in PIPELINE_PY
     # The no-layout fallback plates stay the fixed legacy dicts.
-    assert PIPELINE_PY.count('_plate = {"x": 0.05, "y": _anchor_sub_y, "w": 0.90, "h": float(blur_h)}') == 1
+    # Batch AK: the run path's fallback reads the EFFECTIVE centre
+    # (_sub_centre_eff — margin-converted when a bottom margin is
+    # set, identical to _anchor_sub_y when it is not).
+    assert PIPELINE_PY.count('_plate = {"x": 0.05, "y": _sub_centre_eff, "w": 0.90, "h": float(blur_h)}') == 1
 
 
 # ── 11. Preferences allowlist ──────────────────────────────────────
@@ -558,7 +561,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261104_r62") == 4
+    assert INDEX_HTML.count("?v=20261104_r63") == 4
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────
@@ -664,14 +667,32 @@ def test_fit_max_length_cue_fits_default_bound(tmp_path, sub_lines, size_pt):
     assert w <= FIT_BOUND
     assert len(lines) <= (2 if sub_lines == 2 else 1)
     if sub_lines == 1:
-        assert px < font_px  # one allowed line cannot wrap: shrink-to-fit
+        # One allowed line cannot wrap: a cue that overflows the
+        # bound at full size must shrink-to-fit. Batch AK: the font
+        # is picture-relative now, so at 16pt on the letterbox the
+        # cue already fits at full size — the shrink branch is
+        # asserted exactly when the raw cue exercises it.
+        font = core.subtitle_font_file("padauk")
+        visuals = pq.preset_visuals(
+            core.SUBTITLE_STYLE_PRESETS["yellow"], CH, font_px)
+        raw = r.render_text(FIT_LONG, 1, font_px, font, visuals)
+        if raw is not None and raw[1] > FIT_BOUND:
+            assert px < font_px
+        else:
+            assert px == font_px
 
 
 def test_fit_wraps_before_shrinking_in_two_line_mode(tmp_path):
-    # At 13pt the mid-length cue fits the bound by wrapping alone —
-    # the fit must keep the full font size and use both lines.
+    # The mid-length cue fits the bound by wrapping alone — the fit
+    # must keep the full font size and use both lines.
+    # Batch AK: the font is picture-relative, so on the letterboxed
+    # layout this cue now fits on ONE line at 13pt; the wrap-first
+    # regime is exercised on the full-frame layout (same picture
+    # width, picture height = canvas height), where the property is
+    # unchanged.
     r = _fit_renderer(tmp_path)
-    font_px = core.subtitle_font_px(CW, CH, 13, 2, LB)
+    ff = core.frame_layout("9:16", "blur", 1080, 1920)
+    font_px = core.subtitle_font_px(CW, CH, 13, 2, ff)
     lines, px, w = _fit(r, FIT_MID, 2, font_px)
     assert px == font_px and len(lines) == 2 and w <= FIT_BOUND
 

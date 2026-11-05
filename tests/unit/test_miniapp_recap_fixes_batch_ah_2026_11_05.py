@@ -353,22 +353,23 @@ def test_title_i18n_keys_both_locales():
 # ── 3. Preview line count honoured ─────────────────────────────────
 
 def test_line_clamps_stand_and_rs2_override_is_gone():
-    # The clamp rules exist in the base stylesheet…
-    one = STYLE_CSS.index(".preview-sub-box.one-line .preview-sub-text")
-    block = STYLE_CSS[one:one + 200]
-    assert "-webkit-line-clamp: 1" in block
-    two = STYLE_CSS.index(".preview-sub-box.two-lines .preview-sub-text")
-    block2 = STYLE_CSS[two:two + 200]
-    assert "-webkit-line-clamp: 2" in block2
-    # …and nothing later in the cascade neutralises them (the RS-2
-    # override block is removed, not merely commented around).
-    tail = STYLE_CSS[two:]
-    assert "display: block; overflow: visible;" not in tail
+    # Batch AK rewrite: the CSS sample-text preview is retired (the
+    # engine-composited frame renders the real line count), so the
+    # clamp rules and the RS-2 override question are gone together —
+    # a 1-line setting can no longer paint 2 lines because no CSS
+    # text paints at all.
+    assert ".preview-sub-box.one-line .preview-sub-text" not in STYLE_CSS
+    assert ".preview-sub-box.two-lines .preview-sub-text" not in STYLE_CSS
+    assert ".preview-sub-text" not in STYLE_CSS
 
 
 def test_preview_toggles_line_class_from_setting():
-    assert 'previewBox.classList.add("one-line")' in APP_JS
-    assert 'previewBox.classList.add("two-lines")' in APP_JS
+    # Batch AK rewrite: line count reaches the preview through the
+    # composite payload (the engine renders 1 vs 2 lines); the JS
+    # class toggling on a CSS text box no longer exists.
+    assert 'previewBox.classList.add("one-line")' not in APP_JS
+    assert 'previewBox.classList.add("two-lines")' not in APP_JS
+    assert "sub_lines:" in APP_JS  # composite payload + submit payload
 
 
 # ── 4. Drag affordances ────────────────────────────────────────────

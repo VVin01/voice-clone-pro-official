@@ -48,7 +48,7 @@ ADMIN_ID = 999001
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_qa1():
-    assert HTML.count("?v=20261104_r62") == 4
+    assert HTML.count("?v=20261104_r63") == 4
     assert "20261102_tb1" not in HTML
 
 
@@ -61,28 +61,30 @@ def _js_slice(start_marker: str, end_marker: str) -> str:
 
 
 def test_q1_fit_function_defined_with_containment_rule():
-    body = _js_slice("function fitBlurPlateToCaption()",
-                     "function syncSubBoxVisual()")
-    # Hidden captions never grow the plate.
-    assert 'getComputedStyle(previewSub).display === "none"' in body
-    # The fit is measured against the live caption text element.
-    assert 'document.getElementById("preview-sub-text-el")' in body
-    # Only an overlapping caption grows the plate…
-    assert "text.bottom > plate.top && text.top < plate.bottom" in body
-    # …to text height + breathing room, expressed as a % of the
-    # canvas height. (Batch AA deliberate pin update: the old
-    # "+ twice the centre offset" term was removed — uncapped
-    # inflation — and the growth is now capped; see the Batch AA
-    # test file for the cap pins.)
-    assert "text.height + 8" in body
-    assert "2 * centreDelta" not in body
-    assert "(neededPx / canvasH) * 100" in body
+    # Batch AK rewrite: the JS fit function is retired — containment
+    # is now the ENGINE's, in core.subtitle_plate_box: the plate
+    # always stays inside the canvas (its clamp), at any sub_y /
+    # margin, and the Mini App shows that very plate via the
+    # composited preview frame.
+    assert "function fitBlurPlateToCaption()" not in APP_JS
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "app" / "services" / "recap_engine"))
+    import core as _core
+    lay = _core.frame_layout("9:16", "blur", 1920, 1080)
+    for margin in (0.0, 0.05, 0.5, 0.95):
+        plate = _core.subtitle_plate_box(
+            1080, 1920, lay, raw_font_size=22, sub_lines=2,
+            sub_y=0.85, min_h=None, sub_margin=margin)
+        assert 0.0 <= plate["y"] - plate["h"] / 2
+        assert plate["y"] + plate["h"] / 2 <= 1.0
 
 
 def test_q1_blur_sync_always_refits():
     body = _js_slice("function syncBlurBoxVisual()",
-                     "function fitBlurPlateToCaption()")
-    assert "fitBlurPlateToCaption();" in body
+                     "function syncSubBoxVisual()")
+    # Batch AK: no JS plate to refit — a blur change re-renders the
+    # composited frame instead.
+    assert "scheduleRecapCompositeRefresh();" in body
     # The slider height is still applied first (the fit only grows).
     # (Batch AA deliberate pin update: the height is now painted
     # picture-relative via blurBoxCanvasGeom — see the Batch AA
@@ -94,9 +96,11 @@ def test_q1_caption_moves_and_preview_updates_refit():
     sub = _js_slice("function syncSubBoxVisual()",
                     "if (sliderBlurY && previewBlur && valBlurY)")
     assert "syncBlurBoxVisual();" in sub
-    preview = _js_slice("function updateSubtitleVisualPreview()",
-                        "// 11. Font Size Picker")
-    assert "syncBlurBoxVisual();" in preview
+    # Batch AK: updateSubtitleVisualPreview is a retired stub; the
+    # caption-move path is syncSubBoxVisual, which still funnels
+    # through the blur sync (asserted above) and now also schedules
+    # the composited frame.
+    assert "scheduleRecapCompositeRefresh();" in sub
 
 
 def test_q1_render_payload_untouched():

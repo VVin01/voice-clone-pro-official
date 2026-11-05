@@ -354,7 +354,7 @@ const state = {
     recapCropRight: 0,
     recapSyncCrop: true,
     recapMirror: true,
-    recapZoom: 1.06,
+    recapZoom: 1.0,
     recapSpeed: "+12%",
     recapStoryStyle: "viral",
     recapBurnSubs: true,
@@ -385,6 +385,12 @@ const state = {
     recapBlurW: 92,
     recapSubX: 50,
     recapSubW: 92,
+    // Batch AK: the subtitle's vertical anchor is the BOTTOM-EDGE
+    // margin (percent of the picture height; 5% default, the
+    // Recapter standard). state.recapSubY survives only as the
+    // derived centre-% the canvas drag math works in.
+    recapSubMargin: 5,
+    recapSettingsVersion: 2,
     // Batch AH: recap title overlay — off by default (the historical
     // Mini App behaviour: no title badge was rendered); the position
     // is the title CENTRE as percents of the picture width/height,
@@ -545,6 +551,14 @@ const STICKY_CTA_PAIRS = [
     { tab: "tab-recap", bar: "sticky-cta-recap", src: "btn-start-recap", btn: "btn-start-recap-sticky" },
 ];
 const stickyCtaInView = {};
+// Batch AK (Addition C, owner's direct order 2026-11-05): while the
+// user has an unfinished recap job, EVERY "1-Click" create CTA is
+// hidden — the job-status bar is the progress surface (and the
+// backend already allows only one active recap job per user).
+function recapJobActive() {
+    try { return LiveJobs.activeJobs().some(j => j.kind === "recap"); } catch (e) { return false; }
+}
+window.recapJobActive = recapJobActive;
 function refreshStickyCtas() {
     STICKY_CTA_PAIRS.forEach(p => {
         const bar = document.getElementById(p.bar);
@@ -554,7 +568,9 @@ function refreshStickyCtas() {
         const pane = document.getElementById(p.tab);
         const tabActive = !!(pane && pane.classList.contains("active"));
         btn.disabled = !!src.disabled;
-        bar.classList.toggle("hidden", !(tabActive && stickyCtaInView[p.src] === false));
+        const recapBlocked = p.src === "btn-start-recap" && recapJobActive();
+        if (p.src === "btn-start-recap") src.classList.toggle("hidden", recapBlocked);
+        bar.classList.toggle("hidden", recapBlocked || !(tabActive && stickyCtaInView[p.src] === false));
     });
 }
 window.refreshStickyCtas = refreshStickyCtas;
@@ -759,6 +775,15 @@ window.LiveJobs = LiveJobs;
 // ── Batch AC: progress pill + jobs sheet ───────────────────────────────
 function liveJobStageText(job) {
     if (!job) return "";
+    // Batch AK (Addition C): a terminal job reports its OUTCOME, not
+    // the last in-progress step — finished rows and the app-top
+    // status line used to keep stale step text after completion.
+    if (liveJobsIsTerminal(job.status)) {
+        if (job.status === "SUCCESS") return t("live_job_status_success");
+        if (job.status === "FAILED") return t("live_job_status_failed");
+        if (job.status === "CANCELLED") return t("live_job_status_cancelled");
+        return job.status || "";
+    }
     if (job.status === "QUEUED") {
         return job.queue_position
             ? tf("live_job_queued_pos", { pos: job.queue_position })
@@ -773,11 +798,32 @@ function liveJobStageText(job) {
     if (job.kind === "voice") return t("voice_synthesizing");
     return t("recap_processing_msg");
 }
+// Batch AK (Addition C): the status bar can be dismissed; the
+// dismissal is keyed to the current active set + lead stage, so
+// any state change (a new job, a stage change) shows it again.
+let liveJobsPillDismissedSig = "";
+function liveJobsPillSignature(active) {
+    const lead = [...active].sort((a, b) => (b.progress_percent || 0) - (a.progress_percent || 0))[0];
+    return active.map(j => j.id).sort().join(",") + "|" + (lead ? (lead.progress_stage || lead.status || "") : "");
+}
+function dismissLiveJobsPill() {
+    liveJobsPillDismissedSig = liveJobsPillSignature(LiveJobs.activeJobs());
+    const pill = document.getElementById("live-jobs-pill");
+    if (pill) pill.classList.add("hidden");
+}
+window.dismissLiveJobsPill = dismissLiveJobsPill;
 function renderLiveJobsPill() {
     const pill = document.getElementById("live-jobs-pill");
     if (!pill) return;
     const active = LiveJobs.activeJobs();
+    // The 1-Click CTA hide (Batch AK) tracks the same active set.
+    if (typeof refreshStickyCtas === "function") refreshStickyCtas();
     if (!active.length) {
+        pill.classList.add("hidden");
+        liveJobsPillDismissedSig = "";
+        return;
+    }
+    if (liveJobsPillSignature(active) === liveJobsPillDismissedSig) {
         pill.classList.add("hidden");
         return;
     }
@@ -803,11 +849,16 @@ function liveJobsSheetRowHtml(job) {
     } else if (liveJobsIsTerminal(job.status)) {
         action = `<button type="button" class="mini-chip" onclick="liveJobOpen('${job.id}','${job.kind}')">${t("live_job_view_result")}</button>`;
     }
+    // Batch AK (Addition C): terminal rows lead with the outcome
+    // label alone (no "SUCCESS · Done" duplication, no stale step).
+    const metaText = liveJobsIsTerminal(job.status)
+        ? escapeHtml(liveJobStageText(job))
+        : `${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}`;
     return `<div class="live-job-row" data-live-job-id="${job.id}">
         <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
         <div class="live-job-row-main">
             <div class="live-job-row-title">${title}</div>
-            <div class="live-job-row-meta">${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}${elapsed ? " · " + escapeHtml(elapsed) : ""}</div>
+            <div class="live-job-row-meta">${metaText}${elapsed ? " · " + escapeHtml(elapsed) : ""}</div>
             <div class="live-job-row-bar"><span class="live-job-row-fill" style="width:${pct}%"></span></div>
         </div>
         <div class="live-job-row-actions">${action}</div>
@@ -1075,7 +1126,10 @@ function renderSubmitConfirmSnippet(job) {
     const stageEl = document.getElementById("submit-confirm-stage");
     const fillEl = document.getElementById("submit-confirm-fill");
     if (!job) return;
-    if (stageEl) stageEl.innerText = `${job.status || ""} · ${liveJobStageText(job)}`;
+    // Batch AK: terminal → the outcome label alone (no stale step).
+    if (stageEl) stageEl.innerText = liveJobsIsTerminal(job.status)
+        ? liveJobStageText(job)
+        : `${job.status || ""} · ${liveJobStageText(job)}`;
     if (fillEl) fillEl.style.width = `${Math.min(100, Math.max(4, job.progress_percent || 0))}%`;
 }
 function showSubmitConfirmation(kind, jobId, costText) {
@@ -1157,6 +1211,36 @@ LiveJobs.subscribe((job) => { applyLiveJobToHistory(job); });
 // cache and syncs on the next launch — the user is never blocked.
 const USER_PREFS_CACHE_KEY = "vcp_user_prefs_cache";
 let userPrefsSaveTimer = null;
+// Batch AK: JS mirror of core.sub_centre_to_bottom_margin —
+// converts a legacy centre-% subtitle position (percent of the
+// PICTURE height) into the bottom-edge margin (same basis),
+// plate-height-aware so the subtitle stays where it was. The
+// reference picture height (608) matches core's
+// SUB_MARGIN_CONVERT_REF_PICTURE_H.
+function subtitleFontFractionOfPicture(sizePt, lines) {
+    const pts = [[13, 3.2], [16, 4.0], [19, 4.8], [22, 5.6]];
+    let pt = parseFloat(sizePt);
+    if (!Number.isFinite(pt)) pt = 16;
+    pt = Math.min(22, Math.max(13, pt));
+    let frac = null;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const x0 = pts[i][0], y0 = pts[i][1], x1 = pts[i + 1][0], y1 = pts[i + 1][1];
+        if (pt >= x0 && pt <= x1) { frac = y0 + (y1 - y0) * ((pt - x0) / (x1 - x0)); break; }
+    }
+    if (frac == null) frac = pts[pts.length - 1][1];
+    if (parseInt(lines) === 2) frac *= 1.25;
+    return frac / 100;
+}
+function convertSubCentreToMargin(centrePct, fontSizePt, lines) {
+    const PH = 608;
+    const fp = Math.max(18, Math.round(PH * subtitleFontFractionOfPicture(fontSizePt || 16, lines || 1)));
+    const textH = fp * ((parseInt(lines) === 2) ? 2.30 : 1.15);
+    const pad = Math.max(10, fp * 0.40);
+    const plateFrac = (textH + 2 * pad) / PH;
+    const margin = (100 - centrePct) - (plateFrac * 100) / 2;
+    return Math.round(Math.min(95, Math.max(0, margin)));
+}
+window.convertSubCentreToMargin = convertSubCentreToMargin;
 function collectAccountPrefs() {
     const bs = document.getElementById("slider-blur-strength");
     const sy = document.getElementById("slider-sub-y");
@@ -1189,7 +1273,12 @@ function collectAccountPrefs() {
         recapFontSize: state.recapFontSize || 16,
         recapLines: state.recapLines || 1,
         recapSplitMinutes: state.recapSplitMinutes || 3,
-        recapSubY: sy ? parseInt(sy.value) : (state.recapSubY || 85),
+        // Batch AK: the slider under the historical slider-sub-y id
+        // is the BOTTOM-EDGE margin now; recapSubY (centre-%) is no
+        // longer collected — the margin + schema version are the
+        // stored anchor.
+        recapSubMargin: sy ? parseInt(sy.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5),
+        recapSettingsVersion: 2,
         // Batch AG: sub_x / sub_w are account preferences like
         // recapSubY (NOT per-source — the blur box's horizontal
         // geometry stays out, exactly like its vertical geometry).
@@ -1221,6 +1310,17 @@ function cacheAccountPrefs(prefs) {
 }
 function applyAccountPrefs(prefs) {
     if (!prefs || typeof prefs !== "object") return;
+    // Batch AK migration (client mirror of the server rule): a
+    // pre-AK payload carries recapSubY (centre-%) with no margin
+    // and no version — convert it plate-height-aware so this
+    // device's subtitle does not jump on the first launch after
+    // the update. Runs once: the converted payload is stamped v2.
+    if ((prefs.recapSettingsVersion || 0) < 2 && prefs.recapSubMargin == null
+        && typeof prefs.recapSubY === "number") {
+        prefs = { ...prefs };
+        prefs.recapSubMargin = convertSubCentreToMargin(prefs.recapSubY, prefs.recapFontSize || 16, prefs.recapLines || 1);
+        prefs.recapSettingsVersion = 2;
+    }
     if (typeof prefs.voice_persona === "string" && prefs.voice_persona) {
         state.selectedPersona = prefs.voice_persona;
         if (typeof renderCuratedVoices === "function") { try { renderCuratedVoices(); } catch (e) {} }
@@ -1238,6 +1338,7 @@ function applyAccountPrefs(prefs) {
         "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapCropTop",
         "recapCropBottom", "recapCropLeft", "recapCropRight", "recapFontSize",
         "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
+        "recapSubMargin", "recapSettingsVersion",
         "recapSubX", "recapSubW",
         "recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY",
         "recapZoom", "recapVoice", "recapGeminiVoice",
@@ -3069,7 +3170,10 @@ function refreshLogoUi() {
 
     const previewLogo = document.getElementById("preview-logo");
     if (previewLogo) {
-        previewLogo.style.display = (canUse && has && state.recapLogo !== false) ? "block" : "none";
+        // Batch AK: the canvas watermark placeholder is retired —
+        // the composited frame renders the user's real logo, so the
+        // placeholder never shows (no more fake "LOGO" text).
+        previewLogo.style.display = "none";
     }
     const toggleBtn = document.getElementById("btn-toggle-logo");
     if (toggleBtn) {
@@ -3623,7 +3727,8 @@ function setupRecapVisualEditor() {
     const valTitleY = document.getElementById("val-title-y");
 
     const previewBlur = document.getElementById("preview-blur-box");
-    const previewPlate = document.getElementById("preview-plate-box");
+    // Batch AK: the CSS plate element is gone — the composited
+    // frame carries the engine's real plate (see S2).
     const previewSub = document.getElementById("preview-sub-box");
     const previewTitle = document.getElementById("preview-title-box");
     const previewLogo = document.getElementById("preview-logo");
@@ -4028,6 +4133,9 @@ function setupRecapVisualEditor() {
         // element is the frame source for uploads).
         state.recapVerifiedSourceUrl = null;
         if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
+        // Batch AK: the old source's composite must not linger.
+        if (state.recapCompositeUrl) { URL.revokeObjectURL(state.recapCompositeUrl); state.recapCompositeUrl = null; }
+        recapCompositeHash = "";
         state.recapUploadPending = false;
         // R39: an uploaded file's duration is server-measured — the
         // unverified-link warning by the CTA never applies to it.
@@ -4115,9 +4223,8 @@ function setupRecapVisualEditor() {
         setRecapInfoUploadState("ready");
         if (els.label) els.label.innerText = t("upload_ready_label");
         setRecapPreviewState("ready");
-        // D2: same settle re-fit as the Analyze path — the plate was
-        // last fitted (if at all) while the wrap was hidden.
-        refitBlurPlateAfterSettle();
+        // Batch AK: a fresh source re-composites the preview.
+        scheduleRecapCompositeRefresh();
         if (els.cancelBtn) els.cancelBtn.classList.add("hidden");
         if (els.hint) els.hint.classList.add("hidden");
         setTimeout(() => { if (els.wrap) els.wrap.classList.add("hidden"); }, 1500);
@@ -4201,6 +4308,9 @@ function setupRecapVisualEditor() {
         const clamped = Math.max(0, Math.min(total, targetSec));
         if (sliderSeek) sliderSeek.value = clamped;
         updateSeekTimeDisplay(clamped, total);
+        // Batch AK: the composited preview follows the seek (its
+        // payload reads the seek slider position).
+        scheduleRecapCompositeRefresh();
 
         if (canvasVideo && canvasVideo.src && !canvasVideo.classList.contains("hidden")) {
             canvasVideo.currentTime = clamped;
@@ -4262,6 +4372,95 @@ function setupRecapVisualEditor() {
         } catch (e) { /* keep the existing canvas visuals */ }
     }
     window.refreshRecapFramePreview = refreshRecapFramePreview;
+
+    // ── Batch AK: engine-composited preview ─────────────────────
+    // The canvas's picture is the ENGINE's own composite (POST
+    // /api/recap/preview-composite) for the CURRENT settings — all
+    // seven subtitle styles with engine plate sizing, the title
+    // badge, and (once a script exists) the real first cue as the
+    // sample. The CSS boxes over it are placement handles only;
+    // the hand-mirrored JS renderer no longer draws subtitles.
+    let recapCompositeSeq = 0;
+    let recapCompositeTimer = null;
+    let recapCompositeHash = "";
+    function recapCompositePayload() {
+        const g = (id) => document.getElementById(id);
+        const iv = (el, dflt) => el ? parseInt(el.value) : dflt;
+        const seek = g("slider-canvas-seek");
+        const titleOn = !!state.recapTitleEnabled;
+        const customTitle = (state.recapTitleText || "").trim();
+        // N3: the real first cue once the script editor has one.
+        let sample = "";
+        const firstSeg = document.querySelector("#recap-script-list .script-seg-text");
+        if (firstSeg && firstSeg.value) sample = firstSeg.value.trim().slice(0, 120);
+        return {
+            url: state.uploadedVideoPath ? null : (state.recapVerifiedSourceUrl || null),
+            uploaded_path: state.uploadedVideoPath || null,
+            t: seek ? (parseFloat(seek.value) || 5) : 5,
+            ratio: state.recapRatio || "9:16",
+            ratio_fill: state.recapRatioFill || "blur",
+            crop_top: state.recapCropTop || 0,
+            crop_bottom: state.recapCropBottom || 0,
+            crop_left: state.recapCropLeft || 0,
+            crop_right: state.recapCropRight || 0,
+            mirror_video: state.recapMirror !== false,
+            zoom_factor: state.recapZoom || 1.0,
+            blur_subtitles: state.recapBlurSubs !== false,
+            blur_y: iv(g("slider-blur-y"), 85),
+            blur_h: iv(g("slider-blur-h"), 7),
+            blur_x: iv(g("slider-blur-x"), 4),
+            blur_w: iv(g("slider-blur-w"), 92),
+            blur_box_explicit: !!state.recapBlurBoxTouched,
+            blur_strength: iv(g("slider-blur-strength"), 18),
+            burn_subtitles: state.recapBurnSubs !== false,
+            sub_bottom_margin: iv(g("slider-sub-y"), state.recapSubMargin != null ? state.recapSubMargin : 5),
+            sub_x: iv(g("slider-sub-x"), 50),
+            sub_w: iv(g("slider-sub-w"), 92),
+            sub_lines: state.recapLines || 1,
+            sub_font_size: state.recapFontSize || 16,
+            sub_style: state.recapSubStyle || "yellow",
+            sub_font: state.recapSubFont || "padauk",
+            sample_text: sample || null,
+            // The client resolves the Addition-B fallback (custom
+            // text, else the video's own title) — the preview burns
+            // exactly the text the render will.
+            title_enabled: titleOn,
+            title_text: titleOn ? (customTitle || (state.recapVideoTitle || "") || null) : null,
+            title_x: iv(g("slider-title-x"), state.recapTitleX || 50),
+            title_y: iv(g("slider-title-y"), state.recapTitleY != null ? state.recapTitleY : 12),
+            include_logo: state.recapLogo !== false,
+            logo_pos: state.recapLogoPos || "top-right",
+        };
+    }
+    function scheduleRecapCompositeRefresh() {
+        if (!state.recapVerifiedSourceUrl && !state.uploadedVideoPath) return;
+        if (recapCompositeTimer) clearTimeout(recapCompositeTimer);
+        recapCompositeTimer = setTimeout(refreshRecapCompositePreview, 600);
+    }
+    window.scheduleRecapCompositeRefresh = scheduleRecapCompositeRefresh;
+    async function refreshRecapCompositePreview() {
+        if (!state.recapVerifiedSourceUrl && !state.uploadedVideoPath) return;
+        const payload = recapCompositePayload();
+        const hash = JSON.stringify(payload);
+        if (hash === recapCompositeHash) return; // nothing changed
+        const mySeq = ++recapCompositeSeq;
+        try {
+            const res = await fetch("/api/recap/preview-composite", {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: hash,
+            });
+            if (!res.ok) return;
+            const blob = await res.blob();
+            if (mySeq !== recapCompositeSeq) return; // a newer refresh won
+            recapCompositeHash = hash;
+            const objUrl = URL.createObjectURL(blob);
+            if (state.recapCompositeUrl) URL.revokeObjectURL(state.recapCompositeUrl);
+            state.recapCompositeUrl = objUrl;
+            updateCanvasMockupVisuals();
+        } catch (e) { /* keep the existing canvas visuals */ }
+    }
+    window.refreshRecapCompositePreview = refreshRecapCompositePreview;
 
     if (sliderSeek) {
         sliderSeek.addEventListener("input", (e) => {
@@ -4344,7 +4543,10 @@ function setupRecapVisualEditor() {
         }
         if (state.recapRatio === "Original" && rSource) rCanvas = rSource;
         if (!rSource) {
-            rSource = (state.recapRatio === "9:16" || state.recapRatio === "1:1") ? (16 / 9) : (9 / 16);
+            // Batch AK: no opposite-orientation guess — with the
+            // source aspect unknown, treat the picture as the whole
+            // canvas; the composited frame corrects it on arrival.
+            rSource = rCanvas;
         }
         const ct = Math.max(0, Math.min(35, state.recapCropTop || 0)) / 100.0;
         const cb = Math.max(0, Math.min(35, state.recapCropBottom || 0)) / 100.0;
@@ -4372,6 +4574,30 @@ function setupRecapVisualEditor() {
         const sy = Math.max(0, Math.min(100, subYPercent)) / 100.0;
         if ((r.oy + r.ph) < 1 - 0.002) return r.oy + sy * r.ph;
         return sy;
+    }
+
+    // Batch AK: the subtitle PLATE height as a fraction of the
+    // PICTURE height — core._plate_height_px's formula evaluated at
+    // the 608px reference picture height (the fraction is stable
+    // across picture heights to ~0.1pt).
+    function subtitlePlateHeightFracOfPicture() {
+        const PH = 608;
+        const fp = Math.max(18, PH * subtitleFontFraction(state.recapFontSize || 16, state.recapLines || 1));
+        const textH = fp * ((state.recapLines || 1) === 2 ? 2.30 : 1.15);
+        const pad = Math.max(10, fp * 0.40);
+        return (textH + 2 * pad) / PH;
+    }
+    // The subtitle centre-% (picture basis) implied by a bottom
+    // margin — the value the canvas drag math works in. The slider
+    // under the historical slider-sub-y id IS the margin.
+    function subCentrePercentFromMargin(marginPct) {
+        return 100 - marginPct - subtitlePlateHeightFracOfPicture() * 50;
+    }
+    function subMarginFromCentrePercent(centrePct) {
+        return Math.round(Math.min(95, Math.max(0, 100 - centrePct - subtitlePlateHeightFracOfPicture() * 50)));
+    }
+    function currentSubMarginPercent() {
+        return sliderSubY ? parseFloat(sliderSubY.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5);
     }
 
     // Batch AG: subtitle centre X as a fraction of the canvas width
@@ -4422,6 +4648,7 @@ function setupRecapVisualEditor() {
         state.recapTitleY = Math.round(y);
         if (valTitleX) valTitleX.innerText = `${Math.round(x)}%`;
         if (valTitleY) valTitleY.innerText = `${Math.round(y)}%`;
+        syncTitleFallbackHint();
         if (!enabled) return;
         const c = titleCentreCanvasFrac(x, y);
         const r = recapPictureRect();
@@ -4431,13 +4658,21 @@ function setupRecapVisualEditor() {
         previewTitle.style.bottom = "auto";
         previewTitle.style.transform = "translate(-50%, -50%)";
         previewTitle.style.maxWidth = `${(0.78 * r.pw * 100).toFixed(3)}%`;
-        const textEl = document.getElementById("preview-title-text-el");
-        if (textEl) {
-            const custom = (state.recapTitleText || "").trim();
-            textEl.innerText = custom || (state.recapVideoTitle || "").trim() || t("recap_title_sample");
-            const canvasH = canvas ? canvas.clientHeight : 0;
-            if (canvasH > 0) textEl.style.fontSize = `${Math.max(10, Math.round(canvasH * 0.035))}px`;
-        }
+        // Batch AK: the box is an outline handle — the title itself
+        // renders inside the composited frame.
+        scheduleRecapCompositeRefresh();
+    }
+
+    // Batch AK (Addition B): the fallback hint — visible exactly
+    // when the title toggle is ON and the custom text is empty, the
+    // state where the video's OWN title gets burned for the whole
+    // video. The toggle itself lives in the main form flow (never
+    // buried), so its state is always visible.
+    function syncTitleFallbackHint() {
+        const hint = document.getElementById("recap-title-fallback-hint");
+        if (!hint) return;
+        const show = !!state.recapTitleEnabled && !(state.recapTitleText || "").trim();
+        hint.classList.toggle("hidden", !show);
     }
 
     // Batch AA: the blur box is drawn on the PICTURE, exactly like
@@ -4483,7 +4718,10 @@ function setupRecapVisualEditor() {
     function resetBlurBoxForNewSource() {
         state.recapBlurY = 85;
         state.recapBlurH = 7;
-        state.recapSubY = 85;
+        // Batch AK: the subtitle position resets to the shipped
+        // default — now the 5% bottom margin (syncSubBoxVisual
+        // re-derives the centre mirror from it).
+        state.recapSubMargin = 5;
         // Batch AG: the horizontal blur geometry is per-source like
         // Y/H and resets with it; sub_x follows sub_y's reset rule.
         // sub_w does NOT reset — like the font size, it is a style
@@ -4494,7 +4732,7 @@ function setupRecapVisualEditor() {
         state.recapBlurBoxTouched = false;
         if (sliderBlurY) sliderBlurY.value = 85;
         if (sliderBlurH) sliderBlurH.value = 7;
-        if (sliderSubY) sliderSubY.value = 85;
+        if (sliderSubY) sliderSubY.value = 5;
         if (sliderBlurX) sliderBlurX.value = 4;
         if (sliderBlurW) sliderBlurW.value = 92;
         if (sliderSubX) sliderSubX.value = 50;
@@ -4503,7 +4741,8 @@ function setupRecapVisualEditor() {
         saveRecapSettings();
     }
 
-    // Picker size → fraction of canvas height; mirrors
+    // Picker size → fraction of the PICTURE height (Batch AK —
+    // picture-relative, the Recapter standard); mirrors
     // SUBTITLE_FONT_HEIGHT_FRACTIONS in core.py (×1.25 two-line).
     function subtitleFontFraction(sizePt, lines) {
         const pts = [[13, 3.2], [16, 4.0], [19, 4.8], [22, 5.6]];
@@ -4531,7 +4770,10 @@ function setupRecapVisualEditor() {
     function subtitlePreviewFontPx() {
         const canvasH = canvas ? canvas.clientHeight : 0;
         const frac = subtitleFontFraction(state.recapFontSize || 16, state.recapLines || 1);
-        return canvasH > 0 ? Math.max(8, Math.round(frac * canvasH)) : 13;
+        // Batch AK: the fraction applies to the PICTURE's height on
+        // canvas (ph × canvasH), mirroring core.subtitle_font_px.
+        const r = recapPictureRect();
+        return canvasH > 0 ? Math.max(8, Math.round(frac * r.ph * canvasH)) : 13;
     }
 
     // 1. Slider Controls for Original Blur and Subtitle Y (100% synced with backend FFmpeg coordinates)
@@ -4561,107 +4803,43 @@ function setupRecapVisualEditor() {
         previewBlur.style.width = `${(geom.width * 100).toFixed(3)}%`;
         previewBlur.style.right = "auto";
         previewBlur.style.bottom = "auto";
-        fitBlurPlateToCaption();
+        // Batch AK: the blur geometry feeds the composited frame —
+        // a blur change re-renders it (debounced + hash-guarded).
+        scheduleRecapCompositeRefresh();
     }
 
-    // Q1 (QA cycle 2026-11-02): the dashed band plate is sized from
-    // the blur-band % alone (default 7% — 22px at 16:9 once the CSS
-    // min-height clamps it), while the two-line subtitle sample that
-    // shares its centre anchor is ~47px tall — so the caption
-    // straddled the plate at EVERY ratio (measured 12.4px spill top
-    // and bottom at 16:9 / 1:1 / Original, 4.8px at 9:16). Whenever
-    // the caption overlaps the plate, the plate grows — preview only;
-    // the blur_h % sent to the render is untouched — until it fully
-    // contains the caption (text height + breathing room).
-    // Batch AA: the old growth term added TWICE the centre offset
-    // between caption and plate on top, uncapped — a caption sitting
-    // near the plate's edge inflated the plate far beyond anything
-    // the render would draw. The growth is now the caption's real
-    // need (text height + 8px padding) with an absolute ceiling of
-    // 25% of the canvas height — above the largest legitimate plate
-    // (two-line caption at the largest font ≈ 17–20% of canvas; the
-    // engine's own plate clamp is 50%, typical plates 7–17%) and
-    // far below the runaway values the delta term could reach.
-    // A caption dragged fully away from the band leaves the plate at
-    // its slider height.
-    function fitBlurPlateToCaption() {
-        // Blur safefix (2026-11-03): the band that grows to contain
-        // the caption is the PLATE overlay (#preview-plate-box),
-        // anchored at Sub Y exactly like the render's plate.
-        // #preview-blur-box keeps its own job — the user's source-band
-        // hint at Blur Y, the position the engine falls back to when
-        // detection finds nothing — so both engine positions are
-        // visible at once.
-        if (!previewPlate || !previewSub || !previewBlur || !canvas) return;
-        if (getComputedStyle(previewSub).display === "none") return;
-        const canvasH = canvas.clientHeight;
-        if (!canvasH) return;
-        const textEl = document.getElementById("preview-sub-text-el");
-        if (!textEl) return;
-        const plateY = sliderSubY ? parseFloat(sliderSubY.value) : 85;
-        const plateH = sliderBlurH ? parseFloat(sliderBlurH.value) : 7;
-        // Batch P: the plate shares the subtitle's render anchor
-        // (picture-relative on letterboxed layouts), exactly like
-        // the render's subtitle_plate_box.
-        previewPlate.style.top = `${(subtitleAnchorCanvasFrac(plateY) * 100).toFixed(3)}%`;
-        // Batch AA: the plate's floor is the blur height converted
-        // to canvas terms with the same picture-relative math.
-        previewPlate.style.height = `${(blurBoxCanvasGeom(plateY, plateH).height * 100).toFixed(3)}%`;
-        previewPlate.style.bottom = "auto";
-        const plate = previewPlate.getBoundingClientRect();
-        const text = textEl.getBoundingClientRect();
-        if (!plate.height || !text.height) return;
-        const overlaps = text.bottom > plate.top && text.top < plate.bottom;
-        if (!overlaps) return;
-        // Batch AA: growth = the caption's real need only, capped
-        // at PLATE_MAX_HEIGHT_FRAC of the canvas (see the Q1 note).
-        const PLATE_MAX_HEIGHT_FRAC = 0.25;
-        const neededPx = Math.min(text.height + 8, canvasH * PLATE_MAX_HEIGHT_FRAC);
-        if (plate.height < neededPx) {
-            previewPlate.style.height = `${(neededPx / canvasH) * 100}%`;
-        }
-    }
-
-    // D2 (premium round 2026-11-02): the fit measures live geometry,
-    // so a fit attempted while the preview wrap is still hidden
-    // (loading state) measures 0 and silently no-ops — which is why
-    // the post-Analyze default state kept the slider-sized plate.
-    // Settle points (Analyze completion, source load) re-run the fit
-    // on the next frame, once the wrap is visible and laid out.
-    function refitBlurPlateAfterSettle() {
-        requestAnimationFrame(() => { fitBlurPlateToCaption(); });
-    }
+    // Batch AK: fitBlurPlateToCaption and its plate element are
+    // GONE — the engine-composited frame carries the real plate at
+    // the engine's own size, so there is no CSS plate left to fit.
 
     function syncSubBoxVisual() {
         if (!previewSub) return;
-        const y = sliderSubY ? parseFloat(sliderSubY.value) : 85;
+        // Batch AK: the slider is the BOTTOM-EDGE margin. The drag
+        // handle (outline-only over the composited frame) is placed
+        // by the margin-derived CENTRE through the shared anchor,
+        // with the plate's real height — so the handle outlines the
+        // plate the composite shows.
+        const margin = currentSubMarginPercent();
+        const centre = subCentrePercentFromMargin(margin);
         const x = sliderSubX ? parseFloat(sliderSubX.value) : 50;
         const w = sliderSubW ? parseFloat(sliderSubW.value) : 92;
-        if (valSubY) valSubY.innerText = `${Math.round(y)}%`;
+        if (valSubY) valSubY.innerText = `${Math.round(margin)}%`;
         if (valSubX) valSubX.innerText = `${Math.round(x)}%`;
         if (valSubW) valSubW.innerText = `${Math.round(w)}%`;
-        // Batch P: the sample sits at the RENDER's anchor — sub_y is
-        // a percent of the PICTURE height on letterboxed layouts
-        // (subtitle_centre_px in core.py), not of the whole canvas,
-        // so what the user sees is where the render will burn it.
-        previewSub.style.top = `${(subtitleAnchorCanvasFrac(y) * 100).toFixed(3)}%`;
-        // Batch AG: the sample is centred on sub_x (the shared
-        // centre-X resolver) with its width set from sub_w, so the
-        // caption can be moved sideways and narrowed/widened exactly
-        // as the render will place and wrap it; the plate fit below
-        // measures the text rect, so the plate follows the moved
-        // caption just like the render's plate follows the text.
+        state.recapSubMargin = Math.round(margin);
+        state.recapSubY = Math.round(centre);
+        previewSub.style.top = `${(subtitleAnchorCanvasFrac(centre) * 100).toFixed(3)}%`;
+        previewSub.style.height = `${(subtitlePlateHeightFracOfPicture() * recapPictureRect().ph * 100).toFixed(3)}%`;
+        // Batch AG: the handle is centred on sub_x (the shared
+        // centre-X resolver) with its width set from sub_w, exactly
+        // as the render places and wraps the caption.
         previewSub.style.left = `${(subtitleCentreXCanvasFrac(x) * 100).toFixed(3)}%`;
         previewSub.style.width = `${(subtitleWidthCanvasFrac(w) * 100).toFixed(3)}%`;
         previewSub.style.right = "auto";
         previewSub.style.transform = "translate(-50%, -50%)";
         previewSub.style.bottom = "auto";
-        // Keep the sample size on the render's formula after layout
-        // settles change the canvas height.
-        const subTextEl = document.getElementById("preview-sub-text-el");
-        if (subTextEl) subTextEl.style.fontSize = `${subtitlePreviewFontPx()}px`;
-        // The band plate tracks the caption (Q1): re-fit after a move.
         syncBlurBoxVisual();
+        scheduleRecapCompositeRefresh();
     }
 
     if (sliderBlurY && previewBlur && valBlurY) {
@@ -4957,17 +5135,21 @@ function setupRecapVisualEditor() {
     });
 
     // Attach dragging to Subtitle Box
+    // Batch AK: the slider is the bottom MARGIN now — dragging the
+    // box DOWN must DECREASE the margin, so the delta scale is
+    // negative (the box still follows the finger 1:1 through the
+    // margin-derived centre); the clamp is the margin range.
     enableVerticalDrag(previewSub, (y) => {
         if (sliderSubY) sliderSubY.value = y;
         syncSubBoxVisual();
-    }, () => sliderSubY ? parseFloat(sliderSubY.value) : 85, () => {
+    }, () => sliderSubY ? parseFloat(sliderSubY.value) : 5, () => {
         // Batch P: on letterboxed layouts the caption's canvas
-        // position moves ph× slower than sub_y (picture-relative
-        // anchor) — scale the drag delta so the box follows the
-        // finger 1:1 instead of lagging behind it.
+        // position moves ph× slower than the picture-% value
+        // (picture-relative anchor) — scale the drag delta so the
+        // box follows the finger 1:1 instead of lagging behind it.
         const r = recapPictureRect();
-        return ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
-    });
+        return -(((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1);
+    }, () => [0, 60]);
 
     // Batch AG: horizontal drag for both boxes (2-axis with the
     // vertical drags above). The blur box's left edge clamps
@@ -5200,7 +5382,7 @@ function setupRecapVisualEditor() {
     function updateCanvasMockupVisuals() {
         if (!canvas) return;
 
-        const zoom = state.recapZoom || 1.06;
+        const zoom = state.recapZoom || 1.0;
 
         // 1. Aspect Ratio Frame Class
         if (mockupFrame) {
@@ -5289,8 +5471,10 @@ function setupRecapVisualEditor() {
             }
 
             // Fallback source ratio if media not yet analyzed
+            // (Batch AK: no opposite-orientation guess — the canvas
+            // ratio stands until the real aspect is known).
             if (!rSource) {
-                rSource = (state.recapRatio === "9:16" || state.recapRatio === "1:1") ? (16 / 9) : (9 / 16);
+                rSource = rCanvas;
             }
 
             // Fit aspect for the inset: when neither the extract nor a
@@ -5399,8 +5583,33 @@ function setupRecapVisualEditor() {
 
             const backdropEl = document.getElementById("video-backdrop-blur");
             const noThumbEl = document.getElementById("canvas-no-thumb");
+            const compositeImg = document.getElementById("canvas-composite-img");
             let mediaVisible = false;
-            if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
+            if (compositeImg && state.recapCompositeUrl) {
+                // Batch AK: the engine composite IS the canvas — it
+                // already carries the ratio, fill, crop, zoom,
+                // mirror, blur, subtitles and title exactly as the
+                // render burns them, so it fills the frame plainly
+                // (no CSS fit math) and every other media layer
+                // hides. The CSS boxes stay on top as drag handles.
+                mediaVisible = true;
+                if (noThumbEl) noThumbEl.classList.add("hidden");
+                if (backdropEl) backdropEl.classList.remove("on");
+                canvas.style.backgroundImage = "";
+                innerMovie.style.backgroundImage = "none";
+                innerMovie.style.width = "100%";
+                innerMovie.style.height = "100%";
+                innerMovie.style.top = "0%";
+                innerMovie.style.left = "0%";
+                innerMovie.style.boxShadow = "none";
+                if (thumbImg) thumbImg.classList.add("hidden");
+                if (frameImg) frameImg.classList.add("hidden");
+                if (canvasVideo) { canvasVideo.classList.add("hidden"); canvasVideo.style.display = "none"; }
+                if (compositeImg.getAttribute("src") !== state.recapCompositeUrl) compositeImg.src = state.recapCompositeUrl;
+                compositeImg.classList.remove("hidden");
+                compositeImg.style.display = "block";
+                if (fillBadge) fillBadge.style.display = "none";
+            } else if (canvasVideo && !canvasVideo.classList.contains("hidden") && canvasVideo.src) {
                 mediaVisible = true;
                 if (noThumbEl) noThumbEl.classList.add("hidden");
                 innerMovie.style.backgroundImage = "none";
@@ -5418,6 +5627,7 @@ function setupRecapVisualEditor() {
                 }
                 if (thumbImg) thumbImg.classList.add("hidden");
                 if (frameImg) frameImg.classList.add("hidden");
+                if (compositeImg) compositeImg.classList.add("hidden");
                 canvasVideo.style.display = "block";
                 canvasVideo.style.opacity = "1";
                 canvasVideo.style.objectFit = "fill";
@@ -5449,6 +5659,7 @@ function setupRecapVisualEditor() {
                 canvas.style.backgroundPosition = "";
                 innerMovie.style.backgroundImage = "none";
                 if (thumbImg) thumbImg.classList.add("hidden");
+                if (compositeImg) compositeImg.classList.add("hidden");
                 if (frameImg) {
                     if (frameImg.getAttribute("src") !== state.recapFrameUrl) frameImg.src = state.recapFrameUrl;
                     frameImg.classList.remove("hidden");
@@ -5483,6 +5694,7 @@ function setupRecapVisualEditor() {
                 canvas.style.backgroundPosition = "";
                 innerMovie.style.backgroundImage = "none";
                 if (frameImg) frameImg.classList.add("hidden");
+                if (compositeImg) compositeImg.classList.add("hidden");
                 if (thumbImg) {
                     if (thumbImg.getAttribute("src") !== state.recapThumbnailUrl) delete thumbImg.dataset.failed;
                     thumbImg.src = state.recapThumbnailUrl;
@@ -5501,6 +5713,7 @@ function setupRecapVisualEditor() {
                 innerMovie.style.backgroundImage = "";
                 if (thumbImg) thumbImg.classList.add("hidden");
                 if (frameImg) frameImg.classList.add("hidden");
+                if (compositeImg) compositeImg.classList.add("hidden");
                 // No media at all: collapse the letterbox strip geometry
                 // (its box-shadow drew seam/edge lines on the empty
                 // canvas in every ratio) and show the designed
@@ -5526,7 +5739,93 @@ function setupRecapVisualEditor() {
         syncBlurBoxVisual();
         syncSubBoxVisual();
         syncTitleBoxVisual();
+        syncFillPickerState();
+        scheduleRecapCompositeRefresh();
     }
+
+    // Batch AK (S4/S5/N5): the fill picker's honesty layer — the
+    // picker greys out when the fill cannot change anything (ratio
+    // "Original", or the picture already covers the canvas), shows
+    // "the whole picture is kept" for Blur/Black, and shows the
+    // cropped-away share for Center Crop.
+    function syncFillPickerState() {
+        const note = document.getElementById("recap-fill-note");
+        const picker = document.getElementById("recap-fill-picker");
+        if (!note || !picker) return;
+        const r = recapPictureRect();
+        const fill = state.recapRatioFill || "blur";
+        const fullFrame = (r.pw > 0.999 && r.ph > 0.999);
+        const disabled = state.recapRatio === "Original" || fullFrame;
+        picker.classList.toggle("fill-picker-disabled", disabled);
+        picker.querySelectorAll(".pill-btn").forEach(b => { b.disabled = disabled; });
+        if (disabled) {
+            note.classList.add("hidden");
+            note.innerText = "";
+            return;
+        }
+        if (fill === "crop") {
+            let rCanvas = 9 / 16;
+            if (state.recapRatio === "16:9") rCanvas = 16 / 9;
+            else if (state.recapRatio === "1:1") rCanvas = 1.0;
+            let rSource = null;
+            if (state.recapSourceWidth && state.recapSourceHeight && state.recapSourceHeight > 0) {
+                rSource = state.recapSourceWidth / state.recapSourceHeight;
+            }
+            if (!rSource) rSource = rCanvas;
+            const keepW = Math.max(0.10, 1.0 - (Math.min(35, state.recapCropLeft || 0) + Math.min(35, state.recapCropRight || 0)) / 100.0);
+            const keepH = Math.max(0.10, 1.0 - (Math.min(35, state.recapCropTop || 0) + Math.min(35, state.recapCropBottom || 0)) / 100.0);
+            const rCropped = rSource * (keepW / keepH);
+            const loss = rCropped >= rCanvas ? (1 - rCanvas / rCropped) : (1 - rCropped / rCanvas);
+            note.innerText = tf("fill_crop_loss", { pct: Math.max(0, Math.round(loss * 100)) });
+        } else {
+            note.innerText = t("fill_keep_picture_note");
+        }
+        note.classList.remove("hidden");
+    }
+
+    // Batch AK (S5): in Center Crop mode, dragging the canvas pans
+    // the crop window — the left/right (or top/bottom) crop split
+    // moves with the drag while each axis's TOTAL crop stays, which
+    // is exactly the render's crop-offset freedom. Sliders remain
+    // the precise control; this is the direct-manipulation path.
+    (function setupCropPanDrag() {
+        if (!canvas) return;
+        let panning = null;
+        canvas.addEventListener("pointerdown", (e) => {
+            if ((state.recapRatioFill || "blur") !== "crop") return;
+            if (e.target.closest(".draggable-box")) return;
+            panning = {
+                x: e.clientX, y: e.clientY,
+                cl: state.recapCropLeft || 0, cr: state.recapCropRight || 0,
+                ct: state.recapCropTop || 0, cb: state.recapCropBottom || 0,
+            };
+        });
+        window.addEventListener("pointermove", (e) => {
+            if (!panning) return;
+            const rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const dxPct = ((e.clientX - panning.x) / rect.width) * 100;
+            const dyPct = ((e.clientY - panning.y) / rect.height) * 100;
+            let cl = panning.cl, cr = panning.cr, ct = panning.ct, cb = panning.cb;
+            const totX = cl + cr, totY = ct + cb;
+            if (totX > 0) {
+                // Dragging right reveals more of the left side.
+                const keepW = Math.max(0.10, 1.0 - totX / 100.0);
+                cl = Math.round(Math.max(0, Math.min(totX, panning.cl - dxPct * keepW)));
+                cr = totX - cl;
+            }
+            if (totY > 0) {
+                const keepH = Math.max(0.10, 1.0 - totY / 100.0);
+                ct = Math.round(Math.max(0, Math.min(totY, panning.ct - dyPct * keepH)));
+                cb = totY - ct;
+            }
+            if (cl !== (state.recapCropLeft || 0) || cr !== (state.recapCropRight || 0)
+                || ct !== (state.recapCropTop || 0) || cb !== (state.recapCropBottom || 0)) {
+                applyCropValues(ct, cb, cl, cr);
+            }
+        });
+        window.addEventListener("pointerup", () => { panning = null; });
+    })();
 
     // 2. Aspect Ratio Selector (9:16, 16:9, 1:1, Original)
     const ratioBtns = document.querySelectorAll("#recap-ratio-picker .ratio-btn");
@@ -5682,7 +5981,7 @@ function setupRecapVisualEditor() {
             haptic("selection");
             zoomBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
-            state.recapZoom = parseFloat(btn.getAttribute("data-zoom") || "1.06");
+            state.recapZoom = parseFloat(btn.getAttribute("data-zoom") || "1.00");
             updateCanvasMockupVisuals();
         });
     });
@@ -5799,7 +6098,8 @@ function setupRecapVisualEditor() {
         if (sliderTitleY) sliderTitleY.value = "12";
         syncTitleBoxVisual();
         if (sliderBlurStrength) { sliderBlurStrength.value = "18"; syncBlurStrengthVisual(); }
-        if (sliderSubY) sliderSubY.value = "85";
+        // Batch AK: the sub slider resets to the 5% bottom margin.
+        if (sliderSubY) sliderSubY.value = "5";
         syncBlurBoxVisual();
         syncSubBoxVisual();
 
@@ -5819,9 +6119,9 @@ function setupRecapVisualEditor() {
             b.classList.toggle("active", b.getAttribute("data-crop") === "full");
         });
 
-        state.recapZoom = 1.06;
+        state.recapZoom = 1.0;
         document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-zoom") === "1.06");
+            b.classList.toggle("active", b.getAttribute("data-zoom") === "1.00");
         });
         updateCanvasMockupVisuals();
     }
@@ -5837,7 +6137,6 @@ function setupRecapVisualEditor() {
             const tVal = btnToggleSubs.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapBurnSubs ? t("toggle_on") : t("toggle_off");
             if (previewSub) previewSub.style.display = state.recapBurnSubs ? "block" : "none";
-            if (previewPlate) previewPlate.style.display = (state.recapBlurSubs && state.recapBurnSubs) ? "block" : "none";
             // The band plate tracks the caption (Q1): grow when the
             // caption returns, relax to the slider height when hidden.
             syncBlurBoxVisual();
@@ -5853,7 +6152,6 @@ function setupRecapVisualEditor() {
             const tVal = btnToggleBlur.querySelector(".t-val");
             if (tVal) tVal.innerText = state.recapBlurSubs ? t("toggle_on") : t("toggle_off");
             if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
-            if (previewPlate) previewPlate.style.display = (state.recapBlurSubs && state.recapBurnSubs) ? "block" : "none";
         });
     }
 
@@ -5878,65 +6176,20 @@ function setupRecapVisualEditor() {
             chip.classList.add("active");
             const style = chip.getAttribute("data-style") || "yellow";
             state.recapSubStyle = style;
-            if (previewSub) {
-                previewSub.className = `preview-sub-box ${style}`;
-            }
-            // Style presets change the caption box's padding/height —
-            // the band plate re-fits around it (D2).
-            fitBlurPlateToCaption();
+            // Batch AK: the style renders in the composited frame —
+            // refresh it; the drag handle keeps a neutral outline
+            // (no per-style CSS classes to keep in sync any more).
+            scheduleRecapCompositeRefresh();
         });
     });
 
     // 10. Subtitle Live Preview Renderer
     function updateSubtitleVisualPreview() {
-        const previewText = document.getElementById("preview-sub-text-el");
-        const previewBox = document.getElementById("preview-sub-box");
-        if (!previewText || !previewBox) return;
-
-        const lines = state.recapLines || 1;
-        const size = state.recapFontSize || 16;
-
-        // Batch P: the sample is sized by the render's own formula —
-        // the picker's fraction of the canvas height (×1.25 for two
-        // lines), via subtitleFontFraction — replacing the fixed
-        // mockup table that systematically over-promised the size.
-        previewText.style.fontSize = `${subtitlePreviewFontPx()}px`;
-
-        // Batch Q font choice: the four families are served as
-        // static webfonts (@font-face in style.css, /static/fonts/)
-        // so the live sample renders in the SAME font the PNG burn
-        // will use — the picker's keys are the backend's keys.
-        const fontMap = {
-            "padauk": "'Padauk', sans-serif",
-            "noto_sans": "'Noto Sans Myanmar', sans-serif",
-            "pyidaungsu": "'Pyidaungsu', sans-serif",
-            "noto_serif": "'Noto Serif Myanmar', serif"
-        };
-        previewText.style.fontFamily = fontMap[state.recapSubFont || "padauk"] || fontMap["padauk"];
-
-        if (lines === 1) {
-            previewBox.classList.remove("two-lines");
-            previewBox.classList.add("one-line");
-            previewText.innerHTML = t("sub_sample_text");
-            // NOT nowrap: with nowrap the one-line line-clamp can never
-            // engage, and a long sample (e.g. the i18n subtitle sample
-            // applied by setLanguage) overflows the bar and hard-clips at
-            // both ends. Normal flow + the CSS line-clamp gives a clean
-            // single line with an ellipsis instead.
-            previewText.style.whiteSpace = "normal";
-            previewText.style.lineHeight = "1.8";
-        } else {
-            previewBox.classList.remove("one-line");
-            previewBox.classList.add("two-lines");
-            previewText.innerHTML = t("sub_sample_text");
-            previewText.style.whiteSpace = "normal";
-            previewText.style.lineHeight = "1.8";
-        }
-        // Font size / line count change the caption's height — the
-        // band plate re-fits around it (Q1).
-        syncBlurBoxVisual();
+        // Batch AK: retired — the CSS sample renderer is gone. The
+        // subtitle (style, font, size, sample text) renders inside
+        // the engine-composited frame; nothing here draws it.
+        return;
     }
-
     // 11. Font Size Picker (Synchronized across toolbar & advanced settings)
     function syncSubtitleFontSize(sizeVal) {
         state.recapFontSize = parseInt(sizeVal || "16");
@@ -5944,6 +6197,7 @@ function setupRecapVisualEditor() {
             p.classList.toggle("active", parseInt(p.getAttribute("data-size")) === state.recapFontSize);
         });
         updateSubtitleVisualPreview();
+        scheduleRecapCompositeRefresh();
     }
     document.querySelectorAll("#font-size-picker-toolbar .pill-btn").forEach(pill => {
         pill.addEventListener("click", () => {
@@ -5959,6 +6213,7 @@ function setupRecapVisualEditor() {
             p.classList.toggle("active", parseInt(p.getAttribute("data-lines")) === state.recapLines);
         });
         updateSubtitleVisualPreview();
+        scheduleRecapCompositeRefresh();
     }
     document.querySelectorAll("#sub-lines-picker-toolbar .pill-btn").forEach(pill => {
         pill.addEventListener("click", () => {
@@ -6168,6 +6423,8 @@ function setupRecapVisualEditor() {
                     state.recapVerifiedSourceUrl = data.url;
                     if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
                     if (window.scheduleRecapFrameRefresh) window.scheduleRecapFrameRefresh(Math.min(5, data.duration_seconds || 5));
+                    // Batch AK: composite for the newly verified source.
+                    if (window.scheduleRecapCompositeRefresh) window.scheduleRecapCompositeRefresh();
                 } else {
                     state.recapVerifiedSourceUrl = null;
                 }
@@ -6244,10 +6501,8 @@ function setupRecapVisualEditor() {
             } finally {
                 btnAnalyze.disabled = false;
                 btnAnalyze.innerText = originalText;
-                // D2: the preview wrap only becomes visible at the
-                // "ready" settle above — re-fit the caption plate now
-                // that it can actually be measured.
-                refitBlurPlateAfterSettle();
+                // Batch AK: the settled source re-composites.
+                scheduleRecapCompositeRefresh();
             }
         });
     }
@@ -6269,6 +6524,8 @@ function setupRecapVisualEditor() {
                 state.recapThumbnailUrl = null;
                 state.recapVerifiedSourceUrl = null;
                 if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
+                if (state.recapCompositeUrl) { URL.revokeObjectURL(state.recapCompositeUrl); state.recapCompositeUrl = null; }
+                recapCompositeHash = "";
                 updateCanvasMockupVisuals();
                 if (recapInfoBox) recapInfoBox.classList.add("hidden");
                 const warnEl = document.getElementById("recap-unverified-warning");
@@ -6333,7 +6590,7 @@ function setupRecapVisualEditor() {
         recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"],
         recapSubFont: ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
         recapLogoPos: ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
-        recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja"],
+        recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja", "hi", "my", "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"],
         recapRenderQuality: ["standard", "high", "max"],
         recapTtsEngine: ["voxcpm", "gemini"],
     };
@@ -6343,6 +6600,7 @@ function setupRecapVisualEditor() {
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
         recapFontSize: [12, 30], recapLines: [1, 2], recapSplitMinutes: [1, 10],
         recapBlurY: [0, 100], recapBlurH: [1, 50], recapSubY: [0, 100],
+        recapSubMargin: [0, 95], recapSettingsVersion: [0, 10],
         recapBlurX: [0, 100], recapBlurW: [10, 100],
         recapSubX: [10, 90], recapSubW: [10, 100],
         recapTitleX: [0, 100], recapTitleY: [0, 100],
@@ -6366,7 +6624,10 @@ function setupRecapVisualEditor() {
         snap.recapBlurY = by ? parseInt(by.value) : 85;
         snap.recapBlurH = bh ? parseInt(bh.value) : 7;
         snap.recapBlurStrength = bs ? parseInt(bs.value) : 18;
-        snap.recapSubY = sy ? parseInt(sy.value) : 85;
+        // Batch AK: the slider is the bottom margin now — the
+        // snapshot stores the margin + the schema version.
+        snap.recapSubMargin = sy ? parseInt(sy.value) : 5;
+        snap.recapSettingsVersion = 2;
         const bx = document.getElementById("slider-blur-x");
         const bw = document.getElementById("slider-blur-w");
         const sx = document.getElementById("slider-sub-x");
@@ -6418,6 +6679,21 @@ function setupRecapVisualEditor() {
         // savers move to the new premium default, Padauk).
         const LEGACY_SUB_FONTS = { "default": "padauk", "serif": "noto_serif" };
         if (LEGACY_SUB_FONTS[saved.recapSubFont]) saved.recapSubFont = LEGACY_SUB_FONTS[saved.recapSubFont];
+        // Batch AK settings migration — runs once, versioned. A
+        // pre-AK snapshot stores the subtitle anchor as recapSubY
+        // (centre-% of the picture height); convert it
+        // plate-height-aware to the bottom-edge margin so the
+        // restored subtitle lands where it always was, and stamp
+        // version 2 so it never re-runs.
+        if ((parseInt(saved.recapSettingsVersion) || 0) < 2 && saved.recapSubMargin == null
+            && Number.isFinite(parseInt(saved.recapSubY))) {
+            saved.recapSubMargin = convertSubCentreToMargin(
+                parseInt(saved.recapSubY),
+                parseInt(saved.recapFontSize) || 16,
+                parseInt(saved.recapLines) || 1,
+            );
+            saved.recapSettingsVersion = 2;
+        }
         Object.entries(RECAP_SETTING_ENUMS).forEach(([k, allowed]) => {
             if (allowed.includes(saved[k])) state[k] = saved[k];
         });
@@ -6477,9 +6753,10 @@ function setupRecapVisualEditor() {
         if (previewBlur) previewBlur.style.display = state.recapBlurSubs ? "block" : "none";
         // The plate exists only where the render draws one: blur on
         // AND burn on (blur safefix 2026-11-03).
-        if (previewPlate) previewPlate.style.display = (state.recapBlurSubs && state.recapBurnSubs) ? "block" : "none";
         syncPillGroup("#sub-style-picker .style-chip", "data-style", state.recapSubStyle);
-        if (previewSub) previewSub.className = `preview-sub-box ${state.recapSubStyle}`;
+        // Batch AK: the handle's classes are fixed (the style lives
+        // in the composited frame, not in CSS classes).
+        if (previewSub) previewSub.className = "preview-sub-box draggable-box";
         syncPillGroup("#recap-sub-font-picker .pill-btn", "data-font", state.recapSubFont);
         syncPillGroup("#recap-logo-pos-picker .pill-btn", "data-pos", state.recapLogoPos);
         if (previewLogo) previewLogo.className = `preview-logo-watermark ${state.recapLogoPos}`;
@@ -6496,7 +6773,7 @@ function setupRecapVisualEditor() {
             bs.value = state.recapBlurStrength;
             bs.dispatchEvent(new Event("input"));
         }
-        if (sy && Number.isFinite(state.recapSubY)) sy.value = state.recapSubY;
+        if (sy && Number.isFinite(state.recapSubMargin)) sy.value = state.recapSubMargin;
         const bx = document.getElementById("slider-blur-x");
         const bw = document.getElementById("slider-blur-w");
         const sx = document.getElementById("slider-sub-x");
@@ -6557,6 +6834,13 @@ function setupRecapVisualEditor() {
             recapFontSize: cfg.sub_font_size, recapLines: cfg.sub_lines,
             recapSplitMinutes: cfg.split_minutes,
             recapBlurY: cfg.blur_y, recapBlurH: cfg.blur_h, recapSubY: cfg.sub_y,
+            // Batch AK: the anchor round-trips as the bottom margin
+            // — the job's own margin when it has one, else converted
+            // from its centre-% sub_y with the job's own font/lines,
+            // stamped v2 so restore takes it as-is.
+            recapSubMargin: (cfg.sub_bottom_margin != null) ? cfg.sub_bottom_margin
+                : convertSubCentreToMargin(cfg.sub_y || 85, cfg.sub_font_size || 16, cfg.sub_lines || 1),
+            recapSettingsVersion: 2,
             // Batch AG: horizontal geometry round-trips too — a job
             // rendered with an off-centre box / subtitle re-runs with
             // the same placement (pre-AG configs carry none of these
@@ -6811,7 +7095,7 @@ async function handleStartRecap() {
             crop_left: state.recapCropLeft || 0,
             crop_right: state.recapCropRight || 0,
             mirror_video: state.recapMirror !== false,
-            zoom_factor: state.recapZoom || 1.06,
+            zoom_factor: state.recapZoom || 1.0,
             voice_speed: state.recapSpeed || "+12%",
             blur_subtitles: state.recapBlurSubs !== false,
             blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
@@ -6826,7 +7110,10 @@ async function handleStartRecap() {
             blur_box_explicit: !!state.recapBlurBoxTouched,
             blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
             burn_subtitles: state.recapBurnSubs !== false,
-            sub_y: sliderSubY ? parseInt(sliderSubY.value) : 85,
+            // Batch AK: the slider is the bottom-edge margin; sub_y
+            // is no longer sent (the server default stands and the
+            // margin wins in the engine when present).
+            sub_bottom_margin: sliderSubY ? parseInt(sliderSubY.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5),
             // Batch AG: subtitle centre X + wrap width (picture
             // width percents), mirroring sub_y's centre semantics.
             sub_x: sliderSubX ? parseInt(sliderSubX.value) : 50,
@@ -7030,6 +7317,14 @@ function startRecapJobPolling(jobId) {
                 }
                 if (stepBits.length === 1) stepBits.push(t("queue_notice_recap"));
                 stepText.innerText = stepBits.join(" • ");
+            }
+            // Batch AK (Addition C): on a terminal status the
+            // progress lines must not keep the last in-progress
+            // step — replace them with the outcome label before the
+            // branch handlers run.
+            if (["SUCCESS", "FAILED", "CANCELLED"].includes(data.status)) {
+                if (statusMsg) statusMsg.innerText = liveJobStageText({ status: data.status, kind: "recap" });
+                if (stepText) stepText.innerText = "";
             }
             setRecapStage(data.progress_step, data.status);
 
@@ -10064,7 +10359,10 @@ function hubHistoryDetailHtml(j) {
         // the stored percent as-is; a legacy fraction (0.85) is
         // still handled defensively.
         const pctOf = (v) => Math.round(v <= 1 ? v * 100 : v);
-        if (typeof s.sub_y === "number") parts.push(`Sub ${pctOf(s.sub_y)}%`);
+        // Batch AK: AK jobs carry the bottom margin — label it as
+        // what it is; pre-AK jobs keep the centre-% line.
+        if (typeof s.sub_bottom_margin === "number") parts.push(`Sub margin ${pctOf(s.sub_bottom_margin)}%`);
+        else if (typeof s.sub_y === "number") parts.push(`Sub ${pctOf(s.sub_y)}%`);
         if (typeof s.blur_y === "number") parts.push(`Blur ${pctOf(s.blur_y)}%`);
         if (parts.length) {
             inner += `<div class="history-item-body hub-settings-summary">⚙️ ${escapeHtml(parts.join(" · "))}</div>`;

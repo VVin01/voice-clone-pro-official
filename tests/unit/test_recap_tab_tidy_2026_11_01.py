@@ -113,8 +113,13 @@ def test_all_voices_expanded_is_twelve_cards_no_select():
     assert 'id="btn-preview-recap-voice"' not in HTML
     grid = HTML.split('id="recap-all-voices-grid"', 1)[1].split('id="recap-advanced-accordion"', 1)[0]
     slugs = re.findall(r'data-voice="(\w+)"', grid)
-    assert sorted(slugs) == sorted(VOICE_SLUGS)
-    for slug in VOICE_SLUGS:
+    # Batch AK (S6): ONE home per voice — the expanded grid carries
+    # only the voices the top-4 grid does not; together they are
+    # exactly the twelve, with no duplicates.
+    top_slugs = ["komin", "kozayar", "koaung", "mahnin"]
+    assert sorted(slugs) == sorted(s for s in VOICE_SLUGS if s not in top_slugs)
+    assert sorted(slugs + top_slugs) == sorted(VOICE_SLUGS)
+    for slug in slugs:
         assert f"previewVoiceSlug('{slug}', event)" in grid
     # Top-4 grid unchanged.
     top = HTML.split('id="recap-top-voices"', 1)[1].split('id="all-voices-dropdown-wrap"', 1)[0]
@@ -221,8 +226,15 @@ def test_single_speaker_icon_and_clean_sample():
         assert not tr[lang]["btn_preview_voice"].startswith("🔊")
         sample = tr[lang]["sub_sample_text"]
         assert '"' not in sample and "…" not in sample
-    # The canvas preview renderer reads the sample from i18n now.
-    assert APP_JS.count('previewText.innerHTML = t("sub_sample_text");') == 2
+    # Batch AK: the JS preview renderer is retired — the sample the
+    # preview shows is the engine's ONE shared constant, sent to the
+    # composite endpoint (and replaced by the real first cue when a
+    # script exists). The constant matches the i18n Burmese sample.
+    assert 'previewText.innerHTML = t("sub_sample_text");' not in APP_JS
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "app" / "services" / "recap_engine"))
+    import core as _core
+    assert _core.PREVIEW_SAMPLE_TEXT == tr["my"]["sub_sample_text"]
 
 
 def test_split_minutes_use_western_digits():
@@ -237,7 +249,7 @@ def test_cache_buster_bumped_for_tidy():
     # rt4 = full-app polish batch (2026-11-01) superseding rt3.
     # fp1 = admin-demote + voice-picker batch (2026-11-01 late)
     # superseding rt4 (index.html / app.js / style.css changed again).
-    assert HTML.count("?v=20261104_r62") == 4
+    assert HTML.count("?v=20261104_r63") == 4
     assert "?v=20261101_rt4" not in HTML
     assert "?v=20261101_rt3" not in HTML
     assert "?v=20261101_rt2" not in HTML
@@ -251,7 +263,9 @@ def test_no_media_blur_box_is_label_less():
     # updateCanvasMockupVisuals tracks whether real media is actually
     # displayed; the video, live-thumbnail and (R40 item 9) real-frame
     # branches count.
-    assert APP_JS.count("mediaVisible = true;") == 3
+    # Batch AK: the engine-composited frame is a fourth real-media
+    # branch (it supersedes thumb/frame when present).
+    assert APP_JS.count("mediaVisible = true;") == 4
     # In no-media states (empty preview / dead thumbnail) the blur box
     # renders as a slim, dimmed outline (the F1 scheme below hides its
     # label by default in every state): at the shared default Y=85%

@@ -271,7 +271,7 @@ def run_recap_pipeline(
     crop_left: float = 0.0,
     crop_right: float = 0.0,
     mirror_video: bool = True,
-    zoom_factor: float = 1.06,
+    zoom_factor: float = 1.0,
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
@@ -282,6 +282,7 @@ def run_recap_pipeline(
     blur_watermark: bool = False,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
+    sub_margin: Optional[float] = None,
     sub_x: Optional[float] = None,
     sub_w: Optional[float] = None,
     sub_lines: int = 1,
@@ -412,15 +413,30 @@ def run_recap_pipeline(
         # their documented UI meaning: the user's hint for where the
         # SOURCE caption sits (fallback box in assemble_blur_boxes).
         _anchor_sub_y = float(sub_y) if sub_y is not None else float(blur_y)
+        # Batch AK: with sub_margin set, the plate anchors to the
+        # picture's bottom edge; the effective centre (picture
+        # fraction) is derived for the centre-based consumers below
+        # (fallback-box comparison, no-layout plate fallback).
+        _sub_centre_eff = _anchor_sub_y
+        if sub_margin is not None and _layout is not None:
+            _c_frac = subtitle_anchor_y(
+                _layout["cw"], _layout["ch"], _layout,
+                sub_margin=float(sub_margin),
+                raw_font_size=sub_font_size, sub_lines=sub_lines,
+            )
+            _sub_centre_eff = (
+                (_c_frac * _layout["ch"] - _layout["oy"]) / max(1, _layout["ph"])
+            )
         if _layout is not None:
             _plate = subtitle_plate_box(
                 _layout["cw"], _layout["ch"], _layout,
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
                 sub_y=_anchor_sub_y, min_h=blur_h,
                 sub_x=sub_x, sub_w=sub_w,
+                sub_margin=float(sub_margin) if sub_margin is not None else None,
             )
         else:
-            _plate = {"x": 0.05, "y": _anchor_sub_y, "w": 0.90, "h": float(blur_h)}
+            _plate = {"x": 0.05, "y": _sub_centre_eff, "w": 0.90, "h": float(blur_h)}
     # Batch AA: an EXPLICIT user-set blur box is authoritative for
     # the source band — converted from picture fractions with the
     # same layout math the preview paints it with, it replaces
@@ -471,7 +487,7 @@ def run_recap_pipeline(
     # the LEGACY path only — an explicit user box (_user_box above)
     # supersedes it, and assemble_blur_boxes ignores it then.
     _fallback_box = None
-    if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
+    if (sub_y is not None or sub_margin is not None) and abs(float(blur_y) - float(_sub_centre_eff)) > 0.01:
         _fallback_box = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}
     _anchor = None
     if _layout is not None:
@@ -479,6 +495,7 @@ def run_recap_pipeline(
             _layout["cw"], _layout["ch"], _layout,
             sub_y=float(sub_y) if sub_y is not None else float(blur_y),
             raw_font_size=sub_font_size, sub_lines=sub_lines,
+            sub_margin=float(sub_margin) if sub_margin is not None else None,
         )
     # Batch AG: the horizontal anchor exists only when the user set
     # sub_x — an unset sub_x keeps the plate containment vertical-only,
@@ -557,6 +574,11 @@ def run_recap_pipeline(
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
         overlays["sub_y"] = float(sub_y)
+    # Batch AK: the bottom-edge anchor rides the same overlays dict;
+    # every consumer (PNG block top, plate, ASS writer) prefers it
+    # over the legacy centre when present.
+    if sub_margin is not None:
+        overlays["sub_margin"] = float(sub_margin)
     # Batch AG: horizontal subtitle placement rides the same overlays
     # dict — EdgeSmartSync reads sub_x for the ASS \pos tag and sub_w
     # for the cue-wrap budgets; apply_production_overlays reads sub_x
@@ -723,6 +745,7 @@ def generate_recap_preview(
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
+    sub_margin: Optional[float] = None,
     sub_x: Optional[float] = None,
     sub_w: Optional[float] = None,
     sub_lines: int = 1,
@@ -730,6 +753,8 @@ def generate_recap_preview(
     sub_style: str = "yellow",
     sub_font: str = "padauk",
     sample_text: str = "",
+    title_text: Optional[str] = None,
+    title_position: Optional[list[float]] = None,
     output_ratio: str = "Original",
     frame_fill: str = "blur",
     crop_top: float = 0.0,
@@ -737,7 +762,7 @@ def generate_recap_preview(
     crop_left: float = 0.0,
     crop_right: float = 0.0,
     mirror_video: bool = True,
-    zoom_factor: float = 1.06,
+    zoom_factor: float = 1.0,
     at_seconds: float = 3.5,
     logo_enabled: bool = False,
     logo_path: Optional[str] = None,
@@ -785,6 +810,7 @@ def generate_recap_preview(
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
                 sub_y=float(sub_y) if sub_y is not None else float(blur_y), min_h=blur_h,
                 sub_x=sub_x, sub_w=sub_w,
+                sub_margin=float(sub_margin) if sub_margin is not None else None,
             )
         except Exception:
             _p_plate = {"x": 0.05, "y": float(sub_y) if sub_y is not None else float(blur_y), "w": 0.90, "h": float(blur_h)}
@@ -815,7 +841,17 @@ def generate_recap_preview(
             except Exception:
                 _p_bands = None
         _p_fallback = None
-        if sub_y is not None and abs(float(blur_y) - float(sub_y)) > 0.01:
+        _p_centre_eff = float(sub_y) if sub_y is not None else float(blur_y)
+        if sub_margin is not None and _p_layout is not None:
+            _pc_frac = subtitle_anchor_y(
+                _p_layout["cw"], _p_layout["ch"], _p_layout,
+                sub_margin=float(sub_margin),
+                raw_font_size=sub_font_size, sub_lines=sub_lines,
+            )
+            _p_centre_eff = (
+                (_pc_frac * _p_layout["ch"] - _p_layout["oy"]) / max(1, _p_layout["ph"])
+            )
+        if (sub_y is not None or sub_margin is not None) and abs(float(blur_y) - float(_p_centre_eff)) > 0.01:
             _p_fallback = {"x": 0.05, "y": float(blur_y), "w": 0.90, "h": float(blur_h)}
         _p_anchor = None
         if _p_layout is not None:
@@ -823,6 +859,7 @@ def generate_recap_preview(
                 _p_layout["cw"], _p_layout["ch"], _p_layout,
                 sub_y=float(sub_y) if sub_y is not None else float(blur_y),
                 raw_font_size=sub_font_size, sub_lines=sub_lines,
+                sub_margin=float(sub_margin) if sub_margin is not None else None,
             )
         _p_anchor_x = None
         if _p_layout is not None and sub_x is not None:
@@ -850,6 +887,24 @@ def generate_recap_preview(
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
         overlays["sub_y"] = float(sub_y)
+    # Batch AK: bottom-edge anchor + title badge ride the preview
+    # overlays too, so the composited preview shows the placement
+    # and the title exactly as the render burns them.
+    if sub_margin is not None:
+        overlays["sub_margin"] = float(sub_margin)
+    if title_text and str(title_text).strip():
+        overlays["title_text"] = str(title_text).strip()
+        _tp = title_position
+        if isinstance(_tp, (list, tuple)) and len(_tp) == 2:
+            try:
+                overlays["title_position"] = [
+                    max(0.0, min(1.0, float(_tp[0]))),
+                    max(0.0, min(1.0, float(_tp[1]))),
+                ]
+            except (TypeError, ValueError):
+                overlays["title_position"] = [0.5, 0.12]
+        else:
+            overlays["title_position"] = [0.5, 0.12]
     # Batch AG: the preview's sample subtitle honours sub_x through
     # the same overlays dict (extract_preview_with_overlays resolves
     # it via the shared centre-X resolver).
