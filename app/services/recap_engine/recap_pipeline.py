@@ -289,6 +289,7 @@ def run_recap_pipeline(
     sub_style: str = "yellow",
     sub_font: str = "padauk",
     title_text: Optional[str] = None,
+    title_position: Optional[list[float]] = None,
     logo_path: Optional[str] = None,
     logo_position: Optional[list[float]] = None,
     logo_scale: float = 0.16,
@@ -516,7 +517,21 @@ def run_recap_pipeline(
 
     if title_text and str(title_text).strip():
         overlays["title_text"] = str(title_text).strip()
-        overlays["title_position"] = [0.5, 0.12]
+        # Batch AH: caller-supplied placement — a [tx, ty] pair of
+        # 0..1 title-CENTRE fractions (validated/clamped here so a
+        # malformed value degrades to the default instead of failing
+        # the render); absent keeps the historical [0.5, 0.12].
+        _tp = title_position
+        if isinstance(_tp, (list, tuple)) and len(_tp) == 2:
+            try:
+                overlays["title_position"] = [
+                    max(0.0, min(1.0, float(_tp[0]))),
+                    max(0.0, min(1.0, float(_tp[1]))),
+                ]
+            except (TypeError, ValueError):
+                overlays["title_position"] = [0.5, 0.12]
+        else:
+            overlays["title_position"] = [0.5, 0.12]
 
     if logo_path and Path(logo_path).is_file():
         overlays["logo_path"] = str(logo_path)

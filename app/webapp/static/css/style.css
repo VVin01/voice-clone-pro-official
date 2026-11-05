@@ -930,7 +930,10 @@ select.studio-input { min-height: 50px; }
 /* R40 item 5: the grip is the ONLY touch-drag initiator (see
    enableVerticalDrag) — it swallows its own touch stream so a grab
    there never scrolls the page, and gets a usable touch target. */
-.drag-grip-icon { touch-action: none; padding: 8px 10px; margin: -8px 0; cursor: grab; }
+/* Batch AH: the grip is the ONLY touch-drag initiator (R40 item 5),
+   so it must be a real, visible target — a wide pill handle — not
+   the bare 11px glyph owners could not find or hit. */
+.drag-grip-icon { touch-action: none; padding: 7px 16px; margin: -4px 0; cursor: grab; background: rgba(10, 12, 18, 0.55); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; min-width: 30px; text-align: center; }
 .preview-blur-box {
     background: rgba(120, 130, 150, 0.4);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -946,7 +949,7 @@ select.studio-input { min-height: 50px; }
 /* No-media placeholder state: slim outline only — with no media loaded
    there is nothing to blur yet. */
 .preview-blur-box.no-media { background: rgba(120, 130, 150, 0.16); }
-.drag-grip-icon { color: rgba(255, 255, 255, 0.8); font-size: 11px; }
+.drag-grip-icon { color: rgba(255, 255, 255, 0.9); font-size: 13px; letter-spacing: 2px; }
 .box-resize-handle { position: absolute; left: 50%; transform: translateX(-50%); width: 34px; height: 8px; cursor: ns-resize; }
 .box-resize-handle.top { top: -5px; }
 .box-resize-handle.bottom { bottom: -5px; }
@@ -974,6 +977,23 @@ select.studio-input { min-height: 50px; }
 .preview-sub-box.boxed .preview-sub-text { color: #ffffff; background: rgba(0,0,0,0.72); padding: 2px 8px; border-radius: 6px; text-shadow: none; }
 .preview-sub-box.neon .preview-sub-text { color: #4be1ff; }
 .preview-sub-box .sub-grip { text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
+
+/* Batch AH: the recap title overlay box — centred on (title_x,
+   title_y) of the picture, like the engine's title_position; the
+   text mirrors the render's title PNG (bold, dark outline, capped
+   at 78% of the picture width). */
+.preview-title-box {
+    z-index: 7; text-align: center; padding: 4px 10px; pointer-events: auto;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.45); border-radius: 8px;
+    background: rgba(10, 12, 18, 0.25);
+}
+.preview-title-box .preview-title-text {
+    font-weight: 800; color: #ffffff; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-width: 0; flex: 1 1 auto;
+    text-shadow: 0 1px 0 #000, 0 0 8px rgba(0,0,0,0.9), 1px 0 0 #000, -1px 0 0 #000;
+}
+.recap-title-input { width: 100%; box-sizing: border-box; }
 
 /* ── Canvas toolbar ─────────────────────────────────────────────────── */
 .canvas-compact-toolbar { display: flex; flex-direction: column; gap: var(--s2); }
@@ -3192,16 +3212,14 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .ratio-pills-grid { grid-auto-rows: 1fr; }
 
-/* RS-2 — the canvas subtitle SAMPLE is a style preview, not the
-   caption layout itself; clamping it to the Lines setting hid the
-   sample's second line inside the band (24px clipped in every loaded
-   state). The preview text now always renders in full — it wraps
-   naturally and the box grows; state.recapLines still drives the
-   real render's line count exactly as before. */
-.preview-sub-box.one-line .preview-sub-text,
-.preview-sub-box.two-lines .preview-sub-text {
-    display: block; overflow: visible;
-}
+/* RS-2 (superseded by Batch AH, 2026-11-05) — this block used to
+   neutralise the one-line/two-lines clamps so the sample always
+   rendered in full. The owner rejected that: the preview must
+   honour the Lines setting exactly like the render (Batch P
+   parity) — 1 line selected shows ONE line, 2 shows up to two.
+   The clamp rules above (.preview-sub-box.one-line / .two-lines)
+   therefore stand again; the plate fit measures the clamped text
+   rect, so the band tracks the shown line count. */
 
 /* RS-7 minors — one packing rule for the seek panel: every line
    spans the full panel width. The action buttons split into equal

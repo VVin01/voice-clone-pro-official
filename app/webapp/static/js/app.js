@@ -385,6 +385,15 @@ const state = {
     recapBlurW: 92,
     recapSubX: 50,
     recapSubW: 92,
+    // Batch AH: recap title overlay — off by default (the historical
+    // Mini App behaviour: no title badge was rendered); the position
+    // is the title CENTRE as percents of the picture width/height,
+    // the engine's title_position basis. The sliders are the live
+    // source of truth while the studio is open.
+    recapTitleEnabled: false,
+    recapTitleText: "",
+    recapTitleX: 50,
+    recapTitleY: 12,
     // Batch AA: identity of the last successfully loaded source
     // ("url:<url>" / "file:<server path>") — the new-source reset
     // fires only when a success event brings a DIFFERENT source.
@@ -1186,6 +1195,12 @@ function collectAccountPrefs() {
         // geometry stays out, exactly like its vertical geometry).
         recapSubX: sxEl ? parseInt(sxEl.value) : (state.recapSubX || 50),
         recapSubW: swEl ? parseInt(swEl.value) : (state.recapSubW || 92),
+        // Batch AH: title overlay settings are account preferences
+        // (toggle, custom text, centre position).
+        recapTitleEnabled: !!state.recapTitleEnabled,
+        recapTitleText: state.recapTitleText || "",
+        recapTitleX: state.recapTitleX != null ? state.recapTitleX : 50,
+        recapTitleY: state.recapTitleY != null ? state.recapTitleY : 12,
         recapBlurStrength: bs ? parseInt(bs.value) : (state.recapBlurStrength || 18),
         recapZoom: state.recapZoom,
         recapVoice: state.recapVoice,
@@ -1224,6 +1239,7 @@ function applyAccountPrefs(prefs) {
         "recapCropBottom", "recapCropLeft", "recapCropRight", "recapFontSize",
         "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
         "recapSubX", "recapSubW",
+        "recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY",
         "recapZoom", "recapVoice", "recapGeminiVoice",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
@@ -3592,6 +3608,8 @@ function setupRecapVisualEditor() {
     const sliderSubY = document.getElementById("slider-sub-y");
     const sliderSubX = document.getElementById("slider-sub-x");
     const sliderSubW = document.getElementById("slider-sub-w");
+    const sliderTitleX = document.getElementById("slider-title-x");
+    const sliderTitleY = document.getElementById("slider-title-y");
 
     const valBlurY = document.getElementById("val-blur-y");
     const valBlurH = document.getElementById("val-blur-h");
@@ -3601,10 +3619,13 @@ function setupRecapVisualEditor() {
     const valSubY = document.getElementById("val-sub-y");
     const valSubX = document.getElementById("val-sub-x");
     const valSubW = document.getElementById("val-sub-w");
+    const valTitleX = document.getElementById("val-title-x");
+    const valTitleY = document.getElementById("val-title-y");
 
     const previewBlur = document.getElementById("preview-blur-box");
     const previewPlate = document.getElementById("preview-plate-box");
     const previewSub = document.getElementById("preview-sub-box");
+    const previewTitle = document.getElementById("preview-title-box");
     const previewLogo = document.getElementById("preview-logo");
     const canvas = document.getElementById("video-bg-canvas");
     const mockupFrame = document.getElementById("recap-mockup-frame");
@@ -4371,6 +4392,54 @@ function setupRecapVisualEditor() {
         return sw * r.pw;
     }
 
+    // Batch AH: title centre as canvas fractions on BOTH axes — the
+    // engine's title_position basis ([tx, ty] are the title CENTRE
+    // as fractions of the PICTURE; core.py overlays the title PNG at
+    // ox + pw*tx − w/2, oy + ph*ty − h/2), so the dragged preview
+    // position is the rendered position.
+    function titleCentreCanvasFrac(xPercent, yPercent) {
+        const r = recapPictureRect();
+        const tx = Math.max(0, Math.min(100, xPercent)) / 100.0;
+        const ty = Math.max(0, Math.min(100, yPercent)) / 100.0;
+        return {
+            x: (r.pw < 1 - 0.002) ? r.ox + tx * r.pw : tx,
+            y: ((r.oy + r.ph) < 1 - 0.002) ? r.oy + ty * r.ph : ty,
+        };
+    }
+
+    // Batch AH: paint the title box from the sliders/state — shown
+    // only while the title toggle is on. The text is the user's
+    // custom text, else the source video's own title (the same
+    // fallback the API applies), else the sample label; the box is
+    // capped at the render's 78%-of-picture title width.
+    function syncTitleBoxVisual() {
+        if (!previewTitle) return;
+        const enabled = !!state.recapTitleEnabled;
+        previewTitle.classList.toggle("hidden", !enabled);
+        const x = sliderTitleX ? parseFloat(sliderTitleX.value) : (state.recapTitleX || 50);
+        const y = sliderTitleY ? parseFloat(sliderTitleY.value) : (state.recapTitleY != null ? state.recapTitleY : 12);
+        state.recapTitleX = Math.round(x);
+        state.recapTitleY = Math.round(y);
+        if (valTitleX) valTitleX.innerText = `${Math.round(x)}%`;
+        if (valTitleY) valTitleY.innerText = `${Math.round(y)}%`;
+        if (!enabled) return;
+        const c = titleCentreCanvasFrac(x, y);
+        const r = recapPictureRect();
+        previewTitle.style.left = `${(c.x * 100).toFixed(3)}%`;
+        previewTitle.style.top = `${(c.y * 100).toFixed(3)}%`;
+        previewTitle.style.right = "auto";
+        previewTitle.style.bottom = "auto";
+        previewTitle.style.transform = "translate(-50%, -50%)";
+        previewTitle.style.maxWidth = `${(0.78 * r.pw * 100).toFixed(3)}%`;
+        const textEl = document.getElementById("preview-title-text-el");
+        if (textEl) {
+            const custom = (state.recapTitleText || "").trim();
+            textEl.innerText = custom || (state.recapVideoTitle || "").trim() || t("recap_title_sample");
+            const canvasH = canvas ? canvas.clientHeight : 0;
+            if (canvasH > 0) textEl.style.fontSize = `${Math.max(10, Math.round(canvasH * 0.035))}px`;
+        }
+    }
+
     // Batch AA: the blur box is drawn on the PICTURE, exactly like
     // the subtitle (recapter standard) — blur_y is the box centre as
     // a fraction of the PICTURE height and blur_h its height as a
@@ -4672,8 +4741,39 @@ function setupRecapVisualEditor() {
         });
     }
 
+    // Batch AH: title position sliders mirror the canvas drag.
+    if (sliderTitleX && previewTitle && valTitleX) {
+        sliderTitleX.addEventListener("input", () => {
+            syncTitleBoxVisual();
+        });
+    }
+
+    if (sliderTitleY && previewTitle && valTitleY) {
+        sliderTitleY.addEventListener("input", () => {
+            syncTitleBoxVisual();
+        });
+    }
+
+    // Batch AH: title enable toggle + custom text (the controls live
+    // in the main form area above the CTA; the box/sliders follow).
+    const titleToggleEl = document.getElementById("recap-title-toggle");
+    const titleTextEl = document.getElementById("recap-title-text");
+    if (titleToggleEl) {
+        titleToggleEl.addEventListener("change", () => {
+            state.recapTitleEnabled = !!titleToggleEl.checked;
+            if (titleTextEl) titleTextEl.classList.toggle("hidden", !state.recapTitleEnabled);
+            syncTitleBoxVisual();
+        });
+    }
+    if (titleTextEl) {
+        titleTextEl.addEventListener("input", () => {
+            state.recapTitleText = titleTextEl.value || "";
+            syncTitleBoxVisual();
+        });
+    }
+
     // ── Interactive Drag & Drop / Manual Move on Canvas ──────────────────
-    function enableVerticalDrag(boxElement, onUpdateY, getInitialY, getDeltaScale) {
+    function enableVerticalDrag(boxElement, onUpdateY, getInitialY, getDeltaScale, getClampRange) {
         if (!boxElement || !canvas) return;
 
         let isDragging = false;
@@ -4697,7 +4797,11 @@ function setupRecapVisualEditor() {
             const deltaPx = clientY - startClientY;
             const deltaPercent = (deltaPx / canvasRect.height) * 100;
             const deltaScale = getDeltaScale ? (getDeltaScale() || 1) : 1;
-            const clampedY = Math.max(10, Math.min(95, Math.round(startPercent + deltaPercent * deltaScale)));
+            // Batch AH: the clamp range is a parameter now — the
+            // subtitle/blur default stays [10, 95] (their slider
+            // range); the title box passes [0, 100].
+            const range = getClampRange ? getClampRange() : [10, 95];
+            const clampedY = Math.max(range[0], Math.min(range[1], Math.round(startPercent + deltaPercent * deltaScale)));
             onUpdateY(clampedY);
         }
 
@@ -4887,6 +4991,25 @@ function setupRecapVisualEditor() {
         return (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
     }, () => [10, 90]);
 
+    // Batch AH: the title box drags on BOTH axes over the full
+    // picture (its centre is the engine's title_position), reusing
+    // the same two drag helpers and picture-scaled deltas.
+    enableVerticalDrag(previewTitle, (y) => {
+        if (sliderTitleY) sliderTitleY.value = y;
+        syncTitleBoxVisual();
+    }, () => sliderTitleY ? parseFloat(sliderTitleY.value) : 12, () => {
+        const r = recapPictureRect();
+        return ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
+    }, () => [0, 100]);
+
+    enableHorizontalDrag(previewTitle, (x) => {
+        if (sliderTitleX) sliderTitleX.value = x;
+        syncTitleBoxVisual();
+    }, () => sliderTitleX ? parseFloat(sliderTitleX.value) : 50, () => {
+        const r = recapPictureRect();
+        return (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
+    }, () => [0, 100]);
+
     // ── Resize Handles for Blur Box Height ──
     const blurResizeTop = previewBlur ? previewBlur.querySelector(".box-resize-handle.top") : null;
     const blurResizeBottom = previewBlur ? previewBlur.querySelector(".box-resize-handle.bottom") : null;
@@ -5039,6 +5162,7 @@ function setupRecapVisualEditor() {
     attachBlurResizeX(blurResizeRight, false);
     syncBlurBoxVisual();
     syncSubBoxVisual();
+    syncTitleBoxVisual();
 
     // ── Setup Compact Live Canvas Toolbar Tabs ──
     const tbTabBtns = document.querySelectorAll(".tb-tab-btn");
@@ -5401,6 +5525,7 @@ function setupRecapVisualEditor() {
         }
         syncBlurBoxVisual();
         syncSubBoxVisual();
+        syncTitleBoxVisual();
     }
 
     // 2. Aspect Ratio Selector (9:16, 16:9, 1:1, Original)
@@ -5593,18 +5718,11 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // Batch K: the script-review opt-in also lives as a visible
-    // toggle in the main options area next to the CTA. The two
-    // checkboxes are twins of ONE state — the advanced checkbox
-    // stays the single source the submit payload reads; each
-    // change mirrors into the other so they can never disagree.
-    const srAdvToggle = document.getElementById("recap-script-review-toggle");
-    const srMainToggle = document.getElementById("recap-script-review-toggle-main");
-    if (srAdvToggle && srMainToggle) {
-        srMainToggle.checked = srAdvToggle.checked;
-        srMainToggle.addEventListener("change", () => { srAdvToggle.checked = srMainToggle.checked; });
-        srAdvToggle.addEventListener("change", () => { srMainToggle.checked = srAdvToggle.checked; });
-    }
+    // Batch AH: the Batch K twin-toggle sync is gone — there is
+    // exactly ONE script-review checkbox (#recap-script-review-toggle,
+    // the main-area row with the hint text), and every read site
+    // (fingerprint, submit payload, History prefill) reads it
+    // directly. No mirroring remains to disagree.
 
     // 6c. Source language pills (auto = detect; else a Whisper code)
     const langBtns = document.querySelectorAll("#recap-lang-picker .pill-btn");
@@ -5675,6 +5793,11 @@ function setupRecapVisualEditor() {
         if (sliderBlurX) sliderBlurX.value = "4";
         if (sliderBlurW) sliderBlurW.value = "92";
         if (sliderSubX) sliderSubX.value = "50";
+        // Batch AH: the title position resets with the layout too
+        // (the toggle/text are content choices, not layout — kept).
+        if (sliderTitleX) sliderTitleX.value = "50";
+        if (sliderTitleY) sliderTitleY.value = "12";
+        syncTitleBoxVisual();
         if (sliderBlurStrength) { sliderBlurStrength.value = "18"; syncBlurStrengthVisual(); }
         if (sliderSubY) sliderSubY.value = "85";
         syncBlurBoxVisual();
@@ -6214,7 +6337,7 @@ function setupRecapVisualEditor() {
         recapRenderQuality: ["standard", "high", "max"],
         recapTtsEngine: ["voxcpm", "gemini"],
     };
-    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapBlurBoxTouched"];
+    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapBlurBoxTouched", "recapTitleEnabled"];
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
@@ -6222,6 +6345,7 @@ function setupRecapVisualEditor() {
         recapBlurY: [0, 100], recapBlurH: [1, 50], recapSubY: [0, 100],
         recapBlurX: [0, 100], recapBlurW: [10, 100],
         recapSubX: [10, 90], recapSubW: [10, 100],
+        recapTitleX: [0, 100], recapTitleY: [0, 100],
         recapBlurStrength: [4, 40],
     };
 
@@ -6251,6 +6375,13 @@ function setupRecapVisualEditor() {
         snap.recapBlurW = bw ? parseInt(bw.value) : 92;
         snap.recapSubX = sx ? parseInt(sx.value) : 50;
         snap.recapSubW = sw ? parseInt(sw.value) : 92;
+        // Batch AH: title placement + custom text ride the snapshot
+        // like the AG horizontal geometry (enabled rides the bools).
+        const tx = document.getElementById("slider-title-x");
+        const ty = document.getElementById("slider-title-y");
+        snap.recapTitleX = tx ? parseInt(tx.value) : 50;
+        snap.recapTitleY = ty ? parseInt(ty.value) : 12;
+        snap.recapTitleText = state.recapTitleText || "";
         return snap;
     }
 
@@ -6299,6 +6430,7 @@ function setupRecapVisualEditor() {
         if (Number.isFinite(zoom) && zoom >= 1 && zoom <= 1.2) state.recapZoom = zoom;
         if (typeof saved.recapVoice === "string" && saved.recapVoice) state.recapVoice = saved.recapVoice;
         if (typeof saved.recapGeminiVoice === "string") state.recapGeminiVoice = saved.recapGeminiVoice;
+        if (typeof saved.recapTitleText === "string") state.recapTitleText = saved.recapTitleText;
 
         // ── Re-sync every control so the UI shows the restored state ──
         syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio);
@@ -6373,10 +6505,23 @@ function setupRecapVisualEditor() {
         if (bw && Number.isFinite(state.recapBlurW)) bw.value = state.recapBlurW;
         if (sx && Number.isFinite(state.recapSubX)) sx.value = state.recapSubX;
         if (sw && Number.isFinite(state.recapSubW)) sw.value = state.recapSubW;
+        // Batch AH: title controls re-sync (toggle, text, sliders).
+        const titleToggleEl = document.getElementById("recap-title-toggle");
+        if (titleToggleEl) titleToggleEl.checked = !!state.recapTitleEnabled;
+        const titleTextEl = document.getElementById("recap-title-text");
+        if (titleTextEl) {
+            titleTextEl.value = state.recapTitleText || "";
+            titleTextEl.classList.toggle("hidden", !state.recapTitleEnabled);
+        }
+        const tix = document.getElementById("slider-title-x");
+        const tiy = document.getElementById("slider-title-y");
+        if (tix && Number.isFinite(state.recapTitleX)) tix.value = state.recapTitleX;
+        if (tiy && Number.isFinite(state.recapTitleY)) tiy.value = state.recapTitleY;
         syncSubtitleFontSize(state.recapFontSize || 16);
         syncSubtitleLines(state.recapLines || 1);
         syncBlurBoxVisual();
         syncSubBoxVisual();
+        syncTitleBoxVisual();
         if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
     }
 
@@ -6418,6 +6563,12 @@ function setupRecapVisualEditor() {
             // keys and restore keeps the current values).
             recapBlurX: cfg.blur_x, recapBlurW: cfg.blur_w,
             recapSubX: cfg.sub_x, recapSubW: cfg.sub_w,
+            // Batch AH: title settings round-trip like the rest
+            // (pre-AH configs carry none of these keys and restore
+            // keeps the current values).
+            recapTitleEnabled: cfg.title_enabled === true,
+            recapTitleText: cfg.title_text || "",
+            recapTitleX: cfg.title_x, recapTitleY: cfg.title_y,
             // Batch AA: a job whose blur box was explicit re-runs
             // with an explicit box — authoritativeness is preserved
             // through the prefill (pre-AA configs have no marker and
@@ -6430,10 +6581,9 @@ function setupRecapVisualEditor() {
         };
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snap)); } catch (e) {}
         restoreRecapSettings();
+        // Batch AH: exactly one script-review toggle exists now.
         const srToggle = document.getElementById("recap-script-review-toggle");
-        const srToggleMain = document.getElementById("recap-script-review-toggle-main");
         if (srToggle) srToggle.checked = !!cfg.script_review;
-        if (srToggleMain) srToggleMain.checked = !!cfg.script_review;
         if (cfg.title) state.recapVideoTitle = cfg.title;
         state.recapSourceDuration = cfg.duration_seconds || null;
         const srcUrl = (cfg.url || "").trim();
@@ -6646,6 +6796,8 @@ async function handleStartRecap() {
         const sliderSubY = document.getElementById("slider-sub-y");
         const sliderSubX = document.getElementById("slider-sub-x");
         const sliderSubW = document.getElementById("slider-sub-w");
+        const sliderTitleXSubmit = document.getElementById("slider-title-x");
+        const sliderTitleYSubmit = document.getElementById("slider-title-y");
 
         const payload = {
             url: url,
@@ -6685,6 +6837,13 @@ async function handleStartRecap() {
             sub_lines: state.recapLines || 1,
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",
+            // Batch AH: title overlay — enabled flag, custom text
+            // (null = fall back to the video's own title), and the
+            // centre position in picture percents.
+            title_enabled: !!state.recapTitleEnabled,
+            title_text: (state.recapTitleText || "").trim() || null,
+            title_x: sliderTitleXSubmit ? parseInt(sliderTitleXSubmit.value) : (state.recapTitleX || 50),
+            title_y: sliderTitleYSubmit ? parseInt(sliderTitleYSubmit.value) : (state.recapTitleY != null ? state.recapTitleY : 12),
             duration_seconds: state.recapSourceDuration || null,
             script_review: !!((document.getElementById("recap-script-review-toggle") || {}).checked),
             source_language: state.recapSourceLanguage || "auto",

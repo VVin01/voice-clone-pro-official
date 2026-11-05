@@ -2737,7 +2737,7 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
 }
 USER_PREF_BOOLS: List[str] = [
     "recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs",
-    "recapLogo", "recapSplitEnabled",
+    "recapLogo", "recapSplitEnabled", "recapTitleEnabled",
 ]
 USER_PREF_INTS: Dict[str, tuple] = {
     "recapCropTop": (0, 35), "recapCropBottom": (0, 35),
@@ -2745,12 +2745,14 @@ USER_PREF_INTS: Dict[str, tuple] = {
     "recapFontSize": (12, 30), "recapLines": (1, 2),
     "recapSplitMinutes": (1, 10), "recapSubY": (0, 100),
     "recapSubX": (10, 90), "recapSubW": (10, 100),
+    "recapTitleX": (0, 100), "recapTitleY": (0, 100),
     "recapBlurStrength": (4, 40),
 }
 # Free-string preferences, length-capped; voice slugs are additionally
 # checked against the curated registry when one matches that role.
 USER_PREF_STRINGS: Dict[str, int] = {
     "voice_persona": 50, "recapVoice": 50, "recapGeminiVoice": 100,
+    "recapTitleText": 200,
 }
 USER_PREF_FLOATS: Dict[str, tuple] = {"recapZoom": (1.0, 1.2)}
 
@@ -2783,6 +2785,10 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapSubY": 85,
     "recapSubX": 50,
     "recapSubW": 92,
+    "recapTitleEnabled": False,
+    "recapTitleText": "",
+    "recapTitleX": 50,
+    "recapTitleY": 12,
     "recapBlurStrength": 18,
     "recapZoom": 1.06,
     "recapVoice": "komin",
@@ -4270,6 +4276,20 @@ class RecapConfigRequest(BaseModel):
     # centred rendering byte-identical.
     sub_x: Optional[int] = Field(None, ge=10, le=90)
     sub_w: Optional[int] = Field(None, ge=10, le=100)
+    # Batch AH: recap title overlay. The engine has always been able
+    # to burn a title PNG at overlays["title_position"], but the Mini
+    # App never exposed it — the worker passed no title_text and its
+    # pre-downloaded local source starved the downloader's URL-title
+    # fallback, so Mini App jobs rendered NO title badge. Defaults
+    # reproduce that exactly: title_enabled False → no badge. When
+    # True, the burned text is title_text, falling back to the job's
+    # own (source) title. title_x / title_y are the title CENTRE in
+    # picture percents (the title_position basis; 50 / 12 reproduces
+    # the engine's historical [0.5, 0.12]).
+    title_enabled: bool = False
+    title_text: Optional[str] = Field(None, max_length=200)
+    title_x: int = Field(50, ge=0, le=100)
+    title_y: int = Field(12, ge=0, le=100)
     sub_style: str = "yellow"         # yellow, white, boxed, neon
     sub_font_size: int = Field(16, ge=12, le=30)
     sub_lines: int = Field(1, ge=1, le=2)
@@ -5522,6 +5542,11 @@ async def _execute_recap_background_job(
             sub_font_size=req.sub_font_size,
             sub_style=req.sub_style,
             sub_font=req.sub_font,
+            # Batch AH: title overlay (see RecapConfigRequest). OFF
+            # by default — the historical Mini App behaviour — and
+            # the custom text falls back to the job's source title.
+            title_text=((req.title_text or req.title) if req.title_enabled else None),
+            title_position=[req.title_x / 100.0, req.title_y / 100.0],
             logo_path=logo_path_arg,
             logo_position=logo_pos_coords if logo_path_arg else None,
             extra_text=watermark_text,
