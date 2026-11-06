@@ -18,9 +18,15 @@ async def test_pricing_plans_and_payment_lifecycle(db_session):
     assert user.account_category == AccountCategory.FREE.value
 
     # 1. Fetch active pricing plans (seeds defaults)
+    # Batch BS: seeding covers ALL 8 catalogue plans (before BS only
+    # the three MIN_ minute packs got a PricingPlan row).
     plans = await get_active_pricing_plans(db_session)
-    assert len(plans) == 3
-    assert {p.code for p in plans} == {"MIN_10", "MIN_30", "MIN_60"}
+    assert len(plans) == 8
+    assert {p.code for p in plans} == {
+        "MIN_10", "MIN_30", "MIN_60", "voice_studio_pro",
+        "recap_starter", "recap_studio_pro", "combined_starter",
+        "all_in_one_master",
+    }
 
     # 2. User creates payment request for 10 minutes
     payment = await create_payment_request(

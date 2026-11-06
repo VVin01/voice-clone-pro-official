@@ -11043,6 +11043,12 @@ class AdminSettingsPayload(BaseModel):
     gemini_fallback_1: Optional[str] = None
     gemini_fallback_2: Optional[str] = None
     gemini_fallback_3: Optional[str] = None
+    # Batch BS: the Groq Whisper (speech-to-text) model joins the
+    # payload — it was a registered dynamic setting with no admin
+    # surface at all, and the transcribers read the env only, so the
+    # setting could never take effect. Wired end to end in BS: this
+    # payload + the GET prefill below + get_groq_whisper_model().
+    groq_whisper_model: Optional[str] = None
 
 
 @api_router.get("/admin/settings")
@@ -11051,6 +11057,7 @@ async def get_admin_settings(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Get all dynamic platform settings."""
+    from app.config.settings import get_groq_whisper_model
     from app.services.dynamic_settings import load_dynamic_settings
     await load_dynamic_settings(db)
     return {
@@ -11096,6 +11103,11 @@ async def get_admin_settings(
         "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),
         "gemini_fallback_2": getattr(settings, "gemini_fallback_2", "gemini-3.5-flash-lite"),
         "gemini_fallback_3": getattr(settings, "gemini_fallback_3", "gemini-flash-lite-latest"),
+        # Batch BS: pre-filled with the CURRENT EFFECTIVE model
+        # (dynamic setting > env > default, via the shared resolver
+        # the transcribers use) so the field shows what transcription
+        # will actually run with.
+        "groq_whisper_model": get_groq_whisper_model(),
     }
 
 
@@ -11220,6 +11232,22 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = note
+        elif key == "groq_whisper_model":
+            # Batch BS: a model name is a short token; whitespace is
+            # stripped and the length capped like maintenance_note.
+            # Empty is a real choice — the resolver then falls back
+            # to the GROQ_WHISPER_MODEL env / built-in default.
+            model = str(value).strip()
+            if len(model) > 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Groq Whisper Model (groq_whisper_model) သည် "
+                        "စာလုံး 200 ထက် မရှည်ရပါ။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = model
         elif key in ("group_ai_hourly_budget", "group_ai_daily_budget"):
             # Final-audit batch M: budgets gate real AI spend, so 0
             # (which would silently disable group answers) is rejected
@@ -11867,7 +11895,13 @@ async def send_admin_broadcast(
 
         campaign = BroadcastCampaign(
             admin_id=admin.id,
-            confirmation_token=str(uuid.uuid4()),
+            # Batch BS: the token must fit confirmation_token's
+            # String(32) column — str(uuid4()) is 36 chars and made
+            # this insert fail AFTER the whole delivery loop had run
+            # (records rolled back, admin saw a 500 for a delivered
+            # broadcast). The bot broadcast path's nonce expression
+            # (handlers/admin.py, uuid4().hex[:12]) is mirrored here.
+            confirmation_token=uuid.uuid4().hex[:12],
             message_text=text,
             status=BroadcastCampaignStatus.COMPLETED.value,
             total_recipients=len(user_ids),

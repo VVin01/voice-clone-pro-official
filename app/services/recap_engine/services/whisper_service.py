@@ -534,7 +534,16 @@ class WhisperTimestampService:
             except Exception as comp_err:
                 _safe_print(f"⚠️ Audio pre-compression skipped: {comp_err}")
 
-        groq_model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+        # Batch BS: resolve through the shared helper — dynamic
+        # setting > env > default. This file is also loaded
+        # standalone by file path, so the import stays defensive
+        # with the historical env-only read as the fallback.
+        try:
+            from app.config.settings import get_groq_whisper_model
+
+            groq_model = get_groq_whisper_model()
+        except Exception:
+            groq_model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
         for idx, key in enumerate(api_keys, 1):
             # Audit fix G: log only the non-reversible key digest —
             # first-7/last-4 fragments of a real key must never reach logs.

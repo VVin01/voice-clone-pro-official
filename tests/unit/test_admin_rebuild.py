@@ -187,7 +187,14 @@ async def test_pricing_list_returns_active_plans(db_session):
     )
     res = await api_mod.get_admin_pricing(admin, db_session)
     codes = [p["code"] for p in res["plans"]]
-    assert codes == ["MIN_10", "MIN_30"]
+    # Batch BS: the pricing list fills in every missing catalogue
+    # plan, so all 8 plans are listed in catalogue order (the two
+    # hand-seeded rows keep their own values and sort positions).
+    assert codes == [
+        "MIN_10", "MIN_30", "MIN_60", "voice_studio_pro",
+        "recap_starter", "recap_studio_pro", "combined_starter",
+        "all_in_one_master",
+    ]
     assert res["plans"][0]["price_mmk"] == 8000
     assert res["plans"][0]["category"] == "voice"
 

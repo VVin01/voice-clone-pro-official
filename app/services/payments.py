@@ -125,21 +125,43 @@ def package_recap_credits(package_code: str | None) -> int:
     return int(cat["recap_credits"]) if cat else 0
 
 
+# Batch BS: the seed covers EVERY catalogue plan, derived from
+# PLAN_CATALOGUE itself (single source of truth). Before BS only the
+# three MIN_ minute packs got a PricingPlan row; the other five plans
+# had no row at all, so the admin pricing editor could neither list
+# nor edit them (POST /api/admin/pricing/{code} returned 404) and
+# they priced from the catalogue alone. The PricingPlan row carries
+# only code/minutes/price_mmk/sort_order — the catalogue's category
+# and recap_credits fields have no column and stay catalogue-side
+# metadata everywhere (see package_recap_credits / the overlays).
 DEFAULT_PRICING_PLANS = [
     {"code": p["code"], "minutes": p["minutes"], "price_mmk": p["price_mmk"], "sort_order": i + 1}
-    for i, p in enumerate([e for e in PLAN_CATALOGUE if e["code"].startswith("MIN_")])
+    for i, p in enumerate(PLAN_CATALOGUE)
 ]
 
 
 async def get_active_pricing_plans(session: AsyncSession) -> list[PricingPlan]:
-    """Retrieve active pricing plans, seeding defaults if none exist."""
+    """Retrieve active pricing plans, seeding any missing catalogue rows.
+
+    Seeding is fill-only and idempotent: a row is created for every
+    catalogue code that has none (active or not), with the catalogue
+    values, and existing rows are NEVER modified — an admin-edited
+    price is sacred and survives every re-seed. Because the seeded
+    values equal the catalogue, the DB-wins submit overlay charges
+    exactly the same prices as the catalogue fallback did before.
+    """
     stmt = select(PricingPlan).where(PricingPlan.is_active.is_(True)).order_by(PricingPlan.sort_order)
     res = await session.execute(stmt)
     plans = list(res.scalars().all())
 
-    if not plans:
-        # Seed defaults
-        for p_data in DEFAULT_PRICING_PLANS:
+    existing_codes = {
+        row.code
+        for row in (await session.execute(select(PricingPlan))).scalars().all()
+    }
+    missing = [p for p in DEFAULT_PRICING_PLANS if p["code"] not in existing_codes]
+    if missing:
+        # Seed the missing catalogue plans (fill-only, see docstring).
+        for p_data in missing:
             plan = PricingPlan(
                 code=p_data["code"],
                 minutes=p_data["minutes"],

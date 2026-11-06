@@ -87,13 +87,13 @@ def _transcribe_with_groq_srt(
             except Exception as comp_err:
                 logger.warning(f"Audio pre-compression skipped: {comp_err}")
 
-        groq_model = os.getenv("GROQ_WHISPER_MODEL", "").strip()
-        if not groq_model:
-            try:
-                from app.config import settings as _settings
-                groq_model = getattr(_settings, "groq_whisper_model", "") or "whisper-large-v3-turbo"
-            except Exception:
-                groq_model = "whisper-large-v3-turbo"
+        # Batch BS: resolve through the shared helper — dynamic
+        # setting > env > default. The old env-first read made the
+        # admin-writable groq_whisper_model dynamic setting a dead
+        # letter whenever the env var was present.
+        from app.config.settings import get_groq_whisper_model
+
+        groq_model = get_groq_whisper_model()
 
         for idx, key in enumerate(api_keys, 1):
             # Audit fix G: log only the non-reversible key digest —
