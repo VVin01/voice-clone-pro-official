@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r79">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r80">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r79" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r80" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1181,12 +1181,15 @@
     </div>
     <div class="recap-step-body" id="recap-step-3-body">
 
-        <div class="pill-group sm recap-engine-row" id="recap-engine-picker">
+        <div class="capsule-field">
                                                 <span class="spec-lbl" data-i18n="recap_engine_label">ဇာတ်လမ်းပြော Engine:</span>
-                                                <button type="button" class="pill-btn active" data-engine="voxcpm" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</button>
-                                                <button type="button" class="pill-btn" data-engine="gemini" data-i18n="recap_engine_gemini">✨ Gemini AI</button>
-                                                <button type="button" class="pill-btn" data-engine="edge" data-i18n="recap_engine_edge">🎧 Edge TTS</button>
+        <div class="pill-group sm recap-engine-row seg-capsule" id="recap-engine-picker">
+                                                <span class="seg-capsule-pill" aria-hidden="true"></span>
+                                                <button type="button" class="pill-btn capsule-seg active" data-engine="voxcpm"><span class="seg-short" aria-hidden="true">🎙️</span><span class="seg-full" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</span></button>
+                                                <button type="button" class="pill-btn capsule-seg" data-engine="gemini"><span class="seg-short" aria-hidden="true">✨</span><span class="seg-full" data-i18n="recap_engine_gemini">✨ Gemini AI</span></button>
+                                                <button type="button" class="pill-btn capsule-seg" data-engine="edge"><span class="seg-short" aria-hidden="true">🎧</span><span class="seg-full" data-i18n="recap_engine_edge">🎧 Edge TTS</span></button>
                                             </div>
+        </div>
                                             <div class="recap-gemini-wrap hidden mt-2" id="recap-gemini-voice-wrap">
                                                 <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
                                                 <select id="recap-gemini-voice-select" class="studio-select glass-dropdown recap-gemini-select">
@@ -1326,20 +1329,21 @@
 
         <div class="story-style-block mt-3">
                                             <div class="card-label story-style-label" data-i18n="recap_style_label">ဇာတ်လမ်းပြော စတိုင်လ်:</div>
-                                            <div class="style-pills-grid" id="story-style-picker-quick">
-                                                <button type="button" class="style-select-pill active" data-story="viral">
+                                            <div class="style-pills-grid seg-capsule" id="story-style-picker-quick">
+                                                <span class="seg-capsule-pill" aria-hidden="true"></span>
+                                                <button type="button" class="style-select-pill capsule-seg active" data-story="viral">
                                                     <span class="pill-main" data-i18n="style_viral">Viral Hook (စိတ်လှုပ်ရှားဖွယ်)</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill" data-story="dramatic">
+                                                <button type="button" class="style-select-pill capsule-seg" data-story="dramatic">
                                                     <span class="pill-main" data-i18n="style_dramatic">🎭 သည်းထိတ်ရင်ဖို (Drama)</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill" data-story="funny">
+                                                <button type="button" class="style-select-pill capsule-seg" data-story="funny">
                                                     <span class="pill-main" data-i18n="style_funny">😂 ဟာသ (Comedy)</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill" data-story="pov">
+                                                <button type="button" class="style-select-pill capsule-seg" data-story="pov">
                                                     <span class="pill-main" data-i18n="style_pov">👁️ ဇာတ်ကောင် POV</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill" data-story="standard">
+                                                <button type="button" class="style-select-pill capsule-seg" data-story="standard">
                                                     <span class="pill-main" data-i18n="style_standard">📖 ပုံမှန်ဇာတ်ကြောင်း</span>
                                                 </button>
                                             </div>
@@ -2739,7 +2743,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r79"></script>
-    <script src="/static/js/app.js?v=20261104_r79"></script>
+    <script src="/static/js/i18n.js?v=20261104_r80"></script>
+    <script src="/static/js/app.js?v=20261104_r80"></script>
 </body>
 </html>
