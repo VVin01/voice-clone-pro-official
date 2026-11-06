@@ -2608,6 +2608,9 @@ async function loadUserProfile() {
         refreshRecapQualityLock();
         refreshRecapEngineLock();
         paintVoiceTtsBalanceLine(data);
+        // Batch BW: repaint the TTS counter now the per-user limit is
+        // known (init painted it before the profile arrived).
+        updateTtsCharCount();
         if (data.can_use_logo || data.has_custom_logo) fetchLogoState();
         // Cache the last good profile so the NEXT open paints real
         // balances instantly instead of flashing the gate + 0.0m/0c
@@ -9752,7 +9755,15 @@ function paintTtsQuotaInstant() {
 function updateTtsCharCount() {
     const input = document.getElementById("tts-text-input");
     const counter = document.getElementById("tts-char-count");
-    if (input && counter) counter.textContent = `${(input.value || "").length} / 5,000`;
+    if (input && counter) {
+        // Batch BW: the caller's OWN tier limit (same expression the
+        // voice counter uses) — before BW this was hardcoded 5,000 for
+        // everyone while the server now enforces per-tier.
+        const len = (input.value || "").length;
+        const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+        counter.textContent = `${len} / ${max} ${t("char_counter_unit")}`;
+        counter.style.color = len > max ? "#ef4444" : "var(--text-muted)";
+    }
 }
 function insertTtsSampleText(txt) {
     const input = document.getElementById("tts-text-input");
@@ -9809,6 +9820,19 @@ async function generateTTS() {
     const text = ((input && input.value) || "").trim();
     if (!text) {
         showStudioToast(t("tts_empty_error"), 'warning');
+        return;
+    }
+    // Batch BW: client-side tier guard mirroring the voice submit
+    // guard — the server enforces the same per-tier limit, this only
+    // spares the round trip.
+    const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+    if (text.length > maxChars) {
+        showStudioToast(tf("text_too_long", {
+            len: text.length,
+            tier: state.user?.is_vip ? "VIP" : t("tier_free_label"),
+            max: maxChars,
+            vip_note: state.user?.is_vip ? "" : t("text_too_long_vip_note"),
+        }), 'warning');
         return;
     }
     const engine = ttsState.engine;
