@@ -563,6 +563,12 @@ class Job(Base):
     # the Mini App result/history trim note — the same role
     # engine == "edge_fallback" plays for the fallback disclosure.
     reference_trimmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Batch BV: for RECAP jobs, the resolved server path of the
+    # user's own-voice narration sample (uploaded via
+    # /api/recap/upload_voice_ref). Nullable: only own-voice recap
+    # jobs carry one. NOT source_audio_path — on recap rows that
+    # column holds the source VIDEO (URL or upload path).
+    recap_ref_audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSON blob for recap jobs: the full submit-time RecapConfigRequest
     # plus credit state (credits_charged / credit_deducted / phase /
     # is_vip), so a restart/deploy re-dispatch restores the job exactly

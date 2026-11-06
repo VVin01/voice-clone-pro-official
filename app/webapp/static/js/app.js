@@ -430,6 +430,15 @@ const state = {
     recapTtsEngine: "voxcpm",
     recapGeminiVoice: "",
     recapVoice: "komin",
+    // Batch BV: own-voice narration. Per-job state only — it is
+    // deliberately NOT collected into the persisted recap settings
+    // or the account prefs: an uploaded sample belongs to one job,
+    // never to the account.
+    recapOwnVoiceSelected: false,
+    recapOwnVoiceRefId: null,
+    recapOwnVoiceFile: null,
+    recapOwnVoiceFileName: "",
+    recapOwnVoiceStatus: "idle", // idle | uploading | ready | error
     recapJobId: null,
     recapPollTimer: null,
     recapScriptReadyJobId: null,
@@ -1203,6 +1212,9 @@ function studioConfigFingerprint(kind) {
         blurH: blurH ? blurH.value : null,
         scriptReview: !!(sr && sr.checked),
         title: state.recapVideoTitle || "",
+        // Batch BV: switching persona <-> own-voice (or a new
+        // sample) IS a configuration change for the duplicate guard.
+        ownVoice: state.recapOwnVoiceSelected ? (state.recapOwnVoiceRefId || "pending") : null,
     });
 }
 function setSubmitButtonState(kind) {
@@ -3716,6 +3728,11 @@ function syncRecapEngineAreas() {
     if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
     const pa = document.getElementById("recap-persona-area");
     if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
+    // Batch BV: the own-voice card exists only on the clone engine —
+    // on Gemini/Edge an uploaded sample could never narrate, so the
+    // card (and its selection) does not apply there.
+    const ow = document.getElementById("recap-own-voice-wrap");
+    if (ow) ow.classList.toggle("hidden", state.recapTtsEngine !== "voxcpm");
 }
 function refreshRecapEngineLock() {
     const u = state.user;
@@ -3738,8 +3755,184 @@ function refreshRecapEngineLock() {
     });
     moveSegPill(document.getElementById("recap-engine-picker"));
     syncRecapEngineAreas();
+    // Batch BV: the own-voice card inherits the same lock — clone
+    // narration is purchased + admin, so a FREE profile sees the
+    // card locked (badge + hint, clicks inert), exactly like the
+    // voxcpm pill above. The server clamp enforces the same rule.
+    const owCard = document.getElementById("recap-own-voice-card");
+    if (owCard) {
+        const owLocked = tierKnown && !canUse;
+        owCard.classList.toggle("engine-locked", owLocked);
+        owCard.setAttribute("aria-disabled", owLocked ? "true" : "false");
+        const badge = document.getElementById("recap-own-voice-lock-badge");
+        if (badge) badge.classList.toggle("hidden", !owLocked);
+        const hint = document.getElementById("recap-own-voice-locked-hint");
+        if (hint) hint.classList.toggle("hidden", !owLocked);
+    }
 }
 window.refreshRecapEngineLock = refreshRecapEngineLock;
+
+// ── Batch BV: own-voice narration card ───────────────────────────────
+// The user uploads ONE sample for THIS job (upload-on-pick to
+// /api/recap/upload_voice_ref, the recap twin of the voice tab's
+// streamed save); the submit then references it by handle. Selecting
+// a persona card deselects own-voice and vice versa; the picked
+// persona stays meaningful — it is the per-segment fallback voice.
+let recapOwnVoiceAudio = null;
+let recapOwnVoiceObjectUrl = null;
+
+function stopRecapOwnVoicePreview() {
+    if (recapOwnVoiceAudio) {
+        recapOwnVoiceAudio.pause();
+        recapOwnVoiceAudio = null;
+    }
+    if (recapOwnVoiceObjectUrl) {
+        URL.revokeObjectURL(recapOwnVoiceObjectUrl);
+        recapOwnVoiceObjectUrl = null;
+    }
+    const playBtn = document.getElementById("btn-recap-own-voice-play");
+    if (playBtn) playBtn.innerText = "🔊";
+}
+
+function syncRecapOwnVoiceCard() {
+    const card = document.getElementById("recap-own-voice-card");
+    const body = document.getElementById("recap-own-voice-body");
+    const label = document.getElementById("recap-own-voice-file-label");
+    const status = document.getElementById("recap-own-voice-status");
+    const playBtn = document.getElementById("btn-recap-own-voice-play");
+    const clearBtn = document.getElementById("btn-clear-recap-own-voice");
+    const uploadBtn = document.getElementById("recap-own-voice-upload-btn");
+    const selected = !!state.recapOwnVoiceSelected;
+    if (card) {
+        card.classList.toggle("active", selected);
+        card.setAttribute("aria-pressed", selected ? "true" : "false");
+    }
+    if (body) body.classList.toggle("hidden", !selected);
+    const hasFile = !!state.recapOwnVoiceFile;
+    if (label) {
+        label.innerText = hasFile
+            ? `🎵 ${state.recapOwnVoiceFileName} (${Math.round(state.recapOwnVoiceFile.size / 1024)} KB)`
+            : t("recap_own_voice_upload_btn");
+    }
+    if (uploadBtn) uploadBtn.classList.toggle("has-file", hasFile);
+    if (playBtn) playBtn.classList.toggle("hidden", !hasFile);
+    if (clearBtn) clearBtn.classList.toggle("hidden", !hasFile);
+    if (status) {
+        let text = "";
+        if (state.recapOwnVoiceStatus === "uploading") text = t("recap_own_voice_uploading");
+        else if (state.recapOwnVoiceStatus === "ready") text = t("recap_own_voice_ready");
+        else if (state.recapOwnVoiceStatus === "error") text = t("recap_own_voice_upload_error");
+        status.innerText = text;
+        status.classList.toggle("hidden", !text);
+    }
+}
+
+function selectRecapOwnVoice() {
+    if (!canUseRecapCloneEngine() && state.user
+        && (state.user.is_admin !== undefined || typeof state.user.account_category === "string")) {
+        // Locked for this tier: the lock hint is already on the card.
+        haptic("error");
+        return;
+    }
+    haptic("selection");
+    state.recapOwnVoiceSelected = true;
+    document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card")
+        .forEach(c => c.classList.remove("active"));
+    syncRecapOwnVoiceCard();
+}
+
+function deselectRecapOwnVoice() {
+    if (!state.recapOwnVoiceSelected) return;
+    state.recapOwnVoiceSelected = false;
+    syncRecapOwnVoiceCard();
+}
+
+function clearRecapOwnVoice() {
+    stopRecapOwnVoicePreview();
+    state.recapOwnVoiceSelected = false;
+    state.recapOwnVoiceRefId = null;
+    state.recapOwnVoiceFile = null;
+    state.recapOwnVoiceFileName = "";
+    state.recapOwnVoiceStatus = "idle";
+    const input = document.getElementById("recap-own-voice-input");
+    if (input) input.value = "";
+    syncRecapOwnVoiceCard();
+    haptic("light");
+}
+window.clearRecapOwnVoice = clearRecapOwnVoice;
+
+function previewRecapOwnVoice(e) {
+    if (e) e.stopPropagation();
+    const file = state.recapOwnVoiceFile;
+    if (!file) return;
+    haptic("light");
+    if (recapOwnVoiceAudio) {
+        stopRecapOwnVoicePreview();
+        return;
+    }
+    stopCurrentVoicePreview();
+    recapOwnVoiceObjectUrl = URL.createObjectURL(file);
+    recapOwnVoiceAudio = new Audio(recapOwnVoiceObjectUrl);
+    const playBtn = document.getElementById("btn-recap-own-voice-play");
+    if (playBtn) playBtn.innerText = "⏸️";
+    recapOwnVoiceAudio.addEventListener("ended", stopRecapOwnVoicePreview);
+    recapOwnVoiceAudio.play().catch(() => stopRecapOwnVoicePreview());
+}
+window.previewRecapOwnVoice = previewRecapOwnVoice;
+
+async function uploadRecapOwnVoiceFile(file) {
+    state.recapOwnVoiceFile = file;
+    state.recapOwnVoiceFileName = file.name || "";
+    state.recapOwnVoiceRefId = null;
+    state.recapOwnVoiceStatus = "uploading";
+    syncRecapOwnVoiceCard();
+    try {
+        const formData = new FormData();
+        formData.append("reference_audio", file);
+        const headers = {};
+        if (state.tg && state.tg.initData) {
+            headers["X-Telegram-Init-Data"] = state.tg.initData;
+        }
+        const res = await fetchWithTimeout("/api/recap/upload_voice_ref", {
+            method: "POST",
+            headers: headers,
+            body: formData,
+        }, 120000);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ref_id) {
+            throw new Error(data.detail || "upload failed");
+        }
+        state.recapOwnVoiceRefId = data.ref_id;
+        state.recapOwnVoiceStatus = "ready";
+    } catch (err) {
+        state.recapOwnVoiceRefId = null;
+        state.recapOwnVoiceStatus = "error";
+        showStudioToast(t("recap_own_voice_upload_error"), "error");
+    }
+    syncRecapOwnVoiceCard();
+}
+
+function initRecapOwnVoice() {
+    const card = document.getElementById("recap-own-voice-card");
+    if (card) {
+        card.addEventListener("click", selectRecapOwnVoice);
+        card.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                selectRecapOwnVoice();
+            }
+        });
+    }
+    const input = document.getElementById("recap-own-voice-input");
+    if (input) {
+        input.addEventListener("change", (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) uploadRecapOwnVoiceFile(file);
+        });
+    }
+    syncRecapOwnVoiceCard();
+}
+window.initRecapOwnVoice = initRecapOwnVoice;
 
 // Fetch the authoritative logo state (the profile payload carries
 // the flags but not the signed preview URL).
@@ -7034,6 +7227,7 @@ function setupRecapVisualEditor() {
         });
     });
     refreshRecapEngineLock();
+    initRecapOwnVoice();
     const geminiVoiceSel = document.getElementById("recap-gemini-voice-select");
     if (geminiVoiceSel) {
         geminiVoiceSel.addEventListener("change", () => {
@@ -7558,6 +7752,10 @@ function setupRecapVisualEditor() {
             haptic("selection");
             const voice = card.getAttribute("data-voice");
             state.recapVoice = voice;
+            // Batch BV: picking a persona deselects own-voice (the
+            // persona becomes the narration voice again, not merely
+            // the fallback).
+            deselectRecapOwnVoice();
             voiceCards.forEach(c => c.classList.toggle("active", c.getAttribute("data-voice") === voice));
         });
     });
@@ -8035,6 +8233,14 @@ async function handleStartRecap() {
         showStudioToast(t("toast_recap_not_uploaded"), 'warning');
         return;
     }
+    // Batch BV: same rule for the own-voice sample — a selected
+    // own-voice card whose upload is still in flight (or failed)
+    // must not silently submit as a persona job.
+    if (state.recapOwnVoiceSelected && state.recapTtsEngine === "voxcpm"
+        && state.recapOwnVoiceStatus !== "ready") {
+        showStudioToast(t("recap_own_voice_pending_error"), 'warning');
+        return;
+    }
     const urlInput = document.getElementById("recap-url-input");
     let url = state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : "");
     if (!state.uploadedVideoPath && url) {
@@ -8198,6 +8404,12 @@ async function handleStartRecap() {
             render_quality: state.recapRenderQuality || "standard",
             tts_engine: state.recapTtsEngine || "voxcpm",
             gemini_voice: (state.recapTtsEngine === "gemini" && state.recapGeminiVoice) ? state.recapGeminiVoice : null,
+            // Batch BV: own-voice handle — only on the clone engine
+            // and only once the upload has completed (the submit
+            // guard above blocks an in-flight upload).
+            voice_ref_id: (state.recapTtsEngine === "voxcpm" && state.recapOwnVoiceSelected && state.recapOwnVoiceStatus === "ready")
+                ? state.recapOwnVoiceRefId
+                : null,
             split_video: !!((document.getElementById("recap-split-toggle") || {}).checked),
             split_minutes: state.recapSplitMinutes || 3,
         };

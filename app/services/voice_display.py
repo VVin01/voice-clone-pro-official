@@ -102,10 +102,28 @@ def edge_voice_display_name(persona_slug: Optional[str]) -> str:
     return _EDGE_BASE_DISPLAY_MY.get(edge_voice, "ကိုသီဟ")
 
 
+def own_voice_display_name() -> str:
+    """Display name for a Batch BV own-voice recap narration (the
+    user's uploaded sample cloned by VoxCPM). Resolved through the
+    server i18n table like every other bot-facing voice label; the
+    hard-coded fallback matches the "my" string so a locale-load
+    failure can never blank the completion message."""
+    try:
+        from app.services.i18n import t
+
+        name = t("recap_own_voice_display", "my")
+        if name and name != "recap_own_voice_display":
+            return name
+    except Exception:
+        pass
+    return "🎙️ ကိုယ်ပိုင်အသံ"
+
+
 def recap_voice_display_name(
     tts_engine: Optional[str],
     gemini_voice: Optional[str],
     persona_slug: Optional[str],
+    own_voice: bool = False,
 ) -> str:
     """The voice name a user should see for a recap job.
 
@@ -115,6 +133,14 @@ def recap_voice_display_name(
     "edge_tts") names the Edge base voice that actually narrated —
     labelling it with the persona's name would claim a clone the user
     did not hear. Every other engine names the persona.
+
+    Batch BV: an own-voice job (``own_voice=True``) narrated on the
+    clone engine names the user's own voice — the persona slug on
+    the row is only that job's per-segment fallback voice. The flag
+    is ignored for the Gemini/Edge engines: a job whose narration
+    actually ran there is named for what was heard, exactly as
+    before (an own-voice ref can only ever execute on voxcpm — the
+    tier/engine clamps drop it everywhere else).
     """
     engine = str(tts_engine or "").strip().lower()
     if engine == "gemini":
@@ -123,6 +149,8 @@ def recap_voice_display_name(
             return display
     if engine in ("edge", "edge_tts"):
         return f"🎧 Edge TTS · {edge_voice_display_name(persona_slug)}"
+    if own_voice:
+        return own_voice_display_name()
     return persona_display_name(persona_slug)
 
 

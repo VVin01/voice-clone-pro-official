@@ -4940,8 +4940,38 @@ class EdgeSmartSync:
         if use_voxcpm:
             if persona_ref_wav and persona_ref_text:
                 self.log(f"🎯 VoxCPM 2 locked-voice cloning from persona sample: {Path(persona_ref_wav).name}")
+            elif persona_ref_wav:
+                # Batch BV: a reference WITHOUT a transcript is the
+                # user's own-voice sample (persona samples always
+                # carry one) — it still clones, via the spaces that
+                # accept transcript-free references; the old "voice
+                # design only" wording was wrong for this case.
+                self.log(f"🎯 VoxCPM 2 cloning from own-voice sample: {Path(persona_ref_wav).name} (no transcript)")
             else:
                 self.log("⚠️ No persona sample transcript — VoxCPM voice design (voice may vary slightly)")
+
+        # Batch BV: adapt the narration reference ONCE per job (Batch
+        # BU's 50 s Space cap). synthesize() adapts on every call, so
+        # without this pre-pass each concurrent segment worker would
+        # probe the same over-cap sample — and race the shared
+        # digest-cached trim file. Adapting here, before the segment
+        # loop, makes every per-segment adapt a no-op (the adapted
+        # file is ≤50 s) and yields the job's single
+        # reference_trimmed truth for the checkpoint / plan JSON.
+        reference_trimmed = False
+        if use_voxcpm and persona_ref_wav and vox_engine is not None:
+            try:
+                _ref_before = str(persona_ref_wav)
+                persona_ref_wav = str(
+                    vox_engine._adapt_reference_for_clone(Path(persona_ref_wav))
+                )
+                reference_trimmed = bool(
+                    getattr(vox_engine, "last_reference_trimmed", False)
+                    or persona_ref_wav != _ref_before
+                )
+            except Exception as adapt_err:
+                self.log(f"⚠️ Reference pre-adapt skipped ({adapt_err}) — per-segment adapt still applies")
+        checkpoint["reference_trimmed"] = bool(reference_trimmed)
 
         timing: list[dict[str, Any]] = []
         audio_parts: list[Path] = []
@@ -5266,6 +5296,7 @@ class EdgeSmartSync:
         with _checkpoint_lock:
             checkpoint["fallback_used"] = bool(fallback_segments)
             checkpoint["fallback_segments"] = list(fallback_segments)
+            checkpoint["reference_trimmed"] = bool(reference_trimmed)
             checkpoint["tts_provider"] = (
                 "gemini" if use_gemini and not fallback_segments
                 else "gemini+persona_fallback" if use_gemini
@@ -5322,6 +5353,7 @@ class EdgeSmartSync:
         out_plan["tts_provider"] = checkpoint.get("tts_provider", "edge_tts")
         out_plan["fallback_used"] = bool(fallback_segments)
         out_plan["fallback_segments"] = list(fallback_segments)
+        out_plan["reference_trimmed"] = bool(reference_trimmed)
         out_plan["tts_voice"] = self.voice
         out_plan["actual_audio_duration"] = round(final_audio_duration, 3)
         out_plan["tts_timing_segments"] = timing

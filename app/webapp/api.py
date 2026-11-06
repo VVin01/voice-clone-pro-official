@@ -609,6 +609,91 @@ def _clamp_recap_tts_engine(
     return req.tts_engine
 
 
+# ── Batch BV: own-voice recap narration ──────────────────────────────
+# A recap can be narrated in the user's OWN voice: a sample uploaded
+# via POST /recap/upload_voice_ref drives VoxCPM cloning instead of a
+# curated persona sample. Own-voice IS clone narration, so it inherits
+# the Batch AW gate exactly (Option 1, owner decision 2026-11-06):
+# PURCHASED + admins only, enforced by clamp-never-reject at submit
+# and at execution entry. The upload filename embeds the owner id
+# (webapp_ref_u<user_id>_<uuid12>.<ext>) so ownership validation at
+# submit is a prefix check — no registry table.
+RECAP_OWN_VOICE_VIP_ONLY_DETAIL = (
+    "ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်။ "
+    "VIP tab တွင် Plan ဝယ်ယူနိုင်ပါသည်။"
+)
+VOXCPM_REF_AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".m4a")
+_RECAP_VOICE_REF_ID_RE = re.compile(r"^webapp_ref_u([0-9]+)_([0-9a-f]{12})$")
+
+
+def _clamp_recap_voice_ref(
+    req: "RecapConfigRequest",
+    *,
+    user: Optional[User] = None,
+    user_id: Optional[int] = None,
+    is_vip: Optional[bool] = None,
+) -> Optional[str]:
+    """Batch BV: own-voice narration is a purchased-tier benefit.
+
+    A FREE user's uploaded-sample reference is dropped (handle AND
+    resolved path) at the same two choke points as the Batch AW
+    engine clamp — submit and execution entry — and the substitution
+    is logged at INFO. The job itself is never rejected: it narrates
+    with the picked persona on the clamped engine instead. Returns
+    the surviving resolved path (or None).
+    """
+    if req is None:
+        return None
+    if user is not None:
+        # The user row is the tier's source of truth (the AW clamp's
+        # rule): the canonical tier helper, plus an is_admin attribute
+        # when a caller supplies one (real User rows carry none — for
+        # them the helper's settings.is_admin(id) check decides).
+        is_vip = _can_use_custom_logo(user) or bool(
+            getattr(user, "is_admin", False)
+        )
+    elif is_vip is None and user_id is not None:
+        is_vip = settings.is_admin(user_id)
+    if is_vip:
+        return getattr(req, "voice_ref_path", None)
+    had_ref = bool(
+        getattr(req, "voice_ref_id", None) or getattr(req, "voice_ref_path", None)
+    )
+    req.voice_ref_id = None
+    req.voice_ref_path = None
+    if had_ref:
+        logger.info(
+            "Recap own-voice reference clamped for user %s: dropped (free tier)",
+            user_id if user_id is not None else (user.id if user is not None else None),
+        )
+    return None
+
+
+def _resolve_recap_voice_ref(ref_id: str, user: User) -> Path:
+    """Resolve an upload handle from POST /recap/upload_voice_ref to
+    its on-disk sample, validating shape, ownership and existence.
+
+    Raises 400 (the invalid-voice style) on any problem — callers run
+    this before any credit moves, so a bad handle can never charge.
+    Admins keep the service-wide ownership exemption (the
+    _recap_frame_owner_id precedent); everyone else may only resolve
+    a handle whose embedded owner id is their own.
+    """
+    detail = "ရွေးထားတဲ့ အသံနမူနာ မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ နမူနာ ပြန်တင်ပေးပါခင်ဗျာ။"
+    m = _RECAP_VOICE_REF_ID_RE.match(str(ref_id or "").strip())
+    if not m:
+        raise HTTPException(status_code=400, detail=detail)
+    owner_id = int(m.group(1))
+    if owner_id != user.id and not settings.is_admin(user.id):
+        raise HTTPException(status_code=400, detail=detail)
+    ref_dir = settings.storage_root / "temp" / "voxcpm_refs"
+    for ext in VOXCPM_REF_AUDIO_EXTS:
+        candidate = ref_dir / f"{ref_id}{ext}"
+        if candidate.is_file():
+            return candidate
+    raise HTTPException(status_code=400, detail=detail)
+
+
 def _user_logo_dir(user_id: int) -> Path:
     return settings.storage_root / "user_logos" / str(int(user_id))
 
@@ -4523,6 +4608,65 @@ async def upload_recap_video(
     }
 
 
+@api_router.post("/recap/upload_voice_ref")
+async def upload_recap_voice_ref(
+    reference_audio: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Batch BV: upload an own-voice narration sample for ONE recap
+    job. The recap submit itself is JSON, so the sample is uploaded
+    first and referenced by the returned handle (``ref_id``).
+
+    Save machinery is the Voice tab's (Batch AJ H3): streamed to
+    disk with the 50 MB cap enforced DURING the write, behind the
+    disk-headroom gate, into the same ``temp/voxcpm_refs`` store.
+    The filename embeds the owner id (``webapp_ref_u<uid>_<uuid12>``)
+    so submit-time ownership validation is a prefix check — no
+    registry table. Purchased + admin only (Option 1): own-voice is
+    clone narration, so the upload itself carries the Batch AW tier
+    gate — free users get the VIP upsell and nothing is stored.
+    """
+    if not _can_use_custom_logo(user):
+        raise HTTPException(status_code=403, detail=RECAP_OWN_VOICE_VIP_ONLY_DETAIL)
+    if not reference_audio.filename:
+        raise HTTPException(status_code=400, detail="အသံနမူနာဖိုင် ရွေးချယ်ပေးပါခင်ဗျာ")
+
+    _require_disk_headroom()
+    ref_dir = settings.storage_root / "temp" / "voxcpm_refs"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    ext = Path(reference_audio.filename).suffix or ".wav"
+    clean_ext = ext if ext.lower() in VOXCPM_REF_AUDIO_EXTS else ".wav"
+    ref_id = f"webapp_ref_u{user.id}_{uuid.uuid4().hex[:12]}"
+    save_file = ref_dir / f"{ref_id}{clean_ext}"
+    try:
+        saved_bytes = await _save_upload_streaming(
+            reference_audio, save_file, 50 * 1024 * 1024
+        )
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            raise HTTPException(
+                status_code=413,
+                detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါသည်",
+            )
+        raise
+    if saved_bytes <= 100:
+        # Same ≤100-byte discard as the voice route — an empty stub
+        # is not a usable sample, and here the upload IS the request,
+        # so answer honestly instead of proceeding without a ref.
+        save_file.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="အသံနမူနာဖိုင် မမှန်ကန်ပါ — ဖိုင် အလွတ် ဖြစ်နေပါသည်။",
+        )
+    return {
+        "success": True,
+        "ref_id": ref_id,
+        "filename": Path(reference_audio.filename).name,
+        "size_bytes": saved_bytes,
+    }
+
+
 async def _recap_frame_owner_id(db: AsyncSession, resolved_path: Path) -> Optional[int]:
     """Resolve which user owns the file a /recap/frame request targets.
 
@@ -5268,6 +5412,17 @@ class RecapConfigRequest(BaseModel):
     #   fallback to the persona engine (fallback stays visible).
     tts_engine: str = "voxcpm"
     gemini_voice: Optional[str] = None
+    # Batch BV: own-voice narration. voice_ref_id is the client
+    # handle of a sample uploaded via /api/recap/upload_voice_ref
+    # (filename stem, ownership embedded). voice_ref_path is
+    # SERVER-ONLY: create_recap_job recomputes it from the handle
+    # and overwrites whatever the client sent, before anything is
+    # persisted or dispatched; internal rebuilds from the persisted
+    # config (restart re-dispatch, script-review resume, retry)
+    # keep the resolved value. Both ride the persisted recap_config
+    # via model_dump, like blur_box_explicit.
+    voice_ref_id: Optional[str] = Field(None, max_length=80)
+    voice_ref_path: Optional[str] = None
     # - split_video: after a successful render, also cut the finished
     #   video into labelled parts (smart cut at narration pauses) —
     #   that post-split stays included in the job's credit. For an
@@ -5333,6 +5488,21 @@ class RecapConfigRequest(BaseModel):
             raise ValueError(f"Unsupported tts_engine '{v}'. Use: voxcpm, gemini, edge")
         return e
 
+    @field_validator("voice_ref_id")
+    @classmethod
+    def _check_voice_ref_id(cls, v: Optional[str]) -> Optional[str]:
+        # Batch BV: the handle is a bare filename stem — never a
+        # path. Anything that is not exactly the upload endpoint's
+        # stem shape is rejected here; existence + ownership are
+        # re-validated at submit (_resolve_recap_voice_ref), before
+        # any credit moves.
+        if v is None or not str(v).strip():
+            return None
+        stem = str(v).strip()
+        if not _RECAP_VOICE_REF_ID_RE.match(stem):
+            raise ValueError("Unsupported voice_ref_id. Upload the sample first.")
+        return stem
+
     @field_validator("gemini_voice")
     @classmethod
     def _check_gemini_voice(cls, v: Optional[str]) -> Optional[str]:
@@ -5384,6 +5554,29 @@ def _recap_fallback_info(job_dir) -> tuple[bool, list]:
         return used, best
     except Exception:
         return False, []
+
+
+def _recap_reference_trimmed(job_dir) -> bool:
+    """Batch BV: True when the recap engine's plan JSON records the
+    Batch BU reference auto-trim for this job — an own-voice sample
+    longer than the 50 s Space cap was cloned from its first 45 s.
+    Same on-disk source of truth as _recap_fallback_info; persona
+    samples are ≤50 s, so persona jobs always read False."""
+    try:
+        import json as _json
+        root = Path(job_dir)
+        if not root.is_dir():
+            return False
+        for plan_file in root.rglob("smart_sync_plan*.json"):
+            try:
+                data = _json.loads(plan_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if data.get("reference_trimmed"):
+                return True
+        return False
+    except Exception:
+        return False
 
 
 # ── Recap progress stage mapping (round-4 F-C) ─────────────────────
@@ -6195,6 +6388,10 @@ async def _execute_recap_background_job(
     # engine — a free-tier job can never execute with clone narration,
     # however its config was persisted.
     _clamp_recap_tts_engine(req, user_id=user_id, is_vip=is_vip)
+    # Batch BV: the same execution choke point for the own-voice
+    # reference — a free-tier job can never execute with the user's
+    # uploaded sample, however its config was persisted.
+    _clamp_recap_voice_ref(req, user_id=user_id, is_vip=is_vip)
 
     # Credit accounting for this job (older registry entries — e.g.
     # admin re-queues — may predate these keys): the amount actually
@@ -6301,6 +6498,25 @@ async def _execute_recap_background_job(
         else:
             selected_voice = "my-MM-ThihaNeural"
             tts_engine = "edge_tts"
+
+        # Batch BV: own-voice narration — the user's uploaded sample
+        # replaces the persona reference for VoxCPM cloning (the
+        # pipeline already forwards voxcpm_ref_audio; core prefers
+        # the overlay reference). The persona resolved above stays
+        # (a) the per-segment fallback voice, (b) the gender source
+        # for Edge/Gemini fallbacks. A ref whose file has vanished
+        # since submit (swept/expired) degrades to the persona path
+        # with a log line — never a hard failure of a paid job. The
+        # ref only ever drives the clone engine: on gemini/edge it
+        # stays unset so the intent is exact.
+        if req.tts_engine == "voxcpm" and getattr(req, "voice_ref_path", None):
+            if Path(req.voice_ref_path).is_file():
+                voxcpm_ref_audio = req.voice_ref_path
+            else:
+                logger.warning(
+                    f"Recap job {job_id}: own-voice reference missing at execution "
+                    f"({req.voice_ref_path}) — persona narration"
+                )
 
         # Gemini TTS option (production-grade programme): the persona
         # voice above stays as the per-segment FALLBACK voice, so a
@@ -6687,6 +6903,9 @@ async def _execute_recap_background_job(
         _fb_used, _fb_segs = _recap_fallback_info(job_dir)
         entry["fallback_used"] = _fb_used
         entry["fallback_segments"] = _fb_segs
+        # Batch BV: the BU auto-trim truth for an own-voice sample,
+        # read back from the same plan JSON the fallback fields use.
+        entry["reference_trimmed"] = _recap_reference_trimmed(job_dir)
         # Result warnings from the pipeline (blur safefix 2026-11-03):
         # segmented jobs union the warnings of every segment render.
         if segmented_mode:
@@ -6913,7 +7132,15 @@ async def _execute_recap_background_job(
                     _recap_notify_lang,
                     clean_title=html.escape(str(clean_title[:60])),
                     voice_name=html.escape(
-                        recap_voice_display_name(tts_engine, gemini_voice, req.voice_slug)
+                        recap_voice_display_name(
+                            tts_engine,
+                            gemini_voice,
+                            req.voice_slug,
+                            # Batch BV: an own-voice job names the
+                            # user's own voice, not the fallback
+                            # persona recorded on the row.
+                            own_voice=bool(getattr(req, "voice_ref_path", None)),
+                        )
                     ),
                     job_id=job_id,
                 )
@@ -6935,6 +7162,12 @@ async def _execute_recap_background_job(
                             heard_name=html.escape(_voice_name_note["heard_name"]),
                             engine_name=_voice_name_note["engine_name"],
                         )
+                # Batch BV: disclose the BU auto-trim when the
+                # own-voice sample exceeded the 50 s Space cap (the
+                # recap twin of worker_ref_trim_note). Orthogonal to
+                # the fallback note above — a job can carry both.
+                if entry.get("reference_trimmed"):
+                    notify_text += t("recap_ref_trim_note", _recap_notify_lang)
                 # Batch K: disclose the retention window at delivery
                 # time too (it was previously stated only in History).
                 # Batch X: the copy states the window in HOURS (24).
@@ -7252,7 +7485,10 @@ async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
 
         async with AsyncSessionLocal() as session:
             rows = (await session.execute(
-                select(Job.id, Job.status, Job.source_audio_path, Job.result_path)
+                select(
+                    Job.id, Job.status, Job.source_audio_path,
+                    Job.result_path, Job.recap_ref_audio_path,
+                )
             )).all()
             # Batch AJ M1: slip files a surviving PaymentRequest still
             # references are audit evidence, never orphans.
@@ -7269,9 +7505,13 @@ async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
     status_by_id: dict[str, str] = {}
     referenced_names: set[str] = set()
     referenced_stems: set[str] = set()
-    for jid, status, src_path, res_path in rows:
+    for jid, status, src_path, res_path, ref_audio_path in rows:
         status_by_id[str(jid)] = status
-        for p in (src_path, res_path):
+        # Batch BV: recap_ref_audio_path joins the referenced set —
+        # without it, the abandoned-upload sweep below could delete
+        # an own-voice sample while its job is QUEUED or parked at
+        # SCRIPT_READY (parking can hold a job up to 24 h).
+        for p in (src_path, res_path, ref_audio_path):
             if p:
                 referenced_names.add(Path(p).name)
                 referenced_stems.add(Path(p).stem)
@@ -7678,6 +7918,23 @@ async def create_recap_job(
     # the persisted config and the dispatched runner carry the engine
     # this tier may actually use (free: gemini/edge, never voxcpm).
     _clamp_recap_tts_engine(req, user=user, user_id=user.id, is_vip=is_vip)
+    # Batch BV: own-voice reference. voice_ref_path is server-only —
+    # whatever the client sent is discarded here and recomputed from
+    # the upload handle below, so a forged path can never take
+    # effect. The tier clamp runs at this same choke point (free:
+    # ref dropped, job proceeds on the persona); resolution then
+    # validates handle + ownership + existence BEFORE any credit
+    # moves, so a bad handle is a clean 400, never a charged job.
+    # A ref submitted with a non-clone engine is meaningless (the
+    # card only exists on the Persona Voice engine) and is dropped
+    # the same way.
+    req.voice_ref_path = None
+    _clamp_recap_voice_ref(req, user=user, user_id=user.id, is_vip=is_vip)
+    if req.voice_ref_id:
+        if req.tts_engine == "voxcpm":
+            req.voice_ref_path = str(_resolve_recap_voice_ref(req.voice_ref_id, user))
+        else:
+            req.voice_ref_id = None
     credits = getattr(user, "recap_credits", 0) or 0
 
     # Credit gate (money fix 2026-10-31): EVERY non-admin needs at
@@ -7888,6 +8145,11 @@ async def create_recap_job(
         "error_message": None,
         "script_review": bool(req.script_review),
         "segments_count": None,
+        # Batch BV: own-voice truth for the status payload — set from
+        # the submit-resolved reference; reference_trimmed is filled
+        # in at completion from the engine's plan JSON.
+        "voice_ref_used": bool(req.voice_ref_path),
+        "reference_trimmed": False,
         "split_video": bool(req.split_video),
         "parts": [],
         "split_error": None,
@@ -7919,6 +8181,10 @@ async def create_recap_job(
         preset_voice=req.voice_slug,
         input_text=clean_display_title,
         source_audio_path=req.url,
+        # Batch BV: the resolved own-voice sample path (None for
+        # persona jobs) — the row-level truth the retention sweep's
+        # referenced-paths scan protects while this job is alive.
+        recap_ref_audio_path=req.voice_ref_path,
         # R40 item 15c: the old hardcoded 120 made EVERY recap row
         # in /history display "120s" forever. Estimate from the
         # source duration verified above; the real output duration
@@ -8110,6 +8376,8 @@ async def get_recap_status(
             "error_message": entry.get("error_message"),
             "fallback_used": bool(entry.get("fallback_used")),
             "fallback_segments": entry.get("fallback_segments", []),
+            "voice_ref_used": bool(entry.get("voice_ref_used")),
+            "reference_trimmed": bool(entry.get("reference_trimmed")),
             "warnings": list(entry.get("warnings") or []),
             "output_size_bytes": _e_size,
             "telegram_sendable": _e_sendable,
@@ -8199,6 +8467,17 @@ async def get_recap_status(
         ),
         "fallback_used": _fb_used,
         "fallback_segments": _fb_segs,
+        # Batch BV: own-voice truth on the cold path — the row's
+        # resolved ref column (the persisted config carries the same
+        # path) and the plan-JSON trim flag, read exactly like the
+        # fallback fields above.
+        "voice_ref_used": bool(
+            getattr(job, "recap_ref_audio_path", None)
+            or ((_db_state.get("config") or {}).get("voice_ref_path"))
+        ),
+        "reference_trimmed": _recap_reference_trimmed(
+            settings.storage_root / "recap_output" / job_id
+        ),
         "warnings": _db_warnings,
         "output_size_bytes": _r_size,
         "telegram_sendable": _r_sendable,
@@ -8682,6 +8961,12 @@ async def send_recap_to_telegram(
         _cfg.get("tts_engine"),
         _cfg.get("gemini_voice"),
         db_job.preset_voice if db_job else None,
+        # Batch BV: the persisted config's resolved ref marks an
+        # own-voice job (the row column carries the same truth).
+        own_voice=bool(
+            _cfg.get("voice_ref_path")
+            or (db_job is not None and getattr(db_job, "recap_ref_audio_path", None))
+        ),
     ) or "Smart Sync AI"
 
     delivered, fail_reason = await _send_recap_telegram_delivery(
@@ -9114,6 +9399,12 @@ async def get_user_history(
                 _fb_used, _fb_segs = _recap_fallback_info(
                     settings.storage_root / "recap_output" / j.id
                 )
+                # Batch BV: for recap jobs the BU trim truth lives
+                # in the plan JSON (the row's reference_trimmed
+                # column is a voice-job flag).
+                _ref_trimmed = _recap_reference_trimmed(
+                    settings.storage_root / "recap_output" / j.id
+                )
             else:
                 _fb_used, _fb_segs = False, []
         else:
@@ -9210,6 +9501,16 @@ async def get_user_history(
             "fallback_used": _fb_used,
             "fallback_segments": _fb_segs,
             "reference_trimmed": _ref_trimmed,
+            # Batch BV: the job narrated from the user's own uploaded
+            # sample (row column; the live registry entry covers a
+            # job whose row write lagged).
+            "voice_ref_used": bool(
+                is_recap
+                and (
+                    getattr(j, "recap_ref_audio_path", None)
+                    or (_hist_entry or {}).get("voice_ref_used")
+                )
+            ),
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
             "status": j.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
