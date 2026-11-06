@@ -315,6 +315,7 @@ def run_recap_pipeline(
     blur_w: Optional[float] = None,
     blur_box_explicit: bool = False,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
+    blur_auto_detect: bool = True,
     blur_watermark: bool = False,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
@@ -490,10 +491,14 @@ def run_recap_pipeline(
     # with Blur OFF the old gate still blurred every detected band,
     # and with Burn OFF + Blur ON it shipped a frosted plate strip
     # under no text.
+    # Batch BI: the user's auto-detect switch gates detection too —
+    # OFF skips the detector entirely (as if it returned []), so the
+    # assembly proceeds with plate/fallback/manual box exactly as
+    # when detection finds nothing. Default ON = historical behaviour.
     _canvas_bands: Optional[list[dict]] = None
     _detection_failed = False
     _band_layout = None
-    if blur_subtitles and _user_box is None:
+    if blur_subtitles and _user_box is None and blur_auto_detect:
         try:
             # Detected bands are SOURCE-frame fractions; the preset
             # boxes above and every blur-box consumer use CANVAS
@@ -779,6 +784,7 @@ def generate_recap_preview(
     blur_w: Optional[float] = None,
     blur_box_explicit: bool = False,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
+    blur_auto_detect: bool = True,
     burn_subtitles: bool = True,
     sub_y: Optional[float] = 0.85,
     sub_margin: Optional[float] = None,
@@ -852,12 +858,14 @@ def generate_recap_preview(
             _p_plate = {"x": 0.05, "y": float(sub_y) if sub_y is not None else float(blur_y), "w": 0.90, "h": float(blur_h)}
         # Batch AA: same rule as the render — an explicit user box
         # is authoritative and detection is not run at all.
+        # Batch BI: the user's auto-detect switch gates the preview's
+        # detection identically, so the frame shows what will ship.
         _p_user_box = None
         if blur_box_explicit:
             _p_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout, blur_x=blur_x, blur_w=blur_w)
         _p_bands: Optional[list[dict]] = None
         _p_band_layout = _p_layout
-        if _p_user_box is None:
+        if _p_user_box is None and blur_auto_detect:
             try:
                 if _p_band_layout is None:
                     _p_src_w2, _p_src_h2 = probe_video_size(ffprobe_bin, src)

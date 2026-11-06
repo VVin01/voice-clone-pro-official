@@ -288,5 +288,5 @@ def test_bg_persona_work_intact_and_not_restyled():
 
 
 def test_token_r80():
-    assert INDEX_HTML.count("20261104_r81") == 4
+    assert INDEX_HTML.count("20261104_r82") == 4
     assert "20261104_r79" not in INDEX_HTML

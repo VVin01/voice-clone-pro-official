@@ -402,12 +402,15 @@ def test_detection_not_run_when_user_box_present():
     render_body = render_body.split("\ndef ", 1)[0]
     assert "if blur_subtitles and blur_box_explicit:" in render_body
     assert "_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _layout, blur_x=blur_x, blur_w=blur_w)" in render_body
-    assert "if blur_subtitles and _user_box is None:" in render_body
+    # Batch BI deliberate pin update: both detection gates gained
+    # the user's auto-detect switch as a further condition — the
+    # user-box suppression this test pins is unchanged.
+    assert "if blur_subtitles and _user_box is None and blur_auto_detect:" in render_body
     assert "user_box=_user_box," in render_body
     preview_body = PIPELINE_PY.split("def generate_recap_preview(", 1)[1]
     preview_body = preview_body.split("\ndef ", 1)[0]
     assert "_p_user_box = user_blur_box_to_canvas_box(blur_y, blur_h, _p_layout, blur_x=blur_x, blur_w=blur_w)" in preview_body
-    assert "if _p_user_box is None:" in preview_body
+    assert "if _p_user_box is None and blur_auto_detect:" in preview_body
     assert "user_box=_p_user_box," in preview_body
 
 
@@ -464,5 +467,5 @@ def test_legacy_fallback_hint_construction_unchanged():
 # ── 9. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r64():
-    assert INDEX_HTML.count("?v=20261104_r81") == 4
+    assert INDEX_HTML.count("?v=20261104_r82") == 4
     assert "20261104_r53" not in INDEX_HTML

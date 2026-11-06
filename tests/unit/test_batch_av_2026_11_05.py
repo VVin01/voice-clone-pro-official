@@ -135,6 +135,9 @@ PAYLOAD_KEYS = [
     "crop_top", "crop_bottom", "crop_left", "crop_right", "mirror_video",
     "zoom_factor", "voice_speed", "blur_subtitles", "blur_y", "blur_h",
     "blur_x", "blur_w", "blur_box_explicit", "blur_strength",
+    # Batch BI deliberate pin update: the auto-detect blur switch
+    # rides the submit payload as blur_auto_detect.
+    "blur_auto_detect",
     "burn_subtitles", "sub_bottom_margin", "sub_x", "sub_w", "sub_style",
     "sub_font_size", "sub_font", "sub_lines", "include_logo", "logo_pos",
     "title_enabled", "title_text", "title_x", "title_y",
@@ -361,6 +364,6 @@ def test_av_touch_targets_and_text_fit_guards():
 
 
 def test_av_cache_token_bumped():
-    # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ) → r73 (AW) → r74 (BA) → r75 (BB) → r76 (BF) → r77 (BC) → r78 (BG) → r79 (BE) → r80 (BD) → r81 (BH).
-    assert INDEX_HTML.count("r81") == 4
+    # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ) → r73 (AW) → r74 (BA) → r75 (BB) → r76 (BF) → r77 (BC) → r78 (BG) → r79 (BE) → r80 (BD) → r81 (BH) → r82 (BI).
+    assert INDEX_HTML.count("r82") == 4
     assert "r70" not in INDEX_HTML

@@ -15,6 +15,14 @@ surface must resolve the name through :func:`recap_voice_display_name`:
 
 Unknown slugs fall back to the capitalised slug so legacy rows still
 render something sensible.
+
+Batch BI (2026-11-06) exception: the bot's COMPLETION message resolves
+through :func:`recap_completion_voice_display_name` instead — it names
+the voice the user PICKED (the persona label the Mini App's Step 4 and
+History show), because a completion line that said "🎙️ အသံ: ကိုသီဟ"
+for a job the user set to ကိုမင်း read as the wrong voice next to the
+app (owner report, Milo job rc_1793951089_a4f17f). The on-demand
+delivery caption keeps the heard-voice resolver above.
 """
 from __future__ import annotations
 
@@ -102,6 +110,32 @@ def recap_voice_display_name(
         display = gemini_voice_display_name(gemini_voice)
         if display:
             return display
+    if engine in ("edge", "edge_tts"):
+        return f"🎧 Edge TTS · {edge_voice_display_name(persona_slug)}"
+    return persona_display_name(persona_slug)
+
+
+def recap_completion_voice_display_name(
+    tts_engine: Optional[str],
+    gemini_voice: Optional[str],
+    persona_slug: Optional[str],
+) -> str:
+    """The voice name for the bot's recap COMPLETION message (Batch BI).
+
+    The completion message names the voice the user PICKED — the
+    persona display name the Mini App shows in Step 4 and History —
+    because that is the name the user chose and recognises. For
+    Gemini-engine jobs the heard-voice resolver above would leak the
+    Gemini voice's own display name instead (a free-tier job the user
+    set to ကိုမင်း completed with "🎙️ အသံ: ကိုသီဟ", owner report
+    2026-11-06), which reads as a different voice next to the app.
+    Edge jobs keep the honest Edge label — the persona name would
+    claim a clone the user did not hear (Batch AW) — and every other
+    engine already names the persona. ``gemini_voice`` is accepted
+    for call-site symmetry with :func:`recap_voice_display_name` and
+    is deliberately unused.
+    """
+    engine = str(tts_engine or "").strip().lower()
     if engine in ("edge", "edge_tts"):
         return f"🎧 Edge TTS · {edge_voice_display_name(persona_slug)}"
     return persona_display_name(persona_slug)

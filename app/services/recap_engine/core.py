@@ -2953,6 +2953,21 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
       score at the band's peak row; static measured <= 0.10 on the
       GlunZpix30I card vs >= 0.19 for real dialogue). When every band
       is static (looped image, slideshow), all are kept, as before.
+
+    Batch BI (2026-11-06) adds two guards against the opposite
+    failure — a caption-FREE source ("Me at the zoo", noisy 240p)
+    whose scene texture (face, fence rails, jacket) seeded FOUR
+    dynamic bands and shipped with full-width blur strips across
+    the picture:
+
+    * Prominence gate: a group's peak-row agg must also clear
+      4x the median agg across ALL rows of the matrix. A genuine
+      caption band stands out from its own frame's glyph noise;
+      uniform scene mush sits at the same level as the rows around
+      it, so no group in a texture-only frame can clear the gate.
+    * Band cap: at most 2 bands ship. Real sources carry one
+      caption strip (occasionally two); anything beyond the two
+      strongest survivors is detection noise by definition.
     """
     import numpy as np
 
@@ -2968,6 +2983,9 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
     loose = (pers >= 0.15) & (agg >= 0.006)
     if not strict.any():
         return []
+    # Batch BI prominence floor: frame-relative, so a uniformly
+    # textured frame raises its own bar (see the docstring).
+    prominence_floor = 4.0 * float(np.median(agg))
     # Scan the FULL frame height (blur safefix 2026-11-03): source
     # captions also sit at the TOP of the frame in short dramas and
     # social clips, and a scan that started at 40% of the height
@@ -2983,13 +3001,16 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
             groups[-1].append(y)
         else:
             groups.append([y])
-    kept: list[tuple[dict[str, float], float]] = []
+    kept: list[tuple[dict[str, float], float, float]] = []
     for grp in groups:
         if not any(strict[y] for y in grp):
             continue  # loose smear with no seed row — scene noise
         peak_row = max(grp, key=lambda y: float(agg[y]))
         if float(agg[peak_row]) < 0.02:
             continue  # weak smear, not a subtitle band
+        if float(agg[peak_row]) < prominence_floor:
+            continue  # Batch BI: no more prominent than the frame's
+            # own glyph noise — scene texture, not a caption band
         top = grp[0] / h_px
         bot = (grp[-1] + 1) / h_px
         core_h = bot - top
@@ -3010,17 +3031,88 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
             top, bot = mid - 0.08, mid + 0.08
         box = {"x": 0.0, "y": round((top + bot) / 2.0, 4), "w": 1.0, "h": round(bot - top, 4)}
         dyn_ratio = float(dyn[peak_row]) / (float(agg_mean[peak_row]) + 1e-9)
-        kept.append((box, dyn_ratio))
+        kept.append((box, dyn_ratio, float(agg[peak_row])))
     if not kept:
         return []
-    dynamic = [box for box, ratio in kept if ratio > 0.10]
+    dynamic = [(box, peak) for box, ratio, peak in kept if ratio > 0.10]
     if dynamic and len(dynamic) < len(kept):
-        dropped = [box for box, ratio in kept if ratio <= 0.10]
+        dropped = [box for box, ratio, _peak in kept if ratio <= 0.10]
         log("🔍 Static text band(s) ignored (unchanging across samples — "
             "title-card-like, while dialogue bands were found): "
             + ", ".join(f"y={b['y']:.2f} h={b['h']:.2f}" for b in dropped))
-        return dynamic
-    return [box for box, _ratio in kept]
+        survivors = dynamic
+    else:
+        survivors = [(box, peak) for box, _ratio, peak in kept]
+    # Batch BI band cap: at most 2 bands ship — keep the two with
+    # the highest peak agg and log what was dropped.
+    if len(survivors) > 2:
+        ranked = sorted(survivors, key=lambda bp: bp[1], reverse=True)
+        dropped = ranked[2:]
+        log("🔍 Extra subtitle band(s) dropped by the 2-band cap "
+            "(Batch BI): "
+            + ", ".join(f"y={b['y']:.2f} h={b['h']:.2f}" for b, _p in dropped))
+        survivors = ranked[:2]
+    return [box for box, _peak in sorted(survivors, key=lambda bp: bp[0]["y"])]
+
+
+def _clustered_glyph_row_scores(mask) -> "np.ndarray":
+    """Per-row share of pixels in word-stroke-like horizontal runs.
+
+    ``mask`` is an (h, w) boolean "bright glyph pixel with a dark
+    outline nearby" mask. A pixel counts only when its horizontal
+    run of mask pixels is at most 14 px long (at the 270-px sample
+    scale a subtitle glyph's cross-section is 1-14 px wide, and
+    separate glyphs leave gaps). Long continuous runs — fence
+    rails, clothing blocks, sky bands — contribute nothing
+    (Batch BI).
+
+    The window has NO lower bound above 1: measured on the genuine
+    GlunZpix30I caption strip, 53% of the band's mask mass sits in
+    1-px runs (anti-aliased thin strokes at sample scale) and none
+    in runs over 14 — a 2-px minimum halved the band's peak score
+    (0.0241 -> 0.0120) and dropped it under the aggregator's peak
+    floor, while the 14-px cap costs genuine bands nothing. Lone
+    noise pixels still count, exactly as they did before Batch BI;
+    the aggregator's persistence/prominence gates handle them."""
+    import numpy as np
+
+    m = np.asarray(mask, dtype=bool)
+    if m.ndim != 2 or m.shape[0] == 0 or m.shape[1] == 0:
+        return np.zeros(0, dtype=float)
+    h_px, w_px = m.shape
+    padded = np.zeros((h_px, w_px + 2), dtype=np.int8)
+    padded[:, 1:-1] = m
+    d = np.diff(padded, axis=1)
+    counts = np.zeros(h_px, dtype=float)
+    for y in range(h_px):
+        starts = np.flatnonzero(d[y] == 1)
+        if starts.size == 0:
+            continue
+        ends = np.flatnonzero(d[y] == -1)
+        lengths = ends - starts
+        counts[y] = float(lengths[lengths <= 14].sum())
+    return counts / float(w_px)
+
+
+def _frame_glyph_row_scores(g) -> "np.ndarray":
+    """Row glyph scores for one sampled frame (grayscale array).
+
+    Batch BI: the score counts only bright-with-dark-outline pixels
+    that sit in word-stroke-like horizontal runs (see
+    _clustered_glyph_row_scores). Before, EVERY such pixel counted,
+    so textured scenes (a face, fence rails, a patterned jacket on
+    a noisy 240p source) scored like caption text on row after row
+    and the aggregator shipped several full-width blur strips for a
+    caption-free video (the zoo job, 2026-11-06)."""
+    import numpy as np
+
+    bright = g > 175
+    dark = g < 110
+    near_dark = np.zeros_like(bright)
+    for dx in (2, 3, 4):
+        near_dark[:, dx:] |= dark[:, :-dx]
+        near_dark[:, :-dx] |= dark[:, dx:]
+    return _clustered_glyph_row_scores(bright & near_dark)
 
 
 def detect_source_subtitle_bands(
@@ -3041,9 +3133,11 @@ def detect_source_subtitle_bands(
     unreadable mirror-writing right above the Myanmar line.
 
     Method: sample frames across the video, score every image row by "bright glyph pixels
-    with a dark outline nearby" (the classic hard-sub look), then aggregate the per-frame
-    row scores with _subtitle_band_boxes (Batch AI: percentile aggregate, two-tier
-    candidates, static-overlay demotion — see its docstring).
+    with a dark outline nearby" (the classic hard-sub look; Batch BI: only pixels in
+    word-stroke-like horizontal runs count — see _frame_glyph_row_scores), then aggregate
+    the per-frame row scores with _subtitle_band_boxes (Batch AI: percentile aggregate,
+    two-tier candidates, static-overlay demotion; Batch BI: prominence gate + 2-band
+    cap — see its docstring).
     Returns blur-box dicts in SOURCE-frame fractions ({x, y=center, w, h} of the
     source picture) — NOT canvas fractions. Callers must map each box through
     source_band_to_canvas_box() with the render layout before adding it to
@@ -3072,14 +3166,10 @@ def detect_source_subtitle_bands(
             if p.returncode != 0 or not fp.is_file():
                 continue
             g = np.asarray(Image.open(fp).convert("L")).astype(int)
-            h_px, w_px = g.shape
-            bright = g > 175
-            dark = g < 110
-            near_dark = np.zeros_like(bright)
-            for dx in (2, 3, 4):
-                near_dark[:, dx:] |= dark[:, :-dx]
-                near_dark[:, :-dx] |= dark[:, dx:]
-            row_score = (bright & near_dark).sum(axis=1) / float(w_px)
+            # Batch BI: text-cluster scoring (see
+            # _frame_glyph_row_scores) — only word-stroke-like runs
+            # of bright-with-outline pixels count toward a row.
+            row_score = _frame_glyph_row_scores(g)
             if frame_scores and row_score.shape != frame_scores[0].shape:
                 continue  # inconsistent sample geometry — skip the odd frame
             frame_scores.append(row_score)
