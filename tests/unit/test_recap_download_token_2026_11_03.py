@@ -26,8 +26,10 @@ These tests pin:
   tokens when re-applied;
 - the download endpoint accepts a valid token with no header user,
   and still rejects wrong-scope / stranger / missing tokens;
-- /api/history signs recap deliverables for their owner and leaves
-  voice audio URLs unsigned (that endpoint verifies headers only).
+- /api/history signs recap deliverables for their owner. (Batch BJ
+  update: history now signs voice/TTS audio URLs too — the audio
+  endpoint verifies stream tokens as of BJ; see
+  test_batch_bj_2026_11_06.py.)
 """
 
 import datetime
@@ -318,7 +320,9 @@ def _make_output(storage_root: Path, job_id: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_history_signs_recap_but_not_voice_urls(db_session, tmp_path, monkeypatch):
+async def test_history_signs_recap_and_voice_urls(db_session, tmp_path, monkeypatch):
+    # Renamed in Batch BJ (was ..._but_not_voice_urls): voice audio
+    # URLs are signed now too — the audio endpoint verifies tokens.
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     owner, _ = await get_or_create_user(db_session, telegram_id=OWNER_TG)
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -350,9 +354,22 @@ async def test_history_signs_recap_but_not_voice_urls(db_session, tmp_path, monk
     assert recap["download_url"] == recap["deliverables"]["video"]
 
     voice = by_id["job_voice_dl_1"]
-    assert voice["deliverables"]["audio"] == "/api/audio/stream/job_voice_dl_1"
-    assert voice["deliverables"]["download"] == "/api/audio/download/job_voice_dl_1"
-    assert voice["download_url"] == "/api/audio/stream/job_voice_dl_1"
+    # Batch BJ: the voice row URL and both deliverables entries are
+    # signed with the (job, "audio", owner) scope, and the row URL is
+    # the signed stream form.
+    assert voice["deliverables"]["audio"].startswith(
+        "/api/audio/stream/job_voice_dl_1?t="
+    )
+    assert api_mod._verify_stream_token(
+        _token_of(voice["deliverables"]["audio"]), "job_voice_dl_1", "audio"
+    ) == owner.id
+    assert voice["deliverables"]["download"].startswith(
+        "/api/audio/download/job_voice_dl_1?t="
+    )
+    assert api_mod._verify_stream_token(
+        _token_of(voice["deliverables"]["download"]), "job_voice_dl_1", "audio"
+    ) == owner.id
+    assert voice["download_url"] == voice["deliverables"]["audio"]
 
 
 # ── Premium branded download filenames (2026-11-03 naming scheme) ───

@@ -3295,6 +3295,20 @@ async def get_job_status(
     else:
         _voice_size, _voice_sendable = None, True
 
+    # Batch BJ: sign the audio URL for its requester. The voice/TTS
+    # result screens' download buttons hand this URL to the device
+    # browser via Telegram openLink, where no initData header exists;
+    # the audio route verifies this exact (job, "audio", user) scope.
+    # With no bot token configured the URL passes through unsigned,
+    # as before. In-app playback is unaffected: it fetches with the
+    # header, and when both are sent the header user wins.
+    _output_audio_url = None
+    if job.status == JobStatus.SUCCESS.value:
+        _output_audio_url = _append_stream_token(
+            f"/api/audio/download/{job.id}",
+            _make_stream_token(job.id, user.id, "audio"),
+        )
+
     return {
         "id": job.id,
         "status": job.status,
@@ -3305,7 +3319,7 @@ async def get_job_status(
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "error_message": job.error_message,
-        "output_audio_url": f"/api/audio/download/{job.id}" if job.status == JobStatus.SUCCESS.value else None,
+        "output_audio_url": _output_audio_url,
         "output_size_bytes": _voice_size,
         "telegram_sendable": _voice_sendable,
     }
@@ -3813,10 +3827,38 @@ async def cancel_voice_job(
 async def download_job_audio(
     job_id: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: Optional[User] = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db_session),
+    t: Optional[str] = Query(None),
 ):
     """Stream or download the completed generated voice clone audio file."""
+    # Batch BJ: auth mirrors the recap download route — the initData
+    # header (resolved by get_optional_user) OR a signed stream token
+    # minted for this exact job/audio/user. The Mini App's download
+    # buttons hand the URL to the device browser via Telegram
+    # openLink, where no initData header exists, and an <audio>
+    # element cannot send one either; the scoped token is what
+    # authenticates those opens. Either way the resolved user goes
+    # through the same ownership check below; a token never creates
+    # a user and never widens access beyond its own job scope.
+    # (The token parameter sits after db so the existing direct-call
+    # shape download_job_audio(job_id, request, user, db) is kept.)
+    if user is None and t:
+        token_uid = _verify_stream_token(t, job_id, "audio")
+        if token_uid is not None:
+            user = await db.get(User, token_uid)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Telegram authentication required")
+    # Batch AJ L11 (mirrored from the recap route): a stream token is
+    # a 2 h bearer credential — a user banned after it was minted must
+    # not keep downloading with it.
+    if getattr(user, "status", None) == "BLOCKED" and not settings.is_admin(user.id):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    # Batch AR (mirrored): a token minted before maintenance was
+    # switched on must not keep serving files to a non-admin while
+    # the Mini App is closed. (Header callers were already refused
+    # inside get_optional_user.)
+    _enforce_maintenance_access(user)
     job = await _require_job_owner(db, job_id, user)
 
     # Batch AJ (H7): only a SUCCESS job has a deliverable. The worker
@@ -9011,11 +9053,28 @@ async def get_user_history(
             # can end up opened in the device browser, where no
             # initData header exists, and the scoped token is what
             # authenticates those opens (same fix as the recap status
-            # payloads). Voice URLs are NOT signed — the audio
-            # endpoint does not verify stream tokens and keeps
-            # header-only auth.
+            # payloads). Voice/TTS URLs are signed in the Batch BJ
+            # block right below.
             deliverables = _with_stream_url(deliverables, j.id, user.id)
             download_url = deliverables.get("video") or download_url
+        if not is_recap and download_url:
+            # Batch BJ: voice/TTS history URLs are signed too — the
+            # audio endpoint now verifies stream tokens (scope
+            # (job, "audio", user)), so a History download tapped in
+            # the Mini App can be handed to the device browser via
+            # Telegram openLink exactly like a recap one. The row URL
+            # (the /stream/ form) and both deliverables entries
+            # (stream + download forms) carry the same scope's token;
+            # both URL forms land on the one audio route.
+            _audio_token = _make_stream_token(j.id, user.id, "audio")
+            download_url = _append_stream_token(download_url, _audio_token)
+            if deliverables:
+                deliverables = dict(deliverables)
+                for _dk in ("audio", "download"):
+                    if deliverables.get(_dk):
+                        deliverables[_dk] = _append_stream_token(
+                            deliverables[_dk], _audio_token
+                        )
 
         raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
         _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None

@@ -1871,6 +1871,18 @@ function applyTelegramSendable(kind, sendable) {
 }
 window.applyTelegramSendable = applyTelegramSendable;
 
+function urlCarriesStreamToken(url) {
+    // A stream-token URL authenticates itself (a scoped HMAC rides in
+    // ?t=), so it can be handed to the device browser as-is. The
+    // check is purely syntactic — token VALIDITY is the server's
+    // business, decided when the URL is opened.
+    if (!url || typeof url !== "string") return false;
+    const q = url.split("?", 2)[1];
+    if (!q) return false;
+    return q.split("&").some(p => p.startsWith("t=") && p.length > 2);
+}
+window.urlCarriesStreamToken = urlCarriesStreamToken;
+
 async function downloadAuthFile(url, filename, el) {
     if (!url) return;
     // Batch AF: when the tapped element is handed over (the delegated
@@ -1901,6 +1913,30 @@ async function downloadAuthFile(url, filename, el) {
         };
     }
     try {
+        // Batch BJ: inside the Telegram WebApp, a URL carrying its
+        // own scoped stream token is self-authenticating — hand it
+        // to Telegram openLink so the device browser performs a real
+        // download. The blob path below cannot save inside mobile
+        // WebViews: the programmatic <a download> click on an object
+        // URL is silently dropped there (no blob-download handler;
+        // iOS WKWebView worst), which left the result and History
+        // download buttons dead on phones even though the fetch and
+        // its progress paint succeeded. openLink throwing or being
+        // unavailable falls through to the blob path unchanged, as
+        // do tokenless URLs and plain-browser contexts. The finally
+        // below restores the button's AF progress state immediately.
+        if (urlCarriesStreamToken(url) && window.Telegram?.WebApp?.openLink) {
+            const absUrl = url.startsWith("http") ? url : (window.location.origin + url);
+            let opened = false;
+            try {
+                window.Telegram.WebApp.openLink(absUrl);
+                opened = true;
+            } catch (e) { /* fall through to the blob path */ }
+            if (opened) {
+                haptic("success");
+                return;
+            }
+        }
         const objUrl = await fetchAuthBlobUrlWithProgress(url, onProgress);
         if (!objUrl) throw new Error("Download failed");
         const a = document.createElement("a");
