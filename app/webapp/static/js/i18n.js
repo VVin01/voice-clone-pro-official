@@ -2059,6 +2059,16 @@ function setLanguage(lang) {
     // resets it to the plain "(1 Credit)" copy.
     if (window.repaintRecapCtaPrice) window.repaintRecapCtaPrice();
 
+    // Batch BH: the TTS balance line is painted dynamically (its
+    // paints strip data-i18n), so the sweep above cannot re-stamp
+    // it — but it also cannot translate it. When the line carries
+    // loader-painted data, re-run the quota loader so it repaints
+    // in the new language; its in-flight guard makes this safe.
+    const ttsBalLine = document.getElementById("tts-balance-line");
+    if (ttsBalLine && ttsBalLine.dataset.dynamic === "1" && window.refreshTtsQuota) {
+        window.refreshTtsQuota();
+    }
+
     // Apply placeholders
     document.querySelectorAll("[data-i18n-ph]").forEach(el => {
         const key = el.getAttribute("data-i18n-ph");

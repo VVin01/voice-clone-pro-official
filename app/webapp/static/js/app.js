@@ -9190,11 +9190,53 @@ window.paintVoiceTtsBalanceLine = paintVoiceTtsBalanceLine;
 // request shape — the defect is this loader's fragility, fixed here:
 // timeout via fetchWithTimeout, bounded retries, an in-flight guard,
 // and a tap-to-retry fallback paint instead of eternal "checking…".
+// Batch BH (production bug, owner-confirmed on a real phone
+// 2026-11-06): despite the BB-4 bounds above, the line still sat on
+// "checking…" forever in production — three times, incl. a fresh
+// profile and the owner's phone — while the endpoint answers in
+// ~0.5 s. Two defects are provable from this code alone:
+// (1) every paint wrote into the node captured at loader start and
+//     left its data-i18n="tts_balance_loading" attribute in place,
+//     so ANY later setLanguage() pass (the profile language sync in
+//     loadUserProfile, or a manual language toggle) re-stamped the
+//     loading string over the painted balance — and nothing
+//     re-triggered this loader, so the line stayed on "checking…"
+//     for the rest of the session;
+// (2) every paint — including the BB error fallback — sat behind
+//     the fetch await-chain, so a chain that never settles inside
+//     the Telegram webview paints nothing at all and leaves
+//     ttsQuotaInFlight latched true, silently blocking every later
+//     retry (tab re-entries included).
+// BH makes the stuck state impossible by construction instead of
+// betting on which stall fired: an instant paint from the profile
+// /user/me already carries (BH-1), fresh-node paints that strip
+// data-i18n so no i18n sweep can re-stamp the placeholder (BH-2),
+// and a run-keyed 6 s watchdog that force-paints the tap-to-retry
+// state and releases the latch (BH-3).
 let ttsQuotaInFlight = false;
 async function refreshTtsQuota() {
-    const line = document.getElementById("tts-balance-line");
-    if (!line || ttsQuotaInFlight) return;
+    // BH-1: paint from the already-loaded profile first — this runs
+    // even while a previous (hung) chain holds the latch, because
+    // profile data needs no network.
+    paintTtsQuotaInstant();
+    if (ttsQuotaInFlight) return;
+    if (!document.getElementById("tts-balance-line")) return;
     ttsQuotaInFlight = true;
+    const runId = ++ttsQuotaRunCounter;
+    // BH-3: hard watchdog for this run (disarmed by any paint from
+    // this run — see paintTtsBalanceLine).
+    ttsQuotaWatchdogTimer = setTimeout(() => {
+        if (runId !== ttsQuotaRunCounter) return;
+        ttsQuotaWatchdogTimer = null;
+        const line = document.getElementById("tts-balance-line");
+        if (!line) return;
+        const stillLoading = line.getAttribute("data-i18n") === "tts_balance_loading"
+            || line.textContent === t("tts_balance_loading");
+        if (stillLoading) {
+            paintTtsQuotaError(runId);
+            ttsQuotaInFlight = false;
+        }
+    }, 6000);
     try {
         const retryDelaysMs = [0, 700, 1800];
         for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
@@ -9206,27 +9248,81 @@ async function refreshTtsQuota() {
                 if (!res.ok) throw new Error("tts quota " + res.status);
                 const q = await res.json();
                 const refMin = ((q.referral_seconds || 0) / 60).toFixed(1);
-                line.classList.remove("tts-balance-retry");
-                delete line.dataset.quotaError;
-                if (q.unlimited) {
-                    line.textContent = tf("tts_balance_line_unlimited", { ref_min: refMin });
-                } else {
-                    line.textContent = tf("tts_balance_line", {
-                        ref_min: refMin,
-                        remain_min: (((q.remaining_seconds || 0)) / 60).toFixed(1),
-                    });
-                }
+                paintTtsBalanceLine(runId, (line) => {
+                    line.classList.remove("tts-balance-retry");
+                    delete line.dataset.quotaError;
+                    if (q.unlimited) {
+                        line.textContent = tf("tts_balance_line_unlimited", { ref_min: refMin });
+                    } else {
+                        line.textContent = tf("tts_balance_line", {
+                            ref_min: refMin,
+                            remain_min: (((q.remaining_seconds || 0)) / 60).toFixed(1),
+                        });
+                    }
+                });
                 return;
             } catch (e) { /* retry, then the fallback paint below */ }
         }
-        line.textContent = t("tts_balance_error");
-        line.dataset.quotaError = "1";
-        line.classList.add("tts-balance-retry");
+        paintTtsQuotaError(runId);
     } finally {
         ttsQuotaInFlight = false;
     }
 }
 window.refreshTtsQuota = refreshTtsQuota;
+
+// Batch BH machinery (declared after refreshTtsQuota; the function
+// declarations hoist and the counters initialise at script load,
+// before any tab entry can call the loader).
+let ttsQuotaRunCounter = 0;
+let ttsQuotaWatchdogTimer = null;
+
+function paintTtsBalanceLine(runId, mutate) {
+    // BH-2: re-query the node at paint time (never a captured node)
+    // and strip the i18n hook BEFORE writing, so no later
+    // setLanguage sweep can re-stamp the loading string over
+    // painted data; dataset.dynamic marks the line loader-owned
+    // (setLanguage re-triggers a refresh for dynamic lines).
+    const line = document.getElementById("tts-balance-line");
+    if (!line) return;
+    line.removeAttribute("data-i18n");
+    line.dataset.dynamic = "1";
+    mutate(line);
+    // BH-3: a paint from the CURRENT run disarms its watchdog; a
+    // late paint from a stale run must not disarm a newer run's.
+    if (runId === ttsQuotaRunCounter && ttsQuotaWatchdogTimer) {
+        clearTimeout(ttsQuotaWatchdogTimer);
+        ttsQuotaWatchdogTimer = null;
+    }
+}
+
+function paintTtsQuotaError(runId) {
+    paintTtsBalanceLine(runId, (line) => {
+        line.textContent = t("tts_balance_error");
+        line.dataset.quotaError = "1";
+        line.classList.add("tts-balance-retry");
+    });
+}
+
+function paintTtsQuotaInstant() {
+    // BH-1: /user/me already carries tts_balance_seconds (the Voice
+    // tab paints its own line from it in paintVoiceTtsBalanceLine);
+    // paint the referral picture from it immediately — the quota
+    // response then overwrites with the full picture (daily
+    // remaining included). Admins sit outside the daily cap, so
+    // their instant paint uses the unlimited format. The run key is
+    // -1: the instant paint is not a fetch run and must never
+    // disarm a watchdog.
+    const profile = state.user;
+    if (!profile || typeof profile.tts_balance_seconds !== "number") return;
+    const refMin = (profile.tts_balance_seconds / 60).toFixed(1);
+    paintTtsBalanceLine(-1, (line) => {
+        line.classList.remove("tts-balance-retry");
+        delete line.dataset.quotaError;
+        line.textContent = profile.is_admin
+            ? tf("tts_balance_line_unlimited", { ref_min: refMin })
+            : tf("voice_tts_balance_line", { min: refMin });
+    });
+}
 
 function updateTtsCharCount() {
     const input = document.getElementById("tts-text-input");
