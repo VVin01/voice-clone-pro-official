@@ -251,7 +251,9 @@ def test_standard_case_geometry_unchanged():
     assert _covers(boxes[0], band)
 
 
-# ── Item 4: full-frame detection finds a top band ──────────────────
+# ── Item 4: full-frame detection scans the top of the frame ──────
+# (Batch BQ, 2026-11-06: the scan still covers the top, but a top
+# band no longer SHIPS — the caption zone is bottom-only now.)
 
 def _synthetic_clip(tmp_path: Path, name: str, band_rows) -> Path:
     """Same pattern as test_round4_2026_11_01._synthetic_clip: a dark
@@ -279,19 +281,27 @@ def _synthetic_clip(tmp_path: Path, name: str, band_rows) -> Path:
     return out
 
 
-def test_detector_finds_top_band_above_the_old_scan_floor(tmp_path):
+def test_detector_top_band_scanned_but_zone_dropped_batch_bq(tmp_path):
     from recap_pipeline import find_binary
 
     ffmpeg, ffprobe = find_binary("ffmpeg"), find_binary("ffprobe")
     # Rows 24-43 of 240 → y ≈ 0.10-0.18, far above the old 0.40 scan
-    # floor, which could never see this band at all.
+    # floor. The full-frame scan (this item's original fix) still
+    # SEES the band — but Batch BQ (owner decision 2026-11-06)
+    # removed the top caption zone: auto-detected bands ship only
+    # from the bottom zone [0.58, 1.00], so the band is dropped by
+    # the caption-zone rule and nothing is returned. (Pre-BQ this
+    # pin expected the band to ship; top captions are covered by
+    # the user's manual blur box now.) The zone log line proves
+    # the band was found and dropped by position, not missed by
+    # the scan.
     top = _synthetic_clip(tmp_path, "topband", band_rows=tuple(range(24, 44)))
+    logs: list[str] = []
     boxes = detect_source_subtitle_bands(
-        ffmpeg, ffprobe, top, tmp_path / "wtop", log=lambda m: None
+        ffmpeg, ffprobe, top, tmp_path / "wtop", log=logs.append
     )
-    assert len(boxes) == 1
-    assert boxes[0]["y"] < 0.40
-    assert boxes[0]["y"] - boxes[0]["h"] / 2.0 < 0.10
+    assert boxes == []
+    assert any("caption-zone" in m for m in logs), logs
 
 
 # ── Item 5: preview/render parity ──────────────────────────────────
