@@ -302,7 +302,7 @@ def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
         voice = job.preset_voice
     else:
         engine_obj = EdgeTTSEngine(
-            ffmpeg, work_dir, rate=rate, pitch="+0Hz",
+            ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, pitch="+0Hz",
             log=lambda msg: logger.info("TTS edge: %s", msg),
         )
         voice = job.edge_voice or job.preset_voice or EDGE_TTS_VOICES["thiha"]
@@ -348,7 +348,7 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
         from aiogram import Bot
         from aiogram.types import FSInputFile
 
-        filename = branded_download_filename("TTS", job.id)
+        filename = branded_download_filename("TTS", "wav", job_id=job.id)
         bot = Bot(token=settings.bot_token)
         try:
             await bot.send_audio(
