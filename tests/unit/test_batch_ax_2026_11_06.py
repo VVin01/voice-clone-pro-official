@@ -318,13 +318,15 @@ def test_ax_payload_and_prefs_invariants_hold():
     keys = re.findall(r"^\s+([a-z_]+):", APP_JS[i:j], re.M)
     # Batch BI deliberate pin update: 43 — the payload gained
     # blur_auto_detect (the auto-detect blur switch).
-    assert len(keys) == 43, keys
+    # Batch BV deliberate pin update: 44 — the payload gained
+    # voice_ref_id (the own-voice sample handle).
+    assert len(keys) == 44, keys
     assert keys[0] == "url" and keys[-1] == "split_minutes"
     assert 'RECAP_SETTINGS_KEY = "vcp_recap_settings"' in APP_JS
 
 
 def test_ax_cache_token_r79():
-    assert INDEX_HTML.count("20261104_r92") == 4
+    assert INDEX_HTML.count("20261104_r93") == 4
     assert "20261104_r69" not in INDEX_HTML
 
 

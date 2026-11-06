@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r92">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r93">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r92" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r93" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1253,6 +1253,35 @@
                                             <span class="v-desc" data-i18n="voice_mahnin_desc">ကြည်လင်နူးညံ့ (Audiobook & Drama)</span>
                                         </div>
                                         <button type="button" class="v-preview-btn" onclick="previewVoiceSlug('mahnin', event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
+                                    </div>
+                                </div>
+
+                                <!-- Batch BV: own-voice narration — the user's uploaded
+                                     sample clones via the Persona Voice engine. The wrap
+                                     shows only on that engine (syncRecapEngineAreas);
+                                     the card is locked for FREE profiles
+                                     (refreshRecapEngineLock), mirroring the engine pill. -->
+                                <div class="recap-own-voice-wrap hidden mt-2" id="recap-own-voice-wrap">
+                                    <div class="voice-card" id="recap-own-voice-card" role="button" tabindex="0" aria-pressed="false">
+                                        <div class="v-avatar">🎙️</div>
+                                        <div class="v-info">
+                                            <span class="v-name" data-i18n="recap_own_voice_name">ကိုယ်ပိုင်အသံ</span>
+                                            <span class="v-desc" data-i18n="recap_own_voice_desc">တင်ထားတဲ့ ကိုယ့်အသံနဲ့ ဇာတ်လမ်းပြောမည်</span>
+                                        </div>
+                                        <span class="own-voice-lock-badge hidden" id="recap-own-voice-lock-badge" aria-hidden="true">🔒</span>
+                                    </div>
+                                    <p class="recap-own-voice-locked-hint hidden" id="recap-own-voice-locked-hint" data-i18n="recap_own_voice_locked_hint">🔒 ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</p>
+                                    <div class="recap-own-voice-body hidden" id="recap-own-voice-body">
+                                        <p class="ref-desc" data-i18n="recap_own_voice_hint">ကိုယ်ပိုင်အသံ နမူနာ (၁၀–၃၀ စက္ကန့် အကောင်းဆုံး၊ အများဆုံး ၅၀ စက္ကန့်) တင်ပါ။ ၅၀ စက္ကန့်ထက် ရှည်ရင် ပထမ ၄၅ စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်။</p>
+                                        <div class="ref-upload-row">
+                                            <label class="btn-file-upload" for="recap-own-voice-input" id="recap-own-voice-upload-btn">
+                                                <span id="recap-own-voice-file-label" data-i18n="recap_own_voice_upload_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
+                                            </label>
+                                            <input type="file" id="recap-own-voice-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
+                                            <button class="mini-chip hidden" id="btn-recap-own-voice-play" type="button" onclick="previewRecapOwnVoice(event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
+                                            <button class="mini-chip text-danger hidden" id="btn-clear-recap-own-voice" type="button" onclick="clearRecapOwnVoice()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
+                                        </div>
+                                        <p class="recap-own-voice-status hidden" id="recap-own-voice-status"></p>
                                     </div>
                                 </div>
 
@@ -2772,7 +2801,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r92"></script>
-    <script src="/static/js/app.js?v=20261104_r92"></script>
+    <script src="/static/js/i18n.js?v=20261104_r93"></script>
+    <script src="/static/js/app.js?v=20261104_r93"></script>
 </body>
 </html>

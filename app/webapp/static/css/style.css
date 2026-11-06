@@ -1104,6 +1104,14 @@ select.studio-input { min-height: 50px; }
     font-size: 15px; display: inline-flex; align-items: center; justify-content: center;
 }
 .v-preview-btn.playing { border-color: var(--gold-border); }
+/* Batch BV: own-voice card inside the recap persona area — same card
+   rhythm as the persona cards; the body follows the ref-audio-card
+   spacing pattern. Locked state mirrors the engine pill's. */
+#recap-own-voice-card.engine-locked { opacity: 0.45; cursor: not-allowed; }
+.own-voice-lock-badge { font-size: 15px; flex-shrink: 0; }
+.recap-own-voice-body { margin-top: var(--s3); border-top: 1px solid var(--border); padding-top: var(--s3); }
+.recap-own-voice-status { margin-top: var(--s2); font-size: 12.5px; line-height: 1.6; color: var(--text-2); }
+.recap-own-voice-locked-hint { margin-top: var(--s2); font-size: 12.5px; line-height: 1.6; color: var(--text-2); }
 .more-voices-expander { text-align: center; }
 .all-voices-dropdown { text-align: left; }
 .recap-voice-row { display: flex; gap: var(--s2); }

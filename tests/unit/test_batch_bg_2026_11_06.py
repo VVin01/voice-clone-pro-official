@@ -165,12 +165,15 @@ async def test_sample_fallback_response_cache_control_is_no_cache(db_session):
 # ── BG-6: recap component untouched ──────────────────────────────────
 
 def test_recap_voice_cards_not_restructured():
-    assert INDEX_HTML.count('class="voice-card') == 12
+    # Batch BV deliberate pin update: 13 — the 12 persona cards plus
+    # BV's own-voice card, added inside the same persona area without
+    # restructuring any persona card.
+    assert INDEX_HTML.count('class="voice-card') == 13
     assert "persona-category" not in INDEX_HTML
 
 
 # ── BG-7: token ──────────────────────────────────────────────────────
 
 def test_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r92") == 4
+    assert INDEX_HTML.count("?v=20261104_r93") == 4
     assert "20261104_r76" not in INDEX_HTML

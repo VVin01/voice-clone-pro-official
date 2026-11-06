@@ -76,7 +76,10 @@ def test_notify_and_caption_use_display_helper():
     # decision) reversed it — the notify resolves through the
     # heard-voice resolver (recap_voice_display_name, pinned above),
     # exactly like the on-demand delivery caption.
-    assert "recap_voice_display_name(tts_engine, gemini_voice, req.voice_slug)" in API_PY
+    # Batch BV deliberate pin update: same heard-voice resolver; the
+    # call now also passes BV's own_voice flag (formatted multi-line).
+    assert "recap_voice_display_name(" in API_PY
+    assert 'own_voice=bool(getattr(req, "voice_ref_path", None))' in API_PY
     assert "voice_slug=html.escape(str(req.voice_slug.capitalize()))" not in API_PY
     # The on-demand delivery caption reads the engine from recap_config.
     assert "_load_persisted_recap_state(db_job)" in API_PY
