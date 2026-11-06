@@ -14,8 +14,9 @@ NON_FLAGSHIP_FEMALE = ["manadi", "mamay", "mayoon", "machaw", "mathiri"]
 def test_flagships_keep_authored_processing():
     assert cv.persona_mastering_filter("komin") is None
     assert cv.persona_mastering_filter("mahnin") is None
-    # komyat resolves to komin, so it keeps flagship handling too.
-    assert cv.persona_mastering_filter("komyat") is None
+    # Batch BF (2026-11-06): komyat no longer resolves to komin — he
+    # has his own AI-designed voice, so he takes the standard male
+    # studio chain; pinned in test_batch_bf_2026_11_06.py.
     assert cv.persona_mastering_filter("unknown-persona") is None
     komin = cv.CURATED_VOICES["komin"]
     mahnin = cv.CURATED_VOICES["mahnin"]
@@ -58,6 +59,9 @@ def test_non_flagship_chain_is_the_spec_chain():
 
 
 def test_machaw_follows_mamay_mastering():
+    # Since Batch BF (2026-11-06) machaw resolves her OWN entry (the
+    # reference_id remap is gone); her gender/formant equal mamay's,
+    # so the two chains still match.
     assert cv.persona_mastering_filter("machaw") == cv.persona_mastering_filter("mamay")
 
 

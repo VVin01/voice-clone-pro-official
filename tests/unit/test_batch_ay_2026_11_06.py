@@ -222,6 +222,6 @@ def test_ay_welcome_strip_restyled_scoped():
     assert "switchTab('tab-recap')" in home_strip
 
 
-def test_ay_cache_token_r75():
-    assert INDEX_HTML.count("20261104_r75") == 4
+def test_ay_cache_token_r76():
+    assert INDEX_HTML.count("20261104_r76") == 4
     assert "20261104_r70" not in INDEX_HTML
