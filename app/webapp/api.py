@@ -10420,6 +10420,25 @@ async def get_admin_audit_log(
     ]
 
 
+@api_router.get("/admin/key-health")
+async def get_admin_key_health(
+    refresh: int = 0,
+    admin: User = Depends(require_admin),
+):
+    """Batch BN: API key health (HF/Gemini/Groq pools + Space stages)
+    for the Admin tab's Key Health screen.
+
+    The check itself lives in app.services.key_health (an in-process
+    port of the twice-daily cron checker): ~90 provider probes, so
+    results are cached ~15 min server-side; ``?refresh=1`` forces a
+    fresh round. The payload carries pool indexes, env-var labels and
+    provider-returned account names ONLY — never key material.
+    """
+    from app.services import key_health as _key_health
+
+    return await asyncio.to_thread(_key_health.get_key_health, bool(refresh))
+
+
 def _admin_category_filter(category: str = "") -> str:
     """Normalize the optional users-list category filter.
 
