@@ -16,6 +16,17 @@ the strongest survivors. The real zoo source cannot be downloaded
 in the sandbox (YouTube bot wall), so synthetic fixtures are the
 proof, exactly as the Batch AI suite proved its cases.
 
+Batch BM amendment (2026-11-06): guard (2), the prominence gate,
+is REMOVED — the BL drift investigation proved it kills genuine
+weak captions on busy real frames (the genuine GlunZpix30I strip:
+peak/median ratio ~1.4x against the gate's 4x floor). The zoo
+protection is now carried by (1), (3), and Batch BM's caption-zone
+drop (a band ships only when its whole extent lies in the top
+[0.00, 0.24] / bottom [0.58, 1.00] caption zones, applied BEFORE
+the cap per owner Option A). The BI-1 pins below were re-pinned at
+that level: same fixtures, same outcomes, different mechanism —
+each re-pin says so in place.
+
 BI-2: the user's own ON/OFF switch for auto-detect blur (owner
 request 2026-11-06 14:31) — recap form switch (default ON, persisted
 like every recap pref), a per-job boolean riding RecapConfigRequest
@@ -94,8 +105,13 @@ def test_scene_noise_matrix_yields_zero_bands():
     # all over the height (face / fence / jacket texture), several
     # slightly stronger patches, everything moving between samples
     # (dyn ratio high, so the static-drop rule cannot save us).
-    # No row stands out from the frame's own noise, so the
-    # prominence gate must reject every group.
+    # Batch BI separated this from captions with the prominence
+    # gate; Batch BM removed that gate (it killed genuine weak
+    # strips on busy real frames — see the module docstring) and
+    # the rejection is now positional: every row is "loose" here,
+    # so the texture collapses into ONE group spanning the whole
+    # height, whose padded/capped extent lands mid-picture
+    # (0.42-0.58) and is dropped by the caption-zone rule.
     S = np.zeros((12, H))
     for k in range(12):
         S[k, :] = 0.030 + 0.004 * ((k % 3) - 1)
@@ -122,16 +138,29 @@ def _caption_matrix() -> np.ndarray:
     return S
 
 
-def test_genuine_bottom_band_survives_prominence_gate():
+def test_genuine_bottom_band_survives():
+    # Renamed from test_genuine_bottom_band_survives_prominence_gate
+    # (Batch BM): the gate this pinned against is removed — it
+    # killed this very profile's real-file counterpart on busy
+    # frames (peak/median ~1.4x vs the 4x floor; BL drift
+    # investigation). The band survives on the Batch AI rules plus
+    # its in-zone (bottom) position.
     boxes = _subtitle_band_boxes(_caption_matrix())
     assert boxes, "the GlunZpix30I caption profile must still produce a band"
     assert any(_covers(b, 0.90, 0.955) for b in boxes), boxes
 
 
-def test_prominence_gate_compares_against_the_frames_own_noise():
-    # A noisy floor (median agg ~0.012 -> gate ~0.048): a band that
-    # clearly stands out (peak ~0.065) is kept; a mush band barely
-    # above the floor (peak ~0.033) is dropped.
+def test_weak_mid_picture_mush_dropped_by_zone_strong_bottom_kept():
+    # Re-pinned from test_prominence_gate_compares_against_the_
+    # frames_own_noise (Batch BM). Same fixture, same outcome,
+    # different mechanism: Batch BI separated the two bands by
+    # prominence (strong peak ~0.065 over the ~0.048 gate; mush
+    # ~0.033 under it). The gate is gone — it also killed genuine
+    # weak strips (ratio ~1.4x) — and Batch BM's caption-zone rule
+    # separates them by position instead: the mush band (rows
+    # 60-67, padded extent ~0.244-0.364) is mid-picture and is
+    # zone-dropped; the strong band (rows 150-157) is in the
+    # bottom zone and is kept.
     S = np.zeros((12, H))
     for k in range(12):
         S[k, :] = 0.012 if k % 2 == 0 else 0.008
@@ -185,22 +214,30 @@ def test_cluster_scorer_counts_thin_strokes_but_not_long_runs():
 # ── BI-1 (d): the 2-band cap ────────────────────────────────────────
 
 def test_band_cap_keeps_two_strongest():
+    # Batch BM (owner Decision 2, 2026-11-06): the fixture's bands
+    # were repositioned INTO the caption zones — the pre-BM
+    # strongest band sat mid-picture (rows 90-97, extent
+    # 0.394-0.514), where Batch BM's zone rule drops it before the
+    # cap ever ranks. Cap mechanics are unchanged; the weakest band
+    # now sits in the TOP zone, so its drop also proves the cap
+    # ranks within the zones (zone drop first, cap second —
+    # owner Option A ordering).
     S = _matrix()
 
     def band(y0, peak):
         for k in range(12):
             S[k, y0:y0 + 8] = peak if k % 2 == 0 else peak * 0.7
 
-    band(30, 0.10)
-    band(90, 0.20)
-    band(150, 0.15)
+    band(20, 0.10)   # top zone (extent ~0.044-0.164) — weakest
+    band(150, 0.20)  # bottom zone (extent ~0.694-0.814) — strongest
+    band(170, 0.15)  # bottom zone (extent ~0.794-0.914)
     logs: list[str] = []
     boxes = _subtitle_band_boxes(S, log=logs.append)
     assert len(boxes) == 2, boxes
     ys = sorted(b["y"] for b in boxes)
-    assert any(abs(y - 0.49) < 0.06 for y in ys), ys  # the 0.20 band
-    assert any(abs(y - 0.79) < 0.06 for y in ys), ys  # the 0.15 band
-    assert not any(abs(y - 0.19) < 0.06 for y in ys), ys  # 0.10 dropped
+    assert any(abs(y - 0.754) < 0.06 for y in ys), ys  # the 0.20 band
+    assert any(abs(y - 0.854) < 0.06 for y in ys), ys  # the 0.15 band
+    assert not any(abs(y - 0.104) < 0.06 for y in ys), ys  # 0.10 dropped
     assert any("2-band cap" in m for m in logs), logs
 
 

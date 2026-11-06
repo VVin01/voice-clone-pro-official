@@ -2954,20 +2954,53 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
       GlunZpix30I card vs >= 0.19 for real dialogue). When every band
       is static (looped image, slideshow), all are kept, as before.
 
-    Batch BI (2026-11-06) adds two guards against the opposite
+    Batch BI (2026-11-06) adds guards against the opposite
     failure — a caption-FREE source ("Me at the zoo", noisy 240p)
     whose scene texture (face, fence rails, jacket) seeded FOUR
     dynamic bands and shipped with full-width blur strips across
     the picture:
 
-    * Prominence gate: a group's peak-row agg must also clear
-      4x the median agg across ALL rows of the matrix. A genuine
-      caption band stands out from its own frame's glyph noise;
-      uniform scene mush sits at the same level as the rows around
-      it, so no group in a texture-only frame can clear the gate.
+    * Text-cluster scoring (in detect_source_subtitle_bands): only
+      bright-with-outline pixels in word-stroke-like horizontal
+      runs count toward a row — see _frame_glyph_row_scores.
     * Band cap: at most 2 bands ship. Real sources carry one
       caption strip (occasionally two); anything beyond the two
       strongest survivors is detection noise by definition.
+
+    Batch BM (2026-11-06) removes BI's third guard and adds the
+    zone rule (Batch BL spec, owner-approved, Option A ordering):
+
+    * REMOVED — the prominence gate (a group's peak-row agg had to
+      clear 4x the median agg across ALL rows of the matrix). The
+      BL drift investigation proved it kills genuine captions on
+      busy real frames: on the production-geometry crop of
+      GlunZpix30I the genuine strip's rows seed and group cleanly
+      (peak agg 0.0306, pers 0.58) but the frame's median agg is
+      0.0222 — a full scene's texture, not a noise floor — so the
+      gate's floor of 0.0889 sat ~2.9x above the strip and the
+      band died (report: fix-bl-work/report-build.md). A weak
+      intermittent strip on a busy frame has a peak/median ratio
+      of only ~1.4x, so no purely median-relative gate weak
+      enough to pass it is meaningfully a gate.
+    * Caption-zone drop, applied BEFORE the cap: a surviving band
+      ships only when its whole extent (y ± h/2, source fractions)
+      lies inside a caption zone — top [0.00, 0.24] or bottom
+      [0.58, 1.00] (owner-moved edge; the BL spec's 0.60 left a
+      pinned genuine band only 0.0066 of clearance). Source
+      captions anchor to the picture's edges; the zoo bands sat
+      mid-picture (extents ~0.15–0.28 and ~0.35–0.50 — a talking
+      face) and the zone drop kills them by position, which cannot
+      misfire on an edge-anchored dialogue strip. The order
+      matters (owner Option A, 2026-11-06): a weak strip's peak
+      is an order of magnitude below busy-frame texture, so if
+      the cap ranked by strength first, out-of-zone texture would
+      spend both cap slots and evict the strip — measured on the
+      GlunZpix30I crop, where cap-first returned [] (the strip
+      ranked 4th of 4 dynamic bands) and zone-first ships it.
+      The rule governs static bands too (owner Decision 1: no
+      static exemption — a mid-picture static overlay is not
+      blurred either; in-zone static bands are still kept exactly
+      as Batch AI designed).
     """
     import numpy as np
 
@@ -2983,9 +3016,6 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
     loose = (pers >= 0.15) & (agg >= 0.006)
     if not strict.any():
         return []
-    # Batch BI prominence floor: frame-relative, so a uniformly
-    # textured frame raises its own bar (see the docstring).
-    prominence_floor = 4.0 * float(np.median(agg))
     # Scan the FULL frame height (blur safefix 2026-11-03): source
     # captions also sit at the TOP of the frame in short dramas and
     # social clips, and a scan that started at 40% of the height
@@ -3008,9 +3038,6 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
         peak_row = max(grp, key=lambda y: float(agg[y]))
         if float(agg[peak_row]) < 0.02:
             continue  # weak smear, not a subtitle band
-        if float(agg[peak_row]) < prominence_floor:
-            continue  # Batch BI: no more prominent than the frame's
-            # own glyph noise — scene texture, not a caption band
         top = grp[0] / h_px
         bot = (grp[-1] + 1) / h_px
         core_h = bot - top
@@ -3043,8 +3070,34 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
         survivors = dynamic
     else:
         survivors = [(box, peak) for box, _ratio, peak in kept]
+    # Batch BM caption-zone drop (Batch BL spec, owner-approved
+    # 2026-11-06, Option A ordering): a band ships only when its
+    # WHOLE extent lies in a caption zone — source captions anchor
+    # to the picture's top or bottom edge, never the middle. This
+    # runs BEFORE the cap so out-of-zone texture cannot spend cap
+    # slots and evict a weak genuine strip (measured on the
+    # GlunZpix30I crop: cap-first returned [], zone-first ships
+    # the strip — see the docstring). It governs every band that
+    # reaches here, static ones included (owner Decision 1: no
+    # static exemption).
+    def _in_caption_zone(box: dict) -> bool:
+        lo = box["y"] - box["h"] / 2.0
+        hi = box["y"] + box["h"] / 2.0
+        return (lo >= 0.0 and hi <= 0.24) or (lo >= 0.58 and hi <= 1.0)
+
+    zoned_out = [(b, p) for b, p in survivors if not _in_caption_zone(b)]
+    if zoned_out:
+        log("🔍 Subtitle band(s) dropped by the caption-zone rule "
+            "(Batch BM — extent outside the top [0.00, 0.24] / "
+            "bottom [0.58, 1.00] caption zones): "
+            + ", ".join(
+                f"y={b['y']:.2f} h={b['h']:.2f} "
+                f"(extent {b['y'] - b['h'] / 2.0:.2f}–{b['y'] + b['h'] / 2.0:.2f})"
+                for b, _p in zoned_out))
+        survivors = [(b, p) for b, p in survivors if _in_caption_zone(b)]
     # Batch BI band cap: at most 2 bands ship — keep the two with
-    # the highest peak agg and log what was dropped.
+    # the highest peak agg and log what was dropped. (Batch BM: the
+    # cap now ranks only caption-zone survivors — see above.)
     if len(survivors) > 2:
         ranked = sorted(survivors, key=lambda bp: bp[1], reverse=True)
         dropped = ranked[2:]
@@ -3073,7 +3126,7 @@ def _clustered_glyph_row_scores(mask) -> "np.ndarray":
     (0.0241 -> 0.0120) and dropped it under the aggregator's peak
     floor, while the 14-px cap costs genuine bands nothing. Lone
     noise pixels still count, exactly as they did before Batch BI;
-    the aggregator's persistence/prominence gates handle them."""
+    the aggregator's persistence/peak gates handle them."""
     import numpy as np
 
     m = np.asarray(mask, dtype=bool)
@@ -3136,8 +3189,8 @@ def detect_source_subtitle_bands(
     with a dark outline nearby" (the classic hard-sub look; Batch BI: only pixels in
     word-stroke-like horizontal runs count — see _frame_glyph_row_scores), then aggregate
     the per-frame row scores with _subtitle_band_boxes (Batch AI: percentile aggregate,
-    two-tier candidates, static-overlay demotion; Batch BI: prominence gate + 2-band
-    cap — see its docstring).
+    two-tier candidates, static-overlay demotion; Batch BI: 2-band cap; Batch BM:
+    prominence gate removed, caption-zone drop added before the cap — see its docstring).
     Returns blur-box dicts in SOURCE-frame fractions ({x, y=center, w, h} of the
     source picture) — NOT canvas fractions. Callers must map each box through
     source_band_to_canvas_box() with the render layout before adding it to
