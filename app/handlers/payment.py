@@ -19,6 +19,7 @@ from app.services.payments import (
     create_payment_request,
     get_active_pricing_plans,
     get_payment_account_info,
+    get_plan_by_code,
     get_recent_payment_intent,
     package_recap_credits,
     save_payment_intent,
@@ -70,7 +71,28 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
 
     badge_map = {10: "💎", 30: "⭐", 60: "🔥"}
     buttons = []
+    # Batch BS: every catalogue plan now has a PricingPlan row (the
+    # pricing seeder fills them all in so the admin editor can list
+    # and edit all 8), so this DB-row loop renders ONLY the classic
+    # minute packs — the codes in _db_codes. Every other catalogue
+    # plan keeps the button its category branch builds below, with
+    # the DB price overlaid when a row exists (DB wins, exactly like
+    # payment submit; the branches used to read the catalogue price
+    # directly, which was only safe while those plans had no row to
+    # diverge from the catalogue).
+    _db_by_code = {p.code: p for p in plans}
+    _db_codes = {p.code for p in plans if p.code.startswith("MIN_")}
+
+    def _menu_price(entry: dict) -> int:
+        row = _db_by_code.get(entry["code"])
+        return row.price_mmk if row is not None else entry["price_mmk"]
+
     for p in plans:
+        if p.code not in _db_codes and get_plan_by_code(p.code) is not None:
+            # A catalogue plan whose button is built by its category
+            # branch below (recap / combined / Voice Pro) — rendering
+            # it here as well would duplicate the button (Batch BS).
+            continue
         badge = badge_map.get(p.minutes, "💳")
         tag = ""
         if p.minutes == 30:
@@ -89,19 +111,19 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
         if entry["category"] == "recap":
             buttons.append([
                 InlineKeyboardButton(
-                    text=t("pay_package_recap_btn", lang, credits=entry["recap_credits"], price=f"{entry['price_mmk']:,}"),
+                    text=t("pay_package_recap_btn", lang, credits=entry["recap_credits"], price=f"{_menu_price(entry):,}"),
                     callback_data=f"buy_pkg:{entry['code']}",
                 )
             ])
     # R40 item 15a: catalogue voice plans that are NOT DB minute packs
     # (Voice Pro, 250 min) previously had NO buy button anywhere in bot
     # chat — the plan was advertised in the header text but unbuyable.
-    _db_codes = {p.code for p in plans}
+    # (_db_codes is defined above the DB-row loop — Batch BS.)
     for entry in PLAN_CATALOGUE:
         if entry["category"] == "voice" and entry["code"] not in _db_codes:
             buttons.append([
                 InlineKeyboardButton(
-                    text=t("pay_package_btn", lang, badge="👑", minutes=entry["minutes"], price=f"{entry['price_mmk']:,}", tag=""),
+                    text=t("pay_package_btn", lang, badge="👑", minutes=entry["minutes"], price=f"{_menu_price(entry):,}", tag=""),
                     callback_data=f"buy_pkg:{entry['code']}",
                 )
             ])
@@ -109,7 +131,7 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
         if entry["category"] == "combined":
             buttons.append([
                 InlineKeyboardButton(
-                    text=t("pay_package_combined_btn", lang, minutes=entry["minutes"], credits=entry["recap_credits"], price=f"{entry['price_mmk']:,}"),
+                    text=t("pay_package_combined_btn", lang, minutes=entry["minutes"], credits=entry["recap_credits"], price=f"{_menu_price(entry):,}"),
                     callback_data=f"buy_pkg:{entry['code']}",
                 )
             ])

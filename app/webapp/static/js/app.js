@@ -11692,6 +11692,10 @@ async function loadAdminSettings() {
         setSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", s.gemini_fallback_1 || "gemini-3.5-flash");
         setSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", s.gemini_fallback_2 || "gemini-3.5-flash-lite");
         setSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", s.gemini_fallback_3 || "gemini-flash-lite-latest");
+        // Batch BS: the Groq Whisper (STT) model field — the GET
+        // pre-fills it with the current effective model.
+        const elGroqWhisper = document.getElementById("adm-groq-whisper-model");
+        if (elGroqWhisper) elGroqWhisper.value = s.groq_whisper_model || "";
 
         updateTutorialUI(s);
     } catch (e) {
@@ -11758,6 +11762,9 @@ async function saveGeminiModelSettings() {
         gemini_fallback_1: fb1,
         gemini_fallback_2: fb2,
         gemini_fallback_3: fb3,
+        // Batch BS: the Groq Whisper (STT) model rides the same
+        // model-settings save as the Gemini chain.
+        groq_whisper_model: document.getElementById("adm-groq-whisper-model")?.value?.trim() || "",
     };
 
     try {

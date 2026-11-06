@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -290,3 +291,32 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+GROQ_WHISPER_MODEL_DEFAULT = "whisper-large-v3-turbo"
+
+
+def get_groq_whisper_model() -> str:
+    """Effective Groq Whisper model: dynamic setting > env > default.
+
+    Batch BS: both transcription paths used to read the
+    GROQ_WHISPER_MODEL env directly, so the registered dynamic
+    setting of the same name — writable from the Admin Settings
+    screen since BS — could never take effect. The in-memory
+    ``settings.groq_whisper_model`` attribute already folds the
+    first two layers in the right order: pydantic initialises it
+    from the env (alias above), and the dynamic-settings overlay
+    (load_dynamic_settings / set_dynamic_setting) replaces it
+    whenever an admin-saved BotSetting row exists. A non-empty
+    attribute is therefore the dynamic value when one is set and
+    the env value otherwise; the raw env is re-checked only for
+    callers whose Settings object never saw it, and the historical
+    default closes the chain. When nothing is set anywhere the
+    result is byte-identical to the pre-BS env-only reads.
+    """
+    configured = str(getattr(settings, "groq_whisper_model", "") or "").strip()
+    if configured:
+        return configured
+    env_value = os.getenv("GROQ_WHISPER_MODEL", "").strip()
+    if env_value:
+        return env_value
+    return GROQ_WHISPER_MODEL_DEFAULT
