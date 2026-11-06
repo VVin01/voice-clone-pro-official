@@ -2621,11 +2621,16 @@ function renderCuratedVoices() {
         const isSelected = (v.id === state.selectedPersona);
         card.className = `persona-card ${isSelected ? "active" : ""}`;
         card.setAttribute("data-voice-id", v.id);
+        // Batch BG (§15): the name renders SHORT (own line) and the
+        // parenthetical category becomes its own line under it — the
+        // full label used to wrap mid-parenthesis at phone widths.
+        const cardCategory = personaCategoryName(v.name);
         card.innerHTML = `
             <div class="persona-header">
                 <span class="persona-avatar">${v.avatar}</span>
                 <div class="persona-meta">
-                    <span class="persona-name">${v.name}</span>
+                    <span class="persona-name">${personaShortName(v.name) || v.name}</span>
+                    ${cardCategory ? `<span class="persona-category">${cardCategory}</span>` : ''}
                     <span class="persona-badge">${v.badge}</span>
                 </div>
                 ${isSelected ? '<span class="selected-indicator">✓</span>' : ''}
@@ -2663,9 +2668,20 @@ function renderCuratedVoices() {
 function personaShortName(name) {
     // The picker label carries a parenthetical descriptor
     // ("ကိုမင်း (ရုပ်ရှင်ဇာတ်လမ်းပြောသူ)") that truncates mid-parenthesis at summary
-    // chip width; the chip shows the persona's SHORT name only. The
-    // picker itself keeps the full label.
+    // chip width; the chip shows the persona's SHORT name only. Since
+    // Batch BG the persona CARD also renders the short name on its own
+    // line, with the descriptor as a separate category line beneath it
+    // (personaCategoryName) — the full label no longer wraps
+    // mid-parenthesis inside the card either.
     return String(name || "").replace(/\s*[\(（][^\)）]*[\)）]\s*$/, "").trim();
+}
+
+function personaCategoryName(name) {
+    // Batch BG (§15): the parenthetical descriptor personaShortName
+    // strips — rendered by the persona card as its own smaller line
+    // under the name, never wrapped inline inside parentheses again.
+    const m = String(name || "").match(/[\(（]([^\)）]*)[\)）]\s*$/);
+    return m ? m[1].trim() : "";
 }
 
 function updateSelectedVoiceSummary() {

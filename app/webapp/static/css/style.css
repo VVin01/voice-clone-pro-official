@@ -4323,3 +4323,72 @@ select.studio-input {
 .hub-type-icon.tts { background: var(--sky-soft); }
 /* BB-4: quota fallback line affordance. */
 .tts-balance-retry { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   BATCH BG (2026-11-06) — PERSONA CARD TIDY (BD spec §15)
+   Owner's real-phone screenshot (live r76): "ဖုန်းမှာမသေသပ်" — the
+   Voice-tab persona cards wrapped their titles mid-parenthesis
+   ("ကိုသူရ (သတင်းနှင့် / Documentary)"), descriptions landed ragged and
+   the preview button's icon+label group OVERFLOWED the pill at phone
+   widths (measured −13.6px slack at 360px, my). The 430px panel audit
+   missed all of it: the defects are card-internal typography.
+   Restructure (renderCuratedVoices): SHORT name on its own line, the
+   parenthetical as a separate .persona-category line under it, badge
+   and description unchanged. Cards fill their grid row (height: 100%)
+   so the footer button shares one baseline across the row; the footer
+   bleeds into the card's side padding — the only honest room for the
+   button at 360px, where the card's content box is 118px and the
+   resting label alone measures 94.5px at 12px Padauk Bold.
+   Every value below is proven by measure_persona_cards.py (PIL/Padauk
+   sweep at 360/390/430, my+en, all 12 personas, all 3 label states):
+   resting-label slack +6.5/+21.5/+41.5px (my) after this block. ════ */
+
+/* Equal-height rows, explicit: the flex column fills the row so the
+   description flexes and the footer button pins to one baseline. */
+.persona-card { height: 100%; }
+
+/* Header rhythm: avatar → meta gap and the meta's internal gaps move
+   to the §1 scale (8 / 4). */
+.persona-header { gap: var(--s2); }
+.persona-meta { gap: var(--s1); }
+
+/* Name: the typography scale's 15px card-title step, ONE line — every
+   short name measures ≤ the 118px card measure at 360px in both
+   languages, so nowrap never reaches the ellipsis in practice; the
+   ellipsis stays only as a guard for future longer names. */
+.persona-name {
+    font-size: 15px; line-height: 1.5;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Category: the former parenthetical as its own smaller line. It may
+   take a second line at narrow widths — balanced, as a whole phrase
+   block, never again split inside parentheses behind the name. */
+.persona-category {
+    font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
+    font-size: 12px; font-weight: 600; line-height: 1.5;
+    color: var(--text-2); text-wrap: balance;
+}
+
+/* Badge + description: line-heights complete the §11 rhythm (badge
+   1.5; Burmese description 1.75 under lang-my). */
+.persona-badge { line-height: 1.5; }
+body.lang-my .persona-desc { line-height: 1.75; }
+
+/* Footer: bleeds into the card's side padding so the button spans the
+   card's full inner width (see the measured note above). */
+.persona-footer-row { margin-inline: calc(-1 * var(--s3)); }
+
+/* Preview button: §4's 44px floor, the §1 padding step (8px), label
+   up from the BB V-3 shrink (11.5px) to the 12px scale step now that
+   the room exists. The label may shrink only via its trailing
+   ellipsis, and only the transient loading label at 360px ever does
+   (measured ≈14px of its trailing "…"; resting/playing labels fit
+   whole at every swept width). */
+.voice-preview-btn {
+    min-height: 44px; padding: var(--s2); gap: 5px; font-size: 12px;
+}
+.voice-preview-btn .preview-btn-icon { width: 18px; height: 18px; }
+.voice-preview-btn .preview-btn-label {
+    line-height: 1.5; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}

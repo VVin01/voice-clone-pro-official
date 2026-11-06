@@ -3963,7 +3963,11 @@ async def get_voice_sample_audio(
         return FileResponse(
             str(sample_file),
             media_type="audio/mpeg",
-            headers={"Cache-Control": "public, max-age=86400"},
+            # Batch BG-5: no-cache (ETag revalidation) — the old
+            # public max-age=86400 pinned the previous sample file in
+            # phone/webview caches for 24h, so after the Batch BF voice
+            # swap owners kept hearing the OLD voices for a day.
+            headers={"Cache-Control": "no-cache"},
         )
 
     # 2. Check DB VoiceModel sample_audio_path (SYSTEM models; personal
@@ -3977,7 +3981,8 @@ async def get_voice_sample_audio(
         return FileResponse(
             str(fallback),
             media_type="audio/mpeg",
-            headers={"Cache-Control": "public, max-age=86400"},
+            # Batch BG-5: same no-cache rule as the static return above.
+            headers={"Cache-Control": "no-cache"},
         )
 
     raise HTTPException(status_code=404, detail="Sample audio not found")

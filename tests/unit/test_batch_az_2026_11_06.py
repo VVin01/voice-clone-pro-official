@@ -263,6 +263,6 @@ def test_az_fallbacks_cover_the_new_layers():
     assert ".recap-steps-capsule { background: rgba(255, 255, 255, 0.97); }" in rt
 
 
-def test_az_cache_token_is_r77():
-    assert INDEX_HTML.count("20261104_r77") == 4
+def test_az_cache_token_is_r78():
+    assert INDEX_HTML.count("20261104_r78") == 4
     assert "20261104_r71" not in INDEX_HTML
