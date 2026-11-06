@@ -172,5 +172,5 @@ def test_recap_voice_cards_not_restructured():
 # ── BG-7: token ──────────────────────────────────────────────────────
 
 def test_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r83") == 4
+    assert INDEX_HTML.count("?v=20261104_r84") == 4
     assert "20261104_r76" not in INDEX_HTML
