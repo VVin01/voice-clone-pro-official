@@ -74,22 +74,26 @@ def test_curated_count_stays_twelve_and_all_human():
         assert not any(b in shown for b in banned), vid
 
 
-def test_converted_voices_remap_to_existing_human_voices():
-    # Same slot id + name kept; underlying VoxCPM2 voice is an existing
-    # human persona. No new audio file or model id was invented.
+def test_converted_voices_have_own_references_since_batch_bf():
+    # Batch BF (2026-11-06) supersedes the 2026-10-29 remap pinned
+    # here before: komyat and machaw keep their slot id + name but now
+    # carry their OWN AI-designed VoxCPM2 voices — no reference_id,
+    # and reference audio + transcript are each slot's own.
     komyat = get_curated_voice("komyat")
-    assert komyat["reference_id"] == "komin"
+    assert "reference_id" not in komyat
     assert get_curated_voice("komin") is not None
     machaw = get_curated_voice("machaw")
-    assert machaw["reference_id"] == "mamay"
+    assert "reference_id" not in machaw
     assert get_curated_voice("mamay") is not None
-    # Reference audio + transcript come from the human persona.
+    # Reference audio + transcript come from the slot itself now.
     path, text = get_persona_reference("komyat")
     k_path, k_text = get_persona_reference("komin")
-    assert path == k_path and text == k_text
+    assert path != k_path and text != k_text
+    assert path.endswith("komyat.wav")
     m_path, m_text = get_persona_reference("machaw")
     y_path, y_text = get_persona_reference("mamay")
-    assert m_path == y_path and m_text == y_text
+    assert m_path != y_path and m_text != y_text
+    assert m_path.endswith("machaw.wav")
 
 
 @pytest.mark.asyncio

@@ -312,6 +312,6 @@ def test_au_no_new_i18n_key_for_quality_lock():
     )
 
 
-def test_au_static_cache_token_is_r75():
-    assert INDEX_HTML.count("20261104_r75") == 4
+def test_au_static_cache_token_is_r76():
+    assert INDEX_HTML.count("20261104_r76") == 4
     assert "20261104_r67" not in INDEX_HTML

@@ -19,6 +19,21 @@ display name/description/badge/avatar are human. No new audio file
 or model id was created, and nothing was re-recorded or re-trained —
 this is a remap of existing human voices onto the same slots.
 The total count stays 12.
+
+Update (2026-11-06, Batch BF): komyat and machaw no longer borrow
+another persona's voice. Each now carries its OWN AI-designed VoxCPM2
+voice (designed, cloned and owner-approved on 2026-11-06; see
+PERSONA_REFERENCE_SOURCES), so the "reference_id" remap above has
+been removed — reference audio and transcript resolve per-slot. The
+same batch also replaced the reference voices of kozayar, kophone
+and mayoon with AI-designed ones, tempo-adjusted koaung's FLEURS
+reference, and pointed mahnin at a pause-edited cut of her flagship
+reference. Two owner verdicts landed after the initial build and are
+folded into the same batch: komyat's sample and design reference
+were pause-compressed (voiced audio untouched), and kothura's
+FLEURS voice was replaced by a new AI-designed voice (v5 candidate
+A, a bright news-anchor design). No persona's text, control
+instruction, cfg or mastering parameters changed.
 """
 
 from __future__ import annotations
@@ -229,11 +244,10 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-3Hz",
         "rate_offset": 10,
         "formant_ratio": 0.96,
-        # Human-voice remap (2026-10-29): this slot was a ghost-story
-        # character; its VoxCPM2 reference audio + transcript now come
-        # from komin, an existing male human storyteller. Slot id and
-        # name are kept; no new audio was recorded.
-        "reference_id": "komin",
+        # Own voice (2026-11-06, Batch BF): this slot was a ghost-story
+        # character remapped onto komin's voice in 2026-10-29; it now
+        # carries its own AI-designed VoxCPM2 voice + reference (see
+        # PERSONA_REFERENCE_SOURCES), so no reference_id remains.
         "sample_text": "မင်္ဂလာပါခင်ဗျာ။ ကျွန်တော် ကိုမြတ်ပါ။ စိတ်ဝင်စားဖွယ် ဇာတ်လမ်းများကို ရှင်းလင်းနွေးထွေးစွာ ပြောပြပေးသွားပါ့မယ်။",
         "af_filter": (
             "asetrate=42336,aresample=44100,atempo=1.0417,deesser=i=0.5:m=0.5:f=0.5:s=o,highpass=f=70,equalizer=f=130:width_type=o:w=1:g=3.0,equalizer=f=3200:width_type=o:w=1:g=1.5,equalizer=f=7200:width_type=q:w=2:g=-3.5,loudnorm=I=-15:TP=-1.0:LRA=7"
@@ -306,11 +320,11 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "+2Hz",
         "rate_offset": 12,
         "formant_ratio": 1.025,
-        # Human-voice remap (2026-10-29): this slot was an anime/cartoon
-        # character; its VoxCPM2 reference audio + transcript now come
-        # from mamay, an existing female human friendly guide. Slot id
-        # and name are kept; no new audio was recorded.
-        "reference_id": "mamay",
+        # Own voice (2026-11-06, Batch BF): this slot was an
+        # anime/cartoon character remapped onto mamay's voice in
+        # 2026-10-29; it now carries its own AI-designed VoxCPM2 voice
+        # + reference (see PERSONA_REFERENCE_SOURCES), so no
+        # reference_id remains.
         "sample_text": "မင်္ဂလာပါရှင်။ ကျွန်မ မချောပါ။ ဗီဒီယိုများနှင့် လမ်းညွှန်များကို ဖော်ရွေရှင်းလင်းစွာ ပြောပြပေးသွားပါ့မယ်။",
         "af_filter": (
             "asetrate=45203,aresample=44100,atempo=0.9756,deesser=i=0.5:m=0.5:f=0.5:s=o,highpass=f=70,equalizer=f=240:width_type=o:w=1:g=1.8,equalizer=f=3500:width_type=o:w=1:g=1.5,equalizer=f=7200:width_type=q:w=2:g=-3.5,loudnorm=I=-15:TP=-1.0:LRA=7"
@@ -348,22 +362,40 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
 }
 
 
-# Real human reference clips (2026-10-29 rebuild): personas listed here
-# were rebuilt on openly licensed corpus recordings (see
-# PERSONA_REFERENCE_SOURCES). When a persona has an entry and the wav +
-# transcript sidecar exist, job cloning uses the REAL reference instead
-# of the preview sample mp3. komin/mahnin have no entry (owner-approved,
-# unchanged); komyat resolves to komin (unchanged) and machaw resolves
-# to mamay, so machaw follows mamay's real reference automatically.
+# Reference clips (2026-10-29 rebuild, 2026-11-06 Batch BF): when a
+# persona has an entry here and the wav + transcript sidecar exist,
+# job cloning uses that reference instead of the preview sample mp3.
+# The 2026-10-29 rebuild put eight personas on openly licensed corpus
+# recordings. Batch BF (2026-11-06) replaced five references with
+# AI-designed VoxCPM voices created in-house and owner-approved
+# (kozayar, komyat, kophone, mayoon, machaw — komyat and machaw
+# previously borrowed komin's / mamay's references and now have their
+# own; kothura's FLEURS reference was likewise replaced by an
+# AI-designed voice, v5 candidate A, approved later the same day),
+# tempo-adjusted koaung's FLEURS reference, and gave flagship
+# mahnin an entry pointing at a pause-edited cut of her own flagship
+# reference (her sample mp3 previously doubled as her reference).
+# komin has no entry (owner-approved, unchanged) and still resolves
+# to his preview sample.
 PERSONA_REFERENCE_SOURCES: Dict[str, Dict[str, str]] = {
-    "kothura": {"dataset": "Google FLEURS my_mm", "license": "CC-BY 4.0"},
-    "koaung": {"dataset": "Google FLEURS my_mm", "license": "CC-BY 4.0"},
-    "kozayar": {"dataset": "Google FLEURS my_mm", "license": "CC-BY 4.0"},
-    "kophone": {"dataset": "Google FLEURS my_mm", "license": "CC-BY 4.0"},
+    "kothura": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
+    "koaung": {
+        "dataset": "Google FLEURS my_mm",
+        "license": "CC-BY 4.0",
+        "note": "Reference tempo-adjusted (atempo x1.35, 2026-11-06) to the house pace standard; transcript unchanged.",
+    },
+    "kozayar": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
+    "kophone": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
     "manadi": {"dataset": "OpenSLR SLR80 (Burmese Speech Corpus)", "license": "CC-BY-SA 4.0"},
     "mamay": {"dataset": "OpenSLR SLR80 (Burmese Speech Corpus)", "license": "CC-BY-SA 4.0"},
-    "mayoon": {"dataset": "OpenSLR SLR80 (Burmese Speech Corpus)", "license": "CC-BY-SA 4.0"},
+    "mayoon": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
     "mathiri": {"dataset": "OpenSLR SLR80 (Burmese Speech Corpus)", "license": "CC-BY-SA 4.0"},
+    # Added 2026-11-06 (Batch BF): own AI-designed references for the
+    # two formerly remapped slots, and flagship mahnin's pause-edited
+    # reference.
+    "komyat": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
+    "machaw": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
+    "mahnin": {"dataset": "In-house flagship voice (pause-edited reference, 2026-11-06)", "license": "AI-generated in-house — no third-party recording"},
 }
 
 
@@ -433,8 +465,12 @@ def persona_mastering_filter(persona_id: str) -> Optional[str]:
     Returns None for the flagship personas (komin/mahnin — their
     owner-approved processing stays exactly as authored) and for
     unknown ids, so callers fall back to their previous behaviour.
-    Remapped personas (komyat -> komin, machaw -> mamay) resolve to
-    their human reference persona first, like get_persona_reference().
+    A persona carrying "reference_id" would resolve to that persona
+    first, like get_persona_reference(); since Batch BF (2026-11-06)
+    no persona carries one — komyat and machaw have their own voices
+    now, so komyat takes the standard male studio chain here (his
+    gender/formant match komin's) instead of inheriting komin's
+    flagship exemption.
     """
     info = get_curated_voice(persona_id)
     if not info:
