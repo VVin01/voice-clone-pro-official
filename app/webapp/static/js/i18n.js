@@ -9,6 +9,7 @@ const translations = {
         brand_title: "VOICE CLONE",
         brand_subtitle: "STUDIO",
         btn_tutorial: "လမ်းညွှန်",
+        lang_toggle_title: "ဘာသာစကား ပြောင်းရန်",
         tutorial_banner_title: "အသုံးပြုနည်း ဗီဒီယိုလမ်းညွှန်",
         tutorial_banner_desc: "Voice Clone စတင်နည်း အဆင့်ဆင့်ကို ဗီဒီယိုဖြင့် ကြည့်ပါ",
         recap_tutorial_title: "Movie Recap ဖန်တီးနည်း လမ်းညွှန်",
@@ -987,6 +988,7 @@ const translations = {
         brand_title: "VOICE CLONE",
         brand_subtitle: "STUDIO",
         btn_tutorial: "Guide",
+        lang_toggle_title: "Switch language",
         tutorial_banner_title: "Getting-Started Video Guide",
         tutorial_banner_desc: "Watch the step-by-step guide to your first Voice Clone",
         recap_tutorial_title: "Movie Recap Guide",
@@ -1990,10 +1992,15 @@ function setLanguage(lang) {
     document.body.classList.toggle("lang-my", lang === "my");
     document.body.classList.toggle("lang-en", lang === "en");
 
-    // Update toggle button text
+    // Update toggle button text. Batch BA: the label is written as
+    // flag + text spans (same visible text as before) so the ≤430px
+    // header compaction can hide the text span without ever cutting
+    // a glyph — a flat text node cannot be partially hidden.
     const langBtn = document.getElementById("btn-lang-toggle");
     if (langBtn) {
-        langBtn.innerText = lang === "my" ? "🇲🇲 မြန်မာ" : "🇬🇧 EN";
+        langBtn.innerHTML =
+            '<span class="lang-flag" aria-hidden="true">' + (lang === "my" ? "🇲🇲" : "🇬🇧") + "</span>" +
+            '<span class="lang-btn-text" id="lang-btn-text">' + (lang === "my" ? "မြန်မာ" : "EN") + "</span>";
     }
 
     // Apply to all elements with data-i18n

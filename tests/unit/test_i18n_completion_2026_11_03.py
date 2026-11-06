@@ -123,7 +123,10 @@ APP_JS_LITERAL_ALLOWLIST = {
 # index.html exceptions: the language switcher labels itself, and the
 # two admin tutorial-title inputs whose PLACEHOLDER shows a server-side
 # data default (a stored title value, not UI copy).
-HTML_UNWIRED_ALLOW_IDS = {"btn-lang-toggle", "adm-tut-voice-title", "adm-tut-recap-title"}
+# Batch BA (2026-11-06): "lang-btn-text" is the switcher's own label
+# span inside btn-lang-toggle, split out so the ≤430px header
+# compaction can hide it whole — same self-labelling exception.
+HTML_UNWIRED_ALLOW_IDS = {"btn-lang-toggle", "lang-btn-text", "adm-tut-voice-title", "adm-tut-recap-title"}
 
 
 # ── i18n.js parsing (same block approach as test_upload_ux) ─────────
@@ -441,5 +444,5 @@ def test_server_progress_labels_use_locales():
 # ── (g) cache-bust version ───────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261104_r73") == 4
+    assert INDEX_HTML.count("?v=20261104_r74") == 4
     assert "20261103_r41" not in INDEX_HTML

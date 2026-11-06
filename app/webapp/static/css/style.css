@@ -1597,11 +1597,9 @@ select.studio-input { min-height: 50px; }
 .badge-engine.voxcpm { background: var(--violet-soft); color: var(--violet); }
 .preview-logo-watermark.top-right { position: static; }
 
-/* ── Narrow screens: header tutorial pill collapses to icon-only ────── */
-@media (max-width: 480px) {
-    .tutorial-pill-btn { width: 38px; padding: 5px 0; justify-content: center; }
-    .tutorial-pill-btn .tutorial-btn-text { display: none; }
-}
+/* ── Narrow screens: the header tutorial pill's icon-only collapse
+   moved to the Batch BA ≤430px block at the end of this file (the
+   full labelled form now returns above 430px, per BA-1). ─────────── */
 
 /* ── Final fixes: bare inputs + VIP stat scale ──────────────────────── */
 input[type="text"], input[type="url"], input[type="number"], input[type="search"], input[type="tel"] {
@@ -4193,4 +4191,42 @@ select.studio-input {
     .studio-confirm-card, .gate-lock-card, .live-jobs-sheet-card,
     .submit-confirm-card { animation: none; }
     .studio-toast .toast-progress { animation: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   BATCH BA (2026-11-06) — Header phone-width fit (BA-1)
+   At ≤430px the .top-nav overflowed: row 1 (brand + actions) ran
+   ~4px over at 360px and the user-pill row ran over whenever the
+   balance values were long (a 4-digit minute balance pushed it to
+   ~383px), cutting the 🎬 chip at the right edge and the language
+   label mid-text. Compaction only — no element removed, no id,
+   behaviour, payload or navigation change; full labelled form
+   returns above 430px. Nothing here may cut a glyph: text spans
+   hide whole or not at all.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 430px) {
+    /* Header side padding tightens one step on the spacing scale. */
+    .top-nav { padding-inline: var(--s2); }
+    /* Brand compacts: the STUDIO subtitle hides; the VOICE CLONE
+       wordmark, PRO tag and logo stay whole. */
+    .sub-brand { display: none; }
+    /* Guide + language become compact icon buttons (the guide's
+       collapse moves here from the old ≤480px block): 40×40 hit
+       areas, icons whole, text spans hidden whole — never clipped.
+       Their titles (data-i18n-title) keep the labels reachable. */
+    .tutorial-pill-btn, .lang-pill-btn {
+        width: 40px; min-height: 40px; padding: 5px 0;
+        justify-content: center; flex-shrink: 0;
+    }
+    .tutorial-pill-btn .tutorial-btn-text,
+    .lang-pill-btn .lang-btn-text { display: none; }
+    /* User-pill row tightens: pill padding one step in, the ADMIN /
+       FREE badge text shrinks to the 10px floor (never below,
+       never clipped), LIVE padding tightens, and the balance chips
+       keep their AZ-10.1 glass-pill form with tighter inline
+       padding — icons + values stay whole. */
+    .user-pill { padding: var(--s2); }
+    .vip-badge { font-size: 10px; padding: 2px 6px; }
+    .live-dot { padding: 2px 6px; }
+    .bal-chip { padding: 6px 8px; }
 }
