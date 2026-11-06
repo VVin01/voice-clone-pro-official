@@ -264,5 +264,5 @@ def test_az_fallbacks_cover_the_new_layers():
 
 
 def test_az_cache_token_is_r79():
-    assert INDEX_HTML.count("20261104_r86") == 4
+    assert INDEX_HTML.count("20261104_r87") == 4
     assert "20261104_r71" not in INDEX_HTML

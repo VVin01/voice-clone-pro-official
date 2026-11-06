@@ -742,5 +742,5 @@ def test_action_fallback_errors_are_localized():
 
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("20261104_r86") == 4
+    assert INDEX_HTML.count("20261104_r87") == 4
     assert "20261103_r44" not in INDEX_HTML

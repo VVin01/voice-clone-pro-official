@@ -590,7 +590,18 @@ function refreshStickyCtas() {
         btn.disabled = !!src.disabled;
         const recapBlocked = p.src === "btn-start-recap" && recapJobActive();
         if (p.src === "btn-start-recap") src.classList.toggle("hidden", recapBlocked);
-        bar.classList.toggle("hidden", recapBlocked || !(tabActive && stickyCtaInView[p.src] === false));
+        // Batch BO (owner 2026-11-06 19:56): the recap 1-Click CTA
+        // shows ONLY while the wizard's final step (Step 4) is the
+        // current step. The source button lives inside the Step 4
+        // card, so on Steps 1–3 it sits off-screen and the sticky
+        // bar would otherwise float the create action over the
+        // earlier steps. The gate COMBINES with the AK job-active
+        // hide and the tab/scroll conditions — it replaces none of
+        // them — and showRecapStep (the wizard's one door) calls
+        // back into this refresh on every step change, so boot,
+        // forward nav, back nav and chip taps all obey it.
+        const recapStepGate = p.src === "btn-start-recap" && recapCurrentStep !== 4;
+        bar.classList.toggle("hidden", recapBlocked || recapStepGate || !(tabActive && stickyCtaInView[p.src] === false));
     });
 }
 window.refreshStickyCtas = refreshStickyCtas;
@@ -4313,6 +4324,12 @@ function showRecapStep(n) {
         if (els.card) els.card.classList.toggle("hidden", m !== n);
     });
     refreshRecapStepIndicator();
+    // Batch BO: every step change re-applies the sticky-CTA step
+    // gate — the 1-Click CTA bar may show only while Step 4 is the
+    // current step (see refreshStickyCtas). This is the one door,
+    // so boot (initRecapSteps), Continue buttons, chip taps and
+    // the source-flow auto-advance all pass through it.
+    refreshStickyCtas();
     // Advance animation (AZ-9): the newly-current segment pops once
     // as it expands into the gradient pill.
     const currentBtn = document.querySelector('#recap-steps-nav [data-step-toggle="' + n + '"]');
