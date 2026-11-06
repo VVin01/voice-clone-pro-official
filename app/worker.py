@@ -284,6 +284,9 @@ async def process_single_job(
         await tracker.update_step(3)
         await tracker.start_ticker(step=3)
         used_fallback = False
+        # Batch BU: same treatment for the reference auto-trim flag —
+        # read from the engine after the try/finally below.
+        reference_trimmed = False
         # Initialized BEFORE the try (audit fix 2026-11-03): both are
         # read after the try/finally below (the engine fallback flag
         # and the stage-4 truncation gate), so a failure constructing
@@ -394,6 +397,11 @@ async def process_single_job(
         # only when the engine raised into the except block above.
         if getattr(engine_inst, "last_fallback_used", False):
             used_fallback = True
+        # Batch BU: the engine cloned from a trimmed reference when
+        # the uploaded sample exceeded the 50 s Space cap — the
+        # delivery note below must disclose that too.
+        if getattr(engine_inst, "last_reference_trimmed", False):
+            reference_trimmed = True
 
         # Stage 4: Preparing Output and Deducting Balance
         await tracker.update_step(4)
@@ -451,6 +459,11 @@ async def process_single_job(
             # Persist the fallback flag on the job result so the Mini App
             # job status/history can show the fallback notice as well.
             job.engine = "edge_fallback"
+        if reference_trimmed:
+            # Batch BU: persist the trim flag on the job result so the
+            # Mini App job status/history can show the trim note as
+            # well (mirrors the fallback flag above).
+            job.reference_trimmed = True
 
         # Preserve the generated audio in permanent outputs storage for Mini App & API downloads.
         # A persistence failure now FAILS the job (the failure path
@@ -491,6 +504,7 @@ async def process_single_job(
         if bot and target_chat_id:
             caption_model_name = display_name or getattr(model, "name", "Standard")
             fallback_note = t("worker_fallback_note", lang) if used_fallback else ""
+            trim_note = t("worker_ref_trim_note", lang) if reference_trimmed else ""
             if getattr(job, "auto_deliver", False):
                 try:
                     audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
@@ -512,7 +526,7 @@ async def process_single_job(
                         ])
                         await bot.send_message(
                             chat_id=target_chat_id,
-                            text=t("clone_audio_too_large_text", lang, job_id=job.id) + fallback_note,
+                            text=t("clone_audio_too_large_text", lang, job_id=job.id) + fallback_note + trim_note,
                             reply_markup=kb,
                             parse_mode="HTML",
                         )
@@ -534,7 +548,7 @@ async def process_single_job(
                             completed_status=t("status_completed", lang),
                             model_name=html.escape(str(caption_model_name)),
                             duration_seconds=duration_seconds,
-                        ) + fallback_note
+                        ) + fallback_note + trim_note
                         await bot.send_audio(
                             chat_id=target_chat_id,
                             audio=audio_file,
@@ -568,7 +582,7 @@ async def process_single_job(
                         model_name=html.escape(str(caption_model_name)),
                         duration=duration_seconds,
                         job_id=job.id,
-                    ) + fallback_note
+                    ) + fallback_note + trim_note
                     await bot.send_message(
                         chat_id=target_chat_id,
                         text=notify_text,

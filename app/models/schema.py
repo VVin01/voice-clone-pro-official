@@ -557,6 +557,12 @@ class Job(Base):
     status_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     result_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Batch BU: True when the job's clone reference exceeded the
+    # VoxCPM Space 50 s cap and the engine cloned from its first 45 s
+    # instead. The persisted honesty flag behind the delivery note and
+    # the Mini App result/history trim note — the same role
+    # engine == "edge_fallback" plays for the fallback disclosure.
+    reference_trimmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # JSON blob for recap jobs: the full submit-time RecapConfigRequest
     # plus credit state (credits_charged / credit_deducted / phase /
     # is_vip), so a restart/deploy re-dispatch restores the job exactly

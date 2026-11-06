@@ -105,6 +105,78 @@ SPACE_API_ENDPOINTS = {
 }
 
 
+# Batch BU: VoxCPM Spaces reject a clone reference longer than 50 s
+# ("Reference audio is too long. Please upload audio no longer than
+# 50 seconds."). Pre-BU the intake never adapted the reference, so a
+# user who uploaded a longer sample failed on EVERY admitting space
+# and the job silently fell back to the Edge persona voice (production
+# voice job ed0ff7fe, 2026-11-06: the user paid for 15 s of a voice
+# that was not their clone). The engine now probes the reference once
+# per synthesis and, when it exceeds the cap, clones from its first
+# REFERENCE_TRIM_SECONDS instead — see _adapt_reference_for_clone.
+REFERENCE_MAX_SECONDS = 50.0
+REFERENCE_TRIM_SECONDS = 45.0
+
+
+def _probe_reference_duration_seconds(path: Path) -> Optional[float]:
+    """Float duration of a local audio file via ffprobe, or None.
+
+    Soft-fail by design: any probe problem (no ffprobe, unreadable
+    file, unparseable output) returns None and the caller proceeds
+    with the original reference — the trim check must never become a
+    new way for a working job to fail. The invocation mirrors
+    app/services/audio.py (Batch AJ / L21 protocol whitelist: local
+    files only). The codebase's other probes do not fit this call
+    site: audio.get_wav_duration_seconds raises on failure (billing
+    integrity, AJ/L4) and returns whole seconds, and
+    downloader.probe_local_media would drag yt_dlp into this
+    module's import graph.
+    """
+    try:
+        import subprocess
+
+        ffprobe_bin = shutil.which("ffprobe") or r"C:\ffmpeg\bin\ffprobe.exe"
+        res = subprocess.run(
+            [
+                ffprobe_bin, "-protocol_whitelist", "file,pipe",
+                "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            value = float(res.stdout.strip())
+            return value if value > 0 else None
+    except Exception:
+        pass
+    return None
+
+
+def _trim_reference_audio(src: Path, dst: Path, seconds: float) -> bool:
+    """Write the first ``seconds`` of ``src`` to ``dst`` as WAV.
+
+    Returns True only when a non-empty output file exists. Any ffmpeg
+    failure returns False and the caller falls back to the original
+    reference (today's behaviour).
+    """
+    try:
+        import subprocess
+
+        ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+        res = subprocess.run(
+            [
+                ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+                "-protocol_whitelist", "file,pipe",
+                "-i", str(src), "-t", f"{seconds:.1f}",
+                "-vn", "-c:a", "pcm_s16le", str(dst),
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+        return res.returncode == 0 and dst.is_file() and dst.stat().st_size > 0
+    except Exception:
+        return False
+
+
 def space_api_endpoints(space_name: str) -> dict:
     """Gradio endpoint names for one space (Batch AT, AT-3).
 
@@ -509,6 +581,55 @@ class VoxCPMEngine:
             return False
         return mem.token_dead(token) or mem.gate_blocked(space_name, token)
 
+    def _adapt_reference_for_clone(self, ref_path: Path) -> Path:
+        """Batch BU: return the reference path this call should use.
+
+        Probes the reference once; when it exceeds the VoxCPM Space
+        cap (REFERENCE_MAX_SECONDS) the clone runs from a trimmed
+        copy holding its first REFERENCE_TRIM_SECONDS, written into
+        the engine work dir — the job-scoped temp dir the caller
+        already owns, so the copy dies with the job's existing temp
+        lifecycle. The outcome is published on
+        ``last_reference_trimmed`` (+ the two duration fields) for
+        the caller's honesty surfaces, mirroring last_fallback_used.
+
+        Never raises and never blocks a working job: an unprobeable
+        reference, a failed trim, or any unexpected error returns the
+        ORIGINAL path and leaves the flags unset — byte-identical to
+        pre-BU behaviour. References at/under the cap (including every
+        curated persona sample) are returned untouched.
+        """
+        try:
+            duration = _probe_reference_duration_seconds(ref_path)
+            if duration is None or duration <= REFERENCE_MAX_SECONDS:
+                return ref_path
+            stat = ref_path.stat()
+            digest = hashlib.sha256(
+                f"{ref_path.resolve()}|{stat.st_size}|{int(stat.st_mtime)}".encode("utf-8")
+            ).hexdigest()[:16]
+            trimmed = self.work_dir / f"ref_trim_{digest}.wav"
+            if not (trimmed.is_file() and trimmed.stat().st_size > 0):
+                if not _trim_reference_audio(ref_path, trimmed, REFERENCE_TRIM_SECONDS):
+                    logger.warning(
+                        "VoxCPM reference trim failed for %s (%.1fs) — using the original reference",
+                        ref_path.name, duration,
+                    )
+                    return ref_path
+            self.last_reference_trimmed = True
+            self.last_reference_original_seconds = round(duration, 1)
+            self.last_reference_trimmed_seconds = REFERENCE_TRIM_SECONDS
+            self._log(
+                f"✂️ VoxCPM 2 Reference Audio trimmed: {duration:.1f}s exceeds the "
+                f"{REFERENCE_MAX_SECONDS:.0f}s Space limit — cloning from its first "
+                f"{REFERENCE_TRIM_SECONDS:.0f}s ({trimmed.name})"
+            )
+            return trimmed
+        except Exception as exc:
+            logger.warning(
+                "VoxCPM reference trim check failed (%s) — using the original reference", exc
+            )
+            return ref_path
+
     @classmethod
     def get_client(cls, space_name: str, hf_token: Optional[str] = None) -> Any:
         """Get or initialize cached Gradio client for a specific space and HF token."""
@@ -563,6 +684,12 @@ class VoxCPMEngine:
         # synthesize() returns to learn whether Edge fallback was used.
         self.last_fallback_used = False
         self.last_fallback_reason: Optional[str] = None
+        # Batch BU: same pattern for the reference auto-trim — read by
+        # the caller after synthesize() returns (see
+        # _adapt_reference_for_clone).
+        self.last_reference_trimmed = False
+        self.last_reference_original_seconds: Optional[float] = None
+        self.last_reference_trimmed_seconds: Optional[float] = None
 
         clean_text = str(text or "").strip()
         if not clean_text:
@@ -627,6 +754,11 @@ class VoxCPMEngine:
         if reference_wav:
             ref_path = Path(reference_wav)
             if ref_path.is_file():
+                # Batch BU: an over-cap reference is adapted ONCE here
+                # (trimmed to its first 45 s) so every Space attempt in
+                # this call uses the trimmed copy instead of failing
+                # on the 50 s Space limit.
+                ref_path = self._adapt_reference_for_clone(ref_path)
                 ref_file = handle_file(str(ref_path.resolve()))
                 self._log(f"🎵 VoxCPM 2 Reference Audio loaded: {ref_path.name} ({ref_path.stat().st_size} bytes)")
             else:
