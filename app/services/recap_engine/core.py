@@ -2984,11 +2984,13 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
       enough to pass it is meaningfully a gate.
     * Caption-zone drop, applied BEFORE the cap: a surviving band
       ships only when its whole extent (y ± h/2, source fractions)
-      lies inside a caption zone — top [0.00, 0.24] or bottom
-      [0.58, 1.00] (owner-moved edge; the BL spec's 0.60 left a
+      lies inside the caption zone — bottom [0.58, 1.00] as of
+      Batch BQ (owner decision 2026-11-06; BM originally also had
+      a top zone [0.00, 0.24], removed by BQ — see below; the
+      bottom edge is owner-moved, the BL spec's 0.60 left a
       pinned genuine band only 0.0066 of clearance). Source
-      captions anchor to the picture's edges; the zoo bands sat
-      mid-picture (extents ~0.15–0.28 and ~0.35–0.50 — a talking
+      captions anchor to the picture's bottom edge; the zoo bands
+      sat mid-picture (extents ~0.15–0.28 and ~0.35–0.50 — a talking
       face) and the zone drop kills them by position, which cannot
       misfire on an edge-anchored dialogue strip. The order
       matters (owner Option A, 2026-11-06): a weak strip's peak
@@ -3001,6 +3003,18 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
       static exemption — a mid-picture static overlay is not
       blurred either; in-zone static bands are still kept exactly
       as Batch AI designed).
+    * Batch BQ (2026-11-06) narrows the zone rule to the bottom
+      zone only: the top zone is REMOVED. Both top-zone bands
+      observed live that day were false positives — the zoo
+      re-run's strip across the background above the subject's
+      head and the GlunZpix30I crop's [0.000, 0.101] texture
+      band — while no genuine top caption was ever observed
+      through it. Top-of-frame captions remain coverable by the
+      user's manual blur box (explicit boxes are authoritative;
+      detection never runs for them). Everything else about the
+      detector — cluster scoring, AI floors, static demotion,
+      the zone-before-cap ordering, the 2-band cap — is
+      unchanged.
     """
     import numpy as np
 
@@ -3072,24 +3086,30 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
         survivors = [(box, peak) for box, _ratio, peak in kept]
     # Batch BM caption-zone drop (Batch BL spec, owner-approved
     # 2026-11-06, Option A ordering): a band ships only when its
-    # WHOLE extent lies in a caption zone — source captions anchor
-    # to the picture's top or bottom edge, never the middle. This
-    # runs BEFORE the cap so out-of-zone texture cannot spend cap
-    # slots and evict a weak genuine strip (measured on the
-    # GlunZpix30I crop: cap-first returned [], zone-first ships
-    # the strip — see the docstring). It governs every band that
-    # reaches here, static ones included (owner Decision 1: no
-    # static exemption).
+    # WHOLE extent lies in a caption zone. This runs BEFORE the
+    # cap so out-of-zone texture cannot spend cap slots and evict
+    # a weak genuine strip (measured on the GlunZpix30I crop:
+    # cap-first returned [], zone-first ships the strip — see the
+    # docstring). It governs every band that reaches here, static
+    # ones included (owner Decision 1: no static exemption).
+    # Batch BQ (owner decision 2026-11-06): the zone is BOTTOM
+    # ONLY — BM's top zone [0.00, 0.24] is removed. Both top-zone
+    # bands observed live on 2026-11-06 (the zoo re-run's strip
+    # above the subject's head and the GlunZpix30I crop's
+    # [0.000, 0.101] texture band) were scene texture, never a
+    # real caption; genuine top-of-frame captions are covered by
+    # the user's manual blur box (an explicit box is
+    # authoritative and detection does not run for it anyway).
     def _in_caption_zone(box: dict) -> bool:
         lo = box["y"] - box["h"] / 2.0
         hi = box["y"] + box["h"] / 2.0
-        return (lo >= 0.0 and hi <= 0.24) or (lo >= 0.58 and hi <= 1.0)
+        return lo >= 0.58 and hi <= 1.0
 
     zoned_out = [(b, p) for b, p in survivors if not _in_caption_zone(b)]
     if zoned_out:
         log("🔍 Subtitle band(s) dropped by the caption-zone rule "
-            "(Batch BM — extent outside the top [0.00, 0.24] / "
-            "bottom [0.58, 1.00] caption zones): "
+            "(Batch BM/BQ — extent outside the bottom "
+            "[0.58, 1.00] caption zone): "
             + ", ".join(
                 f"y={b['y']:.2f} h={b['h']:.2f} "
                 f"(extent {b['y'] - b['h'] / 2.0:.2f}–{b['y'] + b['h'] / 2.0:.2f})"

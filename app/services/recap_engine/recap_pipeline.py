@@ -434,6 +434,35 @@ def run_recap_pipeline(
     except Exception as layout_err:
         _log(f"⚠️ Layout probe skipped ({layout_err}); subtitle plate keeps the legacy box")
     _plate = None
+    # R40 item 3: the plate is fed the SUBTITLE's sub_y — before,
+    # it was fed blur_y, so a job with sub_y=67/blur_y=85 shipped
+    # its subtitle floating on sharp picture at 67% while the
+    # plate blurred an empty strip at 85%. blur_y/blur_h keep
+    # their documented UI meaning: the user's hint for where the
+    # SOURCE caption sits (fallback box in assemble_blur_boxes).
+    _anchor_sub_y = float(sub_y) if sub_y is not None else float(blur_y)
+    # Batch AK: with sub_margin set, the plate anchors to the
+    # picture's bottom edge; the effective centre (picture
+    # fraction) is derived for the centre-based consumers below
+    # (fallback-box comparison, no-layout plate fallback).
+    # Batch BP (2026-11-06): the anchor pair is computed BEFORE the
+    # blur gate, not inside it — the fallback-box comparison below
+    # reads _sub_centre_eff whenever sub_y/sub_margin is set, so a
+    # Blur-OFF job with a custom subtitle position crashed with
+    # UnboundLocalError (production jobs rc_1793971254_ec28f9 and
+    # rc_1793971327_71e5e2). The expressions are byte-identical to
+    # the ones the blur branch used, so the blur-ON path's values
+    # are unchanged.
+    _sub_centre_eff = _anchor_sub_y
+    if sub_margin is not None and _layout is not None:
+        _c_frac = subtitle_anchor_y(
+            _layout["cw"], _layout["ch"], _layout,
+            sub_margin=float(sub_margin),
+            raw_font_size=sub_font_size, sub_lines=sub_lines,
+        )
+        _sub_centre_eff = (
+            (_c_frac * _layout["ch"] - _layout["oy"]) / max(1, _layout["ph"])
+        )
     if blur_subtitles:
         # R39 plate: fixed ~92%-wide centred band, height fitted to
         # the wrapped subtitle lines (never below the caller's
@@ -443,27 +472,6 @@ def run_recap_pipeline(
         # legacy-box fallback below inlines their 0.05/0.90 values);
         # blur-strength semantics are unchanged
         # (overlays["blur_strength"] below).
-        # R40 item 3: the plate is fed the SUBTITLE's sub_y — before,
-        # it was fed blur_y, so a job with sub_y=67/blur_y=85 shipped
-        # its subtitle floating on sharp picture at 67% while the
-        # plate blurred an empty strip at 85%. blur_y/blur_h keep
-        # their documented UI meaning: the user's hint for where the
-        # SOURCE caption sits (fallback box in assemble_blur_boxes).
-        _anchor_sub_y = float(sub_y) if sub_y is not None else float(blur_y)
-        # Batch AK: with sub_margin set, the plate anchors to the
-        # picture's bottom edge; the effective centre (picture
-        # fraction) is derived for the centre-based consumers below
-        # (fallback-box comparison, no-layout plate fallback).
-        _sub_centre_eff = _anchor_sub_y
-        if sub_margin is not None and _layout is not None:
-            _c_frac = subtitle_anchor_y(
-                _layout["cw"], _layout["ch"], _layout,
-                sub_margin=float(sub_margin),
-                raw_font_size=sub_font_size, sub_lines=sub_lines,
-            )
-            _sub_centre_eff = (
-                (_c_frac * _layout["ch"] - _layout["oy"]) / max(1, _layout["ph"])
-            )
         if _layout is not None:
             _plate = subtitle_plate_box(
                 _layout["cw"], _layout["ch"], _layout,

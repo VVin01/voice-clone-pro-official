@@ -27,6 +27,12 @@ the cap per owner Option A). The BI-1 pins below were re-pinned at
 that level: same fixtures, same outcomes, different mechanism —
 each re-pin says so in place.
 
+Batch BQ amendment (owner decision 2026-11-06, same day): the
+zone is now BOTTOM ONLY — the top zone is removed (both live
+top-zone bands that day were scene texture). The cap pin below
+was re-pinned again: its top band is now a zone-drop witness
+and a third bottom band keeps the cap exercised.
+
 BI-2: the user's own ON/OFF switch for auto-detect blur (owner
 request 2026-11-06 14:31) — recap form switch (default ON, persisted
 like every recap pref), a per-job boolean riding RecapConfigRequest
@@ -218,17 +224,22 @@ def test_band_cap_keeps_two_strongest():
     # were repositioned INTO the caption zones — the pre-BM
     # strongest band sat mid-picture (rows 90-97, extent
     # 0.394-0.514), where Batch BM's zone rule drops it before the
-    # cap ever ranks. Cap mechanics are unchanged; the weakest band
-    # now sits in the TOP zone, so its drop also proves the cap
-    # ranks within the zones (zone drop first, cap second —
-    # owner Option A ordering).
+    # cap ever ranks. Cap mechanics are unchanged (zone drop
+    # first, cap second — owner Option A ordering).
+    # Batch BQ re-pin (owner decision 2026-11-06): the top zone
+    # is REMOVED, so the fixture's top band is now zone-dropped
+    # before the cap (kept here as the zone-drop witness) and a
+    # third BOTTOM band (rows 128-135, weakest survivor) gives
+    # the cap something to drop: the cap now ranks within the
+    # bottom zone only.
     S = _matrix()
 
     def band(y0, peak):
         for k in range(12):
             S[k, y0:y0 + 8] = peak if k % 2 == 0 else peak * 0.7
 
-    band(20, 0.10)   # top zone (extent ~0.044-0.164) — weakest
+    band(20, 0.10)   # old top zone (extent ~0.044-0.164) — zone-dropped (BQ)
+    band(128, 0.12)  # bottom zone (extent ~0.584-0.704) — weakest survivor
     band(150, 0.20)  # bottom zone (extent ~0.694-0.814) — strongest
     band(170, 0.15)  # bottom zone (extent ~0.794-0.914)
     logs: list[str] = []
@@ -237,7 +248,9 @@ def test_band_cap_keeps_two_strongest():
     ys = sorted(b["y"] for b in boxes)
     assert any(abs(y - 0.754) < 0.06 for y in ys), ys  # the 0.20 band
     assert any(abs(y - 0.854) < 0.06 for y in ys), ys  # the 0.15 band
-    assert not any(abs(y - 0.104) < 0.06 for y in ys), ys  # 0.10 dropped
+    assert not any(abs(y - 0.104) < 0.06 for y in ys), ys  # top band gone
+    assert not any(abs(y - 0.644) < 0.06 for y in ys), ys  # 0.12 cap-dropped
+    assert any("caption-zone" in m for m in logs), logs
     assert any("2-band cap" in m for m in logs), logs
 
 

@@ -56,6 +56,15 @@ y=0.0507 h=0.1013 (top texture, in-zone) and y=0.9375 h=0.0987
 (extent 0.888-0.987) covering the strip's main-line glyphs
 (0.934-0.967 measured in the sampled frames; strip core
 0.877-0.959 per the algebra in the pre-check record).
+
+Batch BQ re-run record (2026-11-06, same machine): the top
+zone is removed (owner decision — both live top-zone bands
+that day were scene texture). Detector on the same crop now
+returns ONLY y=0.9375 h=0.0987 (extent 0.888-0.987) — the
+genuine strip, byte-identical to the post-BM strip — and the
+zone log drops y=0.05 h=0.10 (extent 0.00-0.10, the old top
+texture band), y=0.22 h=0.16 (extent 0.14-0.30) and y=0.52
+h=0.16 (extent 0.44-0.60, the carried burn-in).
 """
 from __future__ import annotations
 
@@ -269,10 +278,14 @@ def test_real_glunzpix30i_caption_strip_covered(tmp_path):
     # post-BM output: y=0.9375 h=0.0987 (extent 0.888-0.987).
     assert any(_covers(b, 0.90, 0.96) for b in boxes), boxes
     assert any(_covers(b, 0.934, 0.967) for b in boxes), boxes
-    # Every returned band must lie entirely inside a caption zone —
-    # the Myanmar burn-in this delivered copy carries (~0.44-0.60)
-    # and mid-picture scene texture are zone-dropped, and the
-    # static title card must not come back either.
+    # Every returned band must lie entirely inside the caption
+    # zone — Batch BQ (owner decision 2026-11-06): BOTTOM ONLY,
+    # [0.58, 1.00]; BM's top zone is removed, so the crop's top
+    # texture band (post-BM output y=0.0507 h=0.1013) is now
+    # zone-dropped too. The Myanmar burn-in this delivered copy
+    # carries (~0.44-0.60) and mid-picture scene texture are
+    # zone-dropped, and the static title card must not come back
+    # either.
     for b in boxes:
         lo, hi = b["y"] - b["h"] / 2.0, b["y"] + b["h"] / 2.0
-        assert (lo >= 0.0 and hi <= 0.24) or (lo >= 0.58 and hi <= 1.0), boxes
+        assert lo >= 0.58 and hi <= 1.0, boxes
