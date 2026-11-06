@@ -336,11 +336,15 @@ def test_title_frontend_wiring():
     # Both drag helpers are attached to the title box.
     assert "enableVerticalDrag(previewTitle," in APP_JS
     assert "enableHorizontalDrag(previewTitle," in APP_JS
-    # Prefs collect + apply carry the four keys.
+    # Prefs collect carries the four keys; prefs APPLY carries only
+    # text/position since Batch BR (the toggle is session-truth —
+    # account prefs must not resurrect it on load).
     assert "recapTitleEnabled: !!state.recapTitleEnabled," in APP_JS
-    assert '"recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY",' in APP_JS
-    # Snapshot round-trip carries them too.
-    assert '"recapTitleEnabled"]' in APP_JS  # RECAP_SETTING_BOOLS
+    assert '"recapTitleText", "recapTitleX", "recapTitleY",' in APP_JS
+    assert '"recapTitleEnabled", "recapTitleText"' not in APP_JS
+    # Snapshot round-trip carries text/position; the enabled bool is
+    # session-truth since Batch BR (absent from RECAP_SETTING_BOOLS).
+    assert '"recapTitleEnabled"]' not in APP_JS
     assert "recapTitleX: [0, 100], recapTitleY: [0, 100]," in APP_JS
     # History prefill maps the stored config back in.
     assert "recapTitleEnabled: cfg.title_enabled === true," in APP_JS

@@ -50,8 +50,13 @@ def test_stage_steppers_present_and_wired():
     # voice polling maps QUEUED/RUNNING/SUCCESS to stages
     assert 'setVoiceStage("working")' in APP_JS
     assert 'setVoiceStage("success")' in APP_JS
-    # recap stepper is driven by the server's real progress_step
-    assert "setRecapStage(data.progress_step, data.status)" in APP_JS
+    # recap stepper is driven by the server's real progress — since
+    # Batch BR through the LiveJobs store job (its stage_index /
+    # stage_total are derived server-side from progress_step),
+    # painted by the store renderer; the detail poller no longer
+    # calls setRecapStage from its private response.
+    assert "setRecapStage(`${job.stage_index || 0}/${job.stage_total || 4}`, job.status)" in APP_JS
+    assert "setRecapStage(data.progress_step, data.status)" not in APP_JS
 
 
 # ── A3: haptics routing ────────────────────────────────────────────────

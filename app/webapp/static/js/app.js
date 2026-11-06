@@ -1484,7 +1484,12 @@ function applyAccountPrefs(prefs) {
         "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
         "recapSubMargin", "recapSettingsVersion",
         "recapSubX", "recapSubW",
-        "recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY",
+        // Batch BR: recapTitleEnabled is session-truth — account
+        // prefs must not resurrect the title toggle on load either
+        // (restore's checkbox re-sync reads state, so applying the
+        // key here would silently turn the toggle back ON). The
+        // title text/position still restore as before.
+        "recapTitleText", "recapTitleX", "recapTitleY",
         "recapZoom", "recapVoice", "recapGeminiVoice",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
@@ -7567,7 +7572,14 @@ function setupRecapVisualEditor() {
         recapRenderQuality: ["standard", "high", "max"],
         recapTtsEngine: ["voxcpm", "gemini", "edge"],
     };
-    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched", "recapTitleEnabled"];
+    // Batch BR: recapTitleEnabled is deliberately NOT in this list —
+    // the title toggle is session-truth (the Batch AX principle): it
+    // always starts OFF on a fresh form load, whatever any saved
+    // snapshot says. Stored snapshots may still carry the key (older
+    // saves, the account-prefs write-through); restore simply never
+    // applies it. History prefill — an explicit re-create action —
+    // sets it directly from the job's config instead (see below).
+    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched"];
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
@@ -7888,6 +7900,18 @@ function setupRecapVisualEditor() {
         };
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snap)); } catch (e) {}
         restoreRecapSettings();
+        // Batch BR: the title toggle is session-truth — restore no
+        // longer applies recapTitleEnabled from any snapshot — so
+        // this explicit re-create action sets it directly from the
+        // job's own config (the same post-restore pattern as the
+        // script-review toggle below). This is the one path still
+        // allowed to turn the toggle ON.
+        state.recapTitleEnabled = cfg.title_enabled === true;
+        const titleTogglePf = document.getElementById("recap-title-toggle");
+        if (titleTogglePf) titleTogglePf.checked = state.recapTitleEnabled;
+        const titleTextPf = document.getElementById("recap-title-text");
+        if (titleTextPf) titleTextPf.classList.toggle("hidden", !state.recapTitleEnabled);
+        syncTitleBoxVisual();
         // Batch AH: exactly one script-review toggle exists now.
         const srToggle = document.getElementById("recap-script-review-toggle");
         if (srToggle) srToggle.checked = !!cfg.script_review;
@@ -8206,12 +8230,78 @@ async function handleStartRecap() {
     }
 }
 
+// ── Batch BR: the recap form's progress lines render from the
+// LiveJobs store — the SAME monotonic-merged job object the progress
+// pill renders (renderLiveJobsPill via liveJobStageText) — so the
+// form and the pill can never show different step text for the same
+// job again. (The detail poller's private response used to paint
+// these lines on its own cadence, with its own clamp, and the two
+// surfaces routinely sat one step apart.) The detail poller keeps
+// only what the bulk endpoint does not carry: result/download URLs,
+// the script editor, failure/refund handling — plus the ETA extra,
+// which it caches below for this renderer. Monotonicity comes from
+// liveJobsMergeJob, the one merge both surfaces share.
+let recapFormJobId = null;      // the job the detail form tracks
+let recapFormEtaSeconds = 0;    // ETA extra, fed by the detail poller
+let recapFormNotice = null;     // a poller health notice owning the status line
+let recapFormStoreSubscribed = false;
+
+function renderRecapFormProgress(job) {
+    if (!job || job.id !== recapFormJobId) return;
+    if (recapFormNotice) return; // a poller notice owns the status line
+    const statusMsg = document.getElementById("recap-status-msg");
+    const stepText = document.getElementById("recap-step-text");
+    const progressFill = document.getElementById("recap-progress-fill");
+    if (statusMsg) statusMsg.innerText = liveJobStageText(job);
+    if (progressFill && job.progress_percent) {
+        progressFill.style.width = `${Math.min(100, Math.max(10, job.progress_percent))}%`;
+    }
+    if (stepText) {
+        if (liveJobsIsTerminal(job.status)) {
+            stepText.innerText = "";
+        } else {
+            const stepBits = [`${t("recap_step_label")} ${job.stage_index || 0}/${job.stage_total || 4}`];
+            if (typeof job.queue_position === "number" && job.queue_position > 0) {
+                stepBits.push(tf("recap_queue_ahead", { count: job.queue_position }));
+            }
+            if (recapFormEtaSeconds > 0) {
+                stepBits.push(tf("recap_eta_dynamic", { min: Math.max(1, Math.round(recapFormEtaSeconds / 60)) }));
+            }
+            if (stepBits.length === 1) stepBits.push(t("queue_notice_recap"));
+            stepText.innerText = stepBits.join(" • ");
+        }
+    }
+    setRecapStage(`${job.stage_index || 0}/${job.stage_total || 4}`, job.status);
+}
+
+function ensureRecapFormStoreSubscription() {
+    if (recapFormStoreSubscribed) return;
+    recapFormStoreSubscribed = true;
+    LiveJobs.subscribe((job, opts) => {
+        if (!job || job.kind !== "recap") return;
+        if (opts && opts.removed) {
+            // The server no longer reports the tracked job at all:
+            // the form lines go empty (the detail poller's own
+            // job-gone path owns the toast + box from here).
+            if (job.id === recapFormJobId) {
+                const statusMsg = document.getElementById("recap-status-msg");
+                const stepText = document.getElementById("recap-step-text");
+                if (statusMsg) statusMsg.innerText = "";
+                if (stepText) stepText.innerText = "";
+            }
+            return;
+        }
+        renderRecapFormProgress(job);
+    });
+}
+
 function startRecapJobPolling(jobId) {
     if (state.recapPollTimer) clearInterval(state.recapPollTimer);
 
     const progressBox = document.getElementById("recap-progress-box");
     const resultBox = document.getElementById("recap-result-box");
-    const progressFill = document.getElementById("recap-progress-fill");
+    // Batch BR: no progressFill handle here any more — the fill is
+    // painted by the store renderer (renderRecapFormProgress).
     const statusMsg = document.getElementById("recap-status-msg");
     const stepText = document.getElementById("recap-step-text");
     const btn = document.getElementById("btn-start-recap");
@@ -8222,6 +8312,16 @@ function startRecapJobPolling(jobId) {
     if (progressBox && state.recapDetailOpen) progressBox.classList.remove("hidden");
     const failedBoxOnPoll = document.getElementById("recap-failed-box");
     if (failedBoxOnPoll) failedBoxOnPoll.classList.add("hidden");
+
+    // Batch BR: this poller's job is the form's tracked job — the
+    // store subscription paints its progress lines from here on
+    // (an already-known store job paints immediately).
+    recapFormJobId = jobId;
+    recapFormEtaSeconds = 0;
+    recapFormNotice = null;
+    ensureRecapFormStoreSubscription();
+    const storeJobOnStart = LiveJobs.jobs.get(jobId);
+    if (storeJobOnStart) renderRecapFormProgress(storeJobOnStart);
 
     // Poll health bookkeeping (hunt #7): this loop used to swallow
     // every failure silently (non-OK -> return, throw -> console.warn)
@@ -8238,11 +8338,11 @@ function startRecapJobPolling(jobId) {
     let recapPollFailures = 0;
     let recapPollNotFound = 0;
     let recapPollTicks = 0;
-    // Batch AC monotonic guard: after a reconnect the cold server path
-    // can report step 1/4 / 15% for a job this client already saw at
-    // step 3/4 — the displayed stage/percent must never go backwards.
-    let recapPollMaxPercent = 0;
-    let recapPollMaxStep = 0;
+    // Batch BR: the Batch AC monotonic guard that used to live here
+    // (recapPollMaxStep / recapPollMaxPercent clamping this poller's
+    // private response) is gone — the displayed stage/percent now
+    // come from the LiveJobs store, whose merge (liveJobsMergeJob)
+    // is monotonic by construction for every surface at once.
     // Tick budget in 2s units: 1800 = the 60-minute overall cap. After
     // the backoff below each 5s tick counts 2.5 units, so the cap (and
     // every stop condition) is unchanged.
@@ -8251,7 +8351,11 @@ function startRecapJobPolling(jobId) {
     function noteRecapPollFailure() {
         recapPollFailures++;
         if (recapPollFailures === 3 && statusMsg) {
-            statusMsg.innerText = t("poll_reconnecting");
+            // Batch BR: the notice also flags the store renderer to
+            // leave the status line alone until a tick succeeds
+            // again (the success path clears recapFormNotice).
+            recapFormNotice = t("poll_reconnecting");
+            statusMsg.innerText = recapFormNotice;
         }
     }
 
@@ -8280,7 +8384,11 @@ function startRecapJobPolling(jobId) {
         if (recapPollTicks > RECAP_POLL_MAX_TICKS) {
             clearInterval(state.recapPollTimer);
             state.recapPollTimer = null;
-            if (statusMsg) statusMsg.innerText = t("poll_background_notice");
+            // Batch BR: the notice keeps owning the status line —
+            // the store renderer must not paint over it now that
+            // this poller has stopped.
+            recapFormNotice = t("poll_background_notice");
+            if (statusMsg) statusMsg.innerText = recapFormNotice;
             showStudioToast(t("poll_background_notice"), 'info', 6000);
             return;
         }
@@ -8298,58 +8406,29 @@ function startRecapJobPolling(jobId) {
             const data = await res.json();
             recapPollFailures = 0;
             recapPollNotFound = 0;
-            // Batch AC monotonic clamp (see recapPollMaxPercent above).
-            const _stepParts = String(data.progress_step || "").split("/");
-            const _stepNum = parseInt(_stepParts[0], 10) || 0;
-            if (_stepNum >= recapPollMaxStep) {
-                recapPollMaxStep = _stepNum;
-            } else if (data.progress_step) {
-                data.progress_step = recapPollMaxStep + "/" + (_stepParts[1] || "4");
-            }
-            if (data.progress_percent) {
-                data.progress_percent = Math.max(recapPollMaxPercent, data.progress_percent);
-                recapPollMaxPercent = data.progress_percent;
-            }
-            if (progressFill && data.progress_percent) {
-                progressFill.style.width = `${Math.min(100, Math.max(10, data.progress_percent))}%`;
-            }
-            if (statusMsg) {
-                if (data.progress_stage) {
-                    // Round-4 F-C: canonical stage from the server,
-                    // rendered in the UI language — the raw engine
-                    // labels ("Smart Sync: VoxCPM 2 3/10", "Timestamp
-                    // translation") never reach the user any more.
-                    const stageText = t("recap_stage_" + data.progress_stage);
-                    statusMsg.innerText = data.progress_sub ? `${stageText} ${data.progress_sub}` : stageText;
-                } else if (data.progress_label) {
-                    statusMsg.innerText = data.progress_label;
-                }
-            }
-            if (stepText && data.progress_step) {
-                // Batch L: prefer the server's job-aware queue/ETA —
-                // position counted from the live queue, ETA derived
-                // from real completed-job durations — and degrade to
-                // the old boilerplate line when the server has no
-                // honest estimate for this job.
-                const stepBits = [`${t("recap_step_label")} ${data.progress_step}`];
-                if (typeof data.queue_position === "number" && data.queue_position > 0) {
-                    stepBits.push(tf("recap_queue_ahead", { count: data.queue_position }));
-                }
-                if (typeof data.eta_seconds === "number" && data.eta_seconds > 0) {
-                    stepBits.push(tf("recap_eta_dynamic", { min: Math.max(1, Math.round(data.eta_seconds / 60)) }));
-                }
-                if (stepBits.length === 1) stepBits.push(t("queue_notice_recap"));
-                stepText.innerText = stepBits.join(" • ");
-            }
+            // Batch BR: a successful tick hands the progress lines
+            // back to the store renderer (clearing any health notice
+            // a failure streak had parked on the status line). The
+            // detail payload's only remaining contribution to those
+            // lines is the ETA extra the bulk endpoint does not
+            // carry (Batch L) — cache it, then repaint FROM THE
+            // STORE JOB, never from this response, so the step/stage
+            // text is the pill's own merged values by construction.
+            recapFormNotice = null;
+            recapFormEtaSeconds = (typeof data.eta_seconds === "number" && data.eta_seconds > 0)
+                ? data.eta_seconds : 0;
+            const storeJobForPaint = LiveJobs.jobs.get(jobId);
+            if (storeJobForPaint) renderRecapFormProgress(storeJobForPaint);
             // Batch AK (Addition C): on a terminal status the
             // progress lines must not keep the last in-progress
             // step — replace them with the outcome label before the
-            // branch handlers run.
+            // branch handlers run. (Batch BR: this write stays, and
+            // stays honest, because it uses the identical text
+            // source as the store renderer — liveJobStageText.)
             if (["SUCCESS", "FAILED", "CANCELLED"].includes(data.status)) {
                 if (statusMsg) statusMsg.innerText = liveJobStageText({ status: data.status, kind: "recap" });
                 if (stepText) stepText.innerText = "";
             }
-            setRecapStage(data.progress_step, data.status);
 
             if (data.status === "SCRIPT_READY") {
                 clearInterval(state.recapPollTimer);
