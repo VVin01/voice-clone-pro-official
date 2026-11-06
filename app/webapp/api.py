@@ -6892,18 +6892,25 @@ async def _execute_recap_background_job(
                         )
                     ]
                 ])
-                from app.services.voice_display import recap_completion_voice_display_name
+                from app.services.voice_display import (
+                    recap_voice_display_name,
+                    recap_voice_name_note_params,
+                )
 
+                # Batch BK: the completion message names the voice the
+                # user actually HEARS (the heard-voice resolver — the
+                # pre-BI behaviour; owner decision 2026-11-06 reversing
+                # BI-3). When the Gemini engine mapped the picked
+                # persona to a differently-named Gemini voice, the
+                # polite note below explains the difference; it never
+                # stacks on the fallback note, which already explains
+                # a substitution when one happened.
                 notify_text = t(
                     "recap_notify_text",
                     _recap_notify_lang,
                     clean_title=html.escape(str(clean_title[:60])),
                     voice_name=html.escape(
-                        # Batch BI: the completion message names the
-                        # voice the user PICKED (the persona label the
-                        # app shows), not the Gemini engine's own
-                        # voice name.
-                        recap_completion_voice_display_name(tts_engine, gemini_voice, req.voice_slug)
+                        recap_voice_display_name(tts_engine, gemini_voice, req.voice_slug)
                     ),
                     job_id=job_id,
                 )
@@ -6913,6 +6920,18 @@ async def _execute_recap_background_job(
                         _recap_notify_lang,
                         count=len(entry.get("fallback_segments") or []) or 1,
                     )
+                else:
+                    _voice_name_note = recap_voice_name_note_params(
+                        tts_engine, gemini_voice, req.voice_slug
+                    )
+                    if _voice_name_note:
+                        notify_text += t(
+                            "recap_voice_name_note",
+                            _recap_notify_lang,
+                            picked_name=html.escape(_voice_name_note["picked_name"]),
+                            heard_name=html.escape(_voice_name_note["heard_name"]),
+                            engine_name=_voice_name_note["engine_name"],
+                        )
                 # Batch K: disclose the retention window at delivery
                 # time too (it was previously stated only in History).
                 # Batch X: the copy states the window in HOURS (24).

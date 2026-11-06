@@ -366,6 +366,7 @@
   "recap_over_app_caption": "🎬 <b>Pro Movie Recap:</b> <code>#{jid}</code>\n📁 <b>File size:</b> <code>{size_formatted}</code> (larger than Telegram's 50MB limit)\n\n💡 <i>The file is too large to send directly via Telegram. Please open it in the Mini App below to watch or download it.</i>",
   "recap_notify_text": "🎉 <b>Your Recap is ready!</b>\n━━━━━━━━━━━━━━━━━━━━\n🎬 <b>Title:</b> <b>{clean_title}</b>\n🎙️ <b>Voice:</b> {voice_name}\n⏱️ <b>Format:</b> MP4 • Myanmar narration + subtitles\n🆔 <b>Task:</b> <code>#{job_id}</code>\n\nYour Recap video is ready. Even if you closed the Mini App, you can watch it there or get it directly via Telegram.",
   "recap_fallback_note": "\n\n⚠️ <i>(Note: {count} narration line(s) were voiced with the backup voice instead of the main engine, so those parts may sound slightly different.)</i>",
+  "recap_voice_name_note": "\n\n📝 <i>Note — instead of the '{picked_name}' voice you picked, this Recap was narrated with {engine_name}'s '{heard_name}' voice.</i>",
   "recap_retention_note": "\n\n⏱️ <i>Files are kept for {retention_hours} hours only — please download anything you need before then.</i>",
   "recap_failure_notify_text": "❌ <b>Your Recap could not be created</b>\n━━━━━━━━━━━━━━━━━━━━\n🎬 <b>Title:</b> <b>{clean_title}</b>\n🆔 <b>Task:</b> <code>#{job_id}</code>\n⚠️ <b>Reason:</b> {reason}",
   "recap_failure_refund_note": "\n\n✅ <b>Don't worry — the {credits} credit(s) you used have been refunded to your account.</b>",

@@ -26,7 +26,12 @@ BI-3: the bot completion message named the Gemini ENGINE's voice
 (ကိုသီဟ) while the app named the voice the user picked (ကိုမင်း).
 The completion message now resolves through
 recap_completion_voice_display_name — the picked persona's label,
-Edge jobs keeping their honest Edge label.
+Edge jobs keeping their honest Edge label. — REVERSED by Batch BK
+the same day (owner decision 2026-11-06): the completion message
+names the heard voice again via recap_voice_display_name, with a
+polite explanatory note when the names differ; the BI-3 pins in
+this file were flipped to the final rule, and the completion
+resolver is pinned as retained-but-unused.
 
 BI-4 (parent-directed addition): the REAL root cause of the TTS
 balance-line bug — the bottom-nav handler in setupTabs() duplicates
@@ -59,6 +64,7 @@ from app.services.downloader import MediaDownloader  # noqa: E402
 from app.services.recap_engine import recap_pipeline as pipeline_mod  # noqa: E402
 from app.services.voice_display import (  # noqa: E402
     recap_completion_voice_display_name,
+    recap_voice_display_name,
 )
 from app.webapp import api as api_mod  # noqa: E402
 
@@ -335,38 +341,54 @@ def test_auto_detect_frontend_wiring():
     assert "if _p_user_box is None and blur_auto_detect:" in PIPELINE_SRC
 
 
-# ── BI-3: completion message names the picked voice ─────────────────
+# ── BI-3: completion message voice name (REVERSED by Batch BK) ──────
+# BI-3 made the completion message name the PICKED persona; the owner
+# reversed that the same day (2026-11-06): the message names the voice
+# ACTUALLY USED (the heard-voice resolver — the pre-BI behaviour),
+# with a polite note when the names differ (Batch BK's note pins live
+# in test_batch_bk_2026_11_06.py). The pins below were flipped to the
+# final rule.
 
-def test_completion_name_gemini_job_uses_picked_persona():
+def test_completion_name_gemini_job_uses_heard_voice():
     # The Milo case: engine gemini, Gemini voice Charon (ကိုသီဟ),
-    # persona the user picked = komin. The completion line must say
-    # ကိုမင်း — the name Step 4 / History show — never ကိုသီဟ.
-    name = recap_completion_voice_display_name("gemini", "Charon", "komin")
-    assert name == "ကိုမင်း"
-    assert "ကိုသီဟ" not in name
+    # persona the user picked = komin. The completion line names the
+    # voice that actually read the recap: ကိုသီဟ.
+    name = recap_voice_display_name("gemini", "Charon", "komin")
+    assert name == "ကိုသီဟ"
+    assert recap_voice_display_name("gemini", "Charon", "mayoon") == "ကိုသီဟ"
+
+
+def test_completion_resolver_retained_with_picked_name_behaviour():
+    # recap_completion_voice_display_name stays in voice_display.py
+    # with its BI behaviour (the picked persona's name) — Batch BK
+    # only stopped the notification from calling it.
+    assert recap_completion_voice_display_name("gemini", "Charon", "komin") == "ကိုမင်း"
     assert recap_completion_voice_display_name("gemini", "Charon", "mayoon") == "မယွန်း"
 
 
 def test_completion_name_edge_and_voxcpm_unchanged():
-    # Edge keeps its honest engine label (Batch AW); VoxCPM already
-    # named the persona.
+    # Edge keeps its honest engine label (Batch AW); VoxCPM names the
+    # persona (the heard voice IS the persona there).
     assert (
-        recap_completion_voice_display_name("edge", None, "komin")
+        recap_voice_display_name("edge", None, "komin")
         == "🎧 Edge TTS · ကိုသီဟ"
     )
     assert (
-        recap_completion_voice_display_name("edge_tts", None, "mathiri")
+        recap_voice_display_name("edge_tts", None, "mathiri")
         == "🎧 Edge TTS · မနီလာ"
     )
-    assert recap_completion_voice_display_name("voxcpm", None, "komin") == "ကိုမင်း"
-    assert recap_completion_voice_display_name(None, None, "komin") == "ကိုမင်း"
+    assert recap_voice_display_name("voxcpm", None, "komin") == "ကိုမင်း"
+    assert recap_voice_display_name(None, None, "komin") == "ကိုမင်း"
 
 
-def test_completion_notify_uses_completion_resolver():
+def test_completion_notify_uses_heard_voice_resolver():
     assert (
-        "recap_completion_voice_display_name(tts_engine, gemini_voice, req.voice_slug)"
+        "recap_voice_display_name(tts_engine, gemini_voice, req.voice_slug)"
         in API_SRC
     )
+    # The picked-name completion resolver is no longer referenced by
+    # the webapp API at all (Batch BK reversal).
+    assert "recap_completion_voice_display_name" not in API_SRC
 
 
 # ── BI-4: the nav handler must run the TTS quota loader ─────────────
