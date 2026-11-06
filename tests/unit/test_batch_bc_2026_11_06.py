@@ -86,9 +86,9 @@ def _pay(pid: str, user_id: int, amount: int, status: str, **kw) -> PaymentReque
 
 # ── Token ────────────────────────────────────────────────────────────
 
-def test_bc_cache_token_is_r77():
+def test_bc_cache_token_is_r78():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261104_r77") == 4
+    assert html.count("20261104_r78") == 4
     assert "20261104_r76" not in html
 
 

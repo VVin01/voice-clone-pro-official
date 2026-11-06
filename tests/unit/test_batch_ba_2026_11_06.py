@@ -132,6 +132,6 @@ def test_ba_no_header_element_removed():
         assert needle in HEADER, needle
 
 
-def test_ba_cache_token_is_r77():
-    assert INDEX_HTML.count("20261104_r77") == 4
+def test_ba_cache_token_is_r78():
+    assert INDEX_HTML.count("20261104_r78") == 4
     assert "20261104_r73" not in INDEX_HTML
