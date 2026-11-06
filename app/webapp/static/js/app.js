@@ -2339,6 +2339,33 @@ if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => { try { moveSpeedPills(); } catch (e) {} });
 }
 
+// ── Batch BD: shared segmented capsule (engine + story pickers) ───
+// The BB-2 component generalised (.seg-capsule in style.css): ONE
+// gradient pill per capsule, measured onto whichever .capsule-seg
+// currently carries .active — the same data-driven measurement as
+// moveSpeedPill, including the wrapped story track (offsetTop
+// follows the segment's row). Re-measured at the same lifecycle
+// points as the speed pills (tab show, resize, language/profile
+// repaint, wizard step show, picker clicks, prefs resync).
+function moveSegPill(capsule) {
+    if (!capsule) return;
+    const pill = capsule.querySelector(".seg-capsule-pill");
+    const active = capsule.querySelector(".capsule-seg.active");
+    if (!pill || !active || !active.offsetWidth) return;
+    pill.style.width = active.offsetWidth + "px";
+    pill.style.height = active.offsetHeight + "px";
+    pill.style.transform = "translate(" + active.offsetLeft + "px, " + active.offsetTop + "px)";
+    pill.classList.add("on");
+}
+function moveSegPills() {
+    document.querySelectorAll(".seg-capsule").forEach(moveSegPill);
+}
+window.moveSegPill = moveSegPill;
+window.moveSegPills = moveSegPills;
+if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => { try { moveSegPills(); } catch (e) {} });
+}
+
 // Tab-enter (AZ-4): the incoming pane carries .tab-enter for one
 // crossfade + 6px rise (see style.css); the class is re-armed on
 // every switch so the motion replays.
@@ -2348,7 +2375,7 @@ function markPaneEnter(pane) {
     void pane.offsetWidth;
     pane.classList.add("tab-enter");
 }
-window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} });
+window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
 
 function switchTab(tabId) {
     const navButtons = document.querySelectorAll(".nav-item");
@@ -2377,6 +2404,7 @@ function switchTab(tabId) {
     refreshStickyCtas();
     moveNavPill();
     moveSpeedPills();
+    moveSegPills();
     // Batch AW: the TTS tab paints its balance line fresh on entry.
     if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
         window.refreshTtsQuota();
@@ -2570,6 +2598,7 @@ async function loadUserProfile() {
             // re-measure the sliding pill against the active item.
             try { moveNavPill(); } catch (e) {}
             try { moveSpeedPills(); } catch (e) {}
+            try { moveSegPills(); } catch (e) {}
             if (adminTab) adminTab.classList.remove("hidden");
         }
 
@@ -3623,6 +3652,7 @@ function refreshRecapEngineLock() {
         }
         btn.classList.toggle("active", engine === state.recapTtsEngine);
     });
+    moveSegPill(document.getElementById("recap-engine-picker"));
     syncRecapEngineAreas();
 }
 window.refreshRecapEngineLock = refreshRecapEngineLock;
@@ -4153,7 +4183,7 @@ function setRecapPreviewState(mode) {
     if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
     // Batch BB-2: the speed capsule lives inside speedGroup — when it
     // unhides, the sliding pill measures against real layout.
-    if (ready) requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} });
+    if (ready) requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     // Batch AV: when a source becomes ready, Step 1 checks off and
     // collapses to its summary strip and Step 2 opens for the user.
     syncRecapStepsWithSource(ready);
@@ -4241,7 +4271,7 @@ function showRecapStep(n) {
     if (n === 4) { refreshRecapStep4Output(); }
     // Batch BB-2: the incoming step card may hold the speed capsule —
     // re-measure its pill now that the card has layout.
-    requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} });
+    requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     const nav = document.getElementById("recap-steps-nav");
     if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -6892,6 +6922,7 @@ function setupRecapVisualEditor() {
             haptic("selection");
             engineBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
+            moveSegPill(document.getElementById("recap-engine-picker"));
             state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
             syncRecapEngineAreas();
         });
@@ -6916,6 +6947,7 @@ function setupRecapVisualEditor() {
             const chosenStory = pill.getAttribute("data-story") || "viral";
             state.recapStoryStyle = chosenStory;
             storyPills.forEach(p => p.classList.toggle("active", p.getAttribute("data-story") === chosenStory));
+            moveSegPill(document.getElementById("story-style-picker-quick"));
         });
     });
 
@@ -7627,6 +7659,7 @@ function setupRecapVisualEditor() {
         document.querySelectorAll("#story-style-picker-quick .style-select-pill").forEach(p => {
             p.classList.toggle("active", p.getAttribute("data-story") === state.recapStoryStyle);
         });
+        moveSegPills();
         document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card").forEach(c => {
             c.classList.toggle("active", c.getAttribute("data-voice") === state.recapVoice);
         });
@@ -12160,7 +12193,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupTabs();
     // AZ-4: park the sliding nav pill under the initially-active
     // item once first layout exists.
-    requestAnimationFrame(() => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} });
+    requestAnimationFrame(() => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     setupVoiceStudio();
     setupRecapVisualEditor();
     initRecapSteps();

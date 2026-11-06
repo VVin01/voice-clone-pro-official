@@ -4392,3 +4392,317 @@ body.lang-my .persona-desc { line-height: 1.75; }
 .voice-preview-btn .preview-btn-label {
     line-height: 1.5; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   BATCH BD (2026-11-06) — WHOLE-APP GLASSMORPHISM 2.0 POLISH
+   Spec: ~/workspace/batch-bd-spec-2026-11-06.md (§1–§14). §15 and
+   the persona sample-listen item shipped in Batch BG (block above)
+   and are verified intact — not restyled here. PRESENTATION ONLY:
+   CSS + markup classes; the only JS is the capsule measurement
+   hooks (moveSegPill / moveSegPills in app.js). No id, handler,
+   data-attribute, behaviour or copy changes; no new visible
+   strings — the engine capsule's compact labels are the emoji
+   already inside its existing labels.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── BD-0 · The capsule family's missing tokens ────────────────────
+   BB-2's .speed-capsule references --glass-rim / --glass-spec /
+   --shadow-sm, which no :root ever defined, and composes its blur
+   as blur(var(--glass-2-blur)) — a nested filter function, invalid
+   at computed-value time. Its rim, shadow and backdrop blur have
+   therefore silently never rendered (the translucent fill + the
+   sliding pill carried the look). The tokens are defined here at
+   the values the design language already uses, and the blur line
+   is repaired — the whole capsule family (BB's speed selectors
+   included) now renders as designed. */
+:root {
+    --glass-rim: rgba(255, 255, 255, 0.65);
+    --glass-spec: var(--rim-shadow);
+    --shadow-sm: 0 2px 10px rgba(70, 110, 160, 0.07);
+}
+.speed-capsule {
+    backdrop-filter: var(--glass-2-blur);
+    -webkit-backdrop-filter: var(--glass-2-blur);
+}
+
+/* ── BD-1 · §5 — the shared segmented capsule (.seg-capsule) ───────
+   BB-2's component, generalised: tier-2 glass track + specular
+   rim, ONE gradient pill sliding to the active segment (measured
+   by moveSegPill, app.js — the moveSpeedPill pattern), the same
+   spring. Two geometries share it:
+   · one-row (engine picker): the active segment expands
+     (flex-grow 2.4) and shows its full label; inactive segments
+     show the compact .seg-short (the label's own emoji).
+   · wrapped (story-style picker): labels are long-form Burmese
+     (PIL/Padauk-measured up to ~155px at 13px — a one-row active
+     segment budgets 92.5px at 360px, so a one-row capsule cannot
+     carry them without shortening copy). Segments keep the C1
+     even-tile flex (1 1 42%) and their full labels; the same
+     gradient pill slides under whichever segment is active. */
+.seg-capsule {
+    position: relative; display: flex; align-items: stretch;
+    gap: var(--s1); width: 100%; padding: 6px;
+    border-radius: 999px;
+    background: var(--glass-2-bg);
+    border: 1px solid var(--glass-rim);
+    box-shadow: var(--glass-spec), var(--shadow-sm);
+    backdrop-filter: var(--glass-2-blur);
+    -webkit-backdrop-filter: var(--glass-2-blur);
+}
+.seg-capsule-pill {
+    position: absolute; top: 0; left: 0; z-index: 0;
+    border-radius: 999px; opacity: 0; pointer-events: none;
+    background: linear-gradient(90deg, #0a84ff, #38bdf8);
+    box-shadow: 0 6px 16px rgba(10, 132, 255, 0.35);
+    transition: transform 0.38s cubic-bezier(0.34, 1.25, 0.4, 1),
+                width 0.38s cubic-bezier(0.34, 1.25, 0.4, 1),
+                height 0.38s cubic-bezier(0.34, 1.25, 0.4, 1),
+                opacity 0.2s ease;
+}
+.seg-capsule-pill.on { opacity: 1; }
+.seg-capsule .capsule-seg {
+    position: relative; z-index: 1;
+    min-height: 44px; padding: 6px 3px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; border-radius: 999px; background: transparent;
+    box-shadow: none;
+    font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
+    font-size: 13px; font-weight: 600; line-height: 1.5;
+    color: var(--text-2); white-space: nowrap; cursor: pointer;
+    transition: color 0.25s ease, transform 0.12s ease;
+}
+.seg-capsule .capsule-seg.active { color: #ffffff; }
+.seg-capsule .capsule-seg:active { transform: scale(0.97); }
+.seg-capsule .capsule-seg .seg-full { display: none; }
+.seg-capsule .capsule-seg.active .seg-full { display: inline; }
+.seg-capsule .capsule-seg.active .seg-short { display: none; }
+/* One-row geometry (engine picker): equal segments, active one
+   expanded — the C1 even-tile flex for this picker is superseded
+   inside the capsule only. */
+#recap-engine-picker.seg-capsule { flex-wrap: nowrap; border-radius: 999px; }
+#recap-engine-picker .pill-btn.capsule-seg { flex: 1 1 0; min-width: 0; }
+#recap-engine-picker .pill-btn.capsule-seg.active { flex-grow: 2.4; }
+/* The engine label leaves the track (the speed-row pattern: title
+   above, capsule full width) so the capsule owns the full width. */
+.capsule-field { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s3); }
+.capsule-field .recap-engine-row { margin-top: 0; width: 100%; }
+/* Wrapped geometry (story styles): the track rounds to the card
+   family radius and the C1 tiles keep their flex + full labels. */
+#story-style-picker-quick.seg-capsule { flex-wrap: wrap; border-radius: var(--r-lg); padding: var(--s2); gap: var(--s2); }
+#story-style-picker-quick .style-select-pill.capsule-seg {
+    white-space: normal; text-align: center; line-height: 1.6;
+    padding: 6px 10px;
+}
+/* Fallback nets learn the new surface (AZ pattern). */
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+    .seg-capsule { background: rgba(255, 255, 255, 0.97); }
+}
+@media (prefers-reduced-transparency: reduce) {
+    .seg-capsule { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(255, 255, 255, 0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .seg-capsule-pill { transition: none; }
+}
+
+/* ── BD-2 · §5 — glass switches ────────────────────────────────────
+   Every toggle family joins the glass language: tier-2 glass track
+   (rim + inset well), white knob with specular, ON = the capsule
+   family's blue gradient. Track/knob geometry is unchanged. */
+.switch-track, .mini-toggle .t-val,
+.script-review-row input[type="checkbox"] {
+    background: var(--glass-2-bg);
+    border-color: var(--glass-rim);
+    box-shadow: var(--shadow-inset);
+}
+.toggle-pill-btn.active .switch-track,
+.mini-toggle.active .t-val,
+.script-review-row input[type="checkbox"]:checked {
+    background: linear-gradient(135deg, #0a84ff, #38bdf8);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+.switch-luxury .slider {
+    background: var(--glass-2-bg);
+    border: 1px solid var(--glass-rim);
+    box-shadow: var(--shadow-inset);
+}
+.switch-luxury input:checked + .slider {
+    background: linear-gradient(135deg, #0a84ff, #38bdf8);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+.switch-luxury .slider::before, .switch-track::after,
+.mini-toggle .t-val::after,
+.script-review-row input[type="checkbox"]::after {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 3px rgba(22, 40, 60, 0.35);
+}
+.chip-toggle.active::before {
+    background: linear-gradient(135deg, #0a84ff, #38bdf8);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* ── BD-3 · §5 — inset glass fields ────────────────────────────────
+   The base focus ring still carried the retired warm-gold tint
+   (rgba(242,179,61,·)); fields now focus in the app's blue, keep
+   the inset well, and text inputs meet the 44px floor. */
+textarea:focus, .studio-input:focus, .studio-select:focus {
+    box-shadow: var(--shadow-inset), 0 0 0 3px rgba(10, 132, 255, 0.18);
+}
+.studio-input { min-height: 44px; }
+
+/* ── BD-4 · §4 — button family completion ──────────────────────────
+   Secondary buttons gain the tier-2 glass rim (nested surfaces
+   take the specular, no extra blur — the L1 tile rule); the danger
+   family is red-tinted glass everywhere it appears. Radius and
+   heights already meet the family standard. */
+.secondary-btn, .mini-btn {
+    box-shadow: var(--rim-shadow), 0 2px 10px rgba(70, 110, 160, 0.07);
+}
+.mini-btn.danger-btn, .adm-danger-btn {
+    background: var(--red-soft);
+    border: 1px solid rgba(217, 45, 32, 0.35);
+    box-shadow: var(--rim-shadow);
+    color: var(--red);
+}
+.adm-danger-btn { padding: var(--s3); }
+
+/* ── BD-5 · §6 — one row language ──────────────────────────────────
+   44px gradient-tinted icon tiles, 14px titles, 12px muted descs,
+   hairline dividers. Home tiles/samples already comply (AY); the
+   hub rows, admin user rows and tutorial rows join them. */
+.hub-type-icon {
+    width: 44px; height: 44px; font-size: 20px;
+    box-shadow: var(--rim-shadow);
+}
+.hub-row-title { font-size: 14px; }
+.adm-avatar {
+    width: 44px; height: 44px; flex-basis: 44px; font-size: 17px;
+    box-shadow: var(--rim-shadow);
+}
+.adm-user-row { padding: var(--s2) 6px; }
+.home-tut-row { padding: var(--s3) var(--s1); }
+.home-tut-icon {
+    width: 44px; height: 44px; font-size: 19px;
+    display: grid; place-items: center; border-radius: var(--r-sm);
+    background: linear-gradient(135deg, rgba(10, 132, 255, 0.16), rgba(56, 189, 248, 0.08));
+    box-shadow: var(--rim-shadow);
+}
+.home-tut-name { font-size: 14px; }
+
+/* ── BD-6 · §7 — one status-pill style ─────────────────────────────
+   Tinted glass + specular + a leading dot in the state's own
+   colour for every state badge family; BC's TEST badge leaves its
+   flat amber fill and joins the same style. */
+.history-item-badge, .badge-status, .adm-status-tag, .badge-test,
+.count-badge, .hint-tag, .gate-chip, .mini-tag {
+    box-shadow: var(--glass-hi-soft), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+.history-item-badge.status-success::before,
+.history-item-badge.status-failed::before,
+.history-item-badge.status-running::before,
+.history-item-badge.status-queued::before,
+.badge-status::before, .adm-status-tag::before, .badge-test::before {
+    content: ""; display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; margin-right: 5px; vertical-align: 2px;
+}
+.badge-test {
+    background: rgba(245, 158, 11, 0.16); color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.45);
+}
+
+/* ── BD-7 · §8 — progress: gradient + glow head ────────────────────
+   Every bar keeps its gradient and gains a lit head (a soft glow
+   at the fill's leading edge); the live-jobs fill joins in. */
+.progress-bar-fill { box-shadow: 2px 0 10px rgba(10, 132, 255, 0.45); }
+.live-jobs-pill-fill, .live-job-row-fill {
+    box-shadow: 2px 0 8px rgba(87, 199, 255, 0.55);
+}
+/* The live-jobs pill completes its tier-2 dressing: the AZ rim is
+   joined by the family gradient hairline (its dark fill stays —
+   white text over jobs content is the design). */
+.live-jobs-pill { border-color: rgba(255, 255, 255, 0.45); }
+
+/* ── BD-8 · §1 — sheet interiors on the rhythm ─────────────────────
+   The live-jobs sheet + submit-confirm sheet carried orphan
+   values (10px / 14px / 20px mixes); both now speak the scale. */
+.live-jobs-sheet-card { padding: var(--s4); }
+.live-jobs-sheet-head { margin-bottom: var(--s2); }
+.live-job-row { gap: var(--s2); padding: var(--s2) 0; }
+.live-job-row-bar { margin-top: var(--s1); }
+.submit-confirm-card { padding: var(--s4); }
+.submit-confirm-hint { margin-top: var(--s2); }
+.submit-confirm-actions { gap: var(--s2); margin-top: var(--s3); }
+.studio-inline-status { gap: var(--s2); margin-top: var(--s2); }
+.prefs-saved-note { margin: var(--s1) 0 var(--s2); }
+.income-detail-total { margin: var(--s2) 0 0; }
+.income-detail-toggle-row { gap: var(--s3); padding: var(--s2) 0 0; }
+.adm-state { padding: var(--s4) var(--s3); }
+
+/* ── BD-9 · §9 — loading: glass skeleton + header treatment ────────
+   The skeleton primitive becomes glass shimmer (tier-1 fill, rim,
+   a travelling highlight). While the entry gate is locked — the
+   whole initial-load window, before the real profile is
+   authoritative — the header's badge + balance chips shimmer as
+   neutral skeleton blocks instead of flashing the placeholder
+   FREE / 0.0m / 0c state (audit follow-up on r74); the gate
+   unlock repaints the profile, so no wrong state survives it. */
+.skeleton {
+    background: linear-gradient(100deg, rgba(255, 255, 255, 0.42) 40%, rgba(255, 255, 255, 0.72) 50%, rgba(255, 255, 255, 0.42) 60%);
+    background-size: 200% 100%;
+    border: 1px solid var(--glass-rim);
+    box-shadow: var(--glass-hi-soft);
+}
+body.gate-locked .user-pill .vip-badge,
+body.gate-locked .user-pill .bal-chip {
+    color: transparent; text-shadow: none;
+    border-color: var(--glass-rim);
+    background: linear-gradient(100deg, rgba(255, 255, 255, 0.42) 40%, rgba(255, 255, 255, 0.72) 50%, rgba(255, 255, 255, 0.42) 60%);
+    background-size: 200% 100%;
+    animation: skeletonWave 1.3s ease infinite;
+    box-shadow: var(--glass-hi-soft);
+}
+body.gate-locked .user-pill .live-dot { opacity: 0.35; }
+
+/* ── BD-10 · §10 — empty states: glass medallions ──────────────────
+   The hub / admin / preview empty states trade the bare emoji for
+   the family's glass icon medallion (tier-2 fill + rim). */
+.hub-state-emoji, .preview-empty-icon {
+    width: 56px; height: 56px; font-size: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--glass-2-bg);
+    border: 1px solid var(--glass-rim);
+    box-shadow: var(--rim-shadow), var(--shadow-sm);
+}
+.adm-state-icon {
+    width: 40px; height: 40px; font-size: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--glass-2-bg);
+    border: 1px solid var(--glass-rim);
+    box-shadow: var(--glass-hi-soft);
+}
+
+/* ── BD-11 · §11 — typography rhythm ───────────────────────────────
+   Body line-height follows the language (Burmese 1.75 / Latin
+   1.6); figures line up in tabular numerals; the audited orphan-
+   syllable wraps (TTS pane subtitle, plan descriptions) balance
+   instead of stranding a syllable. Component-level Myanmar
+   patches (toasts 1.95 etc.) are untouched. */
+body.lang-my { line-height: 1.75; }
+body.lang-en { line-height: 1.6; }
+.bal-chip, .stat-val, .stat-num, .price-val, .acc-num,
+.income-detail-amount, .live-jobs-pill-count, .adm-line-time {
+    font-variant-numeric: tabular-nums;
+}
+.pane-header p, .plan-allocation, .plan-how-text { text-wrap: balance; }
+
+/* ── BD-12 · §12 — compactness trims ───────────────────────────────
+   Pane section gaps join the §1 scale (20px was an orphan against
+   the 4/8/12/16/24 rhythm): every tab screen tightens by 4px per
+   section gap. The two oversized placeholder paddings (drop zone,
+   preview empty state) come down one scale step. Measured
+   before/after: measure_heights.py + report.md. */
+.tab-pane { gap: var(--s4); }
+.video-drop-zone { padding: var(--s4); }
+.preview-empty-state { padding: var(--s6) var(--s4); }
+.hub-state { padding: var(--s4) var(--s3); }

@@ -88,7 +88,11 @@ def test_rs7_column_counts_divide_evenly():
 def test_rs6_fine_pickers_not_converted():
     block = _rs_block()
     # Verified-FINE in the audit — the fix must not churn them.
-    for pid in ("#recap-engine-picker", "#recap-lang-picker",
+    # Batch BD (2026-11-06, spec §5) supersedes the engine picker
+    # entry: it is deliberately converted to the shared segmented
+    # capsule (.seg-capsule) — see test_batch_bd_2026_11_06. The
+    # remaining FINE pickers stay unconverted.
+    for pid in ("#recap-lang-picker",
                 "#recap-split-minutes-picker", "#recap-zoom-picker"):
         assert pid not in block, pid
 
@@ -138,5 +142,5 @@ def test_rs7_mirror_single_label():
 
 
 def test_cache_buster_bumped_for_settings_ui():
-    assert HTML.count("?v=20261104_r79") == 4
+    assert HTML.count("?v=20261104_r80") == 4
     assert "?v=20261102_rr1" not in HTML
