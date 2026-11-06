@@ -8,6 +8,8 @@ surface must resolve the name through :func:`recap_voice_display_name`:
 
 * engine == "gemini"  -> the Gemini voice's Burmese display name
   (``GEMINI_VOICE_DISPLAY_MY``, the same names the Mini App picker shows);
+* engine == "edge" / "edge_tts" (Batch AW) -> "🎧 Edge TTS ·" plus the
+  Edge base voice's name (the persona's gender-matched Thiha/Nilar);
 * otherwise           -> the persona's Burmese display name from
   ``curated_voices`` (short form, without the role gloss).
 
@@ -50,6 +52,37 @@ def persona_display_name(persona_slug: Optional[str]) -> str:
     return slug.capitalize()
 
 
+_EDGE_BASE_DISPLAY_MY = {
+    "my-MM-ThihaNeural": "ကိုသီဟ",
+    "my-MM-NilarNeural": "မနီလာ",
+}
+_LEGACY_FEMALE_EDGE_SLUGS = frozenset(
+    {"mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"}
+)
+
+
+def edge_voice_display_name(persona_slug: Optional[str]) -> str:
+    """Burmese display name for the Edge base voice a recap job used:
+    the persona's gender-matched Edge base (Thiha/Nilar), the legacy
+    female slugs' Nilar, Thiha otherwise."""
+    slug = str(persona_slug or "").strip().lower()
+    edge_voice = None
+    if slug:
+        try:
+            from app.services.curated_voices import get_curated_voice
+
+            info = get_curated_voice(slug)
+        except Exception:
+            info = None
+        if info:
+            edge_voice = info.get("edge_voice")
+    if not edge_voice:
+        edge_voice = (
+            "my-MM-NilarNeural" if slug in _LEGACY_FEMALE_EDGE_SLUGS else "my-MM-ThihaNeural"
+        )
+    return _EDGE_BASE_DISPLAY_MY.get(edge_voice, "ကိုသီဟ")
+
+
 def recap_voice_display_name(
     tts_engine: Optional[str],
     gemini_voice: Optional[str],
@@ -58,11 +91,17 @@ def recap_voice_display_name(
     """The voice name a user should see for a recap job.
 
     Gemini engine + a known Gemini voice wins over the persona slug
-    (the persona is only the per-segment fallback in that mode); every
-    other engine names the persona that actually narrated.
+    (the persona is only the per-segment fallback in that mode). The
+    Edge engine (Batch AW: user-selected "edge", internally
+    "edge_tts") names the Edge base voice that actually narrated —
+    labelling it with the persona's name would claim a clone the user
+    did not hear. Every other engine names the persona.
     """
-    if str(tts_engine or "").strip().lower() == "gemini":
+    engine = str(tts_engine or "").strip().lower()
+    if engine == "gemini":
         display = gemini_voice_display_name(gemini_voice)
         if display:
             return display
+    if engine in ("edge", "edge_tts"):
+        return f"🎧 Edge TTS · {edge_voice_display_name(persona_slug)}"
     return persona_display_name(persona_slug)

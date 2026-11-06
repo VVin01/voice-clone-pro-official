@@ -928,6 +928,10 @@ select.studio-input { min-height: 50px; }
 /* Batch AU: free-tier render-quality lock (the server clamps too). */
 #recap-quality-picker .pill-btn.quality-locked { opacity: 0.45; }
 #recap-quality-picker .pill-btn.quality-locked::after { content: " 🔒"; }
+/* Batch AW: the recap engine picker's clone/persona pill carries the
+   same lock affordance for free profiles (Gemini/Edge stay usable). */
+#recap-engine-picker .pill-btn.engine-locked { opacity: 0.45; }
+#recap-engine-picker .pill-btn.engine-locked::after { content: " 🔒"; }
 .draggable-box { position: absolute; left: 4%; right: 4%; z-index: 6; cursor: grab; touch-action: pan-y; }
 .draggable-box.is-dragging { cursor: grabbing; opacity: 0.9; }
 /* R40 item 5: the grip is the ONLY touch-drag initiator (see

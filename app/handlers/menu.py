@@ -91,10 +91,20 @@ async def render_main_menu(
             "menu_account_info",
             active_lang,
             category=category_badge,
-            total_min=balance.total_usable_minutes,
+            # Batch AW: the Voice balance line is the clone-spendable
+            # figure — referral seconds are TTS-only and get their
+            # own labelled line below instead of folding into it.
+            total_min=balance.clone_spendable_minutes,
             purchased_min=balance.purchased_minutes,
             recap_credits=3 if _recap_credits is None else _recap_credits,
         )
+        if (balance.referral_seconds or 0) > 0:
+            info_text += "\n" + t(
+                "menu_tts_balance_line",
+                active_lang,
+                tts_min=balance.referral_seconds / 60.0,
+                tts_sec=balance.referral_seconds,
+            )
     text = info_text
     # Bot cleanup 2026-11-03: the membership button renders ONLY while
     # the user is unverified, from the persisted gate flags — the same
@@ -303,10 +313,14 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
     cat_raw = getattr(user.account_category, "value", str(user.account_category)).upper()
     tier_badge = "⭐ VIP" if cat_raw == "PURCHASED" else t("hist_tier_free", lang)
 
-    total_usable_min = balance.total_usable_minutes
-    total_usable_sec = balance.total_usable_seconds
+    # Batch AW: the overview totals are the CLONE-SPENDABLE balance;
+    # referral seconds are TTS-only and are neither folded into the
+    # free/bonus line nor the headline total — they get their own
+    # labelled line under the summary when the bucket is non-empty.
+    total_usable_min = balance.clone_spendable_minutes
+    total_usable_sec = balance.clone_spendable_seconds
     purchased_min = balance.purchased_minutes
-    free_min = balance.monthly_free_minutes + balance.welcome_minutes + balance.referral_minutes
+    free_min = balance.monthly_free_minutes + balance.welcome_minutes
     consumed_min = balance.consumed_seconds / 60.0
 
     combined = []
@@ -380,6 +394,13 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
         consumed_min=consumed_min,
         activity_content=activity_content,
     )
+    if (balance.referral_seconds or 0) > 0:
+        summary_text += "\n" + t(
+            "menu_tts_balance_line",
+            lang,
+            tts_min=balance.referral_seconds / 60.0,
+            tts_sec=balance.referral_seconds,
+        )
 
     text = f"{t('history_overview_title', lang)}\n\n{summary_text}"
     kb = user_history_kb(job_count=len(all_jobs), ledger_count=len(all_events), lang=lang)
@@ -436,8 +457,10 @@ async def render_history_ledger_content(session: AsyncSession, user_id: int) -> 
     balance = await get_minute_balance(session, user_id)
     events = await get_user_history_ledger_events(session, user_id, limit=15)
 
-    total_usable_min = balance.total_usable_minutes
-    total_usable_sec = balance.total_usable_seconds
+    # Batch AW: headline total is clone-spendable (see overview note);
+    # the referral/TTS bucket is labelled separately when non-empty.
+    total_usable_min = balance.clone_spendable_minutes
+    total_usable_sec = balance.clone_spendable_seconds
     consumed_min = balance.consumed_seconds / 60.0
 
     lines = [t("history_ledger_title", lang)]
@@ -450,6 +473,15 @@ async def render_history_ledger_content(session: AsyncSession, user_id: int) -> 
             consumed_min=consumed_min,
         )
     )
+    if (balance.referral_seconds or 0) > 0:
+        lines.append(
+            t(
+                "menu_tts_balance_line",
+                lang,
+                tts_min=balance.referral_seconds / 60.0,
+                tts_sec=balance.referral_seconds,
+            )
+        )
 
     if not events:
         lines.append(f"\n{t('history_empty', lang)}")

@@ -134,7 +134,7 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
             "pay_store_balance_line",
             lang,
             category=category_badge,
-            total_min=balance.total_usable_minutes,
+            total_min=balance.clone_spendable_minutes,
             recap_credits=3 if user_recap_credits is None else user_recap_credits,
         )
         text = f"{balance_line}\n\n{store_body}"

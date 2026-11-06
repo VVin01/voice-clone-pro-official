@@ -105,7 +105,7 @@ async def test_concurrent_referral_rewarding(tmp_path):
     results = await asyncio.gather(*(run_confirm(8000 + i) for i in range(1, 31)))
     async with session_maker() as s:
         bal = await get_minute_balance(s, 8000)
-        assert bal.referral_seconds == 600  # Exactly 20 * 30s = 600s
+        assert bal.referral_seconds == 2400  # Exactly 20 * 120s = 2400s (Batch AW reward)
         rewards = (await s.execute(
             select(ReferralReward).where(ReferralReward.referrer_id == 8000)
         )).scalars().all()

@@ -198,7 +198,9 @@ def test_hardcoded_toasts_moved_to_i18n():
 
 
 def test_job_id_missing_uses_dedicated_key():
-    assert APP_JS.count('showStudioToast(t("toast_job_id_missing"), \'warning\')') == 2
+    # Voice + recap senders, plus the Batch AW TTS sender — every
+    # send-to-Telegram surface uses the one dedicated key.
+    assert APP_JS.count('showStudioToast(t("toast_job_id_missing"), \'warning\')') == 3
 
 
 def test_confirm_modal_buttons_follow_language():

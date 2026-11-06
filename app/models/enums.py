@@ -65,6 +65,10 @@ class JobStatus(str, Enum):
 class JobType(str, Enum):
     VOICE_CLONE = "VOICE_CLONE"
     RECAP = "RECAP"
+    # Batch AW: standalone text-to-speech jobs (Gemini/Edge voices).
+    # Deliberately distinct from VOICE_CLONE so the Batch AN daily
+    # voice-minutes accounting never sees them.
+    TTS = "TTS"
 
 
 class BroadcastCampaignStatus(str, Enum):

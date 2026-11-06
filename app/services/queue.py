@@ -293,7 +293,9 @@ async def create_voice_clone_job(
     if not is_admin:
         await grant_monthly_free_allowance(session, user_id)
         balance = await get_minute_balance(session, user_id)
-        if balance.total_usable_seconds <= 0:
+        # Batch AW: clone jobs check the CLONE-SPENDABLE balance —
+        # referral seconds are TTS-only and no longer count here.
+        if balance.clone_spendable_seconds <= 0:
             return None, "INSUFFICIENT_BALANCE"
 
         # Pre-check (hunt F6): the balance is only charged AFTER
@@ -308,12 +310,12 @@ async def create_voice_clone_job(
         # have failed at charge time.
         if valid_text:
             estimated_seconds = estimate_voice_job_seconds(valid_text, speed_preset)
-            if estimated_seconds > balance.total_usable_seconds:
+            if estimated_seconds > balance.clone_spendable_seconds:
                 logger.info(
-                    "Voice job pre-check rejected for user %s: ~%ss estimated vs %ss usable",
+                    "Voice job pre-check rejected for user %s: ~%ss estimated vs %ss clone-spendable",
                     user_id,
                     int(estimated_seconds),
-                    balance.total_usable_seconds,
+                    balance.clone_spendable_seconds,
                 )
                 return None, "INSUFFICIENT_BALANCE"
 
@@ -375,6 +377,10 @@ async def claim_next_queued_job(session: AsyncSession, engine_filter: str | None
     query = select(Job.id).where(
         Job.status == JobStatus.QUEUED.value,
         Job.job_type != JobType.RECAP.value,
+        # Batch AW: TTS jobs execute in the webapp process (their own
+        # background runner), never in the voice-clone worker — keep
+        # them out of this queue even for an engine_filter=None caller.
+        Job.job_type != JobType.TTS.value,
         Job.engine != "recap",
         ~Job.id.startswith("rc_"),
     )

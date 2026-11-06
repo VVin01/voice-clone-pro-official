@@ -186,8 +186,11 @@ def test_ay_refer_card_bindings_and_copy_untouched():
     assert 'id="referral-stats-line"' in card
     assert 'onclick="copyReferralLink()"' in card
     assert 'onclick="shareReferralLink()"' in card
-    # The +30s reward copy is Batch AW's to reword — byte-identical here.
-    assert "အသံအချိန် +30 စက္ကန့်" in card
+    # Batch AW reworded the reward copy (2 minutes of TTS audio,
+    # TTS-tab only) and retitled the card — the AY-era +30s copy is
+    # gone; the bindings above stay byte-identical.
+    assert "TTS အသံ ၂ မိနစ်" in card
+    assert "အသံအချိန် +30 စက္ကန့်" not in card
     assert "openSupportContact()" not in card
 
 
@@ -219,6 +222,6 @@ def test_ay_welcome_strip_restyled_scoped():
     assert "switchTab('tab-recap')" in home_strip
 
 
-def test_ay_cache_token_r72():
-    assert INDEX_HTML.count("20261104_r72") == 4
+def test_ay_cache_token_r73():
+    assert INDEX_HTML.count("20261104_r73") == 4
     assert "20261104_r70" not in INDEX_HTML
