@@ -67,6 +67,15 @@ class User(Base):
     bot_blocked: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    # Batch BC-1: admin-set test-account marker. Payments from flagged
+    # users are excluded from the Admin income totals (read-side filter
+    # only — payment records are never altered) and can be surfaced in
+    # the income detail view badged TEST. Set/unset from the Admin user
+    # detail view; every change is audit-logged. No user IDs are ever
+    # hardcoded — the flag is the only signal.
+    is_test_account: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     referral_code: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
     )

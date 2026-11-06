@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r76">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r77">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r76" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r77" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1902,24 +1902,25 @@
                     <div class="card glass mt-3" id="admin-income-card">
                         <div class="card-header-row">
                             <div class="card-label">💰 <span data-i18n="admin_stat_income">ဝင်ငွေ</span></div>
+                            <button class="mini-chip" onclick="openIncomeDetail('all')"><span data-i18n="admin_income_details_btn">အသေးစိတ် ›</span></button>
                         </div>
                         <div class="admin-stats-grid mt-2">
-                            <div class="card glass stat-mini-card">
+                            <div class="card glass stat-mini-card income-mini-click" onclick="openIncomeDetail('today')">
                                 <span class="stat-lbl" data-i18n="admin_income_today">ယနေ့</span>
                                 <span class="stat-num" id="adm-income-today" style="font-size:17px;">—</span>
                                 <span class="stat-sub" id="adm-income-today-count"></span>
                             </div>
-                            <div class="card glass stat-mini-card">
+                            <div class="card glass stat-mini-card income-mini-click" onclick="openIncomeDetail('7d')">
                                 <span class="stat-lbl" data-i18n="admin_income_7d">၇ ရက်အတွင်း</span>
                                 <span class="stat-num" id="adm-income-7d" style="font-size:17px;">—</span>
                                 <span class="stat-sub" id="adm-income-7d-count"></span>
                             </div>
-                            <div class="card glass stat-mini-card">
+                            <div class="card glass stat-mini-card income-mini-click" onclick="openIncomeDetail('30d')">
                                 <span class="stat-lbl" data-i18n="admin_income_30d">ရက် ၃၀ အတွင်း</span>
                                 <span class="stat-num" id="adm-income-30d" style="font-size:17px;">—</span>
                                 <span class="stat-sub" id="adm-income-30d-count"></span>
                             </div>
-                            <div class="card glass stat-mini-card">
+                            <div class="card glass stat-mini-card income-mini-click" onclick="openIncomeDetail('all')">
                                 <span class="stat-lbl" data-i18n="admin_income_all">စုစုပေါင်း</span>
                                 <span class="stat-num" id="adm-income-all" style="font-size:17px;">—</span>
                                 <span class="stat-sub" id="adm-income-all-count"></span>
@@ -2153,6 +2154,16 @@
                             <button class="btn gold-gradient-btn mt-3" id="adm-adjust-apply-btn" onclick="adminApplyAdjust()">
                                 <span data-i18n="btn_apply_adjust">ပြင်ဆင်ချက် အတည်ပြုမည်</span>
                             </button>
+                            <div class="income-detail-toggle-row mt-3">
+                                <div>
+                                    <div class="text-sm" data-i18n="admin_test_account">🧪 Test အကောင့်</div>
+                                    <p class="text-xs text-muted" data-i18n="admin_test_account_hint">Test အဖြစ် သတ်မှတ်ထားရင် ဒီအကောင့်ရဲ့ ငွေပေးချေမှုတွေကို ဝင်ငွေ စုစုပေါင်းထဲ မထည့်ပါ</p>
+                                </div>
+                                <label class="switch-luxury">
+                                    <input type="checkbox" id="adm-test-flag-toggle" onchange="adminToggleTestFlag(this.checked)">
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
                         </div>
 
                         <div class="card glass mt-3">
@@ -2575,6 +2586,37 @@
             </div>
         </div>
 
+        <!-- ════ BATCH BC-3: INCOME DETAIL SHEET ════
+             Opened from the Admin income card: every APPROVED payment
+             in the selected period, newest first, with the period
+             total reconciling with the card. Test-account payments
+             stay hidden unless the "test လည်း ပြမယ်" switch is on —
+             then they show badged TEST, muted, and still never count
+             toward the total. -->
+        <div class="live-jobs-sheet hidden" id="income-detail-sheet">
+            <div class="live-jobs-sheet-card">
+                <div class="live-jobs-sheet-head">
+                    <span data-i18n="admin_income_detail_title">💰 ဝင်ငွေ အသေးစိတ်</span>
+                    <button type="button" class="modal-close" onclick="closeIncomeDetail()">✕</button>
+                </div>
+                <div class="filter-chips-row" id="income-detail-periods">
+                    <button type="button" class="filter-chip" data-income-period="today" onclick="setIncomeDetailPeriod('today')"><span data-i18n="admin_income_today">ယနေ့</span></button>
+                    <button type="button" class="filter-chip" data-income-period="7d" onclick="setIncomeDetailPeriod('7d')"><span data-i18n="admin_income_7d">၇ ရက်အတွင်း</span></button>
+                    <button type="button" class="filter-chip" data-income-period="30d" onclick="setIncomeDetailPeriod('30d')"><span data-i18n="admin_income_30d">ရက် ၃၀ အတွင်း</span></button>
+                    <button type="button" class="filter-chip" data-income-period="all" onclick="setIncomeDetailPeriod('all')"><span data-i18n="admin_income_all">စုစုပေါင်း</span></button>
+                </div>
+                <div class="income-detail-total" id="income-detail-total">—</div>
+                <div class="income-detail-toggle-row">
+                    <span class="text-sm" data-i18n="admin_income_show_test">test လည်း ပြမယ်</span>
+                    <label class="switch-luxury">
+                        <input type="checkbox" id="income-detail-show-test" onchange="loadIncomeDetail()">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+                <div id="income-detail-list"></div>
+            </div>
+        </div>
+
         <!-- ════ BOTTOM LUXURY FLOATING DOCK ════ -->
         <div class="nav-scrim" aria-hidden="true"></div>
         <nav class="bottom-nav">
@@ -2685,7 +2727,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r76"></script>
-    <script src="/static/js/app.js?v=20261104_r76"></script>
+    <script src="/static/js/i18n.js?v=20261104_r77"></script>
+    <script src="/static/js/app.js?v=20261104_r77"></script>
 </body>
 </html>

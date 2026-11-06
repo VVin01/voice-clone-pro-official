@@ -9844,6 +9844,40 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
         }
 
 
+def _income_window_bounds():
+    """Batch BC: the income windows shared by /admin/overview and
+    /admin/income-detail so the detail list always reconciles with the
+    card. "Today" is the Asia/Rangoon calendar day (fixed UTC+06:30 —
+    Myanmar has no DST); 7d/30d are rolling windows ending now.
+    Returns (today_start_utc, since_7d_utc, since_30d_utc)."""
+    _rangoon = timezone(timedelta(hours=6, minutes=30))
+    _now_utc = datetime.now(timezone.utc)
+    _today_start_utc = _now_utc.astimezone(_rangoon).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).astimezone(timezone.utc)
+    return _today_start_utc, _now_utc - timedelta(days=7), _now_utc - timedelta(days=30)
+
+
+def _payment_bucket_ts(reviewed_at, created_at):
+    """The moment a payment counts as income: approval moment
+    (reviewed_at), falling back to created_at for legacy rows.
+    Naive values (SQLite) are UTC by construction."""
+    ts = reviewed_at or created_at
+    if ts is not None and ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+async def _test_flagged_user_ids(db: AsyncSession) -> set:
+    """Batch BC: ids of users carrying the admin test-account flag.
+    Income aggregations exclude these users' payments read-side;
+    the payment rows themselves are never touched."""
+    rows = (await db.execute(
+        select(User.id).where(User.is_test_account.is_(True))
+    )).scalars().all()
+    return set(rows)
+
+
 @api_router.get("/admin/overview")
 async def get_admin_overview(
     admin: User = Depends(require_admin),
@@ -9961,36 +9995,33 @@ async def get_admin_overview(
     # computed per-row in Python — the codebase-wide convention for
     # this API (no SQL SUM under app/, pinned by the premium-round
     # D1 sweep test after the old Decimal-sum hazard).
-    _rangoon = timezone(timedelta(hours=6, minutes=30))
-    _now_utc = datetime.now(timezone.utc)
-    _today_start_utc = _now_utc.astimezone(_rangoon).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ).astimezone(timezone.utc)
-    _since_7d = _now_utc - timedelta(days=7)
-    _since_30d = _now_utc - timedelta(days=30)
+    _today_start_utc, _since_7d, _since_30d = _income_window_bounds()
     income = {
         "today_mmk": 0, "today_count": 0,
         "last_7d_mmk": 0, "last_7d_count": 0,
         "last_30d_mmk": 0, "last_30d_count": 0,
         "all_time_mmk": 0, "all_time_count": 0,
     }
+    # Batch BC-2: payments from test-flagged accounts are NOT income —
+    # excluded read-side from every window (sums AND counts). The rows
+    # themselves stay untouched; unflagging re-includes them.
+    _test_user_ids = await _test_flagged_user_ids(db)
     _approved_rows = (await db.execute(
         select(
             PaymentRequest.reviewed_at,
             PaymentRequest.created_at,
             PaymentRequest.amount_mmk,
+            PaymentRequest.user_id,
         ).where(PaymentRequest.status == PaymentStatus.APPROVED.value)
     )).all()
-    for _reviewed_at, _created_at, _amount in _approved_rows:
+    for _reviewed_at, _created_at, _amount, _payer_id in _approved_rows:
+        if _payer_id in _test_user_ids:
+            continue
         income["all_time_mmk"] += _amount
         income["all_time_count"] += 1
-        _bucket_ts = _reviewed_at or _created_at
+        _bucket_ts = _payment_bucket_ts(_reviewed_at, _created_at)
         if _bucket_ts is None:
             continue
-        if _bucket_ts.tzinfo is None:
-            # SQLite can hand back naive datetimes; stored values
-            # are UTC by construction (utc_now).
-            _bucket_ts = _bucket_ts.replace(tzinfo=timezone.utc)
         if _bucket_ts >= _today_start_utc:
             income["today_mmk"] += _amount
             income["today_count"] += 1
@@ -10104,6 +10135,80 @@ async def get_admin_overview(
     }
 
 
+@api_router.get("/admin/income-detail")
+async def get_admin_income_detail(
+    period: str = "all",
+    include_test: bool = False,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Batch BC-3: per-payment detail behind the Admin income card.
+
+    Returns every APPROVED payment in the selected window — date/time
+    (same COALESCE(reviewed_at, created_at) bucket the card sums),
+    user (name + @username), package, amount MMK — newest first.
+    ``total_mmk``/``count`` are computed over NON-test rows only, so
+    they reconcile with the /admin/overview card figure for the same
+    period regardless of ``include_test``. Test-flagged payments are
+    omitted unless include_test=true, in which case they ride along
+    badged (is_test) for display only and never enter the totals."""
+    period = (period or "all").strip().lower()
+    if period not in ("today", "7d", "30d", "all"):
+        raise HTTPException(status_code=400, detail="Unknown income period")
+    _today_start_utc, _since_7d, _since_30d = _income_window_bounds()
+    _floor = {
+        "today": _today_start_utc,
+        "7d": _since_7d,
+        "30d": _since_30d,
+        "all": None,
+    }[period]
+    _test_user_ids = await _test_flagged_user_ids(db)
+    rows = (await db.execute(
+        select(PaymentRequest, User)
+        .join(User, PaymentRequest.user_id == User.id)
+        .where(PaymentRequest.status == PaymentStatus.APPROVED.value)
+    )).all()
+    payments = []
+    total_mmk = 0
+    count = 0
+    for req, u in rows:
+        _ts = _payment_bucket_ts(req.reviewed_at, req.created_at)
+        if _floor is not None and (_ts is None or _ts < _floor):
+            continue
+        _is_test = req.user_id in _test_user_ids
+        if not _is_test:
+            total_mmk += req.amount_mmk
+            count += 1
+        elif not include_test:
+            continue
+        payments.append({
+            "id": req.id,
+            "user_id": req.user_id,
+            "user_name": u.first_name or f"User {u.id}",
+            "username": u.username,
+            "package_code": req.package_code,
+            "minutes": req.minutes,
+            "amount_mmk": req.amount_mmk,
+            "is_test": _is_test,
+            "paid_at": _ts.isoformat() if _ts else None,
+            "_sort_ts": _ts,
+        })
+    # Newest first; a missing bucket timestamp sorts last.
+    payments.sort(
+        key=lambda p: p["_sort_ts"] or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    for p in payments:
+        p.pop("_sort_ts", None)
+    return {
+        "period": period,
+        "include_test": bool(include_test),
+        "total_mmk": total_mmk,
+        "count": count,
+        "payments": payments,
+    }
+
+
 @api_router.get("/admin/audit-log")
 async def get_admin_audit_log(
     limit: int = 20,
@@ -10181,6 +10286,7 @@ async def search_admin_users(
             "status": u.status,
             "is_banned": (u.status or "") == UserStatus.BLOCKED.value,
             "bot_blocked": bool(getattr(u, "bot_blocked", False)),
+            "is_test_account": bool(getattr(u, "is_test_account", False)),
             "recap_credits": getattr(u, "recap_credits", 0) or 0,
             "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
             "created_at": u.created_at.isoformat() if u.created_at else None,
@@ -10199,6 +10305,7 @@ async def _admin_user_row(db: AsyncSession, u: User) -> dict:
         "status": u.status,
         "is_banned": (u.status or "") == UserStatus.BLOCKED.value,
         "bot_blocked": bool(getattr(u, "bot_blocked", False)),
+        "is_test_account": bool(getattr(u, "is_test_account", False)),
         "recap_credits": getattr(u, "recap_credits", 0) or 0,
         "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
         "created_at": u.created_at.isoformat() if u.created_at else None,
@@ -10353,6 +10460,42 @@ async def unban_admin_user(
     ))
     await db.commit()
     return {"success": True, "message": f"အသုံးပြုသူ {user_id} ၏ Ban ကို ဖယ်ရှားပြီးပါပြီ"}
+
+
+class TestFlagRequest(BaseModel):
+    is_test_account: bool
+
+
+@api_router.post("/admin/users/{user_id}/test-flag")
+async def set_admin_user_test_flag(
+    user_id: int,
+    req: TestFlagRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Batch BC-1: set/unset the per-user test-account flag.
+
+    Flagged users' APPROVED payments are excluded from the Admin
+    income totals (read-side only — records are never altered) and
+    surface badged TEST in the income detail view. The toggle is
+    audit-logged like the ban/unban actions next to it. No user ID
+    is hardcoded anywhere: the flag is the only signal."""
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    target.is_test_account = bool(req.is_test_account)
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="user.test_flag",
+        target_type="user",
+        target_id=str(user_id),
+        details_json=json.dumps({
+            "is_test_account": bool(req.is_test_account),
+            "via": "miniapp",
+        }),
+    ))
+    await db.commit()
+    return {"success": True, "is_test_account": bool(req.is_test_account)}
 
 
 @api_router.get("/admin/queue")

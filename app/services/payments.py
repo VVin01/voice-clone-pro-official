@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -428,13 +429,19 @@ async def approve_payment_request(
                 # Keep the in-session copy consistent with the UPDATE.
                 await session.refresh(target)
 
-    # Record audit log
+    # Record audit log (Batch BC-4: the entry carries admin id (column),
+    # target user, amount and the decision (the action), serialised with
+    # json.dumps so the details stay parseable for income reconstruction).
     session.add(AuditLog(
         admin_id=admin_id,
         action="payment.approve",
         target_type="payment_request",
         target_id=str(payment.id),
-        details_json=f'{{"user_id": {payment.user_id}, "minutes": {payment.minutes}, "amount_mmk": {payment.amount_mmk}}}',
+        details_json=json.dumps({
+            "user_id": payment.user_id,
+            "minutes": payment.minutes,
+            "amount_mmk": payment.amount_mmk,
+        }),
     ))
 
     _delete_slip_file(payment)
@@ -472,12 +479,23 @@ async def reject_payment_request(
     payment.review_claimed_by = None
     payment.review_claimed_at = None
 
+    # Batch BC-4: the reject entry previously recorded ONLY the reason —
+    # no target user, no amount — so a rejection could not be tied back
+    # to the income history. It now carries the same identity fields as
+    # the approve entry (admin id is the column; the decision is the
+    # action), serialised with json.dumps (a quoted reason used to break
+    # the hand-built JSON string outright).
     session.add(AuditLog(
         admin_id=admin_id,
         action="payment.reject",
         target_type="payment_request",
         target_id=str(payment.id),
-        details_json=f'{{"reason": "{payment.rejection_reason}"}}',
+        details_json=json.dumps({
+            "user_id": payment.user_id,
+            "minutes": payment.minutes,
+            "amount_mmk": payment.amount_mmk,
+            "reason": payment.rejection_reason,
+        }),
     ))
 
     _delete_slip_file(payment)
