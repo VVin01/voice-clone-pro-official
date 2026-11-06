@@ -64,8 +64,8 @@ def _i18n_values(key: str) -> list[str]:
 
 # ── Cache token ─────────────────────────────────────────────────────
 
-def test_bb_cache_token_is_r78():
-    assert HTML.count("20261104_r78") == 4
+def test_bb_cache_token_is_r79():
+    assert HTML.count("20261104_r79") == 4
     assert "20261104_r74" not in HTML
 
 
