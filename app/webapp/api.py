@@ -3314,6 +3314,9 @@ async def get_job_status(
         "status": job.status,
         "engine": job.engine,
         "fallback_used": job.engine == "edge_fallback",
+        # Batch BU: persisted auto-trim disclosure (voice jobs only —
+        # the column is set by the voice worker; recap rows stay False).
+        "reference_trimmed": bool(getattr(job, "reference_trimmed", False)),
         "is_waiting_laptop_worker": is_waiting_laptop,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
@@ -9098,6 +9101,7 @@ async def get_user_history(
         raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
         _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None
         _hist_parts = ((_hist_entry or {}).get("parts") or []) if is_recap else []
+        _ref_trimmed = False  # Batch BU: set for voice jobs in the else-branch below
         if is_recap:
             # Recap fallback truth lives in the engine's plan JSON on
             # disk — the same source the recap status endpoint reads.
@@ -9114,6 +9118,9 @@ async def get_user_history(
                 _fb_used, _fb_segs = False, []
         else:
             _fb_used, _fb_segs = j.engine == "edge_fallback", []
+            # Batch BU: the persisted reference auto-trim flag (voice
+            # jobs only; recap entries never carry one).
+            _ref_trimmed = bool(getattr(j, "reference_trimmed", False))
         # R40 item 13: surface the persisted recap settings so the
         # history detail can show WHAT the job was made with (engine,
         # Gemini voice, subtitle position/style) — previously a user
@@ -9202,6 +9209,7 @@ async def get_user_history(
             ) if is_recap else None,
             "fallback_used": _fb_used,
             "fallback_segments": _fb_segs,
+            "reference_trimmed": _ref_trimmed,
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
             "status": j.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,

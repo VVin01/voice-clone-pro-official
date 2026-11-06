@@ -3957,12 +3957,16 @@ async function handleVoiceGenerate() {
 // Batch O: persistent fallback disclosure on the voice result card.
 // The completion toast alone was easy to miss; when the status payload
 // says the backup engine voiced the job, the note stays on the card.
+// Batch BU: the same card also carries the reference auto-trim note
+// (payload reference_trimmed) — the two disclosures share the element.
 function renderVoiceFallbackNote(data) {
     const noteEl = document.getElementById("voice-fallback-note");
     if (!noteEl) return;
-    const used = !!(data && data.fallback_used);
-    noteEl.textContent = used ? t("voice_fallback_notice") : "";
-    noteEl.classList.toggle("hidden", !used);
+    const notes = [];
+    if (data && data.fallback_used) notes.push(t("voice_fallback_notice"));
+    if (data && data.reference_trimmed) notes.push(t("voice_ref_trim_notice"));
+    noteEl.textContent = notes.join(" ");
+    noteEl.classList.toggle("hidden", notes.length === 0);
 }
 
 function startJobPolling(jobId) {
@@ -4036,6 +4040,7 @@ function startJobPolling(jobId) {
                 setVoiceStage("success");
                 haptic("success");
                 if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
+                if (data.reference_trimmed) { try { showStudioToast(t("voice_ref_trim_notice"), 'info'); } catch (e) {} }
                 renderVoiceFallbackNote(data);
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
@@ -12003,6 +12008,11 @@ function hubHistoryDetailHtml(j) {
             : t("voice_fallback_notice");
         inner += `<div class="history-item-body hub-fallback-note">⚠️ ${escapeHtml(fbNote)}</div>`;
     }
+    if (!isRecap && j.reference_trimmed) {
+        // Batch BU: the persisted reference auto-trim disclosure,
+        // mirroring the fallback note above (voice jobs only).
+        inner += `<div class="history-item-body hub-fallback-note">✂️ ${escapeHtml(t("voice_ref_trim_notice"))}</div>`;
+    }
     if (isRecap && j.parts_count && j.parts_count > 1) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>`;
     }
@@ -12183,6 +12193,7 @@ function hubHistoryRowHtml(j) {
                 <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
             </span>
             ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
+            ${!isRecap && j.reference_trimmed ? `<span class="history-item-badge hub-fallback-badge">${t("hist_ref_trim_badge")}</span>` : ""}
             <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
             <span class="hub-chevron">${open ? "⌃" : "›"}</span>
         </button>
@@ -12356,6 +12367,7 @@ async function checkStartupDeepLinks() {
                 const data = await res.json();
                 if (data.status === "SUCCESS") {
                     if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
+                    if (data.reference_trimmed) { try { showStudioToast(t("voice_ref_trim_notice"), 'info'); } catch (e) {} }
                     renderVoiceFallbackNote(data);
                     state.activeJobId = jobId;
                     const resultBox = document.getElementById("voice-result-box");

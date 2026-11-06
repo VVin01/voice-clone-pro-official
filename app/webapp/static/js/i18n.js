@@ -598,6 +598,7 @@ const translations = {
         recap_fallback_note: "စာကြောင်း {count} ကြောင်းကို မူရင်း အသံအစား အရန် အသံဖြင့် ထုတ်ပေးထားပါသည် — အဲဒီ အပိုင်းများတွင် အသံ အနည်းငယ် ကွာခြားနိုင်ပါသည်။",
         recap_fallback_note_all: "စာကြောင်းအားလုံးကို မူရင်း အသံအစား အရန် အသံဖြင့် ထုတ်ပေးထားပါသည် — အသံ အနည်းငယ် ကွာခြားနိုင်ပါသည်။",
         voice_fallback_notice: "ဒီအသံကို မူရင်း အသံအစား အရန် အသံဖြင့် ထုတ်ပေးထားပါသည် — ရွေးထားသော အသံနှင့် အနည်းငယ် ကွာခြားနိုင်ပါသည်။",
+        voice_ref_trim_notice: "တင်ပေးထားသော နမူနာအသံဖိုင်က 50 စက္ကန့်ထက် ရှည်နေလို့ ပထမ 45 စက္ကန့်ကိုပဲ ဖြတ်ပြီး အသံပွားယူထားပါသည်။",
         // History UI (retention window = settings.media_retention_days)
         history_recap_title: "🕒 လွန်ခဲ့သော ၂၄ နာရီအတွင်း Recap ဖန်တီးမှုများ",
         history_voice_title: "🕒 လွန်ခဲ့သော ၂၄ နာရီအတွင်း Voice ဖန်တီးမှုများ",
@@ -629,6 +630,7 @@ const translations = {
         hist_watch: "▶️ ကြည့်မည်",
         hist_send_telegram: "📱 Telegram",
         hist_fallback_badge: "⚠️ အရန် Engine",
+        hist_ref_trim_badge: "✂️ နမူနာ ဖြတ်ထား",
         admin_history_header: "📜 အလုပ် မှတ်တမ်း",
         admin_history_note: "⏱️ ထုတ်လုပ်ထားသော အသံနှင့် ဗီဒီယို ဖိုင်များကို ၂၄ နာရီအထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်သည်",
         admin_history_purge_btn: "🧹 ၂၄ နာရီကျော် ဖိုင်များ ရှင်းမည်",
@@ -1621,6 +1623,7 @@ const translations = {
         recap_fallback_note: "{count} narration line(s) were voiced with the backup voice instead of the main engine, so those parts may sound slightly different from the selected voice.",
         recap_fallback_note_all: "All narration lines were voiced with the backup voice instead of the main engine, so the voice may sound slightly different from the one you selected.",
         voice_fallback_notice: "This audio was voiced with the backup voice instead of the main engine, so it may sound slightly different from the voice you selected.",
+        voice_ref_trim_notice: "Your reference audio was longer than 50 seconds, so only its first 45 seconds were used for cloning.",
         // History UI (retention window = settings.media_retention_days)
         history_recap_title: "🕒 Recaps from the Last 24 Hours",
         history_voice_title: "🕒 Voices from the Last 24 Hours",
@@ -1652,6 +1655,7 @@ const translations = {
         hist_watch: "▶️ Watch",
         hist_send_telegram: "📱 Telegram",
         hist_fallback_badge: "⚠️ Backup engine",
+        hist_ref_trim_badge: "✂️ Ref trimmed",
         admin_history_header: "📜 Job History",
         admin_history_note: "⏱️ Generated voice & video files are kept for 24 hours, then deleted automatically",
         admin_history_purge_btn: "🧹 Purge Files Older Than 24 Hours",
