@@ -1575,7 +1575,22 @@ window.saveAccountPrefsSoon = saveAccountPrefsSoon;
 function setupAccountPrefs() {
     const recapTab = document.getElementById("tab-recap");
     if (recapTab) {
-        ["click", "change", "input"].forEach(evt => recapTab.addEventListener(evt, saveAccountPrefsSoon));
+        // Batch BT: pointerup joins the list. The canvas drag
+        // helpers (enableVerticalDrag / enableHorizontalDrag) drive
+        // the margin / sub_x / sub_w / title-position values through
+        // raw mouse + touch events with preventDefault, so a drag
+        // ends in a pointerup but NO click/change/input ever reaches
+        // the tab. The settings-snapshot saver has always listened
+        // for pointerup, so a dragged subtitle margin landed in the
+        // local snapshot — but never in the account prefs, and the
+        // next launch's prefs apply then overwrote the restored
+        // value with the server's stale one (live 2026-11-06: a
+        // dragged 20% margin came back as the 5% default, while the
+        // click-toggled Blur setting — which does reach this saver —
+        // persisted across the same loads). The BB-8 change
+        // comparison keeps a pointer-only save silent when nothing
+        // actually changed.
+        ["click", "change", "input", "pointerup"].forEach(evt => recapTab.addEventListener(evt, saveAccountPrefsSoon));
     }
     const voiceTab = document.getElementById("tab-voice");
     if (voiceTab) {
@@ -8253,6 +8268,22 @@ function renderRecapFormProgress(job) {
     const stepText = document.getElementById("recap-step-text");
     const progressFill = document.getElementById("recap-progress-fill");
     if (statusMsg) statusMsg.innerText = liveJobStageText(job);
+    // Batch BT: the studio INLINE status line is the surface the
+    // user actually watches after a 1-Click submit (Batch AC keeps
+    // the detail box closed) — but showStudioInlineStatus wrote it
+    // exactly once at submit (the stage-1 text) and nothing ever
+    // updated it again, so it sat on "[1/4] …" for the whole run
+    // and even after the job finished. Paint it from this same
+    // store job with the same text source, and keep the line
+    // visible while a job is tracked. Terminal jobs paint their
+    // outcome text exactly like the pill; the result/failed boxes
+    // stay the detail poller's business. (The recapFormNotice
+    // early-return above covers this line too — a parked poller
+    // health notice owns the status text, inline included.)
+    const inlineLine = document.getElementById("recap-inline-status");
+    const inlineText = document.getElementById("recap-inline-status-text");
+    if (inlineText) inlineText.innerText = liveJobStageText(job);
+    if (inlineLine) inlineLine.classList.remove("hidden");
     if (progressFill && job.progress_percent) {
         progressFill.style.width = `${Math.min(100, Math.max(10, job.progress_percent))}%`;
     }
@@ -8288,6 +8319,15 @@ function ensureRecapFormStoreSubscription() {
                 const stepText = document.getElementById("recap-step-text");
                 if (statusMsg) statusMsg.innerText = "";
                 if (stepText) stepText.innerText = "";
+                // Batch BT: the inline line mirrors the detail
+                // lines here too — the store no longer reports the
+                // job, so no surface may keep a stale stage text
+                // frozen on it (that frozen stage text is the very
+                // defect this batch fixes). The line element itself
+                // stays in place, emptied like the detail lines;
+                // the poller's job-gone path owns the toast + box.
+                const inlineText = document.getElementById("recap-inline-status-text");
+                if (inlineText) inlineText.innerText = "";
             }
             return;
         }
