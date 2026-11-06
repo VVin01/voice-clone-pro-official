@@ -247,8 +247,12 @@ def test_fc_clean_label_dedupes_smart_sync_prefix():
 def test_fc_status_payload_and_client_rendering():
     assert '"progress_stage": entry.get("progress_stage")' in API_PY
     assert '"progress_sub": entry.get("progress_sub", "")' in API_PY
-    assert 'data.progress_stage' in APP_JS
-    assert '"recap_stage_" + data.progress_stage' in APP_JS
+    # Batch BR: the recap client renders the canonical stage from
+    # the LiveJobs store job via liveJobStageText (the pill's text
+    # function) — the detail poller's private data.progress_stage
+    # rendering path is gone.
+    assert '"recap_stage_" + job.progress_stage' in APP_JS
+    assert '"recap_stage_" + data.progress_stage' not in APP_JS
     for key in (
         "recap_stage_transcribe", "recap_stage_context", "recap_stage_translate",
         "recap_stage_plan", "recap_stage_tts", "recap_stage_sync",
