@@ -81,7 +81,8 @@ def _fn(js: str, name: str) -> str:
 def test_nav_has_four_user_tabs_plus_admin():
     nav = HTML.split('<nav class="bottom-nav">', 1)[1].split("</nav>", 1)[0]
     order = re.findall(r'data-tab="(tab-[a-z]+)"', nav)
-    assert order == ["tab-home", "tab-voice", "tab-recap", "tab-vip", "tab-admin"]
+    # Batch AW: the TTS tab joins the dock between Voice and Recap.
+    assert order == ["tab-home", "tab-voice", "tab-tts", "tab-recap", "tab-vip", "tab-admin"]
 
 
 def test_downloader_and_history_panes_survive():

@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r72">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r73">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r72" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r73" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -245,8 +245,8 @@
                      moved out into its own slim card below — this
                      card's copy and bindings are untouched. -->
                 <div class="card glass" id="home-refer-card">
-                    <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု &amp; အကူအညီ</div>
-                    <p class="ref-desc" data-i18n="ref_desc">သူငယ်ချင်း တစ်ယောက် ဒီ link နဲ့ ဝင်၍ Channel + Group join လိုက်တာနဲ့ အသံအချိန် +30 စက္ကန့် ရပါမည် (အများဆုံး မိတ်ဆွေ 20 ယောက် = 10 မိနစ် အထိ)။</p>
+                    <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု</div>
+                    <p class="ref-desc" data-i18n="ref_desc">သူငယ်ချင်း တစ်ယောက် ဒီ link နဲ့ ဝင်၍ Channel + Group join လိုက်တာနဲ့ TTS အသံ ၂ မိနစ် ရပါမည် (အများဆုံး မိတ်ဆွေ 20 ယောက် = 40 မိနစ် အထိ)။ ဆုကို TTS Tab တွင်သာ သုံးနိုင်ပါသည်။</p>
                     <div class="ref-link-row">
                         <span class="ref-link-text" id="referral-link-text">—</span>
                     </div>
@@ -392,6 +392,7 @@
                         <span class="step-title" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
                     </div>
                     <div id="voice-preflight" class="voice-preflight" aria-live="polite"></div>
+                    <p id="voice-tts-balance-line" class="hidden" style="font-size:12px; opacity:0.85; margin-top:6px;"></p>
                     <button class="btn gold-gradient-btn" id="btn-generate-voice">
                         <span class="btn-text" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
                     </button>
@@ -439,6 +440,124 @@
                 </div>
 
                 <!-- History now lives in the dedicated History tab -->
+                <button type="button" class="hub-link mt-4" onclick="openHistoryHub()">
+                    <span data-i18n="history_view_all">မှတ်တမ်း အကုန် ကြည့်ရန်</span><span class="hub-link-arrow">→</span>
+                </button>
+            </section>
+
+            <!-- ════ TAB: TTS STUDIO (Batch AW) ════
+                 Standalone text-to-speech: Gemini AI or Edge voices,
+                 billed to the referral bucket first and then the tab's
+                 own daily allowance — never to voice minutes or recap
+                 credits (see app/services/tts_service.py). -->
+            <section id="tab-tts" class="tab-pane">
+                <div class="pane-header">
+                    <div class="pane-title-row">
+                        <h2 data-i18n="tts_title">🎧 TTS အသံ ဖန်တီးရန်</h2>
+                        <span class="badge-studio gold">TTS</span>
+                    </div>
+                    <p data-i18n="tts_subtitle">စာသားကို Gemini AI သို့မဟုတ် Edge အသံဖြင့် အသံဖိုင် ပြောင်းပါ</p>
+                </div>
+
+                <div class="card glass input-card">
+                    <div class="card-label" data-i18n="tts_engine_label">အသံ Engine:</div>
+                    <div class="segmented-control sm mb-2" id="tts-engine-picker">
+                        <button type="button" class="seg-btn active" data-tts-engine="gemini">
+                            <span class="seg-title" data-i18n="tts_engine_gemini">✨ Gemini AI</span>
+                        </button>
+                        <button type="button" class="seg-btn" data-tts-engine="edge">
+                            <span class="seg-title" data-i18n="tts_engine_edge">🎧 Edge TTS</span>
+                        </button>
+                    </div>
+                    <div class="control-row mt-2" id="tts-gemini-voice-row">
+                        <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
+                        <select id="tts-gemini-voice-select" class="studio-select glass-dropdown">
+                            <option value="Charon" data-i18n="gem_voice_charon">ကိုသီဟ (ကျား)</option>
+                            <option value="Algenib" data-i18n="gem_voice_algenib">ကိုအာကာ (ကျား)</option>
+                            <option value="Orus" data-i18n="gem_voice_orus">ကိုမင်းခန့် (ကျား)</option>
+                            <option value="Iapetus" data-i18n="gem_voice_iapetus">ကိုလင်းခန့် (ကျား)</option>
+                            <option value="Puck" data-i18n="gem_voice_puck">ကိုသော်တာ (ကျား)</option>
+                            <option value="Kore" data-i18n="gem_voice_kore">မစန္ဒာ (မ)</option>
+                            <option value="Leda" data-i18n="gem_voice_leda">မနှင်းဆီ (မ)</option>
+                            <option value="Sulafat" data-i18n="gem_voice_sulafat">မမေသူ (မ)</option>
+                            <option value="Gacrux" data-i18n="gem_voice_gacrux">မသီရိ (မ)</option>
+                            <option value="Achernar" data-i18n="gem_voice_achernar">မသွန်းရည် (မ)</option>
+                        </select>
+                    </div>
+                    <div class="control-row mt-2 hidden" id="tts-edge-voice-row">
+                        <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
+                        <select id="tts-edge-voice-select" class="studio-select glass-dropdown">
+                            <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (ကျား)</option>
+                            <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မ)</option>
+                        </select>
+                    </div>
+                    <p class="ref-desc" id="tts-balance-line" data-i18n="tts_balance_loading">လက်ကျန် စစ်ဆေးနေသည်…</p>
+                    <p class="ref-desc" data-i18n="tts_cost_hint">💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပြီး ကျန်တာကို နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ကောက်ခံပါသည်။ Voice Clone မိနစ်နှင့် Recap Credit လုံးဝ မထိပါ။</p>
+                </div>
+
+                <div class="card glass input-card">
+                    <div class="card-header-row">
+                        <div class="step-badge-title">
+                            <span class="step-num-pill">1</span>
+                            <span class="step-title" data-i18n="text_input_label">အသံထွက်မည့် စာသား</span>
+                        </div>
+                        <span class="char-counter" id="tts-char-count">0 / 5,000</span>
+                    </div>
+                    <textarea id="tts-text-input" data-i18n-ph="tts_text_placeholder" placeholder="အသံပြောင်းမည့် စာသား ရိုက်ထည့်ပါ…" rows="5"></textarea>
+                    <div class="sample-chips">
+                        <button type="button" class="mini-chip" onclick="insertTtsSampleText('မင်္ဂလာပါခင်ဗျာ၊ Voice Clone Pro Studio မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။')" data-i18n="sample_greeting">💡 မင်္ဂလာပါ</button>
+                        <button type="button" class="mini-chip" onclick="insertTtsSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')" data-i18n="sample_tech">💡 AI နည်းပညာ</button>
+                        <button type="button" class="mini-chip text-danger" onclick="clearTtsText()" data-i18n="btn_clear_text">🗑️ ရှင်းမည်</button>
+                    </div>
+                    <div class="control-row divided mt-2">
+                        <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း:</span>
+                        <div class="pill-group" id="tts-speed-picker">
+                            <button type="button" class="pill-btn" data-tts-speed="+0%">+0%</button>
+                            <button type="button" class="pill-btn" data-tts-speed="+8%">+8%</button>
+                            <button type="button" class="pill-btn active" data-tts-speed="+12%">+12%</button>
+                            <button type="button" class="pill-btn" data-tts-speed="+18%">+18%</button>
+                            <button type="button" class="pill-btn" data-tts-speed="+22%">+22%</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="cta-block">
+                    <div class="step-badge-title">
+                        <span class="step-num-pill">2</span>
+                        <span class="step-title" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
+                    </div>
+                    <div id="tts-preflight" class="voice-preflight" aria-live="polite"></div>
+                    <button type="button" class="btn gold-gradient-btn" id="btn-generate-tts" onclick="generateTTS()">
+                        <span class="btn-text" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
+                    </button>
+                    <div class="queue-notice-banner">
+                        <span class="notice-text" data-i18n="tts_queue_notice">⚡ ပုံမှန်အားဖြင့် စက္ကန့်ပိုင်းမှ ၁ မိနစ် ခန့် ကြာနိုင်ပါတယ်</span>
+                    </div>
+                </div>
+
+                <div class="card glass progress-card hidden" id="tts-progress-box">
+                    <div class="progress-status-header">
+                        <span class="spinner-wave">⚡</span>
+                        <span class="status-msg" data-i18n="tts_status_generating">အသံ ဖန်တီးနေသည်…</span>
+                    </div>
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="tts-progress-fill" style="width: 35%;"></div>
+                    </div>
+                    <div class="eta-tag" data-i18n="calculating_eta">စောင့်ဆိုင်းချိန် ခန့်မှန်းနေသည်…</div>
+                </div>
+
+                <div class="card glass result-card hidden" id="tts-result-box">
+                    <div class="result-title" data-i18n="result_title">🎉 အသံ အဆင်သင့်ဖြစ်ပါပြီ</div>
+                    <audio id="tts-audio-player" controls class="custom-audio-player" preload="auto"></audio>
+                    <div class="result-actions">
+                        <a id="btn-download-tts" href="#" download="voiceclonepro_tts.wav" class="btn secondary-btn" data-i18n="btn_download_wav">📥 WAV ဒေါင်းလုဒ်</a>
+                        <button type="button" id="btn-tts-send-telegram" class="btn send-telegram-gold-btn" onclick="sendTtsToTelegram()">
+                            <span class="btn-icon">📱</span> <span data-i18n="btn_send_voice_telegram">Telegram သို့ ပို့မည်</span>
+                        </button>
+                    </div>
+                    <p id="tts-oversize-note" class="hidden mt-2" data-i18n="note_over_50mb_download" style="font-size:12px; opacity:0.9;">📥 ဒီဖိုင်က 50 MB ထက် ကြီးနေလို့ Telegram နဲ့ တိုက်ရိုက် ပို့လို့ မရပါ — Download ရယူပါ။</p>
+                </div>
+
                 <button type="button" class="hub-link mt-4" onclick="openHistoryHub()">
                     <span data-i18n="history_view_all">မှတ်တမ်း အကုန် ကြည့်ရန်</span><span class="hub-link-arrow">→</span>
                 </button>
@@ -1064,6 +1183,7 @@
                                                 <span class="spec-lbl" data-i18n="recap_engine_label">ဇာတ်လမ်းပြော Engine:</span>
                                                 <button type="button" class="pill-btn active" data-engine="voxcpm" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</button>
                                                 <button type="button" class="pill-btn" data-engine="gemini" data-i18n="recap_engine_gemini">✨ Gemini AI</button>
+                                                <button type="button" class="pill-btn" data-engine="edge" data-i18n="recap_engine_edge">🎧 Edge TTS</button>
                                             </div>
                                             <div class="recap-gemini-wrap hidden mt-2" id="recap-gemini-voice-wrap">
                                                 <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
@@ -2468,6 +2588,10 @@
                 <span class="nav-icon">🎙️</span>
                 <span class="nav-label" data-i18n="tab_voice">အသံဖန်တီး</span>
             </button>
+            <button class="nav-item" data-tab="tab-tts">
+                <span class="nav-icon">🎧</span>
+                <span class="nav-label" data-i18n="tab_tts">TTS အသံ</span>
+            </button>
             <button class="nav-item" data-tab="tab-recap">
                 <span class="nav-icon">🎬</span>
                 <span class="nav-label" data-i18n="tab_recap">Recap</span>
@@ -2558,7 +2682,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r72"></script>
-    <script src="/static/js/app.js?v=20261104_r72"></script>
+    <script src="/static/js/i18n.js?v=20261104_r73"></script>
+    <script src="/static/js/app.js?v=20261104_r73"></script>
 </body>
 </html>

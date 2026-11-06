@@ -114,7 +114,12 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
     stub_user = SimpleNamespace(
         account_category="FREE", language_code="en", recap_credits=None
     )
-    stub_balance = SimpleNamespace(total_usable_minutes=1.0, purchased_minutes=0.0)
+    # Batch AW: the menu reads the clone-spendable figure and the
+    # referral (TTS) bucket separately — the stub carries both.
+    stub_balance = SimpleNamespace(
+        total_usable_minutes=1.0, purchased_minutes=0.0,
+        clone_spendable_minutes=1.0, referral_seconds=0,
+    )
     with patch(
         "app.handlers.menu.get_or_create_user",
         new=AsyncMock(return_value=(stub_user, False)),
@@ -139,7 +144,7 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
                 "<b>၂။ Movie Recap (Mini App)</b>",
                 "<b>၃။ Media Downloader (Mini App)</b>",
                 "<b>၄။ လက်ကျန်မိနစ်နှင့် အကောင့်အဆင့်များ</b>",
-                "<b>၅။ အခမဲ့မိနစ် ရယူနည်း (Refer & Earn)</b>",
+                "<b>၅။ TTS အသံ အခမဲ့ ရယူနည်း (Refer & Earn)</b>",
                 "<b>၆။ ဘာသာစကား (Language)</b>",
                 "• ဖန်တီးထားသော ဖိုင်များကို မှတ်တမ်း (History) မှာ 24 နာရီအထိ ပြန်ဒေါင်းနိုင်ပါသည်။",
                 "• 🚀 <b>Studio ဖွင့်မည်</b> ခလုတ်မှ Voice Tab ကို ဖွင့်ပါ (သို့မဟုတ် ဒီ Chat ထဲမှာပဲ စာသား ပို့လည်း ရပါသည်)။",
@@ -152,7 +157,7 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
                 "<b>2. Movie Recap (Mini App)</b>",
                 "<b>3. Media Downloader (Mini App)</b>",
                 "<b>4. Balances & Tiers</b>",
-                "<b>5. Free Minutes (Refer & Earn)</b>",
+                "<b>5. Free TTS Audio (Refer & Earn)</b>",
                 "<b>6. Language</b>",
                 "• Your creations stay downloadable from History for 24 hours.",
                 "• 🚀 Open the Voice tab from <b>Launch Studio</b> (or just send your text right here in this chat).",

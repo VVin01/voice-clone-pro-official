@@ -598,7 +598,9 @@ def test_recap_poller_has_cancelled_branch_with_proven_refund_only():
 
 
 def test_voice_poller_has_cancelled_branch():
-    assert APP_JS.count('data.status === "CANCELLED"') == 2
+    # Voice + recap pollers, plus the Batch AW TTS poller — every
+    # polling loop stops honestly on a cancelled job.
+    assert APP_JS.count('data.status === "CANCELLED"') == 3
     assert 't("voice_cancelled_toast")' in APP_JS
 
 
@@ -740,5 +742,5 @@ def test_action_fallback_errors_are_localized():
 
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("20261104_r72") == 4
+    assert INDEX_HTML.count("20261104_r73") == 4
     assert "20261103_r44" not in INDEX_HTML

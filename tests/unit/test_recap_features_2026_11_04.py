@@ -51,7 +51,7 @@ import app.services.downloader as downloader_mod
 import app.services.url_safety as url_safety_mod
 from app.config import settings
 from app.db.base import Base
-from app.models.enums import JobStatus, JobType
+from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import BotSetting, Job, User
 from app.services.dynamic_settings import set_dynamic_setting
 from app.services.ledger import get_or_create_user
@@ -207,6 +207,12 @@ def _no_network(monkeypatch):
 @pytest.mark.asyncio
 async def test_retry_creates_new_job_same_config_and_charges_anew(db_session, _no_network):
     owner, _ = await get_or_create_user(db_session, telegram_id=OWNER_TG)
+    # Batch AW: the fixture config uses the default clone engine
+    # (voxcpm), which a FREE owner may no longer run (the AW clamp
+    # substitutes gemini at create — by design). The same-config
+    # invariant is exercised on a PURCHASED owner, whose tier may use
+    # the config exactly as persisted.
+    owner.account_category = AccountCategory.PURCHASED.value
     owner.recap_credits = 2
     state = _recap_state()
     db_session.add(_job("rc_l_retry_src", owner.id, state))
@@ -825,7 +831,7 @@ def test_batch_l_frontend_wiring_pins():
     ):
         assert f'id="{element_id}"' in INDEX_HTML, element_id
     # Static assets moved to the batch's cache version.
-    assert "20261104_r72" in INDEX_HTML
+    assert "20261104_r73" in INDEX_HTML
     assert "20261103_r43" not in INDEX_HTML
 
     # Poller renders the server's job-aware position/ETA.

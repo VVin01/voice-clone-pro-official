@@ -120,6 +120,13 @@ class Settings(BaseSettings):
     # 0 = unlimited for that tier.
     voice_daily_limit_minutes_free: int = Field(default=5, alias="VOICE_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
     voice_daily_limit_minutes_paid: int = Field(default=30, alias="VOICE_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
+    # Batch AW: per-user DAILY TTS-tab minutes cap, split by tier like
+    # Batch AN but on its own allowance — the TTS tab never deducts
+    # voice minutes or recap credits; referral seconds are spent
+    # before this cap is touched. Enforced in create_tts_job for
+    # FREE + PURCHASED; admins exempt; 0 = unlimited for that tier.
+    tts_daily_limit_minutes_free: int = Field(default=15, alias="TTS_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
+    tts_daily_limit_minutes_paid: int = Field(default=60, alias="TTS_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
     # Batch AO: tiered recap pricing kill switch (owner decision
     # 2026-11-05 — credits = ceil(source duration / 180s), one credit
     # per started 3-minute band). Ships DARK: default False, and OFF

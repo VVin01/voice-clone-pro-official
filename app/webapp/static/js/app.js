@@ -2242,6 +2242,10 @@ function switchTab(tabId) {
     window.scrollTo({ top: 0, behavior: "auto" });
     refreshStickyCtas();
     moveNavPill();
+    // Batch AW: the TTS tab paints its balance line fresh on entry.
+    if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
+        window.refreshTtsQuota();
+    }
 }
 window.switchTab = switchTab;
 
@@ -2343,6 +2347,8 @@ async function loadUserProfile() {
         state.logoHas = !!data.has_custom_logo;
         refreshLogoUi();
         refreshRecapQualityLock();
+        refreshRecapEngineLock();
+        paintVoiceTtsBalanceLine(data);
         if (data.can_use_logo || data.has_custom_logo) fetchLogoState();
         // Cache the last good profile so the NEXT open paints real
         // balances instantly instead of flashing the gate + 0.0m/0c
@@ -3326,6 +3332,8 @@ function paintCachedUserHeader(data) {
     state.logoHas = !!data.has_custom_logo;
     refreshLogoUi();
     refreshRecapQualityLock();
+    refreshRecapEngineLock();
+    paintVoiceTtsBalanceLine(data);
 }
 
 // Custom channel logo (paid-only, owner decision 2026-11-02): the
@@ -3422,6 +3430,46 @@ function refreshRecapQualityLock() {
     });
 }
 window.refreshRecapQualityLock = refreshRecapQualityLock;
+
+// Batch AW-3: free-tier recap narration is Gemini TTS or Edge TTS
+// only — the Persona/Clone engine (voxcpm) is purchased + admin.
+// Mirrors the Batch AU quality lock exactly: same tier source
+// (state.user), the voxcpm pill is disabled with the lock affordance
+// while a FREE profile is known, and a saved "voxcpm" preference
+// resolves to "gemini" on load for a free profile (the server clamp
+// enforces the same rule at submit + execution regardless).
+function canUseRecapCloneEngine() {
+    const u = state.user || {};
+    return !!(u.is_admin || u.account_category === "PURCHASED");
+}
+function syncRecapEngineAreas() {
+    const gv = document.getElementById("recap-gemini-voice-wrap");
+    if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
+    const pa = document.getElementById("recap-persona-area");
+    if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
+}
+function refreshRecapEngineLock() {
+    const u = state.user;
+    const tierKnown = !!(
+        u && (u.is_admin !== undefined || typeof u.account_category === "string")
+    );
+    const canUse = canUseRecapCloneEngine();
+    if (tierKnown && !canUse && state.recapTtsEngine === "voxcpm") {
+        state.recapTtsEngine = "gemini";
+    }
+    document.querySelectorAll("#recap-engine-picker .pill-btn").forEach(btn => {
+        const engine = btn.getAttribute("data-engine");
+        if (engine === "voxcpm") {
+            const locked = tierKnown && !canUse;
+            btn.disabled = locked;
+            btn.classList.toggle("engine-locked", locked);
+            btn.setAttribute("aria-disabled", locked ? "true" : "false");
+        }
+        btn.classList.toggle("active", engine === state.recapTtsEngine);
+    });
+    syncRecapEngineAreas();
+}
+window.refreshRecapEngineLock = refreshRecapEngineLock;
 
 // Fetch the authoritative logo state (the profile payload carries
 // the flags but not the signed preview URL).
@@ -6650,20 +6698,24 @@ function setupRecapVisualEditor() {
     });
     refreshRecapQualityLock();
 
-    // 6e. Narration engine pills (VoxCPM persona / Gemini TTS) + Gemini voice select
+    // 6e. Narration engine pills (VoxCPM persona / Gemini TTS / Edge
+    // TTS) + Gemini voice select. Batch AW: Edge keeps the persona
+    // area visible (the persona pick supplies the Edge base voice —
+    // no separate Edge picker); the voxcpm pill is locked for free
+    // profiles by refreshRecapEngineLock and disabled pills never
+    // fire (guard below, same as the quality pills).
     const engineBtns = document.querySelectorAll("#recap-engine-picker .pill-btn");
     engineBtns.forEach(btn => {
         btn.addEventListener("click", () => {
+            if (btn.disabled) return;
             haptic("selection");
             engineBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
-            const gv = document.getElementById("recap-gemini-voice-wrap");
-            if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
-            const pa = document.getElementById("recap-persona-area");
-            if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
+            syncRecapEngineAreas();
         });
     });
+    refreshRecapEngineLock();
     const geminiVoiceSel = document.getElementById("recap-gemini-voice-select");
     if (geminiVoiceSel) {
         geminiVoiceSel.addEventListener("change", () => {
@@ -7219,7 +7271,7 @@ function setupRecapVisualEditor() {
         recapLogoPos: ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
         recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja", "hi", "my", "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"],
         recapRenderQuality: ["standard", "high", "max"],
-        recapTtsEngine: ["voxcpm", "gemini"],
+        recapTtsEngine: ["voxcpm", "gemini", "edge"],
     };
     const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapBlurBoxTouched", "recapTitleEnabled"];
     const RECAP_SETTING_INTS = {
@@ -7380,6 +7432,10 @@ function setupRecapVisualEditor() {
         if (window.syncRecapLangViews) syncRecapLangViews();
         refreshRecapQualityLock();
         syncPillGroup("#recap-quality-picker .pill-btn", "data-quality", state.recapRenderQuality);
+        // Batch AW: a saved "voxcpm" resolves to "gemini" for a free
+        // profile BEFORE the engine pills paint (the lock re-syncs the
+        // pill actives + the persona/Gemini areas from resolved state).
+        refreshRecapEngineLock();
         syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine);
         const gv = document.getElementById("recap-gemini-voice-wrap");
         if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
@@ -8877,6 +8933,244 @@ async function sendVoiceToTelegram(targetJobId) {
     }
 }
 window.sendVoiceToTelegram = sendVoiceToTelegram;
+
+// ── Batch AW: standalone TTS tab ─────────────────────────────────────
+// Gemini AI or Edge voices under the tab's OWN billing (referral
+// bucket first, then the daily TTS allowance — never voice minutes or
+// recap credits; the server enforces it in tts_service.py). The flow
+// mirrors the voice flow: submit → poll /jobs/{id}/status → result
+// card with player, branded download and bot-chat delivery.
+const ttsState = { engine: "gemini", speed: "+12%", jobId: null, pollTimer: null };
+window.ttsState = ttsState;
+
+function paintVoiceTtsBalanceLine(profile) {
+    // AW-11: the Voice tab labels the referral bucket as TTS-only —
+    // it is NOT part of the clone balance anymore.
+    const el = document.getElementById("voice-tts-balance-line");
+    if (!el) return;
+    const secs = profile && typeof profile.tts_balance_seconds === "number"
+        ? profile.tts_balance_seconds : 0;
+    if (secs > 0) {
+        el.textContent = tf("voice_tts_balance_line", { min: (secs / 60).toFixed(1) });
+        el.classList.remove("hidden");
+    } else {
+        el.textContent = "";
+        el.classList.add("hidden");
+    }
+}
+window.paintVoiceTtsBalanceLine = paintVoiceTtsBalanceLine;
+
+async function refreshTtsQuota() {
+    const line = document.getElementById("tts-balance-line");
+    if (!line) return;
+    try {
+        const res = await fetch("/api/tts/quota", { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const q = await res.json();
+        const refMin = ((q.referral_seconds || 0) / 60).toFixed(1);
+        if (q.unlimited) {
+            line.textContent = tf("tts_balance_line_unlimited", { ref_min: refMin });
+        } else {
+            line.textContent = tf("tts_balance_line", {
+                ref_min: refMin,
+                remain_min: (((q.remaining_seconds || 0)) / 60).toFixed(1),
+            });
+        }
+    } catch (e) { /* non-fatal: the submit path reports real errors */ }
+}
+window.refreshTtsQuota = refreshTtsQuota;
+
+function updateTtsCharCount() {
+    const input = document.getElementById("tts-text-input");
+    const counter = document.getElementById("tts-char-count");
+    if (input && counter) counter.textContent = `${(input.value || "").length} / 5,000`;
+}
+function insertTtsSampleText(txt) {
+    const input = document.getElementById("tts-text-input");
+    if (input) { input.value = txt; updateTtsCharCount(); input.focus(); }
+}
+window.insertTtsSampleText = insertTtsSampleText;
+function clearTtsText() {
+    const input = document.getElementById("tts-text-input");
+    if (input) { input.value = ""; updateTtsCharCount(); }
+}
+window.clearTtsText = clearTtsText;
+
+function initTtsTab() {
+    document.querySelectorAll("#tts-engine-picker .seg-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            ttsState.engine = btn.getAttribute("data-tts-engine") || "gemini";
+            document.querySelectorAll("#tts-engine-picker .seg-btn").forEach(
+                b => b.classList.toggle("active", b === btn)
+            );
+            const gRow = document.getElementById("tts-gemini-voice-row");
+            const eRow = document.getElementById("tts-edge-voice-row");
+            if (gRow) gRow.classList.toggle("hidden", ttsState.engine !== "gemini");
+            if (eRow) eRow.classList.toggle("hidden", ttsState.engine !== "edge");
+        });
+    });
+    document.querySelectorAll("#tts-speed-picker .pill-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            ttsState.speed = btn.getAttribute("data-tts-speed") || "+12%";
+            document.querySelectorAll("#tts-speed-picker .pill-btn").forEach(
+                b => b.classList.toggle("active", b === btn)
+            );
+        });
+    });
+    const input = document.getElementById("tts-text-input");
+    if (input) input.addEventListener("input", updateTtsCharCount);
+    updateTtsCharCount();
+}
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTtsTab);
+} else {
+    initTtsTab();
+}
+
+async function generateTTS() {
+    const input = document.getElementById("tts-text-input");
+    const text = ((input && input.value) || "").trim();
+    if (!text) {
+        showStudioToast(t("tts_empty_error"), 'warning');
+        return;
+    }
+    const engine = ttsState.engine;
+    const voice = engine === "gemini"
+        ? ((document.getElementById("tts-gemini-voice-select") || {}).value || "Charon")
+        : ((document.getElementById("tts-edge-voice-select") || {}).value || "thiha");
+    const btn = document.getElementById("btn-generate-tts");
+    const progressBox = document.getElementById("tts-progress-box");
+    const resultBox = document.getElementById("tts-result-box");
+    haptic("heavy");
+    if (btn) btn.disabled = true;
+    if (resultBox) resultBox.classList.add("hidden");
+    if (progressBox) progressBox.classList.remove("hidden");
+    try {
+        const res = await fetchWithTimeout("/api/tts/generate", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ text, engine, voice, speed: ttsState.speed }),
+        }, 30000);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "TTS request failed");
+        ttsState.jobId = data.job_id;
+        pollTtsJob(data.job_id);
+    } catch (err) {
+        showErrorToast(err, 'voice');
+        if (progressBox) progressBox.classList.add("hidden");
+        if (btn) btn.disabled = false;
+    }
+}
+window.generateTTS = generateTTS;
+
+function pollTtsJob(jobId) {
+    if (ttsState.pollTimer) clearInterval(ttsState.pollTimer);
+    let tick = 0;
+    const startedAt = Date.now();
+    ttsState.pollTimer = setInterval(async () => {
+        tick++;
+        try {
+            const res = await fetch(`/api/jobs/${jobId}/status`, { headers: getAuthHeaders() });
+            if (!res.ok) return;
+            const data = await res.json();
+            const progressBox = document.getElementById("tts-progress-box");
+            const resultBox = document.getElementById("tts-result-box");
+            const fill = document.getElementById("tts-progress-fill");
+            const btn = document.getElementById("btn-generate-tts");
+            if (data.status === "QUEUED") {
+                if (fill) fill.style.width = "45%";
+            } else if (data.status === "RUNNING") {
+                if (fill) fill.style.width = "80%";
+            } else if (data.status === "SUCCESS") {
+                clearInterval(ttsState.pollTimer);
+                haptic("success");
+                if (progressBox) progressBox.classList.add("hidden");
+                if (btn) btn.disabled = false;
+                if (resultBox) resultBox.classList.remove("hidden");
+                const player = document.getElementById("tts-audio-player");
+                if (player && data.output_audio_url) {
+                    setAuthMediaSource(player, data.output_audio_url).then((ok) => {
+                        if (ok) { player.load(); player.play().catch(() => {}); }
+                    });
+                }
+                const btnDl = document.getElementById("btn-download-tts");
+                if (btnDl && data.output_audio_url) {
+                    btnDl.setAttribute("data-dl-url", data.output_audio_url);
+                    btnDl.setAttribute("data-dl-name", brandedDlName("TTS", "wav", null, jobId));
+                }
+                const oversize = data.telegram_sendable === false;
+                const btnTg = document.getElementById("btn-tts-send-telegram");
+                const note = document.getElementById("tts-oversize-note");
+                if (btnTg) btnTg.classList.toggle("hidden", oversize);
+                if (note) note.classList.toggle("hidden", !oversize);
+                refreshTtsQuota();
+                loadUserProfile();
+                loadUserHistory();
+            } else if (data.status === "FAILED" || data.status === "CANCELLED") {
+                clearInterval(ttsState.pollTimer);
+                haptic("error");
+                if (progressBox) progressBox.classList.add("hidden");
+                if (btn) btn.disabled = false;
+                showStudioToast(t("tts_failed"), 'error');
+                refreshTtsQuota();
+            }
+            if (tick > 120 && !["SUCCESS", "FAILED", "CANCELLED"].includes(data.status)) {
+                clearInterval(ttsState.pollTimer);
+                if (progressBox) progressBox.classList.add("hidden");
+                if (btn) btn.disabled = false;
+                showStudioToast(t("voice_wait_timeout"), 'info', 6000);
+            }
+        } catch (e) {
+            if (tick > 120) {
+                clearInterval(ttsState.pollTimer);
+                const progressBox = document.getElementById("tts-progress-box");
+                if (progressBox) progressBox.classList.add("hidden");
+                const btn = document.getElementById("btn-generate-tts");
+                if (btn) btn.disabled = false;
+            }
+        }
+    }, 2000);
+}
+
+async function sendTtsToTelegram() {
+    const jobId = ttsState.jobId;
+    if (!jobId) {
+        showStudioToast(t("toast_job_id_missing"), 'warning');
+        return;
+    }
+    haptic("medium");
+    const btn = document.getElementById("btn-tts-send-telegram");
+    const originalContent = btn ? btn.innerHTML : "";
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-inline">⏳</span> <span>${t("toast_sending_telegram")}</span>`;
+    }
+    try {
+        const res = await fetch(`/api/voices/${jobId}/send-telegram`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (!res.ok && data.detail === "file_too_large_telegram") {
+            showStudioToast(t("dl_too_large_telegram"), 'warning', 6000);
+            if (btn) { btn.disabled = false; btn.innerHTML = originalContent; }
+            return;
+        }
+        if (!res.ok) throw new Error(data.detail || "Failed to send to Telegram");
+        haptic("success");
+        if (btn) {
+            btn.classList.add("sent");
+            btn.innerHTML = `<span>${t("btn_telegram_sent")}</span>`;
+        }
+        showStudioToast(t("toast_telegram_sent"), 'success');
+    } catch (err) {
+        showErrorToast(err, 'send');
+        if (btn) { btn.disabled = false; btn.innerHTML = originalContent; }
+    }
+}
+window.sendTtsToTelegram = sendTtsToTelegram;
 
 async function sendRecapToTelegram(targetJobId) {
     const jobId = targetJobId || state.recapJobId;

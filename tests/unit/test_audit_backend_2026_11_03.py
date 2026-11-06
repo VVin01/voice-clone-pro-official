@@ -187,7 +187,9 @@ async def test_precheck_rejects_both_production_cases_at_submit(db_session, monk
     monkeypatch.setattr(queue_mod, "grant_monthly_free_allowance", _noop)
     monkeypatch.setattr(
         queue_mod, "get_minute_balance",
-        AsyncMock(return_value=SimpleNamespace(total_usable_seconds=180)),
+        # Batch AW: the precheck reads the clone-spendable figure (the
+        # mock carries both so the 180s cases below are unchanged).
+        AsyncMock(return_value=SimpleNamespace(total_usable_seconds=180, clone_spendable_seconds=180)),
     )
 
     job, reason = await create_voice_clone_job(

@@ -573,6 +573,42 @@ def _clamp_recap_render_quality(
     return req.render_quality
 
 
+def _clamp_recap_tts_engine(
+    req: "RecapConfigRequest",
+    *,
+    user: Optional[User] = None,
+    user_id: Optional[int] = None,
+    is_vip: Optional[bool] = None,
+) -> str:
+    """Batch AW: recap narration engine is tier-gated.
+
+    FREE users may narrate with Gemini TTS or Edge TTS only; the
+    clone/persona engine (``voxcpm``) is a purchased-tier benefit.
+    This is a clamp, never a rejection: a free user's ``voxcpm``
+    selection runs as ``gemini`` instead (the closest free engine — a
+    real AI voice, no persona) and the substitution is logged at INFO.
+    ``is_vip`` is the execution paths' existing purchased-or-admin
+    flag; submit paths pass the user and reuse the same tier test as
+    the Batch AU quality clamp above. Applied at create_recap_job AND
+    again at execution entry, so a config persisted by an older client
+    — or submitted while purchased and downgraded before the render
+    ran — cannot smuggle clone narration into a free job.
+    """
+    if req is None:
+        return "gemini"
+    if is_vip is None:
+        is_vip = _can_use_custom_logo(user) if user is not None else False
+    requested = str(getattr(req, "tts_engine", "") or "").strip().lower()
+    if is_vip or requested != "voxcpm":
+        return requested
+    req.tts_engine = "gemini"
+    logger.info(
+        "Recap TTS engine clamped for user %s: requested=voxcpm applied=gemini",
+        user_id if user_id is not None else (user.id if user is not None else None),
+    )
+    return req.tts_engine
+
+
 def _user_logo_dir(user_id: int) -> Path:
     return settings.storage_root / "user_logos" / str(int(user_id))
 
@@ -2378,7 +2414,12 @@ async def get_user_profile(
         except Exception:
             pass
     bal = await db.get(MinuteBalance, user.id)
-    seconds_left = bal.total_usable_seconds if bal else 0
+    # Batch AW: the headline balance is the CLONE-SPENDABLE figure —
+    # referral seconds are TTS-only since the re-scope and are exposed
+    # separately as tts_balance_seconds (the TTS tab's balance), never
+    # folded into the voice-clone totals.
+    seconds_left = bal.clone_spendable_seconds if bal else 0
+    tts_seconds_left = int(bal.referral_seconds or 0) if bal else 0
     is_admin = settings.is_admin(user.id)
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or is_admin
 
@@ -2511,6 +2552,8 @@ async def get_user_profile(
         "is_vip": is_vip,
         "balance_seconds": seconds_left,
         "balance_minutes": round(seconds_left / 60, 1),
+        "tts_balance_seconds": tts_seconds_left,
+        "tts_balance_minutes": round(tts_seconds_left / 60, 1),
         "recap_credits": getattr(user, "recap_credits", 3),
         "character_limit": char_limit,
         # R40 deck I4: the plan "how it works" copy states BOTH limits
@@ -3242,7 +3285,7 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
         "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr",
     ],
     "recapRenderQuality": ["standard", "high", "max"],
-    "recapTtsEngine": ["voxcpm", "gemini"],
+    "recapTtsEngine": ["voxcpm", "gemini", "edge"],
 }
 USER_PREF_BOOLS: List[str] = [
     "recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs",
@@ -3761,7 +3804,9 @@ async def download_job_audio(
         path=str(target_path),
         media_type=media_type,
         filename=branded_download_filename(
-            "Voice", (ext or ".wav").lstrip("."), title=job.preset_voice, job_id=job.id
+            # Batch AW: TTS-tab downloads carry the TTS brand segment.
+            "TTS" if job.job_type == JobType.TTS.value else "Voice",
+            (ext or ".wav").lstrip("."), title=job.preset_voice, job_id=job.id
         ),
         content_disposition_type=disposition,
     )
@@ -4986,7 +5031,9 @@ RECAP_SOURCE_LANGUAGE_CODES = frozenset({
     "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr",
 })
 RECAP_RENDER_QUALITIES = frozenset({"standard", "high", "max"})
-RECAP_TTS_ENGINES = frozenset({"voxcpm", "gemini"})
+# Batch AW: "edge" (Microsoft Edge TTS) is a first-class user-selectable
+# recap narration engine alongside voxcpm (clone/persona) and gemini.
+RECAP_TTS_ENGINES = frozenset({"voxcpm", "gemini", "edge"})
 # Recap narrator slugs the worker still maps even though they are not
 # curated personas (legacy Edge female voice). Every other legitimate
 # recap voice_slug is a curated persona slug — see create_recap_job.
@@ -5161,7 +5208,7 @@ class RecapConfigRequest(BaseModel):
     def _check_tts_engine(cls, v: str) -> str:
         e = str(v or "voxcpm").strip().lower()
         if e not in RECAP_TTS_ENGINES:
-            raise ValueError(f"Unsupported tts_engine '{v}'. Use: voxcpm, gemini")
+            raise ValueError(f"Unsupported tts_engine '{v}'. Use: voxcpm, gemini, edge")
         return e
 
     @field_validator("gemini_voice")
@@ -6022,6 +6069,10 @@ async def _execute_recap_background_job(
     # split). Clamping the shared request here also covers configs
     # restored from a persisted job or a script-review snapshot.
     _clamp_recap_render_quality(req, user_id=user_id, is_vip=is_vip)
+    # Batch AW: the same execution choke point for the narration
+    # engine — a free-tier job can never execute with clone narration,
+    # however its config was persisted.
+    _clamp_recap_tts_engine(req, user_id=user_id, is_vip=is_vip)
 
     # Credit accounting for this job (older registry entries — e.g.
     # admin re-queues — may predate these keys): the amount actually
@@ -6126,6 +6177,22 @@ async def _execute_recap_background_job(
             tts_engine = "gemini"
             if not gemini_voice:
                 gemini_voice = "Kore" if is_female else "Charon"
+
+        # Batch AW-1: Edge TTS as a user-selected PRIMARY engine. The
+        # persona resolution above already produced an Edge voice in
+        # every path (curated persona -> its gender-matched Edge base,
+        # legacy female slugs -> Nilar, otherwise Thiha), so selecting
+        # Edge simply keeps that voice as the render voice with the
+        # plain "edge_tts" engine label. Downstream, the pipeline runs
+        # it through the plain-Edge primary path (EdgeSmartSync with a
+        # non-voxcpm voice) — it does NOT detour through VoxCPM, so
+        # Edge here is never recorded as a fallback.
+        if req.tts_engine == "edge":
+            tts_engine = "edge_tts"
+            if p_info:
+                selected_voice = p_info.get("edge_voice") or (
+                    "my-MM-NilarNeural" if is_female else "my-MM-ThihaNeural"
+                )
 
         logo_pos_map = {
             "top-right": [0.82, 0.04],
@@ -7449,6 +7516,10 @@ async def create_recap_job(
     # so the registry, Job row and background runner all carry the
     # quality this tier may actually use.
     _clamp_recap_render_quality(req, user=user, user_id=user.id, is_vip=is_vip)
+    # Batch AW: same submit choke point for the narration engine —
+    # the persisted config and the dispatched runner carry the engine
+    # this tier may actually use (free: gemini/edge, never voxcpm).
+    _clamp_recap_tts_engine(req, user=user, user_id=user.id, is_vip=is_vip)
     credits = getattr(user, "recap_credits", 0) or 0
 
     # Credit gate (money fix 2026-10-31): EVERY non-admin needs at
@@ -8467,6 +8538,129 @@ async def send_recap_to_telegram(
     return {"success": True, "message": "Telegram သို့ ဗီဒီယို ပို့ပြီးပါပြီခင်ဗျာ!"}
 
 
+# ── 5.05. Batch AW: standalone TTS tab ─────────────────────────────────
+class TTSGenerateRequest(BaseModel):
+    text: str = ""
+    engine: str = "gemini"
+    voice: str = ""
+    speed: str = "+12%"
+
+
+def _tts_error_status(reason: str) -> int:
+    if reason in ("TTS_DAILY_LIMIT_EXCEEDED", "CONCURRENT_JOB_LIMIT_EXCEEDED"):
+        return 429
+    if reason == "USER_BLOCKED":
+        return 403
+    return 400
+
+
+def _tts_error_detail(reason: str, user: User) -> str:
+    """User-facing detail for a TTS submit rejection — the daily-cap
+    message NAMES the caller's own tier limit, mirroring the Batch AN
+    voice-cap message."""
+    from app.services.tts_service import TTS_MAX_CHARS, tts_daily_limit_minutes
+
+    if reason == "TTS_DAILY_LIMIT_EXCEEDED":
+        limit = tts_daily_limit_minutes(user, is_admin=False)
+        return (
+            f"🎧 ဒီနေ့အတွက် TTS အသံ ဖန်တီးခွင့် {limit} မိနစ် ပြည့်သွားပါပြီ။ "
+            "မနက်ဖြန် ထပ်မံ ကြိုးစားကြည့်ပါခင်ဗျာ။"
+        )
+    if reason == "TEXT_EXCEEDS_CHARACTER_LIMIT":
+        return f"စာသား အလွန်ရှည်နေပါသည်။ စာလုံးရေ {TTS_MAX_CHARS:,} လုံးအောက် ထားပေးပါခင်ဗျာ။"
+    if reason == "EMPTY_TEXT":
+        return "အသံပြောင်းရန် စာသား အရင် ရိုက်ထည့်ပေးပါခင်ဗျာ။"
+    if reason == "CONCURRENT_JOB_LIMIT_EXCEEDED":
+        return "လုပ်ဆောင်နေဆဲ အလုပ်များ ရှိနေပါသည်။ ပြီးဆုံးမှ ထပ်မံ ကြိုးစားပါခင်ဗျာ။"
+    if reason in ("INVALID_ENGINE", "INVALID_VOICE", "INVALID_SPEED"):
+        return "ရွေးချယ်ထားသော TTS ဆက်တင် မမှန်ကန်ပါ။ ပြန်လည် ရွေးချယ်ပေးပါခင်ဗျာ။"
+    if reason == "USER_BLOCKED":
+        return "ဤအကောင့်ကို ပိတ်ထားပါသည်။"
+    return "TTS အလုပ် စတင်၍ မရပါ။ ခဏအကြာ ထပ်မံ ကြိုးစားကြည့်ပါခင်ဗျာ။"
+
+
+@api_router.post("/tts/generate")
+async def generate_tts(
+    payload: TTSGenerateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Batch AW: submit a standalone TTS job (Gemini or Edge engine).
+
+    Billing lives in app.services.tts_service.create_tts_job: referral
+    seconds are drawn first, only the remainder counts against the
+    tier's daily TTS allowance, and purchased voice minutes / recap
+    credits are NEVER touched. The job runs in-process (background
+    task, the recap-runner pattern) and is polled through the generic
+    /jobs/{id}/status endpoint like every other job type.
+    """
+    from app.services.tts_service import create_tts_job, execute_tts_job
+
+    engine = str(payload.engine or "gemini").strip().lower()
+    voice = str(payload.voice or "").strip()
+    if not voice:
+        voice = "Charon" if engine == "gemini" else "thiha"
+    job, reason = await create_tts_job(
+        db,
+        user.id,
+        text=payload.text or "",
+        engine=engine,
+        voice=voice,
+        speed_rate=str(payload.speed or "+12%"),
+    )
+    if job is None:
+        await db.rollback()
+        raise HTTPException(
+            status_code=_tts_error_status(reason),
+            detail=_tts_error_detail(reason, user),
+        )
+    await db.commit()
+    asyncio.create_task(execute_tts_job(job.id))
+    return {
+        "status": "success",
+        "job_id": job.id,
+        "job_type": "TTS",
+        "engine": job.engine,
+        "estimated_seconds": job.seconds_estimated,
+    }
+
+
+@api_router.get("/tts/quota")
+async def get_tts_quota(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Batch AW: the TTS tab's balance picture — referral seconds (the
+    tab's spendable balance), the tier's daily allowance, and how much
+    of today's allowance is already spoken for (net of referral draws).
+    """
+    from app.services.ledger import get_minute_balance
+    from app.services.tts_service import (
+        tts_cap_consumed_seconds,
+        tts_daily_limit_minutes,
+    )
+
+    bal = await get_minute_balance(db, user.id)
+    is_admin = settings.is_admin(user.id)
+    limit_min = tts_daily_limit_minutes(user, is_admin=is_admin)
+    consumed = await tts_cap_consumed_seconds(db, user.id)
+    remaining = None
+    if limit_min > 0:
+        remaining = max(0.0, limit_min * 60 - consumed)
+    return {
+        "referral_seconds": int(bal.referral_seconds or 0),
+        "referral_minutes": round(int(bal.referral_seconds or 0) / 60, 1),
+        "daily_limit_minutes": limit_min,
+        "unlimited": bool(is_admin or limit_min <= 0),
+        "consumed_seconds": round(consumed, 1),
+        "remaining_seconds": (round(remaining, 1) if remaining is not None else None),
+        "tier": "PURCHASED" if user.account_category == AccountCategory.PURCHASED.value else "FREE",
+        "is_admin": is_admin,
+    }
+
+
 @api_router.post("/voices/{job_id}/send-telegram")
 async def send_voice_to_telegram(
     job_id: str,
@@ -8504,14 +8698,20 @@ async def send_voice_to_telegram(
     from aiogram.types import FSInputFile
     bot = Bot(token=settings.bot_token)
     try:
+        # Batch AW: a TTS job's on-demand send carries the TTS brand
+        # and caption; voice-clone jobs keep theirs.
+        _is_tts_job = db_job.job_type == JobType.TTS.value
         af = FSInputFile(
             str(audio_path),
             filename=branded_download_filename(
-                "Voice", audio_path.suffix.lstrip(".") or "wav",
+                "TTS" if _is_tts_job else "Voice", audio_path.suffix.lstrip(".") or "wav",
                 title=db_job.preset_voice, job_id=job_id,
             ),
         )
         caption = (
+            f"🎧 <b>TTS အသံ</b>\n"
+            f"✨ <i>Mini App TTS Tab မှ တောင်းဆိုချက်အရ သင့်ထံ ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
+        ) if _is_tts_job else (
             f"🎙️ <b>AI Myanmar Voice Clone</b>\n"
             f"✨ <i>Mini App မှ တောင်းဆိုချက်အရ သင့်ထံ ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
         )
@@ -8666,6 +8866,10 @@ async def get_user_history(
         time_ago = _time_ago_str(mins_ago, user.language_code or "my")
 
         is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_"))
+        # Batch AW: TTS jobs serialize as their own type (they ride the
+        # voice-side download/deliverables plumbing, but the client
+        # labels them as TTS creations, not voice clones).
+        is_tts = (j.job_type == JobType.TTS.value)
 
         # Verify whether the output file actually exists on the persistent
         # disk — the single availability check every serializer shares.
@@ -8771,7 +8975,7 @@ async def get_user_history(
             )
         out.append({
             "id": j.id,
-            "job_type": "RECAP" if is_recap else "VOICE_CLONE",
+            "job_type": "RECAP" if is_recap else ("TTS" if is_tts else "VOICE_CLONE"),
             "parts_count": (len(_hist_parts) or None) if is_recap else None,
             "credits_charged": (
                 (_hist_entry or {}).get("credits_charged")
@@ -8997,7 +9201,7 @@ async def get_admin_global_history(
             "user_id": job.user_id,
             "username": username or "Unknown",
             "first_name": first_name or "",
-            "job_type": "RECAP" if is_recap else "VOICE_CLONE",
+            "job_type": "RECAP" if is_recap else ("TTS" if job.job_type == JobType.TTS.value else "VOICE_CLONE"),
             "engine": job.engine,
             "preset_voice": job.preset_voice or ("Thiha" if is_recap else "Standard"),
             "status": job.status,
@@ -10217,7 +10421,7 @@ async def get_admin_queue(
             "user_name": (u.first_name if u else None) or f"User {j.user_id}",
             "username": u.username if u else None,
             "status": j.status,
-            "job_type": "RECAP" if is_recap else "VOICE_CLONE",
+            "job_type": "RECAP" if is_recap else ("TTS" if j.job_type == JobType.TTS.value else "VOICE_CLONE"),
             "engine": j.engine or ("recap" if is_recap else "voxcpm"),
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
             "input_snippet": (j.input_text[:80] + "...") if j.input_text and len(j.input_text) > 80 else (j.input_text or ""),
@@ -10476,6 +10680,8 @@ class AdminSettingsPayload(BaseModel):
     free_daily_job_limit: Optional[int] = None
     voice_daily_limit_minutes_free: Optional[int] = None
     voice_daily_limit_minutes_paid: Optional[int] = None
+    tts_daily_limit_minutes_free: Optional[int] = None
+    tts_daily_limit_minutes_paid: Optional[int] = None
     # Batch AO: tiered recap pricing arming switch (ships dark; the
     # owner flips it only at the announced effective date).
     tiered_recap_pricing_enabled: Optional[bool] = None
@@ -10529,6 +10735,8 @@ async def get_admin_settings(
         "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
         "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 5)),
         "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 30)),
+        "tts_daily_limit_minutes_free": int(getattr(settings, "tts_daily_limit_minutes_free", 15)),
+        "tts_daily_limit_minutes_paid": int(getattr(settings, "tts_daily_limit_minutes_paid", 60)),
         "tiered_recap_pricing_enabled": bool(getattr(settings, "tiered_recap_pricing_enabled", False)),
         "recap_free_max_duration_seconds": int(getattr(settings, "recap_free_max_duration_seconds", 120)),
         "recap_max_duration_seconds": int(getattr(settings, "recap_max_duration_seconds", 600)),
@@ -10687,6 +10895,8 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             "free_daily_job_limit",
             "voice_daily_limit_minutes_free",
             "voice_daily_limit_minutes_paid",
+            "tts_daily_limit_minutes_free",
+            "tts_daily_limit_minutes_paid",
             "recap_free_max_duration_seconds",
             "recap_max_duration_seconds",
         ):
@@ -10699,6 +10909,8 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                 "free_daily_job_limit": (0, 1000),
                 "voice_daily_limit_minutes_free": (0, 1440),
                 "voice_daily_limit_minutes_paid": (0, 1440),
+                "tts_daily_limit_minutes_free": (0, 1440),
+                "tts_daily_limit_minutes_paid": (0, 1440),
                 "recap_free_max_duration_seconds": (0, 86400),
                 "recap_max_duration_seconds": (60, 86400),
             }

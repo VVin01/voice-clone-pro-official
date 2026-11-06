@@ -30,9 +30,13 @@ from app.models.schema import (
 logger = logging.getLogger(__name__)
 
 WELCOME_BONUS_SECONDS = 300       # 5 minutes
-REFERRAL_REWARD_SECONDS = 30     # 30 seconds per referral
+# Batch AW (owner decision 2026-11-05 23:57): the referral reward is
+# now 2 minutes of TTS-only time per rewarded referral (was 30s of
+# clone-spendable time). New rewards only — existing balances keep
+# their value and simply become TTS-spendable under the re-scope.
+REFERRAL_REWARD_SECONDS = 120    # 2 minutes of TTS time per referral
 MAX_REFERRALS_REWARDED = 20      # Max 20 eligible referrals
-MAX_REFERRAL_SECONDS = 600       # Max 10 minutes total (20 * 30s)
+MAX_REFERRAL_SECONDS = 2400      # Max 40 minutes total (20 * 120s)
 
 
 async def _find_available_referral_code(
@@ -441,7 +445,7 @@ async def confirm_referral_and_reward(
             direction=LedgerDirection.CREDIT.value,
             seconds=REFERRAL_REWARD_SECONDS,
             reference_id=str(ref.id),
-            note=f"Referral reward #{reward_idx}/{MAX_REFERRALS_REWARDED} (+30s)",
+            note=f"Referral reward #{reward_idx}/{MAX_REFERRALS_REWARDED} (+{REFERRAL_REWARD_SECONDS}s TTS)",
         )
         session.add(event)
         reward_granted = True
@@ -508,10 +512,16 @@ async def consume_seconds(
 ) -> MinuteBalance:
     """Deduct seconds using a deterministic consumption policy.
 
-    Order:
-    1. Welcome seconds
-    2. Referral seconds
+    This is the VOICE CLONE billing cascade. Order:
+    1. Monthly free seconds
+    2. Welcome seconds
     3. Purchased seconds
+
+    Batch AW re-scope: referral seconds are TTS-only now and are
+    NEVER deducted here (nor counted toward the balance check) —
+    clone-spendable means monthly_free + welcome + purchased. TTS
+    jobs draw the referral bucket through draw_tts_referral_seconds
+    instead.
 
     Returns updated MinuteBalance.
     Raises ValueError if balance is insufficient.
@@ -565,9 +575,9 @@ async def consume_seconds(
                 seconds_to_charge = seconds_to_consume - net_billed
 
     balance = await get_minute_balance(session, user_id)
-    if balance.total_usable_seconds < seconds_to_charge:
+    if balance.clone_spendable_seconds < seconds_to_charge:
         raise ValueError(
-            f"Insufficient balance: requested {seconds_to_charge}s, available {balance.total_usable_seconds}s"
+            f"Insufficient balance: requested {seconds_to_charge}s, available {balance.clone_spendable_seconds}s"
         )
 
     remaining_to_deduct = seconds_to_charge
@@ -604,21 +614,8 @@ async def consume_seconds(
             )
         )
 
-    # 2. Deduct from referral balance
-    if remaining_to_deduct > 0 and balance.referral_seconds > 0:
-        referral_deduct = min(balance.referral_seconds, remaining_to_deduct)
-        balance.referral_seconds -= referral_deduct
-        remaining_to_deduct -= referral_deduct
-        session.add(
-            MinuteLedgerEvent(
-                user_id=user_id,
-                source=LedgerSource.REFERRAL.value,
-                direction=LedgerDirection.DEBIT.value,
-                seconds=referral_deduct,
-                reference_id=job_id,
-                note=note or "Voice generation deduction (Referral)",
-            )
-        )
+    # Batch AW: the referral bucket is skipped entirely — it is
+    # TTS-only balance now (see the docstring above).
 
     # 3. Deduct from purchased balance
     if remaining_to_deduct > 0 and balance.purchased_seconds > 0:
@@ -737,6 +734,116 @@ async def refund_job_seconds(
     balance.updated_at = utc_now()
     await session.flush()
     return balance
+
+
+async def draw_tts_referral_seconds(
+    session: AsyncSession,
+    user_id: int,
+    job_id: str,
+    seconds: int,
+) -> int:
+    """Batch AW: draw up to ``seconds`` from the referral bucket for a
+    TTS job (the referral bucket is the TTS tab's balance).
+
+    Partial coverage is allowed and expected: the caller counts only
+    the remainder against the daily TTS cap. The draw is CLAIMED at
+    submit time (mirroring how the recap worker claims its credit
+    before rendering), recorded as a REFERRAL DEBIT under the job's
+    own reference so the failure/settle refunds below can find it.
+    Returns the amount actually drawn (0 when the bucket is empty or
+    the request is non-positive). The caller owns the transaction and
+    the per-user row lock (create_tts_job holds it).
+    """
+    if seconds <= 0:
+        return 0
+    balance = await get_minute_balance(session, user_id)
+    drawn = min(int(balance.referral_seconds or 0), int(seconds))
+    if drawn <= 0:
+        return 0
+    balance.referral_seconds -= drawn
+    balance.updated_at = utc_now()
+    session.add(
+        MinuteLedgerEvent(
+            user_id=user_id,
+            source=LedgerSource.REFERRAL.value,
+            direction=LedgerDirection.DEBIT.value,
+            seconds=drawn,
+            reference_id=job_id,
+            note="TTS generation deduction (Referral)",
+        )
+    )
+    await session.flush()
+    return drawn
+
+
+async def tts_referral_net_draw(
+    session: AsyncSession,
+    user_id: int,
+    job_id: str,
+) -> int:
+    """Net referral seconds a TTS job currently holds: its REFERRAL
+    debits minus the REFUND:<job_id> credits already returned. This is
+    the figure the daily-cap accounting subtracts from a job's cost
+    and the settle/refund paths reconcile against."""
+    debits = (await session.execute(
+        select(MinuteLedgerEvent).where(
+            MinuteLedgerEvent.user_id == user_id,
+            MinuteLedgerEvent.reference_id == job_id,
+            MinuteLedgerEvent.source == LedgerSource.REFERRAL.value,
+            MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
+        )
+    )).scalars().all()
+    credits = (await session.execute(
+        select(MinuteLedgerEvent).where(
+            MinuteLedgerEvent.user_id == user_id,
+            MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
+            MinuteLedgerEvent.source == LedgerSource.REFERRAL.value,
+            MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
+        )
+    )).scalars().all()
+    net = sum(int(r.seconds or 0) for r in debits) - sum(
+        int(r.seconds or 0) for r in credits
+    )
+    return max(0, net)
+
+
+async def refund_tts_referral_seconds(
+    session: AsyncSession,
+    user_id: int,
+    job_id: str,
+    *,
+    keep_seconds: int = 0,
+    note: str | None = None,
+) -> int:
+    """Batch AW: return a TTS job's referral draw, keeping
+    ``keep_seconds`` of it (the settled charge on success).
+
+    Failure/cancel passes keep_seconds=0 and gets the full draw back;
+    success passes keep_seconds=min(net draw, actual seconds) so an
+    over-estimate hands its unused referral seconds back. Idempotent
+    by construction: it reconciles against tts_referral_net_draw, so
+    repeat calls (a settle racing a failure refund) can never credit
+    the same seconds twice. Returns the amount credited back.
+    """
+    net = await tts_referral_net_draw(session, user_id, job_id)
+    give_back = net - max(0, int(keep_seconds))
+    if give_back <= 0:
+        return 0
+    balance = await get_minute_balance(session, user_id)
+    balance.referral_seconds += give_back
+    balance.updated_at = utc_now()
+    session.add(
+        MinuteLedgerEvent(
+            user_id=user_id,
+            source=LedgerSource.REFERRAL.value,
+            direction=LedgerDirection.CREDIT.value,
+            seconds=give_back,
+            reference_id=f"REFUND:{job_id}",
+            note=note or f"Refund for TTS job {job_id} (Referral)",
+        )
+    )
+    await session.flush()
+    return give_back
 
 
 def recap_refund_reference(job_id: str) -> str:

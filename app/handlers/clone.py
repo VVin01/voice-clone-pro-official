@@ -62,7 +62,9 @@ async def handle_voice_clone_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer(t("maintenance_desc", lang), show_alert=True)
         return
 
-    if not is_admin and balance.total_usable_seconds <= 0:
+    # Batch AW: clone entry checks the clone-spendable balance —
+    # referral seconds are TTS-only now and cannot open the clone flow.
+    if not is_admin and balance.clone_spendable_seconds <= 0:
         await callback.answer(t("tts_insufficient_balance", lang), show_alert=True)
         return
 
@@ -160,9 +162,9 @@ async def handle_clone_audio_input(message: Message, state: FSMContext, session:
             async with AsyncSessionLocal() as s:
                 balance = await get_minute_balance(s, message.from_user.id)
 
-        if balance.total_usable_seconds < duration:
+        if balance.clone_spendable_seconds < duration:
             await message.answer(
-                t("audio_input_insufficient_balance", lang, duration=duration, balance=balance.total_usable_seconds),
+                t("audio_input_insufficient_balance", lang, duration=duration, balance=balance.clone_spendable_seconds),
                 reply_markup=back_to_menu_kb(lang),
                 parse_mode="HTML",
             )

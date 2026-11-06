@@ -127,6 +127,25 @@ class MinuteBalance(Base):
         )
 
     @property
+    def clone_spendable_seconds(self) -> int:
+        """Seconds a VOICE CLONE job may spend (Batch AW re-scope).
+
+        Referral-earned seconds are TTS-only since Batch AW: they are
+        excluded here, and every clone balance check / deduction uses
+        this figure instead of the grand total.
+        """
+        return max(
+            0,
+            self.monthly_free_seconds
+            + self.purchased_seconds
+            + self.welcome_seconds,
+        )
+
+    @property
+    def clone_spendable_minutes(self) -> float:
+        return self.clone_spendable_seconds / 60.0
+
+    @property
     def total_usable_minutes(self) -> float:
         return self.total_usable_seconds / 60.0
 

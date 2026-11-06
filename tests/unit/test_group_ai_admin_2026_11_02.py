@@ -532,8 +532,10 @@ def test_fact_sheet_knowledge_coverage():
     assert "POV" in sheet and "Funny" in sheet
     assert "Split" in sheet and "Credit 1 ခု စီ" in sheet
     assert "Watermark" in sheet
-    # Refer programme constants from the ledger.
-    assert "30 စက္ကန့်" in sheet and "20 ယောက်" in sheet
+    # Refer programme constants from the ledger (Batch AW: the reward
+    # is 120 seconds of TTS-only time per referral).
+    assert "120 စက္ကန့်" in sheet and "20 ယောက်" in sheet
+    assert "TTS Tab တွင်သာ" in sheet
     # Membership gate + tutorial pointer.
     assert "Join" in sheet and "@VoiceClonePro" in sheet
 

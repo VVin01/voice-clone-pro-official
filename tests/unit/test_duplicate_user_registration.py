@@ -268,7 +268,7 @@ async def test_no_duplicate_welcome_bonuses_or_referral_rewards(db_session):
     await db_session.commit()
 
     # Verify MinuteLedgerEvent counts for referrer:
-    # Exactly 1 WELCOME credit (+300s) and 1 REFERRAL credit (+30s)
+    # Exactly 1 WELCOME credit (+300s) and 1 REFERRAL credit (+120s, Batch AW)
     events = (await db_session.execute(
         select(MinuteLedgerEvent).where(MinuteLedgerEvent.user_id == referrer_id)
     )).scalars().all()

@@ -84,18 +84,19 @@ async def test_referral_attribution_and_capping(db_session):
             assert rewarded is False
             assert idx == 0
 
-    # Verify referrer total referral seconds: exactly 20 * 30s = 600s (10 min)
+    # Verify referrer total referral seconds: exactly 20 * 120s = 2400s
+    # (40 min) — Batch AW raised the reward to 2 min of TTS time.
     ref_bal = await get_minute_balance(db_session, referrer.id)
-    assert ref_bal.referral_seconds == 600
-    assert ref_bal.referral_minutes == 10.0
-    # Welcome (300s) + Referral (600s) = 900s (15 min)
-    assert ref_bal.total_usable_seconds == 900
-    assert ref_bal.total_usable_minutes == 15.0
+    assert ref_bal.referral_seconds == 2400
+    assert ref_bal.referral_minutes == 40.0
+    # Welcome (300s) + Referral (2400s) = 2700s (45 min)
+    assert ref_bal.total_usable_seconds == 2700
+    assert ref_bal.total_usable_minutes == 45.0
 
     # Verify referral stats
     stats = await get_referral_stats(db_session, referrer.id)
     assert stats["rewarded_referrals"] == 20
-    assert stats["earned_seconds"] == 600
+    assert stats["earned_seconds"] == 2400
     assert stats["remaining_slots"] == 0
     assert stats["remaining_seconds"] == 0
 

@@ -233,7 +233,9 @@ def test_home_tab_is_first_nav_and_landing_pane():
     # 2026-11-01 nav restructure (owner decision): Downloader + History
     # left the dock for Home's Tools / Library section — 4 user tabs,
     # 5 for admin. Their panes and entry points are unchanged.
-    assert order == ["tab-home", "tab-voice", "tab-recap", "tab-vip", "tab-admin"]
+    # Batch AW (2026-11-06): the TTS tab joins between Voice and Recap
+    # — 5 user tabs, 6 for admin.
+    assert order == ["tab-home", "tab-voice", "tab-tts", "tab-recap", "tab-vip", "tab-admin"]
     # Home is the landing pane; Voice stays directly selectable.
     assert '<section id="tab-home" class="tab-pane active">' in INDEX_HTML
     assert '<section id="tab-voice" class="tab-pane">' in INDEX_HTML
