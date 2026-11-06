@@ -9736,7 +9736,7 @@ async function submitPaymentSlip() {
 // through the audited /api/admin/adjust-user path (unchanged backend).
 // ══════════════════════════════════════════════════════════════════════
 
-const ADM_SECTIONS = ["overview", "payments", "jobs", "users", "broadcast", "activity", "settings"];
+const ADM_SECTIONS = ["overview", "payments", "jobs", "users", "broadcast", "activity", "keys", "settings"];
 let admCurrentSection = "overview";
 let admCurrentUserId = null;
 // Batch AJ M5: one idempotency key per adjust intent — generated
@@ -9798,6 +9798,7 @@ function showAdminSection(name) {
     if (name === "jobs") loadAdminQueue();
     if (name === "users" && !admLoadedSections.users) { loadAdminUsersRecent(); admLoadedSections.users = true; }
     if (name === "activity" && !admLoadedSections.activity) { loadAdminAudit(); admLoadedSections.activity = true; }
+    if (name === "keys") loadAdminKeyHealth(false);
     if (name === "settings") { loadAdminSettings(); loadAdminPricing(); }
     if (name === "broadcast") {
         const ta = document.getElementById("adm-broadcast-text");
@@ -9824,6 +9825,123 @@ function showAdminJobsTab(tab) {
     if (tab === "history") loadAdminHistory(); else loadAdminQueue();
 }
 window.showAdminJobsTab = showAdminJobsTab;
+
+// ── Key Health (Batch BN) ────────────────────────────────────────────
+// The app checks its own provider pools server-side (GET
+// /api/admin/key-health, cached ~15 min; the Refresh button forces a
+// fresh round with ?refresh=1). The payload never carries key
+// material — indexes, labels, account names, statuses only.
+
+let admKeyHealthData = null;
+let admKeyHealthAccountsOpen = false;
+
+async function loadAdminKeyHealth(force) {
+    if (!state.user?.is_admin) return;
+    const summary = document.getElementById("adm-keys-summary");
+    const btn = document.getElementById("adm-keys-refresh-btn");
+    if (force) {
+        if (btn) btn.disabled = true;
+        const checked = document.getElementById("adm-keys-checked-at");
+        if (checked && admKeyHealthData) checked.innerText = t("adm_keys_checking");
+    } else if (!admKeyHealthData && summary) {
+        admStateLoading(summary);
+    }
+    try {
+        const res = await fetchWithTimeout("/api/admin/key-health" + (force ? "?refresh=1" : ""), { headers: getAuthHeaders() });
+        if (!res.ok) throw new Error("key-health " + res.status);
+        admKeyHealthData = await res.json();
+        renderAdminKeyHealth();
+    } catch (e) {
+        if (summary) admStateError(summary, "loadAdminKeyHealth(true)");
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+window.loadAdminKeyHealth = loadAdminKeyHealth;
+
+function admKeyPill(status, text) {
+    const cls = status === "ok" ? "success" : (status === "limit" ? "running" : "failed");
+    return `<span class="mini-tag adm-status-tag ${cls}">${escapeHtml(text)}</span>`;
+}
+
+function admKeyProviderRow(nameKey, pills, subText) {
+    return `<div class="adm-action-row-line"><span><b>${escapeHtml(t(nameKey))}</b></span><span>${pills}</span></div>` +
+        (subText ? `<p class="text-muted text-xs">${escapeHtml(subText)}</p>` : "");
+}
+
+function renderAdminKeyHealth() {
+    const data = admKeyHealthData;
+    if (!data) return;
+    const checked = document.getElementById("adm-keys-checked-at");
+    if (checked) checked.innerText = admFmtDate(data.checked_at);
+    const cached = document.getElementById("adm-keys-cached");
+    if (cached) cached.classList.toggle("hidden", !data.cached);
+    const p = data.providers || {};
+    const rows = [];
+    if (p.hf) {
+        let pills = admKeyPill(p.hf.ok === p.hf.total ? "ok" : "dead", `${p.hf.ok}/${p.hf.total} ${t("adm_keys_working")}`);
+        if (p.hf.dead > 0) pills += " " + admKeyPill("dead", `${p.hf.dead} ${t("adm_keys_dead")}`);
+        if (p.hf.error > 0) pills += " " + admKeyPill("dead", `${p.hf.error} ${t("adm_keys_error")}`);
+        const sub = `${t("adm_keys_quota_left")}: ${Math.round(p.hf.quota_remaining_s || 0).toLocaleString()} ${t("adm_keys_unit_s")}` +
+            (p.hf.quota_exhausted > 0 ? ` · ${p.hf.quota_exhausted} ${t("adm_keys_exhausted")}` : "");
+        rows.push(admKeyProviderRow("adm_keys_hf", pills, sub));
+    }
+    const keyRow = (prov, nameKey) => {
+        if (!prov) return;
+        let pills = admKeyPill(prov.ok === prov.total ? "ok" : "dead", `${prov.ok}/${prov.total} ${t("adm_keys_working")}`);
+        if (prov.limit > 0) pills += " " + admKeyPill("limit", `${prov.limit} ${t("adm_keys_limit")}`);
+        if (prov.dead > 0) pills += " " + admKeyPill("dead", `${prov.dead} ${t("adm_keys_dead")}`);
+        rows.push(admKeyProviderRow(nameKey, pills, ""));
+    };
+    keyRow(p.gemini, "adm_keys_gemini");
+    keyRow(p.groq, "adm_keys_groq");
+    if (p.spaces) {
+        const pills = admKeyPill(p.spaces.running === p.spaces.total ? "ok" : "dead", `${p.spaces.running}/${p.spaces.total} RUNNING`);
+        rows.push(admKeyProviderRow("adm_keys_spaces", pills, ""));
+    }
+    const summary = document.getElementById("adm-keys-summary");
+    if (summary) summary.innerHTML = rows.join("");
+    const accBtn = document.getElementById("adm-keys-accounts-btn");
+    if (accBtn) accBtn.classList.toggle("hidden", !(p.hf && p.hf.accounts && p.hf.accounts.length));
+    renderAdminKeyHealthAccounts();
+}
+
+function admKeyRefillText(row) {
+    if (row.remaining_s == null) return "—";
+    if (!row.refill) return t("adm_keys_full");
+    if (row.refill.method === "slope" && row.refill.refill_at) {
+        return `${t("adm_keys_refill")}: ${admFmtDate(row.refill.refill_at)} (${t("adm_keys_est")})`;
+    }
+    return `${t("adm_keys_refill")}: ${t("adm_keys_refill_24h")}`;
+}
+
+function renderAdminKeyHealthAccounts() {
+    const host = document.getElementById("adm-keys-accounts");
+    if (!host) return;
+    host.classList.toggle("hidden", !admKeyHealthAccountsOpen);
+    if (!admKeyHealthAccountsOpen || !admKeyHealthData) return;
+    const accounts = (admKeyHealthData.providers?.hf?.accounts) || [];
+    host.innerHTML = accounts.map(row => {
+        const name = row.account || ("#" + row.index);
+        const remain = row.remaining_s == null ? "—"
+            : `${Math.round(row.remaining_s).toLocaleString()} / ${Math.round(row.base_s || 0).toLocaleString()} ${t("adm_keys_unit_s")}`;
+        const pill = admKeyPill(row.status === "ok" ? "ok" : "dead", row.status === "ok" ? t("adm_keys_working") : (row.status === "dead" ? t("adm_keys_dead") : t("adm_keys_error")));
+        return `<div class="adm-action-row-line"><span>${escapeHtml(name)} ${pill}</span><span class="text-muted adm-line-time">${escapeHtml(remain)} · ${escapeHtml(admKeyRefillText(row))}</span></div>`;
+    }).join("");
+}
+
+function toggleAdminKeyHealthAccounts() {
+    admKeyHealthAccountsOpen = !admKeyHealthAccountsOpen;
+    const btn = document.getElementById("adm-keys-accounts-btn");
+    const span = btn ? btn.querySelector("span") : null;
+    if (span) {
+        const key = admKeyHealthAccountsOpen ? "adm_keys_accounts_hide" : "adm_keys_accounts_show";
+        span.setAttribute("data-i18n", key);
+        span.innerText = t(key);
+    }
+    renderAdminKeyHealthAccounts();
+}
+window.toggleAdminKeyHealthAccounts = toggleAdminKeyHealthAccounts;
 
 // ── Overview + Payments ──────────────────────────────────────────────
 
