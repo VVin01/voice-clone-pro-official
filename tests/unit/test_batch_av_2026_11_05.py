@@ -361,6 +361,6 @@ def test_av_touch_targets_and_text_fit_guards():
 
 
 def test_av_cache_token_bumped():
-    # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ) → r73 (AW) → r74 (BA) → r75 (BB) → r76 (BF).
-    assert INDEX_HTML.count("r76") == 4
+    # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ) → r73 (AW) → r74 (BA) → r75 (BB) → r76 (BF) → r77 (BC).
+    assert INDEX_HTML.count("r77") == 4
     assert "r70" not in INDEX_HTML

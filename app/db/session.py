@@ -155,6 +155,7 @@ async def init_db() -> None:
                 # PostgreSQL safe IF NOT EXISTS column additions
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS recap_credits INTEGER DEFAULT 3"))
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN DEFAULT FALSE"))
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_test_account BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS engine VARCHAR(20) DEFAULT 'voxcpm'"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preset_voice VARCHAR(50)"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
@@ -176,6 +177,8 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE users ADD COLUMN recap_credits INTEGER DEFAULT 3"))
                 if "bot_blocked" not in cols_users:
                     connection.execute(text("ALTER TABLE users ADD COLUMN bot_blocked BOOLEAN DEFAULT 0"))
+                if "is_test_account" not in cols_users:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN is_test_account BOOLEAN DEFAULT 0"))
 
                 res = connection.execute(text("PRAGMA table_info(voice_models)"))
                 cols = [row[1] for row in res.fetchall()]

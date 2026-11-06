@@ -3304,6 +3304,24 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .live-job-row-bar { height: 5px; border-radius: 999px; background: #e6ebf2; overflow: hidden; margin-top: 4px; }
 .live-job-row-fill { display: block; height: 100%; background: linear-gradient(90deg, #57c7ff, #ffd257); }
+/* Batch BC-3: income detail sheet rows (the sheet itself reuses the
+   live-jobs-sheet glass shell). Test-account rows are muted and carry
+   a TEST badge; they are display-only and never enter the total. */
+.income-mini-click { cursor: pointer; }
+.income-detail-total { font-weight: 700; font-size: 15px; margin: 10px 0 2px; }
+.income-detail-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 8px 0 2px;
+}
+.income-detail-row { align-items: center; }
+.income-detail-row.is-test { opacity: 0.55; }
+.income-detail-username { font-weight: 400; opacity: 0.75; }
+.income-detail-amount { font-weight: 700; font-size: 14px; white-space: nowrap; }
+.badge-test {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.4px; padding: 1px 6px; border-radius: 999px;
+    background: #f59e0b; color: #172036; vertical-align: middle;
+}
 .prefs-saved-note { font-size: 12px; opacity: 0.8; margin: 4px 0 8px; }
 .studio-inline-status {
     display: flex; align-items: center; gap: 8px; margin-top: 10px;

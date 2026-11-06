@@ -955,6 +955,71 @@ function closeLiveJobsSheet() {
     if (sheet) sheet.classList.add("hidden");
 }
 window.closeLiveJobsSheet = closeLiveJobsSheet;
+
+// ── Batch BC-3: income detail sheet ────────────────────────────────
+// Opened from the Admin income card (header chip = all-time, each
+// mini-card = its own period). The period total at the top comes from
+// the SAME endpoint rows the card sums, so it reconciles by
+// construction; test payments are display-only (badged TEST, muted)
+// and never included in that total, toggle or not.
+let _incomeDetailPeriod = "all";
+function openIncomeDetail(period) {
+    _incomeDetailPeriod = period || "all";
+    const sheet = document.getElementById("income-detail-sheet");
+    if (sheet) sheet.classList.remove("hidden");
+    loadIncomeDetail();
+}
+window.openIncomeDetail = openIncomeDetail;
+function closeIncomeDetail() {
+    const sheet = document.getElementById("income-detail-sheet");
+    if (sheet) sheet.classList.add("hidden");
+}
+window.closeIncomeDetail = closeIncomeDetail;
+function setIncomeDetailPeriod(period) {
+    _incomeDetailPeriod = period;
+    loadIncomeDetail();
+}
+window.setIncomeDetailPeriod = setIncomeDetailPeriod;
+async function loadIncomeDetail() {
+    const list = document.getElementById("income-detail-list");
+    const totalEl = document.getElementById("income-detail-total");
+    if (!list) return;
+    document.querySelectorAll("#income-detail-periods .filter-chip").forEach(chip => {
+        chip.classList.toggle("active", chip.dataset.incomePeriod === _incomeDetailPeriod);
+    });
+    const showTest = !!document.getElementById("income-detail-show-test")?.checked;
+    list.innerHTML = `<p class="text-muted">${t("admin_loading")}</p>`;
+    try {
+        const res = await fetchWithTimeout(
+            `/api/admin/income-detail?period=${encodeURIComponent(_incomeDetailPeriod)}&include_test=${showTest}`,
+            { headers: getAuthHeaders() }
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        if (totalEl) {
+            totalEl.innerText = (data.total_mmk || 0).toLocaleString() + " MMK · " +
+                tf("admin_income_count", { count: data.count || 0 });
+        }
+        const rows = data.payments || [];
+        if (!rows.length) {
+            list.innerHTML = `<p class="text-muted">${t("admin_income_empty")}</p>`;
+            return;
+        }
+        list.innerHTML = rows.map(p => `
+            <div class="live-job-row income-detail-row${p.is_test ? " is-test" : ""}">
+                <div class="live-job-row-main">
+                    <div class="live-job-row-title">${escapeHtml(p.user_name || "")}${p.username ? " <span class='income-detail-username'>@" + escapeHtml(p.username) + "</span>" : ""}${p.is_test ? ` <span class="badge-test">${t("admin_income_test_badge")}</span>` : ""}</div>
+                    <div class="live-job-row-meta">${escapeHtml(p.package_code || "")} · ${tf("admin_income_minutes", { minutes: p.minutes ?? 0 })} · ${admFmtDate(p.paid_at)}</div>
+                </div>
+                <div class="income-detail-amount">${(p.amount_mmk || 0).toLocaleString()} MMK</div>
+            </div>`).join("");
+    } catch (e) {
+        list.innerHTML = "";
+        if (totalEl) totalEl.innerText = "—";
+        showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
+    }
+}
+window.loadIncomeDetail = loadIncomeDetail;
 window.liveJobCancel = function(jobId, kind) {
     closeLiveJobsSheet();
     if (kind === "recap") {
@@ -10161,8 +10226,36 @@ function renderAdminUserDetail(u) {
     });
     const tier = document.getElementById("adm-adj-tier");
     if (tier) tier.value = "";
+    // Batch BC-1: reflect the test-account flag on its toggle.
+    const testToggle = document.getElementById("adm-test-flag-toggle");
+    if (testToggle) testToggle.checked = !!u.is_test_account;
     renderAdminBanZone(u);
 }
+
+// Batch BC-1: set/unset the test-account flag (audited server-side).
+// On failure the toggle snaps back so the UI never claims a state the
+// server did not record.
+async function adminToggleTestFlag(checked) {
+    const uid = admCurrentUserId;
+    const toggle = document.getElementById("adm-test-flag-toggle");
+    if (!uid) { if (toggle) toggle.checked = !checked; return; }
+    haptic("light");
+    try {
+        const res = await fetch(`/api/admin/users/${uid}/test-flag`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ is_test_account: !!checked }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        showStudioToast(t(checked ? "admin_test_flag_on" : "admin_test_flag_off"), "success");
+        loadAdminData();
+    } catch (e) {
+        if (toggle) toggle.checked = !checked;
+        showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
+    }
+}
+window.adminToggleTestFlag = adminToggleTestFlag;
 
 function renderAdminBanZone(u) {
     const zone = document.getElementById("adm-detail-ban-zone");

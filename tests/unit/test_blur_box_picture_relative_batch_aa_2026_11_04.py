@@ -464,5 +464,5 @@ def test_legacy_fallback_hint_construction_unchanged():
 # ── 9. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r64():
-    assert INDEX_HTML.count("?v=20261104_r76") == 4
+    assert INDEX_HTML.count("?v=20261104_r77") == 4
     assert "20261104_r53" not in INDEX_HTML
