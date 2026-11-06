@@ -50,7 +50,8 @@ from app.services.queue import MEASURED_CHARS_PER_SECOND, PRE_CHECK_SAFETY_MARGI
 logger = logging.getLogger(__name__)
 
 TTS_ENGINES = ("gemini", "edge")
-TTS_MAX_CHARS = 5000
+# Batch BW: the old flat TTS_MAX_CHARS = 5000 is gone — the per-tier
+# cap lives in tts_character_limit() below.
 # One pill row drives both engines — the recap flow's rate values
 # (Edge: rate=..., Gemini: rate=...), per spec AW-5.
 TTS_SPEED_RATES = ("+0%", "+8%", "+12%", "+18%", "+22%")
@@ -153,6 +154,27 @@ def tts_daily_limit_minutes(user: User, *, is_admin: bool) -> int:
     return int(getattr(settings, "tts_daily_limit_minutes_free", 15) or 0)
 
 
+def tts_character_limit(user: User, *, is_admin: bool) -> int:
+    """Batch BW: the caller's per-generation character cap for the TTS
+    tab — the SAME tier pair the voice-clone paths enforce
+    (settings.character_limit_free / _purchased; owner decision
+    2026-11-07 unifies them at FREE 1,000 / PAID 5,000 across Voice
+    Clone and TTS), additionally bounded by the infrastructure safety
+    ceiling. Admins are bound only by that ceiling, mirroring the
+    voice choke point's admin branch in queue.py. Before BW this tab
+    enforced one flat 5,000-char cap for everyone, so a FREE user
+    could submit 5,000 chars here while the voice tab rejected them
+    at their tier limit."""
+    safety = int(getattr(settings, "infrastructure_safety_character_limit", 5000) or 5000)
+    if is_admin:
+        return safety
+    if user.account_category == AccountCategory.PURCHASED:
+        tier = int(getattr(settings, "character_limit_purchased", 5000) or 5000)
+    else:
+        tier = int(getattr(settings, "character_limit_free", 1000) or 1000)
+    return min(tier, safety)
+
+
 async def create_tts_job(
     session: AsyncSession,
     user_id: int,
@@ -202,7 +224,7 @@ async def create_tts_job(
     text = converted
     if not text.strip():
         return None, "EMPTY_TEXT"
-    if len(text) > TTS_MAX_CHARS:
+    if len(text) > tts_character_limit(user, is_admin=is_admin):
         return None, "TEXT_EXCEEDS_CHARACTER_LIMIT"
 
     estimate = estimate_tts_seconds(text, speed_rate)

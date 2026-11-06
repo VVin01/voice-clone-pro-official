@@ -9015,7 +9015,7 @@ def _tts_error_detail(reason: str, user: User) -> str:
     """User-facing detail for a TTS submit rejection — the daily-cap
     message NAMES the caller's own tier limit, mirroring the Batch AN
     voice-cap message."""
-    from app.services.tts_service import TTS_MAX_CHARS, tts_daily_limit_minutes
+    from app.services.tts_service import tts_character_limit, tts_daily_limit_minutes
 
     if reason == "TTS_DAILY_LIMIT_EXCEEDED":
         limit = tts_daily_limit_minutes(user, is_admin=False)
@@ -9024,7 +9024,20 @@ def _tts_error_detail(reason: str, user: User) -> str:
             "မနက်ဖြန် ထပ်မံ ကြိုးစားကြည့်ပါခင်ဗျာ။"
         )
     if reason == "TEXT_EXCEEDS_CHARACTER_LIMIT":
-        return f"စာသား အလွန်ရှည်နေပါသည်။ စာလုံးရေ {TTS_MAX_CHARS:,} လုံးအောက် ထားပေးပါခင်ဗျာ။"
+        # Batch BW: name the CALLER's own tier limit, exactly like the
+        # daily-cap message above does for minutes (before BW this
+        # named one flat 5,000 for everyone). FREE users also get the
+        # upsell naming the purchased limit, mirroring the voice
+        # submit paths' message.
+        is_admin = settings.is_admin(user.id)
+        limit = tts_character_limit(user, is_admin=is_admin)
+        detail = f"စာသား အလွန်ရှည်နေပါသည်။ စာလုံးရေ {limit:,} လုံးအောက် ထားပေးပါခင်ဗျာ။"
+        if not is_admin and user.account_category != AccountCategory.PURCHASED.value:
+            detail += (
+                f" အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါသည်။"
+                f" စာလုံးရေ {settings.character_limit_purchased:,} အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။"
+            )
+        return detail
     if reason == "EMPTY_TEXT":
         return "အသံပြောင်းရန် စာသား အရင် ရိုက်ထည့်ပေးပါခင်ဗျာ။"
     if reason == "CONCURRENT_JOB_LIMIT_EXCEEDED":

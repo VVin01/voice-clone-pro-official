@@ -353,7 +353,9 @@ async def test_aw_tts_create_validation(db_session):
     assert (job, reason) == (None, "INVALID_SPEED")
     job, reason = await _submit_tts(db_session, user.id, text="   ")
     assert (job, reason) == (None, "EMPTY_TEXT")
-    job, reason = await _submit_tts(db_session, user.id, text="x" * (tts_service.TTS_MAX_CHARS + 1))
+    # Batch BW: the flat TTS_MAX_CHARS cap is gone — this FREE user is
+    # rejected at their own tier limit, exactly like the voice paths.
+    job, reason = await _submit_tts(db_session, user.id, text="x" * (settings.character_limit_free + 1))
     assert (job, reason) == (None, "TEXT_EXCEEDS_CHARACTER_LIMIT")
 
 
