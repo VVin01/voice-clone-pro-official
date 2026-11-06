@@ -175,7 +175,9 @@ def test_az10_pill_and_chip_line_heights():
     assert "word-break: keep-all" in AZ_CSS
     chip = _rule(".bal-chip")
     assert "min-height: 34px" in chip and "line-height: 1.6" in chip
-    assert "min-height: 44px" in _rule("#speed-selector .pill-btn")
+    # Batch BB-2 re-pin: the Voice speed pills became liquid-capsule
+    # segments (.speed-seg); the ≥44px touch height carries over.
+    assert "min-height: 44px" in _rule(".speed-seg")
     assert "body.lang-my .nav-label { line-height: 1.75; }" in AZ_CSS
     assert "#tab-voice { padding-bottom: 72px; }" in AZ_CSS
     assert "min-height: 44px" in _rule(".welcome-strip-btn")
@@ -251,13 +253,16 @@ def test_az12_converted_surfaces_carry_the_keys():
 
 def test_az_fallbacks_cover_the_new_layers():
     supports = AZ_CSS[AZ_CSS.index("@supports not ((backdrop-filter: blur(2px))"):]
-    assert ".studio-alert-carousel, .recap-steps-capsule {" in supports
+    # Batch BB-2 re-pin: the speed capsule joins the no-backdrop net
+    # (AZ's own discipline — every new glass layer enters the nets),
+    # so the selector list now ends with .speed-capsule.
+    assert ".studio-alert-carousel, .recap-steps-capsule,\n    .speed-capsule {" in supports
     assert "background: #ffffff" in supports
     rt = AZ_CSS[AZ_CSS.index("prefers-reduced-transparency: reduce"):]
     assert "backdrop-filter: none" in rt
     assert ".recap-steps-capsule { background: rgba(255, 255, 255, 0.97); }" in rt
 
 
-def test_az_cache_token_is_r74():
-    assert INDEX_HTML.count("20261104_r74") == 4
+def test_az_cache_token_is_r75():
+    assert INDEX_HTML.count("20261104_r75") == 4
     assert "20261104_r71" not in INDEX_HTML

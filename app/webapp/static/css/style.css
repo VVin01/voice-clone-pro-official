@@ -4163,7 +4163,8 @@ select.studio-input {
     .card, .top-nav, .bottom-nav, .modal-content, .studio-confirm-card,
     .gate-lock-card, .studio-toast, .floating-alert-card, .sticky-cta-bar,
     .submit-confirm-card, .live-jobs-sheet-card, .advanced-studio-accordion,
-    .tutorial-banner-card, .studio-alert-carousel, .recap-steps-capsule {
+    .tutorial-banner-card, .studio-alert-carousel, .recap-steps-capsule,
+    .speed-capsule {
         background: #ffffff; border-color: var(--border-strong);
     }
     .top-nav { --az-bg: #ffffff; }
@@ -4176,17 +4177,20 @@ select.studio-input {
         --glass-3-bg: #ffffff;
     }
     .recap-steps-capsule, .live-jobs-pill, .sticky-cta-bar,
-    .gate-lock-card, .submit-confirm-card, .live-jobs-sheet-card {
+    .gate-lock-card, .submit-confirm-card, .live-jobs-sheet-card,
+    .speed-capsule {
         backdrop-filter: none; -webkit-backdrop-filter: none;
     }
     .top-nav { --az-bg: rgba(255, 255, 255, 0.97); }
     .bottom-nav { --az-bg: rgba(255, 255, 255, 0.97); }
     .recap-steps-capsule { background: rgba(255, 255, 255, 0.97); }
+    .speed-capsule { background: rgba(255, 255, 255, 0.97); }
 }
 @media (prefers-reduced-motion: reduce) {
     body::before { animation: none; }
     .recap-steps-nav-item { transition: none; }
     .nav-pill { transition: none; }
+    .speed-capsule-pill { transition: none; }
     .studio-toast, .floating-alert-card, .modal-content,
     .studio-confirm-card, .gate-lock-card, .live-jobs-sheet-card,
     .submit-confirm-card { animation: none; }
@@ -4230,3 +4234,74 @@ select.studio-input {
     .live-dot { padding: 2px 6px; }
     .bal-chip { padding: 6px 8px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   BATCH BB (2026-11-06)
+   BB-2: the three speed selectors (Voice #speed-selector, TTS
+   #tts-speed-picker, Recap #recap-speed-picker) become ONE liquid
+   segmented capsule — the AZ-9 component language: tier-2 glass
+   track, specular rim, ONE gradient pill that slides to the active
+   segment (measured by moveSpeedPill, app.js), the active segment
+   expanded (flex-grow 2.4) showing value + word while inactive
+   segments show the compact value only. Segments keep ≥44px height
+   and the app press squash; labels were PIL/Padauk-measured at
+   13px against the 360px budget (report.md has the table) — the EN
+   +12% label rides the speed_12_capsule key because "+12%
+   Recommended" (116.5px) cannot fit the ~100px active segment.
+   The speed rows stack (title above, capsule full width) so the
+   capsule owns the full card width; the row titles gain the
+   standard inset — their first glyph (the အ + medial-ra cluster)
+   was sliced flush at the card edge on both tabs.
+   BB-3: TTS badge/icon tints (sky family, beside voice violet and
+   recap gold). BB-4: the balance line's tap-to-retry affordance.
+   ════════════════════════════════════════════════════════════════════ */
+.speed-capsule {
+    position: relative; display: flex; align-items: stretch;
+    gap: var(--s1); width: 100%; padding: 6px;
+    border-radius: 999px;
+    background: var(--glass-2-bg);
+    border: 1px solid var(--glass-rim);
+    box-shadow: var(--glass-spec), var(--shadow-sm);
+    backdrop-filter: blur(var(--glass-2-blur)) saturate(160%);
+    -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(160%);
+}
+/* The recap picker's retired grid rules (higher up) are superseded:
+   the capsule is a flex track. */
+#recap-speed-picker.speed-capsule { display: flex; }
+.speed-capsule-pill {
+    position: absolute; top: 0; left: 0; z-index: 0;
+    border-radius: 999px; opacity: 0; pointer-events: none;
+    background: linear-gradient(90deg, #0a84ff, #38bdf8);
+    box-shadow: 0 6px 16px rgba(10, 132, 255, 0.35);
+    transition: transform 0.38s cubic-bezier(0.34, 1.25, 0.4, 1),
+                width 0.38s cubic-bezier(0.34, 1.25, 0.4, 1),
+                height 0.38s cubic-bezier(0.34, 1.25, 0.4, 1),
+                opacity 0.2s ease;
+}
+.speed-capsule-pill.on { opacity: 1; }
+.speed-seg {
+    position: relative; z-index: 1;
+    flex: 1 1 0; min-width: 0; min-height: 44px;
+    padding: 6px 3px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; border-radius: 999px; background: transparent;
+    font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
+    font-size: 13px; font-weight: 600; line-height: 1.5;
+    color: var(--text-2); white-space: nowrap; cursor: pointer;
+    transition: color 0.25s ease, transform 0.12s ease;
+}
+.speed-seg.active { flex-grow: 2.4; color: #ffffff; }
+.speed-seg:active { transform: scale(0.97); }
+.speed-seg .seg-full { display: none; }
+.speed-seg.active .seg-full { display: inline; }
+.speed-seg.active .seg-short { display: none; }
+/* Speed rows stack so the capsule spans the card; the title keeps
+   the standard inset (first-glyph clip fix). */
+.control-row.speed-row { flex-direction: column; align-items: stretch; gap: var(--s2); }
+.control-row.speed-row .ctrl-title { padding-inline-start: var(--s1); }
+#recap-preview-speed-group .card-label { padding-inline-start: var(--s1); }
+/* BB-3: TTS labelling tints. */
+.history-item-badge.badge-tts { background: var(--sky-soft); color: var(--sky); }
+.hub-type-icon.tts { background: var(--sky-soft); }
+/* BB-4: quota fallback line affordance. */
+.tts-balance-retry { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }

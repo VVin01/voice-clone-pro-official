@@ -1389,9 +1389,10 @@ function applyAccountPrefs(prefs) {
     }
     if (typeof prefs.voice_speed === "string") {
         state.speed = prefs.voice_speed;
-        document.querySelectorAll("#speed-selector .pill-btn").forEach(p => {
+        document.querySelectorAll("#speed-selector .speed-seg").forEach(p => {
             p.classList.toggle("active", p.getAttribute("data-speed") === state.speed);
         });
+        moveSpeedPill(document.getElementById("speed-selector"));
     }
     const recapKeys = [
         "recapRatio", "recapRatioFill", "recapSpeed", "recapStoryStyle",
@@ -1419,6 +1420,11 @@ function applyAccountPrefs(prefs) {
     if (typeof window.resyncRecapControlsAfterPrefs === "function") {
         try { window.resyncRecapControlsAfterPrefs(); } catch (e) {}
     }
+    // Batch BB-8: seed the saved-snapshot from what was just applied
+    // (after the control resync, so DOM-derived fields match state),
+    // so the first delegated save attempt after launch — typically a
+    // wizard step click — compares equal and stays silent.
+    userPrefsLastSavedJson = prefsSnapshotJson(collectAccountPrefs());
 }
 async function loadAccountPrefs() {
     try {
@@ -1440,8 +1446,26 @@ function showPrefsSavedNote() {
     // the Batch AC pin on it survive.)
     try { showStudioToast(t("live_prefs_saved"), "success", 2200); } catch (e) {}
 }
+// Batch BB-8: the prefs saver is triggered by DELEGATED listeners on
+// the whole Recap/Voice tabs (setupAccountPrefs), so EVERY click —
+// including pure wizard step navigation — used to schedule a save,
+// and every successful PUT toasted "settings saved" even when the
+// payload was byte-identical to the last save. The toast (and the
+// PUT itself) now fires only when a value actually changed: the
+// collected payload is compared against the last saved snapshot,
+// seeded when server prefs are applied (applyAccountPrefs).
+let userPrefsLastSavedJson = null;
+function prefsSnapshotJson(prefs) {
+    try { return JSON.stringify(prefs); } catch (e) { return null; }
+}
 async function saveAccountPrefsNow() {
     const prefs = collectAccountPrefs();
+    const prefsJson = prefsSnapshotJson(prefs);
+    if (prefsJson !== null && prefsJson === userPrefsLastSavedJson) {
+        // Nothing changed since the last save (e.g. step navigation):
+        // stay silent — no PUT, no toast.
+        return;
+    }
     cacheAccountPrefs(prefs);
     try {
         const res = await fetch("/api/user/preferences", {
@@ -1449,7 +1473,10 @@ async function saveAccountPrefsNow() {
             headers: getAuthHeaders(),
             body: JSON.stringify({ preferences: prefs }),
         });
-        if (res.ok) showPrefsSavedNote();
+        if (res.ok) {
+            userPrefsLastSavedJson = prefsJson;
+            showPrefsSavedNote();
+        }
     } catch (e) {
         // Silent: the cache already holds the change; next launch syncs.
     }
@@ -2061,7 +2088,21 @@ window.shareReferralLink = shareReferralLink;
 
 function openSupportContact() {
     haptic("light");
-    openTutorialUrl(_supportLink);
+    // Batch BB-6: the support destination is a Telegram ACCOUNT (the
+    // admin), not a web page — openLink() punted users out to a
+    // browser tab / t.me landing page. openTelegramLink keeps them
+    // inside Telegram, straight in the admin chat. Scoped to this
+    // handler only: tutorial links keep the shared openTutorialUrl.
+    const url = _supportLink;
+    if (!url) return;
+    const wa = window.Telegram?.WebApp;
+    if (wa && typeof wa.openTelegramLink === "function") {
+        wa.openTelegramLink(url);
+    } else if (wa && typeof wa.openLink === "function") {
+        wa.openLink(url);
+    } else {
+        window.open(url, "_blank");
+    }
 }
 window.openSupportContact = openSupportContact;
 
@@ -2205,6 +2246,34 @@ function moveNavPill() {
 }
 window.moveNavPill = moveNavPill;
 
+// ── Batch BB-2: liquid segmented capsule (speed selectors) ──────
+// Same data-driven measurement as moveNavPill: ONE gradient pill per
+// .speed-capsule, matched to whichever .speed-seg currently carries
+// .active. Segments do not transition their flex (the pill's spring
+// carries the motion), so the target geometry is final the moment
+// .active moves and can be measured synchronously. A capsule with no
+// layout yet (hidden pane / collapsed group) keeps its last position
+// and is re-measured on tab show / resize / language switch / the
+// preview surface sync that unhides its group.
+function moveSpeedPill(capsule) {
+    if (!capsule) return;
+    const pill = capsule.querySelector(".speed-capsule-pill");
+    const active = capsule.querySelector(".speed-seg.active");
+    if (!pill || !active || !active.offsetWidth) return;
+    pill.style.width = active.offsetWidth + "px";
+    pill.style.height = active.offsetHeight + "px";
+    pill.style.transform = "translate(" + active.offsetLeft + "px, " + active.offsetTop + "px)";
+    pill.classList.add("on");
+}
+function moveSpeedPills() {
+    document.querySelectorAll(".speed-capsule").forEach(moveSpeedPill);
+}
+window.moveSpeedPill = moveSpeedPill;
+window.moveSpeedPills = moveSpeedPills;
+if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => { try { moveSpeedPills(); } catch (e) {} });
+}
+
 // Tab-enter (AZ-4): the incoming pane carries .tab-enter for one
 // crossfade + 6px rise (see style.css); the class is re-armed on
 // every switch so the motion replays.
@@ -2214,7 +2283,7 @@ function markPaneEnter(pane) {
     void pane.offsetWidth;
     pane.classList.add("tab-enter");
 }
-window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} });
+window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} });
 
 function switchTab(tabId) {
     const navButtons = document.querySelectorAll(".nav-item");
@@ -2242,6 +2311,7 @@ function switchTab(tabId) {
     window.scrollTo({ top: 0, behavior: "auto" });
     refreshStickyCtas();
     moveNavPill();
+    moveSpeedPills();
     // Batch AW: the TTS tab paints its balance line fresh on entry.
     if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
         window.refreshTtsQuota();
@@ -2434,6 +2504,7 @@ async function loadUserProfile() {
             // AZ-4: a newly-visible nav item re-flows the dock —
             // re-measure the sliding pill against the active item.
             try { moveNavPill(); } catch (e) {}
+            try { moveSpeedPills(); } catch (e) {}
             if (adminTab) adminTab.classList.remove("hidden");
         }
 
@@ -2871,13 +2942,14 @@ function setupVoiceStudio() {
     }
 
     // Speed Pill Buttons
-    const speedPills = document.querySelectorAll("#speed-selector .pill-btn");
+    const speedPills = document.querySelectorAll("#speed-selector .speed-seg");
     speedPills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
             speedPills.forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
             state.speed = pill.getAttribute("data-speed");
+            moveSpeedPill(document.getElementById("speed-selector"));
         });
     });
 
@@ -3987,6 +4059,9 @@ function setRecapPreviewState(mode) {
     if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
     if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
     if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
+    // Batch BB-2: the speed capsule lives inside speedGroup — when it
+    // unhides, the sliding pill measures against real layout.
+    if (ready) requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} });
     // Batch AV: when a source becomes ready, Step 1 checks off and
     // collapses to its summary strip and Step 2 opens for the user.
     syncRecapStepsWithSource(ready);
@@ -4072,6 +4147,9 @@ function showRecapStep(n) {
         currentBtn.classList.add("pop");
     }
     if (n === 4) { refreshRecapStep4Output(); }
+    // Batch BB-2: the incoming step card may hold the speed capsule —
+    // re-measure its pill now that the card has layout.
+    requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} });
     const nav = document.getElementById("recap-steps-nav");
     if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -6621,13 +6699,14 @@ function setupRecapVisualEditor() {
     });
 
     // 6. Narration Speed & Pacing (+0%, +8%, +12%, +18%, +22%)
-    const speedBtns = document.querySelectorAll("#recap-speed-picker .pill-btn");
+    const speedBtns = document.querySelectorAll("#recap-speed-picker .speed-seg");
     speedBtns.forEach(btn => {
         btn.addEventListener("click", () => {
             haptic("selection");
             speedBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapSpeed = btn.getAttribute("data-speed") || "+12%";
+            moveSpeedPill(document.getElementById("recap-speed-picker"));
         });
     });
 
@@ -7419,7 +7498,8 @@ function setupRecapVisualEditor() {
         document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
             b.classList.toggle("active", parseFloat(b.getAttribute("data-zoom")) === state.recapZoom);
         });
-        syncPillGroup("#recap-speed-picker .pill-btn", "data-speed", state.recapSpeed);
+        syncPillGroup("#recap-speed-picker .speed-seg", "data-speed", state.recapSpeed);
+        moveSpeedPill(document.getElementById("recap-speed-picker"));
         syncPillGroup("#recap-split-minutes-picker .pill-btn", "data-split-min", state.recapSplitMinutes);
         const splitToggleEl = document.getElementById("recap-split-toggle");
         if (splitToggleEl) {
@@ -8960,23 +9040,56 @@ function paintVoiceTtsBalanceLine(profile) {
 }
 window.paintVoiceTtsBalanceLine = paintVoiceTtsBalanceLine;
 
+// Batch BB-4 (diagnosed): this loader was the ONLY balance paint in
+// the app that ignored the fetchWithTimeout standard — ONE bare fetch
+// per tab entry, no timeout, no retry, and a catch that swallowed
+// every failure (network error / non-200 / bad JSON) without painting
+// anything, so the static "checking…" placeholder became the
+// permanent state after ANY single failed attempt. Both live
+// observations sat in deploy-restart windows of the single-process
+// app (r73 go-live ~07:00, r74 deploy mid-audit ~07:20), where one
+// request can hang on a draining instance or fail outright; the
+// first pass recovered only because the job flow re-invoked this
+// loader after each job, the audit ran no jobs and never recovered.
+// The endpoint itself reproduces at ≤0.05 s locally under this exact
+// request shape — the defect is this loader's fragility, fixed here:
+// timeout via fetchWithTimeout, bounded retries, an in-flight guard,
+// and a tap-to-retry fallback paint instead of eternal "checking…".
+let ttsQuotaInFlight = false;
 async function refreshTtsQuota() {
     const line = document.getElementById("tts-balance-line");
-    if (!line) return;
+    if (!line || ttsQuotaInFlight) return;
+    ttsQuotaInFlight = true;
     try {
-        const res = await fetch("/api/tts/quota", { headers: getAuthHeaders() });
-        if (!res.ok) return;
-        const q = await res.json();
-        const refMin = ((q.referral_seconds || 0) / 60).toFixed(1);
-        if (q.unlimited) {
-            line.textContent = tf("tts_balance_line_unlimited", { ref_min: refMin });
-        } else {
-            line.textContent = tf("tts_balance_line", {
-                ref_min: refMin,
-                remain_min: (((q.remaining_seconds || 0)) / 60).toFixed(1),
-            });
+        const retryDelaysMs = [0, 700, 1800];
+        for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
+            if (retryDelaysMs[attempt]) {
+                await new Promise(r => setTimeout(r, retryDelaysMs[attempt]));
+            }
+            try {
+                const res = await fetchWithTimeout("/api/tts/quota", { headers: getAuthHeaders() });
+                if (!res.ok) throw new Error("tts quota " + res.status);
+                const q = await res.json();
+                const refMin = ((q.referral_seconds || 0) / 60).toFixed(1);
+                line.classList.remove("tts-balance-retry");
+                delete line.dataset.quotaError;
+                if (q.unlimited) {
+                    line.textContent = tf("tts_balance_line_unlimited", { ref_min: refMin });
+                } else {
+                    line.textContent = tf("tts_balance_line", {
+                        ref_min: refMin,
+                        remain_min: (((q.remaining_seconds || 0)) / 60).toFixed(1),
+                    });
+                }
+                return;
+            } catch (e) { /* retry, then the fallback paint below */ }
         }
-    } catch (e) { /* non-fatal: the submit path reports real errors */ }
+        line.textContent = t("tts_balance_error");
+        line.dataset.quotaError = "1";
+        line.classList.add("tts-balance-retry");
+    } finally {
+        ttsQuotaInFlight = false;
+    }
 }
 window.refreshTtsQuota = refreshTtsQuota;
 
@@ -9010,18 +9123,24 @@ function initTtsTab() {
             if (eRow) eRow.classList.toggle("hidden", ttsState.engine !== "edge");
         });
     });
-    document.querySelectorAll("#tts-speed-picker .pill-btn").forEach(btn => {
+    document.querySelectorAll("#tts-speed-picker .speed-seg").forEach(btn => {
         btn.addEventListener("click", () => {
             haptic("selection");
             ttsState.speed = btn.getAttribute("data-tts-speed") || "+12%";
-            document.querySelectorAll("#tts-speed-picker .pill-btn").forEach(
+            document.querySelectorAll("#tts-speed-picker .speed-seg").forEach(
                 b => b.classList.toggle("active", b === btn)
             );
+            moveSpeedPill(document.getElementById("tts-speed-picker"));
         });
     });
     const input = document.getElementById("tts-text-input");
     if (input) input.addEventListener("input", updateTtsCharCount);
     updateTtsCharCount();
+    // Batch BB-4: the balance line's fallback state is tap-to-retry.
+    const balLine = document.getElementById("tts-balance-line");
+    if (balLine) balLine.addEventListener("click", () => {
+        if (balLine.dataset.quotaError === "1") refreshTtsQuota();
+    });
 }
 if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initTtsTab);
@@ -9572,8 +9691,8 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
     }
 
     if (badge) {
-        badge.className = `history-item-badge ${jobType === 'RECAP' ? 'badge-recap' : 'badge-voice'}`;
-        badge.innerText = jobType === 'RECAP' ? '🎬 RECAP' : '🎙️ VOICE';
+        badge.className = `history-item-badge ${jobType === 'RECAP' ? 'badge-recap' : jobType === 'TTS' ? 'badge-tts' : 'badge-voice'}`;
+        badge.innerText = jobType === 'RECAP' ? '🎬 RECAP' : jobType === 'TTS' ? t("job_badge_tts") : '🎙️ VOICE';
     }
     if (titleEl) {
         titleEl.innerText = title || `Job #${jobId.slice(0, 10)}`;
@@ -10187,7 +10306,7 @@ async function loadAdminUserJobs(uid) {
         if (!jobs.length) { admStateEmpty(box, "admin_user_jobs_empty"); return; }
         box.innerHTML = jobs.map(j => `
             <div class="adm-job-mini">
-                <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬' : '🎙️'}</span>
+                <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : j.job_type === 'TTS' ? 'badge-tts' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬' : j.job_type === 'TTS' ? '🎧' : '🎙️'}</span>
                 <span class="adm-job-mini-main">${escapeHtml(j.input_snippet || j.preset_voice || "—")}</span>
                 <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
                 <span class="text-muted text-xs">${escapeHtml(j.time_ago || "")}</span>
@@ -10390,6 +10509,7 @@ async function loadAdminQueue(isSilent = false) {
                             <span class="badge-status ${statusLower}">${statusBadgeText}</span>
                             <span class="badge-engine ${engineLower}">${engineLabel}</span>
                             <span class="mini-tag">${escapeHtml(j.preset_voice)}</span>
+                            ${j.job_type === 'TTS' ? `<span class="mini-tag">${escapeHtml(t("job_badge_tts"))}</span>` : ""}
                         </div>
                         <span class="queue-timing">${durationTxt}</span>
                     </div>
@@ -10533,7 +10653,7 @@ async function loadAdminHistory() {
             <div class="history-item ${borderCls}" id="adm-job-item-${j.id}">
                 <div class="history-item-header">
                     <div>
-                        <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬 RECAP' : '🎙️ VOICE'}</span>
+                        <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : j.job_type === 'TTS' ? 'badge-tts' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬 RECAP' : j.job_type === 'TTS' ? escapeHtml(t("job_badge_tts")) : '🎙️ VOICE'}</span>
                         <span class="mini-tag adm-tap" style="margin-left: 4px;" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.username ? '@' + j.username : 'ID: ' + j.user_id)}</span>
                     </div>
                     <div>
@@ -11449,16 +11569,20 @@ window.deleteHistoryItem = function(jobId) {
 
 function hubHistoryRowHtml(j) {
     const isRecap = j.job_type === "RECAP";
+    // Batch BB-3: TTS jobs get their own label — they used to render
+    // as ordinary voice jobs (🎙️, no type tag) and were only
+    // recognisable by voice name.
+    const isTts = j.job_type === "TTS";
     const open = hubOpenDetailId === j.id;
-    const snippet = j.input_snippet || (isRecap ? "Movie Recap" : "Voice Synthesis");
+    const snippet = j.input_snippet || (isRecap ? "Movie Recap" : isTts ? "TTS" : "Voice Synthesis");
     const title = isRecap ? escapeHtml(snippet) : `&quot;${escapeHtml(snippet)}&quot;`;
     return `
     <div class="hub-row ${hubStatusBorder(j.status)} ${open ? "open" : ""}" data-job-id="${j.id}">
         <button type="button" class="hub-row-main" onclick="toggleHistoryDetail('${j.id}')" aria-expanded="${open}">
-            <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
+            <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
             <span class="hub-row-text">
                 <span class="hub-row-title">${title}</span>
-                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : ""}${escapeHtml(j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
             </span>
             ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
             <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
@@ -11900,7 +12024,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupTabs();
     // AZ-4: park the sliding nav pill under the initially-active
     // item once first layout exists.
-    requestAnimationFrame(() => { try { moveNavPill(); } catch (e) {} });
+    requestAnimationFrame(() => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} });
     setupVoiceStudio();
     setupRecapVisualEditor();
     initRecapSteps();

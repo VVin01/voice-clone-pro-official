@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r74">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r75">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r74" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r75" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -374,12 +374,13 @@
                         <button class="mini-chip" onclick="insertSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')" data-i18n="sample_tech">💡 AI နည်းပညာ</button>
                         <button class="mini-chip text-danger" onclick="clearVoiceText()" data-i18n="btn_clear_text">🗑️ ရှင်းမည်</button>
                     </div>
-                    <div class="control-row divided mt-2">
+                    <div class="control-row divided mt-2 speed-row">
                         <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း:</span>
-                        <div class="pill-group" id="speed-selector">
-                            <button class="pill-btn" data-speed="slow" data-i18n="speed_slow">0.8x နှေး</button>
-                            <button class="pill-btn active" data-speed="normal" data-i18n="speed_normal">1.0x ပုံမှန်</button>
-                            <button class="pill-btn" data-speed="fast" data-i18n="speed_fast">1.2x မြန်</button>
+                        <div class="speed-capsule" id="speed-selector">
+                            <span class="speed-capsule-pill" aria-hidden="true"></span>
+                            <button class="speed-seg" data-speed="slow"><span class="seg-short">0.8x</span><span class="seg-full" data-i18n="speed_slow">0.8x နှေး</span></button>
+                            <button class="speed-seg active" data-speed="normal"><span class="seg-short">1.0x</span><span class="seg-full" data-i18n="speed_normal">1.0x ပုံမှန်</span></button>
+                            <button class="speed-seg" data-speed="fast"><span class="seg-short">1.2x</span><span class="seg-full" data-i18n="speed_fast">1.2x မြန်</span></button>
                         </div>
                     </div>
                 </div>
@@ -509,14 +510,15 @@
                         <button type="button" class="mini-chip" onclick="insertTtsSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')" data-i18n="sample_tech">💡 AI နည်းပညာ</button>
                         <button type="button" class="mini-chip text-danger" onclick="clearTtsText()" data-i18n="btn_clear_text">🗑️ ရှင်းမည်</button>
                     </div>
-                    <div class="control-row divided mt-2">
+                    <div class="control-row divided mt-2 speed-row">
                         <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း:</span>
-                        <div class="pill-group" id="tts-speed-picker">
-                            <button type="button" class="pill-btn" data-tts-speed="+0%">+0%</button>
-                            <button type="button" class="pill-btn" data-tts-speed="+8%">+8%</button>
-                            <button type="button" class="pill-btn active" data-tts-speed="+12%">+12%</button>
-                            <button type="button" class="pill-btn" data-tts-speed="+18%">+18%</button>
-                            <button type="button" class="pill-btn" data-tts-speed="+22%">+22%</button>
+                        <div class="speed-capsule" id="tts-speed-picker">
+                            <span class="speed-capsule-pill" aria-hidden="true"></span>
+                            <button type="button" class="speed-seg" data-tts-speed="+0%"><span class="seg-short">+0%</span><span class="seg-full" data-i18n="speed_0">+0% ပုံမှန်</span></button>
+                            <button type="button" class="speed-seg" data-tts-speed="+8%"><span class="seg-short">+8%</span><span class="seg-full" data-i18n="speed_8">+8% သွက်</span></button>
+                            <button type="button" class="speed-seg active" data-tts-speed="+12%"><span class="seg-short">+12%</span><span class="seg-full" data-i18n="speed_12_capsule">+12% အကြံပြု</span></button>
+                            <button type="button" class="speed-seg" data-tts-speed="+18%"><span class="seg-short">+18%</span><span class="seg-full" data-i18n="speed_18">+18% မြန်</span></button>
+                            <button type="button" class="speed-seg" data-tts-speed="+22%"><span class="seg-short">+22%</span><span class="seg-full" data-i18n="speed_22">+22% အထူးမြန်</span></button>
                         </div>
                     </div>
                 </div>
@@ -1344,12 +1346,13 @@
                                         </div><!-- /.story-style-block -->
         <div class="recap-adv-group hidden" id="recap-preview-speed-group">
             <div class="card-label" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း:</div>
-            <div class="pill-group sm flex-wrap" id="recap-speed-picker">
-                <button class="pill-btn" data-speed="+0%" data-i18n="speed_0">+0% ပုံမှန်</button>
-                <button class="pill-btn" data-speed="+8%" data-i18n="speed_8">+8% သွက်</button>
-                <button class="pill-btn active" data-speed="+12%" data-i18n="speed_12">+12% အကြံပြု</button>
-                <button class="pill-btn" data-speed="+18%" data-i18n="speed_18">+18% မြန်</button>
-                <button class="pill-btn" data-speed="+22%" data-i18n="speed_22">+22% အထူးမြန်</button>
+            <div class="speed-capsule" id="recap-speed-picker">
+                <span class="speed-capsule-pill" aria-hidden="true"></span>
+                <button class="speed-seg" data-speed="+0%"><span class="seg-short">+0%</span><span class="seg-full" data-i18n="speed_0">+0% ပုံမှန်</span></button>
+                <button class="speed-seg" data-speed="+8%"><span class="seg-short">+8%</span><span class="seg-full" data-i18n="speed_8">+8% သွက်</span></button>
+                <button class="speed-seg active" data-speed="+12%"><span class="seg-short">+12%</span><span class="seg-full" data-i18n="speed_12_capsule">+12% အကြံပြု</span></button>
+                <button class="speed-seg" data-speed="+18%"><span class="seg-short">+18%</span><span class="seg-full" data-i18n="speed_18">+18% မြန်</span></button>
+                <button class="speed-seg" data-speed="+22%"><span class="seg-short">+22%</span><span class="seg-full" data-i18n="speed_22">+22% အထူးမြန်</span></button>
             </div>
         </div>
         <div class="recap-lang-block mt-3">
@@ -2682,7 +2685,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r74"></script>
-    <script src="/static/js/app.js?v=20261104_r74"></script>
+    <script src="/static/js/i18n.js?v=20261104_r75"></script>
+    <script src="/static/js/app.js?v=20261104_r75"></script>
 </body>
 </html>

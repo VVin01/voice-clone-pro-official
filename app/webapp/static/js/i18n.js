@@ -166,6 +166,7 @@ const translations = {
         speed_0: "+0% ပုံမှန်",
         speed_8: "+8% သွက်",
         speed_12: "+12% အကြံပြု",
+        speed_12_capsule: "+12% အကြံပြု",
         speed_18: "+18% မြန်",
         speed_22: "+22% အထူးမြန်",
         // Toggles
@@ -297,6 +298,8 @@ const translations = {
         tts_edge_nilar: "မနီလာ (မ)",
         tts_text_placeholder: "အသံပြောင်းမည့် စာသား ရိုက်ထည့်ပါ…",
         tts_balance_loading: "လက်ကျန် စစ်ဆေးနေသည်…",
+        tts_balance_error: "လက်ကျန် မရသေးပါ — ပြန်စမ်းရန် တို့ပါ",
+        job_badge_tts: "🎧 TTS",
         tts_balance_line: "🎧 မိတ်ဆက်ဆု လက်ကျန် (TTS): {ref_min} မိနစ် · 📅 ဒီနေ့ သုံးနိုင်သေးချိန်: {remain_min} မိနစ်",
         tts_balance_line_unlimited: "🎧 မိတ်ဆက်ဆု လက်ကျန် (TTS): {ref_min} မိနစ် · 📅 နေ့စဉ် ကန့်သတ်ချက် မရှိပါ",
         tts_cost_hint: "💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပြီး ကျန်တာကို နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ကောက်ခံပါသည်။ Voice Clone မိနစ်နှင့် Recap Credit လုံးဝ မထိပါ။",
@@ -1145,6 +1148,7 @@ const translations = {
         speed_0: "+0% Normal",
         speed_8: "+8% Brisk",
         speed_12: "+12% Recommended",
+        speed_12_capsule: "+12% Top pick",
         speed_18: "+18% Fast",
         speed_22: "+22% Ultra-fast",
         // Toggles
@@ -1276,6 +1280,8 @@ const translations = {
         tts_edge_nilar: "Nilar (Female)",
         tts_text_placeholder: "Type or paste the text to speak…",
         tts_balance_loading: "Checking balance…",
+        tts_balance_error: "Balance unavailable — tap to retry",
+        job_badge_tts: "🎧 TTS",
         tts_balance_line: "🎧 Referral balance (TTS): {ref_min} min · 📅 Left today: {remain_min} min",
         tts_balance_line_unlimited: "🎧 Referral balance (TTS): {ref_min} min · 📅 No daily limit",
         tts_cost_hint: "💡 Referral time is spent first; the rest counts against your daily TTS allowance. Voice Clone minutes and Recap Credits are never touched.",

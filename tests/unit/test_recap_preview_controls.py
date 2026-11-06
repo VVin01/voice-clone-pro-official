@@ -163,7 +163,9 @@ def test_hidden_cards_keep_their_default_values():
     # (active pills / toggles) must be exactly as before.
     assert '<button class="ratio-btn active" data-ratio="9:16">' in html
     assert '<button class="pill-btn active" data-fill="blur"' in html
-    assert '<button class="pill-btn active" data-speed="+12%"' in html
+    # Batch BB-2 re-pin: the recap speed pills became liquid-capsule
+    # segments (.speed-seg); the shipped +12% default is unchanged.
+    assert '<button class="speed-seg active" data-speed="+12%"' in html
     # Batch AK (S1): the shipped Micro-Zoom default is 1.00.
     assert '<button class="pill-btn active" data-zoom="1.00"' in html
     assert 'class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true"' in html
