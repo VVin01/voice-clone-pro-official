@@ -1098,6 +1098,7 @@ def _persisted_recap_state(
     credits_refunded: int = 0,
     source_duration_seconds: float = 0.0,
     tiered_pricing: bool = False,
+    max_quality_surcharge: int = 0,
 ) -> str:
     """Serialize everything a recap job needs to survive a restart.
 
@@ -1131,6 +1132,12 @@ def _persisted_recap_state(
             # submit), never a second probe or a flipped switch.
             "source_duration_seconds": float(source_duration_seconds or 0),
             "tiered_pricing": bool(tiered_pricing),
+            # Batch BE: the Max render-quality surcharge pinned at
+            # submit (1 when tiered pricing was armed AND the clamped
+            # quality was Max, else 0) rides along too, so a
+            # re-dispatched worker charges — and refunds — the exact
+            # total the submit quote showed.
+            "max_quality_surcharge": int(max_quality_surcharge or 0),
         },
         ensure_ascii=False,
     )
@@ -1181,6 +1188,12 @@ async def _persist_recap_credits_charged(entry: dict) -> None:
             # duration as a fallback pricing source).
             if entry.get("tiered_pricing") is not None:
                 state["tiered_pricing"] = bool(entry.get("tiered_pricing"))
+            # Batch BE: same in-step treatment for the pinned Max
+            # quality surcharge.
+            if entry.get("max_quality_surcharge") is not None:
+                state["max_quality_surcharge"] = int(
+                    entry.get("max_quality_surcharge") or 0
+                )
             if entry.get("probed_duration_seconds"):
                 state["probed_duration_seconds"] = float(
                     entry["probed_duration_seconds"]
@@ -1349,6 +1362,9 @@ def _restore_script_ready_from_db(job, user=None) -> Optional[dict]:
         "source_duration_seconds": float(state.get("source_duration_seconds") or 0),
         "probed_duration_seconds": float(state.get("probed_duration_seconds") or 0),
         "tiered_pricing": state.get("tiered_pricing"),
+        # Batch BE: the pinned Max surcharge (None when the blob
+        # predates it — the execution entry point derives it then).
+        "max_quality_surcharge": state.get("max_quality_surcharge"),
         "parts_count": None,
         "source_path": state.get("source_path"),
         "req_snapshot": state["config"],
@@ -1838,6 +1854,9 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         source_duration_seconds = float(state.get("source_duration_seconds") or 0) if restore_credit_state else 0.0
         probed_duration_seconds = float(state.get("probed_duration_seconds") or 0) if restore_credit_state else 0.0
         tiered_pricing = state.get("tiered_pricing") if restore_credit_state else None
+        # Batch BE: the pinned Max surcharge is part of the credit
+        # state too (None = blob predates it; derived at execution).
+        max_quality_surcharge = state.get("max_quality_surcharge") if restore_credit_state else None
     else:
         cfg = RecapConfigRequest(
             url=source_url,
@@ -1856,6 +1875,7 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         source_duration_seconds = 0.0
         probed_duration_seconds = 0.0
         tiered_pricing = None
+        max_quality_surcharge = None
 
     entry = {
         "id": job.id,
@@ -1886,6 +1906,7 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         "source_duration_seconds": source_duration_seconds,
         "probed_duration_seconds": probed_duration_seconds,
         "tiered_pricing": tiered_pricing,
+        "max_quality_surcharge": max_quality_surcharge,
         "parts_count": None,
     }
     return {
@@ -1908,6 +1929,15 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
 # submit flow quoted is the price the worker charges even if the
 # switch flips while the job is in flight; entries predating the
 # stamp (legacy rows) fall back to the live switch.
+#
+# Batch BE (arming package, owner decision 2026-11-06 07:28): a
+# tier-priced job whose render quality is Max pays ONE extra credit
+# on top of the band (owner-approved 2026-11-06 00:28). The surcharge
+# is computed once at submit from the AU-clamped request, pinned on
+# the entry + persisted state exactly like the band, and included in
+# every quote, pre-check, top-up target and refund. With the switch
+# off it does not exist: the helpers below are never consulted and
+# the legacy totals are byte-identical.
 
 _RECAP_BAND_SECONDS = 180
 
@@ -1938,6 +1968,27 @@ def _entry_tiered_pricing(entry: dict) -> bool:
     if stamped is not None:
         return bool(stamped)
     return _tiered_recap_pricing_enabled()
+
+
+def _recap_max_quality_surcharge(quality) -> int:
+    """Batch BE: the Max render-quality surcharge — 1 extra credit
+    when the job's render quality is Max, else 0. Callers pass the
+    AU-clamped quality (submit clamps before pricing; execution
+    clamps before charging), so a free-tier job can never accrue it.
+    Only ever consulted for tier-priced jobs."""
+    return 1 if str(quality or "").strip().lower() == "max" else 0
+
+
+def _entry_max_quality_surcharge(entry: dict) -> int:
+    """The Max-quality surcharge pinned on THIS job (0 or 1): the
+    submit-time stamp. Entries predating the stamp carry no key and
+    price without it here — the execution entry point stamps
+    unstamped entries from the job's clamped config before any
+    top-up runs (see _execute_recap_background_job)."""
+    try:
+        return 1 if int(entry.get("max_quality_surcharge") or 0) > 0 else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 def _recap_entry_pricing_duration(entry: dict) -> float:
@@ -2026,8 +2077,9 @@ async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: i
     Tiered (Batch AO): the target is the duration-band total over the
     job's TOTAL source duration — the band replaces the per-part
     formula, so the split size a user picked can no longer change
-    the price. Either way the charge lands before any part renders.
-    Returns the job's total charged credits.
+    the price. Batch BE: a Max-quality tiered job's target also
+    carries the pinned +1 surcharge. Either way the charge lands
+    before any part renders. Returns the job's total charged credits.
     """
     tiered = _entry_tiered_pricing(entry)
     target = int(total_parts)
@@ -2035,7 +2087,7 @@ async def _top_up_recap_segment_charge(user_id: int, entry: dict, total_parts: i
         entry["tiered_pricing"] = True
         duration = _recap_entry_pricing_duration(entry)
         if duration > 0:
-            target = _recap_band_credits(duration)
+            target = _recap_band_credits(duration) + _entry_max_quality_surcharge(entry)
         # else: no probe ever produced a duration — keep the legacy
         # part-count target; an unpriceable job is never charged LESS
         # than the legacy formula would have charged it.
@@ -2057,13 +2109,18 @@ async def _apply_recap_band_top_up(user_id: int, entry: dict, *, is_admin_user: 
     which the legacy world never topped up at all. Inert unless the
     job is tier-priced: switch off, admin jobs and unpaid entries
     return immediately, and a band of 1 (any source ≤3 min — the free
-    lane's ≤2 min included) never reaches the charge helper.
+    lane's ≤2 min included) never reaches the charge helper on its
+    own. Batch BE: the target includes the pinned Max-quality
+    surcharge, so a ≤3-minute Max job (band 1 + 1) DOES top up by
+    the one surcharge credit.
     """
     if is_admin_user or not entry.get("credit_deducted"):
         return int(entry.get("credits_charged") or 0)
     if not _entry_tiered_pricing(entry):
         return int(entry.get("credits_charged") or 0)
-    target = _recap_band_credits(_recap_entry_pricing_duration(entry))
+    target = _recap_band_credits(
+        _recap_entry_pricing_duration(entry)
+    ) + _entry_max_quality_surcharge(entry)
     if target <= int(entry.get("credits_charged") or 0):
         return int(entry.get("credits_charged") or 0)
     entry["tiered_pricing"] = True
@@ -6087,6 +6144,18 @@ async def _execute_recap_background_job(
         "credits_charged",
         int(entry.get("credits_charged") or (1 if credit_deducted else 0)),
     )
+    # Batch BE: an entry that predates the submit-time surcharge
+    # stamp (legacy rebuilds, admin re-queues) derives it HERE — from
+    # the job's pinned pricing mode and the config quality the AU
+    # clamp above just settled — before any top-up runs. Stamped
+    # entries keep their submit-time value: the pin is never
+    # rewritten, so a switch flip mid-flight cannot change the price.
+    if entry.get("max_quality_surcharge") is None:
+        entry["max_quality_surcharge"] = (
+            _recap_max_quality_surcharge(req.render_quality)
+            if _entry_tiered_pricing(entry)
+            else 0
+        )
 
     # Post-semaphore cancel re-check (hunt #5): this coroutine may have
     # waited inside _run_recap_background_job for an execution slot
@@ -7578,6 +7647,14 @@ async def create_recap_job(
     # stays None and every check below is the legacy one, untouched.
     tiered_on = _tiered_recap_pricing_enabled()
     quoted_total_credits = None
+    # Batch BE: the Max render-quality surcharge rides the same pin —
+    # computed once here from the AU-clamped request above, so the
+    # quote, both balance pre-checks below and the worker's top-up
+    # target all include the identical +1. Zero while the switch is
+    # off, so every legacy check below is untouched.
+    submit_max_surcharge = (
+        _recap_max_quality_surcharge(req.render_quality) if tiered_on else 0
+    )
     if checked_duration and checked_duration > max_duration_allowed:
         submit_decision = _recap_submit_duration_decision(
             is_vip=is_vip,
@@ -7619,7 +7696,7 @@ async def create_recap_job(
             # (and thus the part estimate) no longer sets the price,
             # so the pre-check and the quote use the band total, the
             # exact number the worker will charge.
-            required_credits = _recap_band_credits(float(checked_duration))
+            required_credits = _recap_band_credits(float(checked_duration)) + submit_max_surcharge
             if not is_admin_user:
                 quoted_total_credits = required_credits
             if not _recap_segment_balance_ok(
@@ -7648,7 +7725,7 @@ async def create_recap_job(
         # and the worker charges. Free-lane sources (≤2 min) always
         # price as band 1, which the credit gate above already
         # required, so this check can never newly block them.
-        required_credits = _recap_band_credits(float(checked_duration))
+        required_credits = _recap_band_credits(float(checked_duration)) + submit_max_surcharge
         quoted_total_credits = required_credits
         if credits < required_credits:
             raise HTTPException(
@@ -7741,6 +7818,9 @@ async def create_recap_job(
         # the quote was computed from, and the pinned pricing mode.
         "source_duration_seconds": float(checked_duration or 0),
         "tiered_pricing": tiered_on,
+        # Batch BE: the pinned Max-quality surcharge for this job
+        # (0 unless tiered pricing was armed AND quality is Max).
+        "max_quality_surcharge": submit_max_surcharge,
         "parts_count": None,
     }
 
@@ -7771,6 +7851,7 @@ async def create_recap_job(
             estimated_parts=estimated_parts,
             source_duration_seconds=float(checked_duration or 0),
             tiered_pricing=tiered_on,
+            max_quality_surcharge=submit_max_surcharge,
         ),
     )
     if deducted_credit:
@@ -7847,9 +7928,11 @@ async def create_recap_job(
         # Batch AO: the authoritative total this submission will be
         # charged (the band total, when the duration is known) — the
         # confirmation the Mini App shows quotes exactly this number,
-        # computed by the same helper the worker charges with. The key
-        # is omitted entirely while the switch is off, so the legacy
-        # response shape is byte-identical.
+        # computed by the same helper the worker charges with. Batch
+        # BE: a Max-quality submission's total includes the +1
+        # surcharge, exactly as quoted pre-submit. The key is omitted
+        # entirely while the switch is off, so the legacy response
+        # shape is byte-identical.
         response["credits_total"] = quoted_total_credits
     return response
 

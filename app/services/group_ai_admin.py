@@ -752,6 +752,35 @@ def build_fact_sheet() -> str:
     free_chars = int(getattr(settings, "character_limit_free", 1000) or 1000)
     free_recap_max = int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120)
     vip_recap_max = int(getattr(settings, "recap_max_duration_seconds", 600) or 600)
+    # Batch BE: the recap price facts follow the tiered-pricing
+    # arming switch live — before arming the sheet states the legacy
+    # per-part price, after arming the duration-band price (+1 for
+    # Max quality), so the AI never quotes a price that is not in
+    # force.
+    tiered_pricing = bool(getattr(settings, "tiered_recap_pricing_enabled", False))
+    if tiered_pricing:
+        recap_cost_line = (
+            f"• Recap ကုန်ကျစရိတ်: ဗီဒီယို စုစုပေါင်း ကြာချိန် ၃ မိနစ် တစ်ပိုင်းလျှင် "
+            f"Recap Credit 1 ခု (ဥပမာ ၁၀ မိနစ် = 4 Credits)၊ Max အရည်အသွေး ရွေးရင် "
+            f"+1 Credit ထပ်ကျပါတယ်။ Free အတွက် မူရင်း ဗီဒီယို "
+            f"အများဆုံး {free_recap_max} စက္ကန့် ({free_recap_max // 60} မိနစ်)၊ Plan ဝယ်ထားသူတွေ "
+            f"အတွက် တစ်ပိုင်းကို အများဆုံး {vip_recap_max} စက္ကန့် ({vip_recap_max // 60} မိနစ်)။"
+        )
+        recap_split_line = (
+            "• ဗီဒီယို ရှည်ရင် Split (အပိုင်းခွဲ) ရွေးလို့ ရပါတယ် — အပိုင်းတွေ ခွဲပြီး လုပ်ပေးတာ "
+            "ဖြစ်ပြီး၊ ကုန်ကျစရိတ်ကတော့ အပိုင်း အရေအတွက်နဲ့ မဆိုင်ဘဲ ဗီဒီယို စုစုပေါင်း "
+            "ကြာချိန် (၃ မိနစ် တစ်ပိုင်း 1 Credit) နဲ့သာ သတ်မှတ်ပါတယ်။"
+        )
+    else:
+        recap_cost_line = (
+            f"• Recap ကုန်ကျစရိတ်: ၁ ကြိမ်ကို Recap Credit 1 ခု။ Free အတွက် မူရင်း ဗီဒီယို "
+            f"အများဆုံး {free_recap_max} စက္ကန့် ({free_recap_max // 60} မိနစ်)၊ Plan ဝယ်ထားသူတွေ "
+            f"အတွက် တစ်ပိုင်းကို အများဆုံး {vip_recap_max} စက္ကန့် ({vip_recap_max // 60} မိနစ်)။"
+        )
+        recap_split_line = (
+            "• ဗီဒီယို ရှည်ရင် Split (အပိုင်းခွဲ) ရွေးလို့ ရပါတယ် — အပိုင်းတွေ ခွဲပြီး လုပ်ပေးတာ "
+            "ဖြစ်ပြီး၊ Plan ဝယ်ထားသူတွေ အတွက် အပိုင်း ၁ ပိုင်းကို Credit 1 ခု စီ ကျပါတယ်။"
+        )
     # Referral numbers come from the ledger constants, not literals
     # (R40 deck Part 3 — the sheet was the fourth hardcoded copy).
     try:
@@ -829,11 +858,8 @@ def build_fact_sheet() -> str:
         "• စာတန်း (Subtitle) ပြင်လို့ ရတာတွေ: Font (မူရင်း Noto Sans Myanmar အပါအဝင်), "
         "စာလုံး အရွယ်, Blur နောက်ခံ, အချိုး (မူရင်း အချိုး အပါအဝင် 9:16, 16:9, 1:1), "
         "Mirror နဲ့ အမြန်နှုန်း ရွေးချယ်ခွင့်တွေ ရှိပါတယ်။",
-        f"• Recap ကုန်ကျစရိတ်: ၁ ကြိမ်ကို Recap Credit 1 ခု။ Free အတွက် မူရင်း ဗီဒီယို "
-        f"အများဆုံး {free_recap_max} စက္ကန့် ({free_recap_max // 60} မိနစ်)၊ Plan ဝယ်ထားသူတွေ "
-        f"အတွက် တစ်ပိုင်းကို အများဆုံး {vip_recap_max} စက္ကန့် ({vip_recap_max // 60} မိနစ်)။",
-        "• ဗီဒီယို ရှည်ရင် Split (အပိုင်းခွဲ) ရွေးလို့ ရပါတယ် — အပိုင်းတွေ ခွဲပြီး လုပ်ပေးတာ "
-        "ဖြစ်ပြီး၊ Plan ဝယ်ထားသူတွေ အတွက် အပိုင်း ၁ ပိုင်းကို Credit 1 ခု စီ ကျပါတယ်။",
+        recap_cost_line,
+        recap_split_line,
         "• Free Recap ဗီဒီယိုမှာ Watermark ပါပါတယ်၊ Plan ဝယ်ထားသူတွေရဲ့ ဗီဒီယိုမှာ မပါပါဘူး။",
         "【Downloader】",
         "• YouTube, TikTok, Facebook, Douyin လင့်ခ် ကူးထည့်ရင် ဗီဒီယို "

@@ -3581,6 +3581,9 @@ function refreshRecapQualityLock() {
         }
         btn.classList.toggle("active", quality === state.recapRenderQuality);
     });
+    // Batch BE: if the lock just resolved a saved Max preference to
+    // Standard, the quote must drop the surcharge it may have shown.
+    if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
 }
 window.refreshRecapQualityLock = refreshRecapQualityLock;
 
@@ -4059,17 +4062,25 @@ function updateRecapSplitCostHint() {
     // is known, for every non-admin (band 1 at ≤3 min, the free
     // lane's ≤2 min included, so free users see "→ 1 Credit").
     if (state.user?.tiered_pricing_enabled && dur > 0 && !state.user?.is_admin) {
-        const total = Math.max(1, Math.ceil(dur / 180));
+        const band = Math.max(1, Math.ceil(dur / 180));
+        // Batch BE: Max render quality adds +1 credit on top of the
+        // band — the quote shows the breakdown (band + surcharge +
+        // total), mirroring the server's submit-time computation
+        // from the same clamped quality selection.
+        const surcharge = state.recapRenderQuality === "max" ? 1 : 0;
+        const total = band + surcharge;
         if (ctaText) ctaText.textContent = total > 1
             ? tf("btn_start_recap_credits", { credits: total })
             : t("btn_start_recap");
-        let text = tf("recap_tiered_cost_estimate", { duration: formatRecapQuoteDuration(dur), credits: total });
+        let text = surcharge
+            ? tf("recap_tiered_cost_estimate_max", { duration: formatRecapQuoteDuration(dur), credits: band, total })
+            : tf("recap_tiered_cost_estimate", { duration: formatRecapQuoteDuration(dur), credits: total });
         const lowBalance = (state.user?.recap_credits ?? 0) < total;
         if (lowBalance) text += " " + t("recap_split_cost_low_balance");
         hint.textContent = text;
         hint.style.color = lowBalance ? "#f87171" : "";
         hint.classList.remove("hidden");
-        setRecapStep4Quote(total);
+        setRecapStep4Quote(total, surcharge ? tf("recap_step4_quote_breakdown", { credits: band }) : null);
         return;
     }
     if (!show) {
@@ -4279,9 +4290,16 @@ function refreshRecapStep4Choices() {
 }
 window.refreshRecapStep4Choices = refreshRecapStep4Choices;
 
-function setRecapStep4Quote(credits) {
+function setRecapStep4Quote(credits, breakdownText) {
     const el = document.getElementById("recap-step4-quote-credits");
     if (el) el.textContent = String(Math.max(1, parseInt(credits, 10) || 1));
+    // Batch BE: the optional breakdown line under the Step-4 total
+    // (band + Max surcharge) — shown only when a breakdown applies.
+    const bd = document.getElementById("recap-step4-quote-breakdown");
+    if (bd) {
+        bd.textContent = breakdownText || "";
+        bd.classList.toggle("hidden", !breakdownText);
+    }
     refreshRecapStep4Choices();
 }
 window.setRecapStep4Quote = setRecapStep4Quote;
@@ -6854,6 +6872,9 @@ function setupRecapVisualEditor() {
             btn.classList.add("active");
             state.recapRenderQuality = btn.getAttribute("data-quality") || "standard";
             if (typeof window.refreshRecapStep4Facts === "function") window.refreshRecapStep4Facts();
+            // Batch BE: the quote depends on the quality (Max carries
+            // the +1 surcharge while tiered pricing is armed).
+            updateRecapSplitCostHint();
         });
     });
     refreshRecapQualityLock();
@@ -11195,6 +11216,7 @@ async function loadAdminSettings() {
         const elDailyJobLimit = document.getElementById("adm-set-daily-job-limit");
         const elRecapFreeMax = document.getElementById("adm-set-recap-free-max");
         const elRecapMax = document.getElementById("adm-set-recap-max");
+        const elTieredPricing = document.getElementById("adm-set-tiered-pricing");
         const elReqChannelId = document.getElementById("adm-set-required-channel-id");
         const elReqGroupId = document.getElementById("adm-set-required-group-id");
         const elChannelInvite = document.getElementById("adm-set-channel-invite-link");
@@ -11229,6 +11251,9 @@ async function loadAdminSettings() {
         if (elDailyJobLimit && s.free_daily_job_limit != null) elDailyJobLimit.value = s.free_daily_job_limit;
         if (elRecapFreeMax && s.recap_free_max_duration_seconds != null) elRecapFreeMax.value = s.recap_free_max_duration_seconds;
         if (elRecapMax && s.recap_max_duration_seconds != null) elRecapMax.value = s.recap_max_duration_seconds;
+        // Batch BE: the tiered-pricing arming switch (AO shipped the
+        // setting + API dark; this toggle is the arming lever).
+        if (elTieredPricing) elTieredPricing.checked = !!s.tiered_recap_pricing_enabled;
         if (elReqChannelId) elReqChannelId.value = s.required_channel_id || "";
         if (elReqGroupId) elReqGroupId.value = s.required_group_id || "";
         if (elChannelInvite) elChannelInvite.value = s.channel_invite_link || "";
@@ -11366,6 +11391,7 @@ async function saveAdminSettings() {
     const recapFreeMax = recapFreeMaxRaw === "" || recapFreeMaxRaw == null ? null : parseInt(recapFreeMaxRaw, 10);
     const recapMaxRaw = document.getElementById("adm-set-recap-max")?.value?.trim();
     const recapMax = recapMaxRaw === "" || recapMaxRaw == null ? null : parseInt(recapMaxRaw, 10);
+    const tieredPricing = !!document.getElementById("adm-set-tiered-pricing")?.checked;
     const reqChannelId = document.getElementById("adm-set-required-channel-id")?.value?.trim();
     const reqGroupId = document.getElementById("adm-set-required-group-id")?.value?.trim();
     const channelInvite = document.getElementById("adm-set-channel-invite-link")?.value?.trim();
@@ -11412,6 +11438,7 @@ async function saveAdminSettings() {
         ...(Number.isFinite(dailyJobLimit) ? { free_daily_job_limit: dailyJobLimit } : {}),
         ...(Number.isFinite(recapFreeMax) ? { recap_free_max_duration_seconds: recapFreeMax } : {}),
         ...(Number.isFinite(recapMax) ? { recap_max_duration_seconds: recapMax } : {}),
+        tiered_recap_pricing_enabled: tieredPricing,
         ...(reqChannelId ? { required_channel_id: reqChannelId } : {}),
         ...(reqGroupId ? { required_group_id: reqGroupId } : {}),
         ...(channelInvite ? { channel_invite_link: channelInvite } : {}),
