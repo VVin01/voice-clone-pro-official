@@ -304,8 +304,10 @@ def test_both_pipeline_paths_use_the_shared_assembly():
     assert "assemble_blur_boxes(" in preview_body
     # Detection in the render path is gated on the Blur toggle now.
     # (Batch AA deliberate pin update: detection is additionally
-    # skipped when an explicit user box rules the source band.)
-    assert "if blur_subtitles and _user_box is None:\n        try:" in render_body
+    # skipped when an explicit user box rules the source band.
+    # Batch BI deliberate pin update: the user's auto-detect switch
+    # is a third gate on the same condition.)
+    assert "if blur_subtitles and _user_box is None and blur_auto_detect:\n        try:" in render_body
     assert 'if burn_subtitles:\n        # Auto-cover' not in PIPELINE_PY
 
 

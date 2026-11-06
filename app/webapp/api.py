@@ -3347,6 +3347,8 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
 USER_PREF_BOOLS: List[str] = [
     "recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs",
     "recapLogo", "recapSplitEnabled", "recapTitleEnabled",
+    # Batch BI: the source-subtitle auto-detect blur switch.
+    "recapBlurAutoDetect",
 ]
 USER_PREF_INTS: Dict[str, tuple] = {
     "recapCropTop": (0, 35), "recapCropBottom": (0, 35),
@@ -3405,6 +3407,8 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapTitleX": 50,
     "recapTitleY": 12,
     "recapBlurStrength": 18,
+    # Batch BI: auto-detect blur defaults ON (historical behaviour).
+    "recapBlurAutoDetect": True,
     # Batch AK (premium audit S1): the shipped default Micro-Zoom
     # is 1.00 — 1.06 silently cropped ≈11% of the picture in the
     # fill modes. Saved user values persist untouched.
@@ -4711,6 +4715,9 @@ class RecapPreviewCompositeRequest(BaseModel):
     blur_w: Optional[int] = Field(None, ge=10, le=100)
     blur_box_explicit: bool = False
     blur_strength: int = 18
+    # Batch BI: the auto-detect blur switch, mirrored from
+    # RecapConfigRequest so the composite shows what will ship.
+    blur_auto_detect: bool = True
     burn_subtitles: bool = True
     sub_y: int = Field(85, ge=0, le=100)
     sub_bottom_margin: Optional[int] = Field(None, ge=0, le=95)
@@ -4842,6 +4849,7 @@ async def recap_preview_composite(
             blur_w=(float(req.blur_w) / 100.0) if req.blur_w is not None else None,
             blur_box_explicit=bool(req.blur_box_explicit),
             blur_strength=req.blur_strength,
+            blur_auto_detect=bool(req.blur_auto_detect),
             burn_subtitles=req.burn_subtitles,
             sub_y=float(req.sub_y) / 100.0,
             sub_margin=(float(req.sub_bottom_margin) / 100.0) if req.sub_bottom_margin is not None else None,
@@ -5152,6 +5160,13 @@ class RecapConfigRequest(BaseModel):
     # rejecting, so an out-of-range client value degrades to the
     # nearest supported strength rather than failing the submit.
     blur_strength: int = 18
+    # Batch BI: the user's switch for source-subtitle auto-detection
+    # blur (owner request 2026-11-06). Default True — the historical
+    # behaviour; False skips the detector entirely, so only the
+    # plate / fallback hint / manual box blur. Rides the persisted
+    # recap_config end-to-end like blur_box_explicit, so a stored
+    # config without the key (every pre-BI job) re-parses to True.
+    blur_auto_detect: bool = True
     burn_subtitles: bool = True
     sub_y: int = Field(85, ge=0, le=100)
     # Batch AK (premium audit S3 / Addition D): the subtitle anchor
@@ -6540,6 +6555,7 @@ async def _execute_recap_background_job(
             blur_w=(float(req.blur_w) / 100.0) if req.blur_w is not None else None,
             blur_box_explicit=bool(req.blur_box_explicit),
             blur_strength=req.blur_strength,
+            blur_auto_detect=bool(req.blur_auto_detect),
             burn_subtitles=req.burn_subtitles,
             sub_y=float(req.sub_y) / 100.0,
             # Batch AK: bottom-edge margin wins over sub_y in the
@@ -6834,14 +6850,18 @@ async def _execute_recap_background_job(
                         )
                     ]
                 ])
-                from app.services.voice_display import recap_voice_display_name
+                from app.services.voice_display import recap_completion_voice_display_name
 
                 notify_text = t(
                     "recap_notify_text",
                     _recap_notify_lang,
                     clean_title=html.escape(str(clean_title[:60])),
                     voice_name=html.escape(
-                        recap_voice_display_name(tts_engine, gemini_voice, req.voice_slug)
+                        # Batch BI: the completion message names the
+                        # voice the user PICKED (the persona label the
+                        # app shows), not the Gemini engine's own
+                        # voice name.
+                        recap_completion_voice_display_name(tts_engine, gemini_voice, req.voice_slug)
                     ),
                     job_id=job_id,
                 )

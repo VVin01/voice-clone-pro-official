@@ -71,7 +71,12 @@ def test_persona_engine_names_persona_not_slug():
 
 def test_notify_and_caption_use_display_helper():
     # The completion notify must not print the raw persona slug anymore.
-    assert "recap_voice_display_name(tts_engine, gemini_voice, req.voice_slug)" in API_PY
+    # Batch BI (2026-11-06): the notify resolves through the COMPLETION
+    # resolver — it names the voice the user picked, not the Gemini
+    # engine's own voice name; the heard-voice resolver
+    # (recap_voice_display_name, pinned above) still backs the
+    # on-demand delivery caption.
+    assert "recap_completion_voice_display_name(tts_engine, gemini_voice, req.voice_slug)" in API_PY
     assert "voice_slug=html.escape(str(req.voice_slug.capitalize()))" not in API_PY
     # The on-demand delivery caption reads the engine from recap_config.
     assert "_load_persisted_recap_state(db_job)" in API_PY

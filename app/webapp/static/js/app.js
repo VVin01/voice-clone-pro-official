@@ -375,6 +375,10 @@ const state = {
     recapStoryStyle: "viral",
     recapBurnSubs: true,
     recapBlurSubs: true,
+    // Batch BI: source-subtitle auto-detect blur switch — ON by
+    // default (the historical behaviour); OFF skips the detector so
+    // only the user's own blur box / plate is blurred.
+    recapBlurAutoDetect: true,
     recapLogo: true,
     recapLogoPos: "top-right",
     // Custom channel logo (paid-only, owner decision 2026-11-02):
@@ -1391,6 +1395,7 @@ function collectAccountPrefs() {
         recapMirror: !!state.recapMirror,
         recapBurnSubs: !!state.recapBurnSubs,
         recapBlurSubs: !!state.recapBlurSubs,
+        recapBlurAutoDetect: state.recapBlurAutoDetect !== false,
         recapLogo: !!state.recapLogo,
         recapSplitEnabled: !!(splitToggle && splitToggle.checked),
         recapCropTop: state.recapCropTop || 0,
@@ -1463,7 +1468,7 @@ function applyAccountPrefs(prefs) {
         "recapRatio", "recapRatioFill", "recapSpeed", "recapStoryStyle",
         "recapSubStyle", "recapSubFont", "recapLogoPos", "recapSourceLanguage",
         "recapRenderQuality", "recapTtsEngine", "recapSyncCrop", "recapMirror",
-        "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapCropTop",
+        "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapCropTop",
         "recapCropBottom", "recapCropLeft", "recapCropRight", "recapFontSize",
         "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
         "recapSubMargin", "recapSettingsVersion",
@@ -2461,6 +2466,18 @@ function setupTabs() {
 
             if (targetTab === "tab-history") {
                 loadUserHistory();
+            }
+
+            // Batch BI (BI-4): the TTS balance line must paint fresh
+            // on nav entry. This hand-rolled handler duplicates
+            // switchTab's pane switching but never carried the hook —
+            // the AW-era refreshTtsQuota call lived only inside
+            // switchTab, which the dock never calls — so tapping the
+            // TTS nav button never ran the quota loader at all and
+            // the line sat on its placeholder (the real root cause
+            // behind the BB/BH "stuck line" reports).
+            if (targetTab === "tab-tts" && typeof window.refreshTtsQuota === "function") {
+                window.refreshTtsQuota();
             }
 
             if (targetTab === "tab-admin") {
@@ -5186,6 +5203,7 @@ function setupRecapVisualEditor() {
             blur_w: iv(g("slider-blur-w"), 92),
             blur_box_explicit: !!state.recapBlurBoxTouched,
             blur_strength: iv(g("slider-blur-strength"), 18),
+            blur_auto_detect: state.recapBlurAutoDetect !== false,
             burn_subtitles: state.recapBurnSubs !== false,
             sub_bottom_margin: iv(g("slider-sub-y"), state.recapSubMargin != null ? state.recapSubMargin : 5),
             sub_x: iv(g("slider-sub-x"), 50),
@@ -5736,6 +5754,16 @@ function setupRecapVisualEditor() {
     if (sliderTitleY && previewTitle && valTitleY) {
         sliderTitleY.addEventListener("input", () => {
             syncTitleBoxVisual();
+        });
+    }
+
+    // Batch BI: auto-detect blur switch — the change lands in state;
+    // the tab-level delegated saver snapshots it like every other
+    // recap setting, and collectAccountPrefs carries it server-side.
+    const blurAutoDetectToggleEl = document.getElementById("recap-blur-autodetect-toggle");
+    if (blurAutoDetectToggleEl) {
+        blurAutoDetectToggleEl.addEventListener("change", () => {
+            state.recapBlurAutoDetect = !!blurAutoDetectToggleEl.checked;
         });
     }
 
@@ -7486,7 +7514,7 @@ function setupRecapVisualEditor() {
         recapRenderQuality: ["standard", "high", "max"],
         recapTtsEngine: ["voxcpm", "gemini", "edge"],
     };
-    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapLogo", "recapBlurBoxTouched", "recapTitleEnabled"];
+    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched", "recapTitleEnabled"];
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
@@ -7705,6 +7733,10 @@ function setupRecapVisualEditor() {
         if (bw && Number.isFinite(state.recapBlurW)) bw.value = state.recapBlurW;
         if (sx && Number.isFinite(state.recapSubX)) sx.value = state.recapSubX;
         if (sw && Number.isFinite(state.recapSubW)) sw.value = state.recapSubW;
+        // Batch BI: the auto-detect blur switch re-syncs like the
+        // other toggles (default ON when nothing was ever saved).
+        const blurAutoDetectEl = document.getElementById("recap-blur-autodetect-toggle");
+        if (blurAutoDetectEl) blurAutoDetectEl.checked = state.recapBlurAutoDetect !== false;
         // Batch AH: title controls re-sync (toggle, text, sliders).
         const titleToggleEl = document.getElementById("recap-title-toggle");
         if (titleToggleEl) titleToggleEl.checked = !!state.recapTitleEnabled;
@@ -7794,6 +7826,9 @@ function setupRecapVisualEditor() {
             // stay on the legacy path).
             recapBlurBoxTouched: cfg.blur_box_explicit === true,
             recapBlurStrength: cfg.blur_strength,
+            // Batch BI: the auto-detect switch round-trips too
+            // (pre-BI configs carry no key and restore keeps ON).
+            recapBlurAutoDetect: cfg.blur_auto_detect !== false,
             recapZoom: cfg.zoom_factor, recapVoice: cfg.voice_slug,
             recapGeminiVoice: cfg.gemini_voice || "",
             recapSplitEnabled: !!cfg.split_video,
@@ -8037,6 +8072,7 @@ async function handleStartRecap() {
             // engine treats a marked box as authoritative.
             blur_box_explicit: !!state.recapBlurBoxTouched,
             blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
+            blur_auto_detect: state.recapBlurAutoDetect !== false,
             burn_subtitles: state.recapBurnSubs !== false,
             // Batch AK: the slider is the bottom-edge margin; sub_y
             // is no longer sent (the server default stands and the
