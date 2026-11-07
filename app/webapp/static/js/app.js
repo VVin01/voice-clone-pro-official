@@ -4633,6 +4633,12 @@ window.repaintRecapCtaPrice = updateRecapSplitCostHint;
 // empty canvas. Visibility only: no payloads or defaults change here.
 function setRecapPreviewState(mode) {
     state.recapPreviewState = mode;
+    // Batch CP: the drop zone's file input is a full-cover overlay hit
+    // target; it may only intercept taps while the zone is empty —
+    // during loading/ready the progress UI and Cancel button inside
+    // the zone must receive the clicks instead.
+    const dzFileInput = document.getElementById("recap-video-file-input");
+    if (dzFileInput) dzFileInput.style.pointerEvents = mode === "empty" ? "" : "none";
     const ready = mode === "ready";
     const emptyBox = document.getElementById("recap-preview-empty");
     const emptyInner = document.getElementById("recap-preview-empty-inner");
