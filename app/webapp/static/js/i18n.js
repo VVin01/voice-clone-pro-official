@@ -316,7 +316,13 @@ const translations = {
         job_badge_tts: "🎧 TTS",
         tts_balance_line: "🎧 မိတ်ဆက်ဆု လက်ကျန် (TTS): {ref_min} မိနစ် · 📅 ဒီနေ့ သုံးနိုင်သေးချိန်: {remain_min} မိနစ်",
         tts_balance_line_unlimited: "🎧 မိတ်ဆက်ဆု လက်ကျန် (TTS): {ref_min} မိနစ် · 📅 နေ့စဉ် ကန့်သတ်ချက် မရှိပါ",
-        tts_cost_hint: "💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပြီး ကျန်တာကို နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ကောက်ခံပါသည်။ Voice Clone မိနစ်နှင့် Recap Credit လုံးဝ မထိပါ။",
+        tts_cost_hint: "💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပါတယ်",
+        // Batch CN: the long explanations live behind tap-to-expand
+        // toggles — one short line stays on screen, the rest opens
+        // only when the user asks for it.
+        tts_cost_hint_more: "ကုန်ရင် နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ယူပါတယ်။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။",
+        tts_details_toggle: "အသေးစိတ် ကြည့်ရန်",
+        tts_edge_voice_hint: "Edge မှာ မြန်မာ အသံ ၂ မျိုးပဲ ရပါတယ်",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
         tts_key_card_title: "🔑 ကိုယ်ပိုင် Gemini Key",
         tts_key_state_none: "Key မထည့်ရသေးပါ",
@@ -1441,7 +1447,11 @@ const translations = {
         job_badge_tts: "🎧 TTS",
         tts_balance_line: "🎧 Referral balance (TTS): {ref_min} min · 📅 Left today: {remain_min} min",
         tts_balance_line_unlimited: "🎧 Referral balance (TTS): {ref_min} min · 📅 No daily limit",
-        tts_cost_hint: "💡 Referral time is spent first; the rest counts against your daily TTS allowance. Voice Clone minutes and Recap Credits are never touched.",
+        tts_cost_hint: "💡 Referral time is spent first",
+        // Batch CN: tap-to-expand detail lines (see the my block).
+        tts_cost_hint_more: "Once it runs out, your daily TTS allowance is used. Voice Clone minutes and Recap Credits are never touched.",
+        tts_details_toggle: "View details",
+        tts_edge_voice_hint: "Edge offers 2 Myanmar voices",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
         tts_key_card_title: "🔑 Your Own Gemini Key",
         tts_key_state_none: "No key saved yet",

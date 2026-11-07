@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r109">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r110">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r109" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r110" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -535,9 +535,23 @@
                             <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မ)</option>
                         </select>
                     </div>
+                    <!-- Batch CN: Edge carries exactly 2 Myanmar voices —
+                         say so where the shorter list appears, instead of
+                         letting 10 → 2 look like voices went missing. -->
+                    <p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ အသံ ၂ မျိုးပဲ ရပါတယ်</p>
                     <p class="ref-desc" id="tts-balance-line" data-i18n="tts_balance_loading">လက်ကျန် စစ်ဆေးနေသည်…</p>
                     <p class="ref-desc hidden" id="tts-taste-note"></p>
-                    <p class="ref-desc" data-i18n="tts_cost_hint">💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပြီး ကျန်တာကို နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ကောက်ခံပါသည်။ Voice Clone မိနစ်နှင့် Recap Credit လုံးဝ မထိပါ။</p>
+                    <!-- Batch CN: one short hint line stays on screen;
+                         the full billing explanation is tap-to-expand
+                         (the .detail-toggle pattern, toggleTtsDetail). -->
+                    <p class="ref-desc" data-i18n="tts_cost_hint">💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပါတယ်</p>
+                    <button type="button" class="detail-toggle" id="tts-cost-hint-toggle" aria-expanded="false" data-detail-target="tts-cost-hint-more" onclick="toggleTtsDetail(this)">
+                        <span data-i18n="tts_details_toggle">အသေးစိတ် ကြည့်ရန်</span>
+                        <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="hidden" id="tts-cost-hint-more">
+                        <p class="ref-desc" data-i18n="tts_cost_hint_more">ကုန်ရင် နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ယူပါတယ်။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။</p>
+                    </div>
                 </div>
 
                 <!-- Batch CG: bring-your-own Gemini key. Sits directly
@@ -556,12 +570,21 @@
                         <button type="button" class="btn secondary-btn" id="btn-tts-key-save" data-i18n="tts_key_save_btn">Key သိမ်းမယ်</button>
                         <button type="button" class="btn secondary-btn hidden" id="btn-tts-key-delete" data-i18n="tts_key_delete_btn">Key ဖျက်မယ်</button>
                     </div>
-                    <p class="ref-desc mt-2" data-i18n="tts_key_guide_title">Key ရယူနည်း (အခမဲ့):</p>
-                    <p class="ref-desc" data-i18n="tts_key_guide_1">၁။ Google AI Studio (aistudio.google.com) မှာ Google အကောင့်နဲ့ ဝင်ပါ</p>
-                    <p class="ref-desc" data-i18n="tts_key_guide_2">၂။ "Get API key" → "Create API key" ကို နှိပ်ပြီး Key ကို ကူးယူပါ</p>
-                    <p class="ref-desc" data-i18n="tts_key_guide_3">၃။ ကူးထားတဲ့ Key ကို ဒီမှာ ထည့်ပြီး သိမ်းပါ</p>
-                    <p class="ref-desc" data-i18n="tts_key_honest_1">ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။</p>
-                    <p class="ref-desc" data-i18n="tts_key_honest_2">Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။</p>
+                    <!-- Batch CN: the how-to + privacy notes are one
+                         tap-to-expand block (the guide title row is the
+                         toggle); the state line, input and save/delete
+                         above stay always visible. -->
+                    <button type="button" class="detail-toggle mt-2" id="tts-key-guide-toggle" aria-expanded="false" data-detail-target="tts-key-guide-body" onclick="toggleTtsDetail(this)">
+                        <span data-i18n="tts_key_guide_title">Key ရယူနည်း (အခမဲ့):</span>
+                        <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="hidden" id="tts-key-guide-body">
+                        <p class="ref-desc" data-i18n="tts_key_guide_1">၁။ Google AI Studio (aistudio.google.com) မှာ Google အကောင့်နဲ့ ဝင်ပါ</p>
+                        <p class="ref-desc" data-i18n="tts_key_guide_2">၂။ "Get API key" → "Create API key" ကို နှိပ်ပြီး Key ကို ကူးယူပါ</p>
+                        <p class="ref-desc" data-i18n="tts_key_guide_3">၃။ ကူးထားတဲ့ Key ကို ဒီမှာ ထည့်ပြီး သိမ်းပါ</p>
+                        <p class="ref-desc" data-i18n="tts_key_honest_1">ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။</p>
+                        <p class="ref-desc" data-i18n="tts_key_honest_2">Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။</p>
+                    </div>
                 </div>
 
                 <div class="card glass input-card">
@@ -2969,7 +2992,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r109"></script>
-    <script src="/static/js/app.js?v=20261104_r109"></script>
+    <script src="/static/js/i18n.js?v=20261104_r110"></script>
+    <script src="/static/js/app.js?v=20261104_r110"></script>
 </body>
 </html>
