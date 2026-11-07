@@ -65,7 +65,7 @@ def _i18n_values(key: str) -> list[str]:
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_bb_cache_token_is_r79():
-    assert HTML.count("20261104_r94") == 4
+    assert HTML.count("20261104_r95") == 4
     assert "20261104_r74" not in HTML
 
 
@@ -231,7 +231,7 @@ def test_bb2_voice_capsule_values_defaults_and_labels():
     assert '<button class="speed-seg active" data-speed="normal">' in block
     for key in ("speed_slow", "speed_normal", "speed_fast"):
         assert f'data-i18n="{key}"' in block
-    for short in ("0.8x", "1.0x", "1.2x"):
+    for short in ("-20%", "+0%", "+20%"):  # Batch BX Item 7: % labels
         assert f'<span class="seg-short">{short}</span>' in block
 
 

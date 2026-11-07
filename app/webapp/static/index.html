@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r94">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r95">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r94" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r95" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -38,8 +38,8 @@
                 <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free">FREE</span>
                 <span class="live-dot" title="Live"><span class="live-dot-pulse"></span>LIVE</span>
                 <div class="balance-chips">
-                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title">🎙️ 0.0m</span>
-                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title">🎬 0c</span>
+                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title">🎙️ —</span>
+                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title">🎬 —</span>
                 </div>
             </div>
         </header>
@@ -349,7 +349,7 @@
                                 <div class="card-label" data-i18n="custom_ref_title">🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)</div>
                                 <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့်</span>
                             </div>
-                            <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (၃–၃၀ စက္ကန့်၊ WAV/MP3) တင်ပါ။ မတင်ပါက Default မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
+                            <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် — ပိုရှည်ပါက ပထမ 45 စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်၊ WAV/MP3) တင်ပါ။ မတင်ပါက Default မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
                             <div class="ref-upload-row">
                                 <label class="btn-file-upload" for="ref-audio-input">
                                     <span id="ref-audio-label" data-i18n="ref_file_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
@@ -378,9 +378,9 @@
                         <span class="ctrl-title" data-i18n="speed_label">အမြန်နှုန်း:</span>
                         <div class="speed-capsule" id="speed-selector">
                             <span class="speed-capsule-pill" aria-hidden="true"></span>
-                            <button class="speed-seg" data-speed="slow"><span class="seg-short">0.8x</span><span class="seg-full" data-i18n="speed_slow">0.8x နှေး</span></button>
-                            <button class="speed-seg active" data-speed="normal"><span class="seg-short">1.0x</span><span class="seg-full" data-i18n="speed_normal">1.0x ပုံမှန်</span></button>
-                            <button class="speed-seg" data-speed="fast"><span class="seg-short">1.2x</span><span class="seg-full" data-i18n="speed_fast">1.2x မြန်</span></button>
+                            <button class="speed-seg" data-speed="slow"><span class="seg-short">-20%</span><span class="seg-full" data-i18n="speed_slow">-20% နှေး</span></button>
+                            <button class="speed-seg active" data-speed="normal"><span class="seg-short">+0%</span><span class="seg-full" data-i18n="speed_normal">+0% ပုံမှန်</span></button>
+                            <button class="speed-seg" data-speed="fast"><span class="seg-short">+20%</span><span class="seg-full" data-i18n="speed_fast">+20% မြန်</span></button>
                         </div>
                     </div>
                 </div>
@@ -1220,6 +1220,8 @@
                                             </div>
                                 <!-- Persona voices (engine = Persona Voice) -->
                                 <div id="recap-persona-area">
+                                <!-- Batch BX: Edge-engine honesty note — shown only while the Edge engine is selected (syncRecapEngineAreas) -->
+                                <p id="recap-persona-engine-note" class="hint-line hidden" data-i18n="recap_persona_note_edge">Edge အသံဖြင့် ပြောပြပါမည် — ရွေးထားသော Persona အလိုက် ကိုသီဟ သို့မဟုတ် မနီလာ အသံ ဖြစ်ပါမည်။</p>
                                 <!-- Top 4 Popular Voice Cards -->
                                 <div class="recap-top-voices-grid mt-2" id="recap-top-voices">
                                     <div class="voice-card active" data-voice="komin">
@@ -2349,6 +2351,33 @@
                                 <div></div>
                             </div>
                             <div class="form-row-2 mt-2">
+                                <div class="toggle-control-col">
+                                    <label class="input-label" data-i18n="settings_private_ai">Private Chat AI အလိုအလျောက် အဖြေ</label>
+                                    <label class="switch-luxury">
+                                        <input type="checkbox" id="adm-set-private-ai" checked>
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <p class="text-xs text-muted" data-i18n="settings_private_ai_hint">Bot နဲ့ တစ်ဦးချင်း စာပို့သူတွေရဲ့ Product မေးခွန်းတွေကို AI က အလိုအလျောက် ဖြေပေးမယ် (ငွေကြေး/အကောင့် ကိစ္စများကို Admin ထံ လွှဲပေးမည်)</p>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_private_ai_cooldown">Private AI Cooldown (စက္ကန့်)</label>
+                                    <input type="number" id="adm-set-private-ai-cooldown" class="studio-input" min="0" max="86400" step="10" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_private_ai_cooldown_hint">အသုံးပြုသူ တစ်ဦးချင်း AI အဖြေ နှစ်ခုကြား စောင့်ရမည့် အချိန် (0 = Cooldown မရှိ)</p>
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="settings_private_ai_hourly_budget">Private AI နာရီအလိုက် Budget</label>
+                                    <input type="number" id="adm-set-private-ai-hourly" class="studio-input" min="1" max="100000" step="1" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_private_ai_hourly_budget_hint">တစ်နာရီအတွင်း AI ဖြေဆိုနိုင်သော အများဆုံး အကြိမ်ရေ</p>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_private_ai_daily_budget">Private AI နေ့အလိုက် Budget</label>
+                                    <input type="number" id="adm-set-private-ai-daily" class="studio-input" min="1" max="100000" step="1" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_private_ai_daily_budget_hint">တစ်နေ့အတွင်း AI ဖြေဆိုနိုင်သော အများဆုံး အကြိမ်ရေ</p>
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_char_limit_purchased">ဝယ်ယူ စာလုံးရေ ကန့်သတ်ချက် (Purchased Character Limit)</label>
                                     <input type="number" id="adm-set-char-limit-purchased" class="studio-input" min="100" max="10000" step="50" inputmode="numeric">
@@ -2771,13 +2800,13 @@
     <div id="gate-lock" class="gate-lock" role="alertdialog" aria-modal="true">
         <div class="gate-lock-card">
             <div class="modal-emoji" id="gate-lock-emoji">🔐</div>
-            <h3 id="gate-lock-title" data-i18n="gate_lock_title">🔐 Channel နဲ့ Group Join ပြီးမှ သုံးနိုင်ပါမယ်</h3>
-            <p id="gate-lock-desc" class="modal-desc" data-i18n="gate_lock_desc">Voice Clone Pro ကို အသုံးပြုဖို့ Channel နဲ့ Group နှစ်ခုလုံးကို Join ထားဖို့ လိုပါတယ်။ Join ပြီးရင် «ပြန်စစ်မည်» ကို နှိပ်လိုက်ရုံနဲ့ ချက်ချင်း ဖွင့်ပေးပါမယ်။ နောက်ပိုင်း တစ်ခုခုကနေ ပြန်ထွက်သွားရင် App က ပြန်ပိတ်သွားပါမယ်။</p>
-            <div class="gate-banner-chips gate-lock-chips">
+            <h3 id="gate-lock-title" data-i18n="gate_lock_title"></h3>
+            <p id="gate-lock-desc" class="modal-desc" data-i18n="gate_lock_desc"></p>
+            <div class="gate-banner-chips gate-lock-chips hidden">
                 <span id="gate-lock-chip-channel" class="gate-chip" data-i18n="gate_chip_channel">📢 Channel</span>
                 <span id="gate-lock-chip-group" class="gate-chip" data-i18n="gate_chip_group">👥 Group</span>
             </div>
-            <div class="gate-lock-actions">
+            <div class="gate-lock-actions hidden">
                 <a id="gate-lock-link-channel" class="btn mini-btn" data-i18n="gate_join_channel" href="#" target="_blank" rel="noopener">📢 Channel ကို Join မည်</a>
                 <a id="gate-lock-link-group" class="btn mini-btn" data-i18n="gate_join_group" href="#" target="_blank" rel="noopener">👥 Group ကို Join မည်</a>
                 <button id="gate-lock-btn-verify" class="btn gold-gradient-btn" type="button" data-i18n="gate_verify_btn" onclick="verifyEntryGate()">✅ Join ပြီးပြီ — ပြန်စစ်မည်</button>
@@ -2801,7 +2830,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r94"></script>
-    <script src="/static/js/app.js?v=20261104_r94"></script>
+    <script src="/static/js/i18n.js?v=20261104_r95"></script>
+    <script src="/static/js/app.js?v=20261104_r95"></script>
 </body>
 </html>

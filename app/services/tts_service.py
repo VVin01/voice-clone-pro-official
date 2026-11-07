@@ -371,15 +371,39 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
         from aiogram.types import FSInputFile
 
         filename = branded_download_filename("TTS", "wav", job_id=job.id)
+        # Batch BX: the caption now names the engine + friendly voice
+        # (it said nothing before, and History leaked the raw ids).
+        # Language comes from the owner's stored preference, loaded
+        # through the same fresh-session pattern the clone delivery
+        # sites use; any failure falls back to "my" silently.
+        lang = "my"
+        try:
+            from app.db.session import AsyncSessionLocal
+            from app.services.ledger import get_or_create_user
+
+            async with AsyncSessionLocal() as _sess:
+                _owner, _ = await get_or_create_user(_sess, job.user_id)
+                lang = _owner.language_code or "my"
+        except Exception:
+            pass
+        from app.services.i18n import t as _tts_t
+        from app.services.voice_display import (
+            tts_engine_display_name,
+            tts_voice_display_name,
+        )
+
+        caption = _tts_t(
+            "tts_delivery_caption",
+            lang,
+            engine=tts_engine_display_name(getattr(job, "engine", None)),
+            voice=tts_voice_display_name(getattr(job, "engine", None), getattr(job, "preset_voice", None)),
+        )
         bot = Bot(token=settings.bot_token)
         try:
             await bot.send_audio(
                 chat_id=job.chat_id or job.user_id,
                 audio=FSInputFile(str(out_path), filename=filename),
-                caption=(
-                    "🎧 <b>TTS အသံ</b>\n"
-                    "✨ <i>Mini App TTS Tab မှ တောင်းဆိုချက်အရ ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
-                ),
+                caption=caption,
                 parse_mode="HTML",
             )
         finally:

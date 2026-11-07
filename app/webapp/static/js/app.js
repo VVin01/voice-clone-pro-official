@@ -427,7 +427,11 @@ const state = {
     recapSplitMinutes: 3,
     recapSourceLanguage: "auto",
     recapRenderQuality: "standard",
-    recapTtsEngine: "voxcpm",
+    // Batch BX: the pre-profile default is the FREE-safe engine —
+    // a FREE user's first paint no longer shows the locked clone
+    // engine as if it were selected (the tier lock still re-syncs
+    // the picker from the profile once it lands).
+    recapTtsEngine: "gemini",
     recapGeminiVoice: "",
     recapVoice: "komin",
     // Batch BV: own-voice narration. Per-job state only — it is
@@ -3362,6 +3366,27 @@ function setEntryGateMode(mode, data) {
     const chLink = document.getElementById("gate-lock-link-channel");
     const grLink = document.getElementById("gate-lock-link-group");
     const verifyBtn = document.getElementById("gate-lock-btn-verify");
+    const checking = document.getElementById("gate-lock-checking");
+    const actions = document.querySelector(".gate-lock-actions");
+    if (mode === "checking") {
+        // Batch BX: the boot state BEFORE any membership answer —
+        // title/desc/chips/links/verify all hidden, only the checking
+        // spinner line shows. Purely a display state: the lock
+        // overlay stays up and applyEntryGateState remains the only
+        // function that can unlock (fail-closed semantics untouched).
+        if (emoji) emoji.innerText = "🔐";
+        if (title) title.innerText = "";
+        if (desc) desc.innerText = "";
+        if (chips) chips.classList.add("hidden");
+        if (chLink) chLink.classList.add("hidden");
+        if (grLink) grLink.classList.add("hidden");
+        if (verifyBtn) verifyBtn.classList.add("hidden");
+        if (actions) actions.classList.add("hidden");
+        if (checking) checking.classList.remove("hidden");
+        return;
+    }
+    if (checking) checking.classList.add("hidden");
+    if (actions) actions.classList.remove("hidden");
     if (mode === "maintenance") {
         // Batch AR (2026-11-05): the maintenance screen. Title + the
         // admin's maintenance_note verbatim (or the default text when
@@ -3736,6 +3761,10 @@ function syncRecapEngineAreas() {
     // card (and its selection) does not apply there.
     const ow = document.getElementById("recap-own-voice-wrap");
     if (ow) ow.classList.toggle("hidden", state.recapTtsEngine !== "voxcpm");
+    // Batch BX: on the Edge engine the persona grid is a base-voice
+    // picker, not a clone — say so honestly above the grid.
+    const note = document.getElementById("recap-persona-engine-note");
+    if (note) note.classList.toggle("hidden", state.recapTtsEngine !== "edge");
 }
 function refreshRecapEngineLock() {
     const u = state.user;
@@ -3981,6 +4010,10 @@ function bootFromCachedProfile() {
 }
 
 async function initEntryGate() {
+    // Batch BX: enter the neutral "checking" state first — the
+    // statically-shipped lock copy (join text + zero balances) must
+    // never paint before the membership answer arrives.
+    setEntryGateMode("checking");
     // Batch AR: maintenance is checked BEFORE the cached-profile
     // unlock. While maintenance is on, a non-admin must land on the
     // maintenance screen directly — the page already loads locked,
@@ -4601,7 +4634,23 @@ function refreshRecapStep4Choices() {
     const voiceEl = document.getElementById("recap-step4-choice-voice");
     const voiceCard = document.querySelector("#recap-persona-area .voice-card.active .v-name")
         || document.querySelector("#recap-top-voices .voice-card.active .v-name");
-    if (voiceEl) voiceEl.textContent = "🎙️ " + (voiceCard ? voiceCard.textContent.trim() : "");
+    if (voiceEl) {
+        let voiceLine = "🎙️ " + (voiceCard ? voiceCard.textContent.trim() : "");
+        // Batch BX: on the Edge engine the summary must not present
+        // the persona pick as the narration voice — append the Edge
+        // base voice that will actually narrate (gender-matched to
+        // the picked persona, mirroring the server's mapping).
+        if (state.recapTtsEngine === "edge") {
+            const activeCard = voiceCard ? voiceCard.closest(".voice-card") : null;
+            const slug = activeCard ? activeCard.getAttribute("data-voice") : "";
+            const cv = (state.curatedVoices || []).find(v => v.slug === slug);
+            const femaleSlugs = ["mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"];
+            const isFemale = cv ? cv.gender === "female" : femaleSlugs.includes(slug || "");
+            const edgeVoiceName = t(isFemale ? "tts_edge_nilar" : "tts_edge_thiha").replace(/\s*\([^)]*\)\s*$/, "");
+            voiceLine += " " + tf("recap_step4_edge_voice_note", { voice: edgeVoiceName });
+        }
+        voiceEl.textContent = voiceLine;
+    }
     const ratioEl = document.getElementById("recap-step4-choice-ratio");
     const ratioCard = document.querySelector("#recap-preview-ratio-group .ratio-card.active");
     if (ratioEl) ratioEl.textContent = ratioCard
@@ -11323,7 +11372,7 @@ async function loadAdminQueue(isSilent = false) {
                 actionsHtml += `<span class="badge-expired text-xs">⌛ ${t("admin_expired")}</span>`;
                 actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>`;
             } else if (j.download_url) {
-                const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`;
+                const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
                 actionsHtml += `<button class="queue-act-btn uid adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(qTitle)}">▶️ Play</button>`;
                 actionsHtml += `<a href="#" data-open-url="${j.download_url}" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
             }
@@ -11334,7 +11383,7 @@ async function loadAdminQueue(isSilent = false) {
                         <div class="queue-badges-left">
                             <span class="badge-status ${statusLower}">${statusBadgeText}</span>
                             <span class="badge-engine ${engineLower}">${engineLabel}</span>
-                            <span class="mini-tag">${escapeHtml(j.preset_voice)}</span>
+                            <span class="mini-tag">${escapeHtml(j.voice_display || j.preset_voice)}</span>
                             ${j.job_type === 'TTS' ? `<span class="mini-tag">${escapeHtml(t("job_badge_tts"))}</span>` : ""}
                         </div>
                         <span class="queue-timing">${durationTxt}</span>
@@ -11469,7 +11518,7 @@ async function loadAdminHistory() {
             return;
         }
         container.innerHTML = history.map(j => {
-            const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.preset_voice || j.engine}`;
+            const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
             const errText = displayJobError(j.error_message);
             const isFailed = (j.status === "FAILED");
             const isSuccess = (j.status === "SUCCESS");
@@ -11488,7 +11537,7 @@ async function loadAdminHistory() {
                     </div>
                 </div>
                 <div class="history-item-body">
-                    <strong>${escapeHtml(j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
+                    <strong>${escapeHtml(j.voice_display || j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
                     ${errText ? `
                         <div class="history-error-snippet text-xs text-danger mt-1 p-2 glass-inset">
                             ⚠️ <strong>Error:</strong> ${escapeHtml(errText.slice(0, 180))}${errText.length > 180 ? '...' : ''}
@@ -11941,6 +11990,17 @@ async function loadAdminSettings() {
         if (elGroupAiCooldown && s.group_ai_user_cooldown_seconds != null) elGroupAiCooldown.value = s.group_ai_user_cooldown_seconds;
         if (elGroupAiHourly && s.group_ai_hourly_budget != null) elGroupAiHourly.value = s.group_ai_hourly_budget;
         if (elGroupAiDaily && s.group_ai_daily_budget != null) elGroupAiDaily.value = s.group_ai_daily_budget;
+        // Batch BX: Private AI — the toggle defaults ON (owner
+        // order), so an absent key in the response still renders
+        // checked; the number fields follow the group's pattern.
+        const elPrivateAi = document.getElementById("adm-set-private-ai");
+        if (elPrivateAi) elPrivateAi.checked = s.private_ai_enabled === undefined || s.private_ai_enabled === null ? true : !!s.private_ai_enabled;
+        const elPrivateAiCooldown = document.getElementById("adm-set-private-ai-cooldown");
+        const elPrivateAiHourly = document.getElementById("adm-set-private-ai-hourly");
+        const elPrivateAiDaily = document.getElementById("adm-set-private-ai-daily");
+        if (elPrivateAiCooldown && s.private_ai_user_cooldown_seconds != null) elPrivateAiCooldown.value = s.private_ai_user_cooldown_seconds;
+        if (elPrivateAiHourly && s.private_ai_hourly_budget != null) elPrivateAiHourly.value = s.private_ai_hourly_budget;
+        if (elPrivateAiDaily && s.private_ai_daily_budget != null) elPrivateAiDaily.value = s.private_ai_daily_budget;
         if (elCharLimitFree && s.character_limit_free != null) elCharLimitFree.value = s.character_limit_free;
         if (elCharLimitPurchased && s.character_limit_purchased != null) elCharLimitPurchased.value = s.character_limit_purchased;
         if (elFreeAllowance && s.free_monthly_allowance_seconds != null) elFreeAllowance.value = s.free_monthly_allowance_seconds;
@@ -12082,6 +12142,13 @@ async function saveAdminSettings() {
     const groupAiHourly = groupAiHourlyRaw === "" || groupAiHourlyRaw == null ? null : parseInt(groupAiHourlyRaw, 10);
     const groupAiDailyRaw = document.getElementById("adm-set-group-ai-daily")?.value?.trim();
     const groupAiDaily = groupAiDailyRaw === "" || groupAiDailyRaw == null ? null : parseInt(groupAiDailyRaw, 10);
+    const privateAi = !!document.getElementById("adm-set-private-ai")?.checked;
+    const privateAiCooldownRaw = document.getElementById("adm-set-private-ai-cooldown")?.value?.trim();
+    const privateAiCooldown = privateAiCooldownRaw === "" || privateAiCooldownRaw == null ? null : parseInt(privateAiCooldownRaw, 10);
+    const privateAiHourlyRaw = document.getElementById("adm-set-private-ai-hourly")?.value?.trim();
+    const privateAiHourly = privateAiHourlyRaw === "" || privateAiHourlyRaw == null ? null : parseInt(privateAiHourlyRaw, 10);
+    const privateAiDailyRaw = document.getElementById("adm-set-private-ai-daily")?.value?.trim();
+    const privateAiDaily = privateAiDailyRaw === "" || privateAiDailyRaw == null ? null : parseInt(privateAiDailyRaw, 10);
     const charLimitFreeRaw = document.getElementById("adm-set-char-limit-free")?.value?.trim();
     const charLimitFree = charLimitFreeRaw === "" || charLimitFreeRaw == null ? null : parseInt(charLimitFreeRaw, 10);
     const charLimitPurchasedRaw = document.getElementById("adm-set-char-limit-purchased")?.value?.trim();
@@ -12135,6 +12202,10 @@ async function saveAdminSettings() {
         ...(Number.isFinite(groupAiCooldown) ? { group_ai_user_cooldown_seconds: groupAiCooldown } : {}),
         ...(Number.isFinite(groupAiHourly) ? { group_ai_hourly_budget: groupAiHourly } : {}),
         ...(Number.isFinite(groupAiDaily) ? { group_ai_daily_budget: groupAiDaily } : {}),
+        private_ai_enabled: privateAi,
+        ...(Number.isFinite(privateAiCooldown) ? { private_ai_user_cooldown_seconds: privateAiCooldown } : {}),
+        ...(Number.isFinite(privateAiHourly) ? { private_ai_hourly_budget: privateAiHourly } : {}),
+        ...(Number.isFinite(privateAiDaily) ? { private_ai_daily_budget: privateAiDaily } : {}),
         ...(Number.isFinite(charLimitFree) ? { character_limit_free: charLimitFree } : {}),
         ...(Number.isFinite(charLimitPurchased) ? { character_limit_purchased: charLimitPurchased } : {}),
         ...(Number.isFinite(freeAllowance) ? { free_monthly_allowance_seconds: freeAllowance } : {}),
@@ -12426,7 +12497,7 @@ function hubHistoryRowHtml(j) {
             <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
             <span class="hub-row-text">
                 <span class="hub-row-title">${title}</span>
-                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
             </span>
             ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
             ${!isRecap && j.reference_trimmed ? `<span class="history-item-badge hub-fallback-badge">${t("hist_ref_trim_badge")}</span>` : ""}

@@ -154,6 +154,43 @@ def recap_voice_display_name(
     return persona_display_name(persona_slug)
 
 
+# ---------------------------------------------------------------------------
+# Standalone TTS display names (Batch BX). A TTS job row persists the
+# RAW engine voice ("Charon" for Gemini, "my-MM-ThihaNeural" for Edge)
+# in preset_voice — internal ids that leaked into user History and
+# were missing entirely from the bot delivery message. TTS rows never
+# carry a persona slug, so the recap resolvers above do not apply.
+# ---------------------------------------------------------------------------
+
+_TTS_ENGINE_DISPLAY = {"gemini": "Gemini", "edge": "Edge", "edge_tts": "Edge"}
+
+
+def tts_voice_display_name(engine: Optional[str], preset_voice: Optional[str]) -> str:
+    """User-facing voice name for a standalone TTS job row.
+
+    Gemini rows resolve through the same Gemini display table the
+    recap path uses; Edge rows map the persisted neural name to its
+    Burmese base name. Unknown values degrade to the raw value so a
+    display never blanks.
+    """
+    engine_norm = str(engine or "").strip().lower()
+    raw = str(preset_voice or "").strip()
+    if engine_norm == "gemini":
+        display = gemini_voice_display_name(raw)
+        if display:
+            return display
+        return raw.removeprefix("gemini:") or raw
+    if engine_norm in ("edge", "edge_tts"):
+        return _EDGE_BASE_DISPLAY_MY.get(raw, raw or "ကိုသီဟ")
+    return raw
+
+
+def tts_engine_display_name(engine: Optional[str]) -> str:
+    """User-facing engine label for a standalone TTS job row."""
+    engine_norm = str(engine or "").strip().lower()
+    return _TTS_ENGINE_DISPLAY.get(engine_norm, engine_norm)
+
+
 def recap_completion_voice_display_name(
     tts_engine: Optional[str],
     gemini_voice: Optional[str],
