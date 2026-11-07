@@ -474,23 +474,15 @@ async def handle_receipt_wrong_content(message: Message, state: FSMContext):
     await message.answer(t("pay_receipt_wrong_content", lang), parse_mode="HTML")
 
 
-@payment_router.message(StateFilter(None), F.chat.type == "private", F.text, ~F.text.startswith("/"))
-async def handle_receipt_hint_after_restart(message: Message):
-    """Text with NO live FSM state but a persisted payment intent.
-
-    The media twin of this edge (handle_receipt_after_restart) resumes
-    the slip flow after a bot restart, but TEXT met silence: the
-    in-state wrong-content handler above cannot fire without the FSM
-    state. When a recent (<24h) persisted intent exists, the user is
-    mid-purchase — answer with the same polite screenshot request.
-    With no intent, stay silent: this catch-all must never answer
-    ordinary chat text. Commands are excluded at the filter level so
-    later routers keep owning them.
-    """
-    async with AsyncSessionLocal() as session:
-        intent = await get_recent_payment_intent(session, message.from_user.id)
-        if intent is None:
-            return
-        user, _ = await get_or_create_user(session, message.from_user.id)
-        lang = user.language_code or "my"
-    await message.answer(t("pay_receipt_wrong_content", lang), parse_mode="HTML")
+# Batch BY: the no-state private-TEXT payment-intent hint that used
+# to live here (handle_receipt_hint_after_restart) MOVED into
+# app/handlers/group_admin.py::handle_private_message. Registered on
+# this router — included before group_admin_router — its bare
+# (no-state, private, text) filter consumed every plain private text
+# even when it returned silently, which shadowed the Batch BX
+# private-chat AI handler completely. The private handler is now the
+# single terminal owner of plain private text and runs the same
+# intent check (same helper, same reply) as its first step. Do NOT
+# re-add a plain-text catch-all to this router. The MEDIA twin
+# (handle_receipt_after_restart, above) is untouched: media has no
+# competing terminal owner.

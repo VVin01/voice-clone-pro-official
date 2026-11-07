@@ -11940,8 +11940,40 @@ const ADMIN_TUTORIAL_LINK_FIELDS = [
     ["adm-tut-support-link", "tutorial_support_link"],
 ];
 
+// Batch BY: admin-settings edit-clobber protection. loadAdminSettings()
+// repaints EVERY settings field from the server and runs on admin-tab
+// entry and on settings sub-tab entry, so a repaint landing between an
+// admin's edit and their Save silently reverted the field to the old
+// server value (the known repaint clobber vector). Fields the admin
+// has touched since the last load are tracked here and skipped by the
+// paint helpers below; the flags clear ONLY after a successful
+// saveAdminSettings(), whose post-save reload then paints server
+// truth. Programmatic paints never fire input/change events, so
+// painting itself never marks a field dirty.
+const adminSettingsDirty = new Set();
+let _adminSettingsDirtyBound = false;
+
+function _bindAdminSettingsDirtyTracking() {
+    if (_adminSettingsDirtyBound) return;
+    const pane = document.getElementById("adm-screen-settings");
+    if (!pane) return;
+    _adminSettingsDirtyBound = true;
+    const mark = (e) => { if (e.target && e.target.id) adminSettingsDirty.add(e.target.id); };
+    pane.addEventListener("input", mark);
+    pane.addEventListener("change", mark);
+}
+
+function _admPaintValue(el, value) {
+    if (el && !adminSettingsDirty.has(el.id)) el.value = value;
+}
+
+function _admPaintChecked(el, checked) {
+    if (el && !adminSettingsDirty.has(el.id)) el.checked = checked;
+}
+
 async function loadAdminSettings() {
     if (!state.user?.is_admin) return;
+    _bindAdminSettingsDirtyTracking();
     try {
         const res = await fetch("/api/admin/settings", { headers: getAuthHeaders() });
         if (!res.ok) return;
@@ -11976,57 +12008,57 @@ async function loadAdminSettings() {
         const elTutRecapLink = document.getElementById("adm-tut-recap-link");
         const elRecapDemoAsset = document.getElementById("adm-recap-demo-asset");
 
-        if (elKpayNum) elKpayNum.value = s.payment_kpay_number || "";
-        if (elKpayName) elKpayName.value = s.payment_kpay_name || "";
-        if (elWaveNum) elWaveNum.value = s.payment_wave_number || "";
-        if (elWaveName) elWaveName.value = s.payment_wave_name || "";
-        if (elTutLink) elTutLink.value = s.tutorial_video_link || "";
-        if (elMaint) elMaint.checked = !!s.maintenance_mode;
-        if (elMaintNote) elMaintNote.value = s.maintenance_note || "";
-        if (elGroupAi) elGroupAi.checked = !!s.group_ai_admin_enabled;
+        _admPaintValue(elKpayNum, s.payment_kpay_number || "");
+        _admPaintValue(elKpayName, s.payment_kpay_name || "");
+        _admPaintValue(elWaveNum, s.payment_wave_number || "");
+        _admPaintValue(elWaveName, s.payment_wave_name || "");
+        _admPaintValue(elTutLink, s.tutorial_video_link || "");
+        _admPaintChecked(elMaint, !!s.maintenance_mode);
+        _admPaintValue(elMaintNote, s.maintenance_note || "");
+        _admPaintChecked(elGroupAi, !!s.group_ai_admin_enabled);
         const elGroupAiCooldown = document.getElementById("adm-set-group-ai-cooldown");
         const elGroupAiHourly = document.getElementById("adm-set-group-ai-hourly");
         const elGroupAiDaily = document.getElementById("adm-set-group-ai-daily");
-        if (elGroupAiCooldown && s.group_ai_user_cooldown_seconds != null) elGroupAiCooldown.value = s.group_ai_user_cooldown_seconds;
-        if (elGroupAiHourly && s.group_ai_hourly_budget != null) elGroupAiHourly.value = s.group_ai_hourly_budget;
-        if (elGroupAiDaily && s.group_ai_daily_budget != null) elGroupAiDaily.value = s.group_ai_daily_budget;
+        if (s.group_ai_user_cooldown_seconds != null) _admPaintValue(elGroupAiCooldown, s.group_ai_user_cooldown_seconds);
+        if (s.group_ai_hourly_budget != null) _admPaintValue(elGroupAiHourly, s.group_ai_hourly_budget);
+        if (s.group_ai_daily_budget != null) _admPaintValue(elGroupAiDaily, s.group_ai_daily_budget);
         // Batch BX: Private AI — the toggle defaults ON (owner
         // order), so an absent key in the response still renders
         // checked; the number fields follow the group's pattern.
         const elPrivateAi = document.getElementById("adm-set-private-ai");
-        if (elPrivateAi) elPrivateAi.checked = s.private_ai_enabled === undefined || s.private_ai_enabled === null ? true : !!s.private_ai_enabled;
+        _admPaintChecked(elPrivateAi, s.private_ai_enabled === undefined || s.private_ai_enabled === null ? true : !!s.private_ai_enabled);
         const elPrivateAiCooldown = document.getElementById("adm-set-private-ai-cooldown");
         const elPrivateAiHourly = document.getElementById("adm-set-private-ai-hourly");
         const elPrivateAiDaily = document.getElementById("adm-set-private-ai-daily");
-        if (elPrivateAiCooldown && s.private_ai_user_cooldown_seconds != null) elPrivateAiCooldown.value = s.private_ai_user_cooldown_seconds;
-        if (elPrivateAiHourly && s.private_ai_hourly_budget != null) elPrivateAiHourly.value = s.private_ai_hourly_budget;
-        if (elPrivateAiDaily && s.private_ai_daily_budget != null) elPrivateAiDaily.value = s.private_ai_daily_budget;
-        if (elCharLimitFree && s.character_limit_free != null) elCharLimitFree.value = s.character_limit_free;
-        if (elCharLimitPurchased && s.character_limit_purchased != null) elCharLimitPurchased.value = s.character_limit_purchased;
-        if (elFreeAllowance && s.free_monthly_allowance_seconds != null) elFreeAllowance.value = s.free_monthly_allowance_seconds;
-        if (elDailyJobLimit && s.free_daily_job_limit != null) elDailyJobLimit.value = s.free_daily_job_limit;
-        if (elRecapFreeMax && s.recap_free_max_duration_seconds != null) elRecapFreeMax.value = s.recap_free_max_duration_seconds;
-        if (elRecapMax && s.recap_max_duration_seconds != null) elRecapMax.value = s.recap_max_duration_seconds;
+        if (s.private_ai_user_cooldown_seconds != null) _admPaintValue(elPrivateAiCooldown, s.private_ai_user_cooldown_seconds);
+        if (s.private_ai_hourly_budget != null) _admPaintValue(elPrivateAiHourly, s.private_ai_hourly_budget);
+        if (s.private_ai_daily_budget != null) _admPaintValue(elPrivateAiDaily, s.private_ai_daily_budget);
+        if (s.character_limit_free != null) _admPaintValue(elCharLimitFree, s.character_limit_free);
+        if (s.character_limit_purchased != null) _admPaintValue(elCharLimitPurchased, s.character_limit_purchased);
+        if (s.free_monthly_allowance_seconds != null) _admPaintValue(elFreeAllowance, s.free_monthly_allowance_seconds);
+        if (s.free_daily_job_limit != null) _admPaintValue(elDailyJobLimit, s.free_daily_job_limit);
+        if (s.recap_free_max_duration_seconds != null) _admPaintValue(elRecapFreeMax, s.recap_free_max_duration_seconds);
+        if (s.recap_max_duration_seconds != null) _admPaintValue(elRecapMax, s.recap_max_duration_seconds);
         // Batch BE: the tiered-pricing arming switch (AO shipped the
         // setting + API dark; this toggle is the arming lever).
-        if (elTieredPricing) elTieredPricing.checked = !!s.tiered_recap_pricing_enabled;
-        if (elReqChannelId) elReqChannelId.value = s.required_channel_id || "";
-        if (elReqGroupId) elReqGroupId.value = s.required_group_id || "";
-        if (elChannelInvite) elChannelInvite.value = s.channel_invite_link || "";
-        if (elGroupInvite) elGroupInvite.value = s.group_invite_link || "";
+        _admPaintChecked(elTieredPricing, !!s.tiered_recap_pricing_enabled);
+        _admPaintValue(elReqChannelId, s.required_channel_id || "");
+        _admPaintValue(elReqGroupId, s.required_group_id || "");
+        _admPaintValue(elChannelInvite, s.channel_invite_link || "");
+        _admPaintValue(elGroupInvite, s.group_invite_link || "");
 
-        if (elTutVoiceEn) elTutVoiceEn.checked = String(s.tutorial_voice_enabled).toLowerCase() !== "false" && s.tutorial_voice_enabled !== false;
-        if (elTutVoiceTitle) elTutVoiceTitle.value = s.tutorial_voice_title || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
-        if (elTutVoiceLink) elTutVoiceLink.value = s.tutorial_voice_link || s.tutorial_video_link || "";
+        _admPaintChecked(elTutVoiceEn, String(s.tutorial_voice_enabled).toLowerCase() !== "false" && s.tutorial_voice_enabled !== false);
+        _admPaintValue(elTutVoiceTitle, s.tutorial_voice_title || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်");
+        _admPaintValue(elTutVoiceLink, s.tutorial_voice_link || s.tutorial_video_link || "");
 
-        if (elTutRecapEn) elTutRecapEn.checked = String(s.tutorial_recap_enabled).toLowerCase() !== "false" && s.tutorial_recap_enabled !== false;
-        if (elTutRecapTitle) elTutRecapTitle.value = s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
-        if (elTutRecapLink) elTutRecapLink.value = s.tutorial_recap_link || s.tutorial_video_link || "";
-        if (elRecapDemoAsset) elRecapDemoAsset.value = s.recap_demo_asset || "";
+        _admPaintChecked(elTutRecapEn, String(s.tutorial_recap_enabled).toLowerCase() !== "false" && s.tutorial_recap_enabled !== false);
+        _admPaintValue(elTutRecapTitle, s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်");
+        _admPaintValue(elTutRecapLink, s.tutorial_recap_link || s.tutorial_video_link || "");
+        _admPaintValue(elRecapDemoAsset, s.recap_demo_asset || "");
 
         for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
             const el = document.getElementById(elId);
-            if (el) el.value = s[settingKey] || "";
+            _admPaintValue(el, s[settingKey] || "");
         }
 
         setSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", s.gemini_primary_model || "gemini-3.6-flash");
@@ -12036,7 +12068,7 @@ async function loadAdminSettings() {
         // Batch BS: the Groq Whisper (STT) model field — the GET
         // pre-fills it with the current effective model.
         const elGroqWhisper = document.getElementById("adm-groq-whisper-model");
-        if (elGroqWhisper) elGroqWhisper.value = s.groq_whisper_model || "";
+        _admPaintValue(elGroqWhisper, s.groq_whisper_model || "");
 
         updateTutorialUI(s);
     } catch (e) {
@@ -12045,6 +12077,10 @@ async function loadAdminSettings() {
 }
 
 function setSelectOrCustom(selectId, customInputId, val) {
+    // Batch BY: same dirty guard as the rest of the settings pane —
+    // never repaint a model select (or its custom-value input) that
+    // the admin has edited since the last load.
+    if (adminSettingsDirty.has(selectId) || adminSettingsDirty.has(customInputId)) return;
     const sel = document.getElementById(selectId);
     const custom = document.getElementById(customInputId);
     if (!sel) return;
@@ -12231,6 +12267,10 @@ async function saveAdminSettings() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
+        // Batch BY: the save succeeded — clear the edit-clobber guard
+        // so the post-save reload below paints fresh server truth
+        // over every field again.
+        adminSettingsDirty.clear();
         showStudioToast(data.message || t("admin_settings_saved"), 'success');
         loadAdminSettings();
     } catch (e) {

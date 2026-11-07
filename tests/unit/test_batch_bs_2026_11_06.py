@@ -329,9 +329,10 @@ def test_bs_groq_ui_and_i18n_wiring():
     assert 'id="adm-groq-whisper-model"' in INDEX_HTML
     assert 'data-i18n="adm_groq_whisper_label"' in INDEX_HTML
     assert 'data-i18n="adm_groq_whisper_note"' in INDEX_HTML
-    # Load wiring: GET value lands in the input.
+    # Load wiring: GET value lands in the input (Batch BY: through
+    # the admin-settings dirty guard, _admPaintValue).
     assert 'document.getElementById("adm-groq-whisper-model")' in APP_JS
-    assert "elGroqWhisper.value = s.groq_whisper_model" in APP_JS
+    assert "_admPaintValue(elGroqWhisper, s.groq_whisper_model" in APP_JS
     # Save wiring: the field rides the Model Chain save payload.
     assert "groq_whisper_model:" in APP_JS
     # i18n labels exist in BOTH languages (no hardcoded UI text).
@@ -400,5 +401,5 @@ async def test_bs_webapp_broadcast_persists_fitting_token(db_session, monkeypatc
 
 
 def test_bs_cache_token_is_r90():
-    assert INDEX_HTML.count("20261104_r95") == 4
+    assert INDEX_HTML.count("20261104_r96") == 4
     assert "20261104_r89" not in INDEX_HTML

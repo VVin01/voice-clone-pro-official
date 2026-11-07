@@ -40,6 +40,7 @@ from app.db.session import AsyncSessionLocal
 from app.services import group_ai_admin as gai
 from app.services import private_ai as pai
 from app.services.i18n import t as _bot_t
+from app.services.payments import get_recent_payment_intent
 
 logger = logging.getLogger(__name__)
 
@@ -541,6 +542,40 @@ async def handle_private_message(
                 pass
 
         user = message.from_user
+
+        # Batch BY: payment-intent hint, folded in from the old
+        # payment.py catch-all (deleted there). That handler sat on
+        # payment_router — included BEFORE this router — with a
+        # bare (no-state, private, text) filter, so it consumed EVERY
+        # plain private text even when it returned silently, and this
+        # handler never fired in production (BX eyes-on FAIL 1: zero
+        # private_ai log lines while the toggle was ON). This handler
+        # is now the single terminal owner of plain private text, so
+        # the hint check lives here, right after the FSM-state return
+        # and BEFORE the AI prefilter: a user mid-purchase (recent
+        # <24h persisted intent, no live FSM state) gets exactly the
+        # polite screenshot request the old handler sent, in their
+        # language, and the AI never also answers. The check runs
+        # before the private-AI kill switch on purpose — the hint
+        # predates the AI feature and must not depend on its toggle.
+        if user is not None:
+            intent = None
+            hint_lang = "my"
+            async with _session_or_new(session) as s:
+                intent = await get_recent_payment_intent(s, user.id)
+                if intent is not None:
+                    from app.services.ledger import get_or_create_user
+
+                    hint_user, _ = await get_or_create_user(s, user.id)
+                    hint_lang = hint_user.language_code or "my"
+            if intent is not None:
+                await message.answer(
+                    _bot_t("pay_receipt_wrong_content", hint_lang),
+                    parse_mode="HTML",
+                )
+                _log_private_decision(message, user.id, "hint", "payment_intent")
+                return
+
         chat_type = getattr(message.chat.type, "value", str(message.chat.type))
         reason = pai.prefilter_private_reason(
             chat_type=chat_type,

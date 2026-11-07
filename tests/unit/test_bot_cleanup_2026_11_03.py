@@ -22,9 +22,12 @@ from app.handlers.admin import (
     handle_admin_broadcast_test,
     handle_admin_pay_receipt,
 )
+from app.handlers.group_admin import handle_private_message
 from app.handlers.menu import render_main_menu
-from app.handlers.payment import handle_buy_minutes_menu, handle_receipt_hint_after_restart
+from app.handlers.payment import handle_buy_minutes_menu
 from app.handlers.start import handle_membership_card
+from app.services import group_ai_admin as gai
+from app.services import private_ai as pai
 from app.models.enums import AccountCategory, PaymentStatus
 from app.models.schema import PaymentRequest, User, VoiceModel
 from app.services.i18n import t
@@ -400,37 +403,57 @@ async def test_buy_menu_header_free_vs_vip(db_session):
 
 
 @pytest.mark.asyncio
-async def test_receipt_hint_after_restart_only_with_intent(db_session):
-    @asynccontextmanager
-    async def mock_session_ctx():
-        yield db_session
+async def test_receipt_hint_after_restart_only_with_intent(db_session, monkeypatch):
+    """The post-restart receipt TEXT hint — Batch BY moved ownership.
+
+    The hint used to be a payment.py catch-all whose bare filter
+    shadowed the private-chat AI entirely; it now runs as the first
+    step of group_admin.handle_private_message. These are the same
+    assertions as before, aimed at the new owner: WITH a recent
+    intent the hint reply (and only the hint) is sent; WITHOUT one
+    the hint never fires (the message belongs to the AI pipeline).
+    """
+    from aiogram.enums import ChatType
+
+    monkeypatch.setattr(pai, "private_rate_limiter", gai.GroupReplyRateLimiter())
+    ai = AsyncMock(return_value=(gai.DECISION_NO_REPLY, None))
+    monkeypatch.setattr(pai, "ask_private_ai", ai)
 
     user, _ = await get_or_create_user(db_session, telegram_id=9401)
     await save_payment_intent(db_session, user.id, "MIN_10")
     await db_session.commit()
 
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=9401, is_bot=False, first_name="Buyer")
-    msg.text = "paid already"
-    msg.chat = MagicMock()
-    msg.chat.type = "private"
-    msg.answer = AsyncMock()
+    def _msg(user_id, first_name, text):
+        m = MagicMock(spec=Message)
+        m.message_id = 1
+        m.from_user = TgUser(id=user_id, is_bot=False, first_name=first_name)
+        m.text = text
+        m.chat = MagicMock()
+        m.chat.id = user_id
+        m.chat.type = ChatType.PRIVATE
+        m.sender_chat = None
+        m.answer = AsyncMock()
+        m.reply = AsyncMock()
+        m.bot = MagicMock()
+        return m
 
-    with patch("app.handlers.payment.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_receipt_hint_after_restart(msg)
+    msg = _msg(9401, "Buyer", "paid already")
+    await handle_private_message(
+        msg, state=FakeFSMContext(), session=db_session, bot=msg.bot)
     msg.answer.assert_called_once()
     assert "Screenshot" in msg.answer.call_args[0][0]
+    # The hint is terminal: the AI pipeline never also answers.
+    msg.reply.assert_not_called()
+    ai.assert_not_called()
 
-    # No intent -> silence (ordinary text is never answered).
-    msg2 = MagicMock(spec=Message)
-    msg2.from_user = TgUser(id=9402, is_bot=False, first_name="Chatter")
-    msg2.text = "hello"
-    msg2.chat = MagicMock()
-    msg2.chat.type = "private"
-    msg2.answer = AsyncMock()
-    with patch("app.handlers.payment.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_receipt_hint_after_restart(msg2)
+    # No intent -> the hint stays silent (the AI path owns the text;
+    # here the mocked AI decides NO_REPLY, so nothing is sent at all).
+    msg2 = _msg(9402, "Chatter", "Recap ဘယ်လိုလုပ်ရလဲ")
+    await handle_private_message(
+        msg2, state=FakeFSMContext(), session=db_session, bot=msg2.bot)
     msg2.answer.assert_not_called()
+    msg2.reply.assert_not_called()
+    ai.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
