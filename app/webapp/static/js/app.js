@@ -4628,7 +4628,12 @@ function showRecapStep(n) {
         void currentBtn.offsetWidth;
         currentBtn.classList.add("pop");
     }
-    if (n === 4) { refreshRecapStep4Output(); }
+    // Batch CF: entering Step 4 also refreshes the honest ETA line —
+    // CB wired it only into the cost hint + engine picker, so a
+    // navigation/restored-session entry left #recap-step4-eta empty.
+    // The refresh is cache-keyed + sequence-guarded, so this extra
+    // call is a no-op when the shape has not changed.
+    if (n === 4) { refreshRecapStep4Output(); refreshRecapStep4Eta(); }
     // Batch BB-2: the incoming step card may hold the speed capsule —
     // re-measure its pill now that the card has layout.
     requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });

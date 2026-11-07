@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r99">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r100">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r99" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r100" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1561,7 +1561,7 @@
     <div class="progress-bar-track">
         <div class="progress-bar-fill" id="recap-progress-fill" style="width: 15%;"></div>
     </div>
-    <div class="eta-tag" id="recap-step-text" data-i18n="recap_eta_text">ခန့်မှန်းကြာချိန်: ၂–၄ မိနစ်</div>
+    <div class="eta-tag" id="recap-step-text" data-i18n="recap_eta_text">⏳ ခန့်မှန်းကြာချိန် တွက်ချက်နေပါတယ်…</div>
     <div class="telegram-leave-hint" data-i18n="telegram_leave_hint">💡 ဒီစာမျက်နှာကို ပိတ်သွားလို့ ရပါတယ်။ ဗီဒီယို အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ ပို့ပေးပါမည်။</div>
     <button type="button" class="btn secondary-btn mt-2" id="btn-recap-cancel" onclick="cancelCurrentRecapJob()">
         <span data-i18n="btn_cancel_job">⏹️ ပယ်ဖျက်မည်</span>
@@ -1619,16 +1619,12 @@
                 <!-- 🌟 AUTO-SLIDING STUDIO ANNOUNCEMENT & POLICY CAROUSEL (CLEAN & COMPACT) 🌟 -->
                 <div class="studio-alert-carousel" id="studio-alert-carousel">
                     <div class="carousel-track" id="carousel-track">
-                        <!-- Slide 0: High-Speed Studio -->
+                        <!-- Slide 0: Telegram Background Delivery -->
                         <div class="carousel-slide active" data-slide="0">
-                            <span class="slide-text" data-i18n="queue_notice_recap">⚡ ပုံမှန်အားဖြင့် ၂–၄ မိနစ် ခန့် ကြာနိုင်ပါတယ်</span>
-                        </div>
-                        <!-- Slide 1: Telegram Background Delivery -->
-                        <div class="carousel-slide" data-slide="1">
                             <span class="slide-text" data-i18n="telegram_bg_assurance">✨ ဒီမှာ စောင့်နေစရာ မလိုပါ — Render ပြီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ပေးပါမည်။</span>
                         </div>
-                        <!-- Slide 2: Tier Limit & Watermark Policy -->
-                        <div class="carousel-slide" data-slide="2" id="recap-limit-pill">
+                        <!-- Slide 1: Tier Limit & Watermark Policy -->
+                        <div class="carousel-slide" data-slide="1" id="recap-limit-pill">
                             <span class="slide-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 Free: အများဆုံး ၂ မိနစ် (Watermark ပါမည်) • VIP: ၁၀ မိနစ်အထိ (Watermark မပါ)</span>
                         </div>
                     </div>
@@ -1637,7 +1633,6 @@
                         <div class="carousel-dots" id="carousel-dots">
                             <span class="carousel-dot active" data-slide-idx="0"></span>
                             <span class="carousel-dot" data-slide-idx="1"></span>
-                            <span class="carousel-dot" data-slide-idx="2"></span>
                         </div>
                         <button type="button" class="carousel-arrow next" id="btn-carousel-next" aria-label="Next Slide">›</button>
                     </div>
@@ -2874,7 +2869,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r99"></script>
-    <script src="/static/js/app.js?v=20261104_r99"></script>
+    <script src="/static/js/i18n.js?v=20261104_r100"></script>
+    <script src="/static/js/app.js?v=20261104_r100"></script>
 </body>
 </html>

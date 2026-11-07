@@ -326,7 +326,7 @@ def test_ax_payload_and_prefs_invariants_hold():
 
 
 def test_ax_cache_token_r79():
-    assert INDEX_HTML.count("20261104_r99") == 4
+    assert INDEX_HTML.count("20261104_r100") == 4
     assert "20261104_r69" not in INDEX_HTML
 
 
@@ -354,7 +354,8 @@ def test_ax4r_output_card_is_step4s_opening_surface():
 
 def test_ax4r_refresh_on_entry_and_swap_without_flash():
     assert "function refreshRecapStep4Output()" in APP_JS
-    assert "if (n === 4) { refreshRecapStep4Output(); }" in APP_JS
+    # Batch CF: the Step-4 entry branch also refreshes the ETA line.
+    assert "if (n === 4) { refreshRecapStep4Output(); refreshRecapStep4Eta(); }" in APP_JS
     # Re-request uses the EXISTING composite helper (no new API).
     assert "window.refreshRecapCompositePreview()" in APP_JS
     assert APP_JS.count('fetch("/api/recap/preview-composite"') == 1
