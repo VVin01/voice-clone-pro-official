@@ -112,14 +112,24 @@ class Settings(BaseSettings):
     character_limit_purchased: int = Field(default=5000, alias="CHARACTER_LIMIT_PURCHASED")  # VIP: 5000 chars/generation
     recap_free_max_duration_seconds: int = Field(default=120, alias="RECAP_FREE_MAX_DURATION_SECONDS")  # Free: 2 mins (120s)
     recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # VIP: 10 mins (600s)
-    free_daily_job_limit: int = Field(default=5, alias="FREE_DAILY_JOB_LIMIT")
+    # Batch BZ: default 0 — the FREE job-COUNT limit is retired as a
+    # default (BX's guide already stopped naming it; the monthly
+    # allowance + per-day minute caps are the real FREE governors).
+    # The queue.py check stays and no-ops at 0, so an admin can still
+    # re-enable a count cap from Admin Settings without a deploy.
+    free_daily_job_limit: int = Field(default=0, alias="FREE_DAILY_JOB_LIMIT")
     purchased_daily_job_limit: int = Field(default=0, alias="PURCHASED_DAILY_JOB_LIMIT")  # 0 = unlimited
     # Batch AN: per-user DAILY voice-minutes cap, split by tier (owner
     # order 2026-11-05 — the scarce resource is HF caller quota, so one
     # user must not burn the pool in a day). Enforced in
     # create_voice_clone_job for FREE + PURCHASED; admins exempt;
     # 0 = unlimited for that tier.
-    voice_daily_limit_minutes_free: int = Field(default=5, alias="VOICE_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
+    # Batch BZ: the FREE default is 0 (unlimited) — the old 5 min/day
+    # cap could never bind because the FREE monthly wallet is only
+    # 3 minutes, and quoting both numbers confused users (and the AI
+    # fact sheet). The monthly 180 s allowance governs FREE; the cap
+    # mechanism stays for admins to re-enable. PURCHASED stays 30.
+    voice_daily_limit_minutes_free: int = Field(default=0, alias="VOICE_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
     voice_daily_limit_minutes_paid: int = Field(default=30, alias="VOICE_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
     # Batch AW: per-user DAILY TTS-tab minutes cap, split by tier like
     # Batch AN but on its own allowance — the TTS tab never deducts

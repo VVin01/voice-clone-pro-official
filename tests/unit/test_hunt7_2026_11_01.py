@@ -115,7 +115,10 @@ async def test_voice_concurrent_limit_enforced(db_session):
 
 
 @pytest.mark.asyncio
-async def test_voice_daily_limit_enforced(db_session):
+async def test_voice_daily_limit_enforced(db_session, monkeypatch):
+    # Batch BZ: free_daily_job_limit's default is now 0 (retired) —
+    # this test proves the mechanism, so it pins the limit itself.
+    monkeypatch.setattr(settings, "free_daily_job_limit", 5)
     await _seed_cloud_model(db_session)
     user, _ = await get_or_create_user(db_session, telegram_id=777102)
 

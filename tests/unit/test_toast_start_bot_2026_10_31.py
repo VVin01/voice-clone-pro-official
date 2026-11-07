@@ -190,7 +190,8 @@ def test_help_guide_new_sections_and_formatting(lang, markers):
         # Batch BX: the guide's placeholders are the voice/TTS daily
         # minute caps + the FREE recap length (the legacy daily_limit
         # job-count placeholder left the guide entirely).
-        voice_daily_free=5,
+        # Batch BZ: the FREE voice day is a pre-built clause now.
+        voice_daily_free_clause=", up to <b>5 minutes</b> of Voice Clone per day",
         voice_daily_paid=30,
         tts_daily_free=15,
         tts_daily_paid=60,
@@ -202,7 +203,7 @@ def test_help_guide_new_sections_and_formatting(lang, markers):
     )
     assert "{free_min}" not in rendered
     assert "{char_free}" not in rendered
-    assert "{voice_daily_free}" not in rendered
+    assert "{voice_daily_free_clause}" not in rendered
     assert "{retention_hours}" not in rendered
     assert "{vip_recap_min}" not in rendered
     assert "{referral_seconds}" not in rendered

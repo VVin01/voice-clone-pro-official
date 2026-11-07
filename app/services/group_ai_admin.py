@@ -748,7 +748,23 @@ def build_fact_sheet() -> str:
 
     free_seconds = int(getattr(settings, "free_monthly_allowance_seconds", 180) or 180)
     free_minutes = free_seconds // 60
-    daily_limit = int(getattr(settings, "free_daily_job_limit", 5) or 5)
+    # Batch BZ: at the retired default (0) the job-count line must
+    # disappear from the sheet entirely — rendering "0 ခု" would make
+    # the AI state a limit that does not exist. `or 0` (not `or 5`):
+    # a stored 0 IS the value now.
+    daily_limit = int(getattr(settings, "free_daily_job_limit", 0) or 0)
+    # Batch BZ: the per-day MINUTE caps (Batch AN voice / Batch AW
+    # TTS) join the sheet — until now they were missing, so both AIs
+    # answered "how much per day" with the monthly figure and the
+    # job count. Rendered from live settings like every other limit;
+    # 0 states "no limit" instead of a number.
+    voice_daily_free = int(getattr(settings, "voice_daily_limit_minutes_free", 0) or 0)
+    voice_daily_paid = int(getattr(settings, "voice_daily_limit_minutes_paid", 30) or 0)
+    tts_daily_free = int(getattr(settings, "tts_daily_limit_minutes_free", 15) or 0)
+    tts_daily_paid = int(getattr(settings, "tts_daily_limit_minutes_paid", 60) or 0)
+
+    def _daily_cap_phrase(minutes: int) -> str:
+        return "အကန့်အသတ် မရှိ" if minutes <= 0 else f"တစ်နေ့ {minutes} မိနစ်"
     free_chars = int(getattr(settings, "character_limit_free", 1000) or 1000)
     free_recap_max = int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120)
     vip_recap_max = int(getattr(settings, "recap_max_duration_seconds", 600) or 600)
@@ -876,7 +892,18 @@ def build_fact_sheet() -> str:
         # (settings.free_daily_job_limit), the SENTENCE was the bug.
         f"• အခမဲ့ (Free): အသံ {free_seconds} စက္ကန့် ({free_minutes} မိနစ်) တစ်လ၊ "
         "Recap Credit 3 ခု (ပထမဆုံး တစ်ကြိမ်သာ)။",
-        f"• တစ်နေ့ Job {daily_limit} ခုအထိ (Free အကောင့် တစ်နေ့တာ အလုပ် အရေအတွက်)။",
+        f"• Voice Clone တစ်နေ့ ကန့်သတ်ချက်: Free {_daily_cap_phrase(voice_daily_free)}၊ "
+        f"Plan ဝယ်ထားသူ {_daily_cap_phrase(voice_daily_paid)}။",
+        f"• TTS (TTS Tab) တစ်နေ့ ကန့်သတ်ချက်: Free {_daily_cap_phrase(tts_daily_free)}၊ "
+        f"Plan ဝယ်ထားသူ {_daily_cap_phrase(tts_daily_paid)} "
+        "(မိတ်ဆက်ဆု စက္ကန့်ကို အရင် သုံးပြီး ကျန်တာမှ ဒီ ကန့်သတ်ချက်ထဲ ဝင်ပါတယ်)။",
+        # Batch BZ: the daily JOB-count line renders ONLY while the
+        # limit is actually enabled (default is now 0 = retired).
+        *(
+            [f"• တစ်နေ့ Job {daily_limit} ခုအထိ (Free အကောင့် တစ်နေ့တာ အလုပ် အရေအတွက်)။"]
+            if daily_limit > 0
+            else []
+        ),
         f"• Voice တစ်ကြိမ် စာလုံး {free_chars} လုံးအထိ (Free အကောင့်)။",
         "• အသံ (Voice) Plan များ:",
         *[price_line(e) for e in voice if e["code"].startswith("MIN_")],

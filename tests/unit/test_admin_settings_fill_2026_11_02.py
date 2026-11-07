@@ -49,7 +49,7 @@ ADMIN_ID = 999002
 INT_KEYS = {
     "character_limit_purchased": 5000,
     "free_monthly_allowance_seconds": 180,
-    "free_daily_job_limit": 5,
+    "free_daily_job_limit": 0,  # Batch BZ: retired default (mechanism stays, 0 = off)
     "recap_free_max_duration_seconds": 120,
     "recap_max_duration_seconds": 600,
 }
@@ -320,5 +320,5 @@ def test_api_source_carries_gap_keys():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r96") == 4
+    assert INDEX_HTML.count("?v=20261104_r97") == 4
     assert "20261102_ga1" not in INDEX_HTML
