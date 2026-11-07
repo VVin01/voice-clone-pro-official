@@ -653,7 +653,8 @@ def test_batch_be_wiring_contracts():
     # the existing payload field and GET exposure.
     assert 'id="adm-set-tiered-pricing"' in html
     assert 'data-i18n="settings_tiered_pricing"' in html
-    assert "elTieredPricing.checked = !!s.tiered_recap_pricing_enabled" in app_js
+    # Batch BY: the load paint goes through the dirty guard helper.
+    assert "_admPaintChecked(elTieredPricing, !!s.tiered_recap_pricing_enabled)" in app_js
     assert "tiered_recap_pricing_enabled: tieredPricing" in app_js
     assert '"tiered_recap_pricing_enabled": bool(getattr(settings,' in api_py
     for key in ("settings_tiered_pricing:", "settings_tiered_pricing_hint:"):
@@ -662,5 +663,5 @@ def test_batch_be_wiring_contracts():
 
 def test_be_cache_token_is_r79():
     html = _read("app/webapp/static/index.html")
-    assert html.count("?v=20261104_r95") == 4
+    assert html.count("?v=20261104_r96") == 4
     assert "20261104_r78" not in html
