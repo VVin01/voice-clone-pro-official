@@ -762,6 +762,9 @@ def build_fact_sheet() -> str:
     voice_daily_paid = int(getattr(settings, "voice_daily_limit_minutes_paid", 30) or 0)
     tts_daily_free = int(getattr(settings, "tts_daily_limit_minutes_free", 15) or 0)
     tts_daily_paid = int(getattr(settings, "tts_daily_limit_minutes_paid", 60) or 0)
+    # Batch CG: the FREE Gemini taste (minutes of pool-funded Gemini
+    # audio per FREE user per day) — drives the BYOK fact lines below.
+    gemini_taste_free = int(getattr(settings, "free_gemini_taste_minutes", 2) or 0)
 
     def _daily_cap_phrase(minutes: int) -> str:
         return "အကန့်အသတ် မရှိ" if minutes <= 0 else f"တစ်နေ့ {minutes} မိနစ်"
@@ -925,6 +928,19 @@ def build_fact_sheet() -> str:
         f"• TTS (TTS Tab) တစ်နေ့ ကန့်သတ်ချက်: Free {_daily_cap_phrase(tts_daily_free)}၊ "
         f"Plan ဝယ်ထားသူ {_daily_cap_phrase(tts_daily_paid)} "
         "(မိတ်ဆက်ဆု စက္ကန့်ကို အရင် သုံးပြီး ကျန်တာမှ ဒီ ကန့်သတ်ချက်ထဲ ဝင်ပါတယ်)။",
+        # Batch CG: the BYOK facts — FREE users taste the pool Gemini
+        # for a few minutes a day; their own (free) Gemini key lifts
+        # that to the key's own daily quota; purchased users need no
+        # key at all. The 15/60 day caps above still count every
+        # engine, key or not.
+        f"• Gemini အသံ (TTS Tab နဲ့ Recap မှာ): Free အကောင့်က တစ်နေ့ {gemini_taste_free} မိနစ်ခန့် "
+        "အခမဲ့ စမ်းသုံးလို့ ရပါတယ်။ အဲဒီ ပမာဏ ကုန်သွားရင် ကိုယ်ပိုင် Gemini API Key "
+        "(Google AI Studio ကနေ အခမဲ့ ရယူနိုင်ပါတယ်) ကို TTS Tab မှာ ထည့်ထားရင် ကိုယ့် Key ရဲ့ "
+        "တစ်နေ့တာ ကန့်သတ်ချက် (၁၀ မိနစ်ခန့်) အထိ ဆက် သုံးလို့ ရပါတယ်။ Key မထည့်ရင် Edge "
+        "အသံနဲ့ ဆက် လုပ်ပေးပါတယ်။",
+        "• ကိုယ်ပိုင် Gemini Key ထည့်ထားရင် အဲဒီ Key က ကိုယ့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ "
+        "မျှဝေခြင်း မရှိပါ။ Plan ဝယ်ထားသူတွေကတော့ Key ထည့်စရာ မလိုဘဲ Gemini ကို ပုံမှန် "
+        "သုံးနိုင်ပါတယ်။",
         # Batch BZ: the daily JOB-count line renders ONLY while the
         # limit is actually enabled (default is now 0 = retired).
         *(

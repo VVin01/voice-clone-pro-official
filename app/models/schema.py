@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -75,6 +76,20 @@ class User(Base):
     # hardcoded — the flag is the only signal.
     is_test_account: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
+    )
+    # Batch CG: the user's OWN Gemini API key (bring-your-own-key).
+    # The value is a secret: it is never logged, never echoed back to
+    # any client (API/UI expose only •••• + last 4 via
+    # app.services.gemini_key_service.masked_key_view), never written
+    # to an audit row, and is sent ONLY to Google's API for this
+    # user's own Gemini TTS calls. It serves this user alone — never
+    # pooled, never shared (owner decision 2026-11-07 14:27).
+    # gemini_key_state: "" (no key) / "ok" (validated, working) /
+    # "invalid" (Google rejected it as an auth-class failure; routing
+    # skips it until the user saves a fresh one).
+    gemini_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gemini_key_state: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=""
     )
     referral_code: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
@@ -571,6 +586,19 @@ class Job(Base):
     # engine / preset_voice keep the PICKED values, so app/History
     # keep showing the picked name (settled BK split).
     tts_fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Batch CG: how a Gemini-picked job was actually routed —
+    # "own_key" (the user's own key served it), "pool" (the service
+    # pool), "own_pool_mix" (both), "edge_taste" (FREE taste spent:
+    # the whole job went to Edge before synthesis), "edge_exhausted"
+    # (Batch CE pool-exhaustion fallback). NULL for pre-CG rows and
+    # non-Gemini jobs. Delivery-caption truth + CE-watch observability
+    # only; History keeps the picked engine (BK split, unchanged).
+    tts_route: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # Batch CG: True when the user's saved Gemini key was rejected
+    # as invalid mid-job (the job continued on the pool/Edge — a bad
+    # key never fails a job). Drives the plain-copy caption note that
+    # tells the user their key stopped working.
+    gemini_key_broken: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Batch BV: for RECAP jobs, the resolved server path of the
     # user's own-voice narration sample (uploaded via
     # /api/recap/upload_voice_ref). Nullable: only own-voice recap
@@ -824,6 +852,37 @@ class PrivateAiMessage(Base):
             "kind IN ('user', 'fast_path', 'ai_reply', 'escalation')",
             name="chk_private_ai_message_kind",
         ),
+    )
+
+
+class GeminiPoolUsage(Base):
+    """One row per (UTC day, user) of SUCCESSFUL service-pool Gemini
+    TTS draws (Batch CG, 2026-11-07).
+
+    The accounting behind the FREE Gemini taste (delivered pool
+    seconds per user per day) and the global FREE daily budget
+    (pool requests across FREE users per day). Rows are written
+    ONLY after a job actually delivered audio the pool produced —
+    failed attempts consume nothing, mirroring the
+    tts_cap_consumed_seconds rule that FAILED/CANCELLED count zero.
+    ``tier`` is the user's tier AT DEBIT TIME so the global FREE
+    aggregate stays honest if an account upgrades mid-day. Only
+    FREE rows are ever written (PURCHASED pool use is not
+    taste-governed); admins are exempt and never recorded.
+    Created via Base.metadata.create_all (Batch H pattern).
+    """
+
+    __tablename__ = "gemini_pool_usage"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    tier: Mapped[str] = mapped_column(String(20), nullable=False, default="FREE")
+    pool_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pool_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("day", "user_id", name="uq_gemini_pool_usage_day_user"),
     )
 
 

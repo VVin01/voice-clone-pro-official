@@ -291,6 +291,7 @@ def run_recap_pipeline(
     source_language: str = "auto",
     render_quality: str = "standard",
     gemini_voice: Optional[str] = None,
+    gemini_route: Any = None,
     voxcpm_control: Optional[str] = None,
     voxcpm_ref_audio: Optional[str] = None,
     is_female: bool = False,
@@ -687,6 +688,9 @@ def run_recap_pipeline(
         log=_log,
         progress=lambda cur, tot, lbl: _progress(3, 4, f"Smart Sync: {lbl}"),
         should_stop=stop_check,
+        # Batch CG: BYOK route context (in-memory only — never in
+        # overlays, which are persisted into plan/checkpoint JSON).
+        gemini_route=gemini_route,
     )
     runner.voice_volume_percent = 100
     runner.short_pauses = True
@@ -704,6 +708,8 @@ def run_recap_pipeline(
         "segments": result.get("segments", len(plan.get("segments", []))),
         "duration": result.get("duration", 0.0),
         "warnings": _job_warnings,
+        # Batch CG: BYOK route outcome for the runner's accounting.
+        "gemini_route": result.get("gemini_route"),
     }
 
 

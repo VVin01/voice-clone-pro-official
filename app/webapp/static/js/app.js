@@ -9913,8 +9913,11 @@ async function refreshTtsQuota() {
                 const res = await fetchWithTimeout("/api/tts/quota", { headers: getAuthHeaders() });
                 if (!res.ok) throw new Error("tts quota " + res.status);
                 const q = await res.json();
+                _cgQuotaCache = q;
                 const refMin = ((q.referral_seconds || 0) / 60).toFixed(1);
                 paintTtsChipFromQuota(q);
+                paintTtsGeminiKeyState(q);
+                paintTtsTasteNote(q);
                 paintTtsBalanceLine(runId, (line) => {
                     line.classList.remove("tts-balance-retry");
                     delete line.dataset.quotaError;
@@ -10035,6 +10038,128 @@ function clearTtsText() {
 }
 window.clearTtsText = clearTtsText;
 
+// ── Batch CG: BYOK Gemini key card, taste note, Item 3b prompt ──
+// The key VALUE is never painted anywhere: the card shows only the
+// server's masked view (•••• + last 4) from /api/tts/quota, and the
+// typed value is cleared from the input as soon as the save returns.
+let _cgQuotaCache = null;
+
+function paintTtsGeminiKeyState(q) {
+    const stateEl = document.getElementById("tts-key-state");
+    const delBtn = document.getElementById("btn-tts-key-delete");
+    if (!stateEl) return;
+    if (q && q.has_own_key) {
+        stateEl.removeAttribute("data-i18n");
+        stateEl.textContent = q.own_key_state === "invalid"
+            ? t("tts_key_state_invalid")
+            : tf("tts_key_state_ok", { masked: q.own_key_masked || "" });
+        if (delBtn) delBtn.classList.remove("hidden");
+    } else {
+        stateEl.textContent = t("tts_key_state_none");
+        if (delBtn) delBtn.classList.add("hidden");
+    }
+}
+
+function paintTtsTasteNote(q) {
+    const note = document.getElementById("tts-taste-note");
+    if (!note) return;
+    const remaining = q ? q.gemini_taste_remaining_seconds : null;
+    // Taste lines are FREE-only and pointless once an own key routes
+    // first — for everyone else the note stays hidden.
+    if (remaining === null || remaining === undefined || (q && q.has_own_key)) {
+        note.classList.add("hidden");
+        note.textContent = "";
+        return;
+    }
+    note.classList.remove("hidden");
+    note.textContent = remaining > 0
+        ? tf("tts_taste_remaining", { min: Math.ceil(remaining / 60) })
+        : t("tts_taste_spent");
+}
+
+async function saveTtsGeminiKey() {
+    const input = document.getElementById("tts-key-input");
+    const btn = document.getElementById("btn-tts-key-save");
+    const candidate = ((input && input.value) || "").trim();
+    if (!candidate) {
+        showStudioToast(t("tts_key_save_failed"), 'warning');
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = t("tts_key_saving"); }
+    try {
+        const res = await fetchWithTimeout("/api/tts/gemini-key", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ key: candidate }),
+        }, 90000);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || t("tts_key_save_failed"));
+        if (input) input.value = "";
+        showStudioToast(t("tts_key_saved"), 'success');
+        refreshTtsQuota();
+    } catch (err) {
+        showStudioToast((err && err.message) || t("tts_key_save_failed"), 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = t("tts_key_save_btn"); }
+    }
+}
+
+async function deleteTtsGeminiKey() {
+    const btn = document.getElementById("btn-tts-key-delete");
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetchWithTimeout("/api/tts/gemini-key", {
+            method: "DELETE",
+            headers: getAuthHeaders(),
+        }, 30000);
+        if (!res.ok) throw new Error("delete failed");
+        const input = document.getElementById("tts-key-input");
+        if (input) input.value = "";
+        showStudioToast(t("tts_key_deleted"), 'success');
+        refreshTtsQuota();
+    } catch (err) {
+        showStudioToast(t("tts_key_save_failed"), 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function _cgTasteBlocked() {
+    // Item 3b gate, checked on a FRESH quota read at generate time
+    // (not the cached paint): FREE + no own key + taste spent.
+    try {
+        const res = await fetchWithTimeout("/api/tts/quota", { headers: getAuthHeaders() });
+        if (!res.ok) return false;
+        const q = await res.json();
+        _cgQuotaCache = q;
+        paintTtsGeminiKeyState(q);
+        paintTtsTasteNote(q);
+        return !q.is_admin && q.tier === "FREE" && !q.has_own_key
+            && q.gemini_taste_remaining_seconds !== null
+            && q.gemini_taste_remaining_seconds !== undefined
+            && q.gemini_taste_remaining_seconds <= 0;
+    } catch (e) {
+        return false;
+    }
+}
+
+function _cgPromptAddKey() {
+    const modal = document.getElementById("tts-key-prompt-modal");
+    if (modal) modal.classList.add("hidden");
+    const card = document.getElementById("tts-gemini-key-card");
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+    const input = document.getElementById("tts-key-input");
+    if (input) setTimeout(() => input.focus(), 350);
+}
+
+function _cgPromptUseEdge() {
+    const modal = document.getElementById("tts-key-prompt-modal");
+    if (modal) modal.classList.add("hidden");
+    const edgeBtn = document.querySelector('#tts-engine-picker .seg-btn[data-tts-engine="edge"]');
+    if (edgeBtn) edgeBtn.click();
+    generateTTS();
+}
+
 function initTtsTab() {
     document.querySelectorAll("#tts-engine-picker .seg-btn").forEach(btn => {
         btn.addEventListener("click", () => {
@@ -10065,6 +10190,15 @@ function initTtsTab() {
         ttsSampleSettled = true;
         updateTtsCharCount();
     });
+    // Batch CG: key card + Item 3b prompt wiring.
+    const keySaveBtn = document.getElementById("btn-tts-key-save");
+    if (keySaveBtn) keySaveBtn.addEventListener("click", saveTtsGeminiKey);
+    const keyDelBtn = document.getElementById("btn-tts-key-delete");
+    if (keyDelBtn) keyDelBtn.addEventListener("click", deleteTtsGeminiKey);
+    const promptAddBtn = document.getElementById("btn-tts-prompt-add-key");
+    if (promptAddBtn) promptAddBtn.addEventListener("click", _cgPromptAddKey);
+    const promptEdgeBtn = document.getElementById("btn-tts-prompt-edge");
+    if (promptEdgeBtn) promptEdgeBtn.addEventListener("click", _cgPromptUseEdge);
     updateTtsCharCount();
     // Batch BB-4: the balance line's fallback state is tap-to-retry.
     const balLine = document.getElementById("tts-balance-line");
@@ -10096,6 +10230,15 @@ async function generateTTS() {
             max: maxChars,
             vip_note: state.user?.is_vip ? "" : t("text_too_long_vip_note"),
         }), 'warning');
+        return;
+    }
+    // Batch CG Item 3b: a FREE user who picked Gemini with the
+    // taste spent is NEVER silently switched to Edge — the prompt
+    // offers the own-key way to keep Gemini, or an explicit Edge
+    // continue (which re-enters here with Edge selected).
+    if (ttsState.engine === "gemini" && await _cgTasteBlocked()) {
+        const modal = document.getElementById("tts-key-prompt-modal");
+        if (modal) modal.classList.remove("hidden");
         return;
     }
     const engine = ttsState.engine;
@@ -12384,6 +12527,11 @@ async function loadAdminSettings() {
         if (s.character_limit_purchased != null) _admPaintValue(elCharLimitPurchased, s.character_limit_purchased);
         if (s.free_monthly_allowance_seconds != null) _admPaintValue(elFreeAllowance, s.free_monthly_allowance_seconds);
         if (s.free_daily_job_limit != null) _admPaintValue(elDailyJobLimit, s.free_daily_job_limit);
+        // Batch CG: FREE Gemini taste + global FREE budget fields.
+        const elFreeGeminiTaste = document.getElementById("adm-set-free-gemini-taste");
+        const elFreeGeminiBudget = document.getElementById("adm-set-free-gemini-budget");
+        if (s.free_gemini_taste_minutes != null) _admPaintValue(elFreeGeminiTaste, s.free_gemini_taste_minutes);
+        if (s.free_gemini_daily_budget_requests != null) _admPaintValue(elFreeGeminiBudget, s.free_gemini_daily_budget_requests);
         if (s.recap_free_max_duration_seconds != null) _admPaintValue(elRecapFreeMax, s.recap_free_max_duration_seconds);
         if (s.recap_max_duration_seconds != null) _admPaintValue(elRecapMax, s.recap_max_duration_seconds);
         // Batch BE: the tiered-pricing arming switch (AO shipped the
@@ -12540,6 +12688,10 @@ async function saveAdminSettings() {
     const freeAllowance = freeAllowanceRaw === "" || freeAllowanceRaw == null ? null : parseInt(freeAllowanceRaw, 10);
     const dailyJobLimitRaw = document.getElementById("adm-set-daily-job-limit")?.value?.trim();
     const dailyJobLimit = dailyJobLimitRaw === "" || dailyJobLimitRaw == null ? null : parseInt(dailyJobLimitRaw, 10);
+    const freeGeminiTasteRaw = document.getElementById("adm-set-free-gemini-taste")?.value?.trim();
+    const freeGeminiTaste = freeGeminiTasteRaw === "" || freeGeminiTasteRaw == null ? null : parseInt(freeGeminiTasteRaw, 10);
+    const freeGeminiBudgetRaw = document.getElementById("adm-set-free-gemini-budget")?.value?.trim();
+    const freeGeminiBudget = freeGeminiBudgetRaw === "" || freeGeminiBudgetRaw == null ? null : parseInt(freeGeminiBudgetRaw, 10);
     const recapFreeMaxRaw = document.getElementById("adm-set-recap-free-max")?.value?.trim();
     const recapFreeMax = recapFreeMaxRaw === "" || recapFreeMaxRaw == null ? null : parseInt(recapFreeMaxRaw, 10);
     const recapMaxRaw = document.getElementById("adm-set-recap-max")?.value?.trim();
@@ -12593,6 +12745,8 @@ async function saveAdminSettings() {
         ...(Number.isFinite(charLimitPurchased) ? { character_limit_purchased: charLimitPurchased } : {}),
         ...(Number.isFinite(freeAllowance) ? { free_monthly_allowance_seconds: freeAllowance } : {}),
         ...(Number.isFinite(dailyJobLimit) ? { free_daily_job_limit: dailyJobLimit } : {}),
+        ...(Number.isFinite(freeGeminiTaste) ? { free_gemini_taste_minutes: freeGeminiTaste } : {}),
+        ...(Number.isFinite(freeGeminiBudget) ? { free_gemini_daily_budget_requests: freeGeminiBudget } : {}),
         ...(Number.isFinite(recapFreeMax) ? { recap_free_max_duration_seconds: recapFreeMax } : {}),
         ...(Number.isFinite(recapMax) ? { recap_max_duration_seconds: recapMax } : {}),
         tiered_recap_pricing_enabled: tieredPricing,

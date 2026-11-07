@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r103">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r104">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r103" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r104" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -536,7 +536,32 @@
                         </select>
                     </div>
                     <p class="ref-desc" id="tts-balance-line" data-i18n="tts_balance_loading">လက်ကျန် စစ်ဆေးနေသည်…</p>
+                    <p class="ref-desc hidden" id="tts-taste-note"></p>
                     <p class="ref-desc" data-i18n="tts_cost_hint">💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပြီး ကျန်တာကို နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ကောက်ခံပါသည်။ Voice Clone မိနစ်နှင့် Recap Credit လုံးဝ မထိပါ။</p>
+                </div>
+
+                <!-- Batch CG: bring-your-own Gemini key. Sits directly
+                     under the engine card — it is where Gemini is
+                     chosen, where the taste note points, and where
+                     the Item 3b generate-time prompt sends the user.
+                     The saved key is only ever shown masked
+                     (•••• + last 4) from the server's masked view. -->
+                <div class="card glass input-card" id="tts-gemini-key-card">
+                    <div class="card-label" data-i18n="tts_key_card_title">🔑 ကိုယ်ပိုင် Gemini Key</div>
+                    <p class="ref-desc" id="tts-key-state" data-i18n="tts_key_state_none">Key မထည့်ရသေးပါ</p>
+                    <div class="control-row mt-2">
+                        <input type="password" id="tts-key-input" class="studio-input" data-i18n-ph="tts_key_input_placeholder" placeholder="Gemini API Key ထည့်ပါ…" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="btn-row mt-2">
+                        <button type="button" class="btn secondary-btn" id="btn-tts-key-save" data-i18n="tts_key_save_btn">Key သိမ်းမယ်</button>
+                        <button type="button" class="btn secondary-btn hidden" id="btn-tts-key-delete" data-i18n="tts_key_delete_btn">Key ဖျက်မယ်</button>
+                    </div>
+                    <p class="ref-desc mt-2" data-i18n="tts_key_guide_title">Key ရယူနည်း (အခမဲ့):</p>
+                    <p class="ref-desc" data-i18n="tts_key_guide_1">၁။ Google AI Studio (aistudio.google.com) မှာ Google အကောင့်နဲ့ ဝင်ပါ</p>
+                    <p class="ref-desc" data-i18n="tts_key_guide_2">၂။ "Get API key" → "Create API key" ကို နှိပ်ပြီး Key ကို ကူးယူပါ</p>
+                    <p class="ref-desc" data-i18n="tts_key_guide_3">၃။ ကူးထားတဲ့ Key ကို ဒီမှာ ထည့်ပြီး သိမ်းပါ</p>
+                    <p class="ref-desc" data-i18n="tts_key_honest_1">ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။</p>
+                    <p class="ref-desc" data-i18n="tts_key_honest_2">Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။</p>
                 </div>
 
                 <div class="card glass input-card">
@@ -2478,6 +2503,18 @@
                             </div>
                             <div class="form-row-2 mt-2">
                                 <div>
+                                    <label class="input-label" data-i18n="settings_free_gemini_taste_minutes">Free Gemini စမ်းသုံးခွင့် (မိနစ်/နေ့)</label>
+                                    <input type="number" id="adm-set-free-gemini-taste" class="studio-input" min="0" max="1440" step="1" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_free_gemini_taste_minutes_hint">Free အကောင့် တစ်ခု Pool Gemini ကို တစ်နေ့ စမ်းသုံးနိုင်သော မိနစ် (ကိုယ်ပိုင် Key ရှိသူများ မပါ)</p>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_free_gemini_budget_requests">Free Gemini နေ့စဉ် Budget (Requests)</label>
+                                    <input type="number" id="adm-set-free-gemini-budget" class="studio-input" min="0" max="100000" step="10" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_free_gemini_budget_requests_hint">Free အကောင့် အားလုံးပေါင်း Pool Gemini ကို တစ်နေ့ တောင်းဆိုနိုင်သော အများဆုံး အကြိမ်ရေ</p>
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
+                                <div>
                                     <label class="input-label" data-i18n="settings_recap_max">Recap အများဆုံး ကြာချိန် (Recap Max Duration)</label>
                                     <input type="number" id="adm-set-recap-max" class="studio-input" min="60" max="3600" step="30" inputmode="numeric">
                                     <p class="text-xs text-muted" data-i18n="settings_recap_max_hint">ဝယ်ယူထားသော အသုံးပြုသူများ Recap လုပ်နိုင်သော ဗီဒီယို အရှည် အများဆုံး (စက္ကန့်)</p>
@@ -2848,6 +2885,20 @@
         </div>
     </div>
 
+    <!-- Batch CG Item 3b: the generate-time Gemini taste prompt.
+         A FREE user who picked Gemini with the taste spent is NEVER
+         silently switched to Edge — this prompt offers the own-key
+         way to keep Gemini, or an explicit Edge continue. -->
+    <div id="tts-key-prompt-modal" class="image-modal hidden">
+        <div class="modal-content centered" onclick="event.stopPropagation()">
+            <div class="modal-emoji">✨</div>
+            <h3 data-i18n="tts_key_prompt_title">✨ Gemini အခမဲ့ အပိုင်း ကုန်သွားပါပြီ</h3>
+            <p data-i18n="tts_key_prompt_body" class="modal-desc">ဒီနေ့အတွက် Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ။ ကိုယ်ပိုင် Gemini Key ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။</p>
+            <button class="btn gold-gradient-btn" id="btn-tts-prompt-add-key" data-i18n="tts_key_prompt_add">🔑 Key ထည့်မယ်</button>
+            <button class="btn secondary-btn mt-2" id="btn-tts-prompt-edge" data-i18n="tts_key_prompt_edge">Edge နဲ့ ဆက်လုပ်မယ်</button>
+        </div>
+    </div>
+
     <!-- ════ ADMIN 24H MEDIA PREVIEW MODAL (VOICE & RECAP) ════ -->
     <div id="admin-media-modal" class="image-modal hidden" onclick="closeAdminMediaModal()">
         <div class="modal-content admin-media-content" onclick="event.stopPropagation()">
@@ -2905,7 +2956,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r103"></script>
-    <script src="/static/js/app.js?v=20261104_r103"></script>
+    <script src="/static/js/i18n.js?v=20261104_r104"></script>
+    <script src="/static/js/app.js?v=20261104_r104"></script>
 </body>
 </html>

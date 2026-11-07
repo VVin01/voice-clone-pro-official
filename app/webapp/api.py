@@ -7421,6 +7421,30 @@ async def _execute_recap_background_job(
             )
             credit_deducted = bool(entry.get("credit_deducted"))
 
+        # Batch CG: resolve the BYOK route context for Gemini
+        # narration (own key → pool). In-memory only — it never
+        # touches the entry dict, the plan JSON or any disk state;
+        # a resolution failure falls back to the legacy pool-only
+        # engine construction inside the pipeline.
+        _cg_route_ctx = None
+        if tts_engine == "gemini":
+            try:
+                from app.services.gemini_key_service import (
+                    resolve_gemini_route as _resolve_gemini_route,
+                )
+
+                async with AsyncSessionLocal() as _cg_session:
+                    _cg_owner, _ = await get_or_create_user(_cg_session, user_id)
+                    _cg_route_ctx = await _resolve_gemini_route(
+                        _cg_session, _cg_owner, is_admin=is_admin_user
+                    )
+            except Exception:
+                logger.warning(
+                    "Recap job %s: CG route resolution failed; legacy pool path",
+                    job_id, exc_info=True,
+                )
+                _cg_route_ctx = None
+
         def _make_recap_fn(source, target_dir):
             return functools.partial(
             downloader.generate_recap_video,
@@ -7436,6 +7460,7 @@ async def _execute_recap_background_job(
             source_language=req.source_language,
             render_quality=req.render_quality,
             gemini_voice=gemini_voice,
+            gemini_route=_cg_route_ctx,
             output_ratio=req.ratio,
             frame_fill=req.ratio_fill,
             crop_top=float(req.crop_top) / 100.0,
@@ -7478,6 +7503,7 @@ async def _execute_recap_background_job(
 
         part_urls: list[dict] = []
         first_part_dest: Optional[str] = None
+        _cg_outcomes: list[dict] = []
         if segmented_mode:
             # Process every segment through the normal pipeline; each
             # segment render becomes one deliverable part (≤cap each).
@@ -7499,6 +7525,8 @@ async def _execute_recap_background_job(
                     None,
                     _make_recap_fn(seg["path"], str(job_dir / f"seg{seg['n']:02d}")),
                 )
+                if seg_res.get("gemini_route"):
+                    _cg_outcomes.append(seg_res["gemini_route"])
                 for _w in (seg_res.get("warnings") or []):
                     if _w not in seg_warnings:
                         seg_warnings.append(_w)
@@ -7527,6 +7555,8 @@ async def _execute_recap_background_job(
             recap_res = await loop.run_in_executor(
                 None, _make_recap_fn(canonical_source_url, str(job_dir))
             )
+            if recap_res.get("gemini_route"):
+                _cg_outcomes.append(recap_res["gemini_route"])
 
         video_path = recap_res.get("final_video") or recap_res.get("final_video_path")
         if segmented_mode and first_part_dest:
@@ -7541,6 +7571,54 @@ async def _execute_recap_background_job(
         # Batch BV: the BU auto-trim truth for an own-voice sample,
         # read back from the same plan JSON the fallback fields use.
         entry["reference_trimmed"] = _recap_reference_trimmed(job_dir)
+        # Batch CG: settle the BYOK accounting for Gemini narration —
+        # debit the SUCCESSFUL pool draws (FREE taste), flag a key
+        # Google rejected, and remember the taste block so the
+        # completion caption can name the own-key option. Accounting
+        # must never fail a finished job, so it is fully isolated.
+        entry["gemini_taste_blocked"] = any(
+            bool(o.get("taste_blocked")) for o in _cg_outcomes
+        )
+        entry["gemini_key_broken"] = any(
+            bool(o.get("own_key_invalid")) for o in _cg_outcomes
+        )
+        if _cg_route_ctx is not None and _cg_outcomes:
+            try:
+                from app.services.gemini_key_service import (
+                    debit_pool_usage as _cg_debit,
+                    log_route as _cg_log_route,
+                    mark_user_key_invalid as _cg_mark_invalid,
+                )
+
+                _pool_secs = sum(
+                    float(o.get("pool_seconds") or 0.0) for o in _cg_outcomes
+                )
+                _pool_reqs = sum(
+                    int(o.get("pool_requests") or 0) for o in _cg_outcomes
+                )
+                async with AsyncSessionLocal() as _cg_session2:
+                    if entry["gemini_key_broken"]:
+                        await _cg_mark_invalid(_cg_session2, user_id)
+                    if _pool_reqs:
+                        await _cg_debit(
+                            _cg_session2,
+                            user_id,
+                            tier=_cg_route_ctx.tier,
+                            seconds=_pool_secs,
+                            requests=_pool_reqs,
+                        )
+                    await _cg_session2.commit()
+                _cg_log_route(
+                    "pool" if _pool_reqs
+                    else "edge" if entry["gemini_taste_blocked"]
+                    else "own_key",
+                    user_id,
+                    _cg_route_ctx.tier,
+                )
+            except Exception:
+                logger.warning(
+                    "Recap job %s: CG settle failed", job_id, exc_info=True
+                )
         # Result warnings from the pipeline (blur safefix 2026-11-03):
         # segmented jobs union the warnings of every segment render.
         if segmented_mode:
@@ -7803,6 +7881,15 @@ async def _execute_recap_background_job(
                 # the fallback note above — a job can carry both.
                 if entry.get("reference_trimmed"):
                     notify_text += t("recap_ref_trim_note", _recap_notify_lang)
+                # Batch CG: when Gemini narration ran on the persona
+                # fallback because the FREE taste was spent (no route
+                # at all), name the own-key way to keep Gemini; and
+                # when Google rejected the user's saved key mid-job,
+                # say so plainly (the job still delivered).
+                if entry.get("gemini_taste_blocked"):
+                    notify_text += t("recap_key_hint_note", _recap_notify_lang)
+                if entry.get("gemini_key_broken"):
+                    notify_text += t("recap_own_key_broken_note", _recap_notify_lang)
                 # Batch K: disclose the retention window at delivery
                 # time too (it was previously stated only in History).
                 # Batch X: the copy states the window in HOURS (24).
@@ -9804,6 +9891,16 @@ async def get_tts_quota(
     remaining = None
     if limit_min > 0:
         remaining = max(0.0, limit_min * 60 - consumed)
+    # Batch CG: the Gemini route picture the TTS tab paints — own-key
+    # presence (masked view only) + the FREE taste remainder. Taste
+    # fields are None for PURCHASED/admins (no taste governs them).
+    from app.services.gemini_key_service import (
+        masked_key_view,
+        resolve_gemini_route,
+    )
+
+    _key_view = masked_key_view(user)
+    _route = await resolve_gemini_route(db, user, is_admin=is_admin)
     return {
         "referral_seconds": int(bal.referral_seconds or 0),
         "referral_minutes": round(int(bal.referral_seconds or 0) / 60, 1),
@@ -9813,7 +9910,92 @@ async def get_tts_quota(
         "remaining_seconds": (round(remaining, 1) if remaining is not None else None),
         "tier": "PURCHASED" if user.account_category == AccountCategory.PURCHASED.value else "FREE",
         "is_admin": is_admin,
+        "has_own_key": _key_view["has_key"],
+        "own_key_masked": _key_view["masked"],
+        "own_key_state": _key_view["state"],
+        "gemini_taste_limit_seconds": (
+            int(_route.taste_limit_seconds) if _route.taste_remaining_seconds is not None else None
+        ),
+        "gemini_taste_remaining_seconds": (
+            int(round(_route.taste_remaining_seconds))
+            if _route.taste_remaining_seconds is not None
+            else None
+        ),
     }
+
+
+class GeminiKeyPayload(BaseModel):
+    key: str
+
+
+@api_router.get("/tts/gemini-key")
+async def get_tts_gemini_key(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Batch CG: the caller's saved-key state — presence + masked
+    view only. The key value NEVER leaves the server."""
+    from app.services.gemini_key_service import masked_key_view
+
+    return masked_key_view(user)
+
+
+@api_router.post("/tts/gemini-key")
+async def save_tts_gemini_key(
+    payload: GeminiKeyPayload,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Batch CG: validate-then-store a user's own Gemini key. The
+    validation makes exactly ONE minimal real TTS call through the
+    engine's own client path; an invalid (or unverifiable) key is
+    never stored. The stored value is never echoed back — the
+    response carries the masked view only."""
+    from app.services.gemini_key_service import (
+        masked_key_view,
+        save_user_key,
+        validate_gemini_key,
+    )
+
+    candidate = (payload.key or "").strip()
+    lang = (getattr(user, "language", None) or "my").lower()
+    if not candidate:
+        raise HTTPException(
+            status_code=400, detail=t("gemini_key_invalid_error", lang)
+        )
+    accepted, reason = await asyncio.to_thread(validate_gemini_key, candidate)
+    if not accepted:
+        raise HTTPException(
+            status_code=400,
+            detail=t(
+                "gemini_key_unverifiable_error"
+                if reason == "unverifiable"
+                else "gemini_key_invalid_error",
+                lang,
+            ),
+        )
+    await save_user_key(db, user, candidate)
+    await db.commit()
+    await db.refresh(user)
+    return masked_key_view(user)
+
+
+@api_router.delete("/tts/gemini-key")
+async def delete_tts_gemini_key(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Batch CG: one-tap delete — the key material is cleared from
+    the row immediately."""
+    from app.services.gemini_key_service import delete_user_key, masked_key_view
+
+    await delete_user_key(db, user)
+    await db.commit()
+    await db.refresh(user)
+    return masked_key_view(user)
 
 
 @api_router.post("/voices/{job_id}/send-telegram")
@@ -12329,6 +12511,10 @@ class AdminSettingsPayload(BaseModel):
     voice_daily_limit_minutes_paid: Optional[int] = None
     tts_daily_limit_minutes_free: Optional[int] = None
     tts_daily_limit_minutes_paid: Optional[int] = None
+    # Batch CG: FREE Gemini taste (minutes/day per user) + the global
+    # FREE daily pool-request budget.
+    free_gemini_taste_minutes: Optional[int] = None
+    free_gemini_daily_budget_requests: Optional[int] = None
     # Batch AO: tiered recap pricing arming switch (ships dark; the
     # owner flips it only at the announced effective date).
     tiered_recap_pricing_enabled: Optional[bool] = None
@@ -12395,6 +12581,8 @@ async def get_admin_settings(
         "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
         "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 5)),
         "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 30)),
+        "free_gemini_taste_minutes": int(getattr(settings, "free_gemini_taste_minutes", 2)),
+        "free_gemini_daily_budget_requests": int(getattr(settings, "free_gemini_daily_budget_requests", 100)),
         "tts_daily_limit_minutes_free": int(getattr(settings, "tts_daily_limit_minutes_free", 15)),
         "tts_daily_limit_minutes_paid": int(getattr(settings, "tts_daily_limit_minutes_paid", 60)),
         "tiered_recap_pricing_enabled": bool(getattr(settings, "tiered_recap_pricing_enabled", False)),
@@ -12614,6 +12802,8 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             "voice_daily_limit_minutes_paid",
             "tts_daily_limit_minutes_free",
             "tts_daily_limit_minutes_paid",
+            "free_gemini_taste_minutes",
+            "free_gemini_daily_budget_requests",
             "recap_free_max_duration_seconds",
             "recap_max_duration_seconds",
         ):
@@ -12628,6 +12818,8 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                 "voice_daily_limit_minutes_paid": (0, 1440),
                 "tts_daily_limit_minutes_free": (0, 1440),
                 "tts_daily_limit_minutes_paid": (0, 1440),
+                "free_gemini_taste_minutes": (0, 1440),
+                "free_gemini_daily_budget_requests": (0, 100000),
                 "recap_free_max_duration_seconds": (0, 86400),
                 "recap_max_duration_seconds": (60, 86400),
             }

@@ -138,6 +138,19 @@ class Settings(BaseSettings):
     # FREE + PURCHASED; admins exempt; 0 = unlimited for that tier.
     tts_daily_limit_minutes_free: int = Field(default=15, alias="TTS_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
     tts_daily_limit_minutes_paid: int = Field(default=60, alias="TTS_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
+    # Batch CG: the FREE Gemini TTS "taste" — how much Gemini audio
+    # per day the SERVICE POOL funds for one FREE user before the
+    # route steps to their own key (if saved) or Edge. Delivered
+    # seconds, UTC day; 0 = no pool taste for FREE at all. PURCHASED
+    # pool use is NOT taste-governed (their 60-min cap above rules);
+    # admins exempt. A user's own key is never limited by this.
+    free_gemini_taste_minutes: int = Field(default=2, alias="FREE_GEMINI_TASTE_MINUTES")
+    # Batch CG: the global FREE daily budget — total successful
+    # pool Gemini TTS requests across ALL FREE users per UTC day.
+    # Bounds the pool drain no matter how many FREE accounts show
+    # up; when spent, FREE Gemini closes for the day (own keys and
+    # Edge are unaffected, PURCHASED keep the pool).
+    free_gemini_daily_budget_requests: int = Field(default=100, alias="FREE_GEMINI_DAILY_BUDGET_REQUESTS")
     # Batch AO: tiered recap pricing kill switch (owner decision
     # 2026-11-05 — credits = ceil(source duration / 180s), one credit
     # per started 3-minute band). Ships DARK: default False, and OFF

@@ -341,6 +341,74 @@ def _synth_chunks(engine_obj: object, chunks: list[str], voice: str) -> list[Pat
     return parts
 
 
+def _build_routed_engine(ctx, ffmpeg: str, work_dir: Path, rate: str):
+    """Batch CG: build the own-key → pool composite for one job from
+    a resolved GeminiRouteContext. Either side may be absent (no
+    usable own key / pool closed or unconfigured); returns None when
+    neither route exists. The context's key value is handed ONLY to
+    the engine constructor — never logged."""
+    from app.services.recap_engine.gemini_tts_engine import (
+        GeminiTTSEngine,
+        RoutedGeminiEngine,
+        collect_gemini_keys,
+    )
+
+    own_engine = None
+    if ctx.has_usable_own_key:
+        try:
+            own_engine = GeminiTTSEngine(
+                ffmpeg=ffmpeg, work_dir=work_dir, rate=rate,
+                keys=[ctx.own_key],
+                log=lambda msg: logger.info("TTS gemini (own key): %s", msg),
+            )
+        except Exception:
+            own_engine = None
+    pool_engine = None
+    if ctx.pool_allowed:
+        keys = collect_gemini_keys()
+        if keys:
+            try:
+                pool_engine = GeminiTTSEngine(
+                    ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, keys=keys,
+                    log=lambda msg: logger.info("TTS gemini: %s", msg),
+                )
+            except Exception:
+                pool_engine = None
+    if own_engine is None and pool_engine is None:
+        return None
+    return RoutedGeminiEngine(
+        own_engine, pool_engine,
+        log=lambda msg: logger.info("TTS gemini route: %s", msg),
+    )
+
+
+def _record_route_outcome(job: Job, ctx, routed) -> None:
+    """Batch CG: stamp the job's route truth + the transient outcome
+    the executor settles (pool debit / invalid marking) after the
+    synthesis succeeds."""
+    from app.services.gemini_key_service import log_route
+
+    if routed.pool_requests and routed.own_requests:
+        job.tts_route = "own_pool_mix"
+        route_class = "pool"
+    elif routed.pool_requests:
+        job.tts_route = "pool"
+        route_class = "pool"
+    else:
+        job.tts_route = "own_key"
+        route_class = "own_key"
+    if routed.own_key_invalid:
+        job.gemini_key_broken = True
+    job._cg_outcome = {
+        "route": route_class,
+        "pool_seconds": float(routed.pool_seconds),
+        "pool_requests": int(routed.pool_requests),
+        "own_key_invalid": bool(routed.own_key_invalid),
+        "taste_blocked": False,
+    }
+    log_route(route_class, ctx.user_id, ctx.tier)
+
+
 def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
     """Blocking synthesis (run via asyncio.to_thread): chunk the text,
     synthesize each chunk with the selected engine, concatenate the
@@ -369,23 +437,17 @@ def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
             collect_gemini_keys,
         )
 
+        ctx = getattr(job, "_cg_route_ctx", None)
         gemini_engine = None
-        try:
-            keys = collect_gemini_keys()
-            if not keys:
-                raise RuntimeError("Gemini TTS: no Gemini API key configured.")
-            gemini_engine = GeminiTTSEngine(
-                ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, keys=keys,
-                log=lambda msg: logger.info("TTS gemini: %s", msg),
-            )
-            parts = _synth_chunks(gemini_engine, chunks, job.preset_voice)
-        except Exception as exc:
-            if not _is_gemini_exhaustion(exc, gemini_engine):
-                raise
-            logger.warning(
-                "TTS fallback: gemini->edge job=%s reason=%s",
-                job.id, _fallback_reason_class(exc),
-            )
+        if ctx is not None and ctx.taste_blocked:
+            # Batch CG Item 3b, server side: a FREE user whose taste
+            # is spent (and who has no usable own key) is NEVER
+            # silently switched — the client prompt offered the key
+            # first; a submit that still arrives as Gemini lands
+            # truthfully on the Edge twin with the fallback flag, and
+            # the caption names the key option (route "edge_taste").
+            from app.services.gemini_key_service import log_route
+
             edge_voice = EDGE_TTS_VOICES[
                 edge_voice_key_for_gemini_voice(job.preset_voice)
             ]
@@ -396,6 +458,76 @@ def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
             parts = _synth_chunks(engine_obj, chunks, edge_voice)
             job.tts_fallback_used = True
             job.edge_voice = edge_voice
+            job.tts_route = "edge_taste"
+            job._cg_outcome = {
+                "route": "edge",
+                "pool_seconds": 0.0,
+                "pool_requests": 0,
+                "own_key_invalid": False,
+                "taste_blocked": True,
+            }
+            log_route("edge", ctx.user_id, ctx.tier)
+        else:
+            try:
+                if ctx is not None:
+                    routed = _build_routed_engine(ctx, ffmpeg, work_dir, rate)
+                    if routed is None:
+                        raise RuntimeError(
+                            "Gemini TTS: no Gemini API key configured."
+                        )
+                    gemini_engine = routed
+                    job._cg_routed = routed
+                    parts = _synth_chunks(routed, chunks, job.preset_voice)
+                    _record_route_outcome(job, ctx, routed)
+                else:
+                    keys = collect_gemini_keys()
+                    if not keys:
+                        raise RuntimeError(
+                            "Gemini TTS: no Gemini API key configured."
+                        )
+                    gemini_engine = GeminiTTSEngine(
+                        ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, keys=keys,
+                        log=lambda msg: logger.info("TTS gemini: %s", msg),
+                    )
+                    parts = _synth_chunks(gemini_engine, chunks, job.preset_voice)
+            except Exception as exc:
+                if not _is_gemini_exhaustion(exc, gemini_engine):
+                    raise
+                logger.warning(
+                    "TTS fallback: gemini->edge job=%s reason=%s",
+                    job.id, _fallback_reason_class(exc),
+                )
+                edge_voice = EDGE_TTS_VOICES[
+                    edge_voice_key_for_gemini_voice(job.preset_voice)
+                ]
+                engine_obj = EdgeTTSEngine(
+                    ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, pitch="+0Hz",
+                    log=lambda msg: logger.info("TTS edge: %s", msg),
+                )
+                parts = _synth_chunks(engine_obj, chunks, edge_voice)
+                job.tts_fallback_used = True
+                job.edge_voice = edge_voice
+                if ctx is not None:
+                    # Batch CG: the whole job re-synthesised on Edge —
+                    # discarded Gemini chunks debit NOTHING (delivered
+                    # seconds only), but a key Google rejected stays
+                    # marked so the user is told + the key is flagged.
+                    job.tts_route = "edge_exhausted"
+                    routed = getattr(job, "_cg_routed", None)
+                    job._cg_outcome = {
+                        "route": "edge",
+                        "pool_seconds": 0.0,
+                        "pool_requests": 0,
+                        "own_key_invalid": bool(
+                            routed is not None and routed.own_key_invalid
+                        ),
+                        "taste_blocked": False,
+                    }
+                    if job._cg_outcome["own_key_invalid"]:
+                        job.gemini_key_broken = True
+                    from app.services.gemini_key_service import log_route
+
+                    log_route("edge", ctx.user_id, ctx.tier)
     else:
         engine_obj = EdgeTTSEngine(
             ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, pitch="+0Hz",
@@ -480,6 +612,15 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
         )
         if fell_back:
             caption += "\n" + _tts_t("tts_fallback_note", lang)
+            # Batch CG: when the switch happened because the FREE
+            # Gemini taste ran out, name the own-key way back to
+            # Gemini (the same option the Item 3b prompt offers).
+            if getattr(job, "tts_route", None) == "edge_taste":
+                caption += "\n" + _tts_t("tts_taste_key_hint", lang)
+        # Batch CG: a saved key Google rejected mid-job — the job
+        # still delivered (pool/Edge served it); the user is told.
+        if getattr(job, "gemini_key_broken", False):
+            caption += "\n" + _tts_t("tts_own_key_broken_note", lang)
         bot = Bot(token=settings.bot_token)
         try:
             await bot.send_audio(
@@ -517,11 +658,59 @@ async def execute_tts_job(job_id: str) -> None:
             job = (
                 await session.execute(select(Job).where(Job.id == job_id))
             ).scalar_one()
+            # Batch CG: resolve the Gemini route (own key → pool →
+            # Edge) for Gemini-picked jobs BEFORE synthesis; the
+            # context rides the job object as a transient attribute
+            # (memory only — the key value is never persisted).
+            route_ctx = None
+            if job.engine == "gemini":
+                try:
+                    from app.services.gemini_key_service import (
+                        resolve_gemini_route,
+                    )
+
+                    _owner, _ = await get_or_create_user(session, job.user_id)
+                    route_ctx = await resolve_gemini_route(
+                        session, _owner, is_admin=settings.is_admin(job.user_id)
+                    )
+                    job._cg_route_ctx = route_ctx
+                except Exception:
+                    logger.warning(
+                        "TTS job %s: CG route resolution failed; legacy pool path",
+                        job_id, exc_info=True,
+                    )
+                    route_ctx = None
             out_path, duration = await asyncio.to_thread(_synthesize_tts_audio_sync, job)
             job.result_path = str(out_path)
             job.seconds_consumed = int(round(duration))
             job.status = JobStatus.SUCCESS.value
             job.finished_at = datetime.now(timezone.utc)
+            # Batch CG settle: debit the SUCCESSFUL pool draws
+            # (taste/budget — FREE only, enforced inside the helper)
+            # and flag a key Google rejected mid-job so the user is
+            # told (caption note) and routing skips it from now on.
+            _cg_outcome = getattr(job, "_cg_outcome", None)
+            if _cg_outcome is not None:
+                try:
+                    from app.services.gemini_key_service import (
+                        debit_pool_usage,
+                        mark_user_key_invalid,
+                    )
+
+                    if _cg_outcome.get("own_key_invalid"):
+                        await mark_user_key_invalid(session, job.user_id)
+                    if route_ctx is not None and _cg_outcome.get("pool_requests"):
+                        await debit_pool_usage(
+                            session,
+                            job.user_id,
+                            tier=route_ctx.tier,
+                            seconds=float(_cg_outcome.get("pool_seconds") or 0.0),
+                            requests=int(_cg_outcome.get("pool_requests") or 0),
+                        )
+                except Exception:
+                    logger.warning(
+                        "TTS job %s: CG settle failed", job_id, exc_info=True
+                    )
             # Settle: keep only the referral seconds the audio actually
             # cost; hand any over-draw back (idempotent reconcile).
             net = await tts_referral_net_draw(session, job.user_id, job.id)

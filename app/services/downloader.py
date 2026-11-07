@@ -2132,6 +2132,7 @@ class MediaDownloader:
         source_language: str = "auto",
         render_quality: str = "standard",
         gemini_voice: Optional[str] = None,
+        gemini_route=None,
         voxcpm_control: Optional[str] = None,
         voxcpm_ref_audio: Optional[str] = None,
         is_female: bool = False,
@@ -2235,6 +2236,9 @@ class MediaDownloader:
             source_language=source_language,
             render_quality=render_quality,
             gemini_voice=gemini_voice,
+            # Batch CG: BYOK route context (in-memory object, never
+            # serialised by the pipeline).
+            gemini_route=gemini_route,
             voxcpm_control=voxcpm_control,
             voxcpm_ref_audio=voxcpm_ref_audio,
             is_female=is_female,

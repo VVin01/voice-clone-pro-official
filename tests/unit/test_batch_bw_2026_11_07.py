@@ -208,7 +208,7 @@ def test_bw_tts_counter_repaints_on_profile_load():
 
 def test_bw_index_counter_default_and_cache_token():
     assert 'id="tts-char-count">0 / 1000 chars<' in INDEX_HTML
-    assert INDEX_HTML.count("20261104_r103") == 4
+    assert INDEX_HTML.count("20261104_r104") == 4
 
 
 # ── BW-5: the voice side is unchanged ─────────────────────────────────
