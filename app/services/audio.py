@@ -171,3 +171,59 @@ async def normalize_audio_to_wav(
         raise RuntimeError(f"FFmpeg normalization failed (exit {proc.returncode}): {err_msg}")
 
     return out_wav
+
+
+def concat_wav_files(parts: list[Path], output_wav: Path) -> Path:
+    """Batch CH: join WAV parts into one file, in order.
+
+    Same ffmpeg concat-demuxer pattern as the recap engine's
+    concat_audio, but the voice path stays MONO and keeps the first
+    part's sample rate, so a chunked voice job's output format matches
+    what a single-call job from the same Space would have produced.
+    Synchronous: callers run it inside an executor.
+    """
+    part_paths = [Path(p) for p in parts]
+    if not part_paths:
+        raise ValueError("concat_wav_files needs at least one part")
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+    if len(part_paths) == 1:
+        shutil.copy2(part_paths[0], output_wav)
+        return output_wav
+
+    rate = 48000
+    try:
+        with wave.open(str(part_paths[0]), "rb") as wf:
+            rate = wf.getframerate() or rate
+    except Exception:
+        pass
+
+    list_file = output_wav.parent / f"{output_wav.stem}.parts.txt"
+    lines = []
+    for p in part_paths:
+        escaped = str(p.resolve()).replace("'", "'\\''")
+        lines.append(f"file '{escaped}'")
+    list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    cmd = [
+        "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
+        "-hide_banner", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", str(list_file),
+        "-ar", str(rate), "-ac", "1", "-c:a", "pcm_s16le",
+        str(output_wav),
+    ]
+    try:
+        res = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=NORMALIZE_TIMEOUT_SECONDS,
+        )
+    finally:
+        try:
+            list_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    if res.returncode != 0:
+        raise RuntimeError(
+            f"WAV concat failed (exit {res.returncode}): {(res.stderr or '')[-500:]}"
+        )
+    if not output_wav.is_file() or output_wav.stat().st_size == 0:
+        raise RuntimeError(f"WAV concat produced no output at {output_wav}")
+    return output_wav

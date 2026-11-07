@@ -57,7 +57,7 @@ def test_brand_block_reads_voice_clone_plus_pro_badge():
 
 def test_header_logo_is_the_telegram_avatar_asset():
     block = _brand_block()
-    assert 'src="/static/img/brand-logo.svg?v=20261104_r104"' in block
+    assert 'src="/static/img/brand-logo.svg?v=20261104_r105"' in block
     assert 'class="brand-logo-img"' in block
     # The old hand-drawn hexagon crest is gone from the header.
     assert "crest-svg" not in INDEX_HTML
@@ -87,10 +87,10 @@ def test_logo_img_css_is_a_clean_circle():
 
 
 def test_static_cache_token_is_r56():
-    assert "style.css?v=20261104_r104" in INDEX_HTML
+    assert "style.css?v=20261104_r105" in INDEX_HTML
     assert "20261104_r55" not in INDEX_HTML
     # Four versioned refs now: style.css, app.js, i18n.js and the new
     # brand-logo.svg. (The per-batch cache pins that total the token's
     # occurrences were moved 3 -> 4 in this batch; the hardening pins
     # require EVERY /static/ ref in index.html to carry the token.)
-    assert INDEX_HTML.count("?v=20261104_r104") == 4
+    assert INDEX_HTML.count("?v=20261104_r105") == 4

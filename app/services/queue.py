@@ -228,8 +228,12 @@ async def create_voice_clone_job(
         # back to the submit-time estimate when no actual was recorded
         # (the same consumed→estimated fallback the bot history
         # display uses); QUEUED/RUNNING jobs count their estimate;
-        # FAILED and CANCELLED jobs consume nothing. Aggregation is
-        # per-row in Python (no func.sum under app/, Batch R rule).
+        # FAILED and CANCELLED jobs consume nothing; SUCCESS jobs the
+        # worker marked engine="edge_fallback" also consume nothing
+        # (Batch CH: no clone minutes were charged for them, so they
+        # must not eat the cap via the estimate fallback either).
+        # Aggregation is per-row in Python (no func.sum under app/,
+        # Batch R rule).
         _limit_minutes = (
             settings.voice_daily_limit_minutes_paid
             if user.account_category == AccountCategory.PURCHASED.value
@@ -255,6 +259,14 @@ async def create_voice_clone_job(
             )
             _consumed_seconds = 0.0
             for _prev in (await session.execute(_minute_stmt)).scalars().all():
+                if _prev.status == JobStatus.SUCCESS.value and _prev.engine == "edge_fallback":
+                    # Batch CH (Item 2): a voice job delivered via the
+                    # Edge fallback consumed no voice minutes, so it
+                    # must not eat the daily cap either. Its
+                    # seconds_consumed is 0, which the estimate
+                    # fallback below would otherwise resurrect as a
+                    # full submit-time estimate.
+                    continue
                 if _prev.status == JobStatus.SUCCESS.value and (_prev.seconds_consumed or 0) > 0:
                     _consumed_seconds += float(_prev.seconds_consumed)
                 else:

@@ -755,5 +755,5 @@ def test_cg_route_marker_format():
 
 def test_cg_cache_token_is_r104():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261104_r104") == 4
-    assert ("20261104_r" + "103") not in html
+    assert html.count("20261104_r105") == 4
+    assert ("20261104_r" + "104") not in html

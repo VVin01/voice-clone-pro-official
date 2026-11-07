@@ -286,5 +286,5 @@ def test_blur_box_basis_canvas_on_both_sides():
 # ── 7. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261104_r104") == 4
+    assert INDEX_HTML.count("?v=20261104_r105") == 4
     assert "20261104_r48" not in INDEX_HTML
