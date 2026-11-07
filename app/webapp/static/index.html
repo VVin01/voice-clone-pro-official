@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r101">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r102">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r101" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r102" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -2203,6 +2203,14 @@
                         </div>
 
                         <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_balance_breakdown">💰 လက်ကျန် အသေးစိတ်</div>
+                            <div id="adm-detail-breakdown" class="mt-2"></div>
+                            <div id="adm-detail-tts" class="mt-2"></div>
+                            <div id="adm-detail-verify" class="adm-detail-meta mt-2"></div>
+                            <div id="adm-detail-referrals" class="mt-2"></div>
+                        </div>
+
+                        <div class="card glass mt-3">
                             <div class="card-label" data-i18n="admin_adjust_title">✏️ လက်ကျန် ပြင်ဆင်ရန်</div>
                             <div class="filter-chips-row mt-2">
                                 <button type="button" class="filter-chip" onclick="adminAdjustPreset(60, 0, 0)"><span data-i18n="btn_add_minutes">⏱️ +60 မိနစ်</span></button>
@@ -2250,10 +2258,38 @@
                         </div>
 
                         <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_msg_title">✉️ စာ ပို့ရန်</div>
+                            <p class="text-muted text-xs mt-1 hidden" id="adm-msg-note"></p>
+                            <textarea id="adm-msg-text" data-i18n-ph="admin_msg_ph" placeholder="ဒီအသုံးပြုသူထံ ပို့မည့် စာ ရိုက်ပါ…" rows="3" maxlength="4000" class="studio-input mt-2"></textarea>
+                            <button class="btn gold-gradient-btn mt-2" id="adm-msg-send-btn" onclick="adminSendUserMessage()"><span data-i18n="admin_msg_send">✉️ ပို့မည်</span></button>
+                        </div>
+
+                        <div class="card glass mt-3">
                             <div class="card-label" data-i18n="admin_user_jobs">📜 ဒီလူ၏ အလုပ်များ</div>
                             <div id="adm-user-jobs" class="mt-2">
                                 <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
                             </div>
+                        </div>
+
+                        <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_recent_jobs_title">🕘 နောက်ဆုံး အလုပ်များ</div>
+                            <div id="adm-detail-recent-jobs" class="mt-2"></div>
+                        </div>
+
+                        <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_payments_title">💳 ငွေပေးချေမှုများ</div>
+                            <div id="adm-detail-payments" class="mt-2"></div>
+                            <div id="adm-detail-payments-total" class="mt-2"></div>
+                        </div>
+
+                        <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_ledger_title">📒 Ledger မှတ်တမ်း</div>
+                            <div id="adm-detail-ledger" class="mt-2"></div>
+                        </div>
+
+                        <div class="card glass mt-3">
+                            <div class="card-label" data-i18n="admin_ai_chats_title">🤖 Private AI စကားဝိုင်း မှတ်တမ်း</div>
+                            <div id="adm-detail-ai-chats" class="mt-2"></div>
                         </div>
 
                         <div class="card glass adm-danger-card mt-3">
@@ -2869,7 +2905,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r101"></script>
-    <script src="/static/js/app.js?v=20261104_r101"></script>
+    <script src="/static/js/i18n.js?v=20261104_r102"></script>
+    <script src="/static/js/app.js?v=20261104_r102"></script>
 </body>
 </html>

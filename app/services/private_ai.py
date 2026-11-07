@@ -21,9 +21,13 @@ admin-DM machinery. What is private-specific lives here:
   in-memory only: a restart resetting private-chat pacing is
   acceptable and keeps this feature's footprint small.
 
-No message text is stored or logged here; the only persistence is
-the shared escalation record when a sensitive question is handed to
-the admins, exactly like the group path.
+Batch CD (2026-11-07, owner choice): exchanges this chain handles
+ARE recorded to ``private_ai_messages`` (user text + the sent reply,
+30-day retention) so admins can read them in the user-detail
+screen — see the recording section at the bottom of this module.
+The recording is failure-isolated: it can never break or delay a
+reply. The GROUP path still stores nothing beyond the shared
+escalation record; that standing ban is unchanged.
 """
 
 from __future__ import annotations
@@ -254,3 +258,88 @@ async def ask_private_ai(*, text: str, author_name: str) -> tuple[str, str | Non
 # ---------------------------------------------------------------------------
 
 private_rate_limiter = gai.GroupReplyRateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# Transcript recording (Batch CD) — private chain ONLY, failure-isolated
+# ---------------------------------------------------------------------------
+
+#: Owner-chosen retention for recorded private-AI exchanges.
+PRIVATE_AI_RETENTION_DAYS = 30
+
+KIND_USER = "user"
+KIND_FAST_PATH = "fast_path"
+KIND_AI_REPLY = "ai_reply"
+KIND_ESCALATION = "escalation"
+
+
+async def record_private_exchange(
+    session: Any,
+    *,
+    user_id: int,
+    user_text: str,
+    reply_text: str,
+    kind: str,
+) -> bool:
+    """Persist one handled exchange (user row + AI row), best-effort.
+
+    Called by the handler ONLY after the reply/deferral was actually
+    sent, so a stored exchange always reflects a delivered one. Any
+    failure is swallowed (logged WITHOUT message text) and reported
+    as False — recording must never break or delay the reply path,
+    mirroring the AI-failure-silence discipline.
+    """
+    try:
+        from app.models.schema import PrivateAiMessage
+
+        session.add(PrivateAiMessage(
+            user_id=int(user_id), direction="user", kind=KIND_USER,
+            text=user_text or "",
+        ))
+        session.add(PrivateAiMessage(
+            user_id=int(user_id), direction="ai", kind=kind,
+            text=reply_text or "",
+        ))
+        await session.commit()
+        return True
+    except Exception as exc:  # recording must never break the reply
+        logger.warning("private_ai: transcript record failed (dropped): %s", exc)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return False
+
+
+async def prune_private_ai_messages(session: Any, *, now: Any = None) -> int:
+    """Delete recorded rows older than the 30-day retention window.
+
+    The boundary is strict: a row exactly 30 days old is kept, only
+    rows OLDER than (now − 30 days) are deleted.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import delete
+
+    from app.models.schema import PrivateAiMessage
+
+    current = now or datetime.now(timezone.utc)
+    cutoff = current - timedelta(days=PRIVATE_AI_RETENTION_DAYS)
+    result = await session.execute(
+        delete(PrivateAiMessage).where(PrivateAiMessage.created_at < cutoff)
+    )
+    await session.commit()
+    return int(result.rowcount or 0)
+
+
+async def sweep_private_ai_messages() -> int:
+    """Periodic/startup-sweep entry point (own session; safe to call
+    blindly, mirroring gai.sweep_stale_escalations)."""
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            return await prune_private_ai_messages(session)
+    except Exception as exc:
+        logger.warning("private_ai: transcript prune failed: %s", exc)
+        return 0

@@ -11226,7 +11226,140 @@ function renderAdminUserDetail(u) {
     const testToggle = document.getElementById("adm-test-flag-toggle");
     if (testToggle) testToggle.checked = !!u.is_test_account;
     renderAdminBanZone(u);
+    // Batch CD: the completed detail sections + a fresh message box.
+    renderAdminDetailExtras(u);
+    const msgText = document.getElementById("adm-msg-text");
+    if (msgText) msgText.value = "";
+    const msgNote = document.getElementById("adm-msg-note");
+    if (msgNote) {
+        if (u.is_banned) {
+            msgNote.innerText = t("admin_msg_banned_note");
+            msgNote.classList.remove("hidden");
+        } else if (u.bot_blocked) {
+            msgNote.innerText = t("admin_msg_blocked_note");
+            msgNote.classList.remove("hidden");
+        } else {
+            msgNote.innerText = "";
+            msgNote.classList.add("hidden");
+        }
+    }
 }
+
+function admFmtSecs(total) {
+    const s = Math.max(0, Math.round(total || 0));
+    return Math.floor(s / 60) + "m " + (s % 60) + "s";
+}
+
+// Batch CD Item 1: render the completed-detail sections (balance
+// buckets, TTS today, verification, referrals, recent jobs,
+// payments, ledger, recorded private-AI chats) from the payload.
+function renderAdminDetailExtras(u) {
+    const row = (label, val) => `<div class="adm-bc-row"><span>${label}</span><strong>${val}</strong></div>`;
+    const bb = u.balance_breakdown || {};
+    const bd = document.getElementById("adm-detail-breakdown");
+    if (bd) bd.innerHTML =
+        row(t("admin_bal_monthly"), admFmtSecs(bb.monthly_free_seconds)) +
+        row(t("admin_bal_welcome"), admFmtSecs(bb.welcome_seconds)) +
+        row(t("admin_bal_referral"), admFmtSecs(bb.referral_seconds)) +
+        row(t("admin_bal_purchased"), admFmtSecs(bb.purchased_seconds)) +
+        row(t("admin_bal_consumed"), admFmtSecs(bb.consumed_seconds)) +
+        row(t("admin_custom_voices"), String(u.custom_voices_count ?? 0));
+    const tt = u.tts_today || {};
+    const ttsEl = document.getElementById("adm-detail-tts");
+    if (ttsEl) {
+        ttsEl.innerHTML = (tt.consumed_seconds == null)
+            ? row(t("admin_tts_today"), "∞")
+            : row(t("admin_tts_today"), `${t("admin_tts_used")} ${admFmtSecs(tt.consumed_seconds)} · ${t("admin_tts_left")} ${admFmtSecs(tt.remaining_seconds)}`);
+    }
+    const vf = u.verification || {};
+    const vEl = document.getElementById("adm-detail-verify");
+    if (vEl) vEl.innerHTML =
+        `<span class="mini-tag">${t("admin_verified_channel")}: ${vf.channel_verified ? t("admin_verified_yes") : t("admin_verified_no")}</span>` +
+        `<span class="mini-tag">${t("admin_verified_group")}: ${vf.group_verified ? t("admin_verified_yes") : t("admin_verified_no")}</span>`;
+    const rf = u.referrals || {};
+    const rEl = document.getElementById("adm-detail-referrals");
+    if (rEl) {
+        let html = row(t("admin_referrals_made"), String(rf.referred_count ?? 0)) +
+            row(t("admin_referral_earned"), admFmtSecs(rf.referral_earned_seconds));
+        if (rf.referred_by) {
+            html += row(t("admin_referred_by"), escapeHtml((rf.referred_by.first_name || "") + (rf.referred_by.username ? " (@" + rf.referred_by.username + ")" : "") + " · ID " + rf.referred_by.id));
+        }
+        rEl.innerHTML = html;
+    }
+    const jobs = u.recent_jobs || [];
+    const jEl = document.getElementById("adm-detail-recent-jobs");
+    if (jEl) jEl.innerHTML = jobs.length ? jobs.map(j => `
+            <div class="adm-job-mini">
+                <span class="adm-job-mini-main">${escapeHtml(j.job_type || "")} · ${escapeHtml(j.status || "")}</span>
+                <span class="text-muted text-xs">${admFmtDate(j.created_at)} · ${admFmtSecs(j.seconds_consumed || j.seconds_estimated || 0)}</span>
+            </div>`).join("") : `<p class="text-muted">${t("admin_user_jobs_empty")}</p>`;
+    const pays = u.payments || [];
+    const pEl = document.getElementById("adm-detail-payments");
+    if (pEl) pEl.innerHTML = pays.length ? pays.map(p => `
+            <div class="adm-job-mini">
+                <span class="adm-job-mini-main">${escapeHtml(p.plan || "")}</span>
+                <span class="history-item-badge status-${(p.status || "").toLowerCase()}">${escapeHtml(p.status || "")}</span>
+                <span class="text-muted text-xs">${Number(p.amount_mmk || 0).toLocaleString("en-US")} MMK · ${admFmtDate(p.created_at)}</span>
+            </div>`).join("") : `<p class="text-muted">${t("admin_payments_empty")}</p>`;
+    const ptEl = document.getElementById("adm-detail-payments-total");
+    if (ptEl) ptEl.innerHTML = row(t("admin_payments_total"), Number(u.payments_total_mmk || 0).toLocaleString("en-US") + " MMK");
+    const led = u.ledger_recent || [];
+    const lEl = document.getElementById("adm-detail-ledger");
+    if (lEl) lEl.innerHTML = led.length ? led.map(e => `
+            <div class="adm-job-mini">
+                <span class="adm-job-mini-main">${escapeHtml(e.kind || "")}${e.reason ? " · " + escapeHtml(e.reason) : ""}</span>
+                <span class="text-muted text-xs">${(e.delta >= 0 ? "+" : "-") + admFmtSecs(Math.abs(e.delta || 0))} · ${admFmtDate(e.created_at)}</span>
+            </div>`).join("") : `<p class="text-muted">${t("admin_ledger_empty")}</p>`;
+    const chats = u.ai_chats || [];
+    const cEl = document.getElementById("adm-detail-ai-chats");
+    if (cEl) cEl.innerHTML = chats.length ? chats.map(m => `
+            <div class="adm-chat-row ${m.direction === "user" ? "adm-chat-user" : "adm-chat-ai"}">
+                <span class="adm-chat-who">${m.direction === "user" ? t("admin_ai_chat_user") : t("admin_ai_chat_ai")}</span>
+                <span class="adm-chat-text">${escapeHtml(m.text || "")}</span>
+                <span class="adm-chat-time">${admFmtDate(m.created_at)}</span>
+            </div>`).join("") : `<p class="text-muted">${t("admin_ai_chats_empty")}</p>`;
+}
+
+// Batch CD Item 2: admin → this user direct message (inline confirm,
+// same grammar as the broadcast send).
+async function adminSendUserMessage() {
+    const uid = admCurrentUserId;
+    if (!uid) { showStudioToast(t("admin_no_user"), "warning"); return; }
+    const textEl = document.getElementById("adm-msg-text");
+    const msg = textEl ? textEl.value.trim() : "";
+    if (!msg) { showStudioToast(t("admin_msg_empty"), "warning"); return; }
+    haptic("medium");
+    showStudioConfirm(t("admin_msg_confirm"), async () => {
+        const btn = document.getElementById("adm-msg-send-btn");
+        if (btn) btn.disabled = true;
+        try {
+            const res = await fetch(`/api/admin/users/${uid}/message`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ text: msg }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                if (data.detail === "bot_blocked") {
+                    showStudioToast(t("admin_msg_blocked"), "error");
+                    return;
+                }
+                if (data.detail === "chat_not_found") {
+                    showStudioToast(t("admin_msg_unreachable"), "error");
+                    return;
+                }
+                throw new Error(data.detail || t("admin_msg_send_failed"));
+            }
+            showStudioToast(t("admin_msg_sent"), "success");
+            if (textEl) textEl.value = "";
+        } catch (e) {
+            showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
+}
+window.adminSendUserMessage = adminSendUserMessage;
 
 // Batch BC-1: set/unset the test-account flag (audited server-side).
 // On failure the toggle snaps back so the UI never claims a state the

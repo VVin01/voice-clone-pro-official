@@ -2455,6 +2455,20 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-job-mini-main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .adm-job-code { opacity: .7; font-size: 10px; }
 
+/* Batch CD: recorded private-AI chat log rows in the user detail. */
+.adm-chat-row {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 10px; margin-top: var(--s2);
+    border: 1px solid var(--divider); border-radius: var(--r-md, 14px);
+    font-size: 13px;
+}
+.adm-chat-row:first-child { margin-top: 0; }
+.adm-chat-user { background: var(--blue-soft, rgba(64, 132, 255, .08)); }
+.adm-chat-ai { background: var(--glass-2, rgba(127, 140, 160, .08)); }
+.adm-chat-who { font-size: 11px; font-weight: 700; color: var(--text-2); }
+.adm-chat-text { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+.adm-chat-time { font-size: 11px; color: var(--text-3, var(--text-2)); opacity: .75; }
+
 /* Jobs */
 .queue-section-header {
     font-size: 13px; font-weight: 700; color: var(--text-2);

@@ -775,6 +775,50 @@ class GroupAiFaq(Base):
     )
 
 
+class PrivateAiMessage(Base):
+    """One recorded private-chat AI exchange row (Batch CD, 2026-11-07).
+
+    Owner decision (2026-11-07 11:58): private (1:1) chats handled by
+    the private-AI chain are recorded so admins can read the
+    conversation in the Mini App user-detail screen. Two rows per
+    exchange — the user's text (direction 'user', kind 'user') and
+    the bot's sent reply (direction 'ai', kind 'fast_path' /
+    'ai_reply' / 'escalation'). Messages consumed by other chains
+    (commands, FSM flows, the payment-intent hint) are NEVER recorded,
+    and GROUP messages are never recorded anywhere (the standing
+    group storage ban is untouched by this table). Rows older than
+    30 days are pruned by the periodic sweep (see
+    app/services/private_ai.py). Created via
+    Base.metadata.create_all like the other Batch H tables — no
+    migration framework.
+    """
+
+    __tablename__ = "private_ai_messages"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('user', 'ai')",
+            name="chk_private_ai_message_direction",
+        ),
+        CheckConstraint(
+            "kind IN ('user', 'fast_path', 'ai_reply', 'escalation')",
+            name="chk_private_ai_message_kind",
+        ),
+    )
+
+
 class UserPreference(Base):
     """Account-bound Mini App preferences (Batch AC, 2026-11-04).
 
