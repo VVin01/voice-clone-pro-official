@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r110">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r111">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r110" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r111" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -540,7 +540,6 @@
                          letting 10 → 2 look like voices went missing. -->
                     <p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ အသံ ၂ မျိုးပဲ ရပါတယ်</p>
                     <p class="ref-desc" id="tts-balance-line" data-i18n="tts_balance_loading">လက်ကျန် စစ်ဆေးနေသည်…</p>
-                    <p class="ref-desc hidden" id="tts-taste-note"></p>
                     <!-- Batch CN: one short hint line stays on screen;
                          the full billing explanation is tap-to-expand
                          (the .detail-toggle pattern, toggleTtsDetail). -->
@@ -550,7 +549,8 @@
                         <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
                     </button>
                     <div class="hidden" id="tts-cost-hint-more">
-                        <p class="ref-desc" data-i18n="tts_cost_hint_more">ကုန်ရင် နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ယူပါတယ်။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။</p>
+                        <p class="ref-desc hidden" id="tts-taste-note"></p>
+                        <p class="ref-desc" data-i18n="tts_cost_hint_more">TTS အသံကို ဒီ Tab ရဲ့ လက်ကျန်ထဲကပဲ ဖြတ်ပါတယ်။ တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP အတွက် 60 မိနစ်) ရပြီး Referral ဆု စက္ကန့်တွေကို အရင် သုံးပေးပါတယ်။ တစ်ခါ ထုတ်ရင် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် ပါဝင်ပြီး ကိုယ်ပိုင် Key ထည့်ထားရင် မြည်းစမ်း ကန့်သတ်ချက် မရှိတော့ပါ။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။</p>
                     </div>
                 </div>
 
@@ -2992,7 +2992,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r110"></script>
-    <script src="/static/js/app.js?v=20261104_r110"></script>
+    <script src="/static/js/i18n.js?v=20261104_r111"></script>
+    <script src="/static/js/app.js?v=20261104_r111"></script>
 </body>
 </html>

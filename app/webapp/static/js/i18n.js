@@ -320,7 +320,7 @@ const translations = {
         // Batch CN: the long explanations live behind tap-to-expand
         // toggles — one short line stays on screen, the rest opens
         // only when the user asks for it.
-        tts_cost_hint_more: "ကုန်ရင် နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ယူပါတယ်။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။",
+        tts_cost_hint_more: "TTS အသံကို ဒီ Tab ရဲ့ လက်ကျန်ထဲကပဲ ဖြတ်ပါတယ်။ တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP အတွက် 60 မိနစ်) ရပြီး Referral ဆု စက္ကန့်တွေကို အရင် သုံးပေးပါတယ်။ တစ်ခါ ထုတ်ရင် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် ပါဝင်ပြီး ကိုယ်ပိုင် Key ထည့်ထားရင် မြည်းစမ်း ကန့်သတ်ချက် မရှိတော့ပါ။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။",
         tts_details_toggle: "အသေးစိတ် ကြည့်ရန်",
         tts_edge_voice_hint: "Edge မှာ မြန်မာ အသံ ၂ မျိုးပဲ ရပါတယ်",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
@@ -1449,7 +1449,7 @@ const translations = {
         tts_balance_line_unlimited: "🎧 Referral balance (TTS): {ref_min} min · 📅 No daily limit",
         tts_cost_hint: "💡 Referral time is spent first",
         // Batch CN: tap-to-expand detail lines (see the my block).
-        tts_cost_hint_more: "Once it runs out, your daily TTS allowance is used. Voice Clone minutes and Recap Credits are never touched.",
+        tts_cost_hint_more: "TTS audio is charged only to this tab's own balance. You get 15 free minutes a day (60 for VIP), and referral reward seconds are spent first. Each generation can be up to 1,000 characters (5,000 for VIP). Gemini voices include a 2-minute free taste per day; if you add your own key, the taste limit no longer applies. Voice Clone minutes and Recap Credits are never touched.",
         tts_details_toggle: "View details",
         tts_edge_voice_hint: "Edge offers 2 Myanmar voices",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
