@@ -3643,8 +3643,75 @@ OVERLAY_FFMPEG_THREADS = 2
 # probe, or a failed single pass all fall back to the Batch AB
 # two-step path automatically.
 OVERLAY_SINGLE_PASS_MAX_RSS_BYTES = int(3.2 * 1024 * 1024 * 1024)
-# Only one job may single-pass at a time (the job semaphore admits 2).
+# Batch CC: this lock is now the ONE global overlay slot — it guards
+# EVERY production overlay encode in apply_production_overlays
+# (single-pass, both two-step steps, and each chunked run as a unit).
+# It began (Batch AL-R) as a single-pass-only lock; the 2026-11-07
+# OOM loop showed two jobs' unserialised two-step passes summing
+# past the 4 GB instance, so the guard widened to the whole pass.
+# (The name is kept: it is the same lock object the AL-R code made.)
 _OVERLAY_SINGLE_PASS_SLOT = threading.Lock()
+
+
+# Batch CC: heavy-job chunked cue overlay. A job is HEAVY when its
+# cue graph is big enough to threaten the instance (cue count above
+# the threshold) or the video is long: the 2026-11-07 incident job
+# had 312 cues / 550 s and its full-graph passes peaked at 3,306 MB
+# on the 4 GB production instance. Heavy jobs skip the probe and the
+# single-pass entirely (the probe command IS the full graph — its
+# production peak was that same 3,306 MB, so probing recreates the
+# hazard and its verdict cannot change the route) and run step 2 in
+# ≤ 60 s windows, each carrying only the cues that intersect it;
+# peak RSS then scales with one window's cue count, not the total.
+# Thresholds confirmed against the local bench (fix-cc-work/bench):
+# full graph 1,821 MB / two-step step-2 1,848 MB vs chunked ~1/3.
+OVERLAY_HEAVY_CUE_COUNT = 120
+OVERLAY_HEAVY_DURATION_SECONDS = 240.0
+OVERLAY_CHUNK_SECONDS = 60.0
+
+
+def _overlay_is_heavy(cue_count: int, duration: float | None) -> bool:
+    if cue_count > OVERLAY_HEAVY_CUE_COUNT:
+        return True
+    try:
+        return duration is not None and float(duration) > OVERLAY_HEAVY_DURATION_SECONDS
+    except (TypeError, ValueError):
+        return False
+
+
+def _plan_overlay_chunks(
+    cue_spans: list[tuple[float, float]], duration: float | None
+) -> list[tuple[float, float, list[int]]]:
+    """Plan the chunked cue pass: fixed ≤60 s windows from 0 to the
+    media end (the caller's duration, else the last cue end), each
+    carrying the indices of the cues whose display interval
+    intersects it. A cue spanning a seam is carried by BOTH windows
+    (its enable interval is clipped by each window's own length), so
+    the composited result matches the single graph exactly."""
+    total = 0.0
+    try:
+        total = float(duration or 0.0)
+    except (TypeError, ValueError):
+        total = 0.0
+    if cue_spans:
+        total = max(total, max(end for _s, end in cue_spans))
+    if total <= 0:
+        total = OVERLAY_CHUNK_SECONDS
+    windows: list[tuple[float, float, list[int]]] = []
+    ws = 0.0
+    while ws < total - 1e-9:
+        we = min(total, ws + OVERLAY_CHUNK_SECONDS)
+        idxs = [
+            i for i, (s, e) in enumerate(cue_spans) if s < we and e > ws
+        ]
+        windows.append((ws, we, idxs))
+        ws = we
+    return windows
+
+
+def _concat_list_line(path: Path) -> str:
+    """One ffmpeg concat-demuxer list line (single-quote escaped)."""
+    return "file '" + str(path).replace("'", "'\\''") + "'"
 
 
 def _run_overlay_probe(cmd: list[str], *, timeout: float = 180.0) -> tuple[int, int, str]:
@@ -3866,13 +3933,26 @@ def apply_production_overlays(
         input_path: Any = None,
         graph_head: list[str] | None = None,
         start_label: str = "[0:v]",
+        cue_subset: list[int] | None = None,
+        window: tuple[float, float] | None = None,
+        output_path: Any = None,
     ) -> list[str]:
         # Batch AL-R: with graph_head/start_label the SAME builder
         # produces the combined single-pass command (blur chains first,
         # then this step's overlays continuing from the blur output
         # label, reading the original input). Defaults reproduce the
         # classic step-2 command byte for byte.
-        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(input_path if input_path is not None else step2_input)]
+        # Batch CC: cue_subset/window/output_path produce ONE chunked
+        # window command instead — the input is sought to the window,
+        # only the subset's cues are registered, their enable times
+        # are shifted into window time, and the output is the chunk
+        # file (an intermediate: no +faststart, like step 1's). The
+        # graph construction and encoder settings are untouched.
+        cues_here = cue_inputs if cue_subset is None else [cue_inputs[i] for i in cue_subset]
+        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
+        if window is not None:
+            cmd += ["-ss", f"{window[0]:.3f}", "-t", f"{window[1] - window[0]:.3f}"]
+        cmd += ["-i", str(input_path if input_path is not None else step2_input)]
         input_index = 1
         title_idx: int | None = None
         logo_idx: int | None = None
@@ -3895,7 +3975,7 @@ def apply_production_overlays(
             cmd += ["-i", str(pattern_file)]
             input_index += 1
         cue_indices: list[int] = []
-        for png_path, _top, _xe, _cs, _ce in cue_inputs:
+        for png_path, _top, _xe, _cs, _ce in cues_here:
             cue_indices.append(input_index)
             cmd += ["-i", str(png_path)]
             input_index += 1
@@ -3947,7 +4027,13 @@ def apply_production_overlays(
         # horizontal placement is the centred expression by default,
         # or the Batch AG sub_x resolver expression when the user
         # moved the subtitle sideways.
-        for (png_path, top, x_expr, cue_start, cue_end), idx in zip(cue_inputs, cue_indices):
+        for (png_path, top, x_expr, cue_start, cue_end), idx in zip(cues_here, cue_indices):
+            if window is not None:
+                # Window time: a cue that started before the window
+                # shows from its first frame; one that ends after it
+                # is clipped by the window's own length.
+                cue_start = max(0.0, cue_start - window[0])
+                cue_end = cue_end - window[0]
             out = f"vsub{idx}"
             graph.append(
                 f"{current}[{idx}:v]overlay=x='{x_expr}':y={top}:"
@@ -3964,7 +4050,11 @@ def apply_production_overlays(
             current = "[vpat]"
 
         graph.append(f"{current}format=yuv420p[vout]")
-        cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(step_encoder, render_quality) + ["-threads", str(OVERLAY_FFMPEG_THREADS), "-movflags", "+faststart", str(output_video)]
+        cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(step_encoder, render_quality) + ["-threads", str(OVERLAY_FFMPEG_THREADS)]
+        if output_path is None:
+            cmd += ["-movflags", "+faststart", str(output_video)]
+        else:
+            cmd += [str(output_path)]
         return cmd
 
     def _run_overlay_step(build_cmd, step_encoder: str):
@@ -3978,15 +4068,92 @@ def apply_production_overlays(
             return "libx264", p
         return step_encoder, p
 
+    def _run_chunked_step2() -> None:
+        """Batch CC: the heavy-job cue/title step, in ≤60 s windows.
+
+        Each window re-runs the step-2 builder restricted to the cues
+        intersecting it (the full-duration title / logo / extra text /
+        watermark pattern ride in every window, exactly as the single
+        graph applies them), then the windows are concatenated with
+        stream copy — identical encoder settings throughout, so the
+        output is the step-2 output produced at a fraction of the
+        peak memory. Runs as one unit inside the caller's overlay
+        slot acquisition; failures raise exactly like step 2's."""
+        nonlocal used_encoder
+        total = duration
+        if not total:
+            # The pipeline always passes its audio duration; a caller
+            # that did not gets the post-blur input probed rather
+            # than a window plan truncated at the last cue's end.
+            try:
+                total = probe_duration(
+                    resolve_binary(None, "ffprobe", [r"C:\ffmpeg\bin\ffprobe.exe"]),
+                    step2_input,
+                )
+            except Exception:
+                total = None
+        windows = _plan_overlay_chunks(
+            [(cs, ce) for _p, _t, _x, cs, ce in cue_inputs], total
+        )
+        log(
+            f"🧩 Overlay: heavy job ({len(cue_inputs)} cues) — chunked cue pass "
+            f"in {len(windows)} windows of ≤{OVERLAY_CHUNK_SECONDS:.0f}s"
+        )
+        work_dir.mkdir(parents=True, exist_ok=True)
+        chunk_files: list[Path] = []
+        list_path = work_dir / "overlay_chunks.txt"
+        try:
+            for k, (ws, we, idxs) in enumerate(windows):
+                chunk_path = work_dir / f"overlay_chunk_{k:03d}.mp4"
+
+                def _chunk_cmd(enc: str, _ws=ws, _we=we, _idxs=idxs, _out=chunk_path) -> list[str]:
+                    return _build_step2_cmd(
+                        enc,
+                        cue_subset=_idxs,
+                        window=(_ws, _we),
+                        output_path=_out,
+                    )
+
+                used_encoder, p = _run_overlay_step(_chunk_cmd, used_encoder)
+                if p.returncode != 0 or not chunk_path.is_file() or chunk_path.stat().st_size < 5000:
+                    raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
+                chunk_files.append(chunk_path)
+            list_path.write_text(
+                # Absolute entries: the concat demuxer resolves
+                # relative ones against the LIST's directory, not the
+                # process CWD — a relative work_dir would double its
+                # prefix and open nothing.
+                "".join(_concat_list_line(cpath.resolve()) + "\n" for cpath in chunk_files),
+                encoding="utf-8",
+            )
+            concat_cmd = [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "concat", "-safe", "0", "-i", str(list_path),
+                "-map_metadata", "-1", "-c", "copy",
+                "-movflags", "+faststart", str(output_video),
+            ]
+            pc = _run_media(concat_cmd, timeout=ffmpeg_timeout(duration), what="Production overlay render")
+            if pc.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
+                raise RuntimeError("Production overlay render failed: " + pc.stderr[-3000:])
+        finally:
+            for chunk_path in chunk_files:
+                try:
+                    chunk_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            try:
+                list_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _attempt_single_pass() -> bool:
         """Batch AL-R: combined blur+overlay encode, gated by a short
         RAM probe. Returns True only when the single pass produced the
         final output; every failure path returns False and the caller
-        runs the Batch AB two-step path unchanged."""
+        runs the Batch AB two-step path unchanged. Batch CC: the
+        caller holds the global overlay slot for the whole pass, so
+        the attempt no longer acquires it (or falls back on busy)."""
         nonlocal used_encoder
-        if not _OVERLAY_SINGLE_PASS_SLOT.acquire(blocking=False):
-            log("🧪 Overlay: single-pass slot busy (another job) — two-step path")
-            return False
         try:
             def _single_cmd(enc: str) -> list[str]:
                 return _build_step2_cmd(
@@ -4021,16 +4188,23 @@ def apply_production_overlays(
         except Exception as single_exc:
             log(f"⚠️ Overlay single-pass attempt error ({single_exc}) — two-step fallback")
             return False
-        finally:
-            _OVERLAY_SINGLE_PASS_SLOT.release()
 
     used_encoder = encoder
     intermediate: Path | None = None
     step2_input = input_video
     single_done = False
-    if boxes:
-        single_done = _attempt_single_pass()
-        if not single_done:
+    heavy = _overlay_is_heavy(len(cue_inputs), duration)
+    # Batch CC: EVERY production overlay encode below runs under the
+    # one global overlay slot (it previously serialised single-pass
+    # only, so two jobs' two-step passes could sum past the instance
+    # memory). A second job's overlay waits here — its stage text is
+    # already up — instead of OOM-ing both. Heavy jobs skip the
+    # single-pass attempt (see the OVERLAY_HEAVY_* note above) and
+    # route their step 2 to the chunked pass.
+    with _OVERLAY_SINGLE_PASS_SLOT:
+        if boxes and not heavy:
+            single_done = _attempt_single_pass()
+        if boxes and not single_done:
             # STEP 1: blur boxes only, into a scratch intermediate (no
             # +faststart — it is re-read immediately by step 2 and deleted
             # on success; a failed pass re-runs both steps from scratch).
@@ -4046,12 +4220,19 @@ def apply_production_overlays(
                 raise RuntimeError("Production overlay render failed: " + p1.stderr[-3000:])
             step2_input = intermediate
 
-    if not single_done:
-        # STEP 2: title / logo / extra text / subtitle cues / watermark
-        # pattern over the (possibly pre-blurred) video.
-        used_encoder, p = _run_overlay_step(_build_step2_cmd, used_encoder)
-        if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
-            raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
+        if not single_done:
+            if heavy:
+                # STEP 2 (chunked): the same title / logo / extra text
+                # / subtitle cues / watermark pattern, in ≤60 s
+                # windows over the (possibly pre-blurred) video.
+                _run_chunked_step2()
+            else:
+                # STEP 2: title / logo / extra text / subtitle cues /
+                # watermark pattern over the (possibly pre-blurred)
+                # video.
+                used_encoder, p = _run_overlay_step(_build_step2_cmd, used_encoder)
+                if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
+                    raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
     if intermediate is not None:
         try:
             intermediate.unlink()

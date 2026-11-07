@@ -1745,15 +1745,105 @@ async def _clear_recap_stranded_reset_count(job_id: str) -> None:
             state = _load_persisted_recap_state(job) if job is not None else None
             if state is None:
                 return
-            if not state.get("stranded_reset_count"):
+            if not state.get("stranded_reset_count") and not state.get("stranded_stage"):
                 return
             state["stranded_reset_count"] = 0
+            # Batch CC: the stage the count belonged to clears too,
+            # and the job's next life starts with no stage witness.
+            state["stranded_stage"] = None
             job.recap_config = json.dumps(state, ensure_ascii=False)
             await session.commit()
+        _STAGE_WITNESS_RANKS.pop(job_id, None)
+        try:
+            _recap_stage_witness_path(job_id).unlink(missing_ok=True)
+        except Exception:
+            pass
     except Exception as exc:
         logger.warning(
             f"Could not clear stranded reset count for {job_id}: {exc}"
         )
+
+
+# Batch CC: stage-aware stranded counting needs to know the stage a
+# crashed run had reached — the registry entry dies with the process,
+# so the progress seams also mirror the FURTHEST stage reached into a
+# tiny witness file in the job dir (sync file IO only: the seams run
+# on executor threads). The orphan sweep (app.webapp.server) reads it
+# back: a rescue whose job had advanced past the stage recorded at
+# the previous rescue restarts the count for the new stage instead of
+# marching to the fail limit — successful progress is not a loop.
+_RECAP_STAGE_RANK = {
+    "download": 0,
+    "transcribe": 1,
+    "context": 2,
+    "translate": 3,
+    "plan": 4,
+    "script_ready": 4,
+    "tts": 5,
+    "sync": 6,
+    "split": 6,
+    "finalize": 7,
+}
+_RECAP_STAGE_WITNESS_FILE = "progress_stage.json"
+_STAGE_WITNESS_RANKS: dict[str, int] = {}
+
+
+def _recap_stage_witness_path(job_id: str) -> Path:
+    return (
+        settings.storage_root
+        / "recap_output"
+        / str(job_id)
+        / _RECAP_STAGE_WITNESS_FILE
+    )
+
+
+def _read_recap_stage_witness(job_id: str) -> Optional[str]:
+    """Furthest pipeline stage a previous run of this job reached,
+    per its witness file — None when no witness exists (rows/runs
+    predating Batch CC keep the Batch AB stage-blind counting)."""
+    try:
+        data = json.loads(
+            _recap_stage_witness_path(job_id).read_text(encoding="utf-8")
+        )
+        stage = data.get("stage") if isinstance(data, dict) else None
+        return str(stage) if stage in _RECAP_STAGE_RANK else None
+    except Exception:
+        return None
+
+
+def _note_recap_progress_stage(entry: dict, stage) -> None:
+    """Mirror a run's furthest-reached stage into its witness file.
+
+    Best-effort and advance-only: the file always names the furthest
+    stage ANY run of this job reached, never a retry's early stages,
+    so a rescue can tell "died at the same wall again" apart from
+    "progressed past the old wall and died somewhere new"."""
+    if not stage or stage not in _RECAP_STAGE_RANK:
+        return
+    if not isinstance(entry, dict):
+        return
+    job_id = entry.get("id")
+    if not job_id:
+        return
+    job_id = str(job_id)
+    rank = _RECAP_STAGE_RANK[stage]
+    try:
+        if rank <= _STAGE_WITNESS_RANKS.get(job_id, -1):
+            return
+        job_dir = settings.storage_root / "recap_output" / job_id
+        if not job_dir.is_dir():
+            return
+        prev = _read_recap_stage_witness(job_id)
+        if prev is not None and _RECAP_STAGE_RANK[prev] >= rank:
+            _STAGE_WITNESS_RANKS[job_id] = _RECAP_STAGE_RANK[prev]
+            return
+        path = job_dir / _RECAP_STAGE_WITNESS_FILE
+        tmp = path.with_name(_RECAP_STAGE_WITNESS_FILE + ".tmp")
+        tmp.write_text(json.dumps({"stage": stage}), encoding="utf-8")
+        tmp.replace(path)
+        _STAGE_WITNESS_RANKS[job_id] = rank
+    except Exception:
+        pass
 
 
 SCRIPT_READY_TTL_SECONDS = 24 * 3600
@@ -2285,6 +2375,7 @@ async def _fail_stranded_recap_job(job_id: str, user_id: int, state: dict) -> bo
                     fresh_state["credits_refunded"] = refunded_amount
                     # Terminal state: the counter's job is done.
                     fresh_state["stranded_reset_count"] = 0
+                    fresh_state["stranded_stage"] = None
                     job.recap_config = json.dumps(
                         fresh_state, ensure_ascii=False
                     )
@@ -6254,6 +6345,10 @@ def _recap_set_entry_label(entry: dict, label: str, stage: str = None) -> None:
     # Batch CB: keep the ETA stage-timing marks in step (reporting
     # only — see _recap_eta_note_progress).
     _recap_eta_note_progress(entry, stage, "")
+    # Batch CC: mirror the furthest stage into the crash witness the
+    # orphan sweep reads (see _note_recap_progress_stage).
+    if stage:
+        _note_recap_progress_stage(entry, stage)
     if stage and stage in _RECAP_STAGE_BANDS:
         entry["progress_step"] = _RECAP_STAGE_STEPS[stage]
         lo, _hi = _RECAP_STAGE_BANDS[stage]
@@ -7011,6 +7106,8 @@ async def _execute_recap_background_job(
                     # Batch CB: ETA timing/segment marks (reporting
                     # only; read by _recap_eta_from_entry).
                     _recap_eta_note_progress(entry, stage, sub)
+                    # Batch CC: furthest-stage witness for the sweep.
+                    _note_recap_progress_stage(entry, stage)
                 else:
                     entry["progress_step"] = f"{cur}/{tot}"
                 entry["progress_label"] = _recap_clean_progress_label(label)
