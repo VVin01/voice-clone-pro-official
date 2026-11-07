@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r108">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r109">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r108" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r109" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -718,12 +718,12 @@
         <div class="source-panel-file mt-2 hidden" id="panel-source-file">
             <div class="video-drop-zone" id="recap-video-drop-zone">
                 <input type="file" id="recap-video-file-input" accept="video/mp4,video/x-matroska,video/quicktime,video/x-msvideo,video/webm,video/mp2t,video/x-m4v,.mp4,.mkv,.mov,.avi,.webm,.ts,.m4v" class="hidden-file-input">
-                <div class="drop-zone-content" onclick="document.getElementById('recap-video-file-input').click()">
+                <label class="drop-zone-content" for="recap-video-file-input">
                     <span class="drop-icon">🎬</span>
                     <span class="drop-text" id="recap-drop-text" data-i18n="recap_drop_text">ဖုန်း သို့မဟုတ် ကွန်ပျူတာထဲမှ MP4 ဗီဒီယို ရွေးချယ်ပါ</span>
                     <span class="drop-subtext" data-i18n="recap_drop_subtext">Douyin, TikTok, Movie clip မည်သည့် ဗီဒီယိုဖိုင်မဆို တိုက်ရိုက်လက်ခံပါသည်</span>
                     <span class="drop-limits" data-i18n="recap_drop_limits">📦 အများဆုံး 1 GB · MP4, MKV, MOV, AVI, WebM, TS, M4V</span>
-                </div>
+                </label>
                 <div class="upload-progress-wrap hidden" id="recap-upload-progress">
                     <div class="progress-bar-bg"><div class="progress-bar-fill" id="recap-upload-bar" style="width: 0%"></div></div>
                     <div class="upload-progress-row">
@@ -1159,9 +1159,9 @@
                                 <span class="style-lbl" data-i18n="recap_logo_custom_label">🖼️ ကိုယ်ပိုင် Logo:</span>
                                 <div class="logo-manager-controls" id="recap-logo-controls">
                                     <img id="recap-logo-thumb" class="logo-thumb hidden" alt="Logo">
-                                    <button type="button" class="pill-btn" id="btn-logo-upload"><span data-i18n="btn_logo_upload">Logo တင်မည်</span></button>
+                                    <label class="pill-btn" id="btn-logo-upload" for="input-logo-file"><span data-i18n="btn_logo_upload">Logo တင်မည်</span></label>
                                     <button type="button" class="pill-btn hidden" id="btn-logo-remove"><span data-i18n="btn_logo_remove">ဖယ်ရှားမည်</span></button>
-                                    <input type="file" id="input-logo-file" accept="image/png,image/jpeg,image/webp" class="hidden">
+                                    <input type="file" id="input-logo-file" accept="image/png,image/jpeg,image/webp" class="hidden-file-input">
                                 </div>
                                 <div class="logo-vip-hint hidden" id="recap-logo-vip-hint">
                                     <span data-i18n="recap_logo_vip_hint">🔒 ကိုယ်ပိုင် Logo ထည့်ခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</span>
@@ -2969,7 +2969,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r108"></script>
-    <script src="/static/js/app.js?v=20261104_r108"></script>
+    <script src="/static/js/i18n.js?v=20261104_r109"></script>
+    <script src="/static/js/app.js?v=20261104_r109"></script>
 </body>
 </html>

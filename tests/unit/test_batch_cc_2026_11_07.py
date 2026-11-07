@@ -665,7 +665,7 @@ def test_cache_token_is_r101():
     index_html = (
         Path(_api_mod.__file__).resolve().parent / "static" / "index.html"
     ).read_text(encoding="utf-8")
-    assert index_html.count("20261104_r108") == 4
+    assert index_html.count("20261104_r109") == 4
     assert ("20261104_r" + "100") not in index_html
 
 
