@@ -373,6 +373,15 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Initial retention cleanup error: %s", cl_err)
 
+    # Batch CD: startup pass of the private-AI transcript prune
+    # (30-day retention; the periodic sweep below repeats it).
+    try:
+        from app.services.private_ai import sweep_private_ai_messages
+        await sweep_private_ai_messages()
+    except Exception as pai_err:
+        import logging
+        logging.getLogger(__name__).warning("Initial private-AI transcript prune error: %s", pai_err)
+
     # Recover any orphaned RUNNING recap jobs left behind by previous deploys/restarts.
     # Age-aware guard (deploy overlap): only reset rows older than 10 minutes so
     # active renders on the old instance during deploy overlap are not disrupted.
@@ -457,6 +466,12 @@ async def lifespan(app: FastAPI):
                 # cover the rest; this keeps the table clean).
                 from app.services.group_ai_admin import sweep_stale_escalations
                 await sweep_stale_escalations()
+            except Exception:
+                pass
+            try:
+                # Batch CD: private-AI transcripts keep only 30 days.
+                from app.services.private_ai import sweep_private_ai_messages
+                await sweep_private_ai_messages()
             except Exception:
                 pass
 

@@ -507,6 +507,36 @@ def _log_private_decision(message: Message, user_id: int | None, decision: str, 
     )
 
 
+async def _record_private_exchange(
+    session: AsyncSession | None,
+    message: Message,
+    *,
+    reply_text: str,
+    kind: str,
+) -> None:
+    """Batch CD: persist the exchange the private-AI chain just
+    handled (user text + the reply actually sent) for the admin
+    user-detail chat log. Failure-isolated twice over — the service
+    swallows its own errors and this wrapper swallows the rest — so
+    recording can never break or delay the reply. PRIVATE chain
+    only: the group handler never calls this (group messages are
+    never stored — the standing ban)."""
+    try:
+        user = message.from_user
+        if user is None:
+            return
+        async with _session_or_new(session) as s:
+            await pai.record_private_exchange(
+                s,
+                user_id=user.id,
+                user_text=message.text or "",
+                reply_text=reply_text,
+                kind=kind,
+            )
+    except Exception as exc:
+        logger.warning("private_ai: transcript record failed (dropped): %s", exc)
+
+
 async def _user_language(session: AsyncSession | None, user_id: int) -> str:
     """The user's stored language for the localised deferral lines."""
     try:
@@ -604,15 +634,25 @@ async def handle_private_message(
         # the AI — defer to the user and hand the question to a human.
         if gai.detect_sensitive_topic(message.text):
             _log_private_decision(message, user.id, "escalate", "sensitive")
+            deferral_text = _bot_t("private_ai_deferral_sensitive", lang)
+            # _escalate posts the deferral only when the limiter's
+            # deferral cooldown allows it — record the exchange only
+            # when the deferral will actually be posted.
+            will_defer = pai.private_rate_limiter.can_defer(user.id)
             await _escalate(
                 message,
                 bot,
                 reason="sensitive",
-                deferral_text=_bot_t("private_ai_deferral_sensitive", lang),
+                deferral_text=deferral_text,
                 session=session,
                 limiter=pai.private_rate_limiter,
                 dm_link=None,
             )
+            if will_defer:
+                await _record_private_exchange(
+                    session, message,
+                    reply_text=deferral_text, kind=pai.KIND_ESCALATION,
+                )
             return
 
         if not pai.private_rate_limiter.can_reply(user.id, message.message_id):
@@ -636,6 +676,10 @@ async def handle_private_message(
             await message.reply(fast_path_text)
             pai.private_rate_limiter.record_reply(user.id, message.message_id)
             _log_private_decision(message, user.id, f"fast_path:{fast_path_kind}")
+            await _record_private_exchange(
+                session, message,
+                reply_text=fast_path_text, kind=pai.KIND_FAST_PATH,
+            )
             return
 
         # AI answers are budget-gated; fast paths and deferrals above
@@ -657,15 +701,22 @@ async def handle_private_message(
             return
         if decision == gai.DECISION_ESCALATE:
             _log_private_decision(message, user.id, "escalate", "ai_escalate")
+            deferral_text = _bot_t("private_ai_deferral_unsure", lang)
+            will_defer = pai.private_rate_limiter.can_defer(user.id)
             await _escalate(
                 message,
                 bot,
                 reason="ai_escalate",
-                deferral_text=_bot_t("private_ai_deferral_unsure", lang),
+                deferral_text=deferral_text,
                 session=session,
                 limiter=pai.private_rate_limiter,
                 dm_link=None,
             )
+            if will_defer:
+                await _record_private_exchange(
+                    session, message,
+                    reply_text=deferral_text, kind=pai.KIND_ESCALATION,
+                )
             return
         if decision != gai.DECISION_REPLY or not reply_text:
             _log_private_decision(message, user.id, "no_reply", "ai_decision")
@@ -683,6 +734,10 @@ async def handle_private_message(
         await message.reply(reply_text)
         pai.private_rate_limiter.record_reply(user.id, message.message_id)
         _log_private_decision(message, user.id, "reply", "ai")
+        await _record_private_exchange(
+            session, message,
+            reply_text=reply_text, kind=pai.KIND_AI_REPLY,
+        )
     except Exception as exc:
         logger.warning("private_ai: handler failed (silence): %s", exc)
 

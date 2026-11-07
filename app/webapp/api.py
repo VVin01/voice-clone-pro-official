@@ -11651,7 +11651,248 @@ async def get_admin_user_detail(
         select(func.max(Job.created_at)).where(Job.user_id == user_id)
     )).scalar()
     payload["last_job_at"] = last_job_at.isoformat() if last_job_at else None
+
+    # ── Batch CD Item 1: the completed detail (read-side only) ──────
+    from app.models.schema import (
+        CustomVoiceRequest,
+        PrivateAiMessage,
+        Referral,
+        ReferralReward,
+    )
+
+    bal = await db.get(MinuteBalance, user_id)
+    payload["balance_breakdown"] = {
+        "monthly_free_seconds": int(bal.monthly_free_seconds or 0) if bal else 0,
+        "welcome_seconds": int(bal.welcome_seconds or 0) if bal else 0,
+        "referral_seconds": int(bal.referral_seconds or 0) if bal else 0,
+        "purchased_seconds": int(bal.purchased_seconds or 0) if bal else 0,
+        "consumed_seconds": int(bal.consumed_seconds or 0) if bal else 0,
+    }
+
+    # TTS today, through the SAME helpers /api/me (Batch BZ) and the
+    # submit path enforce with — the admin screen can never disagree
+    # with the user's own surfaces. Admin targets are cap-exempt, so
+    # their fields are null (the client paints ∞), like /api/me.
+    tts_today = {
+        "daily_limit_seconds": None,
+        "consumed_seconds": None,
+        "remaining_seconds": None,
+    }
+    if not settings.is_admin(user_id):
+        try:
+            from app.services.tts_service import (
+                tts_cap_consumed_seconds,
+                tts_daily_limit_minutes,
+            )
+
+            _limit_min = tts_daily_limit_minutes(target, is_admin=False)
+            _consumed = await tts_cap_consumed_seconds(db, user_id)
+            _referral = int(bal.referral_seconds or 0) if bal else 0
+            tts_today["daily_limit_seconds"] = int(_limit_min) * 60
+            tts_today["consumed_seconds"] = round(float(_consumed), 1)
+            if _limit_min > 0:
+                tts_today["remaining_seconds"] = round(
+                    _referral + max(0.0, _limit_min * 60 - float(_consumed)), 1
+                )
+        except Exception:
+            pass  # a quota read must never break the detail screen
+    payload["tts_today"] = tts_today
+
+    pay_rows = (await db.execute(
+        select(PaymentRequest)
+        .where(PaymentRequest.user_id == user_id)
+        .order_by(PaymentRequest.created_at.desc())
+        .limit(10)
+    )).scalars().all()
+    payload["payments"] = [
+        {
+            "id": p.id,
+            "plan": p.package_code,
+            "amount_mmk": int(p.amount_mmk or 0),
+            "status": p.status,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in pay_rows
+    ]
+    # Per-user truth (this user's approved total) — NOT the income
+    # card: test-flag exclusions do not apply to a single user's own
+    # record. Aggregated per-row in Python, never SQL SUM (the
+    # codebase's standing aggregation rule, Batch R / premium D1).
+    approved_amounts = (await db.execute(
+        select(PaymentRequest.amount_mmk).where(
+            PaymentRequest.user_id == user_id,
+            PaymentRequest.status == PaymentStatus.APPROVED.value,
+        )
+    )).scalars().all()
+    payload["payments_total_mmk"] = int(
+        sum(int(a or 0) for a in approved_amounts)
+    )
+
+    referred_count = (await db.execute(
+        select(func.count(Referral.id)).where(Referral.referrer_id == user_id)
+    )).scalar() or 0
+    reward_seconds = (await db.execute(
+        select(ReferralReward.seconds).where(
+            ReferralReward.referrer_id == user_id
+        )
+    )).scalars().all()
+    referral_earned = int(sum(int(s or 0) for s in reward_seconds))
+    referred_by = None
+    own_referral = (await db.execute(
+        select(Referral).where(Referral.referred_id == user_id)
+    )).scalars().first()
+    if own_referral is not None:
+        referrer = await db.get(User, own_referral.referrer_id)
+        if referrer is not None:
+            referred_by = {
+                "id": referrer.id,
+                "username": referrer.username,
+                "first_name": referrer.first_name,
+            }
+    payload["referrals"] = {
+        "referred_count": int(referred_count),
+        "referral_earned_seconds": int(referral_earned),
+        "referred_by": referred_by,
+    }
+
+    job_rows = (await db.execute(
+        select(Job)
+        .where(Job.user_id == user_id)
+        .order_by(Job.created_at.desc())
+        .limit(10)
+    )).scalars().all()
+    payload["recent_jobs"] = [
+        {
+            "id": j.id,
+            "job_type": j.job_type,
+            "status": j.status,
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+            "seconds_estimated": int(j.seconds_estimated or 0),
+            "seconds_consumed": int(j.seconds_consumed or 0),
+        }
+        for j in job_rows
+    ]
+
+    ledger_rows = (await db.execute(
+        select(MinuteLedgerEvent)
+        .where(MinuteLedgerEvent.user_id == user_id)
+        .order_by(MinuteLedgerEvent.created_at.desc(), MinuteLedgerEvent.id.desc())
+        .limit(10)
+    )).scalars().all()
+    payload["ledger_recent"] = [
+        {
+            "kind": e.source,
+            "delta": int(e.seconds or 0) if e.direction == "CREDIT" else -int(e.seconds or 0),
+            "reason": e.note,
+            "reference_id": e.reference_id,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in ledger_rows
+    ]
+
+    payload["verification"] = {
+        "channel_verified": bool(target.channel_verified),
+        "group_verified": bool(target.group_verified),
+    }
+    payload["custom_voices_count"] = (await db.execute(
+        select(func.count(CustomVoiceRequest.id)).where(
+            CustomVoiceRequest.user_id == user_id
+        )
+    )).scalar() or 0
+
+    # Recorded private-AI exchanges (Batch CD Item 3): last 50 rows,
+    # oldest → newest so the chat log reads top-down.
+    chat_rows = (await db.execute(
+        select(PrivateAiMessage)
+        .where(PrivateAiMessage.user_id == user_id)
+        .order_by(PrivateAiMessage.id.desc())
+        .limit(50)
+    )).scalars().all()
+    payload["ai_chats"] = [
+        {
+            "direction": m.direction,
+            "kind": m.kind,
+            "text": m.text,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in reversed(chat_rows)
+    ]
     return payload
+
+
+class AdminUserMessageRequest(BaseModel):
+    text: str = ""
+
+
+@api_router.post("/admin/users/{user_id}/message")
+async def send_admin_user_message(
+    user_id: int,
+    req: AdminUserMessageRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Send ONE user a direct bot message from the detail screen
+    (Batch CD Item 2). Every attempt — delivered or not — writes an
+    AuditLog row (BC-4 conventions: admin id, target, text snippet +
+    length in details_json, never a second copy of the full body
+    beyond the audit record). A user who blocked the bot gets a
+    reportable 409, never a silent 'sent'."""
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message text is empty")
+    if len(text) > 4000:
+        raise HTTPException(
+            status_code=400,
+            detail="Message is too long (max 4000 characters)",
+        )
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not settings.bot_token:
+        # Same honesty rule as the broadcast path (Batch AJ M2):
+        # nothing can be sent without a token — say so, never fake it.
+        raise HTTPException(status_code=503, detail="Bot token is not configured")
+
+    from aiogram import Bot
+    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+    delivered = False
+    error_kind = None
+    bot = Bot(token=settings.bot_token)
+    try:
+        await bot.send_message(chat_id=user_id, text=text)
+        delivered = True
+    except TelegramForbiddenError:
+        error_kind = "bot_blocked"
+    except TelegramBadRequest:
+        error_kind = "chat_not_found"
+    except Exception:
+        error_kind = "send_failed"
+    finally:
+        await bot.session.close()
+
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="user.message",
+        target_type="user",
+        target_id=str(user_id),
+        details_json=json.dumps({
+            "snippet": text[:80],
+            "length": len(text),
+            "delivered": delivered,
+            "error": error_kind,
+            "via": "miniapp",
+        }),
+    ))
+    await db.commit()
+
+    if not delivered:
+        # 409-style reportable errors the client renders distinctly:
+        # the bot-blocked copy is its own i18n key client-side, keyed
+        # off this stable detail token.
+        raise HTTPException(status_code=409, detail=error_kind or "send_failed")
+    return {"ok": True}
 
 
 class BanUserRequest(BaseModel):
