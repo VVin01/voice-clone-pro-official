@@ -17,6 +17,7 @@ from app.models.enums import JobStatus
 from app.models.schema import AuditLog, Job, User, VoiceModel, utc_now
 from app.services.audio import (
     GENDER_PITCH_MAP,
+    concat_wav_files,
     generate_edge_tts,
     get_output_filename,
     get_wav_duration_seconds,
@@ -162,6 +163,80 @@ async def _voice_job_cancelled(session: AsyncSession, job: Job) -> bool:
     except Exception:
         return False
     return job.status == JobStatus.CANCELLED.value
+
+
+def _synthesize_voxcpm_voice_job(
+    engine,
+    *,
+    job_id: str,
+    text: str,
+    output_wav: Path,
+    reference_wav,
+    control_instruction,
+    preset_voice,
+    speed,
+    progress_cb,
+    reference_transcript: str = "",
+    reference_seconds: float = 0.0,
+) -> Path:
+    """Batch CH: VoxCPM synthesis for a voice-clone job, chunked when
+    the text cannot fit the model's 2,096-token input cap in one call.
+
+    A text that fits stays EXACTLY the pre-CH single call (same
+    arguments, engine-internal fallback semantics untouched). A longer
+    text is split by app.services.voice_chunking into sentence-aligned
+    chunks; each chunk is synthesized with the SAME reference,
+    control, persona and speed, with allow_fallback=False so a chunk
+    can never silently switch voice mid-job — a chunk failure raises
+    into the caller's EXISTING whole-job resilient fallback, and the
+    parts are concatenated only after every chunk succeeded, so a
+    mixed-voice output is never produced. Runs in an executor.
+    """
+    from app.services.voice_chunking import plan_text_chunks
+
+    chunks = plan_text_chunks(
+        text,
+        reference_transcript=reference_transcript,
+        control_instruction=control_instruction or "",
+        reference_seconds=reference_seconds,
+    )
+    if len(chunks) <= 1:
+        return engine.synthesize(
+            text=text,
+            output_wav=output_wav,
+            reference_wav=reference_wav,
+            control_instruction=control_instruction,
+            preset_voice=preset_voice,
+            speed=speed,
+            progress_cb=progress_cb,
+        )
+
+    logger.info(
+        "Voice clone chunked synthesis: job=%s chunks=%d", job_id, len(chunks)
+    )
+    parts: list[Path] = []
+    try:
+        for idx, chunk in enumerate(chunks, 1):
+            part = output_wav.parent / f"{output_wav.stem}.chunk{idx:02d}.wav"
+            engine.synthesize(
+                text=chunk,
+                output_wav=part,
+                reference_wav=reference_wav,
+                control_instruction=control_instruction,
+                preset_voice=preset_voice,
+                speed=speed,
+                progress_cb=progress_cb,
+                allow_fallback=False,
+            )
+            parts.append(part)
+        concat_wav_files(parts, output_wav)
+    finally:
+        for part in parts:
+            try:
+                part.unlink(missing_ok=True)
+            except Exception:
+                pass
+    return output_wav
 
 
 async def process_single_job(
@@ -339,12 +414,44 @@ async def process_single_job(
                             "deep resonance, velvety cadence, and fluent authentic native pronunciation."
                         )
 
+                # Batch CH: reference overhead for the chunk budget —
+                # the persona reference transcript (exact, when this is
+                # a persona job) plus the reference audio's duration
+                # (the engine trims clone references to 45 s; the
+                # chunker caps the estimate there too). Best-effort:
+                # any probe failure just means a zero overhead, i.e.
+                # the largest chunk budget.
+                reference_transcript = ""
+                reference_seconds = 0.0
+                if getattr(job, "preset_voice", None):
+                    try:
+                        from app.services.curated_voices import get_persona_reference
+
+                        _p_ref_path, _p_ref_text = get_persona_reference(
+                            job.preset_voice
+                        )
+                        reference_transcript = _p_ref_text or ""
+                        if ref_wav is None and _p_ref_path and Path(_p_ref_path).is_file():
+                            reference_seconds = float(
+                                get_wav_duration_seconds(Path(_p_ref_path))
+                            )
+                    except Exception:
+                        reference_transcript = ""
+                        reference_seconds = 0.0
+                if ref_wav is not None:
+                    try:
+                        reference_seconds = float(get_wav_duration_seconds(ref_wav))
+                    except Exception:
+                        reference_seconds = 0.0
+
                 try:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
                         None,
                         functools.partial(
-                            engine_inst.synthesize,
+                            _synthesize_voxcpm_voice_job,
+                            engine_inst,
+                            job_id=str(job.id),
                             text=clean_text,
                             output_wav=converted_wav_path,
                             reference_wav=ref_wav,
@@ -352,7 +459,9 @@ async def process_single_job(
                             preset_voice=getattr(job, "preset_voice", None),
                             speed=job.speed_preset or "normal",
                             progress_cb=tracker.set_custom_note,
-                        )
+                            reference_transcript=reference_transcript,
+                            reference_seconds=reference_seconds,
+                        ),
                     )
                 except Exception as e_vox:
                     used_fallback = True
@@ -435,13 +544,29 @@ async def process_single_job(
         # then failed (or a cancel that landed mid-flight) still
         # carried a downloadable result. Charge → persist → deliver.
         if not settings.is_admin(job.user_id):
-            await consume_seconds(
-                session=session,
-                user_id=job.user_id,
-                seconds_to_consume=duration_seconds,
-                job_id=str(job.id),
-                note=f"Voice clone generation ({model.name}, {duration_seconds}s)",
-            )
+            if used_fallback:
+                # Batch CH (Item 2): a job delivered via the Edge
+                # fallback is not the clone service the user's minutes
+                # pay for — deduct NOTHING from the voice balance
+                # (FREE monthly wallet / welcome / purchased), and the
+                # seconds_consumed=0 write below keeps it out of the
+                # Batch AN daily-cap counting as well (queue.py also
+                # skips edge_fallback SUCCESS rows explicitly). The
+                # Edge audio, the fallback caption note and the
+                # edge_fallback engine marking all stay as they were.
+                logger.info(
+                    "Voice job %s delivered via Edge fallback; "
+                    "skipping voice-balance deduction (Batch CH).",
+                    job.id,
+                )
+            else:
+                await consume_seconds(
+                    session=session,
+                    user_id=job.user_id,
+                    seconds_to_consume=duration_seconds,
+                    job_id=str(job.id),
+                    note=f"Voice clone generation ({model.name}, {duration_seconds}s)",
+                )
         else:
             logger.info("Admin voice job %s completed (%ss); skipping balance deduction.", job.id, duration_seconds)
             session.add(
@@ -454,7 +579,9 @@ async def process_single_job(
                 )
             )
 
-        job.seconds_consumed = duration_seconds
+        # Batch CH (Item 2): fallback-delivered jobs consumed no
+        # voice minutes — record 0, not the delivered duration.
+        job.seconds_consumed = 0 if used_fallback else duration_seconds
         if used_fallback:
             # Persist the fallback flag on the job result so the Mini App
             # job status/history can show the fallback notice as well.
