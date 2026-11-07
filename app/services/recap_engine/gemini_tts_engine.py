@@ -51,7 +51,7 @@ import threading
 import time
 import wave
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 # Audit fix E: the Gemini pool is built by ONE shared helper
 # (app.services.key_rotation) so TTS sees the same union of keys as the
@@ -235,6 +235,13 @@ class GeminiTTSEngine:
         self._dead: set[tuple[str, int]] = set()
         self._last_key = 0
         self.exhausted = False  # circuit breaker: total failure -> later lines fail fast
+        # Batch CG: the last HTTP status + short error text seen per
+        # key index, so callers routing a SINGLE user-owned key can
+        # classify its failure (auth-class → the key is invalid;
+        # 429/quota → the key is merely spent) without ever logging
+        # the key itself. Inert for the shared pool path.
+        self.key_error_codes: dict[int, int] = {}
+        self.key_error_texts: dict[int, str] = {}
 
     def fingerprint(self, voice: str) -> str:
         profile = narrator_prompt("", voice, self.direction)
@@ -301,6 +308,8 @@ class GeminiTTSEngine:
                         last = f"{model}: no audio in the answer"
                     except Exception as exc:  # noqa: BLE001
                         code = _code(exc)
+                        self.key_error_codes[i] = code
+                        self.key_error_texts[i] = str(exc)[:200]
                         last = f"{model} key {i + 1}: {code or ''} {str(exc)[:160]}"
                         if "location is not supported" in str(exc).lower():
                             self.exhausted = True
@@ -370,3 +379,116 @@ class GeminiTTSEngine:
                         "-ac", "1", "-c:a", "pcm_s16le", str(out)], check=True, timeout=120)
         raw.unlink(missing_ok=True)
         return out
+
+
+# ── Batch CG: bring-your-own-key routing ─────────────────────────────
+# A user's own Gemini key is tried FIRST for that user's Gemini TTS;
+# the service pool only tops up. The composite below exposes the same
+# generate_channel99_voice interface as GeminiTTSEngine so both
+# callers (the TTS tab and recap narration) route identically. The
+# key VALUE never appears here beyond the engine that already holds
+# it — nothing in this section logs, formats or returns a key.
+
+def wav_duration_seconds(path: Path) -> float:
+    """Duration of a PCM WAV via the stdlib wave module (the engines
+    write plain PCM, so no ffprobe round-trip is needed for the
+    delivered-seconds accounting). 0.0 on any unreadable file."""
+    try:
+        with wave.open(str(path), "rb") as w:
+            rate = w.getframerate()
+            if rate <= 0:
+                return 0.0
+            return w.getnframes() / float(rate)
+    except Exception:
+        return 0.0
+
+
+def classify_gemini_key_failure(engine: Any, exc: BaseException) -> str:
+    """Classify a SINGLE-key engine's failure for BYOK routing:
+    "invalid" (auth-class — Google rejected the key itself: 401/403,
+    "API key not valid", permission-denied), "spent" (429 / quota —
+    the key is genuine but out of daily quota), or "error" (anything
+    else). Only "invalid" may mark a user's key invalid; every class
+    still steps the current job to the pool — a bad key never fails
+    a job."""
+    codes = getattr(engine, "key_error_codes", None) or {}
+    texts = " ".join((getattr(engine, "key_error_texts", None) or {}).values())
+    haystack = f"{texts} {exc}".lower()
+    if (
+        any(c in (401, 403) for c in codes.values())
+        or "api key not valid" in haystack
+        or "api_key_invalid" in haystack
+        or "permission_denied" in haystack
+        or "permission denied" in haystack
+    ):
+        return "invalid"
+    if (
+        429 in codes.values()
+        or "quota" in haystack
+        or "resource_exhausted" in haystack
+        or "exhausted" in haystack
+    ):
+        return "spent"
+    return "error"
+
+
+class RoutedGeminiEngine:
+    """own-key → pool composite over two GeminiTTSEngine instances.
+
+    Per call: the own-key engine serves while it can; a GeminiTTSError
+    from it is classified (invalid sets ``own_key_invalid`` so the
+    caller can mark the stored key + tell the user) and the call
+    steps to the pool engine. The pool engine's own failures
+    propagate unchanged (the caller's exhaustion handling — CE
+    fallback / recap per-segment fallback — decides). Successful
+    draws are counted per source (requests + delivered WAV seconds)
+    for the taste/budget accounting; failed attempts count nothing.
+    Thread-safe: recap narration calls from a worker pool.
+    """
+
+    def __init__(
+        self,
+        own_engine: Any = None,
+        pool_engine: Any = None,
+        *,
+        log: LogFn = print,
+    ) -> None:
+        self.own_engine = own_engine
+        self.pool_engine = pool_engine
+        self.log = log
+        self.exhausted = False
+        self.own_key_invalid = False
+        self._own_spent = own_engine is None
+        self.own_requests = 0
+        self.own_seconds = 0.0
+        self.pool_requests = 0
+        self.pool_seconds = 0.0
+        self._lock = threading.Lock()
+
+    def generate_channel99_voice(self, text: str, voice: str) -> Path:
+        own_exc: BaseException | None = None
+        if self.own_engine is not None and not self._own_spent:
+            try:
+                out = self.own_engine.generate_channel99_voice(text, voice)
+                with self._lock:
+                    self.own_requests += 1
+                    self.own_seconds += wav_duration_seconds(out)
+                return out
+            except GeminiTTSError as exc:
+                own_exc = exc
+                cls = classify_gemini_key_failure(self.own_engine, exc)
+                with self._lock:
+                    if cls == "invalid":
+                        self.own_key_invalid = True
+                    self._own_spent = True
+                self.log(f"🔑 Own Gemini key stepped aside ({cls}) — pool takes over")
+        if self.pool_engine is not None:
+            out = self.pool_engine.generate_channel99_voice(text, voice)
+            with self._lock:
+                self.pool_requests += 1
+                self.pool_seconds += wav_duration_seconds(out)
+            return out
+        self.exhausted = True
+        if own_exc is not None:
+            raise own_exc
+        raise GeminiTTSError("Gemini TTS: no Gemini route available for this call.")

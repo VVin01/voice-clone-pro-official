@@ -156,12 +156,16 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS recap_credits INTEGER DEFAULT 3"))
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_test_account BOOLEAN DEFAULT FALSE"))
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS gemini_api_key TEXT"))
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS gemini_key_state VARCHAR(10) DEFAULT ''"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS engine VARCHAR(20) DEFAULT 'voxcpm'"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preset_voice VARCHAR(50)"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_config TEXT"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS reference_trimmed BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tts_fallback_used BOOLEAN DEFAULT FALSE"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tts_route VARCHAR(24)"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gemini_key_broken BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_ref_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE voice_models ADD COLUMN IF NOT EXISTS sample_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
@@ -182,6 +186,10 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE users ADD COLUMN bot_blocked BOOLEAN DEFAULT 0"))
                 if "is_test_account" not in cols_users:
                     connection.execute(text("ALTER TABLE users ADD COLUMN is_test_account BOOLEAN DEFAULT 0"))
+                if "gemini_api_key" not in cols_users:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN gemini_api_key TEXT"))
+                if "gemini_key_state" not in cols_users:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN gemini_key_state VARCHAR(10) DEFAULT ''"))
 
                 res = connection.execute(text("PRAGMA table_info(voice_models)"))
                 cols = [row[1] for row in res.fetchall()]
@@ -198,6 +206,10 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN reference_trimmed BOOLEAN DEFAULT 0"))
                 if "tts_fallback_used" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN tts_fallback_used BOOLEAN DEFAULT 0"))
+                if "tts_route" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN tts_route VARCHAR(24)"))
+                if "gemini_key_broken" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN gemini_key_broken BOOLEAN DEFAULT 0"))
                 if "recap_ref_audio_path" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN recap_ref_audio_path TEXT"))
                 if "engine" not in cols_jobs:

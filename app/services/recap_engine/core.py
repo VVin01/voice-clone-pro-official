@@ -4578,6 +4578,7 @@ class EdgeSmartSync:
         should_stop: Callable[[], bool] | None = None,
         max_run_seconds: float | None = None,
         tts_workers: int | None = None,
+        gemini_route: Any = None,
     ) -> None:
         self.job_dir = Path(job_dir).resolve()
         self.source_path = Path(source_path).resolve() if source_path else (self.job_dir / "source.mp4")
@@ -4602,6 +4603,15 @@ class EdgeSmartSync:
         self.smooth_freeze_fallback = bool(smooth_freeze_fallback)
         self.max_freeze_hold = max(0.15, min(float(max_freeze_hold), 1.50))
         self.render_final_video = bool(render_final_video)
+        # Batch CG: the BYOK route context for Gemini narration
+        # (GeminiRouteContext or None). A plain in-memory attribute —
+        # it must NEVER ride through ``overlays``, which the pipeline
+        # persists into checkpoint/plan JSON on disk. Finalised into
+        # self._gemini_outcome after the TTS stage for the caller's
+        # FREE taste accounting.
+        self.gemini_route = gemini_route
+        self._gemini_outcome: Optional[dict] = None
+        self._gemini_routed: Any = None
         # Short pauses: see trim_edge_silence. Trims excessive TTS dead air while keeping natural breath.
         self.short_pauses = True
         self.overlays = dict(overlays or {})
@@ -5049,7 +5059,53 @@ class EdgeSmartSync:
                     bool(self.overlays.get("is_female"))
                 )
                 _gem_keys = collect_gemini_keys()
-                if _gem_keys:
+                if self.gemini_route is not None:
+                    # Batch CG: route narration through the caller's
+                    # own key first, the pool second (same composite
+                    # as the TTS tab). Neither side available → the
+                    # engine stays None and every segment uses the
+                    # persona fallback, exactly like the no-keys case;
+                    # the outcome records the taste block for the
+                    # caller's caption/accounting.
+                    try:
+                        from app.services.recap_engine.gemini_tts_engine import (
+                            RoutedGeminiEngine,
+                        )
+                    except ImportError:
+                        from gemini_tts_engine import (  # type: ignore
+                            RoutedGeminiEngine,
+                        )
+                    _ctx = self.gemini_route
+                    _own_engine = None
+                    if _ctx.has_usable_own_key:
+                        try:
+                            _own_engine = GeminiTTSEngine(
+                                ffmpeg=self.ffmpeg,
+                                work_dir=paths.work / "gemini_tts",
+                                rate=effective_rate,
+                                keys=[_ctx.own_key],
+                                log=self.log,
+                            )
+                        except Exception:
+                            _own_engine = None
+                    _pool_engine = None
+                    if _ctx.pool_allowed and _gem_keys:
+                        _pool_engine = GeminiTTSEngine(
+                            ffmpeg=self.ffmpeg,
+                            work_dir=paths.work / "gemini_tts",
+                            rate=effective_rate,
+                            keys=_gem_keys,
+                            log=self.log,
+                        )
+                    if _own_engine is not None or _pool_engine is not None:
+                        gem_engine = RoutedGeminiEngine(
+                            _own_engine, _pool_engine, log=self.log
+                        )
+                        self._gemini_routed = gem_engine
+                        self.log(f"✨ Gemini TTS engine ready (voice={gemini_voice_name}, routed own-key→pool); persona engine stays as per-segment fallback")
+                    else:
+                        self.log("⚠️ Gemini TTS selected but no Gemini route is available for this user — every line will use the persona engine (reported as fallback)")
+                elif _gem_keys:
                     gem_engine = GeminiTTSEngine(
                         ffmpeg=self.ffmpeg,
                         work_dir=paths.work / "gemini_tts",
@@ -5487,6 +5543,40 @@ class EdgeSmartSync:
             )
             atomic_write_json(paths.checkpoint, checkpoint)
 
+        # Batch CG: finalise the BYOK route outcome now that every
+        # segment's audio exists. Successful draws only (the routed
+        # engine counts nothing for failed attempts); the caller
+        # debits the FREE taste from these numbers. When no route was
+        # available at all (taste spent, no key, no pool) the outcome
+        # records the block so the completion caption can name the
+        # own-key option. In-memory only — never in the checkpoint.
+        if use_gemini and self.gemini_route is not None:
+            _routed = self._gemini_routed
+            if _routed is not None:
+                if _routed.pool_requests and _routed.own_requests:
+                    _route = "own_pool_mix"
+                elif _routed.pool_requests:
+                    _route = "pool"
+                elif _routed.own_requests:
+                    _route = "own_key"
+                else:
+                    _route = "edge"
+                self._gemini_outcome = {
+                    "route": _route,
+                    "pool_seconds": float(_routed.pool_seconds),
+                    "pool_requests": int(_routed.pool_requests),
+                    "own_key_invalid": bool(_routed.own_key_invalid),
+                    "taste_blocked": False,
+                }
+            else:
+                self._gemini_outcome = {
+                    "route": "edge",
+                    "pool_seconds": 0.0,
+                    "pool_requests": 0,
+                    "own_key_invalid": False,
+                    "taste_blocked": bool(self.gemini_route.taste_blocked),
+                }
+
         if short_pauses:
             self.log(f"✂️ Short pauses: Edge TTS silence trimmed · voice {tts_total / 60:.1f} → {cursor / 60:.1f} min "
                      f"(~0.25 s between lines; picture never cut for it)")
@@ -5786,4 +5876,6 @@ class EdgeSmartSync:
             "subtitles_ass": str(final_ass) if final_ass.is_file() else (str(ass_file) if ass_file.is_file() else None),
             "segments": len(timing),
             "duration": final_duration,
+            # Batch CG: BYOK route outcome (None for non-routed runs).
+            "gemini_route": self._gemini_outcome,
         }

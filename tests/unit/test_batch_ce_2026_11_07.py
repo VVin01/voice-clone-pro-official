@@ -487,8 +487,8 @@ def test_ce_cache_token_is_r103():
     html = (ROOT / "app" / "webapp" / "static" / "index.html").read_text(
         encoding="utf-8"
     )
-    assert html.count("20261104_r103") == 4
-    assert ("20261104_r" + "102") not in html
+    assert html.count("20261104_r104") == 4
+    assert ("20261104_r" + "103") not in html
 
 
 def test_ce_fallback_flag_column_and_migrations_exist():

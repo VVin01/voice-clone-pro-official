@@ -74,5 +74,5 @@ def test_vip_title_text_and_badge_unchanged():
 
 
 def test_cache_token_r57():
-    assert INDEX_HTML.count("?v=20261104_r103") == 4
+    assert INDEX_HTML.count("?v=20261104_r104") == 4
     assert "20261104_r55" not in INDEX_HTML

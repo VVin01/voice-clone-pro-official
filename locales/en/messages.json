@@ -502,6 +502,12 @@
   "pay_slip_already_used": "This receipt has already been submitted. The admins will notify you once it has been reviewed.",
   "tts_delivery_caption": "🎧 <b>TTS Audio</b>\n🎙️ Voice: {engine} · {voice}\n✨ <i>Sent at your request from the Mini App TTS tab.</i>",
   "tts_fallback_note": "ℹ️ The Gemini voices are temporarily full, so this one was made with the Edge voice instead.",
+  "tts_taste_key_hint": "💡 Today's free Gemini taste is used up. To keep using Gemini voices, add your own Gemini key (free from Google AI Studio) in the TTS tab — or just keep enjoying the Edge voice.",
+  "tts_own_key_broken_note": "🔑 Your saved Gemini key stopped working, so this job was made with another voice instead. You can replace the key in the TTS tab.",
+  "recap_key_hint_note": "\n💡 Today's free Gemini taste is used up, so the narration used a substitute voice. To keep Gemini voices, add your own Gemini key in the TTS tab.",
+  "recap_own_key_broken_note": "\n🔑 Your saved Gemini key stopped working, so this job used a substitute voice. You can replace the key in the TTS tab.",
+  "gemini_key_invalid_error": "Google did not accept this Gemini key — please check the key and try again.",
+  "gemini_key_unverifiable_error": "The key could not be verified right now — please try again shortly.",
   "private_ai_deferral_sensitive": "This one is about your account, so I can't answer it right here. I've let the admin team know — they'll check it and get back to you.",
   "private_ai_deferral_unsure": "I've asked the admin team about this one so we can be sure. I'll let you know as soon as they reply."
 }
