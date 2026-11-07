@@ -563,6 +563,14 @@ class Job(Base):
     # the Mini App result/history trim note — the same role
     # engine == "edge_fallback" plays for the fallback disclosure.
     reference_trimmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Batch CE: True when a Gemini TTS-tab job hit an exhaustion-class
+    # Gemini failure and was re-synthesised WHOLE on the Edge twin
+    # voice. The persisted honesty flag behind the delivery caption's
+    # used-engine truth + fallback note — the same role
+    # reference_trimmed plays for the BU trim disclosure. The row's
+    # engine / preset_voice keep the PICKED values, so app/History
+    # keep showing the picked name (settled BK split).
+    tts_fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Batch BV: for RECAP jobs, the resolved server path of the
     # user's own-voice narration sample (uploaded via
     # /api/recap/upload_voice_ref). Nullable: only own-voice recap

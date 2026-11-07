@@ -293,10 +293,65 @@ def _find_binary(name: str) -> str:
     return found or name
 
 
+def edge_voice_key_for_gemini_voice(gemini_voice: str | None) -> str:
+    """Batch CE: the Edge twin voice KEY for a picked Gemini voice —
+    the same gender via GEMINI_VOICE_GENDER (female → nilar, male →
+    thiha); an unmapped name defaults to thiha."""
+    from app.services.recap_engine.gemini_tts_engine import GEMINI_VOICE_GENDER
+
+    name = str(gemini_voice or "").strip().removeprefix("gemini:")
+    return "nilar" if GEMINI_VOICE_GENDER.get(name) == "female" else "thiha"
+
+
+def _is_gemini_exhaustion(exc: BaseException, engine: object | None = None) -> bool:
+    """Batch CE: the fallback trigger set — ONLY exhaustion-class
+    Gemini failures: no keys configured, every key dead/exhausted in
+    the engine's own accounting, and the engine's exhausted fail-fast
+    state. Any other synthesis error keeps the job-fails behaviour."""
+    if engine is not None and getattr(engine, "exhausted", False):
+        return True
+    try:
+        from app.services.recap_engine.gemini_tts_engine import GeminiTTSError
+    except Exception:  # pragma: no cover - engine module always present
+        GeminiTTSError = None  # type: ignore[assignment]
+    if GeminiTTSError is not None and isinstance(exc, GeminiTTSError):
+        # The one GeminiTTSError that is NOT exhaustion: an unknown
+        # voice name — a config error the Edge twin cannot fix.
+        return "Unknown Gemini voice" not in str(exc)
+    # This service's own no-keys raise (a plain RuntimeError above).
+    return "no Gemini API key configured" in str(exc)
+
+
+def _fallback_reason_class(exc: BaseException) -> str:
+    msg = str(exc)
+    if "no Gemini API key configured" in msg:
+        return "no_keys"
+    if "location is not supported" in msg:
+        return "location_unsupported"
+    return "pool_exhausted"
+
+
+def _synth_chunks(engine_obj: object, chunks: list[str], voice: str) -> list[Path]:
+    parts: list[Path] = []
+    for chunk in chunks:
+        part = Path(engine_obj.generate_channel99_voice(chunk, voice))
+        if not part.is_file() or part.stat().st_size < 256:
+            raise RuntimeError("TTS engine returned no usable audio.")
+        parts.append(part)
+    return parts
+
+
 def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
     """Blocking synthesis (run via asyncio.to_thread): chunk the text,
     synthesize each chunk with the selected engine, concatenate the
-    WAV parts into the job's output file, and probe its duration."""
+    WAV parts into the job's output file, and probe its duration.
+
+    Batch CE: an exhaustion-class Gemini failure re-synthesises the
+    ENTIRE job on the Edge twin of the picked voice (partial Gemini
+    chunks are discarded — voices never mix inside one file) and
+    stamps ``job.tts_fallback_used`` + ``job.edge_voice`` so the
+    delivery caption can tell the truth; the row's engine /
+    preset_voice keep the picked values for History."""
     from app.services.recap_engine.core import EdgeTTSEngine, probe_duration
 
     ffmpeg = _find_binary("ffmpeg")
@@ -314,27 +369,40 @@ def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
             collect_gemini_keys,
         )
 
-        keys = collect_gemini_keys()
-        if not keys:
-            raise RuntimeError("Gemini TTS: no Gemini API key configured.")
-        engine_obj = GeminiTTSEngine(
-            ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, keys=keys,
-            log=lambda msg: logger.info("TTS gemini: %s", msg),
-        )
-        voice = job.preset_voice
+        gemini_engine = None
+        try:
+            keys = collect_gemini_keys()
+            if not keys:
+                raise RuntimeError("Gemini TTS: no Gemini API key configured.")
+            gemini_engine = GeminiTTSEngine(
+                ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, keys=keys,
+                log=lambda msg: logger.info("TTS gemini: %s", msg),
+            )
+            parts = _synth_chunks(gemini_engine, chunks, job.preset_voice)
+        except Exception as exc:
+            if not _is_gemini_exhaustion(exc, gemini_engine):
+                raise
+            logger.warning(
+                "TTS fallback: gemini->edge job=%s reason=%s",
+                job.id, _fallback_reason_class(exc),
+            )
+            edge_voice = EDGE_TTS_VOICES[
+                edge_voice_key_for_gemini_voice(job.preset_voice)
+            ]
+            engine_obj = EdgeTTSEngine(
+                ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, pitch="+0Hz",
+                log=lambda msg: logger.info("TTS edge: %s", msg),
+            )
+            parts = _synth_chunks(engine_obj, chunks, edge_voice)
+            job.tts_fallback_used = True
+            job.edge_voice = edge_voice
     else:
         engine_obj = EdgeTTSEngine(
             ffmpeg=ffmpeg, work_dir=work_dir, rate=rate, pitch="+0Hz",
             log=lambda msg: logger.info("TTS edge: %s", msg),
         )
         voice = job.edge_voice or job.preset_voice or EDGE_TTS_VOICES["thiha"]
-
-    parts: list[Path] = []
-    for chunk in chunks:
-        part = Path(engine_obj.generate_channel99_voice(chunk, voice))
-        if not part.is_file() or part.stat().st_size < 256:
-            raise RuntimeError("TTS engine returned no usable audio.")
-        parts.append(part)
+        parts = _synth_chunks(engine_obj, chunks, voice)
 
     outputs_dir = Path(settings.storage_root) / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -392,12 +460,26 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
             tts_voice_display_name,
         )
 
+        caption_engine = tts_engine_display_name(getattr(job, "engine", None))
+        caption_voice = tts_voice_display_name(getattr(job, "engine", None), getattr(job, "preset_voice", None))
+        # Batch CE: a fallback job's caption names the engine + voice
+        # ACTUALLY used (Edge + the twin voice) instead, and gains the
+        # explicit fallback note line — the row keeps the picked
+        # values, so History still shows the picked name (BK split).
+        fell_back = bool(getattr(job, "tts_fallback_used", False))
+        if fell_back:
+            caption_engine = tts_engine_display_name("edge")
+            caption_voice = tts_voice_display_name(
+                "edge", getattr(job, "edge_voice", None) or EDGE_TTS_VOICES["thiha"]
+            )
         caption = _tts_t(
             "tts_delivery_caption",
             lang,
-            engine=tts_engine_display_name(getattr(job, "engine", None)),
-            voice=tts_voice_display_name(getattr(job, "engine", None), getattr(job, "preset_voice", None)),
+            engine=caption_engine,
+            voice=caption_voice,
         )
+        if fell_back:
+            caption += "\n" + _tts_t("tts_fallback_note", lang)
         bot = Bot(token=settings.bot_token)
         try:
             await bot.send_audio(

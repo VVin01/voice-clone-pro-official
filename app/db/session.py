@@ -161,6 +161,7 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_config TEXT"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS reference_trimmed BOOLEAN DEFAULT FALSE"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tts_fallback_used BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_ref_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE voice_models ADD COLUMN IF NOT EXISTS sample_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
@@ -195,6 +196,8 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN recap_config TEXT"))
                 if "reference_trimmed" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN reference_trimmed BOOLEAN DEFAULT 0"))
+                if "tts_fallback_used" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN tts_fallback_used BOOLEAN DEFAULT 0"))
                 if "recap_ref_audio_path" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN recap_ref_audio_path TEXT"))
                 if "engine" not in cols_jobs:
