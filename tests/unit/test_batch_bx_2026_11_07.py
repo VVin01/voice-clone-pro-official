@@ -68,7 +68,11 @@ def _render_guide(lang: str) -> str:
         free_sec=180,
         char_free="1,000",
         char_purchased="5,000",
-        voice_daily_free=5,
+        # Batch BZ: the FREE voice day renders as a clause built from
+        # the cap (capped phrase here, with the value an admin set).
+        voice_daily_free_clause=t(
+            "guide_voice_daily_free_capped", lang, minutes=5
+        ),
         voice_daily_paid=30,
         tts_daily_free=15,
         tts_daily_paid=60,
@@ -99,7 +103,12 @@ def test_guide_no_longer_names_the_legacy_daily_job_count():
 
     src = inspect.getsource(menu.render_help_settings_content)
     assert "daily_limit=settings.free_daily_job_limit" not in src
-    assert "voice_daily_free=settings.voice_daily_limit_minutes_free" in src
+    # Batch BZ: the renderer builds the FREE clause from the same
+    # setting (capped phrase when > 0, uncapped phrase at 0).
+    assert "voice_daily_free_clause=" in src
+    assert "guide_voice_daily_free_capped" in src
+    assert "guide_voice_daily_free_uncapped" in src
+    assert "settings.voice_daily_limit_minutes_free" in src
     assert "voice_daily_paid=settings.voice_daily_limit_minutes_paid" in src
     assert "tts_daily_paid=settings.tts_daily_limit_minutes_paid" in src
     assert "recap_free_min=settings.recap_free_max_duration_seconds // 60" in src

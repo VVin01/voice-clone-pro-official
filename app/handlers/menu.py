@@ -46,6 +46,35 @@ logger = logging.getLogger(__name__)
 menu_router = Router(name="menu")
 
 
+async def _menu_tts_spendable_today(
+    session: AsyncSession, user, referral_seconds: int
+) -> float:
+    """Batch BZ: today's spendable TTS seconds for the main menu —
+    the referral bucket plus today's daily-quota remainder, computed
+    through the same helpers /api/me and the TTS submit path use
+    (``tts_daily_limit_minutes`` + ``tts_cap_consumed_seconds``), so
+    the menu figure can never disagree with enforcement. When the
+    tier's daily cap is 0 (unlimited) only the referral figure is
+    returned — an unbounded remainder has no honest number. Any
+    failure falls back to the referral-only figure the menu showed
+    before BZ."""
+    try:
+        from app.services.tts_service import (
+            tts_cap_consumed_seconds,
+            tts_daily_limit_minutes,
+        )
+
+        limit_min = tts_daily_limit_minutes(user, is_admin=False)
+        if limit_min <= 0:
+            return float(referral_seconds or 0)
+        consumed = await tts_cap_consumed_seconds(session, user.id)
+        return float(referral_seconds or 0) + max(
+            0.0, limit_min * 60 - float(consumed)
+        )
+    except Exception:
+        return float(referral_seconds or 0)
+
+
 async def render_main_menu(
     user_id: int,
     lang: str | None = None,
@@ -55,6 +84,9 @@ async def render_main_menu(
         user, _ = await get_or_create_user(session, user_id)
         await grant_monthly_free_allowance(session, user_id)
         balance = await get_minute_balance(session, user_id)
+        _tts_spendable_today = await _menu_tts_spendable_today(
+            session, user, balance.referral_seconds or 0
+        )
         active_lang = lang or user.language_code
         is_admin = settings.is_admin(user_id)
     else:
@@ -63,6 +95,9 @@ async def render_main_menu(
             await grant_monthly_free_allowance(s, user_id)
             await s.commit()
             balance = await get_minute_balance(s, user_id)
+            _tts_spendable_today = await _menu_tts_spendable_today(
+                s, user, balance.referral_seconds or 0
+            )
             active_lang = lang or user.language_code
             is_admin = settings.is_admin(user_id)
 
@@ -98,13 +133,18 @@ async def render_main_menu(
             purchased_min=balance.purchased_minutes,
             recap_credits=3 if _recap_credits is None else _recap_credits,
         )
-        if (balance.referral_seconds or 0) > 0:
-            info_text += "\n" + t(
-                "menu_tts_balance_line",
-                active_lang,
-                tts_min=balance.referral_seconds / 60.0,
-                tts_sec=balance.referral_seconds,
-            )
+        # Batch BZ: the TTS line now states today's SPENDABLE TTS
+        # (referral + daily-quota remainder) and renders for every
+        # non-admin — before BZ it appeared only when the referral
+        # bucket was non-empty, so a new FREE user saw no TTS figure
+        # at all despite a fresh daily allowance. (The History
+        # surfaces keep the referral-only menu_tts_balance_line.)
+        info_text += "\n" + t(
+            "menu_tts_today_line",
+            active_lang,
+            tts_min=_tts_spendable_today / 60.0,
+            tts_sec=int(round(_tts_spendable_today)),
+        )
     text = info_text
     # Bot cleanup 2026-11-03: the membership button renders ONLY while
     # the user is unverified, from the persisted gate flags — the same
@@ -255,7 +295,20 @@ async def render_help_settings_content(session: AsyncSession, user_id: int) -> t
         # job-COUNT limit where users expect the per-day MINUTE caps
         # — the guide now names voice/TTS minutes per tier + the
         # FREE recap length cap, straight off the live settings.
-        voice_daily_free=settings.voice_daily_limit_minutes_free,
+        # Batch BZ: the FREE voice day is rendered as a CLAUSE — at
+        # the retired default (0 = no daily cap; the monthly wallet
+        # governs) the guide says exactly that, and an admin-set cap
+        # re-appears as a number, so the sentence is true at any
+        # configured value.
+        voice_daily_free_clause=(
+            t(
+                "guide_voice_daily_free_capped",
+                lang,
+                minutes=int(settings.voice_daily_limit_minutes_free or 0),
+            )
+            if int(settings.voice_daily_limit_minutes_free or 0) > 0
+            else t("guide_voice_daily_free_uncapped", lang)
+        ),
         voice_daily_paid=settings.voice_daily_limit_minutes_paid,
         tts_daily_free=settings.tts_daily_limit_minutes_free,
         tts_daily_paid=settings.tts_daily_limit_minutes_paid,

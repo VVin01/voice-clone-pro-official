@@ -2,7 +2,7 @@
 
 Owner order: "တစ်နေ့ အသုံးချနိုင်တဲ့ မိနစ် အကန့်အသတ် ထား" + tier split
 "free နဲ့ paid ခွဲပေးအုံး". FREE users get
-settings.voice_daily_limit_minutes_free (default 5) and PURCHASED users
+settings.voice_daily_limit_minutes_free and PURCHASED users
 settings.voice_daily_limit_minutes_paid (default 30); 0 = unlimited for
 that tier; admins exempt. Enforced inside create_voice_clone_job's
 per-user locked block: today's VOICE_CLONE jobs count SUCCESS actuals
@@ -10,6 +10,10 @@ per-user locked block: today's VOICE_CLONE jobs count SUCCESS actuals
 recorded) + QUEUED/RUNNING estimates; FAILED/CANCELLED consume nothing.
 Rejection reason: DAILY_MINUTE_LIMIT_EXCEEDED, strictly when
 consumed + new estimate > cap (exactly at the cap is allowed).
+
+Batch BZ note: the FREE DEFAULT became 0 in BZ (the monthly wallet
+governs FREE) — the autouse fixture below sets both caps explicitly,
+so every mechanism assertion here is unchanged.
 """
 from __future__ import annotations
 

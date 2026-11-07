@@ -2497,6 +2497,10 @@ function switchTab(tabId) {
     if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
         window.refreshTtsQuota();
     }
+    // Batch BZ: first-visit sample prefill rides the same entry hook.
+    if (tabId === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
+        window.maybePrefillTtsSample();
+    }
 }
 window.switchTab = switchTab;
 
@@ -2562,6 +2566,11 @@ function setupTabs() {
             if (targetTab === "tab-tts" && typeof window.refreshTtsQuota === "function") {
                 window.refreshTtsQuota();
             }
+            // Batch BZ: the prefill hook rides this entry path too
+            // (the BI-4 lesson — both TTS entry paths stay in step).
+            if (targetTab === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
+                window.maybePrefillTtsSample();
+            }
 
             if (targetTab === "tab-admin") {
                 loadAdminData();
@@ -2612,6 +2621,7 @@ async function loadUserProfile() {
         refreshRecapQualityLock();
         refreshRecapEngineLock();
         paintVoiceTtsBalanceLine(data);
+        paintTtsTodaySurfaces(data);
         // Batch BW: repaint the TTS counter now the per-user limit is
         // known (init painted it before the profile arrived).
         updateTtsCharCount();
@@ -3640,6 +3650,7 @@ function paintCachedUserHeader(data) {
     refreshRecapQualityLock();
     refreshRecapEngineLock();
     paintVoiceTtsBalanceLine(data);
+    paintTtsTodaySurfaces(data);
 }
 
 // Custom channel logo (paid-only, owner decision 2026-11-02): the
@@ -9635,6 +9646,73 @@ window.sendVoiceToTelegram = sendVoiceToTelegram;
 const ttsState = { engine: "gemini", speed: "+12%", jobId: null, pollTimer: null };
 window.ttsState = ttsState;
 
+// Batch BZ: the two "today's TTS" surfaces — the header 🎧 chip and
+// the Home "Free today" card — painted from the /api/me BZ fields,
+// which the server computes through the same helpers the TTS submit
+// path enforces with, so the numbers can never disagree with the
+// gate. Admin → ∞ (the other chips' treatment). A null remaining
+// with a 0 daily limit means the tier's allowance is unlimited; a
+// null remaining for any other reason (quota read failed) falls back
+// to the referral figure, the most the client can state truthfully.
+function paintTtsTodaySurfaces(data) {
+    if (!data) return;
+    const rem = data.tts_today_remaining_seconds;
+    const chip = document.getElementById("user-tts-bal");
+    if (chip) {
+        if (data.is_admin) chip.innerText = "🎧 ∞";
+        else if (typeof rem === "number") chip.innerText = `🎧 ${(rem / 60).toFixed(1)}m`;
+        else if (data.tts_daily_limit_seconds === 0) chip.innerText = "🎧 ∞";
+        else if (typeof data.tts_balance_seconds === "number") chip.innerText = `🎧 ${(data.tts_balance_seconds / 60).toFixed(1)}m`;
+    }
+    const ttsVal = document.getElementById("home-free-tts-value");
+    if (ttsVal) {
+        if (data.is_admin) ttsVal.innerText = "∞";
+        else if (typeof rem === "number") ttsVal.innerText = tf("home_free_value_min", { min: (rem / 60).toFixed(1) });
+        else if (data.tts_daily_limit_seconds === 0) ttsVal.innerText = t("unlimited");
+        else if (typeof data.tts_balance_seconds === "number") ttsVal.innerText = tf("home_free_value_min", { min: (data.tts_balance_seconds / 60).toFixed(1) });
+    }
+    const note = document.getElementById("home-free-tts-note");
+    if (note) {
+        const ref = (data.tts_referral_seconds != null) ? data.tts_referral_seconds : data.tts_balance_seconds;
+        if (!data.is_admin && typeof ref === "number" && ref > 0) {
+            note.innerText = tf("home_free_tts_referral_note", { min: (ref / 60).toFixed(1) });
+            note.classList.remove("hidden");
+        } else {
+            note.classList.add("hidden");
+        }
+    }
+    const voiceVal = document.getElementById("home-free-voice-value");
+    if (voiceVal) voiceVal.innerText = data.is_admin ? "∞" : tf("home_free_value_min", { min: data.balance_minutes });
+    const recapVal = document.getElementById("home-free-recap-value");
+    if (recapVal) recapVal.innerText = data.is_admin ? "∞" : tf("home_free_value_credits", { count: data.recap_credits || 0 });
+}
+
+// The same two surfaces refreshed from a /api/tts/quota response —
+// the post-job and tab-entry refresh path (refreshTtsQuota), so the
+// chip/card follow a finished TTS job without a full profile reload.
+function paintTtsChipFromQuota(q) {
+    if (!q) return;
+    const chip = document.getElementById("user-tts-bal");
+    const ttsVal = document.getElementById("home-free-tts-value");
+    if (q.is_admin || q.unlimited) {
+        if (chip) chip.innerText = "🎧 ∞";
+        if (ttsVal) ttsVal.innerText = q.is_admin ? "∞" : t("unlimited");
+    } else {
+        const total = (q.referral_seconds || 0) + (q.remaining_seconds || 0);
+        if (chip) chip.innerText = `🎧 ${(total / 60).toFixed(1)}m`;
+        if (ttsVal) ttsVal.innerText = tf("home_free_value_min", { min: (total / 60).toFixed(1) });
+    }
+    const note = document.getElementById("home-free-tts-note");
+    if (note) {
+        if (!q.is_admin && (q.referral_seconds || 0) > 0) {
+            note.innerText = tf("home_free_tts_referral_note", { min: ((q.referral_seconds || 0) / 60).toFixed(1) });
+            note.classList.remove("hidden");
+        } else {
+            note.classList.add("hidden");
+        }
+    }
+}
+
 function paintVoiceTtsBalanceLine(profile) {
     // AW-11: the Voice tab labels the referral bucket as TTS-only —
     // it is NOT part of the clone balance anymore.
@@ -9725,6 +9803,7 @@ async function refreshTtsQuota() {
                 if (!res.ok) throw new Error("tts quota " + res.status);
                 const q = await res.json();
                 const refMin = ((q.referral_seconds || 0) / 60).toFixed(1);
+                paintTtsChipFromQuota(q);
                 paintTtsBalanceLine(runId, (line) => {
                     line.classList.remove("tts-balance-retry");
                     delete line.dataset.quotaError;
@@ -9801,6 +9880,24 @@ function paintTtsQuotaInstant() {
     });
 }
 
+// Batch BZ (Item 7): first-visit sample prefill — a brand-new user
+// landing on the TTS tab can press Generate immediately instead of
+// facing an empty box. Session-scoped: once the user types, edits,
+// clears, uses a sample chip, or simply already has text in the box,
+// the prefill never fires again this session, and it NEVER
+// overwrites existing text.
+let ttsSampleSettled = false;
+function maybePrefillTtsSample() {
+    if (ttsSampleSettled) return;
+    const input = document.getElementById("tts-text-input");
+    if (!input) return;
+    ttsSampleSettled = true;
+    if ((input.value || "").trim() !== "") return;
+    input.value = t("tts_sample_text");
+    updateTtsCharCount();
+}
+window.maybePrefillTtsSample = maybePrefillTtsSample;
+
 function updateTtsCharCount() {
     const input = document.getElementById("tts-text-input");
     const counter = document.getElementById("tts-char-count");
@@ -9816,11 +9913,13 @@ function updateTtsCharCount() {
 }
 function insertTtsSampleText(txt) {
     const input = document.getElementById("tts-text-input");
+    ttsSampleSettled = true;
     if (input) { input.value = txt; updateTtsCharCount(); input.focus(); }
 }
 window.insertTtsSampleText = insertTtsSampleText;
 function clearTtsText() {
     const input = document.getElementById("tts-text-input");
+    ttsSampleSettled = true;
     if (input) { input.value = ""; updateTtsCharCount(); }
 }
 window.clearTtsText = clearTtsText;
@@ -9850,7 +9949,11 @@ function initTtsTab() {
         });
     });
     const input = document.getElementById("tts-text-input");
-    if (input) input.addEventListener("input", updateTtsCharCount);
+    if (input) input.addEventListener("input", () => {
+        // Any real edit settles the BZ prefill for this session.
+        ttsSampleSettled = true;
+        updateTtsCharCount();
+    });
     updateTtsCharCount();
     // Batch BB-4: the balance line's fallback state is tap-to-retry.
     const balLine = document.getElementById("tts-balance-line");

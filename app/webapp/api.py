@@ -2563,6 +2563,43 @@ async def get_user_profile(
     seconds_left = bal.clone_spendable_seconds if bal else 0
     tts_seconds_left = int(bal.referral_seconds or 0) if bal else 0
     is_admin = settings.is_admin(user.id)
+
+    # Batch BZ: today's TTS picture for the header 🎧 chip and the
+    # Home "today's free" card — computed through the SAME helpers the
+    # TTS submit path enforces with (tts_daily_limit_minutes +
+    # tts_cap_consumed_seconds), so the displayed number can never
+    # disagree with enforcement. remaining = referral + (cap −
+    # consumed): referral seconds are spent before the cap is touched.
+    # Admins are exempt from the cap → nulls (the UI paints ∞), the
+    # same treatment the header gives admin balances. A quota failure
+    # must never break the profile read.
+    tts_daily_limit_seconds = None
+    tts_today_consumed_seconds = None
+    tts_today_remaining_seconds = None
+    if not is_admin:
+        try:
+            from app.services.tts_service import (
+                tts_cap_consumed_seconds,
+                tts_daily_limit_minutes,
+            )
+
+            _tts_limit_min = tts_daily_limit_minutes(user, is_admin=False)
+            _tts_consumed = await tts_cap_consumed_seconds(db, user.id)
+            tts_daily_limit_seconds = int(_tts_limit_min) * 60
+            tts_today_consumed_seconds = round(float(_tts_consumed), 1)
+            if _tts_limit_min > 0:
+                tts_today_remaining_seconds = round(
+                    tts_seconds_left
+                    + max(0.0, _tts_limit_min * 60 - float(_tts_consumed)),
+                    1,
+                )
+            else:
+                # Cap 0 = unlimited daily allowance on top of referral.
+                tts_today_remaining_seconds = None
+        except Exception:
+            tts_daily_limit_seconds = None
+            tts_today_consumed_seconds = None
+            tts_today_remaining_seconds = None
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or is_admin
 
     char_limit = (
@@ -2696,6 +2733,12 @@ async def get_user_profile(
         "balance_minutes": round(seconds_left / 60, 1),
         "tts_balance_seconds": tts_seconds_left,
         "tts_balance_minutes": round(tts_seconds_left / 60, 1),
+        # Batch BZ: today's TTS spendable picture (see above). Null
+        # for admins (UI paints ∞) and when the tier cap is 0.
+        "tts_daily_limit_seconds": tts_daily_limit_seconds,
+        "tts_today_consumed_seconds": tts_today_consumed_seconds,
+        "tts_referral_seconds": (None if is_admin else tts_seconds_left),
+        "tts_today_remaining_seconds": tts_today_remaining_seconds,
         "recap_credits": getattr(user, "recap_credits", 3),
         "character_limit": char_limit,
         # R40 deck I4: the plan "how it works" copy states BOTH limits

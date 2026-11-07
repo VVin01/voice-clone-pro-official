@@ -180,7 +180,8 @@ def test_no_seven_day_retention_promise_remains():
             char_purchased="5,000", vip_recap_min=10,
             # Batch BX: the guide's daily figures are the voice/TTS
             # minute caps + the FREE recap length now.
-            voice_daily_free=5, voice_daily_paid=30,
+            # Batch BZ: the FREE voice day is a pre-built clause now.
+            voice_daily_free_clause=" (clause)", voice_daily_paid=30,
             tts_daily_free=15, tts_daily_paid=60, recap_free_min=2,
             retention_hours=24, referral_seconds=120, referral_cap_min=40,
         )

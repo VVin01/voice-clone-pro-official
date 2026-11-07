@@ -108,8 +108,13 @@ async def test_concurrency_limit_enforcement(db_session, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_daily_job_limit_free_vs_purchased(db_session, tmp_path):
-    """Free accounts are limited to 5 jobs per calendar day; Purchased accounts have unlimited routine jobs."""
+async def test_daily_job_limit_free_vs_purchased(db_session, tmp_path, monkeypatch):
+    """Free accounts are limited to 5 jobs per calendar day; Purchased accounts have unlimited routine jobs.
+
+    Batch BZ: the free_daily_job_limit DEFAULT is 0 now (retired) —
+    this test proves the mechanism, so it pins the limit itself.
+    """
+    monkeypatch.setattr(settings, "free_daily_job_limit", 5)
     user, _ = await get_or_create_user(db_session, telegram_id=555003)
     assert user.account_category == AccountCategory.FREE.value
 

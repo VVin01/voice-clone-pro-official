@@ -182,7 +182,17 @@ def test_fact_sheet_built_from_ground_truth():
         assert f"{entry['price_mmk']:,}" in sheet
     assert "180 စက္ကန့်" in sheet  # free voice allowance (settings default)
     assert "Recap Credit 3 ခု" in sheet  # one-time free recap credits
-    assert "တစ်နေ့ Job 5 ခု" in sheet  # free daily job limit
+    # Batch BZ: at the retired default (free_daily_job_limit = 0)
+    # the job-count line is ABSENT, and the daily MINUTE caps are
+    # stated instead — FREE voice unlimited (monthly governs), paid
+    # voice 30, TTS 15/60.
+    assert "တစ်နေ့ Job" not in sheet
+    assert "Voice Clone တစ်နေ့ ကန့်သတ်ချက်" in sheet
+    assert "အကန့်အသတ် မရှိ" in sheet
+    assert "တစ်နေ့ 30 မိနစ်" in sheet
+    assert "TTS (TTS Tab) တစ်နေ့ ကန့်သတ်ချက်" in sheet
+    assert "တစ်နေ့ 15 မိနစ်" in sheet
+    assert "တစ်နေ့ 60 မိနစ်" in sheet
     assert "@VoiceClonePro" in sheet
     assert "Video Upload" in sheet  # blocked-source guidance
     # The sheet must forbid inventing facts beyond it.

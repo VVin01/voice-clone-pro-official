@@ -199,13 +199,16 @@ def test_bw_tts_submit_guard_mirrors_voice_guard():
 
 
 def test_bw_tts_counter_repaints_on_profile_load():
-    # init + sample-insert + clear + the BW profile-load repaint.
-    assert APP_JS.count("updateTtsCharCount();") == 4
+    # init + sample-insert + clear + the BW profile-load repaint
+    # (+2: Batch BZ's first-visit prefill repaint, and BZ's input
+    # listener became a wrapper that calls it after settling the
+    # prefill flag — previously a bare function reference).
+    assert APP_JS.count("updateTtsCharCount();") == 6
 
 
 def test_bw_index_counter_default_and_cache_token():
     assert 'id="tts-char-count">0 / 1000 chars<' in INDEX_HTML
-    assert INDEX_HTML.count("20261104_r96") == 4
+    assert INDEX_HTML.count("20261104_r97") == 4
 
 
 # ── BW-5: the voice side is unchanged ─────────────────────────────────
