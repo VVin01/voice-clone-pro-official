@@ -2064,6 +2064,13 @@ window.openAuthFile = openAuthFile;
 // downloads and anchors carrying data-open-url are authenticated
 // view-in-tab links — neither may navigate to the raw API URL.
 document.addEventListener("click", (e) => {
+    // Batch CK: anchors inside the admin media modal carry their own
+    // direct listeners (see openAdminMediaModal) because the modal's
+    // content wrapper stops click propagation before it can reach this
+    // delegated handler. Those listeners flag the event so that if the
+    // wrapper's stopPropagation is ever removed, a click can never fire
+    // both paths and download twice.
+    if (e.__dlHandled) return;
     const a = e.target && e.target.closest ? e.target.closest("a[data-dl-url], a[data-open-url]") : null;
     if (!a) return;
     e.preventDefault();
@@ -11081,7 +11088,11 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
                 </div>
             `;
         } else if (jobType === "RECAP") {
-            const videoUrl = deliverables.video || downloadUrl;
+            // Batch CK: deliverables.video now points at the DOWNLOAD
+            // route (attachment) for the modal's save button; the player
+            // must keep a stream URL, so prefer downloadUrl (the signed
+            // stream form) and fall back to deliverables.video.
+            const videoUrl = downloadUrl || deliverables.video;
             bodyEl.innerHTML = `
                 <div class="modal-video-wrapper">
                     <video id="admin-modal-video" data-auth-src="${videoUrl}" controls autoplay playsinline class="admin-modal-player-video"
@@ -11152,6 +11163,31 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             buttons += `<a href="#" data-open-url="${downloadUrl}" class="mini-chip" style="opacity: 0.85;">${t("dl_open_in_browser_tab")}</a>`;
         }
         delivEl.innerHTML = buttons;
+        // Batch CK: wire these anchors DIRECTLY. The modal's content
+        // wrapper carries onclick="event.stopPropagation()", so clicks
+        // inside the modal never bubble to the document-level delegated
+        // download handler — the buttons were dead on every device even
+        // with correctly signed URLs (Batch CJ). A listener attached to
+        // the anchor itself fires at the target regardless of the
+        // ancestor's stopPropagation. Each handler flags the event with
+        // __dlHandled so the delegated handler can never double-fire if
+        // the wrapper's stopPropagation is ever removed. The wrapper's
+        // stopPropagation itself stays: it keeps content clicks from
+        // closing the modal via the backdrop handler.
+        delivEl.querySelectorAll("a[data-dl-url]").forEach((a) => {
+            a.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.__dlHandled = true;
+                downloadAuthFile(a.getAttribute("data-dl-url"), a.getAttribute("data-dl-name") || undefined, a);
+            });
+        });
+        delivEl.querySelectorAll("a[data-open-url]").forEach((a) => {
+            a.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.__dlHandled = true;
+                openAuthFile(a.getAttribute("data-open-url"));
+            });
+        });
     }
 
     modal.classList.remove("hidden");

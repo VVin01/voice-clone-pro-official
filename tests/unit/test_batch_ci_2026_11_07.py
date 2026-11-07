@@ -359,4 +359,4 @@ console.log(JSON.stringify({ during,
 # ── Cache token ───────────────────────────────────────────────────
 
 def test_cache_version_r106():
-    assert INDEX_HTML.count("?v=20261104_r107") == 4
+    assert INDEX_HTML.count("?v=20261104_r108") == 4

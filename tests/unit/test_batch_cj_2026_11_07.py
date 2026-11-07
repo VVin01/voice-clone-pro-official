@@ -136,8 +136,11 @@ def _assert_signed_recap_row(row, admin_id):
     ) == admin_id
     deliverables = row["deliverables"]
     for key, base in (
-        ("video", f"/api/recap/stream/{RECAP_JOB}/video"),
-        ("audio", f"/api/recap/stream/{RECAP_JOB}/audio"),
+        # Batch CK: the admin video/audio deliverables move to the
+        # download route (save, not play); the CJ signing itself is
+        # unchanged — same (job, scope) token under the admin's uid.
+        ("video", f"/api/recap/download/{RECAP_JOB}/video"),
+        ("audio", f"/api/recap/download/{RECAP_JOB}/audio"),
         ("srt", f"/api/recap/download/{RECAP_JOB}/srt"),
         ("script", f"/api/recap/download/{RECAP_JOB}/script"),
     ):
@@ -413,5 +416,5 @@ global.fetch = async () => ({ ok: true, status: 200, blob: async () => ({}) });
 # ── Release pin: cache token r107 ───────────────────────────────────
 
 def test_cj_cache_token_is_r107():
-    assert INDEX_HTML.count("20261104_r107") == 4
+    assert INDEX_HTML.count("20261104_r108") == 4
     assert ("20261104_r" + "106") not in INDEX_HTML
