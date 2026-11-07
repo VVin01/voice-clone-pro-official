@@ -41,6 +41,10 @@ _SERVER_BOOT_AT = None
 # the instance again. The count is durable — it lives in the Job
 # row's persisted recap state (``stranded_reset_count``) — and every
 # terminal/reactivation path in app.webapp.api clears it back to 0.
+# Batch CC: the count is per-stage — the run's progress seams keep a
+# furthest-stage witness file (app.webapp.api._note_recap_progress_
+# stage); a rescue whose job advanced past the stage recorded at the
+# previous rescue restarts the count at 1 for the new stage.
 RECAP_STRANDED_RESET_LIMIT = 3
 
 
@@ -84,7 +88,11 @@ async def reset_stale_running_recap_jobs(
     from app.db.session import AsyncSessionLocal
     from app.models.enums import JobStatus, JobType
     from app.models.schema import Job, utc_now
-    from app.webapp.api import _fail_stranded_recap_job, _load_persisted_recap_state
+    from app.webapp.api import (
+        _fail_stranded_recap_job,
+        _load_persisted_recap_state,
+        _read_recap_stage_witness,
+    )
 
     cutoff = absolute_cutoff if absolute_cutoff is not None else utc_now() - timedelta(minutes=cutoff_minutes)
     stranded_predicate = (
@@ -126,10 +134,29 @@ async def reset_stale_running_recap_jobs(
                             job_id,
                         )
                     continue
-                try:
-                    new_count = int(state.get("stranded_reset_count") or 0) + 1
-                except (TypeError, ValueError):
+                # Batch CC: stage-aware counting. The witness file
+                # (written by the run's progress seams) names the
+                # furthest stage the dead run reached; when it has
+                # ADVANCED past the stage recorded at the previous
+                # rescue, the job is making progress, not looping —
+                # the count restarts at 1 for the new stage. No
+                # witness (pre-CC runs) or no recorded stage keeps
+                # the Batch AB stage-blind counting untouched.
+                witness_stage = _read_recap_stage_witness(job_id)
+                recorded_stage = state.get("stranded_stage")
+                if (
+                    witness_stage is not None
+                    and recorded_stage is not None
+                    and witness_stage != recorded_stage
+                ):
                     new_count = 1
+                else:
+                    try:
+                        new_count = int(state.get("stranded_reset_count") or 0) + 1
+                    except (TypeError, ValueError):
+                        new_count = 1
+                if witness_stage is not None:
+                    state["stranded_stage"] = witness_stage
                 if new_count < RECAP_STRANDED_RESET_LIMIT:
                     state["stranded_reset_count"] = new_count
                     res = await sess.execute(
@@ -148,10 +175,11 @@ async def reset_stale_running_recap_jobs(
                     if res.rowcount:
                         handled += 1
                         logger.info(
-                            "Orphan sweep: recap job %s stranded reset %d/%d — re-queued",
+                            "Orphan sweep: recap job %s stranded reset %d/%d (stage %s) — re-queued",
                             job_id,
                             new_count,
                             RECAP_STRANDED_RESET_LIMIT,
+                            state.get("stranded_stage") or "unknown",
                         )
                     continue
                 # Limit reached: fail terminally (refund + DM happen
@@ -162,10 +190,11 @@ async def reset_stale_running_recap_jobs(
                 if await _fail_stranded_recap_job(job_id, user_id, state):
                     handled += 1
                     logger.info(
-                        "Orphan sweep: recap job %s stranded reset %d/%d — FAILED (stranded reset limit reached)",
+                        "Orphan sweep: recap job %s stranded reset %d/%d (stage %s) — FAILED (stranded reset limit reached)",
                         job_id,
                         new_count,
                         RECAP_STRANDED_RESET_LIMIT,
+                        state.get("stranded_stage") or "unknown",
                     )
                 else:
                     logger.warning(
