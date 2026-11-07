@@ -48,7 +48,7 @@ ADMIN_ID = 999001
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_qa1():
-    assert HTML.count("?v=20261104_r108") == 4
+    assert HTML.count("?v=20261104_r109") == 4
     assert "20261102_tb1" not in HTML
 
 

@@ -7755,12 +7755,21 @@ function setupRecapVisualEditor() {
     const btnLogoUpload = document.getElementById("btn-logo-upload");
     const inputLogoFile = document.getElementById("input-logo-file");
     if (btnLogoUpload && inputLogoFile) {
-        btnLogoUpload.addEventListener("click", () => inputLogoFile.click());
+        // Batch CL: the upload control is a <label for="input-logo-file">
+        // — native label activation opens the picker (desktop WebViews
+        // drop .click() chains on hidden file inputs), so there is no
+        // click listener to wire. A label has no `disabled`: the busy
+        // flag + inert styling below preserve the no-double-submit
+        // behaviour the old btnLogoUpload.disabled toggling provided.
+        let logoUploadBusy = false;
         inputLogoFile.addEventListener("change", async () => {
             const file = inputLogoFile.files ? inputLogoFile.files[0] : null;
             inputLogoFile.value = "";
             if (!file) return;
-            btnLogoUpload.disabled = true;
+            if (logoUploadBusy) return;
+            logoUploadBusy = true;
+            btnLogoUpload.style.pointerEvents = "none";
+            btnLogoUpload.setAttribute("aria-disabled", "true");
             try {
                 const formData = new FormData();
                 formData.append("logo_file", file);
@@ -7779,7 +7788,9 @@ function setupRecapVisualEditor() {
             } catch (e) {
                 showErrorToast(e, 'generic');
             } finally {
-                btnLogoUpload.disabled = false;
+                logoUploadBusy = false;
+                btnLogoUpload.style.pointerEvents = "";
+                btnLogoUpload.removeAttribute("aria-disabled");
             }
         });
     }
