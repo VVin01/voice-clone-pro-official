@@ -501,6 +501,7 @@
   "clone_caption_recap_script": "📄 <b>Recap Script</b>",
   "pay_slip_already_used": "This receipt has already been submitted. The admins will notify you once it has been reviewed.",
   "tts_delivery_caption": "🎧 <b>TTS Audio</b>\n🎙️ Voice: {engine} · {voice}\n✨ <i>Sent at your request from the Mini App TTS tab.</i>",
+  "tts_fallback_note": "ℹ️ The Gemini voices are temporarily full, so this one was made with the Edge voice instead.",
   "private_ai_deferral_sensitive": "This one is about your account, so I can't answer it right here. I've let the admin team know — they'll check it and get back to you.",
   "private_ai_deferral_unsure": "I've asked the admin team about this one so we can be sure. I'll let you know as soon as they reply."
 }
