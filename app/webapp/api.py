@@ -260,6 +260,27 @@ def _with_stream_url(urls: Dict[str, Any], job_id: str, user_id: int) -> Dict[st
     return out
 
 
+def _recap_deliverables_download_form(urls: Dict[str, Any]) -> Dict[str, Any]:
+    """Batch CK: point a signed recap deliverables dict's video/audio
+    entries at the DOWNLOAD route (attachment) instead of the stream
+    route (inline), for the ADMIN serializers only.
+
+    The modal's Download buttons must SAVE the file; the stream route
+    plays it. The swap is a pure route-prefix change on the already-
+    signed URL: the stream token is bound to (job, file type), not to
+    the route, and the endpoint verifies it against the path's file
+    type, so the swapped URL's token still verifies. srt/script
+    already use the download route and pass through unchanged, as
+    does the separate download_url (callers keep the stream form for
+    the player / Browser Tab)."""
+    out = dict(urls or {})
+    for key in ("video", "audio"):
+        url = out.get(key)
+        if isinstance(url, str) and url.startswith("/api/recap/stream/"):
+            out[key] = "/api/recap/download/" + url[len("/api/recap/stream/"):]
+    return out
+
+
 async def get_optional_user(
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
     db: AsyncSession = Depends(get_db_session),
@@ -9683,7 +9704,13 @@ async def download_recap_file(
     else:
         media_type, filename = mime_map.get(file_type, ("application/octet-stream", f"{file_type}_{job_id[:8]}"))
 
-    is_stream = "/stream/" in request.url.path or file_type in ["video", "audio"]
+    # Batch CK: disposition is ROUTE-only, like the audio endpoint —
+    # the stream route plays inline (players, Browser Tab) and the
+    # download route saves as an attachment for EVERY file type. The
+    # old file-type clause forced inline for video/audio even on the
+    # download route, so a "Download Video" tap would play the file in
+    # the browser instead of saving it.
+    is_stream = "/stream/" in request.url.path
     disposition = "inline" if is_stream else "attachment"
 
     return FileResponse(
@@ -10618,6 +10645,11 @@ async def get_admin_global_history(
             # without widening access.
             deliverables = _with_stream_url(deliverables, job.id, user.id)
             download_url = deliverables.get("video") or download_url
+            # Batch CK: the modal's Download buttons must SAVE, so the
+            # video/audio deliverables move to the download route;
+            # download_url above keeps the signed stream form for the
+            # player and the Browser Tab button.
+            deliverables = _recap_deliverables_download_form(deliverables)
         if not is_recap and download_url:
             # Batch CJ: voice/TTS admin URLs carry the same Batch BJ
             # audio-scope token, minted for the admin; both URL forms
@@ -12267,6 +12299,9 @@ async def get_admin_queue(
             # Telegram openLink for token-carrying URLs.
             deliverables = _with_stream_url(deliverables, j.id, admin.id)
             download_url = deliverables.get("video") or download_url
+            # Batch CK: video/audio deliverables move to the download
+            # route (save, not play) — see the admin history serializer.
+            deliverables = _recap_deliverables_download_form(deliverables)
         if not is_recap and download_url:
             # Batch CJ: voice/TTS admin URLs carry the Batch BJ
             # audio-scope token, minted for the admin.

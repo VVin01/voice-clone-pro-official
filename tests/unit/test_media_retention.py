@@ -162,8 +162,21 @@ async def test_serializers_agree_when_media_present(db_session, storage):
     queue = await api_mod.get_admin_queue(status="all", engine="all", limit=60, admin=user, db=db_session)
     q = [x for x in queue["jobs"] if x["id"] == "rc_ret_t2"][0]
     assert q["is_expired"] is False
-    assert q["deliverables"] == h["deliverables"]
+    # Batch CK: the serializers still agree on availability and on
+    # download_url (same signed stream form — this user IS the admin,
+    # so the token uid matches too). The one deliberate difference:
+    # the ADMIN deliverables' video/audio entries point at the
+    # download route (attachment) so the admin modal's buttons save
+    # instead of play; every other entry is identical, token included.
     assert q["download_url"] == h["download_url"]
+    for key, user_url in h["deliverables"].items():
+        admin_url = q["deliverables"][key]
+        if key in ("video", "audio"):
+            assert admin_url == user_url.replace(
+                "/api/recap/stream/", "/api/recap/download/", 1
+            ), key
+        else:
+            assert admin_url == user_url, key
 
     status = await api_mod.get_recap_status("rc_ret_t2", user=user, db=db_session)
     assert status["is_expired"] is False
