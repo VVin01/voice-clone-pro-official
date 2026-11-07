@@ -765,6 +765,31 @@ def build_fact_sheet() -> str:
 
     def _daily_cap_phrase(minutes: int) -> str:
         return "အကန့်အသတ် မရှိ" if minutes <= 0 else f"တစ်နေ့ {minutes} မိနစ်"
+
+    # Batch CB Item 6 (owner add-on, 2026-11-07 11:38): at the
+    # retired FREE daily cap (0), a bare "no daily cap" answer misleads
+    # FREE users into hearing "unlimited Voice Clone" — the monthly
+    # free allowance is the limit that actually governs. The FREE
+    # voice phrase therefore pairs both truths in one statement, and
+    # a steering line (rendered only in this state) instructs the AI
+    # to name the monthly allowance whenever it states the missing
+    # daily cap. A live cap > 0 keeps the plain numbered phrase and
+    # needs no steering.
+    if voice_daily_free <= 0:
+        voice_free_daily_phrase = (
+            "တစ်နေ့ သီးခြား အကန့်အသတ် မရှိ — ဒါပေမယ့် အခမဲ့ အသံ အတွက် "
+            f"လစဉ် အခမဲ့ {free_seconds} စက္ကန့် ({free_minutes} မိနစ်) ကသာ "
+            "အမှန် ကန့်သတ်ထားသည်"
+        )
+        voice_free_steering_line = (
+            "• သတိပြုရန် (Free Voice Clone): 'တစ်နေ့ အကန့်အသတ် မရှိ' ဟု "
+            f"ဖြေတိုင်း လစဉ် အခမဲ့ {free_minutes} မိနစ် (စက္ကန့် {free_seconds}) "
+            "ကသာ အမှန် ကန့်သတ်ချက် ဖြစ်ကြောင်း အမြဲ တွဲ၍ ပြောပါ — "
+            "'အကန့်အသတ် မရှိ' ဟု သီးသန့် မပြောပါနှင့်။"
+        )
+    else:
+        voice_free_daily_phrase = _daily_cap_phrase(voice_daily_free)
+        voice_free_steering_line = None
     free_chars = int(getattr(settings, "character_limit_free", 1000) or 1000)
     free_recap_max = int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120)
     vip_recap_max = int(getattr(settings, "recap_max_duration_seconds", 600) or 600)
@@ -892,8 +917,11 @@ def build_fact_sheet() -> str:
         # (settings.free_daily_job_limit), the SENTENCE was the bug.
         f"• အခမဲ့ (Free): အသံ {free_seconds} စက္ကန့် ({free_minutes} မိနစ်) တစ်လ၊ "
         "Recap Credit 3 ခု (ပထမဆုံး တစ်ကြိမ်သာ)။",
-        f"• Voice Clone တစ်နေ့ ကန့်သတ်ချက်: Free {_daily_cap_phrase(voice_daily_free)}၊ "
+        f"• Voice Clone တစ်နေ့ ကန့်သတ်ချက်: Free {voice_free_daily_phrase}၊ "
         f"Plan ဝယ်ထားသူ {_daily_cap_phrase(voice_daily_paid)}။",
+        # Batch CB Item 6: the steering line rides only while the
+        # FREE voice daily cap is retired (see above).
+        *([voice_free_steering_line] if voice_free_steering_line else []),
         f"• TTS (TTS Tab) တစ်နေ့ ကန့်သတ်ချက်: Free {_daily_cap_phrase(tts_daily_free)}၊ "
         f"Plan ဝယ်ထားသူ {_daily_cap_phrase(tts_daily_paid)} "
         "(မိတ်ဆက်ဆု စက္ကန့်ကို အရင် သုံးပြီး ကျန်တာမှ ဒီ ကန့်သတ်ချက်ထဲ ဝင်ပါတယ်)။",

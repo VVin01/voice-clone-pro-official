@@ -167,8 +167,14 @@ def test_eta_seconds_math_is_grounded_in_the_median():
     assert api_mod._recap_eta_seconds(0, "QUEUED", 0, 600.0) == 600
     assert api_mod._recap_eta_seconds(2, "QUEUED", 0, 600.0) == 1200
     assert api_mod._recap_eta_seconds(4, "QUEUED", 0, 600.0) == 1800
-    # RUNNING: the median scaled by the engine's remaining fraction.
-    assert api_mod._recap_eta_seconds(0, "RUNNING", 50, 600.0) == 300
+    # RUNNING: Batch CB REPLACED the pre-CB formula (median x
+    # (1 - progress%), which read 300 here) with the stage
+    # decomposition in app.services.recap_eta: at 50% the job sits
+    # 2/3 through the translate band, so the translate tail +
+    # narration (72 planning-density segments) + sync + finalize
+    # shares of the 600 s total remain — 547 s, NOT half. The
+    # no-progress case still yields the whole median.
+    assert api_mod._recap_eta_seconds(0, "RUNNING", 50, 600.0) == 547
     assert api_mod._recap_eta_seconds(0, "RUNNING", None, 600.0) == 600
     # Terminal / unknown states never get an ETA.
     assert api_mod._recap_eta_seconds(0, "SUCCESS", 100, 600.0) is None
@@ -831,12 +837,14 @@ def test_batch_l_frontend_wiring_pins():
     ):
         assert f'id="{element_id}"' in INDEX_HTML, element_id
     # Static assets moved to the batch's cache version.
-    assert "20261104_r98" in INDEX_HTML
+    assert "20261104_r99" in INDEX_HTML
     assert "20261103_r43" not in INDEX_HTML
 
     # Poller renders the server's job-aware position/ETA.
+    # (Batch CB: the client consumes the ETA RANGE field now; the
+    # single-point eta_seconds stays server-side for other readers.)
     assert "queue_position" in APP_JS
-    assert "eta_seconds" in APP_JS
+    assert "eta_range_seconds" in APP_JS
     assert 'tf("recap_queue_ahead"' in APP_JS
     assert 'tf("recap_eta_dynamic"' in APP_JS
     # Action helpers call the batch L endpoints.
