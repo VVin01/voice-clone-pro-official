@@ -119,6 +119,13 @@ a { color: var(--gold-2); }
 /* ── Utilities ──────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 .hidden-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+/* Batch CP: the recap file input IS the drop zone's hit target — a
+   full-cover invisible overlay, so the tap lands directly on the input
+   (Telegram Desktop's webview swallows label-forwarded clicks; a direct
+   hit carries trusted activation everywhere). JS disables its pointer
+   events outside the preview "empty" state (setRecapPreviewState), so
+   the progress UI and Cancel button inside the zone stay clickable. */
+.drop-zone-file-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .mt-1 { margin-top: var(--s1); } .mt-2 { margin-top: var(--s2); }
 .mt-3 { margin-top: var(--s3); } .mt-4 { margin-top: var(--s4); }
 .mb-1 { margin-bottom: var(--s1); } .mb-2 { margin-bottom: var(--s2); }
@@ -818,6 +825,7 @@ select.studio-input { min-height: 50px; }
 .input-with-btn input { flex: 1; min-width: 0; }
 .input-with-btn .btn { min-height: 50px; flex-shrink: 0; }
 .video-drop-zone {
+    position: relative;
     border: 1.5px dashed var(--border-strong); border-radius: var(--r-md);
     background: var(--inset); padding: var(--s5) var(--s4); text-align: center;
     transition: border-color 0.15s ease, background 0.15s ease;
