@@ -6049,11 +6049,15 @@ function setupRecapVisualEditor() {
     function syncBlurStrengthVisual() {
         const v = sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18;
         if (valBlurStrength) valBlurStrength.textContent = String(Number.isFinite(v) ? v : 18);
-        if (previewBlur) {
-            const px = 2 + ((Number.isFinite(v) ? v : 18) - 4) / 3;
-            previewBlur.style.backdropFilter = `blur(${px.toFixed(1)}px)`;
-            previewBlur.style.webkitBackdropFilter = `blur(${px.toFixed(1)}px)`;
-        }
+        // Batch CA: this used to scale a CSS backdrop frosting on
+        // the blur box (an inline backdrop filter) — retired with
+        // the frosting itself, which washed the composited subtitle
+        // under the box. Strength is payload geometry: the settled
+        // engine-composited frame carries the true blur, so a
+        // strength change schedules it like every other geometry
+        // control (this slider previously never refreshed the
+        // composite at all — the frosting was its only feedback).
+        scheduleRecapCompositeRefresh();
     }
     if (sliderBlurStrength) {
         sliderBlurStrength.addEventListener("input", syncBlurStrengthVisual);

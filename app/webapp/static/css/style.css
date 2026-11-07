@@ -945,8 +945,16 @@ select.studio-input { min-height: 50px; }
    the bare 11px glyph owners could not find or hit. */
 .drag-grip-icon { touch-action: none; padding: 7px 16px; margin: -4px 0; cursor: grab; background: rgba(10, 12, 18, 0.55); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; min-width: 30px; text-align: center; }
 .preview-blur-box {
-    background: rgba(120, 130, 150, 0.4);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    /* Batch CA: NO backdrop-filter, by design. The box is a drag
+       handle over the ENGINE-composited frame, which already
+       carries the real blur with the new subtitle composited sharp
+       on top of it — a CSS frosting blurred EVERYTHING under the
+       rectangle, the subtitle included, so the subtitle looked
+       blurred whenever the box overlapped it (the common case: both
+       default to Y=85%). The region is marked by this tint plus the
+       dashed outline plus the edit-state label; the TRUE blur is
+       what the composited frame shows once the geometry settles. */
+    background: rgba(120, 130, 150, 0.45);
     border: 1.5px dashed rgba(255, 255, 255, 0.55); border-radius: 6px;
     display: flex; align-items: center; justify-content: center; gap: 5px;
     /* Batch AM (M1): NO min-height floor. The old 22px floor painted
