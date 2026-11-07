@@ -118,13 +118,17 @@ def test_bt_renderer_paints_inline_line_from_store_job():
     body = _renderer_body()
     # The inline line is painted with the pill's own text function
     # on the same merged store job as the detail stage line.
+    # Batch CB: both lines now paint the composed formStatusText —
+    # which IS liveJobStageText(job) except while the poller's
+    # overrun flag is set (Item 4's overrun sentence takes both).
     assert 'const inlineLine = document.getElementById("recap-inline-status");' in body
     assert 'const inlineText = document.getElementById("recap-inline-status-text");' in body
-    assert "if (inlineText) inlineText.innerText = liveJobStageText(job);" in body
+    assert "if (inlineText) inlineText.innerText = formStatusText;" in body
     # …and kept visible while a job is tracked.
     assert 'if (inlineLine) inlineLine.classList.remove("hidden");' in body
     # Both status surfaces use the identical text source.
-    assert body.count("liveJobStageText(job)") >= 2
+    assert body.count("innerText = formStatusText;") == 2
+    assert ": liveJobStageText(job);" in body
 
 
 def test_bt_inline_paint_sits_behind_tracked_job_and_notice_guards():
@@ -132,7 +136,7 @@ def test_bt_inline_paint_sits_behind_tracked_job_and_notice_guards():
     # Another job's store update can never repaint the inline line:
     # the tracked-job guard precedes every paint in the renderer.
     guard = body.index("if (!job || job.id !== recapFormJobId) return;")
-    paint = body.index("if (inlineText) inlineText.innerText = liveJobStageText(job);")
+    paint = body.index("if (inlineText) inlineText.innerText = formStatusText;")
     assert guard < paint
     # A parked poller health notice owns the status text — inline
     # included: the notice early-return also precedes the paint.
@@ -142,7 +146,7 @@ def test_bt_inline_paint_sits_behind_tracked_job_and_notice_guards():
 
 def test_bt_inline_terminal_paints_outcome_like_the_pill():
     body = _renderer_body()
-    paint = body.index("if (inlineText) inlineText.innerText = liveJobStageText(job);")
+    paint = body.index("if (inlineText) inlineText.innerText = formStatusText;")
     # No terminal special-case parks the inline line on its last
     # in-progress text: the unconditional paint (the store job's
     # outcome text on a terminal job, exactly as the pill renders)
@@ -246,5 +250,5 @@ def test_bt_server_half_of_save_then_fresh_load_cycle():
 # ── Cache token ──────────────────────────────────────────────────
 
 def test_bt_cache_token_is_r91():
-    assert INDEX_HTML.count("20261104_r98") == 4
+    assert INDEX_HTML.count("20261104_r99") == 4
     assert "20261104_r90" not in INDEX_HTML

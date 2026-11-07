@@ -45,6 +45,7 @@ from app.services.models import get_authorized_model, get_available_models_for_u
 from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.download_names import branded_download_filename
 from app.services.curated_voices import list_curated_voices, get_curated_voice
+from app.services import recap_eta
 from app.webapp.auth import (
     ADMIN_INIT_DATA_MAX_AGE_SECONDS,
     init_data_auth_date,
@@ -863,7 +864,7 @@ def _recap_can_retry(job) -> bool:
     return bool(cfg is not None and _recap_source_available(cfg.url))
 
 
-# ── Queue position / ETA (batch L) ───────────────────────────────────
+# ── Queue position / ETA (batch L, shape-conditioned in batch CB) ───
 # Recap execution is one FIFO path: submissions dispatch immediately
 # and wait on RECAP_EXECUTION_SEMAPHORE (2 concurrent renders), and
 # the server queue worker claims the oldest QUEUED row first. A job's
@@ -871,28 +872,78 @@ def _recap_can_retry(job) -> bool:
 # recap jobs were created before it. The ETA derives from the median
 # processing time (started_at → finished_at) of recently completed
 # recap jobs — a real signal recorded on every Job row — and is only
-# reported when at least 3 samples exist; otherwise the payload
-# carries the position alone rather than an invented number.
-_RECAP_ETA_MEDIAN_CACHE: dict = {"at": 0.0, "seconds": None}
+# reported when enough samples exist; otherwise the payload carries
+# the position alone rather than an invented number.
+#
+# Batch CB Item 1: the medians are now SHAPE-CONDITIONED — bucketed
+# by narration engine class (voxcpm / gemini / edge, from the job's
+# persisted config) x source-duration band (<=60 / <=180 / <=600 /
+# >600 s), with per-engine and global levels behind them (fallback
+# chain bucket -> engine -> global). One 60 s-cached query of the
+# last 100 completed rows feeds every level; the GLOBAL level keeps
+# Batch L's exact definition (the most recent 25 rows, >= 3 usable
+# samples) so its long-standing behaviour is unchanged. Rows whose
+# persisted config is missing/unreadable still count toward the
+# engine/global levels they can be attributed to (a row with no
+# config at all counts only globally — the pre-persistence era).
+_RECAP_ETA_MEDIAN_CACHE: dict = {"at": 0.0, "seconds": None, "medians": None}
 
 
-async def _recap_recent_median_seconds() -> Optional[float]:
-    """Median render duration of the last ~25 completed recap jobs.
+def _recap_median_of(durations) -> Optional[float]:
+    """The house median convention (sorted, upper-middle element) —
+    the same pick Batch L's global median has always made."""
+    vals = sorted(durations)
+    if not vals:
+        return None
+    return float(vals[len(vals) // 2])
 
-    Cached for 60 s: the recap status endpoint is polled every 2 s,
-    and this aggregate changes slowly. Returns None when fewer than 3
-    usable samples exist (no honest estimate possible).
+
+def _recap_row_shape(job) -> tuple:
+    """(engine_class, duration_seconds) for a completed Job row, from
+    its persisted recap state. Either may be None when the row
+    predates persistence or the blob is unusable — the caller then
+    attributes the row only to the levels it can prove."""
+    state = _load_persisted_recap_state(job)
+    engine = None
+    duration = None
+    if state is not None:
+        cfg = state.get("config") or {}
+        engine = recap_eta.engine_class(cfg.get("tts_engine"))
+        raw_duration = state.get("source_duration_seconds")
+        if not raw_duration:
+            raw_duration = cfg.get("duration_seconds")
+        try:
+            duration = float(raw_duration) if raw_duration else None
+        except (TypeError, ValueError):
+            duration = None
+    if duration is None:
+        secs = getattr(job, "seconds_estimated", None)
+        try:
+            duration = float(secs) if secs else None
+        except (TypeError, ValueError):
+            duration = None
+    return engine, duration
+
+
+async def _recap_median_buckets() -> dict:
+    """Shape-conditioned recap duration medians, 60 s-cached.
+
+    Returns {"buckets": {(engine, band): (median, count)},
+             "engines": {engine: (median, count)},
+             "global": (median, count) | None}.
     """
     now = time.time()
     if now - float(_RECAP_ETA_MEDIAN_CACHE.get("at") or 0.0) < 60:
-        return _RECAP_ETA_MEDIAN_CACHE.get("seconds")
-    median: Optional[float] = None
+        cached = _RECAP_ETA_MEDIAN_CACHE.get("medians")
+        if cached is not None:
+            return cached
+    medians: dict = {"buckets": {}, "engines": {}, "global": None}
     try:
         from app.db.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as session:
             res = await session.execute(
-                select(Job.started_at, Job.finished_at)
+                select(Job)
                 .where(
                     (Job.job_type == JobType.RECAP.value)
                     | (Job.id.startswith("rc_"))
@@ -902,21 +953,371 @@ async def _recap_recent_median_seconds() -> Optional[float]:
                     Job.finished_at.is_not(None),
                 )
                 .order_by(Job.finished_at.desc())
-                .limit(25)
+                .limit(100)
             )
-            durations = sorted(
-                d
-                for started, finished in res.all()
-                for d in [(finished - started).total_seconds()]
-                if 30 <= d <= 6 * 3600
+            rows = list(res.scalars().all())
+        usable = []
+        for job in rows:
+            try:
+                d = (job.finished_at - job.started_at).total_seconds()
+            except Exception:
+                continue
+            if 30 <= d <= 6 * 3600:
+                usable.append((job, float(d)))
+        # Global: Batch L's definition — the most recent 25 rows.
+        global_durations = [d for _job, d in usable[:25]]
+        if global_durations:
+            medians["global"] = (
+                _recap_median_of(global_durations),
+                len(global_durations),
             )
-        if len(durations) >= 3:
-            median = float(durations[len(durations) // 2])
+        bucket_rows: dict = {}
+        engine_rows: dict = {}
+        for job, d in usable:
+            engine, duration = _recap_row_shape(job)
+            if engine is not None:
+                engine_rows.setdefault(engine, []).append(d)
+                if duration:
+                    band = recap_eta.duration_band(duration)
+                    bucket_rows.setdefault((engine, band), []).append(d)
+        medians["engines"] = {
+            k: (_recap_median_of(v), len(v)) for k, v in engine_rows.items()
+        }
+        medians["buckets"] = {
+            k: (_recap_median_of(v), len(v)) for k, v in bucket_rows.items()
+        }
     except Exception as exc:
-        logger.warning(f"Could not compute recap duration median: {exc}")
-        median = None
-    _RECAP_ETA_MEDIAN_CACHE.update({"at": now, "seconds": median})
-    return median
+        logger.warning(f"Could not compute recap duration medians: {exc}")
+        medians = {"buckets": {}, "engines": {}, "global": None}
+    _RECAP_ETA_MEDIAN_CACHE.update(
+        {
+            "at": now,
+            "seconds": (
+                medians["global"][0]
+                if medians["global"] and medians["global"][1] >= 3
+                else None
+            ),
+            "medians": medians,
+        }
+    )
+    return medians
+
+
+async def _recap_recent_median_seconds() -> Optional[float]:
+    """Median render duration of the last ~25 completed recap jobs
+    (Batch L's global level, kept as the compat surface). Returns
+    None when fewer than 3 usable samples exist."""
+    medians = await _recap_median_buckets()
+    glob = medians.get("global")
+    if glob and glob[1] >= recap_eta.MEDIAN_THRESHOLDS["global"]:
+        return float(glob[0])
+    return None
+
+
+def _recap_resolve_total_range(
+    medians: dict,
+    engine: str,
+    duration_seconds,
+    quality: str,
+    *,
+    require_samples: bool,
+) -> Optional[tuple]:
+    """Resolve a job shape's TOTAL duration range.
+
+    Returns (low, high, point, source) or None. Priority: the shape's
+    own bucket median -> its engine median -> the global median (each
+    gated by its sample threshold, surfaced with the calibrated
+    spread; the point is the median itself). With require_samples
+    False and no trusted median, the calibrated stage model
+    (app.services.recap_eta) supplies the range — the cold-start
+    basis for the pre-submit surfaces. With require_samples True and
+    no trusted median there is NO estimate (Batch L's rule, kept for
+    the in-job status surfaces).
+    """
+    eng = recap_eta.engine_class(engine)
+    band = recap_eta.duration_band(duration_seconds)
+    thresholds = recap_eta.MEDIAN_THRESHOLDS
+    bucket = (medians.get("buckets") or {}).get((eng, band))
+    if bucket and bucket[1] >= thresholds["bucket"]:
+        low, high = recap_eta.spread_range(bucket[0])
+        return (low, high, float(bucket[0]), "bucket")
+    engine_med = (medians.get("engines") or {}).get(eng)
+    if engine_med and engine_med[1] >= thresholds["engine"]:
+        low, high = recap_eta.spread_range(engine_med[0])
+        return (low, high, float(engine_med[0]), "engine")
+    glob = medians.get("global")
+    if glob and glob[1] >= thresholds["global"]:
+        low, high = recap_eta.spread_range(glob[0])
+        return (low, high, float(glob[0]), "global")
+    if require_samples:
+        return None
+    try:
+        d = float(duration_seconds or 0)
+    except (TypeError, ValueError):
+        d = 0.0
+    if d <= 0:
+        return None
+    low, high = recap_eta.total_range(
+        eng, d, recap_eta.estimate_segments(d), quality
+    )
+    return (low, high, (low + high) / 2.0, "calibration")
+
+
+def _recap_eta_note_progress(entry: dict, stage, sub) -> None:
+    """Batch CB Item 2 (reporting only): stamp stage timing + segment
+    marks on the registry entry so the ETA path can derive the job's
+    OWN observed pace. Called from the pipeline progress callback and
+    the authored-label seam whenever the canonical stage changes or a
+    new "i/n" sub-progress arrives. No pipeline behaviour changes —
+    these fields are read by the status endpoint alone."""
+    now = time.time()
+    if stage and entry.get("eta_stage") != stage:
+        entry["eta_stage"] = stage
+        entry["eta_stage_since"] = now
+        entry["eta_mark_first"] = None
+        entry["eta_mark_last"] = None
+    if sub:
+        m = _RECAP_SUB_PROGRESS_RE.match(str(sub).strip())
+        if m:
+            done, total = int(m.group(1)), int(m.group(2))
+            if not entry.get("eta_mark_first"):
+                entry["eta_mark_first"] = (done, now)
+            entry["eta_mark_last"] = (done, now, total)
+
+
+def _recap_observed_pace(entry: dict, stage) -> Optional[float]:
+    """The running job's own observed seconds-per-unit for its current
+    counted stage (segments for narration, parts for sync), from the
+    progress marks. Needs real movement (>= 2 units over >= 5 s) or a
+    stage-start average over >= 3 units; otherwise None (the caller
+    falls back to the calibrated pace)."""
+    first = entry.get("eta_mark_first")
+    last = entry.get("eta_mark_last")
+    if first and last:
+        try:
+            d_done = int(last[0]) - int(first[0])
+            d_time = float(last[1]) - float(first[1])
+            if d_done >= 2 and d_time >= 5.0:
+                return d_time / d_done
+        except (TypeError, ValueError, IndexError):
+            pass
+    if stage in ("tts", "sync") and last:
+        since = entry.get("eta_stage_since")
+        try:
+            done = int(last[0])
+            if since and done >= 3:
+                elapsed = time.time() - float(since)
+                if elapsed >= 5.0:
+                    return elapsed / done
+        except (TypeError, ValueError, IndexError):
+            pass
+    return None
+
+
+def _recap_entry_shape(entry: dict) -> tuple:
+    """(engine_class, duration_seconds, quality) for a registry entry."""
+    engine = recap_eta.engine_class(
+        entry.get("tts_engine"), bool(entry.get("voice_ref_used"))
+    )
+    try:
+        duration = float(entry.get("source_duration_seconds") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    quality = str(entry.get("render_quality") or "standard")
+    return engine, duration, quality
+
+
+def _recap_eta_payload(
+    *,
+    status: str,
+    position: Optional[int],
+    totals: Optional[tuple],
+    submit_totals: Optional[tuple],
+    stage=None,
+    segments_total=None,
+    segments_done=None,
+    parts_done=None,
+    observed_pace=None,
+    stage_frac=None,
+    engine: str = "voxcpm",
+    duration_seconds=0,
+    quality: str = "standard",
+    queue_elapsed=None,
+    run_elapsed=None,
+) -> dict:
+    """Assemble {eta_seconds, eta_range_seconds, eta_overrun} for one
+    active job from resolved totals. ``totals`` is the samples-gated
+    resolution (None -> no numbers at all, Batch L's rule);
+    ``submit_totals`` is the calibration-allowed resolution the user
+    was shown at submit — the overrun flag compares elapsed against
+    ITS high bound (Item 4), so a job is only ever "overrunning" the
+    estimate it was actually given."""
+    out = {"eta_seconds": None, "eta_range_seconds": None, "eta_overrun": False}
+    if submit_totals is not None:
+        if status == "QUEUED":
+            expected_high = recap_eta.queue_waves(position) * submit_totals[1]
+            if queue_elapsed is not None and queue_elapsed > expected_high:
+                out["eta_overrun"] = True
+        elif status == "RUNNING":
+            if run_elapsed is not None and run_elapsed > submit_totals[1]:
+                out["eta_overrun"] = True
+    if totals is None:
+        return out
+    total_low, total_high, total_point, _source = totals
+    if status == "QUEUED":
+        waves = recap_eta.queue_waves(position)
+        out["eta_seconds"] = int(round(waves * total_point))
+        out["eta_range_seconds"] = [
+            int(round(waves * total_low)),
+            int(round(waves * total_high)),
+        ]
+        return out
+    if status == "RUNNING":
+        low, high, point = recap_eta.remaining_range(
+            stage,
+            engine=engine,
+            duration_seconds=duration_seconds,
+            quality=quality,
+            segments_total=segments_total,
+            segments_done=segments_done,
+            parts_done=parts_done,
+            observed_pace=observed_pace,
+            stage_frac=stage_frac,
+            total_override=(total_low, total_high),
+        )
+        out["eta_seconds"] = int(round(point))
+        out["eta_range_seconds"] = [int(round(low)), int(round(high))]
+        return out
+    return out
+
+
+def _recap_eta_from_entry(
+    entry: dict, medians: dict, position: Optional[int], now: Optional[float] = None
+) -> dict:
+    """ETA payload for a registry-backed job (status endpoint hot
+    path + live-jobs bulk path). Pure apart from the registry read
+    the caller passes in."""
+    now = now if now is not None else time.time()
+    status = str(entry.get("status") or "")
+    if status not in ("QUEUED", "RUNNING"):
+        return {"eta_seconds": None, "eta_range_seconds": None, "eta_overrun": False}
+    engine, duration, quality = _recap_entry_shape(entry)
+    totals = _recap_resolve_total_range(
+        medians, engine, duration, quality, require_samples=True
+    )
+    submit_totals = _recap_resolve_total_range(
+        medians, engine, duration, quality, require_samples=False
+    )
+    created = entry.get("created_at")
+    queue_elapsed = (
+        max(0.0, now - float(created))
+        if isinstance(created, (int, float))
+        else None
+    )
+    run_started = entry.get("eta_run_started_at")
+    run_elapsed = (
+        max(0.0, now - float(run_started))
+        if isinstance(run_started, (int, float))
+        else queue_elapsed
+    )
+    stage = entry.get("eta_stage") or entry.get("progress_stage")
+    sub_done = sub_total = None
+    sub = entry.get("progress_sub")
+    if sub:
+        m = _RECAP_SUB_PROGRESS_RE.match(str(sub).strip())
+        if m:
+            sub_done, sub_total = int(m.group(1)), int(m.group(2))
+    segments_total = sub_total or entry.get("segments_count")
+    stage_frac = None
+    pct = entry.get("progress_percent")
+    if stage in recap_eta.PROGRESS_BANDS and isinstance(pct, (int, float)):
+        lo_b, hi_b = recap_eta.PROGRESS_BANDS[stage]
+        stage_frac = max(0.0, min(1.0, (float(pct) - lo_b) / max(1.0, hi_b - lo_b)))
+    return _recap_eta_payload(
+        status=status,
+        position=position,
+        totals=totals,
+        submit_totals=submit_totals,
+        stage=stage,
+        segments_total=segments_total,
+        segments_done=sub_done if stage == "tts" else None,
+        parts_done=sub_done if stage == "sync" else None,
+        observed_pace=_recap_observed_pace(entry, stage) if stage == "tts" else None,
+        stage_frac=stage_frac,
+        engine=engine,
+        duration_seconds=duration,
+        quality=quality,
+        queue_elapsed=queue_elapsed,
+        run_elapsed=run_elapsed,
+    )
+
+
+def _recap_eta_from_row(
+    job, medians: dict, position: Optional[int], now: Optional[datetime] = None
+) -> dict:
+    """ETA payload for a Job row with no registry entry (the status
+    endpoint's cold path + live-jobs DB rows). The row's stage is
+    unknown, so a RUNNING row's stage is inferred from its elapsed
+    share of the resolved total — the honest best the surviving
+    signals allow."""
+    now = now or datetime.now(timezone.utc)
+    status = str(job.status or "")
+    if status not in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+        return {"eta_seconds": None, "eta_range_seconds": None, "eta_overrun": False}
+    engine, duration = _recap_row_shape(job)
+    engine = engine or "voxcpm"
+    state = _load_persisted_recap_state(job)
+    quality = "standard"
+    if state is not None:
+        quality = str((state.get("config") or {}).get("render_quality") or "standard")
+    totals = _recap_resolve_total_range(
+        medians, engine, duration, quality, require_samples=True
+    )
+    submit_totals = _recap_resolve_total_range(
+        medians, engine, duration, quality, require_samples=False
+    )
+
+    def _elapsed_since(dt) -> Optional[float]:
+        if dt is None:
+            return None
+        try:
+            ref = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+            return max(0.0, (now - ref).total_seconds())
+        except Exception:
+            return None
+
+    queue_elapsed = _elapsed_since(job.created_at)
+    run_elapsed = _elapsed_since(job.started_at)
+    if status == JobStatus.RUNNING.value and totals is not None and run_elapsed is not None:
+        total_point = totals[2]
+        pct = 100.0 * run_elapsed / total_point if total_point > 0 else 0.0
+        stage, stage_frac = recap_eta.infer_stage_from_progress(pct)
+        segments_total = recap_eta.estimate_segments(duration) if duration else None
+        return _recap_eta_payload(
+            status="RUNNING",
+            position=position,
+            totals=totals,
+            submit_totals=submit_totals,
+            stage=stage,
+            segments_total=segments_total,
+            stage_frac=stage_frac,
+            engine=engine,
+            duration_seconds=duration or 0,
+            quality=quality,
+            queue_elapsed=queue_elapsed,
+            run_elapsed=run_elapsed,
+        )
+    return _recap_eta_payload(
+        status=status,
+        position=position,
+        totals=totals,
+        submit_totals=submit_totals,
+        engine=engine,
+        duration_seconds=duration or 0,
+        quality=quality,
+        queue_elapsed=queue_elapsed,
+        run_elapsed=run_elapsed,
+    )
 
 
 def _recap_registry_queue_position(job_id: str, entry: dict) -> Optional[int]:
@@ -981,9 +1382,19 @@ def _recap_eta_seconds(
 
     QUEUED: the jobs ahead drain two at a time (the execution
     semaphore), so the wait is ceil((ahead + 1) / 2) median-length
-    waves including this job's own render. RUNNING: the median scaled
-    by the engine's own remaining progress fraction. Anything else —
-    or no median sample — yields None (no fabricated numbers).
+    waves including this job's own render (Batch L, unchanged).
+
+    RUNNING (Batch CB): the pre-CB formula — the median scaled by
+    (1 - progress%) — is REPLACED by the stage decomposition in
+    app.services.recap_eta: the stage the progress implies keeps its
+    calibrated share of the total, and every stage after it counts in
+    full, so a job deep in the narration stage no longer collapses
+    toward zero. This bare-(progress, median) shape survives for
+    callers with nothing richer; the status endpoints use
+    _recap_eta_from_entry / _recap_eta_from_row, which feed the same
+    decomposition the job's real stage, segment counters and own
+    observed pace. Anything else — or no median sample — yields None
+    (no fabricated numbers).
     """
     if median_seconds is None:
         return None
@@ -991,10 +1402,32 @@ def _recap_eta_seconds(
         waves = ((position or 0) + 2) // 2
         return int(round(waves * median_seconds))
     if status == "RUNNING":
-        pct = progress_percent if isinstance(progress_percent, (int, float)) else 0
-        pct = min(95.0, max(0.0, float(pct)))
-        return max(20, int(round(median_seconds * (1.0 - pct / 100.0))))
+        _low, _high, point = recap_eta.remaining_from_progress(
+            progress_percent, float(median_seconds)
+        )
+        return int(round(point))
     return None
+
+
+async def _recap_submit_eta_range(engine, duration_seconds, quality) -> Optional[list]:
+    """Batch CB Item 3: the pre-submit TOTAL range for a job shape —
+    the shape's bucket/engine/global median with its spread when a
+    trusted median exists, else the calibrated stage model
+    (require_samples=False). None when the shape carries no duration
+    to reason from: no number is ever invented (Batch L's rule)."""
+    try:
+        d = float(duration_seconds or 0)
+    except (TypeError, ValueError):
+        d = 0.0
+    if d <= 0:
+        return None
+    medians = await _recap_median_buckets()
+    totals = _recap_resolve_total_range(
+        medians, engine, d, quality, require_samples=False
+    )
+    if totals is None:
+        return None
+    return [int(round(totals[0])), int(round(totals[1]))]
 
 
 async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None = None) -> bool:
@@ -1434,6 +1867,9 @@ def _restore_script_ready_from_db(job, user=None) -> Optional[dict]:
         "error_message": None,
         "script_review": True,
         "segments_count": state.get("segments_count"),
+        # Batch CB: the ETA shape, restored from the persisted config.
+        "tts_engine": cfg.tts_engine,
+        "render_quality": cfg.render_quality,
         "split_video": bool(cfg.split_video),
         "parts": [],
         "split_error": None,
@@ -1979,6 +2415,9 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         "error_message": None,
         "script_review": bool(cfg.script_review),
         "segments_count": None,
+        # Batch CB: the ETA shape, restored from the persisted config.
+        "tts_engine": cfg.tts_engine,
+        "render_quality": cfg.render_quality,
         "split_video": bool(cfg.split_video),
         "parts": [],
         "split_error": None,
@@ -3734,10 +4173,16 @@ def _live_stage_from_step(step, status) -> tuple:
     return 0, 4
 
 
-def _live_job_payload(job, registry_entry=None, now=None) -> Dict[str, Any]:
+def _live_job_payload(job, registry_entry=None, now=None, medians=None) -> Dict[str, Any]:
     """Serialize one Job row (+ live recap registry entry) for the
     bulk live-jobs response. Pure apart from the registry read the
-    caller passes in, so it is unit-testable without a request."""
+    caller passes in, so it is unit-testable without a request.
+
+    Batch CB: when the caller supplies the cached median buckets,
+    recap jobs also carry the honest ETA fields (eta_seconds,
+    eta_range_seconds, eta_overrun) from the same estimator the
+    detail status endpoint uses — the pill/sheet read the overrun
+    flag from HERE (the LiveJobs store is their only channel)."""
     now = now or datetime.now(timezone.utc)
     is_recap = (
         job.job_type == JobType.RECAP.value
@@ -3786,6 +4231,21 @@ def _live_job_payload(job, registry_entry=None, now=None) -> Dict[str, Any]:
             elapsed = None
     raw_title = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
     title = (raw_title or "")[:70]
+    eta_payload = {
+        "eta_seconds": None,
+        "eta_range_seconds": None,
+        "eta_overrun": False,
+    }
+    if is_recap and medians is not None and status in ("QUEUED", "RUNNING"):
+        try:
+            if registry_entry is not None:
+                eta_payload = _recap_eta_from_entry(
+                    registry_entry, medians, queue_position, now=now.timestamp()
+                )
+            else:
+                eta_payload = _recap_eta_from_row(job, medians, None, now=now)
+        except Exception:
+            pass
     return {
         "id": job.id,
         "kind": kind,
@@ -3797,6 +4257,9 @@ def _live_job_payload(job, registry_entry=None, now=None) -> Dict[str, Any]:
         "progress_label": progress_label,
         "queue_position": queue_position,
         "elapsed_seconds": elapsed,
+        "eta_seconds": eta_payload["eta_seconds"],
+        "eta_range_seconds": eta_payload["eta_range_seconds"],
+        "eta_overrun": eta_payload["eta_overrun"],
         "title": title,
         "created_at": created.isoformat() if created else None,
         "finished_at": finished.isoformat() if finished else None,
@@ -3831,11 +4294,22 @@ async def get_live_jobs(
 
     seen_ids = {j.id for j in jobs}
     out = []
+    # Batch CB: the shape medians are 60 s-cached; one fetch serves
+    # every recap ETA in this bulk response.
+    live_medians = None
+    if any(
+        j.job_type == JobType.RECAP.value or str(j.id).startswith("rc_")
+        for j in jobs
+    ) or RECAP_JOBS_REGISTRY:
+        try:
+            live_medians = await _recap_median_buckets()
+        except Exception:
+            live_medians = None
     for job in jobs:
         entry = RECAP_JOBS_REGISTRY.get(job.id) if (
             job.job_type == JobType.RECAP.value or str(job.id).startswith("rc_")
         ) else None
-        payload = _live_job_payload(job, entry, now=now)
+        payload = _live_job_payload(job, entry, now=now, medians=live_medians)
         # Voice queue position: the shared truthful counter (older
         # active jobs ahead of this one, across kinds — the voice
         # concurrency gate counts the same pool).
@@ -3861,6 +4335,20 @@ async def get_live_jobs(
         if e_status not in _LIVE_ACTIVE_STATUSES and e_status != "SCRIPT_READY" and not recent_terminal:
             continue
         stage_index, stage_total = _live_stage_from_step(entry.get("progress_step"), e_status)
+        e_position = (
+            _recap_registry_queue_position(job_id, entry)
+            if e_status in ("QUEUED", "RUNNING") else None
+        )
+        e_eta = {
+            "eta_seconds": None,
+            "eta_range_seconds": None,
+            "eta_overrun": False,
+        }
+        if live_medians is not None and e_status in ("QUEUED", "RUNNING"):
+            try:
+                e_eta = _recap_eta_from_entry(entry, live_medians, e_position)
+            except Exception:
+                pass
         out.append({
             "id": job_id,
             "kind": "recap",
@@ -3870,10 +4358,10 @@ async def get_live_jobs(
             "progress_percent": int(entry.get("progress_percent") or 0),
             "progress_stage": entry.get("progress_stage"),
             "progress_label": str(entry.get("progress_label") or ""),
-            "queue_position": (
-                _recap_registry_queue_position(job_id, entry)
-                if e_status in ("QUEUED", "RUNNING") else None
-            ),
+            "queue_position": e_position,
+            "eta_seconds": e_eta["eta_seconds"],
+            "eta_range_seconds": e_eta["eta_range_seconds"],
+            "eta_overrun": e_eta["eta_overrun"],
             "elapsed_seconds": (
                 max(0, int(time.time() - float(e_created)))
                 if isinstance(e_created, (int, float)) else None
@@ -5763,6 +6251,9 @@ def _recap_set_entry_label(entry: dict, label: str, stage: str = None) -> None:
     entry["progress_label"] = label
     entry["progress_stage"] = stage
     entry["progress_sub"] = ""
+    # Batch CB: keep the ETA stage-timing marks in step (reporting
+    # only — see _recap_eta_note_progress).
+    _recap_eta_note_progress(entry, stage, "")
     if stage and stage in _RECAP_STAGE_BANDS:
         entry["progress_step"] = _RECAP_STAGE_STEPS[stage]
         lo, _hi = _RECAP_STAGE_BANDS[stage]
@@ -6471,6 +6962,7 @@ async def _execute_recap_background_job(
         return
 
     entry["status"] = "RUNNING"
+    entry["eta_run_started_at"] = time.time()
     entry["progress_percent"] = 15
     entry["progress_step"] = "1/4"
     _recap_set_entry_label(entry, "📥 Downloading source video from URL...", stage="download")
@@ -6516,6 +7008,9 @@ async def _execute_recap_background_job(
                     entry["progress_sub"] = sub
                     entry["progress_step"] = step
                     entry["progress_percent"] = pct
+                    # Batch CB: ETA timing/segment marks (reporting
+                    # only; read by _recap_eta_from_entry).
+                    _recap_eta_note_progress(entry, stage, sub)
                 else:
                     entry["progress_step"] = f"{cur}/{tot}"
                 entry["progress_label"] = _recap_clean_progress_label(label)
@@ -8188,6 +8683,10 @@ async def create_recap_job(
         "error_message": None,
         "script_review": bool(req.script_review),
         "segments_count": None,
+        # Batch CB: the ETA shape (engine class + render quality) —
+        # read by the shape-conditioned estimator on the status path.
+        "tts_engine": req.tts_engine,
+        "render_quality": req.render_quality,
         # Batch BV: own-voice truth for the status payload — set from
         # the submit-resolved reference; reference_trimmed is filled
         # in at completion from the engine's plan JSON.
@@ -8306,6 +8805,16 @@ async def create_recap_job(
                 await _refund_recap_credits(user.id, 1, job_id=job_id)
         raise
 
+    # Batch CB Item 3: the honest total range for THIS job's shape,
+    # computed from the same resolver the Step-4 wizard consulted —
+    # the client paints it as the initial estimate (and it is the
+    # range the overrun flag later compares against). Null when the
+    # duration is unknown: no invented number.
+    _submit_eta_range = await _recap_submit_eta_range(
+        req.tts_engine,
+        checked_duration or req.duration_seconds,
+        req.render_quality,
+    )
     response = {
         "success": True,
         "recap_id": job_id,
@@ -8315,6 +8824,7 @@ async def create_recap_job(
         "remaining_credits": getattr(user, "recap_credits", 0),
         "estimated_parts": estimated_parts,
         "credits_charged": 1 if deducted_credit else 0,
+        "eta_range_seconds": _submit_eta_range,
         "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
     }
     if tiered_on:
@@ -8345,6 +8855,27 @@ async def _deferred_db_session() -> Optional[AsyncSession]:
     as-is.
     """
     return None
+
+
+@api_router.get("/recap/eta-estimate")
+async def get_recap_eta_estimate(
+    duration_seconds: float = 0,
+    tts_engine: str = "voxcpm",
+    render_quality: str = "standard",
+    user: User = Depends(get_current_user),
+):
+    """Batch CB Item 3: the Step-4 wizard's honest estimate. The
+    client already knows duration / engine / quality before submit;
+    this returns the server-computed total range for that shape
+    (shape median when trusted samples exist, else the calibrated
+    stage model), or null when there is no basis for a number.
+    Unknown engine/quality values degrade to the product defaults —
+    this is a display hint, never a gate."""
+    quality = str(render_quality or "standard").strip().lower()
+    if quality not in recap_eta.QUALITY_FACTOR:
+        quality = "standard"
+    eta_range = await _recap_submit_eta_range(tts_engine, duration_seconds, quality)
+    return {"eta_range_seconds": eta_range}
 
 
 @api_router.get("/recap/{job_id}/status")
@@ -8385,14 +8916,18 @@ async def get_recap_status(
         _e_status = entry.get("status")
         if _e_status in ("QUEUED", "RUNNING"):
             _e_position = _recap_registry_queue_position(job_id, entry)
-            _e_eta = _recap_eta_seconds(
-                _e_position,
-                _e_status,
-                entry.get("progress_percent"),
-                await _recap_recent_median_seconds(),
+            # Batch CB: shape-conditioned, stage-aware ETA payload
+            # (eta_seconds point + eta_range_seconds + eta_overrun).
+            _e_eta_payload = _recap_eta_from_entry(
+                entry, await _recap_median_buckets(), _e_position
             )
         else:
-            _e_position, _e_eta = None, None
+            _e_position = None
+            _e_eta_payload = {
+                "eta_seconds": None,
+                "eta_range_seconds": None,
+                "eta_overrun": False,
+            }
         _e_can_retry = None
         if _e_status == "FAILED":
             try:
@@ -8409,7 +8944,9 @@ async def get_recap_status(
             "id": job_id,
             "status": entry.get("status", "PENDING"),
             "queue_position": _e_position,
-            "eta_seconds": _e_eta,
+            "eta_seconds": _e_eta_payload["eta_seconds"],
+            "eta_range_seconds": _e_eta_payload["eta_range_seconds"],
+            "eta_overrun": _e_eta_payload["eta_overrun"],
             "can_retry": _e_can_retry,
             "progress_percent": entry.get("progress_percent", 0),
             "progress_step": entry.get("progress_step", ""),
@@ -8490,19 +9027,26 @@ async def get_recap_status(
     # computed from the Job table on this cold path.
     if job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
         _d_position = await _recap_db_queue_position(job)
-        _d_eta = _recap_eta_seconds(
-            _d_position,
-            job.status,
-            15 if job.status == JobStatus.RUNNING.value else 0,
-            await _recap_recent_median_seconds(),
+        # Batch CB: same ETA payload as the registry branch, derived
+        # from the Job row (its persisted config carries the shape;
+        # a RUNNING row's stage is inferred from elapsed share).
+        _d_eta_payload = _recap_eta_from_row(
+            job, await _recap_median_buckets(), _d_position
         )
     else:
-        _d_position, _d_eta = None, None
+        _d_position = None
+        _d_eta_payload = {
+            "eta_seconds": None,
+            "eta_range_seconds": None,
+            "eta_overrun": False,
+        }
     return {
         "id": job_id,
         "status": job.status,
         "queue_position": _d_position,
-        "eta_seconds": _d_eta,
+        "eta_seconds": _d_eta_payload["eta_seconds"],
+        "eta_range_seconds": _d_eta_payload["eta_range_seconds"],
+        "eta_overrun": _d_eta_payload["eta_overrun"],
         "can_retry": (
             _recap_can_retry(job)
             if job.status == JobStatus.FAILED.value
@@ -8652,6 +9196,7 @@ async def render_recap_job(
 
     req = RecapConfigRequest(**snapshot)
     entry["status"] = "RUNNING"
+    entry["eta_run_started_at"] = time.time()
     entry["progress_percent"] = 15
     entry["progress_step"] = "3/4"
     _recap_set_entry_label(entry, "🗣️ Rendering with your reviewed script...", stage="tts")

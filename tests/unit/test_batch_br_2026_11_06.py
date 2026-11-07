@@ -130,7 +130,13 @@ def test_br_form_lines_subscribe_to_livejobs_store():
 def test_br_renderer_uses_pill_text_source_and_store_step_fields():
     body = _renderer_body()
     # Stage line: the pill's OWN text function on the store job.
-    assert "if (statusMsg) statusMsg.innerText = liveJobStageText(job);" in body
+    # Batch CB: the line is composed through formStatusText, which IS
+    # liveJobStageText(job) except while the poller's overrun flag is
+    # set (the Item-4 overrun sentence takes the line instead).
+    assert "const formStatusText = (recapFormEtaOverrun && !liveJobsIsTerminal(job.status))" in body
+    assert "? liveJobOverrunText(job)" in body
+    assert ": liveJobStageText(job);" in body
+    assert "if (statusMsg) statusMsg.innerText = formStatusText;" in body
     # Step line: composed from the store job's stage fields — the
     # same merged values renderLiveJobsPill's lead job carries.
     assert '`${t("recap_step_label")} ${job.stage_index || 0}/${job.stage_total || 4}`' in body
@@ -216,8 +222,12 @@ def test_br_tick_repaints_from_the_store_job_and_caches_eta():
     tick = _tick_body()
     # The ETA extra (Batch L) is cached for the store renderer —
     # the one detail-payload field the step line still consumes.
-    assert 'recapFormEtaSeconds = (typeof data.eta_seconds === "number" && data.eta_seconds > 0)' in tick
-    assert 'tf("recap_eta_dynamic", { min: Math.max(1, Math.round(recapFormEtaSeconds / 60)) })' in _renderer_body()
+    # Batch CB: the extra is now the remaining RANGE + the overrun
+    # flag (the single-point eta_seconds and its 1-minute display
+    # floor are retired — see the CB test file for the floor pins).
+    assert "recapFormEtaRange = Array.isArray(data.eta_range_seconds) ? data.eta_range_seconds : null;" in tick
+    assert "recapFormEtaOverrun = !!data.eta_overrun;" in tick
+    assert 'formatEtaRangeText(recapFormEtaRange, "remaining")' in _renderer_body()
     # The repaint reads the STORE job, never the tick's response.
     assert "const storeJobForPaint = LiveJobs.jobs.get(jobId);" in tick
     assert "if (storeJobForPaint) renderRecapFormProgress(storeJobForPaint);" in tick
@@ -235,7 +245,9 @@ def test_br_poller_notices_own_the_status_line_while_parked():
     # The renderer refuses to paint over a parked notice.
     assert "if (recapFormNotice) return;" in _renderer_body()
     # Poller start resets the notice/ETA state for the new job.
-    assert "recapFormEtaSeconds = 0;" in poller
+    # (Batch CB: the ETA state is the range + overrun flag pair.)
+    assert "recapFormEtaRange = null;" in poller
+    assert "recapFormEtaOverrun = false;" in poller
     assert "recapFormNotice = null;" in poller
 
 
@@ -305,5 +317,5 @@ def test_br_prefill_still_sets_title_from_job_config():
 # ── Token ────────────────────────────────────────────────────────
 
 def test_br_cache_token_is_r89():
-    assert INDEX_HTML.count("20261104_r98") == 4
+    assert INDEX_HTML.count("20261104_r99") == 4
     assert "20261104_r88" not in INDEX_HTML

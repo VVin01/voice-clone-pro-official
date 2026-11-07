@@ -888,6 +888,17 @@ function liveJobStageText(job) {
     if (job.kind === "voice") return t("voice_synthesizing");
     return t("recap_processing_msg");
 }
+// Batch CB Item 4: the overrun status sentence — composed from the
+// store job itself (its stage text + its elapsed counter, the same
+// values the pill/sheet/form already render) so every surface says
+// the identical sentence when the server flags eta_overrun.
+function liveJobOverrunText(job) {
+    if (!job) return "";
+    const stage = liveJobStageText(job);
+    const elapsed = (typeof job.elapsed_seconds === "number" && job.elapsed_seconds > 0)
+        ? formatRecapQuoteDuration(job.elapsed_seconds) : "";
+    return tf("recap_eta_overrun", { stage, elapsed });
+}
 // Batch AK (Addition C): the status bar can be dismissed; the
 // dismissal is keyed to the current active set + lead stage, so
 // any state change (a new job, a stage change) shows it again.
@@ -923,7 +934,11 @@ function renderLiveJobsPill() {
     const stageEl = document.getElementById("live-jobs-pill-stage");
     const fillEl = document.getElementById("live-jobs-pill-fill");
     if (countEl) countEl.innerText = tf("live_jobs_count", { count: active.length });
-    if (stageEl) stageEl.innerText = LiveJobs.reconnecting ? t("poll_reconnecting") : liveJobStageText(lead);
+    // Batch CB Item 4: an overrunning lead job replaces the pill's
+    // stage text with the honest overrun sentence.
+    if (stageEl) stageEl.innerText = LiveJobs.reconnecting
+        ? t("poll_reconnecting")
+        : (lead.eta_overrun && !liveJobsIsTerminal(lead.status) ? liveJobOverrunText(lead) : liveJobStageText(lead));
     if (fillEl) fillEl.style.width = `${Math.min(100, Math.max(4, lead.progress_percent || 0))}%`;
 }
 function liveJobsSheetRowHtml(job) {
@@ -941,14 +956,20 @@ function liveJobsSheetRowHtml(job) {
     }
     // Batch AK (Addition C): terminal rows lead with the outcome
     // label alone (no "SUCCESS · Done" duplication, no stale step).
+    // Batch CB Item 4: an active job the server flags eta_overrun
+    // leads with the overrun sentence instead (it already carries
+    // the stage + elapsed, so the separate elapsed suffix is off).
+    const overrun = !!job.eta_overrun && !liveJobsIsTerminal(job.status);
     const metaText = liveJobsIsTerminal(job.status)
         ? escapeHtml(liveJobStageText(job))
-        : `${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}`;
+        : (overrun
+            ? escapeHtml(liveJobOverrunText(job))
+            : `${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}`);
     return `<div class="live-job-row" data-live-job-id="${job.id}">
         <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
         <div class="live-job-row-main">
             <div class="live-job-row-title">${title}</div>
-            <div class="live-job-row-meta">${metaText}${elapsed ? " · " + escapeHtml(elapsed) : ""}</div>
+            <div class="live-job-row-meta">${metaText}${elapsed && !overrun ? " · " + escapeHtml(elapsed) : ""}</div>
             <div class="live-job-row-bar"><span class="live-job-row-fill" style="width:${pct}%"></span></div>
         </div>
         <div class="live-job-row-actions">${action}</div>
@@ -4397,6 +4418,10 @@ function formatRecapQuoteDuration(durationSec) {
 }
 
 function updateRecapSplitCostHint() {
+    // Batch CB: the Step-4 ETA refresh rides the same hub — every
+    // duration/quality/language change that repaints the quote also
+    // re-asks for the shape's time range (it no-ops when unchanged).
+    refreshRecapStep4Eta();
     const hint = document.getElementById("recap-split-cost-hint");
     if (!hint) return;
     const toggle = document.getElementById("recap-split-toggle");
@@ -4684,6 +4709,64 @@ function setRecapStep4Quote(credits, breakdownText) {
     refreshRecapStep4Choices();
 }
 window.setRecapStep4Quote = setRecapStep4Quote;
+
+// ── Batch CB: honest ETA text + the Step-4 estimate ─────────────
+// ONE formatter for every ETA surface: a RANGE in whole minutes
+// (low floored, high ceiled), the under-a-minute wording ONLY when
+// the range's high bound is genuinely < 90 s, and NO 1-minute floor
+// anywhere — the pre-CB Math.max(1, ...) paint is what let a job
+// 50 minutes in claim "~1 min" for tens of minutes.
+function formatEtaRangeText(range, mode) {
+    if (!Array.isArray(range) || range.length < 2) return "";
+    const low = Number(range[0]), high = Number(range[1]);
+    if (!isFinite(low) || !isFinite(high) || high <= 0) return "";
+    if (high < 90) return t("recap_eta_under_minute");
+    const lowMin = Math.max(1, Math.floor(low / 60));
+    const highMin = Math.max(lowMin, Math.ceil(high / 60));
+    if (lowMin === highMin) return tf("recap_eta_dynamic", { min: lowMin });
+    return tf(mode === "estimate" ? "recap_eta_estimate_range" : "recap_eta_range", { low: lowMin, high: highMin });
+}
+
+// The Step-4 estimate: the wizard knows duration + engine + quality
+// before submit, so it asks the server for THAT shape's total range
+// (GET /api/recap/eta-estimate) whenever the shape changes — the
+// quote refresh hub (updateRecapSplitCostHint) and the engine
+// picker both land here. A null range hides the line: no number is
+// ever invented client-side.
+let recapStep4EtaSeq = 0;
+let recapStep4EtaKey = "";
+async function refreshRecapStep4Eta() {
+    const el = document.getElementById("recap-step4-eta");
+    if (!el) return;
+    const dur = state.recapSourceDuration || 0;
+    if (!dur) {
+        el.textContent = "";
+        el.classList.add("hidden");
+        recapStep4EtaKey = "";
+        return;
+    }
+    const engine = state.recapTtsEngine || "voxcpm";
+    const quality = state.recapRenderQuality || "standard";
+    const key = `${dur}|${engine}|${quality}|${currentLang}`;
+    if (key === recapStep4EtaKey) return;
+    recapStep4EtaKey = key;
+    const seq = ++recapStep4EtaSeq;
+    try {
+        const res = await fetch(`/api/recap/eta-estimate?duration_seconds=${encodeURIComponent(dur)}&tts_engine=${encodeURIComponent(engine)}&render_quality=${encodeURIComponent(quality)}`, { headers: getAuthHeaders() });
+        if (!res.ok) throw new Error("eta " + res.status);
+        const data = await res.json();
+        if (seq !== recapStep4EtaSeq) return; // a newer shape won
+        const text = formatEtaRangeText(data.eta_range_seconds, "estimate");
+        el.textContent = text;
+        el.classList.toggle("hidden", !text);
+    } catch (e) {
+        if (seq === recapStep4EtaSeq) {
+            el.textContent = "";
+            el.classList.add("hidden");
+        }
+    }
+}
+window.refreshRecapStep4Eta = refreshRecapStep4Eta;
 
 function refreshRecapStep4Thumb() {
     // AX-4R: the Step 4 frame is the SAME engine composite the
@@ -7291,6 +7374,9 @@ function setupRecapVisualEditor() {
             moveSegPill(document.getElementById("recap-engine-picker"));
             state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
             syncRecapEngineAreas();
+            // Batch CB: the engine is an ETA shape input — refresh
+            // the Step-4 range for the new engine.
+            refreshRecapStep4Eta();
         });
     });
     refreshRecapEngineLock();
@@ -8384,15 +8470,13 @@ async function handleStartRecap() {
     // Cinema Compositing") — vendor names out, structure kept.
     if (statusMsg) statusMsg.innerText = t("recap_stage1_status");
 
-    let estMinutes = "၁.၅ - ၂.၅";
-    if (state.recapSourceDuration && state.recapSourceDuration > 180) {
-        estMinutes = "၃ - ၄";
-    }
-    if (stepText) {
-        stepText.innerText = tf("recap_eta_estimate", {
-            min: currentLang === "my" ? estMinutes : estMinutes.replace("၁.၅ - ၂.၅", "1.5 - 2.5").replace("၃ - ၄", "3 - 4"),
-        });
-    }
+    // Batch CB Item 3: the hardcoded submit-time estimate
+    // ("1.5 - 2.5" / "3 - 4" minutes for every job) is GONE — it was
+    // fiction unrelated to the job's shape. The honest range the
+    // wizard fetched for Step 4 rides the submit response
+    // (eta_range_seconds); the store renderer + detail poller paint
+    // the live lines from real server estimates from here on, and
+    // when no estimate exists the line simply carries no number.
 
     // Batch AC duplicate-submit guard, engaged at the last moment
     // before the request (after every auto-adjustment, e.g. the
@@ -8541,7 +8625,8 @@ async function handleStartRecap() {
 // which it caches below for this renderer. Monotonicity comes from
 // liveJobsMergeJob, the one merge both surfaces share.
 let recapFormJobId = null;      // the job the detail form tracks
-let recapFormEtaSeconds = 0;    // ETA extra, fed by the detail poller
+let recapFormEtaRange = null;   // ETA range extra, fed by the detail poller (Batch CB)
+let recapFormEtaOverrun = false; // overrun flag, fed by the detail poller (Batch CB)
 let recapFormNotice = null;     // a poller health notice owning the status line
 let recapFormStoreSubscribed = false;
 
@@ -8551,7 +8636,14 @@ function renderRecapFormProgress(job) {
     const statusMsg = document.getElementById("recap-status-msg");
     const stepText = document.getElementById("recap-step-text");
     const progressFill = document.getElementById("recap-progress-fill");
-    if (statusMsg) statusMsg.innerText = liveJobStageText(job);
+    // Batch CB Item 4: while the job overruns its initial estimate,
+    // the status line (here AND the inline line below) switches to
+    // the honest overrun copy — the stage + elapsed come from this
+    // same store job, the flag from the detail poller's ETA extra.
+    const formStatusText = (recapFormEtaOverrun && !liveJobsIsTerminal(job.status))
+        ? liveJobOverrunText(job)
+        : liveJobStageText(job);
+    if (statusMsg) statusMsg.innerText = formStatusText;
     // Batch BT: the studio INLINE status line is the surface the
     // user actually watches after a 1-Click submit (Batch AC keeps
     // the detail box closed) — but showStudioInlineStatus wrote it
@@ -8566,7 +8658,7 @@ function renderRecapFormProgress(job) {
     // health notice owns the status text, inline included.)
     const inlineLine = document.getElementById("recap-inline-status");
     const inlineText = document.getElementById("recap-inline-status-text");
-    if (inlineText) inlineText.innerText = liveJobStageText(job);
+    if (inlineText) inlineText.innerText = formStatusText;
     if (inlineLine) inlineLine.classList.remove("hidden");
     if (progressFill && job.progress_percent) {
         progressFill.style.width = `${Math.min(100, Math.max(10, job.progress_percent))}%`;
@@ -8579,8 +8671,13 @@ function renderRecapFormProgress(job) {
             if (typeof job.queue_position === "number" && job.queue_position > 0) {
                 stepBits.push(tf("recap_queue_ahead", { count: job.queue_position }));
             }
-            if (recapFormEtaSeconds > 0) {
-                stepBits.push(tf("recap_eta_dynamic", { min: Math.max(1, Math.round(recapFormEtaSeconds / 60)) }));
+            // Batch CB: the ETA bit is the remaining RANGE (no
+            // 1-minute floor); during an overrun the status line
+            // carries the honest copy and the bit stays off rather
+            // than contradicting it.
+            const etaText = recapFormEtaOverrun ? "" : formatEtaRangeText(recapFormEtaRange, "remaining");
+            if (etaText) {
+                stepBits.push(etaText);
             }
             if (stepBits.length === 1) stepBits.push(t("queue_notice_recap"));
             stepText.innerText = stepBits.join(" • ");
@@ -8641,7 +8738,8 @@ function startRecapJobPolling(jobId) {
     // store subscription paints its progress lines from here on
     // (an already-known store job paints immediately).
     recapFormJobId = jobId;
-    recapFormEtaSeconds = 0;
+    recapFormEtaRange = null;
+    recapFormEtaOverrun = false;
     recapFormNotice = null;
     ensureRecapFormStoreSubscription();
     const storeJobOnStart = LiveJobs.jobs.get(jobId);
@@ -8739,8 +8837,12 @@ function startRecapJobPolling(jobId) {
             // STORE JOB, never from this response, so the step/stage
             // text is the pill's own merged values by construction.
             recapFormNotice = null;
-            recapFormEtaSeconds = (typeof data.eta_seconds === "number" && data.eta_seconds > 0)
-                ? data.eta_seconds : 0;
+            // Batch CB: the ETA extra is now the remaining RANGE +
+            // the overrun flag (the bulk endpoint carries its own
+            // copy for the pill/sheet; the detail payload's richer
+            // estimator feeds this form).
+            recapFormEtaRange = Array.isArray(data.eta_range_seconds) ? data.eta_range_seconds : null;
+            recapFormEtaOverrun = !!data.eta_overrun;
             const storeJobForPaint = LiveJobs.jobs.get(jobId);
             if (storeJobForPaint) renderRecapFormProgress(storeJobForPaint);
             // Batch AK (Addition C): on a terminal status the
