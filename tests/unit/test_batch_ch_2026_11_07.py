@@ -459,8 +459,8 @@ def test_ch_cache_token_is_r105():
     html = (
         Path(__file__).resolve().parents[2] / "app/webapp/static/index.html"
     ).read_text(encoding="utf-8")
-    assert html.count("20261104_r105") == 4
-    assert ("20261104_r" + "104") not in html
+    assert html.count("20261104_r106") == 4
+    assert ("20261104_r" + "105") not in html
 
 
 # ---------------------------------------------------------------------------

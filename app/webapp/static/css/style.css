@@ -3016,6 +3016,12 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-cost-hint { font-size: 12px; opacity: 0.9; }
 .recap-unverified-warning { font-size: 12.5px; line-height: 1.55; color: #d97706; font-weight: 600; }
 
+/* Batch CI — persistent duration-cap notice (Step 1 source area +
+   Step 4 under the CTA): same alert family as .upload-error-box, so
+   the over-limit reason stays readable in place instead of flashing
+   by as a toast. */
+.recap-overlimit-notice { padding: var(--s2) var(--s3); border-radius: var(--r-md); background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); font-size: 12.5px; line-height: 1.55; font-weight: 600; color: var(--red); }
+
 
 /* AGY-4 — slider thumbs lose the dark-theme black rim; blur box gets
    the glass specular highlight like every other frosted surface. */
