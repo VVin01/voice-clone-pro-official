@@ -4808,3 +4808,40 @@ button.bal-chip {
     .bal-chip.tts { padding: 6px 7px; }
     .home-free-row { padding: var(--s2); gap: var(--s2); }
 }
+
+/* ════════════════════════════════════════════════════════════
+   BATCH CN (2026-11-07) — TTS TAB FIXES
+   CN-1: the Gemini key card's lines lost their first glyphs at
+   the card's left edge in the live webview (owner eyes-on, two
+   passes). Measured locally (headless Chromium, the shipped
+   markup + this stylesheet): the card's box geometry is
+   pixel-identical to the clean engine card — same content-left,
+   no transform, no negative margin, no overflow — so the loss
+   is glyph-ink level, the first-glyph clip this codebase has
+   met before (Batch BB: the speed-row titles' first cluster
+   "sliced flush at the card edge", fixed with the standard
+   inset). The key card is a stack of long body lines whose
+   first glyphs (Myanmar digits ၁/၂/၃, clusters, Latin "Key")
+   start flush at the content edge. The card gains ONE extra
+   spacing step of start padding, so every child's content —
+   text lines, the input row, the button row — clears the
+   card's hard glass edge uniformly; the shared .card rhythm
+   is untouched (end padding and all siblings unchanged).
+   CN-2: .detail-toggle — the tap-to-expand row for the tab's
+   long explanations (the toggleHomeTutorials idiom: a quiet
+   full-width row, chevron rotates on .open). ─────────────── */
+#tts-gemini-key-card { padding-inline-start: calc(var(--s4) + var(--s2)); }
+
+.detail-toggle {
+    display: flex; align-items: center; gap: var(--s2);
+    width: 100%; min-height: 44px; padding: 2px 0;
+    background: transparent; border: none; cursor: pointer;
+    color: var(--text-2); text-align: left;
+    font-size: 13.5px; line-height: 1.55;
+    -webkit-tap-highlight-color: transparent;
+}
+.detail-toggle .detail-toggle-chevron {
+    flex: 0 0 auto; font-size: 13px; color: var(--text-3);
+    transition: transform 0.18s ease;
+}
+.detail-toggle.open .detail-toggle-chevron { transform: rotate(180deg); }

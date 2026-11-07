@@ -92,7 +92,7 @@ def _user(uid: int, **kw) -> User:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_r38():
-    assert HTML.count("?v=20261104_r109") == 4
+    assert HTML.count("?v=20261104_r110") == 4
     assert "20261102_r37" not in HTML
 
 

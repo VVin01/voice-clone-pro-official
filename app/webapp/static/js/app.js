@@ -10342,6 +10342,46 @@ function _cgPromptUseEdge() {
     generateTTS();
 }
 
+// ── Batch CN: tap-to-expand detail blocks on the TTS tab ────────
+// One reusable toggle for the tab's long explanations (the cost
+// hint's billing detail, the key card's how-to + privacy notes):
+// the button carries data-detail-target="<id>"; the target starts
+// .hidden and unfolds in place — the toggleHomeTutorials idiom
+// (hidden flip + .open chevron rotation + aria-expanded). State is
+// not persisted; a fresh visit starts collapsed.
+function toggleTtsDetail(btn) {
+    if (!btn) return;
+    const target = document.getElementById(btn.getAttribute("data-detail-target") || "");
+    if (!target) return;
+    const open = target.classList.toggle("hidden") === false;
+    btn.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+window.toggleTtsDetail = toggleTtsDetail;
+
+// Batch CN: engine-driven visibility for the whole TTS tab. The
+// Gemini-only surfaces (taste note + BYOK key card) exist only in
+// Gemini mode; the Edge voice hint explains the 10 → 2 voice list
+// in Edge mode. The taste note's own quota rules still decide its
+// Gemini-mode visibility (paintTtsTasteNote re-run on the cached
+// quota), so the two never fight.
+function applyTtsEngineVisibility() {
+    const engine = ttsState.engine || "gemini";
+    const gRow = document.getElementById("tts-gemini-voice-row");
+    const eRow = document.getElementById("tts-edge-voice-row");
+    if (gRow) gRow.classList.toggle("hidden", engine !== "gemini");
+    if (eRow) eRow.classList.toggle("hidden", engine !== "edge");
+    const keyCard = document.getElementById("tts-gemini-key-card");
+    if (keyCard) keyCard.classList.toggle("hidden", engine !== "gemini");
+    const edgeHint = document.getElementById("tts-edge-voice-hint");
+    if (edgeHint) edgeHint.classList.toggle("hidden", engine !== "edge");
+    const tasteNote = document.getElementById("tts-taste-note");
+    if (tasteNote) {
+        if (engine !== "gemini") tasteNote.classList.add("hidden");
+        else paintTtsTasteNote(_cgQuotaCache);
+    }
+}
+
 function initTtsTab() {
     document.querySelectorAll("#tts-engine-picker .seg-btn").forEach(btn => {
         btn.addEventListener("click", () => {
@@ -10350,10 +10390,7 @@ function initTtsTab() {
             document.querySelectorAll("#tts-engine-picker .seg-btn").forEach(
                 b => b.classList.toggle("active", b === btn)
             );
-            const gRow = document.getElementById("tts-gemini-voice-row");
-            const eRow = document.getElementById("tts-edge-voice-row");
-            if (gRow) gRow.classList.toggle("hidden", ttsState.engine !== "gemini");
-            if (eRow) eRow.classList.toggle("hidden", ttsState.engine !== "edge");
+            applyTtsEngineVisibility();
         });
     });
     document.querySelectorAll("#tts-speed-picker .speed-seg").forEach(btn => {
@@ -10387,6 +10424,9 @@ function initTtsTab() {
     if (balLine) balLine.addEventListener("click", () => {
         if (balLine.dataset.quotaError === "1") refreshTtsQuota();
     });
+    // Batch CN: paint the engine-driven surfaces once at init so
+    // the tab opens consistent with the selected engine.
+    applyTtsEngineVisibility();
 }
 if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initTtsTab);
