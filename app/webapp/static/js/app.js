@@ -4390,6 +4390,107 @@ function notifyRecapSplitAutoEnabled() {
     showStudioToast(t("toast_split_auto"), 'info');
 }
 
+// ── Batch CI: duration-cap gate at the EARLIEST point ─────────────
+// The server enforces the FREE 120 s / VIP 600 s SOURCE cap only at
+// submit (POST /api/recap/generate → HTTP 400), where the reason
+// surfaced as a seconds-long toast: a FREE user with a 2:01 source
+// walked all four wizard steps, saw a normal quote at Step 4,
+// pressed 1-Click and could not tell why nothing happened. The gate
+// below evaluates the SAME facts the moment the client learns the
+// duration (upload completion / link probe paint through
+// updateRecapSplitCostHint, which calls the painter) and keeps the
+// explanation on screen:
+//   free-blocked — persistent notice on Step 1 (and under the Step-4
+//     CTA), advancing past Step 1 refused in showRecapStep, the
+//     1-Click button disabled (the sticky CTA mirrors its disabled
+//     state), so the user fixes the source instead of the submit.
+//   vip-notice — persistent Step-1 notice with the split guidance;
+//     never a block (the split path is chosen later in the wizard).
+//   clear — in-limit, duration unknown, or admin (server-exempt).
+// The server checks stay untouched as the backstop.
+function recapDurationGateState(durationSeconds, maxSeconds, isVip, isAdmin) {
+    if (isAdmin) return "clear";
+    const dur = Number(durationSeconds) || 0;
+    // Unknown duration (not learned yet, or a local <video> reporting
+    // Infinity for streamed WebM) never gates — the server-measured
+    // duration re-evaluates when it lands.
+    if (!isFinite(dur) || dur <= 0) return "clear";
+    if (dur <= (Number(maxSeconds) || 0)) return "clear";
+    return isVip ? "vip-notice" : "free-blocked";
+}
+
+function recapGateDurationText(durationSeconds) {
+    const total = Math.max(0, Math.floor(Number(durationSeconds) || 0));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+// The Step-1 / Step-4 notice copy: the same facts the server's
+// recap_over_limit_message states (actual duration, tier, max) plus
+// the tier's way forward (VIP upsell / split guidance).
+function recapOverLimitNoticeText(durationSeconds, maxSeconds, isVip) {
+    return tf("recap_over_limit_notice", {
+        duration: recapGateDurationText(durationSeconds),
+        tier: isVip ? "VIP" : t("tier_free_label"),
+        max: Math.floor((Number(maxSeconds) || 0) / 60),
+        hint: t(isVip ? "toast_recap_over_hint_vip" : "toast_recap_over_hint_free"),
+    });
+}
+
+// A server duration rejection the client could not pre-empt (a link
+// source whose duration was never learned) is kept here by the
+// submit catch and rendered persistently under the Step-4 CTA.
+let recapSubmitRejectText = "";
+
+function updateRecapDurationGate() {
+    const dur = state.recapSourceDuration || 0;
+    const maxSeconds = recapNormalMaxSeconds();
+    const isVip = !!state.user?.is_vip;
+    const isAdmin = !!state.user?.is_admin;
+    const gate = recapDurationGateState(dur, maxSeconds, isVip, isAdmin);
+    const step1Note = document.getElementById("recap-overlimit-notice");
+    if (step1Note) {
+        const show = gate !== "clear";
+        step1Note.classList.toggle("hidden", !show);
+        if (show) step1Note.innerText = recapOverLimitNoticeText(dur, maxSeconds, isVip);
+    }
+    const step4Note = document.getElementById("recap-overlimit-notice-step4");
+    const btn = document.getElementById("btn-start-recap");
+    if (gate === "free-blocked") {
+        if (step4Note) {
+            step4Note.innerText = recapOverLimitNoticeText(dur, maxSeconds, isVip);
+            step4Note.classList.remove("hidden");
+        }
+        if (btn && !btn.disabled) {
+            btn.disabled = true;
+            btn.style.opacity = "0.5";
+            // Only the gate's OWN disable is ever undone by the gate
+            // (see the clear branch) — other owners keep their state.
+            btn.setAttribute("data-ci-gate-disabled", "1");
+        }
+    } else {
+        if (step4Note) {
+            if (recapSubmitRejectText) {
+                step4Note.innerText = recapSubmitRejectText;
+                step4Note.classList.remove("hidden");
+            } else {
+                step4Note.classList.add("hidden");
+            }
+        }
+        if (btn && btn.getAttribute("data-ci-gate-disabled")) {
+            btn.removeAttribute("data-ci-gate-disabled");
+            if (!recapJobIsActive()) {
+                btn.disabled = false;
+                btn.style.opacity = "";
+            }
+        }
+    }
+    if (typeof refreshStickyCtas === "function") refreshStickyCtas();
+    return gate;
+}
+window.updateRecapDurationGate = updateRecapDurationGate;
+
 // Segmented (over-cap) recaps are charged 1 credit PER PART. This
 // mirrors the server's planning (_recap_estimate_part_count in api.py
 // → plan_parts over the same target): parts of min(split, cap−30s),
@@ -4418,6 +4519,11 @@ function formatRecapQuoteDuration(durationSec) {
 }
 
 function updateRecapSplitCostHint() {
+    // Batch CI: the duration-cap gate repaints from the same hub —
+    // both duration-learn points (upload completion, link extract),
+    // the info-card clear, profile load and the pickers all pass
+    // through here, so the gate can never sit stale.
+    updateRecapDurationGate();
     // Batch CB: the Step-4 ETA refresh rides the same hub — every
     // duration/quality/language change that repaints the quote also
     // re-asks for the shape's time range (it no-ops when unchanged).
@@ -4608,6 +4714,20 @@ window.refreshRecapStepIndicator = refreshRecapStepIndicator;
 // the indicator, scrolls the tab back to the top of the wizard.
 function showRecapStep(n) {
     if (!document.getElementById("recap-step-" + n)) return;
+    // Batch CI: a FREE source over the duration cap may not advance
+    // past Step 1 — the persistent notice on Step 1 carries the full
+    // reason, and this toast repeats it for a tap that went nowhere.
+    // VIP (split path) and admins are never blocked here; the server
+    // submit check remains the backstop for every tier.
+    if (n > 1 && n !== recapCurrentStep
+        && recapDurationGateState(state.recapSourceDuration || 0, recapNormalMaxSeconds(), !!state.user?.is_vip, !!state.user?.is_admin) === "free-blocked") {
+        showStudioToast(tf("toast_recap_over_limit", {
+            tier: t("tier_free_label"),
+            m: Math.floor(recapNormalMaxSeconds() / 60),
+            hint: t("toast_recap_over_hint_free"),
+        }), 'warning', 6000);
+        return;
+    }
     recapCurrentStep = n;
     [1, 2, 3, 4].forEach(m => {
         const els = recapStepEls(m);
@@ -5135,6 +5255,9 @@ function setupRecapVisualEditor() {
         state.lastRecapInfo = null;
         state.recapSourceDuration = 0;
         state.recapVideoTitle = "";
+        // Batch CI: a new source retires any stored server duration
+        // rejection — the gate repaint below hides its Step-4 note.
+        recapSubmitRejectText = "";
         updateRecapSplitCostHint();
         paintRecapUnverifiedWarning();
     }
@@ -5151,6 +5274,9 @@ function setupRecapVisualEditor() {
         if (isOverLimit && (state.user?.is_admin || state.user?.is_vip)) isOverLimit = false;
         paintRecapInfoMeta(data, isOverLimit, maxAllowed);
         paintRecapUnverifiedWarning();
+        // Batch CI: the gate notices are painted imperatively (not
+        // via data-i18n), so a language switch re-renders them too.
+        updateRecapDurationGate();
     }
     window.refreshRecapInfoMetaLanguage = refreshRecapInfoMetaLanguage;
 
@@ -7815,6 +7941,9 @@ function setupRecapVisualEditor() {
                     state.lastRecapInfo = { metadata_verified: false, duration_seconds: 0, has_subtitles: false, estimated_duration: "00:00" };
                     paintRecapInfoMeta(state.lastRecapInfo, false, recapNormalMaxSeconds());
                     paintRecapUnverifiedWarning();
+                    // Batch CI: duration is back to UNKNOWN here —
+                    // repaint the gate so no stale notice survives.
+                    updateRecapDurationGate();
                     const sb = document.getElementById("canvas-seek-time-badge");
                     if (sb) sb.innerText = "⏱️ 00:05s / --:--";
                 }
@@ -8293,6 +8422,9 @@ function setupRecapVisualEditor() {
         if (srToggle) srToggle.checked = !!cfg.script_review;
         if (cfg.title) state.recapVideoTitle = cfg.title;
         state.recapSourceDuration = cfg.duration_seconds || null;
+        // Batch CI: a prefilled source's duration becomes known
+        // HERE (Step-4 context) — the gate must evaluate it too.
+        updateRecapDurationGate();
         const srcUrl = (cfg.url || "").trim();
         if (/^https?:\/\//i.test(srcUrl)) {
             state.uploadedVideoPath = null;
@@ -8601,10 +8733,23 @@ async function handleStartRecap() {
                 : (data.credits_charged
                     ? tf("confirm_cost_recap", { credits: data.credits_charged })
                     : t("confirm_cost_none")));
+        // Batch CI: an accepted submit retires any stored duration
+        // rejection note from an earlier attempt on this source.
+        recapSubmitRejectText = "";
+        updateRecapDurationGate();
         showSubmitConfirmation("recap", data.recap_id, confirmCostText);
 
     } catch (err) {
         studioSubmitFailure("recap");
+        // Batch CI: a server DURATION-cap rejection — possible when
+        // the client never learned this source's duration (some link
+        // sources) — ALSO lands as a persistent note under the Step-4
+        // CTA via the gate painter; the toast alone disappears in
+        // seconds and leaves the user guessing. Identified by the
+        // same marker mapErrorToToast's recap pass-through family
+        // uses. Any other outcome clears a stale stored rejection.
+        const rawErr = err && err.message ? String(err.message) : "";
+        recapSubmitRejectText = rawErr.includes('ကန့်သတ်ချက် (အများဆုံး') ? rawErr : "";
         // R40 item 11: this catch only sees SUBMIT-time failures — the
         // server rejected /recap/generate before any charge (or the
         // request never landed), so the generic recap failure copy
@@ -8615,6 +8760,7 @@ async function handleStartRecap() {
         showStudioToast(mapped === t('err_recap_failed') ? t('err_recap_rejected') : mapped, 'error');
         if (progressBox) progressBox.classList.add("hidden");
         if (btn) btn.disabled = false;
+        updateRecapDurationGate();
     }
 }
 
