@@ -2669,7 +2669,7 @@ async def get_user_profile(
         pass
 
     # Round-6 P2: Refer & Support exposure. The referral programme is
-    # complete in the bot (ledger.py: attribution, +30s rewards capped
+    # complete in the bot (ledger.py: attribution, 120s TTS-only rewards capped
     # at 20, get_referral_stats) but the Mini App never exposed it —
     # users could only find a tutorial post. Ride the fields on /me so
     # the Home card renders with zero extra fetches. A referral failure
@@ -9296,6 +9296,38 @@ def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str
         return False
 
 
+def _job_display_names(job, *, is_recap: bool, is_tts: bool):
+    """(voice_display, engine_display) for the job serializers (Batch BX).
+
+    Additive display fields — the raw ``preset_voice`` stays untouched:
+    * TTS rows get the friendly voice + engine names (the raw values
+      are engine ids users should never see: "Charon",
+      "my-MM-ThihaNeural").
+    * Own-voice recap rows (Batch BV: ``recap_ref_audio_path`` set)
+      get the own-voice label in BOTH the admin queue and user
+      History — before BX these rows fell back to the job's default
+      persona slug ("komin") in the admin list.
+    Everything else returns (None, None) and the client keeps its
+    existing rendering.
+    """
+    if is_tts:
+        from app.services.voice_display import (
+            tts_engine_display_name,
+            tts_voice_display_name,
+        )
+
+        engine = getattr(job, "tts_engine", None) or job.engine
+        return (
+            tts_voice_display_name(engine, job.preset_voice) or None,
+            tts_engine_display_name(engine) or None,
+        )
+    if is_recap and getattr(job, "recap_ref_audio_path", None):
+        from app.services.voice_display import own_voice_display_name
+
+        return own_voice_display_name(), None
+    return None, None
+
+
 def _time_ago_str(mins_ago: int, lang: str) -> str:
     """Localized relative-time label for history / queue payloads.
 
@@ -9525,6 +9557,10 @@ async def get_user_history(
                 )
             ),
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
+            # Batch BX: friendly display names beside the raw value
+            # (TTS engine/voice; own-voice recap label).
+            "voice_display": _job_display_names(j, is_recap=is_recap, is_tts=is_tts)[0],
+            "engine_display": _job_display_names(j, is_recap=is_recap, is_tts=is_tts)[1],
             "status": j.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
             "created_at": j.created_at.isoformat() if j.created_at else None,
@@ -9712,6 +9748,11 @@ async def get_admin_global_history(
             "job_type": "RECAP" if is_recap else ("TTS" if job.job_type == JobType.TTS.value else "VOICE_CLONE"),
             "engine": job.engine,
             "preset_voice": job.preset_voice or ("Thiha" if is_recap else "Standard"),
+            # Batch BX: friendly display names beside the raw value
+            # (TTS engine/voice; own-voice recap label — the admin
+            # queue showed the default "komin" slug for those rows).
+            "voice_display": _job_display_names(job, is_recap=is_recap, is_tts=(job.job_type == JobType.TTS.value))[0],
+            "engine_display": _job_display_names(job, is_recap=is_recap, is_tts=(job.job_type == JobType.TTS.value))[1],
             "status": job.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
             "created_at": job.created_at.isoformat() if job.created_at else None,
@@ -11094,6 +11135,10 @@ async def get_admin_queue(
             "job_type": "RECAP" if is_recap else ("TTS" if j.job_type == JobType.TTS.value else "VOICE_CLONE"),
             "engine": j.engine or ("recap" if is_recap else "voxcpm"),
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
+            # Batch BX: friendly display names beside the raw value
+            # (TTS engine/voice; own-voice recap label).
+            "voice_display": _job_display_names(j, is_recap=is_recap, is_tts=(j.job_type == JobType.TTS.value))[0],
+            "engine_display": _job_display_names(j, is_recap=is_recap, is_tts=(j.job_type == JobType.TTS.value))[1],
             "input_snippet": (j.input_text[:80] + "...") if j.input_text and len(j.input_text) > 80 else (j.input_text or ""),
             "created_at": j.created_at.isoformat() if j.created_at else None,
             "started_at": j.started_at.isoformat() if j.started_at else None,
@@ -11344,6 +11389,12 @@ class AdminSettingsPayload(BaseModel):
     group_ai_user_cooldown_seconds: Optional[int] = None
     group_ai_hourly_budget: Optional[int] = None
     group_ai_daily_budget: Optional[int] = None
+    # Batch BX: the bot private-chat AI joins the payload beside its
+    # group sibling (registered dynamic settings read per message).
+    private_ai_enabled: Optional[bool] = None
+    private_ai_user_cooldown_seconds: Optional[int] = None
+    private_ai_hourly_budget: Optional[int] = None
+    private_ai_daily_budget: Optional[int] = None
     character_limit_free: Optional[int] = None
     character_limit_purchased: Optional[int] = None
     free_monthly_allowance_seconds: Optional[int] = None
@@ -11406,6 +11457,12 @@ async def get_admin_settings(
         "group_ai_user_cooldown_seconds": int(getattr(settings, "group_ai_user_cooldown_seconds", 60) or 0),
         "group_ai_hourly_budget": int(getattr(settings, "group_ai_hourly_budget", 40) or 40),
         "group_ai_daily_budget": int(getattr(settings, "group_ai_daily_budget", 300) or 300),
+        # Batch BX: private-chat AI — the toggle defaults ON (owner
+        # order), so the getattr default here is True, not False.
+        "private_ai_enabled": bool(getattr(settings, "private_ai_enabled", True)),
+        "private_ai_user_cooldown_seconds": int(getattr(settings, "private_ai_user_cooldown_seconds", 60) or 0),
+        "private_ai_hourly_budget": int(getattr(settings, "private_ai_hourly_budget", 40) or 40),
+        "private_ai_daily_budget": int(getattr(settings, "private_ai_daily_budget", 300) or 300),
         "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
         "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
         "free_monthly_allowance_seconds": int(getattr(settings, "free_monthly_allowance_seconds", 180)),
@@ -11537,6 +11594,24 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = limit_val
+        elif key == "private_ai_user_cooldown_seconds":
+            # Batch BX: same bounds discipline as the group sibling —
+            # 0 is a real choice (no per-user cooldown); the cap keeps
+            # a typo from parking users for a year.
+            try:
+                limit_val = int(value)
+            except (TypeError, ValueError):
+                limit_val = -1
+            if limit_val < 0 or limit_val > 86400:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Private AI အသုံးပြုသူ Cooldown (private_ai_user_cooldown_seconds) သည် "
+                        "0 မှ 86400 စက္ကန့် အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = limit_val
         elif key == "maintenance_note":
             # Batch Z: free-text announcement the Group AI quotes
             # verbatim from its fact sheet while maintenance is on
@@ -11583,6 +11658,24 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     status_code=400,
                     detail=(
                         f"Group AI Budget ({key}) သည် "
+                        "1 မှ 100000 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = limit_val
+        elif key in ("private_ai_hourly_budget", "private_ai_daily_budget"):
+            # Batch BX: same rule as the group budgets — 0 would
+            # silently disable private answers, so it is rejected
+            # here even though the reader would fall back to defaults.
+            try:
+                limit_val = int(value)
+            except (TypeError, ValueError):
+                limit_val = -1
+            if limit_val < 1 or limit_val > 100000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Private AI Budget ({key}) သည် "
                         "1 မှ 100000 အတွင်း ဖြစ်ရပါမည်။ "
                         "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
                     ),

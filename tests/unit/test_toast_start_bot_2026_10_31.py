@@ -187,15 +187,22 @@ def test_help_guide_new_sections_and_formatting(lang, markers):
         free_sec=300,
         char_free="1,000",
         char_purchased="5,000",
-        daily_limit=5,
+        # Batch BX: the guide's placeholders are the voice/TTS daily
+        # minute caps + the FREE recap length (the legacy daily_limit
+        # job-count placeholder left the guide entirely).
+        voice_daily_free=5,
+        voice_daily_paid=30,
+        tts_daily_free=15,
+        tts_daily_paid=60,
+        recap_free_min=2,
         vip_recap_min=10,
         retention_hours=24,
-        referral_seconds=30,
-        referral_cap_min=10,
+        referral_seconds=120,
+        referral_cap_min=40,
     )
     assert "{free_min}" not in rendered
     assert "{char_free}" not in rendered
-    assert "{daily_limit}" not in rendered
+    assert "{voice_daily_free}" not in rendered
     assert "{retention_hours}" not in rendered
     assert "{vip_recap_min}" not in rendered
     assert "{referral_seconds}" not in rendered

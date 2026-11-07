@@ -274,7 +274,7 @@ async def verify_user_membership(
     If both verified:
     - Sets user.channel_verified = True and user.group_verified = True.
     - Idempotently awards welcome bonus (5 minutes) if not awarded yet.
-    - Confirms pending referral and rewards referrer (30s) if applicable.
+    - Confirms pending referral and rewards referrer (120s TTS-only) if applicable.
 
     Returns (is_verified, reason).
     """

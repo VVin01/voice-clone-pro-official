@@ -139,15 +139,19 @@ async def test_help_settings_dynamically_reflects_admin_changes(db_session):
     orig_free_chars = settings.character_limit_free
     orig_purchased_chars = settings.character_limit_purchased
     orig_daily_limit = settings.free_daily_job_limit
+    orig_voice_daily_free = settings.voice_daily_limit_minutes_free
 
     try:
         user, _ = await get_or_create_user(db_session, telegram_id=555003)
         user.language_code = "my"
         await db_session.flush()
 
-        # 1. Baseline rendering in Burmese (current defaults: 180s = 3m, 1000 free chars, 5000 purchased chars, 5 daily)
+        # 1. Baseline rendering in Burmese (current defaults: 180s = 3m, 1000 free chars, 5000 purchased chars)
+        # Batch BX: §4 names the monthly free minutes without the old
+        # "(180 seconds)" parenthetical — the per-day MINUTE caps are
+        # the limits the section now states.
         text_my, _ = await render_help_settings_content(db_session, user.id)
-        assert "၃ မိနစ် (၁၈၀ စက္ကန့်)" in text_my or "3 မိနစ် (180 စက္ကန့်)" in text_my
+        assert "3 မိနစ်" in text_my
         assert "၁,၀၀၀" in text_my or "1,000" in text_my
         assert "၅,၀၀၀" in text_my or "5,000" in text_my
         assert "၅" in text_my or "5" in text_my
@@ -157,28 +161,32 @@ async def test_help_settings_dynamically_reflects_admin_changes(db_session):
         await set_dynamic_setting(db_session, "character_limit_free", 800, admin_id=999)
         await set_dynamic_setting(db_session, "character_limit_purchased", 5000, admin_id=999)
         await set_dynamic_setting(db_session, "free_daily_job_limit", 10, admin_id=999)
+        # Batch BX: the guide's daily figure is now the voice daily
+        # MINUTE cap (the legacy job-count limit left the guide).
+        await set_dynamic_setting(db_session, "voice_daily_limit_minutes_free", 9, admin_id=999)
         await db_session.commit()
 
         # 3. Help & Settings immediately renders modified values in Burmese
         text_updated_my, _ = await render_help_settings_content(db_session, user.id)
-        assert "5 မိနစ် (300 စက္ကန့်)" in text_updated_my
+        assert "5 မိနစ်" in text_updated_my
         assert "800" in text_updated_my
         assert "5,000" in text_updated_my
-        assert "10" in text_updated_my
+        assert "9 မိနစ်" in text_updated_my
 
         # 4. English user also immediately sees updated values
         user.language_code = "en"
         await db_session.commit()
         text_updated_en, _ = await render_help_settings_content(db_session, user.id)
-        assert "5 free minutes (300s)" in text_updated_en
+        assert "5 free Voice Clone minutes" in text_updated_en
         assert "800" in text_updated_en
         assert "5,000" in text_updated_en
-        assert "10" in text_updated_en
+        assert "9 minutes" in text_updated_en
     finally:
         settings.free_monthly_allowance_seconds = orig_allowance
         settings.character_limit_free = orig_free_chars
         settings.character_limit_purchased = orig_purchased_chars
         settings.free_daily_job_limit = orig_daily_limit
+        settings.voice_daily_limit_minutes_free = orig_voice_daily_free
 
 
 

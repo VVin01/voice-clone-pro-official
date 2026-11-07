@@ -154,6 +154,18 @@ class Settings(BaseSettings):
     group_ai_user_cooldown_seconds: int = Field(default=60, alias="GROUP_AI_USER_COOLDOWN_SECONDS")
     group_ai_hourly_budget: int = Field(default=40, alias="GROUP_AI_HOURLY_BUDGET")
     group_ai_daily_budget: int = Field(default=300, alias="GROUP_AI_DAILY_BUDGET")
+    # Batch BX: bot PRIVATE-chat AI auto-reply kill switch (owner
+    # order 2026-11-07 — plain-text private messages must be answered,
+    # not met with silence). BotSetting-backed like the group switch;
+    # the handler re-reads the DB row per message. Default ON (the
+    # owner's explicit order), unlike the group switch's OFF.
+    private_ai_enabled: bool = Field(default=True, alias="PRIVATE_AI_ENABLED")
+    # Private-AI anti-spam tuning (BotSetting-backed, read per message
+    # via app/services/private_ai.get_private_limits). Only real AI
+    # calls consume the budgets; fast paths and deferrals are free.
+    private_ai_user_cooldown_seconds: int = Field(default=60, alias="PRIVATE_AI_USER_COOLDOWN_SECONDS")
+    private_ai_hourly_budget: int = Field(default=40, alias="PRIVATE_AI_HOURLY_BUDGET")
+    private_ai_daily_budget: int = Field(default=300, alias="PRIVATE_AI_DAILY_BUDGET")
 
     # Infrastructure Safety Limit (independent of user account tiers, protects Edge TTS & VoxCPM memory)
     infrastructure_safety_character_limit: int = Field(

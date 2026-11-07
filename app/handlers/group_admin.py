@@ -38,6 +38,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.services import group_ai_admin as gai
+from app.services import private_ai as pai
+from app.services.i18n import t as _bot_t
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +202,8 @@ async def _escalate(
     reason: str,
     deferral_text: str,
     session: AsyncSession | None = None,
+    limiter=None,
+    dm_link: str | None = ...,
 ) -> None:
     """Post the polite deferral line + DM every admin (cooldown-gated).
 
@@ -210,19 +214,26 @@ async def _escalate(
     the record for cross-admin keyboard sync. Without budget — or if
     drafting/persisting fails — the DM goes out exactly as before:
     no draft, no buttons.
+
+    Batch BX: ``limiter`` and ``dm_link`` parameterise the two
+    group-specific pieces for the private-chat path — the deferral
+    pacing/budget can run on the private limiter, and the admin DM
+    can drop the (invalid-for-private) group message link. Both
+    default to the historical group behaviour, byte-identical.
     """
+    limiter = limiter if limiter is not None else gai.rate_limiter
     user = message.from_user
-    if user is None or not gai.rate_limiter.can_defer(user.id):
+    if user is None or not limiter.can_defer(user.id):
         return
-    gai.rate_limiter.record_deferral(user.id)
+    limiter.record_deferral(user.id)
     try:
         await message.reply(deferral_text)
     except Exception as exc:
         logger.debug("group_ai_admin: deferral post failed: %s", exc)
 
     draft_text = None
-    if gai.rate_limiter.ai_budget_available():
-        gai.rate_limiter.record_ai_call()
+    if limiter.ai_budget_available():
+        limiter.record_ai_call()
         draft_text = await gai.draft_escalation_answer(
             text=message.text or "",
             author_name=user.first_name or "",
@@ -253,6 +264,7 @@ async def _escalate(
         message_id=message.message_id,
         reason=reason,
         draft_text=draft_text,
+        dm_link=dm_link,
     )
     keyboard = gai.build_escalation_keyboard(escalation_id) if escalation_id else None
     sender = bot or message.bot
@@ -472,6 +484,172 @@ async def handle_group_message(
         # Batch AJ (M12): persist any limiter changes from this
         # message (debounced + dirty-checked; never raises).
         await _flush_limiter(session)
+
+
+# ---------------------------------------------------------------------------
+# Bot private-chat AI replies (Batch BX) — same router, same "last
+# word" position: commands and FSM flows have already had their
+# chance by the time a plain-text private message lands here.
+# ---------------------------------------------------------------------------
+
+
+def _log_private_decision(message: Message, user_id: int | None, decision: str, reason: str = "") -> None:
+    """One INFO line per terminal private-AI decision — ids + reason
+    class only, NEVER the message text (the no-storage rule)."""
+    logger.info(
+        "private_ai: decision=%s reason=%s chat_id=%s message_id=%s user_id=%s",
+        decision,
+        reason or "-",
+        message.chat.id,
+        message.message_id,
+        user_id,
+    )
+
+
+async def _user_language(session: AsyncSession | None, user_id: int) -> str:
+    """The user's stored language for the localised deferral lines."""
+    try:
+        async with _session_or_new(session) as s:
+            from app.services.ledger import get_or_create_user
+
+            user, _ = await get_or_create_user(s, user_id)
+            return user.language_code or "my"
+    except Exception:
+        return "my"
+
+
+@group_admin_router.message(F.chat.type == ChatType.PRIVATE, F.text)
+async def handle_private_message(
+    message: Message,
+    state: FSMContext = None,
+    session: AsyncSession | None = None,
+    bot: Bot = None,
+) -> None:
+    """Plain-text private chat: greetings + service questions get an
+    AI answer in Burmese; payment/refund/account topics are deferred
+    to the admins and NEVER answered by the AI; any failure degrades
+    to silence. Mirrors handle_group_message step for step, on the
+    private limiter/kill-switch (app/services/private_ai.py)."""
+    try:
+        # A user mid-flow in an FSM conversation owns their messages
+        # (clone text input, payment slips, admin edit prompts…).
+        if state is not None:
+            try:
+                if await state.get_state():
+                    return
+            except Exception:
+                pass
+
+        user = message.from_user
+        chat_type = getattr(message.chat.type, "value", str(message.chat.type))
+        reason = pai.prefilter_private_reason(
+            chat_type=chat_type,
+            text=message.text,
+            from_user_id=user.id if user else None,
+            from_user_is_bot=bool(user.is_bot) if user else True,
+            sender_chat_id=message.sender_chat.id if message.sender_chat else None,
+        )
+        if reason is not None:
+            return
+
+        async with _session_or_new(session) as s:
+            if not await pai.is_private_ai_enabled(s):
+                return
+            limits = await pai.get_private_limits(s)
+        pai.private_rate_limiter.update_limits(
+            gai.GroupAiLimits(
+                user_cooldown_seconds=limits.user_cooldown_seconds,
+                hourly_budget=limits.hourly_budget,
+                daily_budget=limits.daily_budget,
+            )
+        )
+        lang = await _user_language(session, user.id)
+
+        # Hard rule first: payment/refund/account topics never reach
+        # the AI — defer to the user and hand the question to a human.
+        if gai.detect_sensitive_topic(message.text):
+            _log_private_decision(message, user.id, "escalate", "sensitive")
+            await _escalate(
+                message,
+                bot,
+                reason="sensitive",
+                deferral_text=_bot_t("private_ai_deferral_sensitive", lang),
+                session=session,
+                limiter=pai.private_rate_limiter,
+                dm_link=None,
+            )
+            return
+
+        if not pai.private_rate_limiter.can_reply(user.id, message.message_id):
+            return
+
+        # Deterministic fast paths (no AI budget): greeting, starter
+        # fragment, maintenance availability — same placement as the
+        # group handler (after the sensitive check + cooldown).
+        fast_path_text = None
+        fast_path_kind = None
+        if gai.is_greeting_only(message.text):
+            fast_path_text = pai.PRIVATE_WELCOME_TEXT
+            fast_path_kind = "greeting"
+        elif gai.is_starter_fragment(message.text):
+            fast_path_text = gai.STARTER_POINTER_TEXT
+            fast_path_kind = "starter"
+        elif gai.maintenance_mode_on() and gai.is_service_availability_question(message.text):
+            fast_path_text = gai.build_maintenance_reply()
+            fast_path_kind = "maintenance"
+        if fast_path_text is not None:
+            await message.reply(fast_path_text)
+            pai.private_rate_limiter.record_reply(user.id, message.message_id)
+            _log_private_decision(message, user.id, f"fast_path:{fast_path_kind}")
+            return
+
+        # AI answers are budget-gated; fast paths and deferrals above
+        # are unaffected — they need no AI call.
+        if not pai.private_rate_limiter.ai_budget_available():
+            _log_private_decision(message, user.id, "no_reply", "ai_budget_exhausted")
+            return
+        pai.private_rate_limiter.record_ai_call()
+
+        decision, reply_text = await pai.ask_private_ai(
+            text=message.text or "",
+            author_name=user.first_name or "",
+        )
+
+        if decision == gai.DECISION_AI_FAILED:
+            # The call failed — silence for the user, logged AS a
+            # failure (Batch AQ standard), never a canned fallback.
+            _log_private_decision(message, user.id, "ai_failed", "ai_call")
+            return
+        if decision == gai.DECISION_ESCALATE:
+            _log_private_decision(message, user.id, "escalate", "ai_escalate")
+            await _escalate(
+                message,
+                bot,
+                reason="ai_escalate",
+                deferral_text=_bot_t("private_ai_deferral_unsure", lang),
+                session=session,
+                limiter=pai.private_rate_limiter,
+                dm_link=None,
+            )
+            return
+        if decision != gai.DECISION_REPLY or not reply_text:
+            _log_private_decision(message, user.id, "no_reply", "ai_decision")
+            return
+
+        reply_text = gai.strip_emoji(reply_text)
+        if not reply_text:
+            _log_private_decision(message, user.id, "no_reply", "empty_reply")
+            return
+
+        # Re-check the cap at send time, then answer.
+        if not pai.private_rate_limiter.can_reply(user.id, message.message_id):
+            _log_private_decision(message, user.id, "no_reply", "cooldown_recheck")
+            return
+        await message.reply(reply_text)
+        pai.private_rate_limiter.record_reply(user.id, message.message_id)
+        _log_private_decision(message, user.id, "reply", "ai")
+    except Exception as exc:
+        logger.warning("private_ai: handler failed (silence): %s", exc)
 
 
 # ---------------------------------------------------------------------------

@@ -386,7 +386,7 @@ async def confirm_referral_and_reward(
     session: AsyncSession,
     referred_user_id: int,
 ) -> tuple[bool, bool, int]:
-    """Confirm membership of referred user and award referrer 30s if under cap.
+    """Confirm membership of referred user and award referrer 120s TTS-only if under cap.
 
     Returns (was_pending: bool, reward_awarded: bool, reward_index: int).
     """

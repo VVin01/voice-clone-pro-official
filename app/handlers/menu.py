@@ -31,7 +31,7 @@ from app.services.ledger import (
     grant_monthly_free_allowance,
 )
 from app.services.models import get_displayable_models_for_user
-from app.ui.helpers import safe_answer_callback, safe_edit_message
+from app.ui.helpers import NOT_MODIFIED, safe_answer_callback, safe_edit_message
 from app.ui.keyboards import (
     back_to_menu_kb,
     help_settings_kb,
@@ -119,16 +119,58 @@ async def render_main_menu(
     return text, kb
 
 
-@menu_router.callback_query(F.data == "menu:home")
-async def handle_menu_home(callback: CallbackQuery, state: FSMContext | None = None):
-    if state is not None:
-        await state.clear()
-    text, kb = await render_main_menu(callback.from_user.id)
-    await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
+async def _user_lang_or_default(user_id: int) -> str:
+    """Best-effort language lookup for the error fallback (Batch BX)."""
+    try:
+        async with AsyncSessionLocal() as s:
+            user_rec, _ = await get_or_create_user(s, user_id)
+            return user_rec.language_code or "my"
+    except Exception:
+        return "my"
+
+
+async def _answer_callback_first(callback: CallbackQuery) -> None:
+    """Stop the button's spinner immediately (Batch BX).
+
+    Old inline buttons (previous Refer/Guide/History messages) made
+    the 🏠 button LOOK unresponsive: the handler awaited a full menu
+    re-render before answering, so on any slow render the tap
+    appeared to do nothing. Answer first, render after.
+    """
     try:
         await callback.answer()
     except Exception:
         pass
+
+
+@menu_router.callback_query(F.data == "menu:home")
+async def handle_menu_home(callback: CallbackQuery, state: FSMContext | None = None):
+    await _answer_callback_first(callback)
+    if state is not None:
+        await state.clear()
+    try:
+        text, kb = await render_main_menu(callback.from_user.id)
+        result = await safe_edit_message(
+            callback, text, reply_markup=kb, parse_mode="HTML",
+            report_unmodified=True,
+        )
+        if result is NOT_MODIFIED:
+            # The tapped message is already visually identical (a menu
+            # rendered earlier, often deep in chat history) — an edit
+            # is a no-op there, so deliver a FRESH menu at the bottom
+            # of the chat where the user is actually looking.
+            await callback.bot.send_message(
+                callback.from_user.id, text, reply_markup=kb, parse_mode="HTML",
+            )
+    except Exception:
+        logger.exception("menu:home render failed; sending a fallback error")
+        try:
+            lang = await _user_lang_or_default(callback.from_user.id)
+            await callback.bot.send_message(
+                callback.from_user.id, t("bot_generic_error", lang), parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 @menu_router.callback_query(F.data == "menu:change_lang")
@@ -209,7 +251,15 @@ async def render_help_settings_content(session: AsyncSession, user_id: int) -> t
         free_sec=settings.free_monthly_allowance_seconds,
         char_free=f"{settings.character_limit_free:,}",
         char_purchased=f"{settings.character_limit_purchased:,}",
-        daily_limit=settings.free_daily_job_limit,
+        # Batch BX: the guide's old {daily_limit} named the legacy
+        # job-COUNT limit where users expect the per-day MINUTE caps
+        # — the guide now names voice/TTS minutes per tier + the
+        # FREE recap length cap, straight off the live settings.
+        voice_daily_free=settings.voice_daily_limit_minutes_free,
+        voice_daily_paid=settings.voice_daily_limit_minutes_paid,
+        tts_daily_free=settings.tts_daily_limit_minutes_free,
+        tts_daily_paid=settings.tts_daily_limit_minutes_paid,
+        recap_free_min=settings.recap_free_max_duration_seconds // 60,
         vip_recap_min=int(getattr(settings, "recap_max_duration_seconds", 600) or 600) // 60,
         retention_hours=settings.media_retention_days * 24,
         referral_seconds=REFERRAL_REWARD_SECONDS,
@@ -525,16 +575,31 @@ async def render_history_ledger_content(session: AsyncSession, user_id: int) -> 
 
 @menu_router.callback_query(F.data == "menu:history")
 async def handle_menu_history(callback: CallbackQuery, session: AsyncSession | None = None):
-    if session is not None:
-        text, kb = await render_history_overview_content(session, callback.from_user.id)
-    else:
-        async with AsyncSessionLocal() as s:
-            text, kb = await render_history_overview_content(s, callback.from_user.id)
-    await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
+    # Batch BX: same defensive shape as handle_menu_home.
+    await _answer_callback_first(callback)
     try:
-        await callback.answer()
+        if session is not None:
+            text, kb = await render_history_overview_content(session, callback.from_user.id)
+        else:
+            async with AsyncSessionLocal() as s:
+                text, kb = await render_history_overview_content(s, callback.from_user.id)
+        result = await safe_edit_message(
+            callback, text, reply_markup=kb, parse_mode="HTML",
+            report_unmodified=True,
+        )
+        if result is NOT_MODIFIED:
+            await callback.bot.send_message(
+                callback.from_user.id, text, reply_markup=kb, parse_mode="HTML",
+            )
     except Exception:
-        pass
+        logger.exception("menu:history render failed; sending a fallback error")
+        try:
+            lang = await _user_lang_or_default(callback.from_user.id)
+            await callback.bot.send_message(
+                callback.from_user.id, t("bot_generic_error", lang), parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 @menu_router.callback_query(F.data == "history:jobs")

@@ -177,8 +177,12 @@ def test_no_seven_day_retention_promise_remains():
             "help_settings_guide",
             lang,
             free_min="3", free_sec=180, char_free="1,000",
-            char_purchased="5,000", daily_limit=5, vip_recap_min=10,
-            retention_hours=24, referral_seconds=30, referral_cap_min=10,
+            char_purchased="5,000", vip_recap_min=10,
+            # Batch BX: the guide's daily figures are the voice/TTS
+            # minute caps + the FREE recap length now.
+            voice_daily_free=5, voice_daily_paid=30,
+            tts_daily_free=15, tts_daily_paid=60, recap_free_min=2,
+            retention_hours=24, referral_seconds=120, referral_cap_min=40,
         )
         assert "24" in guide and "{retention_hours}" not in guide
 

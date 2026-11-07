@@ -8,6 +8,23 @@ from aiogram.types import CallbackQuery, InaccessibleMessage, Message
 logger = logging.getLogger(__name__)
 
 
+class _NotModified:
+    """Sentinel type for safe_edit_message(report_unmodified=True)."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "NOT_MODIFIED"
+
+
+#: Returned by safe_edit_message(report_unmodified=True) INSTEAD of the
+#: original message when Telegram rejects the edit as "message is not
+#: modified". Callers use it to fall back to a fresh message — an old
+#: message deep in chat history cannot be edited into place, and a
+#: silent no-op looks to the user like a dead button (Batch BX).
+NOT_MODIFIED = _NotModified()
+
+
 async def safe_edit_message(
     callback: CallbackQuery,
     text: str,
@@ -23,7 +40,12 @@ async def safe_edit_message(
     to sending a new message to the user's chat.
 
     Also safely handles 'message is not modified' TelegramBadRequest.
+
+    With report_unmodified=True the caller learns about the not-modified
+    case via the module-level NOT_MODIFIED sentinel instead of receiving
+    the original message back as if the edit had succeeded.
     """
+    report_unmodified = bool(kwargs.pop("report_unmodified", False))
     msg = callback.message
     # Check if message is a valid Message instance with edit capability
     if isinstance(msg, Message):
@@ -50,7 +72,7 @@ async def safe_edit_message(
                 err_str = str(exc).lower()
                 if "message is not modified" in err_str:
                     logger.debug("safe_edit_message: Caption content unchanged.")
-                    return msg
+                    return NOT_MODIFIED if report_unmodified else msg
                 logger.warning(
                     "safe_edit_message: TelegramBadRequest on edit_caption (%s), trying edit_text/fallback",
                     exc,
@@ -73,7 +95,7 @@ async def safe_edit_message(
                 err_str = str(exc).lower()
                 if "message is not modified" in err_str:
                     logger.debug("safe_edit_message: Message content unchanged.")
-                    return msg
+                    return NOT_MODIFIED if report_unmodified else msg
                 logger.warning(
                     "safe_edit_message: TelegramBadRequest on edit_text (%s), falling back to send_message",
                     exc,

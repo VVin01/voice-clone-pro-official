@@ -789,7 +789,11 @@ def build_fact_sheet() -> str:
         referral_seconds = int(REFERRAL_REWARD_SECONDS)
         referral_max = int(MAX_REFERRALS_REWARDED)
     except Exception:
-        referral_seconds, referral_max = 30, 20
+        # Batch BX: the fallback now matches the ledger constants
+        # (Batch AW re-scoped the reward to 120 s TTS-only); the old
+        # 30 s fallback was a pre-AW leftover that would have made the
+        # sheet contradict the product if the import ever failed.
+        referral_seconds, referral_max = 120, 20
     referral_cap_min = (referral_seconds * referral_max) // 60
 
     # The 12 preset personas, derived live from the curated catalogue.
@@ -2228,19 +2232,33 @@ def build_escalation_dm(
     message_id: int,
     reason: str,
     draft_text: str | None = None,
+    dm_link: str | None = ...,
 ) -> str:
-    """Owner-DM body (HTML parse mode; user content is escaped)."""
+    """Owner-DM body (HTML parse mode; user content is escaped).
+
+    Batch BX: ``dm_link`` parameterises the "view the message" link.
+    The default (ellipsis) keeps the historical group behaviour
+    byte-identical — the t.me/c/… group link. The private-chat path
+    passes ``dm_link=None``: a private chat has no such link, so the
+    DM shows a "Private chat" line instead of a dead link.
+    """
     who = html.escape(author_name or "Member")
     uname = f" (@{html.escape(author_username)})" if author_username else ""
     reason_line = {
         "sensitive": "ငွေကြေး/အကောင့်နဲ့ ဆိုင်လို့ AI က Group ထဲမှာ မဖြေဘဲ ရပ်ထားပါတယ်။",
         "ai_escalate": "AI က မသေချာလို့ Group ထဲမှာ မဖြေဘဲ ရပ်ထားပါတယ်။",
     }.get(reason, "AI က Group ထဲမှာ မဖြေဘဲ ရပ်ထားပါတယ်။")
+    if dm_link is ...:
+        link_line = f"🔗 <a href=\"{group_message_link(chat_id, message_id)}\">Group မှာ ကြည့်ရန်</a>"
+    elif dm_link:
+        link_line = f"🔗 <a href=\"{dm_link}\">ကြည့်ရန်</a>"
+    else:
+        link_line = "💬 <i>Private chat မှ မေးခွန်း (Group လင့်ခ် မရှိပါ)</i>"
     body = (
         "🆘 <b>Group AI Admin — စစ်ဆေးပေးရန်</b>\n\n"
         f"👤 <b>User:</b> {who}{uname} • <code>{int(author_id)}</code>\n"
         f"❓ <b>မေးခွန်း:</b> {html.escape(text)}\n"
-        f"🔗 <a href=\"{group_message_link(chat_id, message_id)}\">Group မှာ ကြည့်ရန်</a>\n\n"
+        f"{link_line}\n\n"
         f"<i>{reason_line}</i>"
     )
     if draft_text:
