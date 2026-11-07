@@ -2026,6 +2026,24 @@ window.downloadAuthFile = downloadAuthFile;
 async function openAuthFile(url) {
     if (!url) return;
     try {
+        // Batch CJ: a URL carrying its own scoped stream token is
+        // self-authenticating — hand it to Telegram openLink so the
+        // device browser opens it, exactly like downloadAuthFile
+        // (Batch BJ). The blob + target=_blank path below is silently
+        // dropped by mobile WebViews, which left the "Browser Tab"
+        // button dead on phones even for token-carrying URLs (the
+        // admin media modal's URLs are signed since Batch CJ).
+        // openLink throwing or being unavailable falls through to
+        // the blob path unchanged, as do tokenless URLs and
+        // plain-browser contexts.
+        if (urlCarriesStreamToken(url) && window.Telegram?.WebApp?.openLink) {
+            const absUrl = url.startsWith("http") ? url : (window.location.origin + url);
+            try {
+                window.Telegram.WebApp.openLink(absUrl);
+                haptic("success");
+                return;
+            } catch (e) { /* fall through to the blob path */ }
+        }
         const objUrl = await fetchAuthBlobUrl(url);
         if (!objUrl) throw new Error("Open failed");
         const a = document.createElement("a");

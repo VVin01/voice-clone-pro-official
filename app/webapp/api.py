@@ -10605,6 +10605,32 @@ async def get_admin_global_history(
         is_expired = bool(job.status == JobStatus.SUCCESS.value and not file_exists)
 
         download_url, deliverables = _job_deliverables(job, is_recap, file_exists)
+        if is_recap and deliverables:
+            # Batch CJ: sign the recap URLs for the ADMIN, exactly as
+            # the user history serializer signs them for their owner.
+            # The admin serializers used to hand out the raw URLs, so
+            # downloadAuthFile could not escape to the device browser
+            # via Telegram openLink (that path needs the self-
+            # authenticating ?t= token) and phone downloads died in
+            # the WebView blob path. The token's uid is loaded as the
+            # user at the endpoint and the ownership checks accept
+            # owner OR admin, so an admin-scoped token validates
+            # without widening access.
+            deliverables = _with_stream_url(deliverables, job.id, user.id)
+            download_url = deliverables.get("video") or download_url
+        if not is_recap and download_url:
+            # Batch CJ: voice/TTS admin URLs carry the same Batch BJ
+            # audio-scope token, minted for the admin; both URL forms
+            # land on the one audio route.
+            _audio_token = _make_stream_token(job.id, user.id, "audio")
+            download_url = _append_stream_token(download_url, _audio_token)
+            if deliverables:
+                deliverables = dict(deliverables)
+                for _dk in ("audio", "download"):
+                    if deliverables.get(_dk):
+                        deliverables[_dk] = _append_stream_token(
+                            deliverables[_dk], _audio_token
+                        )
 
         raw_snippet = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
         out.append({
@@ -12233,6 +12259,26 @@ async def get_admin_queue(
         is_expired = bool(j.status == JobStatus.SUCCESS.value and not file_exists)
 
         download_url, deliverables = _job_deliverables(j, is_recap, file_exists)
+        if is_recap and deliverables:
+            # Batch CJ: sign the recap URLs for the ADMIN (see the
+            # admin history serializer) — the raw URLs left the Admin
+            # queue's media-modal downloads dead on phones because
+            # downloadAuthFile only escapes to the device browser via
+            # Telegram openLink for token-carrying URLs.
+            deliverables = _with_stream_url(deliverables, j.id, admin.id)
+            download_url = deliverables.get("video") or download_url
+        if not is_recap and download_url:
+            # Batch CJ: voice/TTS admin URLs carry the Batch BJ
+            # audio-scope token, minted for the admin.
+            _audio_token = _make_stream_token(j.id, admin.id, "audio")
+            download_url = _append_stream_token(download_url, _audio_token)
+            if deliverables:
+                deliverables = dict(deliverables)
+                for _dk in ("audio", "download"):
+                    if deliverables.get(_dk):
+                        deliverables[_dk] = _append_stream_token(
+                            deliverables[_dk], _audio_token
+                        )
 
         jobs_out.append({
             "id": j.id,
