@@ -100,7 +100,8 @@ def _card_span(card_id: str) -> str:
 # ── CN-4: cache token ───────────────────────────────────────────────
 
 def test_cn_cache_token_is_r110():
-    assert HTML.count("20261104_r110") == 4
+    # Superseded by Batch CO (r111); CN's own bump landed as r110.
+    assert HTML.count("20261104_r111") == 4
     assert "20261104_r109" not in HTML
 
 
@@ -143,8 +144,8 @@ def test_cn2_cost_hint_is_one_short_line_with_an_expandable_rest():
         "💡 Referral time is spent first",
     ]
     assert _i18n_values("tts_cost_hint_more") == [
-        "ကုန်ရင် နေ့စဉ် TTS ခွင့်ပြုချက်ထဲက ယူပါတယ်။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။",
-        "Once it runs out, your daily TTS allowance is used. Voice Clone minutes and Recap Credits are never touched.",
+        "TTS အသံကို ဒီ Tab ရဲ့ လက်ကျန်ထဲကပဲ ဖြတ်ပါတယ်။ တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP အတွက် 60 မိနစ်) ရပြီး Referral ဆု စက္ကန့်တွေကို အရင် သုံးပေးပါတယ်။ တစ်ခါ ထုတ်ရင် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် ပါဝင်ပြီး ကိုယ်ပိုင် Key ထည့်ထားရင် မြည်းစမ်း ကန့်သတ်ချက် မရှိတော့ပါ။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။",
+        "TTS audio is charged only to this tab's own balance. You get 15 free minutes a day (60 for VIP), and referral reward seconds are spent first. Each generation can be up to 1,000 characters (5,000 for VIP). Gemini voices include a 2-minute free taste per day; if you add your own key, the taste limit no longer applies. Voice Clone minutes and Recap Credits are never touched.",
     ]
     # The old wall of text is gone from BOTH surfaces.
     assert OLD_MY_COST_HINT not in I18N_JS and OLD_MY_COST_HINT not in HTML
