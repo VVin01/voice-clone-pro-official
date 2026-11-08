@@ -11759,6 +11759,14 @@ function renderAdminDetailExtras(u) {
                 <span class="adm-job-mini-main">${escapeHtml(e.kind || "")}${e.reason ? " · " + escapeHtml(e.reason) : ""}</span>
                 <span class="text-muted text-xs">${(e.delta >= 0 ? "+" : "-") + admFmtSecs(Math.abs(e.delta || 0))} · ${admFmtDate(e.created_at)}</span>
             </div>`).join("") : `<p class="text-muted">${t("admin_ledger_empty")}</p>`;
+    // Batch CU: recap-credit movements (their own ledger table).
+    const rLed = u.recap_ledger_recent || [];
+    const rlEl = document.getElementById("adm-detail-recap-ledger");
+    if (rlEl) rlEl.innerHTML = rLed.length ? rLed.map(e => `
+            <div class="adm-job-mini">
+                <span class="adm-job-mini-main">${escapeHtml(e.kind || "")}${e.reason ? " · " + escapeHtml(e.reason) : ""}</span>
+                <span class="text-muted text-xs">${(e.delta >= 0 ? "+" : "-") + Math.abs(e.delta || 0)} cr · ${admFmtDate(e.created_at)}</span>
+            </div>`).join("") : `<p class="text-muted">${t("admin_recap_ledger_empty")}</p>`;
     const chats = u.ai_chats || [];
     const cEl = document.getElementById("adm-detail-ai-chats");
     if (cEl) cEl.innerHTML = chats.length ? chats.map(m => `

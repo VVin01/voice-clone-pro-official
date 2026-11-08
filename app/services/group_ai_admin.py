@@ -114,6 +114,10 @@ AI_MAX_ATTEMPTS = 8
 # Escalation approval (admin DM buttons) + FAQ cache tuning.
 ESCALATION_CALLBACK_PREFIX = "gai_esc"
 ESCALATION_EXPIRY_SECONDS = 24 * 3600  # pending records die after 24h
+EDITING_CLAIM_TIMEOUT_SECONDS = 30 * 60  # Batch CU: an edit claim left
+# untouched this long is released back to PENDING by the sweep — an
+# orphaned claim (restart, abandoned session) must never wedge a
+# record forever the way escalation id 2 wedged on 2026-11-08.
 FAQ_MATCH_THRESHOLD = 0.8  # token-set Jaccard for a FAQ cache hit
 FAQ_SCAN_LIMIT = 500  # newest FAQ rows considered per lookup
 
@@ -2003,6 +2007,11 @@ async def claim_escalation_for_edit(session: Any, escalation_id: int, *, admin_i
     if row is None:
         return "not_found", None
     snapshot = _escalation_snapshot(row)
+    if row.status == "EDITING" and int(row.handled_by or 0) == int(admin_id):
+        # Batch CU: the claimer re-tapping Edit on their OWN claim
+        # re-enters the edit (their FSM session may have been lost in
+        # a restart) instead of being told it is already handled.
+        return "reclaimed", snapshot
     if row.status != "PENDING":
         return "already_handled", snapshot
     created = _as_utc(row.created_at)
@@ -2101,6 +2110,62 @@ async def expire_stale_escalations(session: Any) -> int:
     )
     await session.commit()
     return int(result.rowcount or 0)
+
+
+async def release_stale_editing_claims(
+    session: Any, *, timeout_seconds: int = EDITING_CLAIM_TIMEOUT_SECONDS
+) -> list[dict]:
+    """Batch CU: release EDITING claims idle past the timeout.
+
+    An edit claim lives in the claiming admin's in-memory FSM session;
+    a restart (or an admin who simply walks away) orphans it, and the
+    row then answers already_handled to everyone forever. Flips stale
+    EDITING rows back to PENDING (handled_by/at cleared) and returns
+    their snapshots so the caller can re-DM fresh copies with live
+    keyboards. Fresh claims are untouched.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select, update
+
+    from app.models.schema import GroupAiEscalation
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=int(timeout_seconds))
+    rows = (await session.execute(
+        select(GroupAiEscalation).where(GroupAiEscalation.status == "EDITING")
+    )).scalars().all()
+    released: list[dict] = []
+    for row in rows:
+        # Staleness is judged in Python on _as_utc-normalised values —
+        # a datetime in the UPDATE's WHERE would make the ORM
+        # evaluator compare naive/aware values on some backends.
+        handled_at = _as_utc(row.handled_at)
+        if handled_at is None or handled_at >= cutoff:
+            continue
+        holder = row.handled_by
+        result = await session.execute(
+            update(GroupAiEscalation)
+            .where(
+                GroupAiEscalation.id == row.id,
+                GroupAiEscalation.status == "EDITING",
+            )
+            .values(status="PENDING", handled_by=None, handled_at=None)
+        )
+        if result.rowcount:
+            _escalation_audit(
+                session,
+                action="group_ai_escalation.edit_stale_released",
+                admin_id=int(holder or 0),
+                escalation_id=int(row.id),
+                chat_id=row.chat_id,
+            )
+            snap = _escalation_snapshot(row)
+            snap["status"] = "PENDING"
+            snap["handled_by"] = None
+            released.append(snap)
+    if released:
+        await session.commit()
+    return released
 
 
 async def sweep_stale_escalations() -> int:
