@@ -5414,7 +5414,7 @@ class EdgeSmartSync:
             restart_uniform = False
             fallback_segments: list[int] = []
 
-            if render_pipelined and _tts_pass == 0 and _renderer_thread is None:
+            if render_pipelined and _renderer_thread is None:
                 _start_part_renderer()
 
             _tts_results: dict[int, dict[str, Any]] = {}
@@ -5528,6 +5528,61 @@ class EdgeSmartSync:
                     _renderer_thread.join(timeout=30)
                 raise _tts_errors[min(_tts_errors)]
 
+            if (
+                _tts_pass == 0
+                and use_gemini
+                and fallback_segments
+                and len(fallback_segments) < len(segments)
+            ):
+                # Batch CS: the Gemini pass fell back on SOME lines
+                # (pool exhaustion mid-job) — shipping it would mix
+                # two voices in one narration. Restart the TTS stage
+                # uniformly on the Studio Persona engine instead: the
+                # whole-job rule the TTS tab adopted in Batch CE.
+                self.log(
+                    f"🔁 Gemini TTS fell back on {len(fallback_segments)}/{len(segments)} "
+                    "lines — restarting narration uniformly on the Studio Persona "
+                    "engine so the recap speaks with one voice"
+                )
+                # Preserve pass 0's routed Gemini draws for the CG
+                # settle before the route context is dropped.
+                if self.gemini_route is not None and self._gemini_routed is not None:
+                    _routed0 = self._gemini_routed
+                    self._gemini_outcome = {
+                        "route": "uniform_restart",
+                        "pool_seconds": float(_routed0.pool_seconds),
+                        "pool_requests": int(_routed0.pool_requests),
+                        "own_key_invalid": bool(_routed0.own_key_invalid),
+                        "taste_blocked": False,
+                    }
+                restart_uniform = True
+                use_gemini = False
+                # The persona engine is also the VoxCPM branch's
+                # fallback target; pass 2 must run it as the PRIMARY
+                # engine, not as 100% "fallback" bookkeeping.
+                use_voxcpm = False
+                gem_engine = None
+                checkpoint["uniform_restart"] = True
+                # The pipelined part renderer consumes timings with
+                # cumulative cursor state — it cannot absorb a second
+                # pass. Stop it, drop its pass-0 parts (they embed
+                # pass-0 audio durations) and let pass 2 start fresh.
+                if _renderer_thread is not None:
+                    if _render_queue is not None:
+                        _render_queue.put(None)
+                    _renderer_thread.join(timeout=30)
+                    _renderer_thread = None
+                    _render_queue = None
+                audio_cursor = 0.0
+                frames_done = 0
+                _render_state["error"] = None
+                checkpoint["video"] = {}
+                for _part in paths.video_parts.glob("*.mp4"):
+                    try:
+                        _part.unlink()
+                    except OSError:
+                        pass
+
             if not restart_uniform:
                 break
         with _checkpoint_lock:
@@ -5622,6 +5677,7 @@ class EdgeSmartSync:
         out_plan = dict(plan)
         out_plan["segments"] = [dict(seg) for seg in plan.get("segments", [])]
         out_plan["tts_provider"] = checkpoint.get("tts_provider", "edge_tts")
+        out_plan["uniform_restart"] = bool(checkpoint.get("uniform_restart"))
         out_plan["fallback_used"] = bool(fallback_segments)
         out_plan["fallback_segments"] = list(fallback_segments)
         out_plan["reference_trimmed"] = bool(reference_trimmed)

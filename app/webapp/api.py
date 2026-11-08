@@ -7455,7 +7455,16 @@ async def _execute_recap_background_job(
                 )
 
                 async with AsyncSessionLocal() as _cg_session:
-                    _cg_owner, _ = await get_or_create_user(_cg_session, user_id)
+                    # Batch CS: get_or_create_user lives in the ledger
+                    # service and was never imported into this module —
+                    # every gemini recap since CG died here with a
+                    # NameError and silently took the legacy pool path
+                    # (no BYOK routing, no taste/budget accounting).
+                    from app.services.ledger import (
+                        get_or_create_user as _get_or_create_user,
+                    )
+
+                    _cg_owner, _ = await _get_or_create_user(_cg_session, user_id)
                     _cg_route_ctx = await _resolve_gemini_route(
                         _cg_session, _cg_owner, is_admin=is_admin_user
                     )
