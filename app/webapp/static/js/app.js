@@ -11720,6 +11720,20 @@ function renderAdminDetailExtras(u) {
             ? row(t("admin_tts_today"), "∞")
             : row(t("admin_tts_today"), `${t("admin_tts_used")} ${admFmtSecs(tt.consumed_seconds)} · ${t("admin_tts_left")} ${admFmtSecs(tt.remaining_seconds)}`);
     }
+    // Batch CV: BYOK Gemini key presence (masked last4 only).
+    const gk = u.gemini_key || {};
+    const gkEl = document.getElementById("adm-detail-gemini-key");
+    if (gkEl) {
+        let gkVal;
+        if (!gk.has_key) {
+            gkVal = t("admin_gemini_key_none");
+        } else if (gk.state === "invalid") {
+            gkVal = `••••${escapeHtml(gk.last4 || "")} · ${t("admin_gemini_key_invalid")}`;
+        } else {
+            gkVal = `••••${escapeHtml(gk.last4 || "")} · ${t("admin_gemini_key_ok")}`;
+        }
+        gkEl.innerHTML = row(t("admin_gemini_key"), gkVal);
+    }
     const vf = u.verification || {};
     const vEl = document.getElementById("adm-detail-verify");
     if (vEl) vEl.innerHTML =
