@@ -2543,6 +2543,10 @@ function switchTab(tabId) {
     if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
         window.refreshTtsQuota();
     }
+    // Batch CT: the VIP tab re-syncs plan prices from the API on entry.
+    if (tabId === "tab-vip" && typeof refreshPlanPrices === "function") {
+        refreshPlanPrices();
+    }
     // Batch BZ: first-visit sample prefill rides the same entry hook.
     if (tabId === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
         window.maybePrefillTtsSample();
@@ -9814,8 +9818,42 @@ function switchPlanCategory(cat) {
 let activePackageCode = "voice_studio_pro";
 let activeAmount = 25000;
 
+// Batch CT: plan prices of record come from /api/vip/plans (the
+// DB-backed resolution), never from the static card literals — an
+// admin price edit must reach the buy cards and this drawer without
+// a redeploy. The inline amounts remain only as offline fallbacks.
+let planPriceByCode = {};
+
+function syncPlanPrices(data) {
+    const plans = (data && data.plans) || [];
+    plans.forEach(p => {
+        const numeric = parseInt(String(p.price || "").replace(/[^0-9]/g, ""), 10);
+        if (p.id && Number.isFinite(numeric) && numeric > 0) {
+            planPriceByCode[p.id] = numeric;
+        }
+    });
+    document.querySelectorAll("[data-price-for]").forEach(el => {
+        const v = planPriceByCode[el.getAttribute("data-price-for")];
+        if (v) el.innerText = v.toLocaleString("en-US");
+    });
+}
+
+async function refreshPlanPrices() {
+    try {
+        const res = await fetchWithTimeout("/api/vip/plans", { headers: getAuthHeaders() });
+        if (res.ok) syncPlanPrices(await res.json());
+    } catch (err) {
+        // Static fallback prices stay — the server still re-resolves
+        // the real price at slip submit.
+    }
+}
+
 async function openPaymentDrawer(packageCode, amount, title) {
     haptic("light");
+    // A previously synced API price wins over the inline literal.
+    if (planPriceByCode[packageCode]) {
+        amount = planPriceByCode[packageCode];
+    }
     activePackageCode = packageCode;
     activeAmount = amount;
 
@@ -9835,6 +9873,17 @@ async function openPaymentDrawer(packageCode, amount, title) {
         const res = await fetchWithTimeout("/api/vip/plans", { headers: getAuthHeaders() });
         if (res.ok) {
             const data = await res.json();
+            // Batch CT: sync plan prices from the same payload; if the
+            // open drawer's plan was repriced, repaint amount + title.
+            syncPlanPrices(data);
+            const fresh = planPriceByCode[activePackageCode];
+            if (fresh && fresh !== activeAmount) {
+                activeAmount = fresh;
+                const titleEl2 = document.getElementById("drawer-package-title");
+                if (titleEl2 && title) {
+                    titleEl2.innerText = `${title} — ${fresh.toLocaleString()} MMK`;
+                }
+            }
             const accounts = data.payment_accounts || [];
             accounts.forEach(acc => {
                 const prov = (acc.provider || "").toLowerCase();

@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r115">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r116">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r115" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r116" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1819,7 +1819,7 @@
                         <div class="plan-name" data-i18n="plan_packs_name">🎙️ Voice Packs</div>
                         <div class="plan-allocation" data-i18n="plan_packs_alloc">မိနစ် ၁၀ / ၃၀ / ၆၀ — လိုသလောက်ဝယ်၊ သက်တမ်းမကုန်</div>
                         <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_packs_price">8,000</span>
+                            <span class="price-val" data-i18n="plan_packs_price" data-price-for="MIN_10">8,000</span>
                             <span class="currency">MMK</span>
                             <span data-i18n="plan_packs_from">မှစ၍</span>
                         </div>
@@ -1833,7 +1833,7 @@
                         <div class="plan-name" data-i18n="plan_voice_name">🎙️ Voice Pro</div>
                         <div class="plan-allocation" data-i18n="plan_voice_alloc">မိနစ် ၂၅၀ (၄ နာရီကျော်) အသံထုတ်ခွင့်</div>
                         <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_voice_price">75,000</span>
+                            <span class="price-val" data-i18n="plan_voice_price" data-price-for="voice_studio_pro">75,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')" data-i18n="btn_buy_voice">💎 Voice Plan ဝယ်မည်</button>
@@ -1848,9 +1848,9 @@
                     <!-- PLAN 2a: Movie Recap Starter (new entry pack) -->
                     <div class="card glass pricing-card" id="card-plan-recap-starter">
                         <div class="plan-name" data-i18n="plan_recap_starter_name">🎬 Recap Starter</div>
-                        <div class="plan-allocation" data-i18n="plan_recap_starter_alloc">Recap ဗီဒီယို ၅ ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)</div>
+                        <div class="plan-allocation" data-i18n="plan_recap_starter_alloc">Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)</div>
                         <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_recap_starter_price">20,000</span>
+                            <span class="price-val" data-i18n="plan_recap_starter_price" data-price-for="recap_starter">20,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_starter', 20000, '🎬 Recap Starter')" data-i18n="btn_buy_recap_starter">🎬 Recap Starter ဝယ်မည်</button>
@@ -1859,9 +1859,9 @@
                     <!-- PLAN 2: Movie Recap Studio Pro -->
                     <div class="card glass pricing-card" id="card-plan-recap">
                         <div class="plan-name" data-i18n="plan_recap_name">🎬 Recap Pro</div>
-                        <div class="plan-allocation" data-i18n="plan_recap_alloc">Recap ဗီဒီယို ၂၅ ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)</div>
+                        <div class="plan-allocation" data-i18n="plan_recap_alloc">Recap Credit ၂၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)</div>
                         <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_recap_price">90,000</span>
+                            <span class="price-val" data-i18n="plan_recap_price" data-price-for="recap_studio_pro">90,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 90000, '🎬 Recap Pro')" data-i18n="btn_buy_recap">🎬 Recap Plan ဝယ်မည်</button>
@@ -1876,9 +1876,9 @@
                     <!-- PLAN 3a: Voice + Recap Starter (new entry bundle) -->
                     <div class="card glass pricing-card" id="card-plan-combined-starter">
                         <div class="plan-name" data-i18n="plan_combined_starter_name">🎙️🎬 Combined Starter</div>
-                        <div class="plan-allocation" data-i18n="plan_combined_starter_alloc">မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား (အများဆုံး ၁၀ မိနစ်/ကား)</div>
+                        <div class="plan-allocation" data-i18n="plan_combined_starter_alloc">မိနစ် ၃၀ + Recap Credit ၅ ခု</div>
                         <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_combined_starter_price">30,000</span>
+                            <span class="price-val" data-i18n="plan_combined_starter_price" data-price-for="combined_starter">30,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('combined_starter', 30000, '🎙️🎬 Combined Starter')" data-i18n="btn_buy_combined_starter">✨ Combined Starter ဝယ်မည်</button>
@@ -1887,9 +1887,9 @@
                     <!-- PLAN 3: All-in-One Master Suite (Featured Gold Halo) -->
                     <div class="card glass pricing-card featured-master" id="card-plan-master">
                         <div class="plan-name master-title" data-i18n="plan_master_name">👑 Master</div>
-                        <div class="plan-allocation text-gold" data-i18n="plan_master_alloc">မိနစ် ၅၀၀ + Recap ဗီဒီယို ၆၀ ကား (အများဆုံး ၁၀ မိနစ်/ကား)</div>
+                        <div class="plan-allocation text-gold" data-i18n="plan_master_alloc">မိနစ် ၅၀၀ + Recap Credit ၆၀ ခု</div>
                         <div class="plan-price master-price">
-                            <span class="price-val" data-i18n="plan_master_price">180,000</span>
+                            <span class="price-val" data-i18n="plan_master_price" data-price-for="all_in_one_master">180,000</span>
                             <span class="currency">MMK</span>
                         </div>
                         <button class="btn gold-gradient-btn mt-3" onclick="openPaymentDrawer('all_in_one_master', 180000, '👑 Master')" data-i18n="btn_buy_master">👑 Master Suite ဝယ်မည်</button>
@@ -2993,7 +2993,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r115"></script>
-    <script src="/static/js/app.js?v=20261104_r115"></script>
+    <script src="/static/js/i18n.js?v=20261104_r116"></script>
+    <script src="/static/js/app.js?v=20261104_r116"></script>
 </body>
 </html>
