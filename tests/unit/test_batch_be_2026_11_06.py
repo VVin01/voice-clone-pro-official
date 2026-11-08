@@ -663,5 +663,5 @@ def test_batch_be_wiring_contracts():
 
 def test_be_cache_token_is_r79():
     html = _read("app/webapp/static/index.html")
-    assert html.count("?v=20261104_r115") == 4
+    assert html.count("?v=20261104_r116") == 4
     assert "20261104_r78" not in html

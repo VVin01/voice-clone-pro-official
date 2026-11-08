@@ -410,7 +410,7 @@
   "worker_error_timeout": "အချိန် ကြာလွန်းသဖြင့် အလုပ် ရပ်ဆိုင်းလိုက်ရပါသည်။ ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။",
   "worker_error_generic": "နည်းပညာဆိုင်ရာ အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့ပါသည်။ ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။",
   "legacy_model_disabled": "⚠️ ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။\n\nVoxCPM2 နဲ့ ပြန်ပွားဖို့ <b>VoxCPM (Cloud AI)</b> မော်ဒယ်ကို ရွေးပြီး ကိုးကားအသံ (၃-၃၀ စက္ကန့်) တစ်ခု ပို့ပေးပါ။",
-  "pay_package_recap_btn": "🎬 {credits} Recap ကား — {price} ကျပ်",
+  "pay_package_recap_btn": "🎬 {credits} Recap Credit — {price} ကျပ်",
   "pay_package_combined_btn": "🎙️🎬 {minutes} မိနစ် + {credits} Recap — {price} ကျပ်",
   "bot_generic_error": "⚠️ တစ်ခုခု ချို့ယွင်းသွားပါသည်။ ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါခင်ဗျာ။",
   "note_over_50mb_download": "📥 ဒီဖိုင်က 50 MB ထက် ကြီးနေလို့ Telegram နဲ့ တိုက်ရိုက် ပို့လို့ မရပါ — Download ရယူပါ။",

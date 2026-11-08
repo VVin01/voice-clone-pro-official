@@ -52,4 +52,4 @@ def test_cp_overlay_untouched():
 
 
 def test_cache_token_r113():
-    assert INDEX.count("20261104_r115") == 4
+    assert INDEX.count("20261104_r116") == 4
