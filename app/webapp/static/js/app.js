@@ -13732,8 +13732,21 @@ function setupAlertCarousel() {
 }
 
 // ── App Startup ────────────────────────────────────────────────────────────
+// CQ: on Telegram Desktop the OS file picker never opens from a tap in
+// the webview (CL/CP), while drag-and-drop works. Show the drag hint in
+// the Recap drop zone only on that platform; hidden everywhere else.
+function applyDesktopDropHint() {
+    try {
+        var platform = (window.Telegram && Telegram.WebApp && Telegram.WebApp.platform) || "";
+        if (platform !== "tdesktop") return;
+        var hint = document.getElementById("recap-drop-desktop-hint");
+        if (hint) hint.hidden = false;
+    } catch (e) { /* hint stays hidden */ }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
+    applyDesktopDropHint();
     initEntryGate();
     setLanguage(currentLang);
     setupTabs();
