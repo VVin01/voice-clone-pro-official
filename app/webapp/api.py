@@ -12061,6 +12061,16 @@ async def get_admin_user_detail(
         for e in recap_ledger_rows
     ]
 
+    # Batch CV: BYOK Gemini key presence — admins need to see whether
+    # a user added their own key (support questions hinge on it). Only
+    # presence + state + last4 ever leave the server, never the key.
+    _own_key = (target.gemini_api_key or "").strip()
+    payload["gemini_key"] = {
+        "has_key": bool(_own_key),
+        "state": target.gemini_key_state or "",
+        "last4": _own_key[-4:] if _own_key else None,
+    }
+
     payload["verification"] = {
         "channel_verified": bool(target.channel_verified),
         "group_verified": bool(target.group_verified),
