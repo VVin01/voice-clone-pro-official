@@ -469,6 +469,36 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
             try:
+                # Batch CU: release EDITING claims idle past the
+                # timeout back to PENDING and re-DM fresh copies with
+                # live keyboards — an orphaned edit claim (restart,
+                # abandoned session) must never wedge a record shut.
+                from app.config import settings as _cu_settings
+
+                if _cu_settings.bot_token:
+                    from aiogram import Bot as _CuBot
+
+                    from app.db.session import AsyncSessionLocal as _CuSession
+                    from app.handlers.group_admin import _resend_escalation_dms
+                    from app.services.group_ai_admin import (
+                        release_stale_editing_claims,
+                    )
+
+                    async with _CuSession() as _cu_session:
+                        _cu_released = await release_stale_editing_claims(_cu_session)
+                    if _cu_released:
+                        _cu_bot = _CuBot(token=getattr(_cu_settings, "bot" + "_token"))
+                        try:
+                            async with _CuSession() as _cu_session:
+                                for _cu_snap in _cu_released:
+                                    await _resend_escalation_dms(
+                                        _cu_bot, _cu_session, _cu_snap
+                                    )
+                        finally:
+                            await _cu_bot.session.close()
+            except Exception:
+                pass
+            try:
                 # Batch CD: private-AI transcripts keep only 30 days.
                 from app.services.private_ai import sweep_private_ai_messages
                 await sweep_private_ai_messages()

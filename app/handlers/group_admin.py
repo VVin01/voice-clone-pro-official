@@ -549,6 +549,79 @@ async def _user_language(session: AsyncSession | None, user_id: int) -> str:
         return "my"
 
 
+# Batch CU: the FSM edit-text handler is registered BEFORE the
+# private-AI catch-all below on purpose — aiogram matches handlers
+# in registration order and a matched handler consumes the update
+# even when it returns early, so while this state-filtered handler
+# sat after the catch-all, an admin's edited text was swallowed
+# by the catch-all's FSM guard and the edit could never complete.
+@group_admin_router.message(GroupAiEditStates.waiting_text, F.chat.type == ChatType.PRIVATE)
+async def handle_group_ai_edit_text(
+    message: Message,
+    state: FSMContext = None,
+    session: AsyncSession | None = None,
+    bot: Bot = None,
+) -> None:
+    """The claiming admin's corrected draft arrives as a private text.
+
+    The text is sanitised through the same emoji-strip path as any
+    group post, saved as the record's draft_text (the AI original
+    stays in original_draft_text), the claim is released back to
+    PENDING, and every admin gets a fresh DM with the updated draft
+    and a live keyboard — anyone may then approve or dismiss it.
+    """
+    try:
+        admin = message.from_user
+        if admin is None or not settings.is_admin(admin.id):
+            return
+        if state is None:
+            return
+        data = await state.get_data()
+        escalation_id = data.get("escalation_id")
+        if not escalation_id:
+            await state.clear()
+            return
+        sender = bot or message.bot
+
+        raw = (message.text or "").strip()
+        if raw == "/cancel":
+            async with _session_or_new(session) as s:
+                await _release_edit_and_refresh(
+                    bot=sender,
+                    session=s,
+                    escalation_id=int(escalation_id),
+                    admin_id=admin.id,
+                    admin_name=admin.first_name or "Admin",
+                    new_draft=None,
+                )
+            await state.clear()
+            await message.answer(gai.ADMIN_CONFIRM_EDIT_CANCELLED)
+            return
+
+        cleaned = gai.strip_emoji(raw)
+        if not cleaned:
+            await message.answer(gai.ADMIN_EDIT_EMPTY)
+            return
+
+        async with _session_or_new(session) as s:
+            snapshot = await _release_edit_and_refresh(
+                bot=sender,
+                session=s,
+                escalation_id=int(escalation_id),
+                admin_id=admin.id,
+                admin_name=admin.first_name or "Admin",
+                new_draft=cleaned,
+            )
+        await state.clear()
+        if snapshot is None:
+            await message.answer(gai.ADMIN_ALERT_EDIT_GONE)
+            return
+        await message.answer(gai.ADMIN_CONFIRM_EDIT_SAVED)
+    except Exception as exc:
+        logger.warning("group_ai_admin: edit text handling failed: %s", exc)
+
+
+
 @group_admin_router.message(F.chat.type == ChatType.PRIVATE, F.text)
 async def handle_private_message(
     message: Message,
@@ -913,7 +986,7 @@ async def _handle_edit_claim(
         await _sync_admin_copies(bot, record, status_line=gai.STATUS_LINE_EXPIRED)
         await callback.answer(gai.ADMIN_ALERT_EXPIRED, show_alert=True)
         return
-    if outcome != "claimed" or record is None:
+    if outcome not in ("claimed", "reclaimed") or record is None:
         await _clear_keyboard(callback)
         await callback.answer(gai.ADMIN_ALERT_ALREADY_HANDLED, show_alert=True)
         return
@@ -975,72 +1048,6 @@ async def _handle_edit_cancel(
         except Exception:
             pass
     await callback.answer(gai.ADMIN_CONFIRM_EDIT_CANCELLED)
-
-
-@group_admin_router.message(GroupAiEditStates.waiting_text, F.chat.type == ChatType.PRIVATE)
-async def handle_group_ai_edit_text(
-    message: Message,
-    state: FSMContext = None,
-    session: AsyncSession | None = None,
-    bot: Bot = None,
-) -> None:
-    """The claiming admin's corrected draft arrives as a private text.
-
-    The text is sanitised through the same emoji-strip path as any
-    group post, saved as the record's draft_text (the AI original
-    stays in original_draft_text), the claim is released back to
-    PENDING, and every admin gets a fresh DM with the updated draft
-    and a live keyboard — anyone may then approve or dismiss it.
-    """
-    try:
-        admin = message.from_user
-        if admin is None or not settings.is_admin(admin.id):
-            return
-        if state is None:
-            return
-        data = await state.get_data()
-        escalation_id = data.get("escalation_id")
-        if not escalation_id:
-            await state.clear()
-            return
-        sender = bot or message.bot
-
-        raw = (message.text or "").strip()
-        if raw == "/cancel":
-            async with _session_or_new(session) as s:
-                await _release_edit_and_refresh(
-                    bot=sender,
-                    session=s,
-                    escalation_id=int(escalation_id),
-                    admin_id=admin.id,
-                    admin_name=admin.first_name or "Admin",
-                    new_draft=None,
-                )
-            await state.clear()
-            await message.answer(gai.ADMIN_CONFIRM_EDIT_CANCELLED)
-            return
-
-        cleaned = gai.strip_emoji(raw)
-        if not cleaned:
-            await message.answer(gai.ADMIN_EDIT_EMPTY)
-            return
-
-        async with _session_or_new(session) as s:
-            snapshot = await _release_edit_and_refresh(
-                bot=sender,
-                session=s,
-                escalation_id=int(escalation_id),
-                admin_id=admin.id,
-                admin_name=admin.first_name or "Admin",
-                new_draft=cleaned,
-            )
-        await state.clear()
-        if snapshot is None:
-            await message.answer(gai.ADMIN_ALERT_EDIT_GONE)
-            return
-        await message.answer(gai.ADMIN_CONFIRM_EDIT_SAVED)
-    except Exception as exc:
-        logger.warning("group_ai_admin: edit text handling failed: %s", exc)
 
 
 async def _clear_keyboard(callback: CallbackQuery) -> None:

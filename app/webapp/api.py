@@ -12040,6 +12040,27 @@ async def get_admin_user_detail(
         for e in ledger_rows
     ]
 
+    # Batch CU: recap-credit movements live in their own ledger table
+    # and were never merged in, so recap activity was invisible here.
+    from app.models.schema import RecapCreditLedgerEvent as _RecapLedger
+
+    recap_ledger_rows = (await db.execute(
+        select(_RecapLedger)
+        .where(_RecapLedger.user_id == user_id)
+        .order_by(_RecapLedger.created_at.desc(), _RecapLedger.id.desc())
+        .limit(10)
+    )).scalars().all()
+    payload["recap_ledger_recent"] = [
+        {
+            "kind": e.source,
+            "delta": int(e.credits or 0) if e.direction == "CREDIT" else -int(e.credits or 0),
+            "reason": e.note,
+            "reference_id": e.reference_id,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in recap_ledger_rows
+    ]
+
     payload["verification"] = {
         "channel_verified": bool(target.channel_verified),
         "group_verified": bool(target.group_verified),
