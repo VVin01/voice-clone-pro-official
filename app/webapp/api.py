@@ -3692,7 +3692,7 @@ async def create_voice_job(
         or "voxcpm" in (req.model_slug or "").lower()
     )
     if not is_vox:
-        raise HTTPException(status_code=400, detail="ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။")
+        raise HTTPException(status_code=400, detail="ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၁၀-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။")
     actual_engine = "voxcpm"
 
     if actual_engine == "voxcpm":
@@ -3819,7 +3819,7 @@ async def create_voice_job_with_audio(
         or "voxcpm" in (model_slug or "").lower()
     )
     if not is_vox:
-        raise HTTPException(status_code=400, detail="ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။")
+        raise HTTPException(status_code=400, detail="ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၁၀-၃၀ စက္ကန့်) ပို့ပြီး ပြန်ပွားပေးပါ။")
     actual_engine = "voxcpm"
 
     if actual_engine == "voxcpm":
@@ -10886,8 +10886,8 @@ async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession
                 "currency": "MMK",
                 "features": [
                     "VoxCPM Cloud AI မြန်မာအသံ ၁၂ မျိုး (၆ ကျား / ၆ မ) အပြည့်အဝ အသုံးပြုခွင့်" if is_my else "12 VoxCPM Cloud AI Personas (6M / 6F)",
-                    "Custom Voice Clone (မိမိနှစ်သက်ရာ အသံဖိုင် တင်၍ အသံတူပွားယူခွင့်)" if is_my else "Custom Voice Clone (Audio Sample Upload)",
-                    "VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်" if is_my else "VoxCPM2 Reference Audio Cloning (3-30s sample)",
+                    "ကိုယ်ပိုင်အသံ Clone — နမူနာ အသံ ၁၀-၃၀ စက္ကန့် တင်၍ ကိုယ့်အသံနဲ့ ပြောခိုင်းနိုင်ပါတယ်" if is_my else "Custom Voice Clone — upload a 10-30s sample and generate in your own voice",
+                    "TTS အသံ တစ်ရက် ၆၀ မိနစ် အထိ သုံးနိုင်ပါတယ်" if is_my else "Up to 60 TTS minutes per day",
                     "အရည်အသွေးမြင့် Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct Lossless WAV Audio Downloads",
                     "တစ်ကြိမ်လျှင် စာလုံးရေ ၅,၀၀၀ အထိ ထုတ်လုပ်နိုင်ခွင့်" if is_my else "Up to 5,000 characters per generation",
                 ],
@@ -10897,15 +10897,15 @@ async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession
                 "id": "recap_starter",
                 "name": "🎬 Recap Starter" if is_my else "🎬 Recap Starter",
                 "category": "recap",
-                "allocation": "5 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "5 Movie Recap Credits (Max 10 mins/video)",
+                "allocation": "Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "5 Recap Credits (1 credit per 3 minutes)",
                 "minutes": 0,
                 "recap_credits": 5,
                 "price": "20,000",
                 "currency": "MMK",
                 "features": [
-                    "Full HD 1080p Movie Recap ဗီဒီယို (၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "5 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
-                    "🎬 Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)",
-                    "Watermark လုံးဝမပါ (Clean 1080p)" if is_my else "Zero Watermark (Clean 1080p)",
+                    "Recap Credit ၅ ခု — ဗီဒီယို ၃ မိနစ်ကို ၁ credit နှုန်း (၁၀ မိနစ်ဆို ၄ credit၊ တစ်ကားချင်း အများဆုံး ၁၀ မိနစ်)" if is_my else "5 Recap Credits — 1 credit per 3 minutes of video (a 10-minute video = 4 credits; max 10 mins/video)",
+                    "🎬 Smart Video Transform (Smart Blur, Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Mirror & Zoom)",
+                    "Watermark လုံးဝမပါ" if is_my else "Zero Watermark",
                 ],
                 "badge": "Recap Starter",
             },
@@ -10913,16 +10913,16 @@ async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession
                 "id": "recap_studio_pro",
                 "name": "🎬 Recap Pro" if is_my else "🎬 Recap Pro",
                 "category": "recap",
-                "allocation": "25 Movie Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "25 Movie Recap Credits (Max 10 mins/video)",
+                "allocation": "Recap Credit ၂၅ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "25 Recap Credits (1 credit per 3 minutes)",
                 "minutes": 0,
                 "recap_credits": 25,
                 "price": "90,000",
                 "currency": "MMK",
                 "features": [
-                    "Full HD 1080p Movie Recap ဗီဒီယို (၂၅) ကား (၁ ကား အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Full HD 1080p Movie Recap Generations (Max 10 mins/video)",
-                    "🎬 Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Auto-Mirror & Zoom)",
-                    "ဇာတ်လမ်းစတိုင် ၆ မျိုး (Viral Hook, Dramatic, POV စသဖြင့်) & စာတန်းစတိုင် ၇ မျိုး" if is_my else "6 Narration Styles (Viral Hook, Dramatic, POV) & 7 Subtitle Styles",
-                    "Watermark လုံးဝမပါ (Clean 1080p) & Channel Logo သီးသန့်ထည့်ခွင့်" if is_my else "Zero Watermark (Clean 1080p) & Custom Channel Logo Branding",
+                    "Recap Credit ၂၅ ခု — ဗီဒီယို ၃ မိနစ်ကို ၁ credit နှုန်း (၁၀ မိနစ်ဆို ၄ credit၊ တစ်ကားချင်း အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Recap Credits — 1 credit per 3 minutes of video (a 10-minute video = 4 credits; max 10 mins/video)",
+                    "🎬 Smart Video Transform (Smart Blur, Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Mirror & Zoom)",
+                    "ဇာတ်လမ်းစတိုင် အမျိုးမျိုး (Viral Hook, Drama, Comedy စသဖြင့်) & စာတန်းစတိုင် အမျိုးမျိုး" if is_my else "Multiple narration styles (Viral Hook, Drama, Comedy & more) & subtitle styles",
+                    "Watermark လုံးဝမပါ & Channel Logo သီးသန့်ထည့်ခွင့်" if is_my else "Zero Watermark & Custom Channel Logo Branding",
                     "ရှည်လျားသော ဗီဒီယိုများ အပိုင်းခွဲ ထုတ်နိုင်ခြင်း (Split)" if is_my else "Split long videos into parts",
                 ],
                 "badge": "Recap Pro",
@@ -10931,14 +10931,14 @@ async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession
                 "id": "combined_starter",
                 "name": "🎙️🎬 Combined Starter" if is_my else "🎙️🎬 Combined Starter",
                 "category": "combined",
-                "allocation": "30 Mins + 5 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "30 Mins + 5 Recap Credits (Max 10 mins/video)",
+                "allocation": "30 Mins + Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "30 Mins + 5 Recap Credits (1 credit per 3 minutes)",
                 "minutes": 30,
                 "recap_credits": 5,
                 "price": "30,000",
                 "currency": "MMK",
                 "features": [
-                    "Voice မိနစ် ၃၀ + Recap ဗီဒီယို ၅ ကား — နှစ်မျိုးလုံးကို တစ်ပြိုင်တည်း စမ်းသုံးနိုင်သည်" if is_my else "30 Voice Minutes + 5 Recap Videos — try both products in one plan",
-                    "VoxCPM2 Reference Audio (၃-၃၀ စက္ကန့်) နဲ့ အသံတူပွားခွင့်" if is_my else "VoxCPM2 Reference Audio Cloning (3-30s sample)",
+                    "Voice မိနစ် ၃၀ + Recap Credit ၅ ခု — နှစ်မျိုးလုံးကို တစ်ပြိုင်တည်း စမ်းသုံးနိုင်သည်" if is_my else "30 Voice Minutes + 5 Recap Credits — try both products in one plan",
+                    "ကိုယ်ပိုင်အသံ Clone — နမူနာ အသံ ၁၀-၃၀ စက္ကန့်" if is_my else "Custom Voice Clone — 10-30s sample",
                     "🎬 Smart Video Transform & Watermark လုံးဝမပါ" if is_my else "Smart Video Transform & Zero Watermark",
                 ],
                 "badge": "Combined Starter",
@@ -10947,15 +10947,15 @@ async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession
                 "id": "all_in_one_master",
                 "name": "👑 Master" if is_my else "👑 Master",
                 "category": "combined",
-                "allocation": "500 Mins + 60 Recap Credits (အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "500 Mins + 60 Recap Credits (Max 10 mins/video)",
+                "allocation": "500 Mins + Recap Credit ၆၀ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "500 Mins + 60 Recap Credits (1 credit per 3 minutes)",
                 "minutes": 500,
                 "recap_credits": 60,
                 "price": "180,000",
                 "currency": "MMK",
                 "features": [
                     "Voice Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော် အသံသွင်းခွင့်)" if is_my else "Full Voice Pro (500 Mins - 8+ Hours)",
-                    "Recap Pro အပြည့်အစုံ (ဗီဒီယို ၆၀ ကား - အများဆုံး ၁၀ မိနစ်/ကား)" if is_my else "Full Recap Pro (60 Full HD Videos - Max 10 mins/video)",
-                    "👑 VoxCPM2 Reference Audio အသံတူပွားမှု (Custom Clone) အပြည့်အစုံ" if is_my else "Full VoxCPM2 Reference Audio Custom Cloning",
+                    "Recap Pro အပြည့်အစုံ (Recap Credit ၆၀ ခု)" if is_my else "Full Recap Pro (60 Recap Credits)",
+                    "👑 ကိုယ်ပိုင်အသံ Clone အပြည့်အစုံ (နမူနာ ၁၀-၃၀ စက္ကန့်)" if is_my else "Full Custom Voice Cloning (10-30s sample)",
                     "🎬 Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)" if is_my else "Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)",
                     "Admin ထံ တိုက်ရိုက် VIP Support" if is_my else "Direct VIP support from the admin",
                 ],
