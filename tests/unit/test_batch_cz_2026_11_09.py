@@ -61,9 +61,9 @@ def _recap_preview_state_body() -> str:
 
 # ── Release pin: cache token ─────────────────────────────────────────
 
-def test_cz_cache_token_is_r121():
-    assert INDEX_HTML.count("20261104_r121") == 4
-    assert "20261104_r120" not in INDEX_HTML
+def test_cz_cache_token_is_r122():
+    assert INDEX_HTML.count("20261104_r122") == 4
+    assert "20261104_r" + "121" not in INDEX_HTML
 
 
 # ── CZ: the dock handler must repaint the capsule pills ─────────────
