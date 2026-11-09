@@ -2600,6 +2600,15 @@ function setupTabs() {
             window.scrollTo({ top: 0, behavior: "auto" });
             refreshStickyCtas();
             moveNavPill();
+            // Batch CZ: the dock handler duplicates switchTab's pane
+            // switching — switchTab repaints the sliding capsule pills
+            // here, but this handler never did, so the .active speed
+            // segment (white text, flex-grow 2.4) stayed white-on-white
+            // until a segment tap. Mirror the hook, plus an rAF repeat
+            // as a webview-layout safety net (idempotent, cheap).
+            moveSpeedPills();
+            moveSegPills();
+            requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
 
             if (targetTab === "tab-history") {
                 loadUserHistory();
