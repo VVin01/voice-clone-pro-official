@@ -5660,6 +5660,35 @@ class EdgeSmartSync:
             _render_queue = _q
             _renderer_thread = _t
 
+        def _stop_part_renderer() -> None:
+            """Stop the pipelined part renderer and wait until it is
+            really dead (Batch DB).
+
+            The Batch CS restart stopped it with join(timeout=30)
+            and carried on even when the thread was still rendering
+            (a real job's render backlog always outlasts 30 s); the
+            parts wipe then unlinked the file under the in-flight
+            ffmpeg, whose +faststart pass re-opens the output by
+            name — the job died on the renderer's stale error
+            (2026-11-09: the restart's first live firings killed
+            4 paid jobs). Set the abort flag first so the thread
+            skips its backlog, then join in slices until it exits:
+            a single part render is bounded by ffmpeg_timeout, so
+            this always terminates. The abort flag is cleared on
+            the way out so a later pass can start a fresh renderer
+            that does not skip its queue."""
+            nonlocal _renderer_thread, _render_queue
+            if _renderer_thread is None:
+                return
+            _render_abort.set()
+            if _render_queue is not None:
+                _render_queue.put(None)
+            while _renderer_thread.is_alive():
+                _renderer_thread.join(timeout=5)
+            _renderer_thread = None
+            _render_queue = None
+            _render_abort.clear()
+
 
         for _tts_pass in range(2):
             engine_provider = "gemini" if use_gemini else ("voxcpm" if use_voxcpm else "edge_tts")
@@ -5792,11 +5821,7 @@ class EdgeSmartSync:
                         _fut.result()
             fallback_segments.sort()
             if _tts_errors:
-                if _renderer_thread is not None:
-                    _render_abort.set()
-                    if _render_queue is not None:
-                        _render_queue.put(None)
-                    _renderer_thread.join(timeout=30)
+                _stop_part_renderer()
                 raise _tts_errors[min(_tts_errors)]
 
             if (
@@ -5838,15 +5863,13 @@ class EdgeSmartSync:
                 # cumulative cursor state — it cannot absorb a second
                 # pass. Stop it, drop its pass-0 parts (they embed
                 # pass-0 audio durations) and let pass 2 start fresh.
-                if _renderer_thread is not None:
-                    if _render_queue is not None:
-                        _render_queue.put(None)
-                    _renderer_thread.join(timeout=30)
-                    _renderer_thread = None
-                    _render_queue = None
+                _stop_part_renderer()
                 audio_cursor = 0.0
                 frames_done = 0
-                _render_state["error"] = None
+                # Fresh error state for pass 2 (Batch DB): an error
+                # the old thread stored while it was being stopped
+                # must not poison the fresh pass's final raise.
+                _render_state = {"error": None}
                 checkpoint["video"] = {}
                 for _part in paths.video_parts.glob("*.mp4"):
                     try:

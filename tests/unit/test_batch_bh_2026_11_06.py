@@ -167,5 +167,5 @@ def test_bh4_reused_i18n_keys_unchanged_in_both_languages():
 
 
 def test_bh4_token_bumped_to_r81():
-    assert INDEX_HTML.count("20261104_r123") == 4
+    assert INDEX_HTML.count("20261104_r124") == 4
     assert "20261104_r80" not in INDEX_HTML
