@@ -363,16 +363,26 @@ def test_end_to_end_preview_frame_uses_png(tmp_path):
         work_dir=tmp_path / "pw",
     )
     assert out_img.is_file()
-    assert list((tmp_path / "pw" / "subtitle_png_cache").glob("sub_*.png"))
+    pngs = list((tmp_path / "pw" / "subtitle_png_cache").glob("sub_*.png"))
+    assert pngs
     from PIL import Image
+
+    # Batch CX: the preview shows the sample as ONE line at the
+    # locked size — an overflowing sample renders its first fitting
+    # piece (the preview is one frame, it has no time window to
+    # split across), never a shrunken whole sample.
+    assert len(pngs) == 1
+    with Image.open(pngs[0]) as im:
+        assert im.width <= int(0.92 * 320)
+        assert im.height < 40  # one line at the locked size, not two
 
     band = Image.open(out_img).convert("L").crop((20, 150, 300, 235))
     data = list(band.getdata())
-    assert sum(data) / len(data) > 35  # sample subtitle rendered
+    assert sum(data) / len(data) > 25  # sample subtitle rendered
 
 
 # ── 11. Cache version ──────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261104_r119") == 4
+    assert INDEX_HTML.count("?v=20261104_r120") == 4
     assert "20261104_r48" not in INDEX_HTML
