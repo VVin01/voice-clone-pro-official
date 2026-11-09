@@ -403,7 +403,7 @@ def run_recap_pipeline(
         progress=lambda cur, tot, lbl: _progress(1 + int(cur * 2 / max(1, tot)), 4, lbl),
         should_stop=stop_check,
         gemini_text_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash"),
-        gemini_request_timeout_seconds=45,
+        gemini_request_timeout_seconds=30,  # Batch CY: planner per-request timeout 45 s -> 30 s
         narrative_style=narrative_style,
         is_female=bool(is_female),
         source_language=source_language,
@@ -769,7 +769,7 @@ def build_recap_script_plan(
         progress=progress_fn or (lambda cur, tot, lbl: None),
         should_stop=lambda: False,
         gemini_text_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash"),
-        gemini_request_timeout_seconds=45,
+        gemini_request_timeout_seconds=30,  # Batch CY: planner per-request timeout 45 s -> 30 s
         narrative_style=narrative_style,
         is_female=bool(is_female),
         source_language=source_language,

@@ -117,9 +117,9 @@ def _mid_word_boundaries(cue, texts):
 
 # ── Release pin: cache token ─────────────────────────────────────
 
-def test_da_cache_token_is_r122():
-    assert INDEX_HTML.count("20261104_r122") == 4
-    assert "20261104_r" + "121" not in INDEX_HTML
+def test_da_cache_token_is_r123():
+    assert INDEX_HTML.count("20261104_r123") == 4
+    assert "20261104_r" + "122" not in INDEX_HTML
 
 
 # ── 1. The two live defects, fixed at the live geometry (19pt) ──

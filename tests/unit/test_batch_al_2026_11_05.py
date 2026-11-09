@@ -245,14 +245,24 @@ def test_worker_engines_bind_to_different_tokens(tmp_path, monkeypatch):
 # ── B: failover budget scaling + no quota retry-walk ─────────────────
 
 def test_failover_budget_scales_with_segment_length():
-    # ~3.7 s line: far below the old flat 240 s, but with real headroom.
+    # Batch CY (2026-11-09) re-sloped the AL formula: the AL slope
+    # (20 s per window second, cap 240 s) saturated at a 10.5 s
+    # window, so normal lines still got the flat 240 s. CY budgets
+    # 25 s + 2.5 s per expected audio second, floored at 45 s and
+    # capped at 150 s — the detailed CY pins live in
+    # test_batch_cy_2026_11_09.py; the AL-era assertions below were
+    # updated to the CY values.
+    # ~3.7 s line: short lines sit on the 45 s floor (was 104 s
+    # under AL, still far below the old flat 240 s).
     b = core.vox_failover_budget(3.7, 80)
-    assert 60.0 <= b <= 150.0
-    # Tiny line hits the floor; huge window hits the old cap.
+    assert b == 45.0
+    # Tiny line hits the floor (unchanged); huge window hits the
+    # CY cap of 150 s (was the historical 240 s cap under AL).
     assert core.vox_failover_budget(0.2, 5) == 45.0
-    assert core.vox_failover_budget(60.0, 900) == 240.0
-    # Monotonic in window length.
-    assert core.vox_failover_budget(2.0, 40) < core.vox_failover_budget(5.6, 120)
+    assert core.vox_failover_budget(60.0, 900) == 150.0
+    # Monotonic once above the floor (the AL pair 2.0/5.6 s now both
+    # land on the shared floor, so the comparison uses longer lines).
+    assert core.vox_failover_budget(8.0, 170) < core.vox_failover_budget(20.0, 420)
 
 
 class _RetryFakeEngine:
