@@ -1269,6 +1269,44 @@ def _cx_next_starts_content(tokens: list[str], idx: int) -> bool:
     return not _cx_is_break_token(tokens[j])
 
 
+def _cx_cut_at_space(tokens: list[str], cut: int) -> bool:
+    """True when the boundary BEFORE tokens[cut] sits at a space
+    in the source text. tokenize_burmese_words glues a space to
+    the END of the preceding token ('တု '), and a standalone
+    whitespace token is possible too — accept either shape, on
+    either side of the boundary."""
+    if cut <= 0 or cut >= len(tokens):
+        return True
+    prev_tok, next_tok = tokens[cut - 1], tokens[cut]
+    if not prev_tok.strip() or not next_tok.strip():
+        return True
+    return prev_tok != prev_tok.rstrip() or next_tok != next_tok.lstrip()
+
+
+def _cx_cut_is_word_boundary(tokens: list[str], cut: int) -> bool:
+    """True when a cut BEFORE tokens[cut] does not slice a
+    space-delimited word in two: the boundary sits at a space, or
+    the piece ends with clause punctuation. (Meaningful particle
+    boundaries are the caller's preference loop, which runs
+    before this is consulted.)"""
+    if cut <= 0 or cut >= len(tokens):
+        return True
+    if _cx_cut_at_space(tokens, cut):
+        return True
+    return tokens[cut - 1].rstrip().endswith(("။", "၊"))
+
+
+def _cx_last_space_boundary(tokens: list[str], start: int, end: int) -> int | None:
+    """The most recent cut index in (start, end) that sits at a
+    space — the last in-span point where a piece can end without
+    breaking a word. None when the fitting span holds no space
+    boundary at all."""
+    for c in range(end - 1, start, -1):
+        if _cx_cut_at_space(tokens, c):
+            return c
+    return None
+
+
 def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) -> list[str]:
     """Split one over-wide line into pieces that each fit the bound
     at the LOCKED size.
@@ -1281,6 +1319,18 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
     otherwise at the overflow point. The loop keeps cutting until
     every piece fits. A single token wider than the bound is
     returned whole (the caller's single-token shrink handles it).
+
+    Batch DA (Ulfa, 2026-11-09 — "စာလုံးမကွဲအောင် ပြင်ပါ"): the
+    overflow cut is a LAST resort. When it would land inside a
+    space-delimited word (the live CX render split ပြုလုပ် and
+    တိကျ that way), the cut BACKTRACKS to the most recent space
+    boundary inside the fitting span, so the whole word moves to
+    the next piece — unless the backtracked piece would fall
+    below the same ≥40% substantial floor, because a stub piece
+    flashes worse than a broken word; then the overflow cut
+    stands. The rule applies to every piece (the loop re-enters
+    for the remainder). No dictionary segmenter: "word boundary"
+    here means a space, or the existing meaningful boundaries.
     """
     tokens = [t for t in tokenize_burmese_words(line) if t != ""]
     if not tokens:
@@ -1329,6 +1379,21 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
                 if full_w > 0 and cand_w >= 0.4 * full_w:
                     cut = cand_cut
                     break
+        if cut == end and not _cx_cut_is_word_boundary(tokens, end):
+            # Batch DA: the overflow cut would slice a word in
+            # two. Backtrack to the most recent space boundary in
+            # the span so the whole word moves to the next piece —
+            # unless that piece would be a stub (<40% of the
+            # fitting width), in which case the overflow cut
+            # stands as the last resort.
+            back = _cx_last_space_boundary(tokens, start, end)
+            if back is not None:
+                back_w = _png_cue_width(
+                    renderer, "".join(tokens[start:back]).strip(),
+                    font_px, font_path, visuals,
+                )
+                if full_w > 0 and back_w >= 0.4 * full_w:
+                    cut = back
         pieces.append("".join(tokens[start:cut]).strip())
         start = cut
     return [p for p in pieces if p]
