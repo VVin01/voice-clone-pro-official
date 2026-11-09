@@ -125,7 +125,7 @@ def probes(monkeypatch):
 
 def test_bn_cache_token_is_r86():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261104_r122") == 4
+    assert html.count("20261104_r123") == 4
     assert "20261104_r85" not in html
 
 

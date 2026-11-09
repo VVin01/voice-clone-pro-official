@@ -186,20 +186,58 @@ def recap_job_timeout(source_duration: float | None) -> int:
 DEFAULT_TTS_WORKERS = 6
 
 
-def vox_failover_budget(window_seconds: float, text_chars: int) -> float:
-    """Batch AL: per-segment VoxCPM failover budget, scaled to the
-    segment instead of the old flat 240 s for every line.
+# Batch CY: per-segment VoxCPM failover budget constants. The Batch
+# AL slope (20 s of budget per second of window) saturated at a
+# 10.5 s window, so every normal narration line still received the
+# old flat 240 s and one pathological segment could burn ~8 min
+# (2 wrapper attempts x 240 s) before falling back. CY derives the
+# budget from the segment's expected synthesis load instead: the
+# spoken length is estimated from the window and from the text
+# (~21 chars/s of Burmese narration, the rate in the Batch AL
+# fixtures), and the budget is 25 s of walk patience plus 2.5 s per
+# expected audio second — a normal 15-25 s line lands at 62-88 s,
+# floored at 45 s (the AL floor: ~2 healthy attempts at the CB
+# fresh-quota pace of 15-21 s/segment) and capped at 150 s, below
+# the historical 240 s. With the wrapper's 2 attempts a normal
+# line's worst case is <= ~3 min; even the longest segment's
+# absolute ceiling is 2 x 150 s, well under the old ~8 min.
+VOX_FAILOVER_BUDGET_FLOOR_SECONDS = 45.0
+VOX_FAILOVER_BUDGET_CAP_SECONDS = 150.0
+VOX_FAILOVER_BUDGET_BASE_SECONDS = 25.0
+VOX_FAILOVER_BUDGET_PER_AUDIO_SECOND = 2.5
+VOX_NARRATION_CHARS_PER_SECOND = 21.0
 
-    A ~4 s narration line does not merit a 240 s space/token walk:
-    budget = 30 s base + 20 s per second of narration window, floored
-    at 45 s and capped at the historical 240 s (long segments keep the
-    full old headroom). text_chars is accepted for future tuning and
-    for call-site clarity; the window is the load-bearing input."""
+
+def vox_failover_budget(window_seconds: float, text_chars: int) -> float:
+    """Batch AL + CY: per-segment VoxCPM failover budget, scaled to
+    the segment instead of the old flat 240 s for every line.
+
+    Batch AL introduced the scaling (30 s + 20 s per window second,
+    cap 240 s); Batch CY re-slopes it around the segment's expected
+    synthesis load — see the constants above. The expected spoken
+    length is the larger of the video window and the text-implied
+    length, so a dense long line in a short window still earns a
+    workable budget."""
     try:
         window = float(window_seconds or 0.0)
     except (TypeError, ValueError):
         window = 0.0
-    return float(min(240.0, max(45.0, 30.0 + 20.0 * max(0.0, window))))
+    try:
+        chars = float(text_chars or 0)
+    except (TypeError, ValueError):
+        chars = 0.0
+    expected_audio = max(
+        max(0.0, window),
+        max(0.0, chars) / VOX_NARRATION_CHARS_PER_SECOND,
+    )
+    return float(min(
+        VOX_FAILOVER_BUDGET_CAP_SECONDS,
+        max(
+            VOX_FAILOVER_BUDGET_FLOOR_SECONDS,
+            VOX_FAILOVER_BUDGET_BASE_SECONDS
+            + VOX_FAILOVER_BUDGET_PER_AUDIO_SECOND * expected_audio,
+        ),
+    ))
 
 
 def _with_protocol_whitelist(cmd: list[str]) -> list[str]:

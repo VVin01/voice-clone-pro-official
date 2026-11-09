@@ -108,7 +108,15 @@ DEFAULT_DIRECTION = ("An energetic, ALIVE Burmese storyteller PERFORMING the sto
                      "emphasis, questions sound like questions, hooks rise with excitement, and the voice rises "
                      "and falls naturally, like someone telling a story they care about. Diction stays crisp and "
                      "the story always stays clear — energy comes from pace, emphasis and timing, never shouting.")
-BUSY_ROUNDS, BUSY_WAIT_SECONDS = 3, 20
+# Batch CY: busy patience trimmed 3 rounds x 20 s -> 2 rounds x 10 s.
+# On a busy (5xx) day the old values parked every affected line for
+# up to 60 s of pure sleep (including a wait AFTER the final round,
+# which could only delay the persona fallback) before the walk
+# repeated; CY keeps the same key/model rotation order and the same
+# gemini_tts health-registry semantics — only the stall patience
+# shrinks, so a busy line fails over to the next round (and then to
+# the persona engine) sooner.
+BUSY_ROUNDS, BUSY_WAIT_SECONDS = 2, 10
 # Batch AJ / L20: hard cap on the HTTP attempts ONE _ask() call may
 # make for ONE narration line. The loop's own structure bounded it
 # only loosely: quota/auth deaths are marked dead, 5xx answers set
@@ -277,7 +285,7 @@ class GeminiTTSEngine:
         models = _rotated_tts_models()
         last = ""
         attempts = 0
-        for _round in range(BUSY_ROUNDS):
+        for _round_no in range(BUSY_ROUNDS):
             busy = False
             for model in models:
                 for i in order:
@@ -341,8 +349,12 @@ class GeminiTTSEngine:
                         self.log(f"⚠️ Gemini TTS key {i + 1}: {str(exc)[:100]}")
             if not busy:
                 break
-            self.log(f"⏳ Gemini TTS busy — waiting {BUSY_WAIT_SECONDS} s")
-            time.sleep(BUSY_WAIT_SECONDS)
+            # Batch CY: no wait after the FINAL round — the call is
+            # about to fail over to the persona engine, and sleeping
+            # first was pure stall.
+            if _round_no < BUSY_ROUNDS - 1:
+                self.log(f"⏳ Gemini TTS busy — waiting {BUSY_WAIT_SECONDS} s")
+                time.sleep(BUSY_WAIT_SECONDS)
         self.exhausted = True
         raise GeminiTTSError(
             "Gemini TTS: all keys' quota is exhausted or unavailable for today — "
