@@ -206,7 +206,7 @@ def test_bv_frontend_card_markup_and_flow():
 
 
 def test_bv_cache_token_is_r93():
-    assert INDEX_HTML.count("20261104_r119") == 4
+    assert INDEX_HTML.count("20261104_r120") == 4
     assert "20261104_r92" not in INDEX_HTML
 
 

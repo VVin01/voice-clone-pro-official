@@ -561,7 +561,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261104_r119") == 4
+    assert INDEX_HTML.count("?v=20261104_r120") == 4
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────
@@ -661,40 +661,29 @@ def test_fit_defect_baseline_unfitted_cue_is_wider_than_canvas(tmp_path):
 
 @pytest.mark.parametrize("sub_lines,size_pt", [(1, 16), (1, 22), (2, 16), (2, 22)])
 def test_fit_max_length_cue_fits_default_bound(tmp_path, sub_lines, size_pt):
+    # Batch CX: subtitles are always ONE LINE at the LOCKED size —
+    # the fit never wraps to two lines and never shrinks a
+    # multi-token cue; an overflowing cue returns its first fitting
+    # piece (the production burn shows every piece in turn via
+    # fit_png_cue_pieces). The sub_lines setting no longer changes
+    # the burn: a 2-line cue is one line too.
     r = _fit_renderer(tmp_path)
     font_px = core.subtitle_font_px(CW, CH, size_pt, sub_lines, LB)
     lines, px, w = _fit(r, FIT_LONG, sub_lines, font_px)
     assert w <= FIT_BOUND
-    assert len(lines) <= (2 if sub_lines == 2 else 1)
-    if sub_lines == 1:
-        # One allowed line cannot wrap: a cue that overflows the
-        # bound at full size must shrink-to-fit. Batch AK: the font
-        # is picture-relative now, so at 16pt on the letterbox the
-        # cue already fits at full size — the shrink branch is
-        # asserted exactly when the raw cue exercises it.
-        font = core.subtitle_font_file("padauk")
-        visuals = pq.preset_visuals(
-            core.SUBTITLE_STYLE_PRESETS["yellow"], CH, font_px)
-        raw = r.render_text(FIT_LONG, 1, font_px, font, visuals)
-        if raw is not None and raw[1] > FIT_BOUND:
-            assert px < font_px
-        else:
-            assert px == font_px
+    assert len(lines) == 1
+    assert px == font_px
 
 
-def test_fit_wraps_before_shrinking_in_two_line_mode(tmp_path):
-    # The mid-length cue fits the bound by wrapping alone — the fit
-    # must keep the full font size and use both lines.
-    # Batch AK: the font is picture-relative, so on the letterboxed
-    # layout this cue now fits on ONE line at 13pt; the wrap-first
-    # regime is exercised on the full-frame layout (same picture
-    # width, picture height = canvas height), where the property is
-    # unchanged.
+def test_fit_never_wraps_to_two_lines(tmp_path):
+    # Batch CX replaces the old wrap-first regime: the mid-length
+    # cue renders as ONE line at the locked size (its first fitting
+    # piece when it overflows), never as two wrapped lines.
     r = _fit_renderer(tmp_path)
     ff = core.frame_layout("9:16", "blur", 1080, 1920)
     font_px = core.subtitle_font_px(CW, CH, 13, 2, ff)
     lines, px, w = _fit(r, FIT_MID, 2, font_px)
-    assert px == font_px and len(lines) == 2 and w <= FIT_BOUND
+    assert px == font_px and len(lines) == 1 and w <= FIT_BOUND
 
 
 def test_fit_fitting_cue_is_byte_identical(tmp_path):
@@ -726,9 +715,12 @@ def test_fit_band_preset_also_fits(tmp_path):
 
 
 def test_fit_wired_into_both_burn_paths():
+    # Batch CX: the production burn splits cues via
+    # fit_png_cue_pieces (every piece shown in turn); the preview
+    # still fits the single sample frame via fit_png_cue_lines.
     prod = CORE_PY.split("def apply_production_overlays(", 1)[1].split("\ndef ", 1)[0]
     prev = CORE_PY.split("def extract_preview_with_overlays(", 1)[1].split("\ndef ", 1)[0]
-    assert "fit_png_cue_lines(" in prod and "_sub_w_fraction(overlays)" in prod
+    assert "fit_png_cue_pieces(" in prod and "_sub_w_fraction(overlays)" in prod
     assert "fit_png_cue_lines(" in prev and "_sub_w_fraction(overlays)" in prev
 
 

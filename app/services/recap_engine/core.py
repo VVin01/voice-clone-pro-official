@@ -1182,104 +1182,272 @@ def _scaled_png_visuals(visuals: dict[str, Any], from_px: int, to_px: int) -> di
     return out
 
 
-def _wrap_cue_lines_to_width(renderer, text: str, font_px: int, font_path,
-                             stroke_px: int, ink_budget_px: int) -> list[str]:
-    """Greedy wrap into the FEWEST lines whose measured ink widths
-    fit the budget. Breaks only at syllable boundaries
-    (split_into_burmese_syllables — the same indivisible atoms the
-    cue splitter uses), so a break can never split a shaped cluster.
-    A single atom wider than the budget stays whole on its own line
-    (the caller's shrink loop then reduces the font)."""
-    tokens = split_into_burmese_syllables(text)
+# ── Batch CX: fixed-size subtitles with meaningful cue splitting ──
+#
+# Ulfa (2026-11-09): short cues rendered LARGE and long cues SMALL
+# because the Batch AG fit shrank the font per cue. The font is now
+# LOCKED at the job's chosen size for every cue, subtitles are
+# ALWAYS ONE LINE on the PNG burn path, and a cue that overflows at
+# the locked size is SPLIT into sequential cues — its time window
+# split proportionally to each piece's text share — instead of being
+# wrapped or shrunk. Split points are meaningful phrase/clause
+# boundaries (punctuation ၊/။, conjunctions and particles); a split
+# never lands inside a shaped syllable cluster. The ONLY shrink left
+# is a single unbreakable token wider than the canvas at the locked
+# size, which keeps the old floor logic for that one cue.
+
+# Extra break markers beyond PARTICLE_SYLS (the vocabulary the cue
+# formatter already uses): sentence/clause punctuation and the
+# relativizer/quotative particles တာ / တဲ့. Built lazily —
+# PARTICLE_SYLS is defined further down this module, after this block.
+_CX_BREAK_SUFFIXES: tuple[str, ...] | None = None
+
+
+def _cx_break_suffixes() -> tuple[str, ...]:
+    """The meaningful-break vocabulary, resolved on first use."""
+    global _CX_BREAK_SUFFIXES
+    if _CX_BREAK_SUFFIXES is None:
+        _CX_BREAK_SUFFIXES = ("။", "၊", "တာ", "တဲ့") + tuple(sorted(PARTICLE_SYLS))
+    return _CX_BREAK_SUFFIXES
+# Minimum readable on-screen time (s) for one split piece, enforced
+# only when the cue window is long enough to allow it.
+_CX_MIN_PIECE_SECONDS = 0.4
+
+
+def _png_cue_width(renderer, line, font_px, font_path, visuals) -> int:
+    """Total rendered PNG width (px) of one subtitle line: ink width
+    plus the padding render_lines adds on both sides — the same
+    numbers the renderer will use, so a width predicted here is the
+    width the burn produces."""
+    st = int(visuals.get("stroke_px", 1))
+    pad = _png_subs.png_pad_x(visuals, int(font_px), st)
+    return renderer.text_width(line, int(font_px), font_path, st) + 2 * pad
+
+
+def _png_cue_fits(renderer, line, font_px, font_path, visuals, max_width_px) -> bool:
+    """True when one line renders within the width budget at the
+    given size."""
+    return _png_cue_width(renderer, line, font_px, font_path, visuals) <= int(max_width_px)
+
+
+def _cx_is_break_token(tok: str) -> bool:
+    """True when one token IS a break marker: a conjunction/
+    particle from the break vocabulary, or ending with sentence/
+    clause punctuation.
+
+    Whole-token match only, deliberately: tokenize_burmese_words
+    already emits particles as their own tokens, so an endswith
+    test would also fire inside a written word (e.g. the verb
+    လွှမ်းမိုးနေ ends with နေ) and split mid-word.
+    """
+    t = (tok or "").strip()
+    if not t:
+        return False
+    if t.endswith("။") or t.endswith("၊"):
+        return True
+    return t in _cx_break_suffixes()
+
+
+def _cx_is_meaningful_break(tokens: list[str], idx: int) -> bool:
+    """True when a split AFTER tokens[idx] lands on a phrase/clause
+    boundary."""
+    return _cx_is_break_token(tokens[idx])
+
+
+def _cx_next_starts_content(tokens: list[str], idx: int) -> bool:
+    """True when the piece starting at tokens[idx] begins with a
+    content token: skip whitespace, then the next token must not
+    itself be a break marker. A boundary followed by another
+    particle (အိမ်ထဲ | မှာ) would strand that particle at the
+    start of the next piece — prefer a boundary whose next piece
+    starts with a real word instead."""
+    j = idx
+    while j < len(tokens) and not tokens[j].strip():
+        j += 1
+    if j >= len(tokens):
+        return False
+    return not _cx_is_break_token(tokens[j])
+
+
+def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) -> list[str]:
+    """Split one over-wide line into pieces that each fit the bound
+    at the LOCKED size.
+
+    Greedy, measured with the real font: accumulate word tokens
+    (tokenize_burmese_words — a split never lands inside a shaped
+    cluster) until the next token would overflow, then cut at the
+    last meaningful boundary inside the piece when that still
+    leaves a substantial piece (≥40% of the fitting width),
+    otherwise at the overflow point. The loop keeps cutting until
+    every piece fits. A single token wider than the bound is
+    returned whole (the caller's single-token shrink handles it).
+    """
+    tokens = [t for t in tokenize_burmese_words(line) if t != ""]
     if not tokens:
         return []
-    lines: list[str] = []
-    cur = ""
-    for tok in tokens:
-        cand = cur + tok if cur else tok
-        if cur and renderer.text_width(cand, font_px, font_path, stroke_px) > ink_budget_px:
-            lines.append(cur)
-            cur = tok
-        else:
+    pieces: list[str] = []
+    start = 0
+    while start < len(tokens):
+        # Extend the piece as far as it fits, tracking the last
+        # meaningful boundary inside it — and the last CLEAN one
+        # (whose next piece starts with a content word, not a
+        # stranded particle).
+        end = start
+        cur = ""
+        last_good: int | None = None
+        last_clean: int | None = None
+        while end < len(tokens):
+            cand = cur + tokens[end]
+            if cur and not _png_cue_fits(renderer, cand, font_px, font_path, visuals, max_width_px):
+                break
             cur = cand
-    if cur:
-        lines.append(cur)
-    return [ln.strip() for ln in lines if ln.strip()]
+            end += 1
+            if end < len(tokens) and _cx_is_meaningful_break(tokens, end - 1):
+                last_good = end
+                if _cx_next_starts_content(tokens, end):
+                    last_clean = end
+        if end == len(tokens):
+            if cur.strip():
+                pieces.append(cur.strip())
+            break
+        if end == start:
+            # One token alone overflows the bound: unbreakable.
+            pieces.append(tokens[start])
+            start += 1
+            continue
+        # Prefer a clean meaningful cut, then any meaningful cut,
+        # when the piece it leaves is still substantial (≥40% of
+        # the fitting width); a sliver piece flashes awkwardly.
+        cut = end
+        full_w = _png_cue_width(renderer, cur.strip(), font_px, font_path, visuals)
+        for cand_cut in (last_clean, last_good):
+            if cand_cut is not None and cand_cut > start:
+                cand_w = _png_cue_width(
+                    renderer, "".join(tokens[start:cand_cut]).strip(),
+                    font_px, font_path, visuals,
+                )
+                if full_w > 0 and cand_w >= 0.4 * full_w:
+                    cut = cand_cut
+                    break
+        pieces.append("".join(tokens[start:cut]).strip())
+        start = cut
+    return [p for p in pieces if p]
+
+
+def _cx_shrink_single_token(renderer, line, font_px, font_path, visuals, max_width_px):
+    """Shrink ONE unbreakable token stepwise to the floor — the old
+    Batch AG loop, single line only. Returns (lines, px, visuals).
+    Only called when a single token is wider than the canvas at the
+    locked size; at the floor the token ships as-is (it cannot be
+    split without breaking a shaped cluster)."""
+    floor = SUBTITLE_FONT_MIN_PX
+    px = int(font_px)
+    while px > floor:
+        vis = _scaled_png_visuals(visuals, int(font_px), px)
+        if _png_cue_fits(renderer, line, px, font_path, vis, max_width_px):
+            return [line], px, vis
+        need = _png_cue_width(renderer, line, px, font_path, vis)
+        ratio = (int(max_width_px) / need) if need > 0 else 0.9
+        factor = max(0.85, min(0.95, ratio * 0.98))
+        px = max(floor, min(px - 1, int(px * factor)))
+    vis = _scaled_png_visuals(visuals, int(font_px), floor)
+    return [line], floor, vis
+
+
+def fit_png_cue_pieces(renderer, text, font_px, font_path, visuals, max_width_px,
+                       cue_start, cue_end):
+    """Batch CX: fit ONE cue for the PNG burn at the LOCKED size.
+
+    Returns a list of (lines, font_px, visuals, start, end) — one
+    entry per piece, in order. A cue that already fits is one piece,
+    unchanged (same lines, size and visuals as before, so its render
+    is byte-identical). An overflowing cue is split at meaningful
+    phrase/clause boundaries into one-line pieces, each at the
+    locked size; the cue's time window is split proportionally to
+    each piece's text share (with a 0.4 s readability floor when the
+    window is long enough to allow it). A single unbreakable token
+    wider than the canvas keeps the old floor shrink for that one
+    piece only.
+    """
+    base_lines = _png_subs.normalize_cue_lines(text, 1)
+    if not base_lines:
+        return []
+    line = base_lines[0]
+    start_px = int(font_px)
+    start = float(cue_start)
+    end = float(cue_end)
+    if _png_cue_fits(renderer, line, start_px, font_path, visuals, max_width_px):
+        return [([line], start_px, visuals, start, end)]
+    raw_pieces = _cx_split_line(renderer, line, start_px, font_path, visuals, max_width_px)
+    if not raw_pieces:
+        return []
+    total_chars = sum(len(p) for p in raw_pieces) or 1
+    total_dur = max(0.0, end - start)
+    durs = [(len(p) / total_chars) * total_dur for p in raw_pieces]
+    # Readability floor: when the window is long enough, no piece
+    # flashes shorter than _CX_MIN_PIECE_SECONDS; the extra time
+    # comes out of the longest pieces, total window unchanged.
+    if len(durs) > 1 and total_dur >= _CX_MIN_PIECE_SECONDS * len(durs):
+        need = sum(max(0.0, _CX_MIN_PIECE_SECONDS - d) for d in durs)
+        if need > 0:
+            surplus = [max(0.0, d - _CX_MIN_PIECE_SECONDS) for d in durs]
+            tot_surplus = sum(surplus)
+            if tot_surplus >= need:
+                spare = total_dur - _CX_MIN_PIECE_SECONDS * len(durs)
+                durs = [
+                    _CX_MIN_PIECE_SECONDS + (s / tot_surplus) * spare
+                    for s in surplus
+                ]
+    out: list[tuple[list[str], int, dict[str, Any], float, float]] = []
+    cur = start
+    for i, piece in enumerate(raw_pieces):
+        piece_end = end if i == len(raw_pieces) - 1 else cur + durs[i]
+        if _png_cue_fits(renderer, piece, start_px, font_path, visuals, max_width_px):
+            out.append(([piece], start_px, visuals, round(cur, 3), round(piece_end, 3)))
+        else:
+            shrunk_lines, shrunk_px, shrunk_vis = _cx_shrink_single_token(
+                renderer, piece, start_px, font_path, visuals, max_width_px
+            )
+            out.append((shrunk_lines, shrunk_px, shrunk_vis, round(cur, 3), round(piece_end, 3)))
+        cur = piece_end
+    return out
 
 
 def fit_png_cue_lines(renderer, text, sub_lines, font_px, font_path,
                       visuals, max_width_px):
-    """Batch AG: sub_w as a HARD fit constraint on the PNG burn.
+    """Batch CX: fit one cue for the PNG burn at the LOCKED size.
 
-    The pre-AG burn trusted the cue splitter's CHARACTER budget
-    (45 chars vertical / 1 line) to keep cues on-canvas — but char
-    count is not pixel width: a max-length cue at the rendered font
-    size ran wider than the 1080px canvas and was clipped at BOTH
-    edges (verified on the 2026-11-04 eyes-on render, cue at 65.7s).
-    This fit is measured with the actual font at the actual size:
-
-    * lines that already fit render EXACTLY as before — same lines,
-      same size, same visuals (the returned tuple feeds
-      render_lines, which is what render_text itself calls, so the
-      cached PNG is byte-identical);
-    * otherwise the cue is re-wrapped at syllable boundaries into
-      the allowed line count (sub_lines), and if it still cannot
-      fit, the font shrinks (proportionally, stroke scaled with it)
-      until it does — down to SUBTITLE_FONT_MIN_PX, where the
-      width-fitted wrap ships even if it needs an extra line:
-      spilling off-canvas is the one outcome never accepted.
+    Subtitles are ALWAYS ONE LINE on the PNG burn path — the
+    sub_lines argument is accepted for call-site compatibility but
+    no longer controls the line count (Ulfa's 2026-11-09 order
+    supersedes the 2-line wrap). The font never shrinks for a
+    multi-token cue: a cue that overflows is split into sequential
+    one-line pieces by fit_png_cue_pieces (the production burn shows
+    every piece in turn); this single-cue entry point — the preview
+    frame, which has no time window to split across — returns the
+    FIRST fitting piece at the locked size. A cue that already fits
+    renders EXACTLY as before — same lines, same size, same visuals
+    (the fast path).
 
     Returns (lines, effective_font_px, effective_visuals); lines is
-    [] for a cue with no visible text.
+    [] for a cue with no visible text. The only shrink left is a
+    single unbreakable token wider than the canvas, which keeps the
+    old floor logic for that one cue.
     """
-    base_lines = _png_subs.normalize_cue_lines(text, sub_lines)
+    base_lines = _png_subs.normalize_cue_lines(text, 1)
     if not base_lines:
         return [], int(font_px), visuals
-    max_lines = 2 if int(sub_lines or 1) != 1 else 1
-    full_text = " ".join(base_lines)
+    line = base_lines[0]
     start_px = int(font_px)
-    floor = SUBTITLE_FONT_MIN_PX
-
-    def _png_width(lines, at_px, vis) -> int:
-        st = int(vis.get("stroke_px", 1))
-        pad = _png_subs.png_pad_x(vis, at_px, st)
-        widest = max(
-            (renderer.text_width(ln, at_px, font_path, st) for ln in lines),
-            default=0,
-        )
-        return widest + 2 * pad
-
-    # Fast path: the cue already fits — today's rendering, untouched.
-    if len(base_lines) <= max_lines and _png_width(base_lines, start_px, visuals) <= max_width_px:
-        return base_lines, start_px, visuals
-
-    px = start_px
-    while px > floor:
-        vis = _scaled_png_visuals(visuals, start_px, px)
-        st = int(vis.get("stroke_px", 1))
-        pad = _png_subs.png_pad_x(vis, px, st)
-        ink_budget = max(8, int(max_width_px) - 2 * pad)
-        wrapped = _wrap_cue_lines_to_width(renderer, full_text, px, font_path, st, ink_budget)
-        if wrapped and len(wrapped) <= max_lines and _png_width(wrapped, px, vis) <= max_width_px:
-            return wrapped, px, vis
-        # Shrink toward the worst overflow (an over-wide single line
-        # when the line COUNT is the binding constraint, else the
-        # widest wrapped line) and retry at the smaller size. The
-        # step is capped at ×0.85 per pass so the loop re-wraps at
-        # intermediate sizes and settles on the LARGEST fitting size
-        # (e.g. two lines at ~46px beats one line at ~24px).
-        need = _png_width(wrapped or base_lines, px, vis)
-        if len(wrapped) > max_lines:
-            need = max(need, renderer.text_width(full_text, px, font_path, st) + 2 * pad)
-        ratio = (max_width_px / need) if need > 0 else 0.9
-        factor = max(0.85, min(0.95, ratio * 0.98))
-        px = max(floor, min(px - 1, int(px * factor)))
-    vis = _scaled_png_visuals(visuals, start_px, floor)
-    st = int(vis.get("stroke_px", 1))
-    pad = _png_subs.png_pad_x(vis, floor, st)
-    ink_budget = max(8, int(max_width_px) - 2 * pad)
-    wrapped = _wrap_cue_lines_to_width(renderer, full_text, floor, font_path, st, ink_budget)
-    return (wrapped or base_lines), floor, vis
+    if _png_cue_fits(renderer, line, start_px, font_path, visuals, max_width_px):
+        return [line], start_px, visuals
+    pieces = fit_png_cue_pieces(
+        renderer, text, font_px, font_path, visuals, max_width_px, 0.0, 1.0
+    )
+    if not pieces:
+        return [], start_px, visuals
+    first_lines, first_px, first_vis, _s, _e = pieces[0]
+    return first_lines, first_px, first_vis
 
 
 def _subtitle_block_top_px(
@@ -3568,7 +3736,6 @@ def _resolve_png_subtitle_job(
     file-only call renders what the file describes). Returns None
     when there is nothing to burn.
     """
-    sub_lines = int(overlays.get("sub_lines", 1))
     cues: list[tuple[float, float, str]] = []
     file_font_px: int | None = None
     file_visuals: dict[str, Any] | None = None
@@ -3608,8 +3775,13 @@ def _resolve_png_subtitle_job(
     cues = [(a, b, t) for a, b, t in cues if t.strip()]
     if not cues:
         return None
+    # Batch CX: the PNG burn is always one line at the job's chosen
+    # size — the 2-line mode (and its ×1.25 font factor in
+    # subtitle_font_px) no longer applies here. A file-only call
+    # keeps the .ass file's own font size (it renders what the file
+    # describes).
     raw_size = int(overlays.get("subtitles_font_size", 16))
-    font_px = file_font_px or subtitle_font_px(cw, ch, raw_size, sub_lines, layout)
+    font_px = file_font_px or subtitle_font_px(cw, ch, raw_size, 1, layout)
     if file_visuals is not None:
         visuals = file_visuals
     else:
@@ -3625,7 +3797,8 @@ def _resolve_png_subtitle_job(
         "font_px": int(font_px),
         "visuals": visuals,
         "font_path": font_path,
-        "sub_lines": sub_lines,
+        # Batch CX: always one line on the PNG burn path.
+        "sub_lines": 1,
     }
 
 
@@ -3902,38 +4075,39 @@ def apply_production_overlays(
         renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
         lay_dict = {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
         x_expr = _subtitle_overlay_x_expr(cw, ch, lay_dict, overlays.get("sub_x"))
-        # Batch AG hard fit bound: no cue PNG may exceed sub_w of
-        # the picture width — fit_png_cue_lines wraps each cue into
-        # the allowed line count and shrinks the font only when
-        # wrapping cannot make it fit; cues that already fit render
-        # exactly as before.
+        # Batch CX hard fit bound: no cue PNG may exceed sub_w of
+        # the picture width. Cues are ONE LINE at the LOCKED size —
+        # fit_png_cue_pieces splits an overflowing cue into
+        # sequential one-line pieces (its time window split with
+        # it); cues that already fit render exactly as before.
         fit_max_w = int(round(_sub_w_fraction(overlays) * pw))
         for cue_start, cue_end, cue_text in sub_job["cues"]:
-            fit_lines, fit_px, fit_visuals = fit_png_cue_lines(
+            for fit_lines, fit_px, fit_visuals, piece_start, piece_end in fit_png_cue_pieces(
                 renderer,
                 cue_text,
-                sub_job["sub_lines"],
                 sub_job["font_px"],
                 sub_job["font_path"],
                 sub_job["visuals"],
                 fit_max_w,
-            )
-            if not fit_lines:
-                continue
-            png_path, _png_w, png_h = renderer.render_lines(
-                fit_lines, fit_px, sub_job["font_path"], fit_visuals
-            )
-            top = _subtitle_block_top_px(
-                cw, ch, lay_dict,
-                sub_y=overlays.get("sub_y"),
-                subtitles_margin_v=overlays.get("subtitles_margin_v"),
-                boxes=boxes,
-                font_px=sub_job["font_px"],
-                sub_lines=sub_job["sub_lines"],
-                block_h=png_h,
-                sub_margin=overlays.get("sub_margin"),
-            )
-            cue_inputs.append((png_path, top, x_expr, float(cue_start), float(cue_end)))
+                cue_start,
+                cue_end,
+            ):
+                if not fit_lines:
+                    continue
+                png_path, _png_w, png_h = renderer.render_lines(
+                    fit_lines, fit_px, sub_job["font_path"], fit_visuals
+                )
+                top = _subtitle_block_top_px(
+                    cw, ch, lay_dict,
+                    sub_y=overlays.get("sub_y"),
+                    subtitles_margin_v=overlays.get("subtitles_margin_v"),
+                    boxes=boxes,
+                    font_px=sub_job["font_px"],
+                    sub_lines=sub_job["sub_lines"],
+                    block_h=png_h,
+                    sub_margin=overlays.get("sub_margin"),
+                )
+                cue_inputs.append((png_path, top, x_expr, float(piece_start), float(piece_end)))
 
     def _build_step2_cmd(
         step_encoder: str,
@@ -4416,39 +4590,17 @@ def extract_preview_with_overlays(
     # Add sample subtitle if burn_subtitles is enabled
     srt_temp = None
     if overlays.get("burn_subtitles", True):
-        sub_lines = int(overlays.get("sub_lines", 1))
+        # Batch CX: subtitles are always one line on the PNG burn
+        # path — the 2-line mode (and its ×1.25 font factor) no
+        # longer applies here; the sample is one line at the locked
+        # size, like every production cue. (A sample that overflows
+        # shows its first fitting piece — the preview is one frame,
+        # it has no time window to split across.)
+        sub_lines = 1
         sample = str(sample_text or "").strip()
         if not sample:
             sample = PREVIEW_SAMPLE_TEXT
-        if sub_lines == 2 and "\n" not in sample and len(sample) > 20:
-            syls = split_into_burmese_syllables(sample)
-            if len(syls) > 1:
-                half = len(sample) // 2
-                best_idx = 1
-                best_diff = 9999
-                cand = []
-                for i in range(1, len(syls)):
-                    left_len = sum(len(s) for s in syls[:i])
-                    diff = abs(left_len - half)
-                    curr = syls[i - 1].strip()
-                    if curr in PARTICLE_SYLS or any(curr.endswith(p) for p in ['ပြီး', 'တော့', 'က', 'နဲ့', 'မှာ', 'ကို', 'တယ်', 'တာ', '၊', ' ']):
-                        cand.append((diff, i))
-                if cand:
-                    cand.sort(key=lambda x: x[0])
-                    best_idx = cand[0][1]
-                else:
-                    for i in range(1, len(syls)):
-                        left_len = sum(len(s) for s in syls[:i])
-                        diff = abs(left_len - half)
-                        if diff < best_diff:
-                            best_diff = diff
-                            best_idx = i
-                l1 = "".join(syls[:best_idx]).strip()
-                l2 = "".join(syls[best_idx:]).strip()
-                if l1 and l2:
-                    sample = f"{l1}\n{l2}"
-        elif sub_lines == 1:
-            sample = sample.replace("\n", " ").strip()
+        sample = sample.replace("\n", " ").strip()
 
         # Batch Q: the sample subtitle is a Pillow+raqm PNG overlay
         # (png_subtitles), exactly like the production burn — the
