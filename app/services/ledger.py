@@ -6,7 +6,7 @@ import logging
 import secrets
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -895,16 +895,58 @@ async def recap_debit_total_for_job(session: AsyncSession, job_id: str) -> int:
     return sum(int(r.credits or 0) for r in rows)
 
 
-async def recap_refund_total_for_job(session: AsyncSession, job_id: str) -> int:
-    """Batch AJ (H11): total recap credits ever refunded for a job
-    (CREDIT events under the REFUND:<job_id> reference)."""
+async def recap_refund_family(
+    session: AsyncSession, job_id: str
+) -> tuple[int, int]:
+    """Batch DC: (total credits, row count) across a job's refund
+    family — the plain ``REFUND:<job_id>`` row plus any
+    ``REFUND:<job_id>#<n>`` top-up rows. A job re-charged by an
+    admin retry (Batch AJ H6) can legitimately be refunded more
+    than once, but the partial unique index
+    ``uq_recap_ledger_refund_ref`` allows only one CREDIT row per
+    exact reference, so later refunds take a ``#<n>`` suffix and
+    every total must sum the whole family."""
+    base = recap_refund_reference(job_id)
+    like_base = (
+        base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
     rows = (await session.execute(
         select(RecapCreditLedgerEvent).where(
-            RecapCreditLedgerEvent.reference_id == recap_refund_reference(job_id),
             RecapCreditLedgerEvent.direction == LedgerDirection.CREDIT.value,
+            or_(
+                RecapCreditLedgerEvent.reference_id == base,
+                RecapCreditLedgerEvent.reference_id.like(
+                    like_base + "#%", escape="\\"
+                ),
+            ),
         )
     )).scalars().all()
-    return sum(int(r.credits or 0) for r in rows)
+    rows = [
+        r for r in rows
+        if r.reference_id == base
+        or (r.reference_id or "").startswith(base + "#")
+    ]
+    return sum(int(r.credits or 0) for r in rows), len(rows)
+
+
+async def recap_refund_total_for_job(session: AsyncSession, job_id: str) -> int:
+    """Batch AJ (H11): total recap credits ever refunded for a job
+    (CREDIT events under the REFUND:<job_id> reference; Batch DC:
+    the whole refund family, including #<n> top-up rows)."""
+    total, _count = await recap_refund_family(session, job_id)
+    return total
+
+
+async def recap_next_refund_reference(
+    session: AsyncSession, job_id: str
+) -> str:
+    """Batch DC: the reference the job's NEXT refund row must use —
+    the plain ``REFUND:<job_id>`` for the first refund, then
+    ``REFUND:<job_id>#<n>``, so the partial unique index on exact
+    references never blocks a legitimate later refund."""
+    _total, count = await recap_refund_family(session, job_id)
+    base = recap_refund_reference(job_id)
+    return base if count == 0 else f"{base}#{count + 1}"
 
 
 async def recap_refund_event_exists(

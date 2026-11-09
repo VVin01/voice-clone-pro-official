@@ -1463,9 +1463,10 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
     Batch O (billing option C): when `job_id` is given, the refund is
     also written to the recap-credit ledger (CREDIT, reference
     ``REFUND:<job_id>``) in the SAME transaction as the balance change,
-    and a job whose refund is already on the ledger is never refunded
-    again from here — the ledger row is the durable cross-check behind
-    the persisted refund claim.
+    and the amount refunded from here is capped at the job's
+    outstanding balance — total DEBITs minus total refunds on the
+    ledger (Batch DC) — so a re-charge created by an admin retry
+    stays refundable while a true double refund stays impossible.
     """
     if count <= 0:
         return False
@@ -1475,11 +1476,39 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
 
     try:
         from app.db.session import AsyncSessionLocal
-        from app.services.ledger import record_recap_credit_event, recap_refund_event_exists
+        from app.services.ledger import (
+            recap_debit_total_for_job,
+            recap_next_refund_reference,
+            recap_refund_event_exists,
+            recap_refund_family,
+            record_recap_credit_event,
+        )
 
         async with AsyncSessionLocal() as session:
-            if job_id and await recap_refund_event_exists(session, user_id, job_id):
-                return False
+            refund_reference: str | None = None
+            if job_id:
+                # Batch DC: the guard is the OUTSTANDING amount, not
+                # the mere existence of an earlier refund. An admin
+                # retry re-charges a fully-refunded job (Batch AJ
+                # H6); when the retry also fails, that re-charge must
+                # be refundable even though a REFUND row already
+                # exists (2026-11-09: two retried jobs lost 5 credits
+                # to the old exists-check). Jobs whose charges predate
+                # the ledger (no DEBIT rows) keep the exists-check.
+                debit_total = await recap_debit_total_for_job(session, job_id)
+                if debit_total > 0:
+                    refunded_total, _refund_rows = await recap_refund_family(
+                        session, job_id
+                    )
+                    outstanding = debit_total - refunded_total
+                    if outstanding <= 0:
+                        return False
+                    count = min(count, outstanding)
+                    refund_reference = await recap_next_refund_reference(
+                        session, job_id
+                    )
+                elif await recap_refund_event_exists(session, user_id, job_id):
+                    return False
             # Atomic increment (hunt F5): no read-modify-write window in
             # which a concurrent charge could be overwritten.
             result = await session.execute(
@@ -1495,7 +1524,7 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
                     user_id=user_id,
                     direction="CREDIT",
                     credits=count,
-                    reference_id=f"REFUND:{job_id}",
+                    reference_id=refund_reference or f"REFUND:{job_id}",
                     note=f"Recap credit refund for job {job_id}",
                 )
             await session.commit()
