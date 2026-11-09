@@ -368,7 +368,22 @@ async def process_single_job(
         # them inside the block must never be able to mask the real
         # error behind a NameError at those reads.
         engine_inst = None
-        clean_text = job.input_text or "မင်္ဂလာပါခင်ဗျာ"
+        # Batch CW: rewrite digit runs in the SYNTHESIS text as
+        # Myanmar number words, so VoxCPM reads numbers in Burmese
+        # instead of English (and the Edge fallback below, which
+        # receives this same clean_text, speaks the same words).
+        # job.input_text is never mutated: the character-limit
+        # validation and billing in create_voice_clone_job already ran
+        # on the user's original text, and History/display keep
+        # showing it. The normalization happens HERE, upstream of the
+        # Batch CH chunker, so chunk planning and its token budget are
+        # computed on the normalized (longer) text that is actually
+        # synthesized.
+        from app.services.number_words import normalize_numbers_for_speech
+
+        clean_text = normalize_numbers_for_speech(
+            job.input_text or "မင်္ဂလာပါခင်ဗျာ"
+        )
         # Release the pooled connection for the synthesis stage
         # (audit fix 2026-11-03): stage 3 runs for minutes in an
         # executor and touches no DB state, so any transaction still

@@ -32,6 +32,14 @@ except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
     from app.services.myanmar_text import repair_burmese_mark_order
 
 try:
+    from app.services.number_words import normalize_numbers_for_speech
+except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
+    _ROOT = _HERE.parents[2]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+    from app.services.number_words import normalize_numbers_for_speech
+
+try:
     from app.services.recap_engine import png_subtitles as _png_subs
 except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
     import png_subtitles as _png_subs  # type: ignore[no-redef]
@@ -4910,6 +4918,14 @@ class EdgeSmartSync:
         ``budget_seconds`` (scaled to the segment by the caller) is
         passed through as the engine's total failover budget.
         """
+        # Batch CW: VoxCPM pronounces digit runs the English way, so
+        # the line it receives gets its digits rewritten as Myanmar
+        # number words (recap narration is full of years and counts).
+        # This is the VoxCPM-only choke point: the caller's shared
+        # ``speak`` line also feeds the Gemini/Edge paths, which are
+        # out of CW scope and keep the original digits, and the
+        # segment fingerprint/cache stay keyed on the raw narration.
+        speak = normalize_numbers_for_speech(speak)
         last_err: Exception | None = None
         for attempt in range(attempts):
             try:
