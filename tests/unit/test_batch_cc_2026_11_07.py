@@ -259,9 +259,10 @@ def test_heavy_by_duration_only_still_chunks(tmp_path, monkeypatch):
     )
     assert result == out
     assert len(calls) == 6  # 5 chunks + concat, several cue-less
-    # The full-duration title rides in EVERY window (single-graph rule).
+    # Batch DD: the legacy title_text in the overlays dict is inert
+    # — no chunk graph carries a title step any more.
     for cmd in calls[:5]:
-        assert "vtitle" in _graph_of(cmd)
+        assert "vtitle" not in _graph_of(cmd)
 
 
 def test_just_under_threshold_keeps_classic_two_step(tmp_path, monkeypatch):
@@ -307,7 +308,10 @@ def test_overlay_slot_blocks_a_second_job(tmp_path, monkeypatch):
 
     def _job():
         done["result"] = core.apply_production_overlays(
-            "ffmpeg", src, tmp_path / "out.mp4", {"title_text": "Hello"},
+            # Batch DD: a blur-box list activates the overlay pass
+            # (the old title_text activator no longer exists).
+            "ffmpeg", src, tmp_path / "out.mp4",
+            {"blur_boxes": [{"x": 0.1, "y": 0.5, "w": 0.5, "h": 0.1, "strength": 18}]},
             "libx264", tmp_path / "w", frame_size=(320, 240),
             layout={"pw": 320, "ph": 240, "ox": 0, "oy": 0}, duration=4,
         )
@@ -665,7 +669,7 @@ def test_cache_token_is_r101():
     index_html = (
         Path(_api_mod.__file__).resolve().parent / "static" / "index.html"
     ).read_text(encoding="utf-8")
-    assert index_html.count("20261104_r125") == 4
+    assert index_html.count("20261104_r126") == 4
     assert ("20261104_r" + "100") not in index_html
 
 

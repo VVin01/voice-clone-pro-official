@@ -1458,7 +1458,7 @@ def _cx_shrink_single_token(renderer, line, font_px, font_path, visuals, max_wid
 
 
 def fit_png_cue_pieces(renderer, text, font_px, font_path, visuals, max_width_px,
-                       cue_start, cue_end):
+                       cue_start, cue_end, max_lines: int = 1):
     """Batch CX: fit ONE cue for the PNG burn at the LOCKED size.
 
     Returns a list of (lines, font_px, visuals, start, end) — one
@@ -1471,22 +1471,39 @@ def fit_png_cue_pieces(renderer, text, font_px, font_path, visuals, max_width_px
     window is long enough to allow it). A single unbreakable token
     wider than the canvas keeps the old floor shrink for that one
     piece only.
+
+    Batch DD: with ``max_lines`` > 1 (the user's Lines 1/2/3
+    choice), the split lines are wrapped into pieces of up to
+    ``max_lines`` lines each instead of always shipping sequential
+    one-line pieces — a cue that fits within the chosen line count
+    stays ONE piece over its full window. max_lines=1 reproduces
+    the CX/DA behaviour byte-identically (the default).
     """
-    base_lines = _png_subs.normalize_cue_lines(text, 1)
+    max_lines = min(3, max(1, int(max_lines or 1)))
+    base_lines = _png_subs.normalize_cue_lines(text, max_lines)
     if not base_lines:
         return []
-    line = base_lines[0]
     start_px = int(font_px)
     start = float(cue_start)
     end = float(cue_end)
-    if _png_cue_fits(renderer, line, start_px, font_path, visuals, max_width_px):
-        return [([line], start_px, visuals, start, end)]
+    if len(base_lines) <= max_lines and all(
+        _png_cue_fits(renderer, ln, start_px, font_path, visuals, max_width_px)
+        for ln in base_lines
+    ):
+        return [(list(base_lines), start_px, visuals, start, end)]
+    line = " ".join(base_lines)
     raw_pieces = _cx_split_line(renderer, line, start_px, font_path, visuals, max_width_px)
     if not raw_pieces:
         return []
+    # Batch DD: group the split lines into ≤max_lines-line pieces.
+    groups: list[list[str]] = [
+        raw_pieces[i:i + max_lines] for i in range(0, len(raw_pieces), max_lines)
+    ]
     total_chars = sum(len(p) for p in raw_pieces) or 1
     total_dur = max(0.0, end - start)
-    durs = [(len(p) / total_chars) * total_dur for p in raw_pieces]
+    durs = [
+        (sum(len(p) for p in g) / total_chars) * total_dur for g in groups
+    ]
     # Readability floor: when the window is long enough, no piece
     # flashes shorter than _CX_MIN_PIECE_SECONDS; the extra time
     # comes out of the longest pieces, total window unchanged.
@@ -1503,15 +1520,24 @@ def fit_png_cue_pieces(renderer, text, font_px, font_path, visuals, max_width_px
                 ]
     out: list[tuple[list[str], int, dict[str, Any], float, float]] = []
     cur = start
-    for i, piece in enumerate(raw_pieces):
-        piece_end = end if i == len(raw_pieces) - 1 else cur + durs[i]
-        if _png_cue_fits(renderer, piece, start_px, font_path, visuals, max_width_px):
-            out.append(([piece], start_px, visuals, round(cur, 3), round(piece_end, 3)))
-        else:
-            shrunk_lines, shrunk_px, shrunk_vis = _cx_shrink_single_token(
-                renderer, piece, start_px, font_path, visuals, max_width_px
-            )
-            out.append((shrunk_lines, shrunk_px, shrunk_vis, round(cur, 3), round(piece_end, 3)))
+    for i, group in enumerate(groups):
+        piece_end = end if i == len(groups) - 1 else cur + durs[i]
+        piece_px, piece_vis = start_px, visuals
+        lines_out: list[str] = []
+        for ln in group:
+            if _png_cue_fits(renderer, ln, start_px, font_path, visuals, max_width_px):
+                lines_out.append(ln)
+            else:
+                # A single unbreakable token wider than the bound:
+                # the old floor shrink, for that line only; the
+                # whole piece renders at the smallest shrunk size.
+                shrunk_lines, shrunk_px, shrunk_vis = _cx_shrink_single_token(
+                    renderer, ln, start_px, font_path, visuals, max_width_px
+                )
+                lines_out.extend(shrunk_lines)
+                if shrunk_px < piece_px:
+                    piece_px, piece_vis = shrunk_px, shrunk_vis
+        out.append((lines_out, piece_px, piece_vis, round(cur, 3), round(piece_end, 3)))
         cur = piece_end
     return out
 
@@ -1520,32 +1546,38 @@ def fit_png_cue_lines(renderer, text, sub_lines, font_px, font_path,
                       visuals, max_width_px):
     """Batch CX: fit one cue for the PNG burn at the LOCKED size.
 
-    Subtitles are ALWAYS ONE LINE on the PNG burn path — the
-    sub_lines argument is accepted for call-site compatibility but
-    no longer controls the line count (Ulfa's 2026-11-09 order
-    supersedes the 2-line wrap). The font never shrinks for a
-    multi-token cue: a cue that overflows is split into sequential
-    one-line pieces by fit_png_cue_pieces (the production burn shows
-    every piece in turn); this single-cue entry point — the preview
-    frame, which has no time window to split across — returns the
-    FIRST fitting piece at the locked size. A cue that already fits
-    renders EXACTLY as before — same lines, same size, same visuals
-    (the fast path).
+    The font never shrinks for a multi-token cue: a cue that
+    overflows is split by fit_png_cue_pieces (the production burn
+    shows every piece in turn); this single-cue entry point — the
+    preview frame, which has no time window to split across —
+    returns the FIRST fitting piece at the locked size. A cue that
+    already fits renders EXACTLY as before — same lines, same size,
+    same visuals (the fast path).
+
+    Batch DD: the piece wraps into up to the chosen line count
+    (Lines 1/2/3) at the locked size — sub_lines is honoured again
+    (the CX one-line-only rule is superseded by Ulfa's 2026-11-09
+    DD order), so the preview frame shows the same wrapped piece
+    the production burn will show first.
 
     Returns (lines, effective_font_px, effective_visuals); lines is
     [] for a cue with no visible text. The only shrink left is a
     single unbreakable token wider than the canvas, which keeps the
     old floor logic for that one cue.
     """
-    base_lines = _png_subs.normalize_cue_lines(text, 1)
+    max_lines = min(3, max(1, int(sub_lines or 1)))
+    base_lines = _png_subs.normalize_cue_lines(text, max_lines)
     if not base_lines:
         return [], int(font_px), visuals
-    line = base_lines[0]
     start_px = int(font_px)
-    if _png_cue_fits(renderer, line, start_px, font_path, visuals, max_width_px):
-        return [line], start_px, visuals
+    if len(base_lines) <= max_lines and all(
+        _png_cue_fits(renderer, ln, start_px, font_path, visuals, max_width_px)
+        for ln in base_lines
+    ):
+        return list(base_lines), start_px, visuals
     pieces = fit_png_cue_pieces(
-        renderer, text, font_px, font_path, visuals, max_width_px, 0.0, 1.0
+        renderer, text, font_px, font_path, visuals, max_width_px, 0.0, 1.0,
+        max_lines=max_lines,
     )
     if not pieces:
         return [], start_px, visuals
@@ -2307,48 +2339,6 @@ def _render_text_with_pillow(
     return output
 
 
-def _render_title_png(text: str, output: Path, font_path: str, font_size: int, max_width: int = 1500) -> Path:
-    """Render Myanmar title through Chromium renderer with Pillow fallback."""
-    text = str(text or "").strip()
-    if not text:
-        raise ValueError("Empty title")
-
-    import sys
-    project_root = Path(__file__).resolve().parents[1]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-    try:
-        from services.text_overlay_service import make_video_title_png
-        # Batch AK (Addition A): size the Chromium panel from the
-        # measured wrap — the service's defaults (170px / 2 lines)
-        # clipped any title wrapping past two lines. The panel now
-        # fits however many lines the wrap produces at this width,
-        # with the service's own padding accounted for.
-        _lines = _wrap_title_lines(text, int(font_size), int(max_width), font_path)
-        _line_h = int(round(int(font_size) * 1.30))  # the renderer's CSS line-height
-        cfg = {
-            "font_path": str(font_path or ""),
-            "font_size": int(font_size),
-            "max_width": int(max_width),
-            "panel_width": int(max_width) + 2 * 44 + 8,
-            "video_title_panel_height": max(110, len(_lines) * _line_h + 2 * 18 + 12),
-            "max_title_lines": max(2, len(_lines)),
-        }
-        return make_video_title_png(text, output, cfg)
-    except Exception:
-        # Seamless Pillow fallback
-        return _render_text_with_pillow(
-            text=text,
-            output=output,
-            font_size=max(24, int(font_size)),
-            max_width=int(max_width),
-            bg_alpha=0.82,
-            border_color=(255, 215, 0, 200),
-            font_path=font_path
-        )
-
-
 def _render_extra_text_png(
     text: str,
     output: Path,
@@ -2650,6 +2640,40 @@ SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = {
         "outline": 1.2,
         "shadow": 0.8,
     },
+    # Batch DD: three more presets in the mock's spirit (10 total).
+    "rose": {
+        "name": "Rose Pink",
+        "label": "ပန်းရောင် (Rose Pink)",
+        "short": "ပန်းရောင်",
+        "primary": "&H00B469FF",  # BGR: #FF69B4
+        "outline_col": "&H00000000",
+        "back_col": "&H80000000",
+        "border_style": 1,
+        "outline": 1.6,
+        "shadow": 1.0,
+    },
+    "orange": {
+        "name": "Sunset Orange",
+        "label": "လိမ္မော်ရောင် (Sunset Orange)",
+        "short": "လိမ္မော်ရောင်",
+        "primary": "&H00008CFF",  # BGR: #FF8C00
+        "outline_col": "&H00000000",
+        "back_col": "&H80000000",
+        "border_style": 1,
+        "outline": 1.6,
+        "shadow": 1.0,
+    },
+    "mint": {
+        "name": "Mint Green",
+        "label": "ပူစီနံစိမ်း (Mint Green)",
+        "short": "ပူစီနံစိမ်း",
+        "primary": "&H009DFF00",  # BGR: #00FF9D
+        "outline_col": "&H00151515",
+        "back_col": "&H80000000",
+        "border_style": 1,
+        "outline": 1.8,
+        "shadow": 1.0,
+    },
 }
 
 
@@ -2784,7 +2808,7 @@ def resolve_subtitle_font(value: str | None) -> tuple[str, str]:
     return DEFAULT_SUBTITLE_FONT, SUBTITLE_FONT_OPTIONS[DEFAULT_SUBTITLE_FONT]["family"]
 
 
-def subtitle_font_file(value: str | None) -> Path:
+def subtitle_font_file(value: str | None, bold: bool = True) -> Path:
     """Bundled static font FILE for a subtitle-font selector (Batch Q).
 
     The PNG renderer loads fonts by path, so the family-resolution
@@ -2794,11 +2818,15 @@ def subtitle_font_file(value: str | None) -> Path:
     variable NotoSansMyanmar.ttf is in NO option's list and can
     therefore never be picked here (it stays banned by construction,
     not just by staging discipline).
+
+    Batch DD: ``bold=False`` (the user's bold toggle off) prefers
+    the Regular build instead; families with a single build
+    (Pyidaungsu Bold) are unaffected either way.
     """
     key, _family = resolve_subtitle_font(value)
     src_dir = bundled_fonts_dir()
     files = list(SUBTITLE_FONT_OPTIONS[key]["files"])
-    ordered = sorted(files, key=lambda fn: 0 if "bold" in fn.lower() else 1)
+    ordered = sorted(files, key=lambda fn: 0 if ("bold" in fn.lower()) == bool(bold) else 1)
     for fn in ordered:
         p = src_dir / fn
         if p.is_file():
@@ -2820,6 +2848,226 @@ def subtitle_font_file(value: str | None) -> Path:
         if p.is_file():
             return p
     raise RuntimeError("no bundled subtitle font file found")
+
+
+# ── Batch DD: shared subtitle-look resolution ─────────────────────
+# The preview composite and the production burn MUST consume the
+# same font file and the same visuals for the same overlays dict —
+# these helpers are the single resolution point for both.
+
+def overlays_font_path(overlays: dict[str, Any] | None) -> Path:
+    """The font FILE a job's subtitles render with.
+
+    A user-uploaded custom font (``sub_font_custom_path``, resolved
+    server-side at submit/preview time and existence-checked here)
+    wins; on ANY problem it falls back to the chosen built-in —
+    a job must never fail over a font. Otherwise the built-in file
+    honours the bold toggle (``sub_bold``, default on — the
+    historical always-Bold build).
+    """
+    ov = overlays or {}
+    custom = str(ov.get("sub_font_custom_path") or "").strip()
+    if custom:
+        p = Path(custom)
+        if p.is_file():
+            return p
+        logging.getLogger(__name__).warning(
+            "custom subtitle font missing on disk (%s); falling back to built-in", custom
+        )
+    sel = ov.get("subtitles_font") or ov.get("sub_font")
+    return subtitle_font_file(str(sel) if sel else None, bold=bool(ov.get("sub_bold", True)))
+
+
+def overlays_visual_overrides(overlays: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The Batch DD free style controls carried on the overlays dict
+    (``sub_visual_overrides``), or None when the job made no custom
+    choices — presets then render exactly as before."""
+    ov = (overlays or {}).get("sub_visual_overrides")
+    return dict(ov) if isinstance(ov, dict) and ov else None
+
+
+def build_subtitle_visuals(
+    preset: dict[str, Any],
+    overrides: dict[str, Any] | None,
+    canvas_h: int,
+    font_px: int,
+) -> dict[str, Any]:
+    """Preset visuals with the user's free controls folded in — the
+    one builder every PNG subtitle surface (production burn,
+    preview composite, file-fallback burn) goes through."""
+    visuals = _png_subs.preset_visuals(preset, canvas_h, font_px)
+    return _png_subs.apply_visual_overrides(visuals, overrides, canvas_h, font_px)
+
+
+def merge_preset_overrides(
+    preset: dict[str, Any], overrides: dict[str, Any] | None
+) -> dict[str, Any]:
+    """ASS-side twin of build_subtitle_visuals: fold the free
+    controls into a SUBTITLE_STYLE_PRESETS-shaped dict (ASS colour
+    strings) so the .ass writer describes the same look the PNG
+    burn renders."""
+    if not overrides:
+        return preset
+    st = dict(preset)
+    fill = _png_subs.hex_to_rgba(overrides.get("text_color"))
+    if fill is not None:
+        st["primary"] = _png_subs.rgba_to_ass_colour(fill)
+    oc = _png_subs.hex_to_rgba(overrides.get("outline_color"))
+    if oc is not None:
+        st["outline_col"] = _png_subs.rgba_to_ass_colour(oc)
+    if overrides.get("outline_width") is not None:
+        try:
+            st["outline"] = max(0.0, float(overrides["outline_width"]))
+        except (TypeError, ValueError):
+            pass
+    bg = _png_subs.hex_to_rgba(overrides.get("bg_color"))
+    opacity = overrides.get("bg_opacity")
+    if bg is not None:
+        op = 0.75 if opacity is None else max(0.0, min(1.0, float(opacity)))
+        if op > 0:
+            st["back_col"] = _png_subs.rgba_to_ass_colour(
+                (bg[0], bg[1], bg[2], int(round(op * 255)))
+            )
+            st["border_style"] = 3
+        else:
+            st["border_style"] = 1
+    elif opacity is not None and int(st.get("border_style", 1)) == 3:
+        op = max(0.0, min(1.0, float(opacity)))
+        if op <= 0:
+            st["border_style"] = 1
+        else:
+            cur = _png_subs.ass_colour_to_rgba(st.get("back_col"))
+            st["back_col"] = _png_subs.rgba_to_ass_colour(
+                (cur[0], cur[1], cur[2], int(round(op * 255)))
+            )
+    if overrides.get("shadow") is not None:
+        st["shadow"] = 1.2 if overrides["shadow"] else 0.0
+    return st
+
+
+# ── Batch DD: anti-copyright protection levels ────────────────────
+
+PROTECTION_LEVELS = ("off", "standard", "strong")
+
+
+def normalize_protection_level(value: Any) -> str:
+    """Unknown/absent → "standard" (today's behaviour)."""
+    v = str(value or "").strip().lower()
+    return v if v in PROTECTION_LEVELS else "standard"
+
+
+def protection_zoom_factor(level: Any, zoom_factor: float) -> float:
+    """Effective Micro-Zoom for a protection level: Off forces the
+    plain 1.0 frame (no zoom-crop); Standard and Strong keep the
+    user's chosen zoom exactly as before Batch DD."""
+    if normalize_protection_level(level) == "off":
+        return 1.0
+    return float(zoom_factor)
+
+
+def protection_speed_factor(level: Any, seed: Any) -> float | None:
+    """Strong's whole-output micro speed factor, in [0.98, 1.02].
+
+    Deterministic per job (seeded by the job identity) so a resumed
+    or re-dispatched job re-applies the SAME factor. None for Off /
+    Standard — no post-process runs at all. The factor is applied
+    to video and audio together (see apply_protection_strong), so
+    A/V sync — subtitles are already burned — holds by construction.
+    """
+    if normalize_protection_level(level) != "strong":
+        return None
+    import hashlib
+
+    digest = hashlib.sha256(str(seed).encode("utf-8")).digest()
+    steps = int.from_bytes(digest[:2], "big") % 41  # 0..40 → 0.980..1.020
+    return round(0.98 + steps * 0.001, 3)
+
+
+def apply_protection_strong(
+    ffmpeg: str,
+    video_path: Path,
+    factor: float,
+    log: LogFn = _noop,
+) -> Path:
+    """Batch DD Strong anti-copyright post-process, applied ONCE to
+    the finished output:
+
+    * micro speed change by ``factor`` (0.98–1.02) — video via
+      setpts, audio via asetrate (which retimes AND pitch-shifts
+      in one resample) + aresample back to 44.1 kHz, so audio and
+      video stay in sync (the burned subtitles ride the video);
+    * light film grain (noise filter);
+    * all input metadata stripped (``-map_metadata -1``).
+
+    Any failure returns the ORIGINAL file untouched — a cosmetic
+    protection step must never fail a paid job.
+    """
+    try:
+        factor = max(0.98, min(1.02, float(factor)))
+        out = video_path.with_name(video_path.stem + ".prot.mp4")
+        vf = f"setpts=PTS/{factor:.3f},noise=alls=6:allf=t"
+        af = f"asetrate=44100*{factor:.3f},aresample=44100"
+        cmd = [
+            str(ffmpeg), "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(video_path),
+            "-vf", vf, "-af", af,
+            "-map_metadata", "-1",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "160k",
+            "-movflags", "+faststart",
+            str(out),
+        ]
+        res = _run_media(cmd, timeout=RENDER_TIMEOUT_FLOOR_SECONDS, what="protection-strong")
+        if res.returncode == 0 and out.is_file() and out.stat().st_size > 10_000:
+            log(f"🛡️ Protection Strong applied (speed ×{factor:.3f}, grain, metadata stripped)")
+            return out
+        log(f"⚠️ Protection Strong failed (rc={res.returncode}); keeping original output")
+        try:
+            out.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return video_path
+    except Exception as exc:
+        log(f"⚠️ Protection Strong error ({exc}); keeping original output")
+        return video_path
+
+
+def manual_blur_boxes_to_canvas_boxes(
+    boxes: Any, layout: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Batch DD: convert the user's manual blur-box LIST from
+    picture fractions ({x: left, y: centre, w, h} of the picture —
+    the exact basis the Step-2 editor draws and the single-box
+    path uses) to canvas-fraction boxes for overlays["blur_boxes"].
+
+    The conversion is source_band_to_canvas_box's — the same
+    layout math as detected bands and the single user box, so
+    preview == render by construction. A per-box ``strength``
+    (4..40) rides along for the overlay pass. At most 5 boxes.
+    With no layout the picture is assumed to fill the canvas (the
+    plate's no-layout fallback rule)."""
+    out: list[dict[str, Any]] = []
+    for b in boxes or []:
+        if not isinstance(b, dict):
+            continue
+        if layout is not None and int(layout.get("cw") or 0) > 0:
+            cb: dict[str, Any] = dict(source_band_to_canvas_box(b, layout))
+        else:
+            cb = {
+                "x": round(_clamp01(b.get("x"), 0.0), 4),
+                "y": round(_clamp01(b.get("y"), 0.85), 4),
+                "w": round(_clamp01(b.get("w"), 0.92), 4),
+                "h": round(_clamp01(b.get("h"), 0.07), 4),
+            }
+        if b.get("strength") is not None:
+            try:
+                cb["strength"] = max(4, min(40, int(b["strength"])))
+            except (TypeError, ValueError):
+                pass
+        out.append(cb)
+        if len(out) >= 5:
+            break
+    return out
 
 
 def stage_bundled_fonts(dest_dir: Path) -> Path | None:
@@ -3084,6 +3332,7 @@ def write_synced_ass_file(
     boxes: list[dict[str, Any]] | None = None,
     layout: dict[str, Any] | None = None,
     sub_margin: float | None = None,
+    sub_visual_overrides: dict[str, Any] | None = None,
 ) -> Path:
     """Generate a pixel-accurate ASS subtitle file with complex Myanmar script text shaping."""
     cw = max(320, int(cw))
@@ -3143,6 +3392,9 @@ def write_synced_ass_file(
 
     st_key = str(sub_style or "yellow").lower()
     st = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
+    # Batch DD: the user's free style controls describe the same
+    # look in the side-file ASS as in the PNG burn.
+    st = merge_preset_overrides(st, sub_visual_overrides)
     p_col = st["primary"]
     o_col = st["outline_col"]
     b_col = st["back_col"]
@@ -3692,12 +3944,70 @@ def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> li
     return chunks if chunks else [text]
 
 
+def _format_cue_lines_multi(text: str, lines_cnt: int) -> str:
+    """Batch DD: balance a cue across 3+ lines without cutting words.
+
+    Token-based partition (tokenize_burmese_words keeps shaped
+    clusters whole): choose the cut points that keep every line
+    closest to an equal share of the text, with the same boundary
+    bonuses the 2-line formatter uses (clause punctuation and
+    sentence particles make a cut cheaper). Falls back to fewer
+    lines when the text cannot fill them."""
+    tokens = [t for t in tokenize_burmese_words(text) if t != ""]
+    if len(tokens) <= 1:
+        return text
+    n = min(int(lines_cnt), len(tokens))
+    total = sum(len(t) for t in tokens)
+    if total <= 0:
+        return text
+    bonus_after = {
+        "။": 15, "၊": 15, "ပြီးတော့": 15, "ပြီးနောက်": 15, "ပြီးရင်": 15,
+        "တဲ့အခါ": 15, "ဒါပေမဲ့": 15, "ဒါပေမယ့်": 15, "ကြောင့်": 15, "အတွက်": 15,
+        "ပါတယ်": 8, "ခဲ့တယ်": 8, "တယ်": 8, "နေတာ": 8, "ပါပဲ": 8,
+        "လိုက်တယ်": 8, "က": 8, "နဲ့": 8, "မှာ": 8, "ကို": 8, "တော့": 8,
+        "ရဲ့": 8, "လေ": 8, "နော်": 8,
+    }
+    # Greedy balanced cuts: for each line boundary, take the token
+    # cut closest to the ideal cumulative share (boundary bonuses
+    # pull the cut toward natural phrase ends).
+    cuts: list[int] = []
+    start = 0
+    for line_idx in range(1, n):
+        ideal = total * line_idx / n
+        best_cut, best_score = None, None
+        cum = sum(len(t) for t in tokens[:start])
+        for k in range(start + 1, len(tokens) - (n - line_idx) + 1):
+            cum += len(tokens[k - 1])
+            score = abs(cum - ideal) - bonus_after.get(tokens[k - 1].strip(), 0)
+            if best_score is None or score < best_score:
+                best_score, best_cut = score, k
+        if best_cut is None:
+            break
+        cuts.append(best_cut)
+        start = best_cut
+    if not cuts:
+        return text
+    parts: list[str] = []
+    prev = 0
+    for c in cuts + [len(tokens)]:
+        part = "".join(tokens[prev:c]).strip()
+        if part:
+            parts.append(part)
+        prev = c
+    return "\n".join(parts) if len(parts) > 1 else text
+
+
 def _format_cue_lines(text: str, lines_cnt: int) -> str:
     """Format subtitle text into 1 or 2 lines without cutting words in half."""
     text = canonicalize_burmese_text(text)
     if lines_cnt == 1:
         # Strictly return a single line with no embedded newlines!
         return re.sub(r'\s+', ' ', text.replace("\r\n", " ").replace("\n", " ")).strip()
+
+    if lines_cnt >= 3:
+        if "\n" in text:
+            return text
+        return _format_cue_lines_multi(text, lines_cnt)
 
     if "\n" in text:
         return text
@@ -3745,8 +4055,19 @@ def _format_cue_lines(text: str, lines_cnt: int) -> str:
     return text
 
 
+# Batch DD: the per-cue character budget table, by canvas
+# orientation and lines-per-cue. The 1/2-line entries are the
+# legacy table; the 3-line entries extend it at the same per-line
+# rate the 2-line entries use (80/2 = 40, 96/2 = 48 per line).
+_SUBTITLE_CUE_BUDGETS: dict[bool, dict[int, int]] = {
+    True: {1: 45, 2: 80, 3: 120},
+    False: {1: 52, 2: 96, 3: 144},
+}
+
+
 def _subtitle_max_chars(is_vert: bool, lines_per_cue: int,
-                        sub_w: float | None = None) -> int:
+                        sub_w: float | None = None,
+                        font_size: int | None = None) -> int:
     """Per-cue character budget for split_burmese_subtitle_cues.
 
     The legacy table — 45/52 chars for one line, 80/96 for two
@@ -3756,8 +4077,26 @@ def _subtitle_max_chars(is_vert: bool, lines_per_cue: int,
     linearly against that 0.92 reference, so a narrower column
     wraps into more, shorter cues and a wider one into fewer.
     sub_w None or exactly 0.92 reproduces the table byte-identically.
+
+    Batch DD (Ulfa, 2026-11-09 — "size သေးလိုက်လဲ စာကြောင်း
+    ရှည်မလာဘူး"): the budget is also SIZE-AWARE. A smaller font
+    fits more characters per line, so the budget scales by the
+    font-fraction ratio frac(16pt) / frac(size) — vertical 1-line:
+    13pt ≈ 56, 16pt = 45, 19pt ≈ 38, 22pt ≈ 32. The same ratio
+    applies to every table entry. font_size None (or 16) keeps the
+    historical numbers; the CX/DA measured burn fit remains the
+    hard safety net either way.
     """
-    base = (45 if is_vert else 52) if int(lines_per_cue or 1) == 1 else (80 if is_vert else 96)
+    lines = min(3, max(1, int(lines_per_cue or 1)))
+    base = _SUBTITLE_CUE_BUDGETS[bool(is_vert)][lines]
+    if font_size is not None:
+        try:
+            fs = int(font_size)
+        except (TypeError, ValueError):
+            fs = 16
+        if fs != 16:
+            ratio = _subtitle_font_fraction(16) / max(0.001, _subtitle_font_fraction(fs))
+            base = max(8, int(round(base * ratio)))
     if sub_w is None:
         return base
     try:
@@ -3780,13 +4119,15 @@ def split_burmese_subtitle_cues(
     - If lines_per_cue == 1: strictly splits long sentences across time into sequential 1-line cues.
       NEVER forces 2 lines onto screen when 1 line is selected!
     - If lines_per_cue == 2: wraps into 2 balanced lines within the same cue.
+    - If lines_per_cue == 3 (Batch DD): wraps into up to 3 balanced lines
+      within the same cue.
     - NEVER cuts words in half (preserves compounds and syllables).
     """
     text = canonicalize_burmese_text(text)
     if not text:
         return []
 
-    lines_cnt = 1 if int(lines_per_cue) == 1 else 2
+    lines_cnt = min(3, max(1, int(lines_per_cue or 1)))
     total_dur = max(0.6, float(end_sec) - float(start_sec))
 
     if lines_cnt == 1:
@@ -3806,7 +4147,7 @@ def split_burmese_subtitle_cues(
             cur_t = c_end
         return results
 
-    # If lines_per_cue == 2:
+    # If lines_per_cue >= 2:
     if total_dur >= 4.0 and "။" in text:
         sentences = [s.strip() for s in re.split(r'(?<=[။])\s*', text) if s.strip()]
         if len(sentences) >= 2 and (total_dur / len(sentences)) >= 1.8:
@@ -3816,13 +4157,13 @@ def split_burmese_subtitle_cues(
             for i, sent in enumerate(sentences):
                 s_dur = max(1.8, (len(sent) / tot_chars) * total_dur)
                 s_end = cur_t + s_dur if i < len(sentences) - 1 else end_sec
-                formatted = _format_cue_lines(sent, 2)
+                formatted = _format_cue_lines(sent, lines_cnt)
                 results.append((round(cur_t, 3), round(s_end, 3), formatted))
                 cur_t = s_end
             return results
 
     # Otherwise, keep as ONE cue spanning the full spoken segment duration!
-    formatted_text = _format_cue_lines(text, 2)
+    formatted_text = _format_cue_lines(text, lines_cnt)
     return [(round(start_sec, 3), round(end_sec, 3), formatted_text)]
 
 
@@ -3878,13 +4219,18 @@ def _resolve_png_subtitle_job(
     cues = [(a, b, t) for a, b, t in cues if t.strip()]
     if not cues:
         return None
-    # Batch CX: the PNG burn is always one line at the job's chosen
-    # size — the 2-line mode (and its ×1.25 font factor in
-    # subtitle_font_px) no longer applies here. A file-only call
-    # keeps the .ass file's own font size (it renders what the file
-    # describes).
+    # Batch CX forced the PNG burn to one line; Batch DD (Ulfa,
+    # 2026-11-09) supersedes that with the user's Lines 1/2/3
+    # choice: cues wrap into up to the chosen line count at the
+    # locked size (the ×1.25 multi-line font factor in
+    # subtitle_font_px applies again). A file-only call keeps the
+    # .ass file's own font size and one-line resolution (it renders
+    # what the file describes).
     raw_size = int(overlays.get("subtitles_font_size", 16))
-    font_px = file_font_px or subtitle_font_px(cw, ch, raw_size, 1, layout)
+    sub_lines = min(3, max(1, int(overlays.get("sub_lines") or 1)))
+    font_px = file_font_px or subtitle_font_px(
+        cw, ch, raw_size, 1 if file_font_px else sub_lines, layout
+    )
     if file_visuals is not None:
         visuals = file_visuals
     else:
@@ -3892,16 +4238,24 @@ def _resolve_png_subtitle_job(
             overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow"
         ).lower()
         preset = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
-        visuals = _png_subs.preset_visuals(preset, ch, font_px)
-    font_sel = file_family or overlays.get("subtitles_font") or overlays.get("sub_font")
-    font_path = subtitle_font_file(str(font_sel) if font_sel else None)
+        # Batch DD: one shared font/visual resolution — the preview
+        # composite resolves through the same helpers, so preview
+        # == render for font and style (free controls included).
+        visuals = build_subtitle_visuals(
+            preset, overlays_visual_overrides(overlays), ch, font_px
+        )
+    if file_family:
+        font_path = subtitle_font_file(str(file_family))
+    else:
+        font_path = overlays_font_path(overlays)
     return {
         "cues": cues,
         "font_px": int(font_px),
         "visuals": visuals,
         "font_path": font_path,
-        # Batch CX: always one line on the PNG burn path.
-        "sub_lines": 1,
+        # Batch DD: the job's chosen line count (1 for file-derived
+        # jobs, which keep their historical one-line resolution).
+        "sub_lines": 1 if file_font_px else sub_lines,
     }
 
 
@@ -4072,7 +4426,9 @@ def apply_production_overlays(
 
     text_width = int(pw * 0.78)  # Scaled to actual picture width
     boxes = [x for x in (overlays.get("blur_boxes") or []) if isinstance(x, dict)]
-    title_text = str(overlays.get("title_text") or "").strip()
+    # Batch DD: the title overlay feature is REMOVED — no title_text
+    # is read or rendered anywhere in the overlay pass. Legacy
+    # overlays dicts carrying title_* keys are simply ignored.
     logo_enabled = bool(overlays.get("logo_enabled", True))
     logo_path = str(overlays.get("logo_path") or "").strip() if logo_enabled else ""
     logo_file = Path(logo_path) if logo_path else None
@@ -4086,23 +4442,16 @@ def apply_production_overlays(
     sub_job = _resolve_png_subtitle_job(
         overlays, cw, ch, {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
     )
-    if not boxes and not title_text and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()) and sub_job is None:
+    if not boxes and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()) and sub_job is None:
         return input_video
 
     # Batch AB: the overlay pass runs as TWO sequential ffmpeg steps
     # (blur boxes first, then everything else — see the step builders
     # below) to bound the peak memory of the pass, so the PNG assets
     # are rendered up front here and each step registers its own
-    # inputs. Registration order is unchanged: title, logo, extra
+    # inputs. Registration order is unchanged: logo, extra
     # text, watermark pattern, then one input per subtitle cue PNG.
-    title_file: Path | None = None
     extra_file: Path | None = None
-    if title_text:
-        title_file = _render_title_png(
-            title_text, work_dir / "title_overlay.png",
-            str(overlays.get("title_font_path") or ""), int(overlays.get("title_font_size", 54)),
-            max_width=text_width,
-        )
     logo_present = bool(logo_file and logo_file.is_file())
     if extra_text:
         extra_file = _render_extra_text_png(
@@ -4157,7 +4506,13 @@ def apply_production_overlays(
         y = y if y % 2 == 0 else y - 1
 
         # Prevent boxblur crashes by strictly clamping luma radius < min(w, h) / 2
-        safe_luma = max(2, min(blur_strength, (min(w, h) // 2) - 1))
+        # Batch DD: a box may carry its own strength (the manual
+        # box list); detected/global boxes keep blur_strength.
+        try:
+            box_strength = max(4, min(40, int(b.get("strength")))) if b.get("strength") is not None else blur_strength
+        except (TypeError, ValueError):
+            box_strength = blur_strength
+        safe_luma = max(2, min(box_strength, (min(w, h) // 2) - 1))
         safe_chroma = max(1, min(safe_luma // 2, 9))
         base = f"bbase{i}"; crop = f"bcrop{i}"; blur = f"bblur{i}"; out = f"bv{i}"
         blur_graph.append(f"{blur_current}split=2[{base}][{crop}]")
@@ -4194,6 +4549,7 @@ def apply_production_overlays(
                 fit_max_w,
                 cue_start,
                 cue_end,
+                max_lines=sub_job["sub_lines"],
             ):
                 if not fit_lines:
                     continue
@@ -4239,14 +4595,9 @@ def apply_production_overlays(
             cmd += ["-ss", f"{window[0]:.3f}", "-t", f"{window[1] - window[0]:.3f}"]
         cmd += ["-i", str(input_path if input_path is not None else step2_input)]
         input_index = 1
-        title_idx: int | None = None
         logo_idx: int | None = None
         extra_idx: int | None = None
         pattern_idx: int | None = None
-        if title_file is not None:
-            title_idx = input_index
-            cmd += ["-i", str(title_file)]
-            input_index += 1
         if logo_present:
             logo_idx = input_index
             cmd += ["-i", str(logo_file)]
@@ -4267,13 +4618,6 @@ def apply_production_overlays(
 
         graph: list[str] = list(graph_head or [])
         current = start_label
-        if title_idx is not None and title_file is not None:
-            pos = overlays.get("title_position") or [0.5, 0.12]
-            tx = _clamp01(pos[0] if len(pos) > 0 else 0.5, 0.5)
-            ty = _clamp01(pos[1] if len(pos) > 1 else 0.12, 0.12)
-            out = "vtitle"
-            graph.append(f"{current}[{title_idx}:v]overlay=x='{ox}+({pw}*{tx:.6f}-w/2)':y='{oy}+({ph}*{ty:.6f}-h/2)':eof_action=repeat[{out}]")
-            current = f"[{out}]"
 
         if logo_idx is not None:
             pos = overlays.get("logo_position") or [0.80, 0.06]
@@ -4615,7 +4959,13 @@ def extract_preview_with_overlays(
         x = x if x % 2 == 0 else x - 1
         y = y if y % 2 == 0 else y - 1
 
-        safe_luma = max(2, min(blur_strength, (min(w, h) // 2) - 1))
+        # Batch DD: a box may carry its own strength (the manual
+        # box list); detected/global boxes keep blur_strength.
+        try:
+            box_strength = max(4, min(40, int(b.get("strength")))) if b.get("strength") is not None else blur_strength
+        except (TypeError, ValueError):
+            box_strength = blur_strength
+        safe_luma = max(2, min(box_strength, (min(w, h) // 2) - 1))
         safe_chroma = max(1, min(safe_luma // 2, 9))
 
         base = f"bbase{i}"; crop = f"bcrop{i}"; blur = f"bblur{i}"; out = f"bv{i}"
@@ -4635,44 +4985,17 @@ def extract_preview_with_overlays(
         if lp and Path(lp).is_file():
             logo_file = Path(lp)
 
-    # Batch AK: the title badge joins the preview — production has
-    # always burned it (apply_production_overlays) but the preview
-    # never showed it, so a wrapped/clipped title was invisible
-    # until the render shipped. Same renderer, same placement
-    # expression as production.
-    title_file = None
-    _title_text_p = str(overlays.get("title_text") or "").strip()
-    if _title_text_p:
-        try:
-            title_file = _render_title_png(
-                _title_text_p, temp_dir / "preview_title.png",
-                str(overlays.get("title_font_path") or ""),
-                int(overlays.get("title_font_size", 54)),
-                max_width=int(pw * 0.78),
-            )
-        except Exception:
-            title_file = None
+    # Batch DD: the title overlay feature is REMOVED — production
+    # no longer burns it, so the preview no longer shows it either
+    # (preview == render). Legacy title_* overlay keys are ignored.
 
     cmd_inputs: list[str] = ["-ss", f"{seek_sec:.2f}", "-i", str(source)]
     _next_idx = 1
-    title_idx: int | None = None
-    if title_file is not None:
-        title_idx = _next_idx
-        _next_idx += 1
-        cmd_inputs += ["-i", str(title_file)]
     logo_idx: int | None = None
     if logo_file:
         logo_idx = _next_idx
         _next_idx += 1
         cmd_inputs += ["-i", str(logo_file)]
-
-    if title_idx is not None:
-        tpos = overlays.get("title_position") or [0.5, 0.12]
-        tx = _clamp01(tpos[0] if len(tpos) > 0 else 0.5, 0.5)
-        ty = _clamp01(tpos[1] if len(tpos) > 1 else 0.12, 0.12)
-        out = "vtitle"
-        graph.append(f"{current}[{title_idx}:v]overlay=x='{ox}+({pw}*{tx:.6f}-w/2)':y='{oy}+({ph}*{ty:.6f}-h/2)'[{out}]")
-        current = f"[{out}]"
 
     if logo_idx is not None:
         pos = overlays.get("logo_position") or [0.80, 0.05]
@@ -4693,13 +5016,11 @@ def extract_preview_with_overlays(
     # Add sample subtitle if burn_subtitles is enabled
     srt_temp = None
     if overlays.get("burn_subtitles", True):
-        # Batch CX: subtitles are always one line on the PNG burn
-        # path — the 2-line mode (and its ×1.25 font factor) no
-        # longer applies here; the sample is one line at the locked
-        # size, like every production cue. (A sample that overflows
-        # shows its first fitting piece — the preview is one frame,
-        # it has no time window to split across.)
-        sub_lines = 1
+        # Batch DD: the sample honours the user's Lines 1/2/3
+        # choice, exactly like the production burn (CX's forced
+        # one-line is superseded); an overflowing sample shows its
+        # first fitting piece at the chosen line count.
+        sub_lines = min(3, max(1, int(overlays.get("sub_lines") or 1)))
         sample = str(sample_text or "").strip()
         if not sample:
             sample = PREVIEW_SAMPLE_TEXT
@@ -4719,7 +5040,13 @@ def extract_preview_with_overlays(
             overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow"
         ).lower()
         preset = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
-        visuals = _png_subs.preset_visuals(preset, ch, font_px)
+        # Batch DD: same shared resolution as the production burn
+        # (build_subtitle_visuals + overlays_font_path) — preview
+        # == render for font, style and free controls.
+        visuals = build_subtitle_visuals(
+            preset, overlays_visual_overrides(overlays), ch, font_px
+        )
+        font_file = overlays_font_path(overlays)
         renderer = _png_subs.PngSubtitleRenderer(temp_dir / "subtitle_png_cache")
         # Batch AG: the sample goes through the same hard fit as the
         # production burn (same bound: sub_w of the picture width),
@@ -4729,13 +5056,13 @@ def extract_preview_with_overlays(
             renderer,
             canonicalize_burmese_text(sample),
             sub_lines, font_px,
-            subtitle_font_file(sub_font), visuals,
+            font_file, visuals,
             int(round(_sub_w_fraction(overlays) * pw)),
         )
         rendered = None
         if fit_lines:
             rendered = renderer.render_lines(
-                fit_lines, fit_px, subtitle_font_file(sub_font), fit_visuals
+                fit_lines, fit_px, font_file, fit_visuals
             )
         if rendered is not None:
             png_path, _png_w, png_h = rendered
@@ -5997,7 +6324,12 @@ class EdgeSmartSync:
             ch_val = int(layout.get("ch", 1080))
             is_vert = (ch_val > cw_val) or (self.output_ratio == "9:16")
             lines_per_cue = int(self.overlays.get("sub_lines", 1))
-            max_chars = _subtitle_max_chars(is_vert, lines_per_cue, self.overlays.get("sub_w"))
+            # Batch DD: size-aware budget — the chosen font size
+            # scales the per-cue character budget (frac ratio).
+            max_chars = _subtitle_max_chars(
+                is_vert, lines_per_cue, self.overlays.get("sub_w"),
+                font_size=int(self.overlays.get("subtitles_font_size", 16)),
+            )
 
             for s_item in timing:
                 raw_st = float(s_item.get("audio_start", 0.0))
@@ -6044,6 +6376,7 @@ class EdgeSmartSync:
                 subtitles_margin_v=self.overlays.get("subtitles_margin_v"),
                 boxes=self.overlays.get("boxes"),
                 layout=layout,
+                sub_visual_overrides=overlays_visual_overrides(self.overlays),
             )
             self.log(f"📝 Synced Myanmar ASS saved: {ass_file.name} (font={active_font})")
         except Exception as srt_err:
@@ -6111,7 +6444,6 @@ class EdgeSmartSync:
         video_for_mux = paths.synced_video_noaudio
         overlays_active = bool(
             self.overlays.get("blur_boxes")
-            or str(self.overlays.get("title_text") or "").strip()
             or str(self.overlays.get("logo_path") or "").strip()
             or str(self.overlays.get("extra_text") or "").strip()
             or str(self.overlays.get("subtitles_file") or "").strip()

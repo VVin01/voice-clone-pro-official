@@ -54,7 +54,12 @@ def _rejoin(pieces):
     return "".join(ln[0] for ln, *_ in pieces).replace(" ", "")
 
 
-# ── 1. Locked size: no per-cue shrink, always one line ──────────
+# ── 1. Locked size: no per-cue shrink ───────────────────────────
+# Batch DD (2026-11-09) supersedes CX's "always one line": the
+# fit wraps into up to the user's chosen line count (Lines 1/2/3)
+# at the LOCKED size. The CX guarantees that survive unchanged:
+# the font never shrinks for a multi-token cue and every rendered
+# line fits the bound.
 
 @pytest.mark.parametrize("size_pt", [13, 16, 19, 22])
 @pytest.mark.parametrize("sub_lines", [1, 2])
@@ -67,7 +72,9 @@ def test_cx_font_locked_and_one_line(tmp_path, size_pt, sub_lines):
         r, LONG, sub_lines, font_px, font, visuals, BOUND
     )
     assert px == font_px, "CX: the font must never shrink for a multi-token cue"
-    assert len(lines) == 1, "CX: subtitles are always one line"
+    assert 1 <= len(lines) <= sub_lines, "DD: wrap within the chosen line count"
+    if sub_lines == 1:
+        assert len(lines) == 1, "CX: one-line jobs stay one line"
     _path, w, _h = r.render_lines(lines, px, font, vis)
     assert w <= BOUND
 
@@ -87,17 +94,18 @@ def test_cx_fitting_cue_is_byte_identical(tmp_path):
 
 
 def test_cx_two_line_setting_does_not_enlarge_the_burn_font(tmp_path):
-    # _resolve_png_subtitle_job: the 2-line mode (and its ×1.25
-    # font factor) no longer applies on the PNG burn path — the
-    # locked size is the job's chosen 1-line size.
+    # Batch DD supersedes the CX pin below: the user's Lines 1/2/3
+    # choice is honoured on the burn again — a 2-line job resolves
+    # at 2 lines WITH the ×1.25 multi-line font factor, exactly as
+    # the preview resolves it (preview == render).
     job = core._resolve_png_subtitle_job(
         {"subtitle_cues": [[0.0, 6.0, LONG]], "subtitles_font_size": 16,
          "sub_lines": 2, "sub_style": "yellow"},
         CW, CH, LB,
     )
     assert job is not None
-    assert job["sub_lines"] == 1
-    assert job["font_px"] == core.subtitle_font_px(CW, CH, 16, 1, LB)
+    assert job["sub_lines"] == 2
+    assert job["font_px"] == core.subtitle_font_px(CW, CH, 16, 2, LB)
 
 
 # ── 2. Splitting: pieces fit, windows partition, text preserved ─

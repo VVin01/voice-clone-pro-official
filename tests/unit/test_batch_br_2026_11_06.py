@@ -268,54 +268,35 @@ def test_br_title_enabled_absent_from_restore_applied_bools():
 
 
 def test_br_restore_ignores_a_snapshot_title_enabled_true():
+    # Batch DD: the title feature is removed entirely — restore
+    # has no title keys to read, and no title state exists at all.
     body = _restore_body()
-    # Restore never reads the snapshot's title key...
-    assert "saved.recapTitleEnabled" not in body
-    # ...so with the fresh default standing, the checkbox re-sync
-    # (which reads STATE, not the snapshot) shows OFF after load.
-    assert "recapTitleEnabled: false," in APP_JS
-    assert "if (titleToggleEl) titleToggleEl.checked = !!state.recapTitleEnabled;" in body
-    # Title text/position in the snapshot still restore as before.
-    assert 'if (typeof saved.recapTitleText === "string") state.recapTitleText = saved.recapTitleText;' in body
-    assert "recapTitleX: [0, 100], recapTitleY: [0, 100]," in APP_JS
+    assert "recapTitle" not in body
+    assert "recapTitle" not in APP_JS
 
 
 def test_br_account_prefs_cannot_resurrect_the_toggle():
-    # applyAccountPrefs applies server prefs into state key-by-key;
-    # the title bool is out of that list, while its text/position
-    # neighbours remain applied.
-    assert '"recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY",' not in APP_JS
-    assert '"recapTitleText", "recapTitleX", "recapTitleY",' in APP_JS
-    # Collect still SENDS the session value (in-use behaviour of
-    # the toggle and its change handler are untouched).
-    assert "recapTitleEnabled: !!state.recapTitleEnabled," in APP_JS
-    assert "state.recapTitleEnabled = !!titleToggleEl.checked;" in APP_JS
+    # Batch DD: there is no toggle left to resurrect — no title
+    # key appears in collect, apply, or anywhere in the client.
+    assert "recapTitle" not in APP_JS
 
 
 def test_br_title_toggle_assignments_are_only_change_handler_and_prefill():
-    # Nothing else in the app may write the flag: not restore (see
-    # above), not prefs apply, not the snapshot round-trip.
-    assert APP_JS.count("state.recapTitleEnabled = ") == 2
+    # Batch DD: zero assignments — the flag itself is gone.
+    assert APP_JS.count("state.recapTitleEnabled") == 0
 
 
 def test_br_prefill_still_sets_title_from_job_config():
     body = _prefill_body()
-    # The prefill snapshot still maps the job's config as before...
-    assert "recapTitleEnabled: cfg.title_enabled === true," in body
-    # ...and because restore no longer applies that bool, prefill
-    # sets it DIRECTLY — after the restore call, mirroring the
-    # script-review toggle pattern in the same function.
-    assert "state.recapTitleEnabled = cfg.title_enabled === true;" in body
-    restore_at = body.index("restoreRecapSettings();")
-    direct_at = body.index("state.recapTitleEnabled = cfg.title_enabled === true;")
-    assert direct_at > restore_at
-    assert "if (titleTogglePf) titleTogglePf.checked = state.recapTitleEnabled;" in body
-    assert 'if (titleTextPf) titleTextPf.classList.toggle("hidden", !state.recapTitleEnabled);' in body
+    # Batch DD: prefill maps the DD config fields (protection,
+    # blur-box list) and no title keys at all.
+    assert "recapTitle" not in body
+    assert "recapProtection: cfg.protection_level," in body
     assert "if (srToggle) srToggle.checked = !!cfg.script_review;" in body
 
 
 # ── Token ────────────────────────────────────────────────────────
 
 def test_br_cache_token_is_r89():
-    assert INDEX_HTML.count("20261104_r125") == 4
+    assert INDEX_HTML.count("20261104_r126") == 4
     assert "20261104_r88" not in INDEX_HTML

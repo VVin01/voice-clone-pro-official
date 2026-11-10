@@ -716,6 +716,85 @@ def _resolve_recap_voice_ref(ref_id: str, user: User) -> Path:
     raise HTTPException(status_code=400, detail=detail)
 
 
+# ── Batch DD: Step-2 rebuild shared pieces ──────────────────────
+# Custom subtitle fonts ride the voice-ref pattern exactly: the
+# upload endpoint stores the file under an owner-embedded handle
+# (webapp_font_u<uid>_<uuid12>), the config carries only the
+# handle, and the server resolves it to a path at submit (and at
+# preview) — a forged path can never take effect. The engine falls
+# back to the chosen built-in on any load failure.
+RECAP_SUB_FONT_EXTS = (".ttf", ".otf")
+RECAP_SUB_FONT_MAX_BYTES = 5 * 1024 * 1024
+_RECAP_SUB_FONT_ID_RE = re.compile(r"^webapp_font_u([0-9]+)_([0-9a-f]{12})$")
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _resolve_recap_sub_font(font_id: str, user: User) -> Path:
+    """Resolve a custom-font upload handle to its file, validating
+    shape, ownership and existence (the voice-ref resolver's rules).
+    Raises 400 on any problem — callers run this before any credit
+    moves."""
+    detail = "ရွေးထားတဲ့ Font မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ Font ပြန်တင်ပေးပါခင်ဗျာ။"
+    m = _RECAP_SUB_FONT_ID_RE.match(str(font_id or "").strip())
+    if not m:
+        raise HTTPException(status_code=400, detail=detail)
+    owner_id = int(m.group(1))
+    if owner_id != user.id and not settings.is_admin(user.id):
+        raise HTTPException(status_code=400, detail=detail)
+    font_dir = settings.storage_root / "temp" / "sub_fonts"
+    for ext in RECAP_SUB_FONT_EXTS:
+        candidate = font_dir / f"{font_id}{ext}"
+        if candidate.is_file():
+            return candidate
+    raise HTTPException(status_code=400, detail=detail)
+
+
+def _dd_overrides_from(req) -> Optional[Dict[str, Any]]:
+    """Build the engine's sub_visual_overrides dict from a request's
+    flat DD style fields (both recap schemas carry the same names).
+    Returns None when the user made no custom choices, so presets
+    render exactly as before. bg_opacity converts percent → 0..1."""
+    out: Dict[str, Any] = {}
+    for src, dst in (
+        ("sub_text_color", "text_color"),
+        ("sub_outline_color", "outline_color"),
+        ("sub_bg_color", "bg_color"),
+    ):
+        v = getattr(req, src, None)
+        if v:
+            out[dst] = v
+    ow = getattr(req, "sub_outline_width", None)
+    if ow is not None:
+        out["outline_width"] = float(ow)
+    bo = getattr(req, "sub_bg_opacity", None)
+    if bo is not None:
+        out["bg_opacity"] = max(0.0, min(1.0, float(bo) / 100.0))
+    sh = getattr(req, "sub_shadow", None)
+    if sh is not None:
+        out["shadow"] = bool(sh)
+    return out or None
+
+
+def _dd_blur_boxes_fractions(req) -> Optional[list]:
+    """The request's manual blur-box list as picture-fraction dicts
+    (the engine's basis), or None. When the client sent no list but
+    the config carries the LEGACY single explicit box, migrate it
+    to a one-element list (Batch DD migration-on-read) using the
+    single-box path's own defaults (x 5% / w 90% when unset)."""
+    boxes = getattr(req, "blur_boxes", None)
+    if boxes:
+        return [b.to_fraction_dict() for b in boxes]
+    if getattr(req, "blur_box_explicit", False):
+        return [{
+            "x": (float(req.blur_x) / 100.0) if getattr(req, "blur_x", None) is not None else 0.05,
+            "y": float(req.blur_y) / 100.0,
+            "w": (float(req.blur_w) / 100.0) if getattr(req, "blur_w", None) is not None else 0.90,
+            "h": float(req.blur_h) / 100.0,
+            "strength": int(req.blur_strength),
+        }]
+    return None
+
+
 def _user_logo_dir(user_id: int) -> Path:
     return settings.storage_root / "user_logos" / str(int(user_id))
 
@@ -4056,7 +4135,9 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
     "recapRatioFill": ["blur", "crop", "black"],
     "recapSpeed": ["+0%", "+8%", "+12%", "+18%", "+22%"],
     "recapStoryStyle": ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
-    "recapSubStyle": ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"],
+    # Batch DD: 10 style presets (was 7) + the protection level.
+    "recapSubStyle": ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"],
+    "recapProtection": ["off", "standard", "strong"],
     "recapSubFont": ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
     "recapLogoPos": ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
     # Batch AK (premium audit S6/N2): every language the backend
@@ -4071,30 +4152,44 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
 }
 USER_PREF_BOOLS: List[str] = [
     "recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs",
-    "recapLogo", "recapSplitEnabled", "recapTitleEnabled",
+    "recapLogo", "recapSplitEnabled",
     # Batch BI: the source-subtitle auto-detect blur switch.
     "recapBlurAutoDetect",
+    # Batch DD: free subtitle-style toggles (shadow / bold).
+    "recapSubShadow", "recapSubBold",
 ]
 USER_PREF_INTS: Dict[str, tuple] = {
     "recapCropTop": (0, 35), "recapCropBottom": (0, 35),
     "recapCropLeft": (0, 35), "recapCropRight": (0, 35),
-    "recapFontSize": (12, 30), "recapLines": (1, 2),
+    # Batch DD: the size slider runs 10–26pt (schema still accepts
+    # stored values up to 30) and Lines gains a 3-line choice.
+    "recapFontSize": (10, 30), "recapLines": (1, 3),
     "recapSplitMinutes": (1, 10), "recapSubY": (0, 100),
     # Batch AK: bottom-edge subtitle margin (% of picture height)
     # and the settings-schema version that gates the one-time
     # centre-% → margin conversion in _effective_user_prefs.
     "recapSubMargin": (0, 95), "recapSettingsVersion": (0, 10),
     "recapSubX": (10, 90), "recapSubW": (10, 100),
-    "recapTitleX": (0, 100), "recapTitleY": (0, 100),
     "recapBlurStrength": (4, 40),
+    # Batch DD: background-box opacity for the free style controls.
+    "recapBgOpacity": (0, 100),
 }
 # Free-string preferences, length-capped; voice slugs are additionally
 # checked against the curated registry when one matches that role.
 USER_PREF_STRINGS: Dict[str, int] = {
     "voice_persona": 50, "recapVoice": 50, "recapGeminiVoice": 100,
-    "recapTitleText": 200,
+    # Batch DD: free style colours (#RRGGBB or "" = preset colour),
+    # the manual blur-box list as JSON (≤5 boxes), and the custom
+    # subtitle-font upload handle. (recapTitleText is gone with the
+    # title feature — legacy stored values are dropped on read.)
+    "recapTextColor": 7, "recapOutlineColor": 7, "recapBgColor": 7,
+    "recapBlurBoxesJson": 2000, "recapSubFontCustomId": 80,
 }
-USER_PREF_FLOATS: Dict[str, tuple] = {"recapZoom": (1.0, 1.2)}
+USER_PREF_FLOATS: Dict[str, tuple] = {
+    "recapZoom": (1.0, 1.2),
+    # Batch DD: outline width in ASS units; -1 = the preset's own.
+    "recapOutlineWidth": (-1.0, 4.0),
+}
 
 DEFAULT_USER_PREFS: Dict[str, Any] = {
     "voice_persona": "komin",
@@ -4127,10 +4222,18 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapSettingsVersion": 2,
     "recapSubX": 50,
     "recapSubW": 92,
-    "recapTitleEnabled": False,
-    "recapTitleText": "",
-    "recapTitleX": 50,
-    "recapTitleY": 12,
+    # Batch DD defaults: protection Standard (today's behaviour),
+    # free style controls unset (preset look), bold on, shadow off.
+    "recapProtection": "standard",
+    "recapTextColor": "",
+    "recapOutlineColor": "",
+    "recapBgColor": "",
+    "recapBgOpacity": 75,
+    "recapOutlineWidth": -1.0,
+    "recapSubShadow": False,
+    "recapSubBold": True,
+    "recapBlurBoxesJson": "",
+    "recapSubFontCustomId": "",
     "recapBlurStrength": 18,
     # Batch BI: auto-detect blur defaults ON (historical behaviour).
     "recapBlurAutoDetect": True,
@@ -5339,6 +5442,57 @@ async def upload_recap_voice_ref(
     }
 
 
+@api_router.post("/recap/upload_sub_font")
+async def upload_recap_sub_font(
+    font_file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    _gate: User = Depends(require_gate_verified),
+):
+    """Batch DD: upload a custom subtitle font (.ttf/.otf, ≤5 MB)
+    for recap jobs. Mirrors upload_voice_ref: streamed save behind
+    the disk-headroom gate, owner-embedded handle. The file is
+    validated by actually loading it with Pillow's font loader —
+    a file the PNG renderer cannot load is rejected here instead
+    of failing (or silently falling back) at render time."""
+    if not font_file.filename:
+        raise HTTPException(status_code=400, detail="Font ဖိုင် ရွေးချယ်ပေးပါခင်ဗျာ")
+    ext = Path(font_file.filename).suffix.lower()
+    if ext not in RECAP_SUB_FONT_EXTS:
+        raise HTTPException(status_code=400, detail="TTF သို့မဟုတ် OTF font ဖိုင်သာ တင်နိုင်ပါသည်ခင်ဗျာ")
+    _require_disk_headroom()
+    font_dir = settings.storage_root / "temp" / "sub_fonts"
+    font_dir.mkdir(parents=True, exist_ok=True)
+    font_id = f"webapp_font_u{user.id}_{uuid.uuid4().hex[:12]}"
+    save_file = font_dir / f"{font_id}{ext}"
+    try:
+        saved_bytes = await _save_upload_streaming(
+            font_file, save_file, RECAP_SUB_FONT_MAX_BYTES
+        )
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            raise HTTPException(
+                status_code=413,
+                detail="Font ဖိုင် အရွယ်အစား 5 MB ထက် ကျော်လွန်နေပါသည်",
+            )
+        raise
+    try:
+        from PIL import ImageFont
+
+        ImageFont.truetype(str(save_file), 24)
+    except Exception:
+        save_file.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Font ဖိုင် မမှန်ကန်ပါ — ဖတ်ယူ၍ မရပါ။ အခြား font ဖိုင် စမ်းကြည့်ပါခင်ဗျာ။",
+        )
+    return {
+        "success": True,
+        "font_id": font_id,
+        "filename": Path(font_file.filename).name,
+        "size_bytes": saved_bytes,
+    }
+
+
 async def _recap_frame_owner_id(db: AsyncSession, resolved_path: Path) -> Optional[int]:
     """Resolve which user owns the file a /recap/frame request targets.
 
@@ -5554,6 +5708,28 @@ async def recap_preview_frame(
 # what the render burns. Source handling mirrors /recap/preview-
 # frame (per-URL cache, 720p cap) and /recap/frame (containment +
 # owner-or-admin) — no new trust surface.
+class RecapBlurBoxIn(BaseModel):
+    """Batch DD: one manual blur box in PERCENTS of the picture —
+    {x: left, y: CENTRE, w, h} (the legacy single-box basis, so the
+    preview editor, this schema and the engine all speak one
+    geometry) plus a per-box strength."""
+
+    x: float = Field(..., ge=0, le=100)
+    y: float = Field(..., ge=0, le=100)
+    w: float = Field(..., ge=1, le=100)
+    h: float = Field(..., ge=1, le=100)
+    strength: int = Field(18, ge=4, le=40)
+
+    def to_fraction_dict(self) -> Dict[str, Any]:
+        return {
+            "x": float(self.x) / 100.0,
+            "y": float(self.y) / 100.0,
+            "w": float(self.w) / 100.0,
+            "h": float(self.h) / 100.0,
+            "strength": int(self.strength),
+        }
+
+
 class RecapPreviewCompositeRequest(BaseModel):
     url: Optional[str] = None
     uploaded_path: Optional[str] = None
@@ -5584,19 +5760,28 @@ class RecapPreviewCompositeRequest(BaseModel):
     sub_bottom_margin: Optional[int] = Field(None, ge=0, le=95)
     sub_x: Optional[int] = Field(None, ge=10, le=90)
     sub_w: Optional[int] = Field(None, ge=10, le=100)
-    sub_lines: int = Field(1, ge=1, le=2)
-    sub_font_size: int = Field(16, ge=12, le=30)
+    # Batch DD: Lines 1/2/3; the size slider runs 10–26pt (stored
+    # values up to 30 still parse).
+    sub_lines: int = Field(1, ge=1, le=3)
+    sub_font_size: int = Field(16, ge=10, le=30)
     sub_style: str = "yellow"
     sub_font: str = "padauk"
     sample_text: Optional[str] = Field(None, max_length=300)
-    # The client sends the EFFECTIVE title text (its custom text, or
-    # the video's own title when the custom text is empty — the
-    # client holds the title in form state), so the preview burns
-    # exactly what the render will. The submit gate is unchanged.
-    title_enabled: bool = False
-    title_text: Optional[str] = Field(None, max_length=200)
-    title_x: int = Field(50, ge=0, le=100)
-    title_y: int = Field(12, ge=0, le=100)
+    # Batch DD: the title overlay feature is REMOVED — no title
+    # fields (legacy clients' title keys are ignored by pydantic).
+    # Manual blur-box list (≤5), protection level, free style
+    # controls and the custom-font handle mirror RecapConfigRequest
+    # so the composite shows exactly what the render will burn.
+    blur_boxes: Optional[List[RecapBlurBoxIn]] = Field(None, max_length=5)
+    protection_level: str = "standard"
+    sub_text_color: Optional[str] = None
+    sub_outline_color: Optional[str] = None
+    sub_outline_width: Optional[float] = Field(None, ge=0, le=4)
+    sub_bg_color: Optional[str] = None
+    sub_bg_opacity: Optional[int] = Field(None, ge=0, le=100)
+    sub_shadow: Optional[bool] = None
+    sub_bold: bool = True
+    sub_font_custom_id: Optional[str] = Field(None, max_length=80)
     include_logo: bool = True
     logo_pos: str = "top-right"
 
@@ -5695,6 +5880,14 @@ async def recap_preview_composite(
     }
     logo_pos_coords = logo_pos_map.get(req.logo_pos, [0.82, 0.04])
 
+    # Batch DD: resolve the custom-font handle up front (ownership
+    # + existence), like the logo path above — a bad handle is a
+    # clean 400 before any rendering starts.
+    sub_font_custom_path_arg = (
+        str(_resolve_recap_sub_font(req.sub_font_custom_id, user))
+        if req.sub_font_custom_id else None
+    )
+
     out_dir = settings.storage_root / "temp" / "recap_preview_composite"
     out_dir.mkdir(parents=True, exist_ok=True)
     downloader = MediaDownloader()
@@ -5709,6 +5902,7 @@ async def recap_preview_composite(
             blur_x=(float(req.blur_x) / 100.0) if req.blur_x is not None else None,
             blur_w=(float(req.blur_w) / 100.0) if req.blur_w is not None else None,
             blur_box_explicit=bool(req.blur_box_explicit),
+            manual_blur_boxes=_dd_blur_boxes_fractions(req),
             blur_strength=req.blur_strength,
             blur_auto_detect=bool(req.blur_auto_detect),
             burn_subtitles=req.burn_subtitles,
@@ -5720,9 +5914,11 @@ async def recap_preview_composite(
             sub_font_size=req.sub_font_size,
             sub_style=req.sub_style,
             sub_font=req.sub_font,
+            sub_visual_overrides=_dd_overrides_from(req),
+            sub_font_custom_path=sub_font_custom_path_arg,
+            sub_bold=bool(req.sub_bold),
+            protection_level=req.protection_level,
             sample_text=(req.sample_text or ""),
-            title_text=((req.title_text or None) if req.title_enabled else None),
-            title_position=[req.title_x / 100.0, req.title_y / 100.0],
             output_ratio=req.ratio,
             frame_fill=req.ratio_fill,
             crop_top=float(req.crop_top) / 100.0,
@@ -6046,23 +6242,39 @@ class RecapConfigRequest(BaseModel):
     # centred rendering byte-identical.
     sub_x: Optional[int] = Field(None, ge=10, le=90)
     sub_w: Optional[int] = Field(None, ge=10, le=100)
-    # Batch AH: recap title overlay. The engine has always been able
-    # to burn a title PNG at overlays["title_position"], but the Mini
-    # App never exposed it — the worker passed no title_text and its
-    # pre-downloaded local source starved the downloader's URL-title
-    # fallback, so Mini App jobs rendered NO title badge. Defaults
-    # reproduce that exactly: title_enabled False → no badge. When
-    # True, the burned text is title_text, falling back to the job's
-    # own (source) title. title_x / title_y are the title CENTRE in
-    # picture percents (the title_position basis; 50 / 12 reproduces
-    # the engine's historical [0.5, 0.12]).
-    title_enabled: bool = False
-    title_text: Optional[str] = Field(None, max_length=200)
-    title_x: int = Field(50, ge=0, le=100)
-    title_y: int = Field(12, ge=0, le=100)
-    sub_style: str = "yellow"         # yellow, white, boxed, neon
-    sub_font_size: int = Field(16, ge=12, le=30)
-    sub_lines: int = Field(1, ge=1, le=2)
+    # Batch DD: the title overlay feature is REMOVED entirely
+    # (Batch AH's title_enabled/title_text/title_x/title_y are
+    # gone). The model keeps pydantic's default extra="ignore", so
+    # a legacy stored config still carrying those keys parses
+    # cleanly and the fields are simply dropped.
+    # Batch DD: manual blur-box LIST (≤5, percents of the picture).
+    # When present it supersedes the legacy single-box fields at
+    # render (the pipeline ships it alongside auto-detection); when
+    # absent, a legacy blur_box_explicit config migrates to a
+    # one-element list at dispatch (_dd_blur_boxes_fractions).
+    blur_boxes: Optional[List[RecapBlurBoxIn]] = Field(None, max_length=5)
+    # Batch DD: anti-copyright LEVEL — off / standard / strong
+    # (validated below; unknown values degrade to "standard").
+    protection_level: str = "standard"
+    # Batch DD: free subtitle-style controls. Colours are #RRGGBB
+    # (invalid → dropped to None by the validator = preset colour);
+    # outline_width is in ASS units; bg_opacity is a percent.
+    sub_text_color: Optional[str] = None
+    sub_outline_color: Optional[str] = None
+    sub_outline_width: Optional[float] = Field(None, ge=0, le=4)
+    sub_bg_color: Optional[str] = None
+    sub_bg_opacity: Optional[int] = Field(None, ge=0, le=100)
+    sub_shadow: Optional[bool] = None
+    sub_bold: bool = True
+    # Batch DD: custom subtitle font — client handle + SERVER-ONLY
+    # resolved path (the voice_ref_id/voice_ref_path pattern:
+    # create_recap_job recomputes the path from the handle and
+    # overwrites whatever the client sent).
+    sub_font_custom_id: Optional[str] = Field(None, max_length=80)
+    sub_font_custom_path: Optional[str] = None
+    sub_style: str = "yellow"         # 10 presets (Batch DD)
+    sub_font_size: int = Field(16, ge=10, le=30)
+    sub_lines: int = Field(1, ge=1, le=3)
     sub_font: str = "padauk"          # padauk, noto_sans, pyidaungsu, noto_serif
     include_logo: bool = True
     logo_pos: str = "top-right"       # top-right, top-left, bottom-right, bottom-left, top-center
@@ -6123,6 +6335,32 @@ class RecapConfigRequest(BaseModel):
             w_eff = self.blur_w if self.blur_w is not None else 92
             self.blur_x = max(0, min(100 - w_eff, int(self.blur_x)))
         return self
+
+    @field_validator("protection_level")
+    @classmethod
+    def _check_protection_level(cls, v: str) -> str:
+        lvl = str(v or "standard").strip().lower()
+        return lvl if lvl in ("off", "standard", "strong") else "standard"
+
+    @field_validator("sub_text_color", "sub_outline_color", "sub_bg_color")
+    @classmethod
+    def _check_hex_color(cls, v):
+        # Clamp-never-reject: a malformed colour degrades to the
+        # preset's colour (None) instead of failing the submit.
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if _HEX_COLOR_RE.match(s) else None
+
+    @field_validator("sub_font_custom_id")
+    @classmethod
+    def _check_sub_font_custom_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        stem = str(v).strip()
+        if not _RECAP_SUB_FONT_ID_RE.match(stem):
+            raise ValueError("Unsupported sub_font_custom_id. Upload the font first.")
+        return stem
 
     @field_validator("sub_font")
     @classmethod
@@ -7533,7 +7771,10 @@ async def _execute_recap_background_job(
             blur_h=float(req.blur_h) / 100.0,
             blur_x=(float(req.blur_x) / 100.0) if req.blur_x is not None else None,
             blur_w=(float(req.blur_w) / 100.0) if req.blur_w is not None else None,
-            blur_box_explicit=bool(req.blur_box_explicit),
+            # Batch DD: an explicit list (or its legacy migration)
+            # supersedes the single-box path at the pipeline.
+            blur_boxes=_dd_blur_boxes_fractions(req),
+            blur_box_explicit=bool(req.blur_box_explicit) and not req.blur_boxes,
             blur_strength=req.blur_strength,
             blur_auto_detect=bool(req.blur_auto_detect),
             burn_subtitles=req.burn_subtitles,
@@ -7547,11 +7788,12 @@ async def _execute_recap_background_job(
             sub_font_size=req.sub_font_size,
             sub_style=req.sub_style,
             sub_font=req.sub_font,
-            # Batch AH: title overlay (see RecapConfigRequest). OFF
-            # by default — the historical Mini App behaviour — and
-            # the custom text falls back to the job's source title.
-            title_text=((req.title_text or req.title) if req.title_enabled else None),
-            title_position=[req.title_x / 100.0, req.title_y / 100.0],
+            # Batch DD: protection level + free style controls +
+            # the server-resolved custom font path.
+            protection_level=req.protection_level,
+            sub_visual_overrides=_dd_overrides_from(req),
+            sub_font_custom_path=req.sub_font_custom_path,
+            sub_bold=bool(req.sub_bold),
             logo_path=logo_path_arg,
             logo_position=logo_pos_coords if logo_path_arg else None,
             extra_text=watermark_text,
@@ -8716,6 +8958,14 @@ async def create_recap_job(
             req.voice_ref_path = str(_resolve_recap_voice_ref(req.voice_ref_id, user))
         else:
             req.voice_ref_id = None
+    # Batch DD: custom subtitle font — server-only path recomputed
+    # from the handle at the same choke point, before any credit
+    # moves (a bad handle is a clean 400, never a charged job).
+    req.sub_font_custom_path = None
+    if req.sub_font_custom_id:
+        req.sub_font_custom_path = str(
+            _resolve_recap_sub_font(req.sub_font_custom_id, user)
+        )
     credits = getattr(user, "recap_credits", 0) or 0
 
     # Credit gate (money fix 2026-10-31): EVERY non-admin needs at

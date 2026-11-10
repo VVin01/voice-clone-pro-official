@@ -426,7 +426,8 @@ def _effective_threads(cmd):
 
 
 _OVERLAYS_FULL = {
-    "title_text": "Hello Title",
+    # Batch DD: no title_text — the feature is removed; cues +
+    # blur boxes activate the pass on their own.
     "subtitle_cues": [[0.5, 2.5, "မြို့ကြီးဆီကို ထွက်ခွာပြီး"]],
     "subtitles_font_size": 16,
     "sub_style": "yellow",
@@ -471,7 +472,7 @@ def test_overlay_with_blur_runs_two_steps(tmp_path, monkeypatch):
     g2 = _graph_of(step2)
     assert "boxblur" not in g2
     assert "between(t,0.500,2.500)" in g2
-    assert "vtitle" in g2
+    assert "vtitle" not in g2  # Batch DD: title overlay removed
     assert step2[-1] == str(out)
     assert "+faststart" in step2
 
@@ -489,7 +490,9 @@ def test_overlay_without_blur_runs_one_step(tmp_path, monkeypatch):
     src.write_bytes(b"0" * 100)
     out = tmp_path / "out.mp4"
     result = core.apply_production_overlays(
-        "ffmpeg", src, out, {"title_text": "Hello Title"}, "libx264",
+        # Batch DD: subtitle cues activate the one-step pass (the
+        # old title_text activator no longer exists).
+        "ffmpeg", src, out, {"subtitle_cues": [[0.5, 2.5, "နမူနာ စာတန်း"]], "subtitles_font_size": 16, "sub_style": "yellow", "sub_lines": 1, "sub_y": 0.85}, "libx264",
         tmp_path / "w", frame_size=(320, 240),
         layout={"pw": 320, "ph": 240, "ox": 0, "oy": 0}, duration=4,
     )
@@ -545,7 +548,9 @@ def test_overlay_total_failure_raises(tmp_path, monkeypatch):
     src.write_bytes(b"0" * 100)
     with pytest.raises(RuntimeError, match="Production overlay render failed"):
         core.apply_production_overlays(
-            "ffmpeg", src, tmp_path / "out.mp4", {"title_text": "Hello"},
+            # Batch DD: subtitle cues activate the pass (title_text
+            # alone is inert now and would return the input).
+            "ffmpeg", src, tmp_path / "out.mp4", {"subtitle_cues": [[0.5, 2.5, "နမူနာ စာတန်း"]], "subtitles_font_size": 16, "sub_style": "yellow", "sub_lines": 1, "sub_y": 0.85},
             "libx264", tmp_path / "w", frame_size=(320, 240),
             layout={"pw": 320, "ph": 240, "ox": 0, "oy": 0}, duration=4,
         )
