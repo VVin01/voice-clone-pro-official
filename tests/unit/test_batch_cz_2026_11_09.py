@@ -61,8 +61,8 @@ def _recap_preview_state_body() -> str:
 
 # ── Release pin: cache token ─────────────────────────────────────────
 
-def test_cz_cache_token_is_r128():
-    assert INDEX_HTML.count("20261104_r128") == 4
+def test_cz_cache_token_is_r129():
+    assert INDEX_HTML.count("20261104_r129") == 4
     assert "20261104_r" + "122" not in INDEX_HTML
 
 
