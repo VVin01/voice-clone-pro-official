@@ -5716,13 +5716,39 @@ class RecapBlurBoxIn(BaseModel):
     """Batch DD: one manual blur box in PERCENTS of the picture —
     {x: left, y: CENTRE, w, h} (the legacy single-box basis, so the
     preview editor, this schema and the engine all speak one
-    geometry) plus a per-box strength."""
+    geometry) plus a per-box strength.
 
-    x: float = Field(..., ge=0, le=100)
-    y: float = Field(..., ge=0, le=100)
-    w: float = Field(..., ge=1, le=100)
-    h: float = Field(..., ge=1, le=100)
-    strength: int = Field(18, ge=4, le=40)
+    Batch DK: the numeric fields CLAMP into their documented
+    ranges instead of rejecting (the blur_strength precedent).
+    The box list is a saved preference (recapBlurBoxesJson is an
+    opaque string at the prefs layer), so an out-of-range stored
+    box must degrade to the nearest supported geometry rather
+    than 422 every submit/preview for that account."""
+
+    x: float = Field(...)
+    y: float = Field(...)
+    w: float = Field(...)
+    h: float = Field(...)
+    strength: int = 18
+
+    @field_validator("x", "y")
+    @classmethod
+    def _clamp_box_pos(cls, v) -> float:
+        return max(0.0, min(100.0, float(v)))
+
+    @field_validator("w", "h")
+    @classmethod
+    def _clamp_box_size(cls, v) -> float:
+        return max(1.0, min(100.0, float(v)))
+
+    @field_validator("strength")
+    @classmethod
+    def _clamp_box_strength(cls, v) -> int:
+        try:
+            strength = int(v)
+        except (TypeError, ValueError):
+            return 18
+        return max(4, min(40, strength))
 
     def to_fraction_dict(self) -> Dict[str, Any]:
         return {
@@ -5780,7 +5806,13 @@ class RecapPreviewCompositeRequest(BaseModel):
     protection_level: str = "standard"
     sub_text_color: Optional[str] = None
     sub_outline_color: Optional[str] = None
-    sub_outline_width: Optional[float] = Field(None, ge=0, le=4)
+    # Batch DK: ge=-1 — the prefs layer's documented sentinel for
+    # "the style preset's own outline" (USER_PREF_FLOATS allows
+    # [-1, 4], the shipped default is -1.0, and the client forwards
+    # the saved value verbatim). The validator below normalises the
+    # sentinel to None, so it never reaches a downstream consumer;
+    # values in [0, 4] pass through untouched, < -1 still 422s.
+    sub_outline_width: Optional[float] = Field(None, ge=-1, le=4)
     sub_bg_color: Optional[str] = None
     sub_bg_opacity: Optional[int] = Field(None, ge=0, le=100)
     sub_shadow: Optional[bool] = None
@@ -5788,6 +5820,14 @@ class RecapPreviewCompositeRequest(BaseModel):
     sub_font_custom_id: Optional[str] = Field(None, max_length=80)
     include_logo: bool = True
     logo_pos: str = "top-right"
+
+    @field_validator("sub_outline_width")
+    @classmethod
+    def _norm_sub_outline_width(cls, v):
+        # Batch DK: -1 == "the preset's own" == field absent.
+        if v is not None and float(v) == -1.0:
+            return None
+        return v
 
 
 @api_router.post("/recap/preview-composite")
@@ -6265,7 +6305,13 @@ class RecapConfigRequest(BaseModel):
     # outline_width is in ASS units; bg_opacity is a percent.
     sub_text_color: Optional[str] = None
     sub_outline_color: Optional[str] = None
-    sub_outline_width: Optional[float] = Field(None, ge=0, le=4)
+    # Batch DK: ge=-1 — the prefs layer's documented sentinel for
+    # "the style preset's own outline" (USER_PREF_FLOATS allows
+    # [-1, 4], the shipped default is -1.0, and the client forwards
+    # the saved value verbatim). The validator below normalises the
+    # sentinel to None, so it never reaches a downstream consumer;
+    # values in [0, 4] pass through untouched, < -1 still 422s.
+    sub_outline_width: Optional[float] = Field(None, ge=-1, le=4)
     sub_bg_color: Optional[str] = None
     sub_bg_opacity: Optional[int] = Field(None, ge=0, le=100)
     sub_shadow: Optional[bool] = None
@@ -6345,6 +6391,17 @@ class RecapConfigRequest(BaseModel):
     def _check_protection_level(cls, v: str) -> str:
         lvl = str(v or "standard").strip().lower()
         return lvl if lvl in ("off", "standard", "strong") else "standard"
+
+    @field_validator("sub_outline_width")
+    @classmethod
+    def _norm_sub_outline_width(cls, v):
+        # Batch DK: -1 == "the preset's own" == field absent (the
+        # prefs layer's documented sentinel — see the field comment
+        # above). Normalised here so the extras builder, the
+        # persisted config and the worker never see the sentinel.
+        if v is not None and float(v) == -1.0:
+            return None
+        return v
 
     @field_validator("sub_text_color", "sub_outline_color", "sub_bg_color")
     @classmethod
