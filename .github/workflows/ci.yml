@@ -52,5 +52,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # The self-hosted runner's /tmp is a small shared tmpfs, and every full
+      # pytest run leaves ~500 MB of temp files in /tmp/pytest-of-root. Clear
+      # the stale directory before the suite, or later runs fail with
+      # "No space left on device" (as in main run #747).
+      - name: Clear stale pytest temp dir
+        run: rm -rf /tmp/pytest-of-root
+
       - name: Run test suite
         run: python -m pytest -q -rs
