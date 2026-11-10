@@ -290,6 +290,30 @@ def _quota_failure_kind(error_text: str) -> Optional[str]:
     return "dead"
 
 
+_ADMISSION_REQUESTED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*s requested")
+_ADMISSION_LEFT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*s (?:left|remaining)")
+
+
+def _parse_admission_refusal(error_text: str) -> Optional[tuple[float, float]]:
+    """Batch DI: (seconds requested, seconds left) from an HF ZeroGPU
+    admission refusal — production text is "You have exceeded your
+    free ZeroGPU quota (94s requested vs. 65s left)". Returns None
+    when the error carries no figures. The refusal text is the only
+    runtime source of exact balances: Hugging Face exposes a
+    read-only quota endpoint (the key-health checker polls it via
+    huggingface_hub's get_zero_gpu_quota), but the engine cannot
+    probe 30 accounts inside a segment's failover budget, so it
+    learns from the refusals it already receives."""
+    text = str(error_text or "")
+    req = _ADMISSION_REQUESTED_RE.search(text)
+    if req is None:
+        return None
+    left = _ADMISSION_LEFT_RE.search(text, req.end())
+    if left is None:
+        return None
+    return float(req.group(1)), float(left.group(1))
+
+
 def _job_token_key(token: Optional[str]) -> str:
     """Stable, non-reversible key for one caller identity in job memory."""
     if not token:
@@ -449,6 +473,67 @@ class VoxCPMEngine:
     # from the same slot start at different tokens.
     _token_bind_rr_counters: dict[int, int] = {}
     _lock = threading.Lock()
+    # Batch DI: last-known ZeroGPU balances (seconds of quota left)
+    # per token, plus the admission price last seen per space and
+    # overall. Process-level, like the cooldowns: every engine in the
+    # process shares what any walk learned. Balances are learned from
+    # admission-refusal texts (exact figures) and from successful
+    # calls (a success proves the balance covered that space's
+    # price); see _parse_admission_refusal. Keyed by raw token, same
+    # as _token_cooldowns; never persisted or logged.
+    _token_balances: dict[str, float] = {}
+    _space_admission_prices: dict[str, float] = {}
+    _last_admission_price: Optional[float] = None
+
+    @classmethod
+    def _record_admission_refusal(
+        cls, space_name: str, token: Optional[str], requested: float, left: float
+    ) -> None:
+        """Batch DI: learn from a refusal — the token's exact balance
+        (``left``) and the space's admission price (``requested``)."""
+        with cls._lock:
+            cls._space_admission_prices[str(space_name)] = float(requested)
+            cls._last_admission_price = float(requested)
+            if token:
+                cls._token_balances[str(token)] = float(left)
+
+    @classmethod
+    def _record_success_balance(cls, space_name: str, token: Optional[str]) -> None:
+        """Batch DI: a successful call proves the token's balance
+        covered this space's admission price. When the balance is
+        already known exactly (learned from a refusal), debit the
+        price just paid; when it is unknown, record the price as the
+        lower bound the success guarantees."""
+        if not token:
+            return
+        with cls._lock:
+            price = cls._space_admission_prices.get(str(space_name))
+            if price is None:
+                return
+            key = str(token)
+            known = cls._token_balances.get(key)
+            if known is None:
+                cls._token_balances[key] = float(price)
+            else:
+                cls._token_balances[key] = max(0.0, known - float(price))
+
+    @classmethod
+    def _balance_sort_key(cls, token: Optional[str]) -> tuple[int, float]:
+        """Batch DI walk order: (tier, -balance). Tier 0 = known
+        solvent (balance >= the last-seen admission price, richest
+        first), tier 1 = balance unknown, tier 2 = known insolvent
+        (balance below the last-seen price; closest to solvent
+        first). The anonymous caller has no per-token balance and
+        always sorts as unknown."""
+        if not token:
+            return (1, 0.0)
+        bal = cls._token_balances.get(str(token))
+        if bal is None:
+            return (1, 0.0)
+        price = cls._last_admission_price
+        if price is not None and bal < price:
+            return (2, -bal)
+        return (0, -bal)
     # Batch AJ (M12): cooldown persistence backstop. The in-memory
     # dict above stays keyed by raw token (existing behaviour/tests),
     # but the PERSISTED form — BotSetting key "aj_hf:cooldowns" via
@@ -813,6 +898,30 @@ class VoxCPMEngine:
             other_toks = [t for t in tokens_pool if t not in healthy_auth]
             ordered_toks = rotated_auth + other_toks
 
+        # Batch DI: order the walk by last-known balance, richest
+        # first (owner, 2026-11-10: start from the token with the
+        # most quota left). Production 2026-11-10: a segment burned
+        # its whole 45 s failover budget on instant admission
+        # refusals from tokens holding 63–89 s against a 94 s price,
+        # while richer tokens waited behind them in rotation order.
+        # The sort composes with the health classes above (a cooling
+        # token never jumps the queue on balance alone) and with the
+        # rotation (equal keys keep their rotated relative order):
+        # key = (health class, balance tier, -balance, rotated
+        # position). Space priority is untouched — pairs below still
+        # iterate the configured space order inside each token round.
+        ordered_toks = [
+            tok
+            for _pos, tok in sorted(
+                enumerate(ordered_toks),
+                key=lambda item: (
+                    _token_sort_key(item[1]),
+                    *VoxCPMEngine._balance_sort_key(item[1]),
+                    item[0],
+                ),
+            )
+        ]
+
         # Batch AT (AT-1): space-first round-robin pair order — one
         # pair per space per round (token-major), so every space gets
         # an early attempt before any space gets a second one. The
@@ -1072,6 +1181,10 @@ class VoxCPMEngine:
                         except Exception:
                             pass
 
+                    # Batch DI: the success proves this token covered
+                    # the space's admission price — update its
+                    # last-known balance for the balance-ordered walk.
+                    VoxCPMEngine._record_success_balance(space_name, active_token)
                     self._log(f"✅ VoxCPM 2 Success [{tok_masked}]: {out_path.name} ({out_path.stat().st_size} bytes)")
                     return out_path
                 else:
@@ -1097,6 +1210,15 @@ class VoxCPMEngine:
                     # every later segment.
                     if self.job_memory is not None:
                         self.job_memory.record_gate(space_name, active_token)
+                    # Batch DI: the refusal text carries the exact
+                    # figures — learn the token's balance and this
+                    # space's admission price so the NEXT segment's
+                    # walk starts from the richest token.
+                    _adm = _parse_admission_refusal(str(e_pair))
+                    if _adm is not None:
+                        VoxCPMEngine._record_admission_refusal(
+                            space_name, active_token, _adm[0], _adm[1]
+                        )
                     self._log(f"⚠️ Token {tok_masked} refused at '{space_name}' admission gate (GPU-seconds requested > balance); pair memoised for this job, rotating...")
                 elif quota_kind == "dead":
                     # Account quota is gone: cool the token globally as

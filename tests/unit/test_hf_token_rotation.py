@@ -70,6 +70,12 @@ def _clean_engine_state(monkeypatch):
     # Cooldowns / round-robin counter are class-level state shared
     # across engine instances; reset them so tests are deterministic.
     monkeypatch.setattr(VoxCPMEngine, "_token_cooldowns", {})
+    # Batch DI: the balance-ordered walk keeps process-level
+    # balance state — reset it with the cooldowns so learned
+    # balances never leak between walk tests.
+    monkeypatch.setattr(VoxCPMEngine, "_token_balances", {})
+    monkeypatch.setattr(VoxCPMEngine, "_space_admission_prices", {})
+    monkeypatch.setattr(VoxCPMEngine, "_last_admission_price", None)
     monkeypatch.setattr(VoxCPMEngine, "_token_rr_counter", 0)
 
 

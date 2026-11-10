@@ -19,7 +19,7 @@ Ulfa's approved scope (spec FINAL section + 22:32 parity order —
   configs migrate on read;
 * anti-copyright is a LEVEL: Off / Standard / Strong (Strong =
   micro speed 0.98–1.02× + pitch + grain + metadata strip);
-* cache token r130;
+* cache token r131;
 * PARITY: the values the preview shows are the values the renderer
   consumes, from the same normalised inputs and shared constants.
 """
@@ -244,14 +244,10 @@ def test_protection_level_mapping():
     assert core.protection_zoom_factor("off", 1.10) == 1.0
     assert core.protection_zoom_factor("standard", 1.10) == 1.10
     assert core.protection_zoom_factor("strong", 1.06) == 1.06
-    # Speed factor exists only for Strong, inside [0.98, 1.02].
-    assert core.protection_speed_factor("off", "job-a") is None
-    assert core.protection_speed_factor("standard", "job-a") is None
-    for seed in ("job-a", "job-b", "rc_123", "x" * 40):
-        f = core.protection_speed_factor("strong", seed)
-        assert f is not None and 0.98 <= f <= 1.02
-    # Deterministic per job (resume/re-dispatch re-applies the same).
-    assert core.protection_speed_factor("strong", "job-a") == core.protection_speed_factor("strong", "job-a")
+    # Batch DI: the DD speed factor is REMOVED (owner order — Strong
+    # back to pre-DD behaviour, no retime/pitch shift). The function
+    # must not exist any more.
+    assert not hasattr(core, "protection_speed_factor")
 
 
 def test_protection_schema_clamps_unknown_to_standard():
@@ -482,10 +478,10 @@ def test_submit_and_composite_share_dd_payload_fields():
 
 # ── 9. Cache token ────────────────────────────────────────────────
 
-def test_cache_token_is_r130():
-    assert INDEX_HTML.count("20261104_r130") == 4
+def test_cache_token_is_r131():
+    assert INDEX_HTML.count("20261104_r131") == 4
     assert "r125" not in INDEX_HTML
-    assert INDEX_HTML.count("r130") == 4
+    assert INDEX_HTML.count("r131") == 4
 
 
 def test_dd_sig_declarations_precede_first_use():

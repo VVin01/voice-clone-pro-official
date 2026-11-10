@@ -2965,52 +2965,33 @@ def protection_zoom_factor(level: Any, zoom_factor: float) -> float:
     return float(zoom_factor)
 
 
-def protection_speed_factor(level: Any, seed: Any) -> float | None:
-    """Strong's whole-output micro speed factor, in [0.98, 1.02].
-
-    Deterministic per job (seeded by the job identity) so a resumed
-    or re-dispatched job re-applies the SAME factor. None for Off /
-    Standard — no post-process runs at all. The factor is applied
-    to video and audio together (see apply_protection_strong), so
-    A/V sync — subtitles are already burned — holds by construction.
-    """
-    if normalize_protection_level(level) != "strong":
-        return None
-    import hashlib
-
-    digest = hashlib.sha256(str(seed).encode("utf-8")).digest()
-    steps = int.from_bytes(digest[:2], "big") % 41  # 0..40 → 0.980..1.020
-    return round(0.98 + steps * 0.001, 3)
-
-
 def apply_protection_strong(
     ffmpeg: str,
     video_path: Path,
-    factor: float,
     log: LogFn = _noop,
 ) -> Path:
-    """Batch DD Strong anti-copyright post-process, applied ONCE to
-    the finished output:
+    """Strong anti-copyright post-process, applied ONCE to the
+    finished output:
 
-    * micro speed change by ``factor`` (0.98–1.02) — video via
-      setpts, audio via asetrate (which retimes AND pitch-shifts
-      in one resample) + aresample back to 44.1 kHz, so audio and
-      video stay in sync (the burned subtitles ride the video);
     * light film grain (noise filter);
     * all input metadata stripped (``-map_metadata -1``).
+
+    Batch DI (owner order): Strong is back to its pre-Batch-DD
+    behaviour — it no longer retimes or pitch-shifts the output.
+    The DD micro speed factor ([0.98, 1.02] via setpts + asetrate)
+    audibly dulled the narration and is removed entirely; the
+    audio is re-encoded untouched (no asetrate, no resample trick).
 
     Any failure returns the ORIGINAL file untouched — a cosmetic
     protection step must never fail a paid job.
     """
     try:
-        factor = max(0.98, min(1.02, float(factor)))
         out = video_path.with_name(video_path.stem + ".prot.mp4")
-        vf = f"setpts=PTS/{factor:.3f},noise=alls=6:allf=t"
-        af = f"asetrate=44100*{factor:.3f},aresample=44100"
+        vf = "noise=alls=6:allf=t"
         cmd = [
             str(ffmpeg), "-y", "-hide_banner", "-loglevel", "error",
             "-i", str(video_path),
-            "-vf", vf, "-af", af,
+            "-vf", vf,
             "-map_metadata", "-1",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-c:a", "aac", "-b:a", "160k",
@@ -3019,7 +3000,7 @@ def apply_protection_strong(
         ]
         res = _run_media(cmd, timeout=RENDER_TIMEOUT_FLOOR_SECONDS, what="protection-strong")
         if res.returncode == 0 and out.is_file() and out.stat().st_size > 10_000:
-            log(f"🛡️ Protection Strong applied (speed ×{factor:.3f}, grain, metadata stripped)")
+            log("🛡️ Protection Strong applied (grain, metadata stripped)")
             return out
         log(f"⚠️ Protection Strong failed (rc={res.returncode}); keeping original output")
         try:
@@ -3883,32 +3864,26 @@ def tokenize_burmese_words(text: str) -> list[str]:
 
 
 def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> list[str]:
-    """Split text into 1-line chunks without cutting words or syllables in half."""
+    """Split text into 1-line chunks without cutting words or syllables in half.
+
+    Batch DI: the fill is greedy across sentence/clause boundaries.
+    The pre-DI version hard-split at every "။" (then every "၊") and
+    chunked each fragment on its own, so a narration segment made of
+    several short sentences shipped as several short cues even when
+    the character budget would have held them together (owner,
+    2026-11-10: the subtitles come out as short little pieces).
+    Now words accumulate until the budget fills, so cues run as
+    close to the size-scaled capacity as the text allows. Whole
+    words are never cut: breaks land between the space-delimited
+    phrases Gemini writes (and the PNG burn re-splits any piece
+    that still overflows at meaningful phrase boundaries), and only
+    an over-long phrase falls back to syllable-safe particle
+    tokenization.
+    """
     text = re.sub(r'\s+', ' ', text.replace("\r\n", " ").replace("\n", " ")).strip()
     if len(text) <= max_chars:
         return [text]
 
-    # If full sentences exist, split first at ။
-    if "။" in text:
-        parts = [p.strip() for p in re.split(r'(?<=[။])\s*', text) if p.strip()]
-        if len(parts) > 1:
-            res = []
-            for p in parts:
-                res.extend(_split_burmese_into_single_line_chunks(p, max_chars=max_chars))
-            return res
-
-    # If clauses exist, split at ၊
-    if "၊" in text:
-        parts = [p.strip() for p in re.split(r'(?<=[၊])\s*', text) if p.strip()]
-        if len(parts) > 1:
-            res = []
-            for p in parts:
-                res.extend(_split_burmese_into_single_line_chunks(p, max_chars=max_chars))
-            return res
-
-    # Otherwise split into words/tokens. Prefer the natural phrase spaces Gemini writes
-    # (never break inside a space-delimited phrase); only an over-long phrase falls back to
-    # syllable-safe particle tokenization.
     tokens: list[str] = []
     for word in text.split(" "):
         if not word:
@@ -3923,7 +3898,7 @@ def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> li
     if not tokens:
         return [text]
 
-    chunks = []
+    chunks: list[str] = []
     curr = ""
     for tok in tokens:
         if curr and (len(curr) + len(tok) > max_chars):
@@ -4148,19 +4123,40 @@ def split_burmese_subtitle_cues(
         return results
 
     # If lines_per_cue >= 2:
-    if total_dur >= 4.0 and "။" in text:
+    # Batch DI: pack sentences greedily up to the per-cue budget.
+    # The pre-DI branch emitted ONE cue per sentence whenever the
+    # window allowed (short sentences = short cues), and otherwise
+    # kept the whole segment as one cue no matter how far over the
+    # budget it ran (the PNG burn then shredded it into short
+    # pieces). Packing fills each cue close to max_cue_chars; a
+    # segment that packs into a single group — or whose window is
+    # too short to give every group a readable share — keeps the
+    # historical whole-cue wrap below.
+    if "။" in text:
         sentences = [s.strip() for s in re.split(r'(?<=[။])\s*', text) if s.strip()]
-        if len(sentences) >= 2 and (total_dur / len(sentences)) >= 1.8:
-            tot_chars = sum(len(s) for s in sentences) or 1
-            cur_t = start_sec
-            results = []
-            for i, sent in enumerate(sentences):
-                s_dur = max(1.8, (len(sent) / tot_chars) * total_dur)
-                s_end = cur_t + s_dur if i < len(sentences) - 1 else end_sec
-                formatted = _format_cue_lines(sent, lines_cnt)
-                results.append((round(cur_t, 3), round(s_end, 3), formatted))
-                cur_t = s_end
-            return results
+        if len(sentences) >= 2:
+            groups: list[str] = []
+            cur_group = ""
+            for s in sentences:
+                cand = f"{cur_group} {s}" if cur_group else s
+                if cur_group and len(cand) > max_cue_chars:
+                    groups.append(cur_group)
+                    cur_group = s
+                else:
+                    cur_group = cand
+            if cur_group:
+                groups.append(cur_group)
+            if len(groups) >= 2 and (total_dur / len(groups)) >= 1.8:
+                tot_chars = sum(len(g) for g in groups) or 1
+                cur_t = start_sec
+                results = []
+                for i, grp in enumerate(groups):
+                    s_dur = max(1.8, (len(grp) / tot_chars) * total_dur)
+                    s_end = cur_t + s_dur if i < len(groups) - 1 else end_sec
+                    formatted = _format_cue_lines(grp, lines_cnt)
+                    results.append((round(cur_t, 3), round(s_end, 3), formatted))
+                    cur_t = s_end
+                return results
 
     # Otherwise, keep as ONE cue spanning the full spoken segment duration!
     formatted_text = _format_cue_lines(text, lines_cnt)
