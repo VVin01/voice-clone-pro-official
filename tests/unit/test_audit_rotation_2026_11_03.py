@@ -404,6 +404,12 @@ def test_voxcpm_401_rotates_and_cools_down_dead_token(tmp_path, monkeypatch):
     space = "custom/aaa"
 
     monkeypatch.setattr(VoxCPMEngine, "_token_cooldowns", {})
+    # Batch DI: the balance-ordered walk keeps process-level
+    # balance state — reset it with the cooldowns so learned
+    # balances never leak between walk tests.
+    monkeypatch.setattr(VoxCPMEngine, "_token_balances", {})
+    monkeypatch.setattr(VoxCPMEngine, "_space_admission_prices", {})
+    monkeypatch.setattr(VoxCPMEngine, "_last_admission_price", None)
     monkeypatch.setattr(VoxCPMEngine, "_token_rr_counter", 0)
     monkeypatch.setattr(vx, "get_available_hf_tokens", lambda: [])
 

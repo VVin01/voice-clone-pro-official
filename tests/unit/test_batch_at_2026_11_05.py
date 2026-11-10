@@ -79,6 +79,12 @@ class _RecClient:
 def _vox_engine(tmp_path, monkeypatch, *, tokens, spaces, **kw):
     monkeypatch.setattr(vx, "get_available_hf_tokens", lambda: list(tokens))
     monkeypatch.setattr(VoxCPMEngine, "_token_cooldowns", {})
+    # Batch DI: the balance-ordered walk keeps process-level
+    # balance state — reset it with the cooldowns so learned
+    # balances never leak between walk tests.
+    monkeypatch.setattr(VoxCPMEngine, "_token_balances", {})
+    monkeypatch.setattr(VoxCPMEngine, "_space_admission_prices", {})
+    monkeypatch.setattr(VoxCPMEngine, "_last_admission_price", None)
     monkeypatch.setattr(VoxCPMEngine, "_token_rr_counter", 0)
     monkeypatch.setattr(VoxCPMEngine, "_token_bind_rr_counters", {})
     engine = VoxCPMEngine(work_dir=tmp_path / "cache", **kw)

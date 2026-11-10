@@ -22,7 +22,7 @@ from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, 
 # Batch DD: manual blur-box list conversion, protection levels and
 # the Strong post-process live in core beside their single-box /
 # zoom counterparts so render and preview share them.
-from core import manual_blur_boxes_to_canvas_boxes, normalize_protection_level, protection_zoom_factor, protection_speed_factor, apply_protection_strong
+from core import manual_blur_boxes_to_canvas_boxes, normalize_protection_level, protection_zoom_factor, apply_protection_strong
 
 logger = logging.getLogger(__name__)
 
@@ -728,17 +728,16 @@ def run_recap_pipeline(
     runner.short_pauses = True
 
     result = runner.run()
-    # Batch DD: Protection Strong — one post-process over the whole
-    # finished output (micro speed + pitch, grain, metadata strip).
-    # Failure keeps the original file (helper never raises).
-    _strong_factor = protection_speed_factor(
-        protection_level, target_job_dir.name
-    )
-    if _strong_factor is not None and result.get("final"):
+    # Batch DI: Protection Strong — one post-process over the whole
+    # finished output (grain + metadata strip ONLY). The Batch DD
+    # micro speed/pitch pass is removed (owner order: Strong back
+    # to pre-DD behaviour — no retime, no pitch shift). Failure
+    # keeps the original file (helper never raises).
+    if normalize_protection_level(protection_level) == "strong" and result.get("final"):
         _final_path = Path(str(result["final"]))
         if _final_path.is_file():
             result["final"] = str(apply_protection_strong(
-                ffmpeg_bin, _final_path, _strong_factor, log=_log
+                ffmpeg_bin, _final_path, log=_log
             ))
     _progress(4, 4, "✅ Final Recap Video Ready!")
     _log(f"🎉 Final Video: {result.get('final')}")
