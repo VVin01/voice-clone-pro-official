@@ -19,7 +19,7 @@ Ulfa's approved scope (spec FINAL section + 22:32 parity order —
   configs migrate on read;
 * anti-copyright is a LEVEL: Off / Standard / Strong (Strong =
   micro speed 0.98–1.02× + pitch + grain + metadata strip);
-* cache token r126;
+* cache token r127;
 * PARITY: the values the preview shows are the values the renderer
   consumes, from the same normalised inputs and shared constants.
 """
@@ -482,7 +482,27 @@ def test_submit_and_composite_share_dd_payload_fields():
 
 # ── 9. Cache token ────────────────────────────────────────────────
 
-def test_cache_token_is_r126():
-    assert INDEX_HTML.count("20261104_r126") == 4
+def test_cache_token_is_r127():
+    assert INDEX_HTML.count("20261104_r127") == 4
     assert "r125" not in INDEX_HTML
-    assert INDEX_HTML.count("r126") == 4
+    assert INDEX_HTML.count("r127") == 4
+
+
+def test_dd_sig_declarations_precede_first_use():
+    """Regression (live pageerror 2026-11-10): ddChipsSig / ddExtrasSig
+    must be declared at the TOP of setupRecapVisualEditor — the
+    composite-refresh path reads them during setup, long before the
+    blur-list editor section further down the same function. A `let`
+    declared there throws "Cannot access before initialization"."""
+    app_js = (ROOT / "app" / "webapp" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    fn_start = app_js.index("function setupRecapVisualEditor()")
+    decl = app_js.index('let ddChipsSig = "";')
+    decl2 = app_js.index('let ddExtrasSig = "";')
+    refresh = app_js.index("function refreshRecapCompositePreview")
+    chips_fn = app_js.index("function ddRenderBlurChips")
+    assert fn_start < decl < refresh
+    assert fn_start < decl2 < refresh
+    assert decl < chips_fn and decl2 < chips_fn
+    # Exactly one declaration each (no leftover duplicates below).
+    assert app_js.count("let ddChipsSig") == 1
+    assert app_js.count("let ddExtrasSig") == 1
