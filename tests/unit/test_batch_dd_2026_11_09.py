@@ -19,7 +19,7 @@ Ulfa's approved scope (spec FINAL section + 22:32 parity order —
   configs migrate on read;
 * anti-copyright is a LEVEL: Off / Standard / Strong (Strong =
   micro speed 0.98–1.02× + pitch + grain + metadata strip);
-* cache token r131;
+* cache token r132;
 * PARITY: the values the preview shows are the values the renderer
   consumes, from the same normalised inputs and shared constants.
 """
@@ -56,12 +56,14 @@ def _visuals(font_px, preset="yellow"):
 # ── 1. Size-aware cue budget ─────────────────────────────────────
 
 def test_budget_pinned_vertical_one_line_values():
-    # The four values pinned by the spec: budget(size) =
-    # base × frac(16)/frac(size) on the vertical 1-line base (45).
-    assert core._subtitle_max_chars(True, 1, font_size=13) == 56
-    assert core._subtitle_max_chars(True, 1, font_size=16) == 45
-    assert core._subtitle_max_chars(True, 1, font_size=19) == 38
-    assert core._subtitle_max_chars(True, 1, font_size=22) == 32
+    # Batch DJ: the pinned values are the MEASURED capacities —
+    # budget(size) = floor(0.95 × median rendered capacity) at the
+    # 994 px bound (supersedes the DD fraction-ratio values
+    # 56/45/38/32, which overstated capacity ~1.2–1.35×).
+    assert core._subtitle_max_chars(True, 1, font_size=13) == 33
+    assert core._subtitle_max_chars(True, 1, font_size=16) == 25
+    assert core._subtitle_max_chars(True, 1, font_size=19) == 20
+    assert core._subtitle_max_chars(True, 1, font_size=22) == 17
 
 
 def test_budget_monotonic_in_size():
@@ -71,20 +73,24 @@ def test_budget_monotonic_in_size():
 
 
 def test_budget_legacy_values_unchanged_without_size():
-    assert core._subtitle_max_chars(True, 1) == 45
+    # Batch DJ: without a size, vertical budgets are the measured
+    # 16pt-default values (lines × per-line capacity); horizontal
+    # keeps the legacy table byte-identically.
+    assert core._subtitle_max_chars(True, 1) == 25
     assert core._subtitle_max_chars(False, 1) == 52
-    assert core._subtitle_max_chars(True, 2) == 80
+    assert core._subtitle_max_chars(True, 2) == 40
     assert core._subtitle_max_chars(False, 2) == 96
     # font_size=16 is the ratio's identity point.
     assert core._subtitle_max_chars(False, 2, font_size=16) == 96
 
 
 def test_budget_three_line_entries():
-    assert core._subtitle_max_chars(True, 3) == 120
+    # Batch DJ: vertical 3-line = 3 × the multi-line ladder value.
+    assert core._subtitle_max_chars(True, 3) == 60
     assert core._subtitle_max_chars(False, 3) == 144
-    # Size-aware ratio applies to the 3-line entries too.
-    assert core._subtitle_max_chars(True, 3, font_size=13) == round(120 * 0.040 / 0.032)
-    assert core._subtitle_max_chars(True, 3, font_size=22) == round(120 * 0.040 / 0.056)
+    # Size-aware values apply to the 3-line entries too.
+    assert core._subtitle_max_chars(True, 3, font_size=13) == 75
+    assert core._subtitle_max_chars(True, 3, font_size=22) == 39
 
 
 def test_budget_ratio_applies_to_every_entry():
@@ -478,10 +484,10 @@ def test_submit_and_composite_share_dd_payload_fields():
 
 # ── 9. Cache token ────────────────────────────────────────────────
 
-def test_cache_token_is_r131():
-    assert INDEX_HTML.count("20261104_r131") == 4
+def test_cache_token_is_r132():
+    assert INDEX_HTML.count("20261104_r132") == 4
     assert "r125" not in INDEX_HTML
-    assert INDEX_HTML.count("r131") == 4
+    assert INDEX_HTML.count("r132") == 4
 
 
 def test_dd_sig_declarations_precede_first_use():

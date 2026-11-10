@@ -101,11 +101,13 @@ def test_di_capacity_strictly_decreasing_in_pt(lines):
 
 
 def test_di_capacity_anchor_table():
-    # DD anchors for the vertical 1-line budget.
-    assert core._subtitle_max_chars(True, 1, 0.92, 13) == 56
-    assert core._subtitle_max_chars(True, 1, 0.92, 16) == 45
-    assert core._subtitle_max_chars(True, 1, 0.92, 19) == 38
-    assert core._subtitle_max_chars(True, 1, 0.92, 22) == 32
+    # DD anchors for the vertical 1-line budget — Batch DJ
+    # recalibrated them to measured rendered capacity
+    # (33/25/20/17 supersedes the DD ratio values 56/45/38/32).
+    assert core._subtitle_max_chars(True, 1, 0.92, 13) == 33
+    assert core._subtitle_max_chars(True, 1, 0.92, 16) == 25
+    assert core._subtitle_max_chars(True, 1, 0.92, 19) == 20
+    assert core._subtitle_max_chars(True, 1, 0.92, 22) == 17
 
 
 def _pieces(tmp_path, text, size_pt, start=0.0, end=12.0):
