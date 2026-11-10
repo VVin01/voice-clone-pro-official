@@ -117,8 +117,8 @@ def _mid_word_boundaries(cue, texts):
 
 # ── Release pin: cache token ─────────────────────────────────────
 
-def test_da_cache_token_is_r126():
-    assert INDEX_HTML.count("20261104_r126") == 4
+def test_da_cache_token_is_r127():
+    assert INDEX_HTML.count("20261104_r127") == 4
     assert "20261104_r" + "122" not in INDEX_HTML
 
 

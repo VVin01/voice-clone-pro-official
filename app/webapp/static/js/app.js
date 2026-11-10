@@ -5131,6 +5131,14 @@ window.initRecapSteps = initRecapSteps;
 
 // ── TAB 2: Recap Studio Configuration & Visual Mockup ──────────────────────
 function setupRecapVisualEditor() {
+    // Batch DD: blur-chip / extras render signatures. Declared at the
+    // TOP of this scope: the composite-refresh path (defined and first
+    // invoked far above the blur-list editor section) reads them, and
+    // a `let` declared mid-function throws a TDZ error on that early
+    // call (seen live 2026-11-10: "Cannot access 'ddChipsSig' before
+    // initialization" on page load).
+    let ddChipsSig = "";
+    let ddExtrasSig = "";
     const sliderBlurY = document.getElementById("slider-blur-y");
     const sliderBlurH = document.getElementById("slider-blur-h");
     const sliderBlurX = document.getElementById("slider-blur-x");
@@ -7755,8 +7763,8 @@ function setupRecapVisualEditor() {
     // (3) Blur-box LIST editor: sliders + the drag box edit the
     // SELECTED box; chips select; add/delete manage the list (≤5).
     // Other boxes paint as outline overlays (click selects).
-    let ddChipsSig = "";
-    let ddExtrasSig = "";
+    // (ddChipsSig / ddExtrasSig are declared at the top of
+    // setupRecapVisualEditor — see the note there.)
     function ddBoxes() {
         if (!Array.isArray(state.recapBlurBoxes)) state.recapBlurBoxes = [];
         return state.recapBlurBoxes;
