@@ -4034,9 +4034,39 @@ def _format_cue_lines(text: str, lines_cnt: int) -> str:
 # orientation and lines-per-cue. The 1/2-line entries are the
 # legacy table; the 3-line entries extend it at the same per-line
 # rate the 2-line entries use (80/2 = 40, 96/2 = 48 per line).
+# Batch DJ keeps the HORIZONTAL entries on this legacy table —
+# the 16:9 path never re-split (its budgets sit far below true
+# capacity); the VERTICAL entries are superseded by the measured
+# capacity ladders below and no longer read from this table.
 _SUBTITLE_CUE_BUDGETS: dict[bool, dict[int, int]] = {
     True: {1: 45, 2: 80, 3: 120},
     False: {1: 52, 2: 96, 3: 144},
+}
+
+# Batch DJ (2026-11-10): MEASURED per-line character capacity of
+# Burmese narration at the production burn — PngSubtitleRenderer +
+# Padauk-Bold, bound = 0.92 × 1080 = 994 px on the full-frame
+# 1080×1920 vertical canvas, over a real narration corpus (the
+# planner's own SRT output, the pinned-post spoken script, the CX
+# fixture stream), taking greedy token-fit pieces exactly as
+# _cx_split_line measures them. Each value is
+# floor(0.95 × median measured capacity), nudged down by at most
+# 2 chars at the top of the range so the ladder stays STRICTLY
+# decreasing per pt (the Batch DI invariant). Two ladders because
+# Lines 2/3 burn at the ×1.25 multi-line font (subtitle_font_px),
+# whose per-line capacity is smaller than the 1-line font's.
+#   pt:            10  11  12  13  14  15  16  17  18  19  20  21  22  23  24  25  26
+#   median (1-line font):     47  42  37  35  31  29  27  25  24  22  21  20  19  18  17  16  16
+#   median (multi-line font): 36  33  30  27  25  23  22  20  19  18  16  16  15  14  13  12  12
+_SUBTITLE_VERTICAL_LINE_CAPACITY: dict[int, int] = {
+    10: 44, 11: 39, 12: 35, 13: 33, 14: 29, 15: 27, 16: 25,
+    17: 23, 18: 22, 19: 20, 20: 19, 21: 18, 22: 17, 23: 16,
+    24: 15, 25: 14, 26: 13,
+}
+_SUBTITLE_VERTICAL_LINE_CAPACITY_MULTILINE: dict[int, int] = {
+    10: 34, 11: 31, 12: 28, 13: 25, 14: 23, 15: 21, 16: 20,
+    17: 19, 18: 18, 19: 17, 20: 15, 21: 14, 22: 13, 23: 12,
+    24: 11, 25: 10, 26: 9,
 }
 
 
@@ -4061,17 +4091,42 @@ def _subtitle_max_chars(is_vert: bool, lines_per_cue: int,
     applies to every table entry. font_size None (or 16) keeps the
     historical numbers; the CX/DA measured burn fit remains the
     hard safety net either way.
+
+    Batch DJ (2026-11-10): the DD ratio OVERSTATED true vertical
+    capacity by ~1.2–1.35× — DI's live matrix showed burned cues
+    landing at roughly HALF the SRT cues because the width-true
+    burn fit re-split most of them (simulated unsplit rate with
+    the DD budgets: only ~14–28%). VERTICAL budgets now come from
+    the MEASURED ladders above: budget = lines × per-line
+    capacity at the chosen size (≈95% of the median measured
+    capacity; font_size None means the 16pt default; sizes clamp
+    to the measured 10–26 range), and the simulated unsplit rate
+    is ~97–99% across the slider. The horizontal path keeps the
+    legacy table + DD ratio scaling unchanged.
     """
     lines = min(3, max(1, int(lines_per_cue or 1)))
-    base = _SUBTITLE_CUE_BUDGETS[bool(is_vert)][lines]
-    if font_size is not None:
+    if is_vert:
         try:
-            fs = int(font_size)
+            fs = int(font_size) if font_size is not None else 16
         except (TypeError, ValueError):
             fs = 16
-        if fs != 16:
-            ratio = _subtitle_font_fraction(16) / max(0.001, _subtitle_font_fraction(fs))
-            base = max(8, int(round(base * ratio)))
+        fs = min(26, max(10, fs))
+        ladder = (
+            _SUBTITLE_VERTICAL_LINE_CAPACITY
+            if lines == 1
+            else _SUBTITLE_VERTICAL_LINE_CAPACITY_MULTILINE
+        )
+        base = lines * ladder[fs]
+    else:
+        base = _SUBTITLE_CUE_BUDGETS[bool(is_vert)][lines]
+        if font_size is not None:
+            try:
+                fs = int(font_size)
+            except (TypeError, ValueError):
+                fs = 16
+            if fs != 16:
+                ratio = _subtitle_font_fraction(16) / max(0.001, _subtitle_font_fraction(fs))
+                base = max(8, int(round(base * ratio)))
     if sub_w is None:
         return base
     try:

@@ -297,24 +297,28 @@ def test_ass_offcentre_emits_pos_at_the_resolver_centre(tmp_path):
 # ── 7. Cue-wrap budgets ────────────────────────────────────────────
 
 def test_wrap_budgets_legacy_table_and_default():
-    assert _subtitle_max_chars(True, 1) == 45
+    # Batch DJ: VERTICAL values are the measured-capacity budgets
+    # (lines × per-line capacity at the 16pt default); HORIZONTAL
+    # keeps the legacy table.
+    assert _subtitle_max_chars(True, 1) == 25
     assert _subtitle_max_chars(False, 1) == 52
-    assert _subtitle_max_chars(True, 2) == 80
+    assert _subtitle_max_chars(True, 2) == 40
     assert _subtitle_max_chars(False, 2) == 96
     for is_vert, lines in [(True, 1), (False, 1), (True, 2), (False, 2)]:
         assert _subtitle_max_chars(is_vert, lines, 0.92) == _subtitle_max_chars(is_vert, lines)
 
 
 def test_wrap_budgets_scale_with_sub_w():
-    assert _subtitle_max_chars(True, 1, 0.46) == 22    # half width → half budget
-    assert _subtitle_max_chars(True, 1, 0.23) == 11
-    assert _subtitle_max_chars(True, 1, 1.0) == 49     # full width → more per cue
+    assert _subtitle_max_chars(True, 1, 0.46) == 12    # half width → half budget
+    assert _subtitle_max_chars(True, 1, 0.23) == 8     # quarter width → the 8-char floor
+    assert _subtitle_max_chars(True, 1, 1.0) == 27     # full width → more per cue
     assert _subtitle_max_chars(False, 2, 0.46) == 48
 
 
 def test_wrap_budget_and_ass_tag_read_the_overlays_dict():
     # Batch DD: the production call site is size-aware — the
-    # chosen font size scales the budget (frac ratio).
+    # chosen font size feeds the budget (Batch DJ: measured
+    # capacity ladders on the vertical path).
     assert 'font_size=int(self.overlays.get("subtitles_font_size", 16))' in CORE_PY
     assert "_subtitle_max_chars(" in CORE_PY
     assert 'sub_x=self.overlays.get("sub_x"),' in CORE_PY
@@ -564,7 +568,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261104_r131") == 4
+    assert INDEX_HTML.count("?v=20261104_r132") == 4
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────
