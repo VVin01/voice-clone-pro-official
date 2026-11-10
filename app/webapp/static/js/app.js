@@ -8087,9 +8087,15 @@ function setupRecapVisualEditor() {
         refreshRecapStep2Summary();
     };
 
-    // (9) 9:16 preview cap: the sticky frame never exceeds 36% of
-    // the screen height (aspect exact) and shrinks to ~22% once
-    // the settings area is scrolled; it re-expands at the top.
+    // (9) Batch DG: the 9:16 preview is sized WIDTH-first — its
+    // natural design width (300px max, or the card width) with the
+    // height following the aspect. The old DD rule capped it by a
+    // percentage of the screen HEIGHT (36%, shrinking to 22% on
+    // scroll), which on tall/desktop webviews squeezed the frame
+    // to ~110px wide — too small to read subtitles or place blur
+    // boxes, and it shrank while the user was working. Now only a
+    // SHORT viewport (<640px) gets a height guard (44%); there is
+    // no scroll shrink.
     function ddFitPreviewFrame() {
         const frame = document.getElementById("recap-mockup-frame");
         if (!frame) return;
@@ -8098,16 +8104,14 @@ function setupRecapVisualEditor() {
             frame.style.width = "";
             return;
         }
-        const scrolled = (window.scrollY || 0) > 90;
-        const cap = (scrolled ? 0.22 : 0.36) * window.innerHeight;
         const parentW = frame.parentElement ? frame.parentElement.clientWidth : 300;
-        const natW = Math.min(300, parentW);
-        const natH = natW * 16 / 9;
-        const h = Math.min(natH, cap);
-        frame.style.height = `${Math.round(h)}px`;
-        frame.style.width = `${Math.round(h * 9 / 16)}px`;
+        let w = Math.min(300, parentW);
+        if (window.innerHeight < 640) {
+            w = Math.min(w, window.innerHeight * 0.44 * 9 / 16);
+        }
+        frame.style.width = `${Math.round(w)}px`;
+        frame.style.height = `${Math.round(w * 16 / 9)}px`;
     }
-    window.addEventListener("scroll", ddFitPreviewFrame, { passive: true });
     window.addEventListener("resize", ddFitPreviewFrame);
     ["recap-ratio-picker", "recap-fill-picker"].forEach(id => {
         const el = document.getElementById(id);
