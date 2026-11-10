@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r125">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_r126">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r125" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261104_r126" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -893,22 +893,10 @@
                     <div class="preview-sub-box draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
                         <span class="drag-grip-icon sub-grip">📝 ⠿</span>
                     </div>
-                    <!-- Batch AH: the recap title overlay box. Hidden
-                         unless the title toggle is on; drag it (grip
-                         or mouse) to place the title — the position
-                         is the title centre, picture-relative, the
-                         same basis the engine burns title_position.
-                         Batch AM (M2 residual): the handle is
-                         GRIP-ONLY — the real title renders inside
-                         the composited frame; no text span is
-                         painted here any more. -->
-                    <div class="preview-title-box draggable-box hidden" id="preview-title-box" style="top: 12%; transform: translate(-50%, -50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
-                        <span class="drag-grip-icon title-grip">🏷️ ⠿</span>
-                    </div>
                 </div>
             </div>
         </div>
-        <div class="recap-dock-section hidden" id="recap-preview-ratio-group">
+        <div class="recap-dock-section hidden dd-acc-group" id="recap-preview-ratio-group" data-acc-title-key="recap_ratio_label">
             <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား:</div>
             <div class="ratio-pills-grid" id="recap-ratio-picker">
                 <!-- Batch AS (AS-1): each card stacks its
@@ -997,11 +985,11 @@
                         <span class="recap-fine-chevron" id="recap-fine-chevron">▼</span>
                     </button>
                     <div class="recap-fine-body hidden" id="recap-fine-body">
-                    <div class="recap-detail-group" id="recap-subtitle-group">
+                    <div class="recap-detail-group dd-acc-group" id="recap-subtitle-group" data-acc-title-key="recap_subtitle_group_title">
                         <div class="recap-detail-group-title" data-i18n="recap_subtitle_group_title">📝 စာတန်း ဆက်တင်များ</div>
                         <div class="overlays-toggle-row mt-2">
                             <button class="mini-toggle active" id="btn-toggle-subs">
-                                <span class="t-lbl" data-i18n="recap_burn_subs_label">📝 စာတန်းထိုး ထည့်ရန်:</span>
+                                <span class="t-lbl" data-i18n="recap_burn_subs_label">📝 စာတန်းထိုး ထည့်မည်</span>
                                 <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
                             </button>
                         </div>
@@ -1018,6 +1006,9 @@
                                 <option value="band" data-i18n="recap_sub_band">⬛ Band (အပြည့်ပတ်)</option>
                                 <option value="heavy" data-i18n="recap_sub_heavy">🔲 Heavy (နောက်ခံထူ)</option>
                                 <option value="soft" data-i18n="recap_sub_soft">🌫️ Soft (နောက်ခံပါး)</option>
+                                <option value="rose" data-i18n="sub_style_rose">🌸 Rose Pink (ပန်းရောင်)</option>
+                                <option value="orange" data-i18n="sub_style_orange">🟠 Sunset Orange (လိမ္မော်ရောင်)</option>
+                                <option value="mint" data-i18n="sub_style_mint">🟢 Mint Green (ပူစီနံစိမ်း)</option>
                             </select>
                         </div>
                         <div class="style-selector-grid-2 mt-2">
@@ -1026,17 +1017,16 @@
                                 <div class="pill-group sm" id="sub-lines-picker-toolbar">
                                     <button class="pill-btn active" data-lines="1" data-i18n="sub_lines_one">၁ ကြောင်း</button>
                                     <button class="pill-btn" data-lines="2" data-i18n="sub_lines_two">၂ ကြောင်း</button>
+                                    <button class="pill-btn" data-lines="3" data-i18n="sub_lines_three">၃ ကြောင်း</button>
                                 </div>
                             </div>
-                            <div class="spec-col-half">
-                                <span class="style-lbl" data-i18n="recap_sub_size_label">စာလုံးအရွယ် (Size):</span>
-                                <div class="pill-group sm" id="font-size-picker-toolbar">
-                                    <button class="pill-btn" data-size="13">13pt</button>
-                                    <button class="pill-btn active" data-size="16">16pt</button>
-                                    <button class="pill-btn" data-size="19">19pt</button>
-                                    <button class="pill-btn" data-size="22">22pt</button>
-                                </div>
+                        </div>
+                        <div class="slider-group mt-2">
+                            <div class="slider-header">
+                                <span data-i18n="recap_sub_size_label">စာလုံးအရွယ် (Size):</span>
+                                <span class="slider-val" id="val-font-size">16pt</span>
                             </div>
+                            <input type="range" min="10" max="26" step="1" value="16" class="studio-slider" id="slider-font-size">
                         </div>
                         <div class="style-selector-row mt-2">
                             <span class="style-lbl" data-i18n="recap_sub_font_label">စာလုံးဖောင့် (Font):</span>
@@ -1045,6 +1035,55 @@
                                 <button type="button" class="pill-btn" data-font="noto_sans" data-i18n="recap_sub_font_noto_sans">Noto Sans</button>
                                 <button type="button" class="pill-btn" data-font="pyidaungsu" data-i18n="recap_sub_font_pyidaungsu">Pyidaungsu</button>
                                 <button type="button" class="pill-btn" data-font="noto_serif" data-i18n="recap_sub_font_noto_serif">Noto Serif</button>
+                            </div>
+                        </div>
+                    <div class="style-selector-row mt-2" id="recap-sub-font-custom-row">
+                            <span class="style-lbl" data-i18n="recap_font_custom_label">🔤 ကိုယ်ပိုင် Font:</span>
+                            <div class="logo-manager-controls">
+                                <label class="pill-btn" id="btn-sub-font-upload" for="input-sub-font-file"><span data-i18n="recap_font_upload_btn">Font တင်မည်</span></label>
+                                <button type="button" class="pill-btn hidden" id="btn-sub-font-clear"><span data-i18n="recap_font_custom_clear">ဖယ်ရှားမည်</span></button>
+                                <input type="file" id="input-sub-font-file" accept=".ttf,.otf" class="hidden-file-input">
+                            </div>
+                            <div class="logo-status" id="sub-font-custom-status"></div>
+                        </div>
+                        <div class="recap-dd-style-custom mt-2" id="recap-style-custom-controls">
+                            <span class="style-lbl" data-i18n="recap_style_custom_label">🎨 စတိုင်လ် အသေးစိတ် ပြင်ရန်:</span>
+                            <div class="dd-color-row mt-2">
+                                <label class="dd-color-field"><span data-i18n="recap_text_color_label">စာသား အရောင်</span><input type="color" id="input-sub-text-color" value="#ffd94d"></label>
+                                <label class="dd-color-field"><span data-i18n="recap_outline_color_label">အနားသတ် အရောင်</span><input type="color" id="input-sub-outline-color" value="#000000"></label>
+                                <label class="dd-color-field"><span data-i18n="recap_bg_color_label">နောက်ခံ အရောင်</span><input type="color" id="input-sub-bg-color" value="#000000"></label>
+                            </div>
+                            <div class="slider-group mt-2">
+                                <div class="slider-header">
+                                    <span data-i18n="recap_outline_width_label">အနားသတ် အထူ:</span>
+                                    <span class="slider-val" id="val-outline-width">—</span>
+                                </div>
+                                <input type="range" min="0" max="40" step="1" value="18" class="studio-slider" id="slider-outline-width">
+                            </div>
+                            <div class="slider-group">
+                                <div class="slider-header">
+                                    <span data-i18n="recap_bg_opacity_label">နောက်ခံ အပြည့် %:</span>
+                                    <span class="slider-val" id="val-bg-opacity">75%</span>
+                                </div>
+                                <input type="range" min="0" max="100" step="1" value="75" class="studio-slider" id="slider-bg-opacity">
+                            </div>
+                            <div class="overlays-toggle-row mt-2">
+                                <button class="mini-toggle" id="btn-toggle-sub-shadow">
+                                    <span class="t-lbl" data-i18n="recap_shadow_label">🌑 အရိပ် (Shadow):</span>
+                                    <span class="t-val" data-i18n="toggle_off">ပိတ်</span>
+                                </button>
+                                <button class="mini-toggle active" id="btn-toggle-sub-bold">
+                                    <span class="t-lbl" data-i18n="recap_bold_label">🅱️ စာလုံးထူ (Bold):</span>
+                                    <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="style-selector-row mt-2">
+                            <span class="style-lbl" data-i18n="recap_sub_pos_label">စာတန်း နေရာ:</span>
+                            <div class="pill-group sm" id="sub-pos-picker">
+                                <button type="button" class="pill-btn" data-pos-band="top" data-i18n="recap_sub_pos_top">အပေါ်</button>
+                                <button type="button" class="pill-btn" data-pos-band="center" data-i18n="recap_sub_pos_center">အလယ်</button>
+                                <button type="button" class="pill-btn active" data-pos-band="bottom" data-i18n="recap_sub_pos_bottom">အောက်</button>
                             </div>
                         </div>
                     <div class="editor-controls mt-2">
@@ -1077,7 +1116,7 @@
                         </div>
                     </div>
                     </div>
-                    <div class="recap-detail-group" id="recap-blur-group">
+                    <div class="recap-detail-group dd-acc-group" id="recap-blur-group" data-acc-title-key="recap_blur_group_title">
                         <div class="recap-detail-group-title" data-i18n="recap_blur_group_title">🌫️ Blur Box ဆက်တင်များ</div>
                         <label class="script-review-row mt-2" for="recap-blur-autodetect-toggle">
                             <input type="checkbox" id="recap-blur-autodetect-toggle" checked>
@@ -1086,6 +1125,14 @@
                                 <span class="script-review-hint" data-i18n="recap_blur_autodetect_hint">ပိတ်ထားလျှင် ကိုယ်တိုင် ဆွဲထားသော Blur နေရာကိုသာ Blur လုပ်ပါမည်</span>
                             </span>
                         </label>
+                    <div class="blur-box-list-row mt-2" id="blur-box-list-row">
+                        <span class="style-lbl" data-i18n="recap_blur_boxes_label">🔲 Blur Box စာရင်း:</span>
+                        <div class="blur-box-chips" id="blur-box-chips"></div>
+                        <div class="blur-box-actions">
+                            <button type="button" class="pill-btn" id="btn-blur-box-add"><span data-i18n="recap_blur_box_add">➕ Box အသစ်</span></button>
+                            <button type="button" class="pill-btn" id="btn-blur-box-del"><span data-i18n="recap_blur_box_del">🗑️ ဖျက်မည်</span></button>
+                        </div>
+                    </div>
                     <div class="editor-controls mt-2">
                         <div class="slider-group">
                             <div class="slider-header">
@@ -1124,40 +1171,7 @@
                         </div>
                     </div>
                     </div>
-                    <div class="recap-detail-group">
-                        <label class="script-review-row" for="recap-title-toggle">
-                            <input type="checkbox" id="recap-title-toggle">
-                            <span class="script-review-main-text">
-                                <span data-i18n="recap_title_toggle_label">🏷️ ခေါင်းစဉ် စာတန်း ထည့်မည်</span>
-                                <span class="script-review-hint" data-i18n="recap_title_hint">ဗီဒီယိုပေါ်တွင် ခေါင်းစဉ် ပြပေးပါတယ် — Live Canvas မှာ ဖိဆွဲပြီး နေရာ ရွှေ့နိုင်ပါတယ်</span>
-                            </span>
-                        </label>
-                        <div class="recap-title-controls mt-3" id="recap-title-controls">
-                            <input type="text" id="recap-title-text" class="studio-input recap-title-input hidden mt-2" maxlength="200" data-i18n-ph="recap_title_placeholder" placeholder="ခေါင်းစဉ် စာသား (ဘာမှ မရေးရင် ဗီဒီယို ခေါင်းစဉ်ကို သုံးပါမယ်)">
-                            <!-- Batch AK (Addition B): shown whenever the title
-                                 toggle is ON and the custom text is empty — the
-                                 video's OWN title will be burned for the whole
-                                 video. Synced by app.js (syncTitleFallbackHint). -->
-                            <p class="recap-title-fallback-hint hidden mt-2" id="recap-title-fallback-hint" data-i18n="recap_title_fallback_hint">ℹ️ ကိုယ်ပိုင် ခေါင်းစဉ် မရေးထားပါက ဗီဒီယို၏ မူရင်း ခေါင်းစဉ်ကို တစ်လျှောက်လုံး ပြပါမည်။</p>
-                        </div>
-                        <div class="editor-controls mt-2">
-                            <div class="slider-group" id="title-pos-sliders">
-                                <div class="slider-header">
-                                    <span data-i18n="slider_title_x">🏷️ ခေါင်းစဉ် အနေအထား (Title X):</span>
-                                    <span class="slider-val" id="val-title-x">50%</span>
-                                </div>
-                                <input type="range" min="0" max="100" value="50" class="studio-slider" id="slider-title-x">
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="slider_title_y">🏷️ ခေါင်းစဉ် အမြင့် (Title Y):</span>
-                                    <span class="slider-val" id="val-title-y">12%</span>
-                                </div>
-                                <input type="range" min="0" max="100" value="12" class="studio-slider" id="slider-title-y">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="recap-detail-group">
+                    <div class="recap-detail-group dd-acc-group" id="recap-logo-group" data-acc-title-key="recap_logo_group_title">
                         <div class="overlays-toggle-row">
                             <button class="mini-toggle active" id="btn-toggle-logo">
                                 <span class="t-lbl" data-i18n="recap_logo_toggle_label">⭐ Logo:</span>
@@ -1193,8 +1207,16 @@
                                 <div class="logo-status" id="recap-logo-status"></div>
                             </div>
                     </div>
-                                            <div class="recap-adv-group hidden" id="recap-preview-transform-group">
+                                            <div class="recap-adv-group hidden dd-acc-group" id="recap-preview-transform-group" data-acc-title-key="recap_anticopyright_label">
                                                 <div class="card-label" data-i18n="recap_anticopyright_label">ဗီဒီယို ပုံစံပြောင်းမှုများ:</div>
+                                                <div class="style-selector-row mt-2">
+                                                    <span class="style-lbl" data-i18n="recap_protection_label">🛡️ ကာကွယ်မှု အဆင့်:</span>
+                                                    <div class="pill-group sm" id="recap-protection-picker">
+                                                        <button type="button" class="pill-btn" data-protection="off" data-i18n="recap_protection_off">ပိတ်မည်</button>
+                                                        <button type="button" class="pill-btn active" data-protection="standard" data-i18n="recap_protection_standard">စံနှုန်း</button>
+                                                        <button type="button" class="pill-btn" data-protection="strong" data-i18n="recap_protection_strong">အပြင်းစား</button>
+                                                    </div>
+                                                </div>
                                                 <div class="anticopyright-grid mt-2">
                                                     <div class="spec-col">
                                                         <span class="spec-lbl" data-i18n="recap_mirror_label">🪞 Mirror (ဘယ်/ညာ လှန်):</span>
@@ -1273,6 +1295,7 @@
                 </div>
             </div>
         </div>
+        <div class="recap-step2-summary mt-3" id="recap-step2-summary" aria-live="polite"></div>
         <div class="recap-step-next-row mt-3">
             <button type="button" class="btn secondary-btn recap-step-next" data-step-next="3"><span data-i18n="recap_step_continue">ဆက်လုပ်မည်</span> →</button>
         </div>
@@ -2996,7 +3019,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261104_r125"></script>
-    <script src="/static/js/app.js?v=20261104_r125"></script>
+    <script src="/static/js/i18n.js?v=20261104_r126"></script>
+    <script src="/static/js/app.js?v=20261104_r126"></script>
 </body>
 </html>

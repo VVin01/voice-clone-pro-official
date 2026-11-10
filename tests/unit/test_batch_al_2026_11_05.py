@@ -557,10 +557,11 @@ def test_overlay_single_pass_when_probe_passes(tmp_path, monkeypatch):
     calls = _capture_overlay_media(monkeypatch)
     result, out, work = _run_overlay(tmp_path, monkeypatch)
     assert result == out
-    # ONE encode total: blur graph and title/cues live in the same graph.
+    # ONE encode total: blur graph and cues live in the same graph.
+    # (Batch DD: the title overlay is removed — no vtitle step.)
     assert len(calls) == 1
     graph = _graph_of(calls[0])
-    assert "boxblur" in graph and "vtitle" in graph and "between(t," in graph
+    assert "boxblur" in graph and "vtitle" not in graph and "between(t," in graph
     assert calls[0][-1] == str(out)
     assert not (work / "overlay_step1_blurred.mp4").exists()
     idxs = [i for i, a in enumerate(calls[0]) if a == "-threads"]

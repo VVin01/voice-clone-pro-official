@@ -103,41 +103,44 @@ def test_surviving_toggle_has_the_hint_and_feeds_the_payload():
 # ── 2. Title: API model ────────────────────────────────────────────
 
 def test_title_fields_default_to_historical_behaviour():
+    # Batch DD (2026-11-09): the title feature is REMOVED — the
+    # schema carries no title fields at all.
     req = _req()
-    assert req.title_enabled is False
-    assert req.title_text is None
-    assert req.title_x == 50
-    assert req.title_y == 12
+    assert not hasattr(req, "title_enabled")
+    assert not hasattr(req, "title_text")
+    assert "title_enabled" not in req.model_dump()
 
 
 def test_title_fields_round_trip_through_persisted_config():
+    # Batch DD: a legacy persisted config carrying title fields
+    # still parses (pydantic ignores the extras) and the fields
+    # are gone from the rebuilt dump.
     req = _req(title_enabled=True, title_text="My Recap", title_x=30, title_y=70)
     dump = req.model_dump()
     dump.pop("url", None)
     rebuilt = _req(**dump)
-    assert rebuilt.title_enabled is True
-    assert rebuilt.title_text == "My Recap"
-    assert (rebuilt.title_x, rebuilt.title_y) == (30, 70)
+    assert not hasattr(rebuilt, "title_enabled")
+    assert "title_text" not in dump
 
 
 def test_title_bounds():
+    # Batch DD: legacy title values are ignored entirely (no
+    # bounds to violate); the DD bounds that replaced them hold.
     from pydantic import ValidationError
 
-    for kw in ({"title_x": -1}, {"title_x": 101}, {"title_y": -1}, {"title_y": 101},
-               {"title_text": "x" * 201}):
-        with pytest.raises(ValidationError):
-            _req(**kw)
-    _req(title_x=0, title_y=0)
-    _req(title_x=100, title_y=100)
-    _req(title_text="x" * 200)
+    _req(title_x=-1, title_y=101, title_text="x" * 500)
+    with pytest.raises(ValidationError):
+        _req(sub_lines=4)
+    with pytest.raises(ValidationError):
+        _req(sub_font_size=9)
+    _req(sub_lines=3)
+    _req(sub_font_size=10)
 
 
 def test_title_worker_threading():
-    assert (
-        "title_text=((req.title_text or req.title) if req.title_enabled else None),"
-        in API_PY
-    )
-    assert "title_position=[req.title_x / 100.0, req.title_y / 100.0]," in API_PY
+    # Batch DD: no title threading remains in the API layer.
+    assert "title_text=((" not in API_PY
+    assert "title_position=[req.title_x" not in API_PY
 
 
 # ── 2b. Title: prefs allowlist ─────────────────────────────────────
@@ -145,30 +148,22 @@ def test_title_worker_threading():
 def test_title_prefs_defaults_and_sanitizer():
     import app.webapp.api as api_mod
 
+    # Batch DD: the recapTitle* pref keys are retired — absent
+    # from the defaults, and the sanitizer drops legacy values.
     defaults = api_mod.DEFAULT_USER_PREFS
-    assert defaults["recapTitleEnabled"] is False
-    assert defaults["recapTitleText"] == ""
-    assert defaults["recapTitleX"] == 50
-    assert defaults["recapTitleY"] == 12
-
+    for key in ("recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY"):
+        assert key not in defaults
     out = api_mod._sanitize_user_prefs({
         "recapTitleEnabled": True,
         "recapTitleText": "Hello",
-        "recapTitleX": 250,          # out of range → dropped (the
-        "recapTitleY": -5,           # sanitizer never clamps ints)
-        "recapTitleText2": "nope",   # unknown keys are dropped
+        "recapTitleX": 50,
+        "recapTitleY": 12,
     })
-    assert out["recapTitleEnabled"] is True
-    assert out["recapTitleText"] == "Hello"
-    assert "recapTitleX" not in out
-    assert "recapTitleY" not in out
-    assert "recapTitleText2" not in out
-    # In-range values pass through untouched.
-    out3 = api_mod._sanitize_user_prefs({"recapTitleX": 0, "recapTitleY": 100})
-    assert out3["recapTitleX"] == 0 and out3["recapTitleY"] == 100
-    # Over-long free text is dropped whole, never stored.
-    out2 = api_mod._sanitize_user_prefs({"recapTitleText": "y" * 500})
-    assert "recapTitleText" not in out2
+    for key in ("recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY"):
+        assert key not in out
+    # The DD defaults that replaced them are present.
+    assert defaults["recapProtection"] == "standard"
+    assert defaults["recapSubBold"] is True
 
 
 # ── 2c. Title: downloader + pipeline threading ─────────────────────
@@ -179,11 +174,13 @@ def test_title_threading_signatures():
     from app.services.downloader import MediaDownloader
 
     dl_params = inspect.signature(MediaDownloader.generate_recap_video).parameters
-    assert "title_text" in dl_params and "title_position" in dl_params
     pl_params = inspect.signature(recap_pipeline.run_recap_pipeline).parameters
-    assert "title_text" in pl_params and "title_position" in pl_params
-    assert pl_params["title_position"].default is None
-    assert "title_position=title_position," in DOWNLOADER_PY
+    # Batch DD: title threading is gone from both signatures; the
+    # DD parameters (protection / blur list) thread instead.
+    assert "title_text" not in dl_params and "title_position" not in dl_params
+    assert "title_text" not in pl_params and "title_position" not in pl_params
+    assert "protection_level" in pl_params and "blur_boxes" in pl_params
+    assert "title_position=title_position," not in DOWNLOADER_PY
 
 
 def _capture_pipeline_overlays(monkeypatch, tmp_path, **kwargs):
@@ -230,27 +227,27 @@ def test_pipeline_no_title_by_default(monkeypatch, tmp_path):
 
 @pytest.mark.skipif(not FFMPEG_BIN, reason="ffmpeg not available")
 def test_pipeline_title_default_position_is_historical(monkeypatch, tmp_path):
-    overlays = _capture_pipeline_overlays(
-        monkeypatch, tmp_path, title_text="My Title"
-    )
-    assert overlays["title_text"] == "My Title"
-    assert overlays["title_position"] == [0.5, 0.12]
+    # Batch DD: the pipeline never sets title overlays; the DD
+    # protection level rides the overlays dict instead.
+    overlays = _capture_pipeline_overlays(monkeypatch, tmp_path)
+    assert "title_text" not in overlays
+    assert "title_position" not in overlays
+    assert overlays["protection_level"] == "standard"
 
 
 @pytest.mark.skipif(not FFMPEG_BIN, reason="ffmpeg not available")
 def test_pipeline_title_custom_position_and_clamping(monkeypatch, tmp_path):
+    # Batch DD: protection levels thread through the pipeline —
+    # "strong" lands on the overlays; unknown values normalise to
+    # "standard" (never raise, never pass through raw).
     overlays = _capture_pipeline_overlays(
-        monkeypatch, tmp_path, title_text="T", title_position=[0.3, 0.7]
+        monkeypatch, tmp_path, protection_level="strong"
     )
-    assert overlays["title_position"] == [0.3, 0.7]
+    assert overlays["protection_level"] == "strong"
     overlays = _capture_pipeline_overlays(
-        monkeypatch, tmp_path, title_text="T", title_position=[1.4, -0.2]
+        monkeypatch, tmp_path, protection_level="bogus"
     )
-    assert overlays["title_position"] == [1.0, 0.0]
-    overlays = _capture_pipeline_overlays(
-        monkeypatch, tmp_path, title_text="T", title_position="bogus"
-    )
-    assert overlays["title_position"] == [0.5, 0.12]
+    assert overlays["protection_level"] == "standard"
 
 
 # ── 2d. Title: the engine burns it where title_position says ───────
@@ -299,56 +296,35 @@ def _title_centroid_y(tmp_path, out_video):
 def test_engine_title_lands_at_title_position(tmp_path, ty, lo, hi):
     src = _make_dark_src(tmp_path)
     out = tmp_path / "out.mp4"
-    core.apply_production_overlays(
+    result = core.apply_production_overlays(
         FFMPEG_BIN, src, out,
         {"title_text": "TITLE TEST", "title_position": [0.5, ty]},
         "libx264", tmp_path / "w", frame_size=(320, 240),
         layout={"pw": 320, "ph": 240, "ox": 0, "oy": 0}, duration=3,
     )
-    assert out.is_file()
-    cy = _title_centroid_y(tmp_path, out)
-    assert lo <= cy <= hi, f"title centroid y={cy:.3f} not in [{lo}, {hi}] for ty={ty}"
+    # Batch DD: a legacy overlays dict carrying ONLY title keys
+    # is inert — the engine returns the input untouched.
+    assert Path(result) == src
+    assert not out.is_file()
 
 
 # ── 2e. Title: frontend wiring ─────────────────────────────────────
 
 def test_title_controls_markup():
-    # Batch AM (M2 residual): the title drag handle is grip-only —
-    # 'id="preview-title-text-el"' was removed from this list because
-    # the ellipsized text span inside the handle is gone; the real
-    # title renders in the composited frame.
+    # Batch DD: every title control is gone from the markup.
     for el in ('id="recap-title-toggle"', 'id="recap-title-text"',
                'id="preview-title-box"',
                'id="slider-title-x"', 'id="slider-title-y"',
                'id="val-title-x"', 'id="val-title-y"'):
-        assert el in INDEX_HTML, el
-    assert 'maxlength="200"' in INDEX_HTML
+        assert el not in INDEX_HTML, el
 
 
 def test_title_frontend_wiring():
-    assert "function syncTitleBoxVisual()" in APP_JS
-    assert "function titleCentreCanvasFrac(" in APP_JS
-    # Payload carries all four fields.
-    assert "title_enabled: !!state.recapTitleEnabled," in APP_JS
-    assert 'title_text: (state.recapTitleText || "").trim() || null,' in APP_JS
-    assert "title_x: sliderTitleXSubmit ? parseInt(sliderTitleXSubmit.value)" in APP_JS
-    assert "title_y: sliderTitleYSubmit ? parseInt(sliderTitleYSubmit.value)" in APP_JS
-    # Both drag helpers are attached to the title box.
-    assert "enableVerticalDrag(previewTitle," in APP_JS
-    assert "enableHorizontalDrag(previewTitle," in APP_JS
-    # Prefs collect carries the four keys; prefs APPLY carries only
-    # text/position since Batch BR (the toggle is session-truth —
-    # account prefs must not resurrect it on load).
-    assert "recapTitleEnabled: !!state.recapTitleEnabled," in APP_JS
-    assert '"recapTitleText", "recapTitleX", "recapTitleY",' in APP_JS
-    assert '"recapTitleEnabled", "recapTitleText"' not in APP_JS
-    # Snapshot round-trip carries text/position; the enabled bool is
-    # session-truth since Batch BR (absent from RECAP_SETTING_BOOLS).
-    assert '"recapTitleEnabled"]' not in APP_JS
-    assert "recapTitleX: [0, 100], recapTitleY: [0, 100]," in APP_JS
-    # History prefill maps the stored config back in.
-    assert "recapTitleEnabled: cfg.title_enabled === true," in APP_JS
-    assert "recapTitleX: cfg.title_x, recapTitleY: cfg.title_y," in APP_JS
+    # Batch DD: no title wiring survives anywhere in the client.
+    for marker in ("syncTitleBoxVisual", "titleCentreCanvasFrac(",
+                   "title_enabled:", "recapTitleEnabled", "recapTitleText",
+                   "recapTitleX", "previewTitle", "slider-title"):
+        assert marker not in APP_JS, marker
 
 
 def test_title_i18n_keys_both_locales():

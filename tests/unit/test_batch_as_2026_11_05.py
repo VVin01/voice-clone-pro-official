@@ -214,8 +214,7 @@ def _render_preview(tmp_path: Path, name: str, **kw):
         source_video_path=str(src), output_image_path=str(out),
         blur_subtitles=False, burn_subtitles=True,
         sample_text="နမူနာ စာတန်း စမ်းသပ်ချက်",
-        title_text="Learn English Spider-Man Homecoming Story",
-        title_position=[0.5, 0.12], frame_fill="black",
+        frame_fill="black",
         output_ratio="Original", at_seconds=2.0, **kw,
     )
     return out
@@ -239,20 +238,25 @@ def test_preview_original_output_is_native_size(tmp_path):
 
 
 def test_preview_title_is_never_mirrored(tmp_path):
+    # Batch DD: there is no title in the preview any more — the
+    # old title band (top-centre) is plain picture now, so it
+    # mirrors WITH the picture like everything else.
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         pytest.skip("ffmpeg/ffprobe not available")
+    import inspect
+
+    from app.services.recap_engine.recap_pipeline import generate_recap_preview
+
+    params = inspect.signature(generate_recap_preview).parameters
+    assert "title_text" not in params and "title_position" not in params
     on = _grey(_render_preview(tmp_path, "on.jpg", mirror_video=True, sub_font="padauk"))
     off = _grey(_render_preview(tmp_path, "off.jpg", mirror_video=False, sub_font="padauk"))
     h, w = on.shape
-    panel = on[0 : int(h * 0.25), int(w * 0.35) : int(w * 0.70)]
-    panel_off = off[0 : int(h * 0.25), int(w * 0.35) : int(w * 0.70)]
     marker = on[0 : int(h * 0.15), 0 : int(w * 0.25)]
     marker_off = off[0 : int(h * 0.15), 0 : int(w * 0.25)]
     import numpy as np
 
-    # The title panel is pixel-stable across the mirror flag…
-    assert np.abs(panel - panel_off).mean() < 0.5
-    # …while the picture itself really does flip (the test is live).
+    # The picture itself really does flip (the test is live).
     assert np.abs(marker - marker_off).mean() > 2.0
 
 
@@ -267,9 +271,8 @@ def test_preview_font_selection_changes_the_render(tmp_path):
     sub_band = padauk[int(h * 0.78) :, :]
     sub_band_serif = serif[int(h * 0.78) :, :]
     assert np.abs(sub_band - sub_band_serif).mean() > 0.5  # glyphs differ
-    panel = padauk[0 : int(h * 0.25), int(w * 0.35) : int(w * 0.70)]
-    panel_serif = serif[0 : int(h * 0.25), int(w * 0.35) : int(w * 0.70)]
-    assert np.abs(panel - panel_serif).mean() < 0.5  # title font is not the sub font
+    # Batch DD: the old title-panel comparison is gone with the
+    # title feature — the top band is plain picture in both.
 
 
 # ── AS-5: plumbing — picker → payload → submit all carry the font ──
@@ -287,10 +290,9 @@ def test_font_rides_composite_and_submit_payloads():
 # ── AS-3b: title OFF refreshes the composite too ────────────────────
 
 def test_title_sync_refreshes_before_the_disabled_return():
-    block = _function_block("function syncTitleBoxVisual() {", span=1600)
-    refresh = block.index("scheduleRecapCompositeRefresh();")
-    early_return = block.index("if (!enabled) return;")
-    assert refresh < early_return
+    # Batch DD: the title sync (and its disabled-return ordering
+    # hazard) is removed with the feature.
+    assert "syncTitleBoxVisual" not in APP_JS
 
 
 # ── AS-3a: the composite is exempt from the CSS mirror flip ─────────
@@ -305,13 +307,13 @@ def test_composite_branch_strips_the_mirrored_class():
 
 
 def test_title_overlay_applied_after_the_mirror_in_engine_graph():
-    # extract_preview_with_overlays: the visual filters (hflip) build
-    # [base] first; the title overlay is appended after it.
+    # Batch DD: the preview engine carries no title overlay step.
     body = (
         REPO_ROOT / "app" / "services" / "recap_engine" / "core.py"
     ).read_text(encoding="utf-8")
     fn = body.split("def extract_preview_with_overlays(", 1)[1].split("\ndef ", 1)[0]
-    assert fn.index("_visual_filters(mirror_video") < fn.index('graph.append(f"{current}[{title_idx}:v]overlay=')
+    assert "_visual_filters(mirror_video" in fn
+    assert "title_idx" not in fn and "_render_title_png" not in fn
 
 
 # ── AS-2 (client): one stage authority ──────────────────────────────
@@ -382,6 +384,6 @@ def test_persona_filter_chips_wrap_without_clipping():
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_static_token_is_r67():
-    assert INDEX_HTML.count("20261104_r125") == 4
+    assert INDEX_HTML.count("20261104_r126") == 4
     for text in (INDEX_HTML, APP_JS, I18N_JS, STYLE_CSS):
         assert "20261104_r66" not in text

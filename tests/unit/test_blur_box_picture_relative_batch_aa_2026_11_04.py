@@ -273,7 +273,9 @@ def test_marker_state_snapshot_and_payload():
     assert "recapBlurBoxTouched: false," in APP_JS
     assert '"recapBlurBoxTouched"' in APP_JS  # snapshot bool list
     payload = APP_JS.split("const payload = {", 1)[1].split("};", 1)[0]
-    assert "blur_box_explicit: !!state.recapBlurBoxTouched," in payload
+    # Batch DD: the explicit marker now also yields when a
+    # blur-box LIST is present (the list supersedes the single box).
+    assert "blur_box_explicit: !!state.recapBlurBoxTouched && !(Array.isArray(state.recapBlurBoxes)" in payload
     # The payload still carries picture percents straight from the
     # sliders (the QA-batch pin, unchanged).
     assert "blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85," in payload
@@ -467,5 +469,5 @@ def test_legacy_fallback_hint_construction_unchanged():
 # ── 9. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r64():
-    assert INDEX_HTML.count("?v=20261104_r125") == 4
+    assert INDEX_HTML.count("?v=20261104_r126") == 4
     assert "20261104_r53" not in INDEX_HTML

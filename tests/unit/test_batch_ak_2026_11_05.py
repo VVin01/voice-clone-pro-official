@@ -172,9 +172,9 @@ def test_title_wrap_breaks_spaceless_overwide_word():
 # ── Addition B: title fallback hint ────────────────────────────────
 
 def test_title_fallback_hint_wiring():
-    assert 'id="recap-title-fallback-hint"' in INDEX_HTML
-    assert 'data-i18n="recap_title_fallback_hint"' in INDEX_HTML
-    assert "syncTitleFallbackHint" in APP_JS
+    # Batch DD: the title feature (and its fallback hint) is gone.
+    assert 'id="recap-title-fallback-hint"' not in INDEX_HTML
+    assert "syncTitleFallbackHint" not in APP_JS
 
 
 # ── Addition C: live-jobs bar, sheet, CTA hide ─────────────────────
@@ -241,5 +241,5 @@ def test_language_parity_with_backend():
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_r64():
-    assert INDEX_HTML.count("?v=20261104_r125") == 4
+    assert INDEX_HTML.count("?v=20261104_r126") == 4
     assert "?v=20261104_r62" not in INDEX_HTML

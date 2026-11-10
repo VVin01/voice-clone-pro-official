@@ -33,8 +33,9 @@ def test_restore_is_validated_not_blind():
     assert 'recapRatio: ["9:16", "16:9", "1:1", "Original"]' in APP_JS
     # Batch AW: "edge" joins the validated engine allow-list.
     assert 'recapTtsEngine: ["voxcpm", "gemini", "edge"]' in APP_JS
-    # all seven server-side SUBTITLE_STYLE_PRESETS keys must restore
-    assert 'recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"]' in APP_JS
+    # all ten server-side SUBTITLE_STYLE_PRESETS keys must restore
+    # (Batch DD added rose / orange / mint).
+    assert 'recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"]' in APP_JS
     assert "if (allowed.includes(saved[k])) state[k] = saved[k];" in APP_JS
     assert 'typeof saved[k] === "boolean"' in APP_JS
     assert "recapCropTop: [0, 35]" in APP_JS
@@ -87,5 +88,5 @@ def test_snapshot_covers_payload_fields():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r125") == 4
+    assert INDEX_HTML.count("?v=20261104_r126") == 4
     assert "?v=20261102_rs1" not in INDEX_HTML

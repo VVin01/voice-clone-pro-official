@@ -2156,8 +2156,11 @@ class MediaDownloader:
         sub_font_size: int = 16,
         sub_style: str = "yellow",
         sub_font: str = "padauk",
-        title_text: Optional[str] = None,
-        title_position: Optional[list[float]] = None,
+        blur_boxes: Optional[list] = None,
+        sub_visual_overrides: Optional[dict] = None,
+        sub_font_custom_path: Optional[str] = None,
+        sub_bold: bool = True,
+        protection_level: str = "standard",
         logo_path: Optional[str] = None,
         logo_position: Optional[list[float]] = None,
         logo_scale: float = 0.16,
@@ -2200,8 +2203,6 @@ class MediaDownloader:
                 progress_callback(0, 4, "📥 Downloading source video from URL...")
             recap_max_height = 1080 if is_vip else 720
             source_video_path, info = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
-            if not title_text and isinstance(info, dict) and info.get("title"):
-                title_text = str(info["title"]).strip()
 
         # Enforce maximum video duration limit: Free users = 2 mins (120s), VIP = 10 mins (600s)
         try:
@@ -2262,8 +2263,11 @@ class MediaDownloader:
             sub_font_size=sub_font_size,
             sub_style=sub_style,
             sub_font=sub_font,
-            title_text=title_text,
-            title_position=title_position,
+            blur_boxes=blur_boxes,
+            sub_visual_overrides=sub_visual_overrides,
+            sub_font_custom_path=sub_font_custom_path,
+            sub_bold=sub_bold,
+            protection_level=protection_level,
             logo_path=logo_path,
             logo_position=logo_position,
             logo_scale=logo_scale,
@@ -2303,9 +2307,12 @@ class MediaDownloader:
         sub_font_size: int = 16,
         sub_style: str = "yellow",
         sub_font: str = "padauk",
+        manual_blur_boxes: Optional[list] = None,
+        sub_visual_overrides: Optional[dict] = None,
+        sub_font_custom_path: Optional[str] = None,
+        sub_bold: bool = True,
+        protection_level: str = "standard",
         sample_text: str = "",
-        title_text: Optional[str] = None,
-        title_position: Optional[list[float]] = None,
         output_ratio: str = "Original",
         frame_fill: str = "blur",
         crop_top: float = 0.0,
@@ -2369,8 +2376,11 @@ class MediaDownloader:
             sub_style=sub_style,
             sub_font=sub_font,
             sample_text=sample_text,
-            title_text=title_text,
-            title_position=title_position,
+            manual_blur_boxes=manual_blur_boxes,
+            sub_visual_overrides=sub_visual_overrides,
+            sub_font_custom_path=sub_font_custom_path,
+            sub_bold=sub_bold,
+            protection_level=protection_level,
             output_ratio=output_ratio,
             frame_fill=frame_fill,
             crop_top=crop_top,

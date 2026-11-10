@@ -61,6 +61,73 @@ def ass_colour_to_rgba(colour: Any) -> tuple[int, int, int, int]:
     return (rr, gg, bb, 255 - aa)
 
 
+def hex_to_rgba(value: Any, alpha: int = 255) -> tuple[int, int, int, int] | None:
+    """``#RRGGBB`` (or ``RRGGBB``) → Pillow RGBA; None when unparsable."""
+    s = str(value or "").strip().lstrip("#")
+    if len(s) != 6:
+        return None
+    try:
+        r, g, b = (int(s[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+    return (r, g, b, max(0, min(255, int(alpha))))
+
+
+def rgba_to_ass_colour(rgba: tuple[int, int, int, int]) -> str:
+    """Pillow RGBA → ASS ``&HAABBGGRR`` (ASS alpha is transparency)."""
+    r, g, b, a = (int(v) for v in rgba)
+    return f"&H{255 - a:02X}{b:02X}{g:02X}{r:02X}"
+
+
+def apply_visual_overrides(
+    visuals: dict[str, Any],
+    overrides: dict[str, Any] | None,
+    canvas_h: int,
+    font_px: int,
+) -> dict[str, Any]:
+    """Batch DD: fold the user's free subtitle-style controls into a
+    preset's PNG visuals. ONE implementation shared by the production
+    burn and the preview composite, so what the preview paints is
+    what the render burns.
+
+    Override keys (all optional; absent keys keep the preset):
+    ``text_color`` / ``outline_color`` / ``bg_color`` are ``#RRGGBB``
+    hex strings; ``outline_width`` is in ASS outline units (scaled
+    exactly like a preset's outline, R40 cap included); ``bg_opacity``
+    is 0..1 (0 removes the background box); ``shadow`` is a bool.
+    """
+    if not overrides:
+        return visuals
+    out = dict(visuals)
+    fill = hex_to_rgba(overrides.get("text_color"))
+    if fill is not None:
+        out["fill"] = fill
+    stroke_col = hex_to_rgba(overrides.get("outline_color"))
+    if stroke_col is not None:
+        out["stroke_colour"] = stroke_col
+    if overrides.get("outline_width") is not None:
+        try:
+            w = float(overrides["outline_width"])
+        except (TypeError, ValueError):
+            w = -1.0
+        if w >= 0:
+            px = max(1.5, w * (max(240, int(canvas_h)) / 720.0))
+            px = min(px, max(1.5, 0.08 * max(1, int(font_px))))
+            out["stroke_px"] = max(0, int(round(px * 0.75)))
+    bg = hex_to_rgba(overrides.get("bg_color"))
+    opacity = overrides.get("bg_opacity")
+    if bg is not None:
+        op = 0.75 if opacity is None else max(0.0, min(1.0, float(opacity)))
+        out["band"] = (bg[0], bg[1], bg[2], int(round(op * 255))) if op > 0 else None
+    elif opacity is not None and out.get("band") is not None:
+        op = max(0.0, min(1.0, float(opacity)))
+        band = out["band"]
+        out["band"] = (band[0], band[1], band[2], int(round(op * 255))) if op > 0 else None
+    if overrides.get("shadow") is not None:
+        out["shadow"] = bool(overrides["shadow"])
+    return out
+
+
 def subtitle_outline_px(preset: dict[str, Any], canvas_h: int, font_px: int) -> float:
     """The outline width (px) libass would have burned for a preset.
 
@@ -294,6 +361,7 @@ class PngSubtitleRenderer:
                 "sc": visuals.get("stroke_colour"),
                 "sp": stroke,
                 "band": visuals.get("band"),
+                "shadow": bool(visuals.get("shadow")),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -331,6 +399,22 @@ class PngSubtitleRenderer:
                 [0, 0, w - 1, h - 1],
                 radius=max(6, int(round(font_px * 0.18))),
                 fill=tuple(band),
+            )
+        if visuals.get("shadow"):
+            # Batch DD: drop shadow — the same text drawn once,
+            # offset down-right in translucent black, under the
+            # main pass. Offset scales with the font so the preview
+            # and the render (same renderer) agree at every size.
+            sh = max(2, int(round(font_px * 0.06)))
+            draw.multiline_text(
+                (pad_x - bbox[0] + sh, pad_y - bbox[1] + sh),
+                joined,
+                font=font,
+                fill=(0, 0, 0, 170),
+                stroke_width=stroke,
+                stroke_fill=(0, 0, 0, 170),
+                spacing=spacing,
+                align="center",
             )
         draw.multiline_text(
             (pad_x - bbox[0], pad_y - bbox[1]),

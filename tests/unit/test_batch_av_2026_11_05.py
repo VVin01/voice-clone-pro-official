@@ -55,6 +55,13 @@ REMOVED_IDS = {
     "recap-adv-section-frame", "recap-adv-section-speed",
     "recap-adv-section-other",
     "recap-step1-tut-btn",
+    # Batch DD: the title feature's controls are removed for good.
+    "preview-title-box", "title-pos-sliders", "slider-title-x",
+    "val-title-x", "slider-title-y", "val-title-y",
+    "recap-title-controls", "recap-title-toggle", "recap-title-text",
+    "recap-title-fallback-hint",
+    # Batch DD: the font-size pill toolbar became a slider row.
+    "font-size-picker-toolbar",
 }
 
 SURVIVING_IDS = [
@@ -65,7 +72,7 @@ SURVIVING_IDS = [
     "crop-shade-bottom", "crop-shade-left", "crop-shade-right",
     "canvas-no-thumb", "canvas-preview-loading", "canvas-source-label",
     "preview-logo", "preview-blur-box", "preview-sub-box",
-    "preview-title-box", "mockup-fill-badge",
+    "mockup-fill-badge",
     "recap-preview-ratio-group", "recap-preview-controls-group",
     "canvas-compact-toolbar", "tb-panel-seek", "canvas-seek-time-badge",
     "slider-canvas-seek", "btn-seek-prev-5", "btn-canvas-play-toggle",
@@ -74,10 +81,11 @@ SURVIVING_IDS = [
     "slider-blur-x", "val-blur-x", "slider-blur-w", "val-blur-w",
     "slider-blur-strength", "val-blur-strength",
     "slider-sub-y", "val-sub-y", "slider-sub-x", "val-sub-x",
-    "slider-sub-w", "val-sub-w", "title-pos-sliders",
-    "slider-title-x", "val-title-x", "slider-title-y", "val-title-y",
+    "slider-sub-w", "val-sub-w",
     "btn-reset-canvas-layout",
-    "sub-style-picker", "sub-lines-picker-toolbar", "font-size-picker-toolbar",
+    # Batch DD: font size is a full-width slider row now.
+    "sub-style-picker", "sub-lines-picker-toolbar", "slider-font-size",
+    "val-font-size",
     "recap-sub-font-picker", "recap-quality-picker",
     "recap-crop-presets-toolbar", "recap-logo-pos-picker",
     "recap-logo-manager", "recap-logo-controls", "recap-logo-thumb",
@@ -110,8 +118,7 @@ SURVIVING_IDS = [
     # retired — the surviving language control is "recap-lang-more".
     "recap-lang-more", "recap-split-toggle", "recap-split-minutes-wrap",
     "recap-split-minutes-picker", "recap-split-cost-hint",
-    "recap-title-controls", "recap-title-toggle", "recap-title-text",
-    "recap-title-fallback-hint", "recap-script-review-toggle",
+    "recap-script-review-toggle",
     "btn-start-recap", "recap-unverified-warning", "prefs-saved-note",
     "recap-inline-status", "recap-inline-status-text",
     "recap-progress-box", "recap-spinner", "recap-status-msg",
@@ -138,9 +145,11 @@ PAYLOAD_KEYS = [
     # Batch BI deliberate pin update: the auto-detect blur switch
     # rides the submit payload as blur_auto_detect.
     "blur_auto_detect",
-    "burn_subtitles", "sub_bottom_margin", "sub_x", "sub_w", "sub_style",
+    # Batch DD deliberate pin update: the four title keys are
+    # gone; sub_y joined (Top/Center position bands); the DD
+    # settings ride the ddConfigExtras() spread after sub_lines.
+    "burn_subtitles", "sub_bottom_margin", "sub_y", "sub_x", "sub_w", "sub_style",
     "sub_font_size", "sub_font", "sub_lines", "include_logo", "logo_pos",
-    "title_enabled", "title_text", "title_x", "title_y",
     "duration_seconds", "script_review", "source_language",
     "render_quality", "tts_engine", "gemini_voice",
     # Batch BV deliberate pin update: the own-voice sample handle
@@ -248,7 +257,7 @@ def test_av_step2_visible_vs_detail_split():
     # font, position sliders together — never split across groups).
     sub = detail[detail.index('id="recap-subtitle-group"'):detail.index('id="recap-blur-group"')]
     for marker in ('id="btn-toggle-subs"', 'id="sub-style-picker"',
-                   'id="sub-lines-picker-toolbar"', 'id="font-size-picker-toolbar"',
+                   'id="sub-lines-picker-toolbar"', 'id="slider-font-size"',
                    'id="recap-sub-font-picker"', 'id="slider-sub-y"',
                    'id="slider-sub-x"', 'id="slider-sub-w"'):
         assert marker in sub, marker
@@ -258,10 +267,10 @@ def test_av_step2_visible_vs_detail_split():
                    'id="slider-blur-w"', 'id="slider-blur-strength"'):
         assert marker in blur, marker
     assert 'id="slider-sub-y"' not in blur
-    # Title group: toggle + text + X/Y sliders together.
+    # Batch DD: there is no title group in the detail area at all.
     for marker in ('id="recap-title-toggle"', 'id="recap-title-text"',
                    'id="slider-title-x"', 'id="slider-title-y"'):
-        assert marker in detail, marker
+        assert marker not in detail, marker
     # Picture/transform group: mirror, zoom, framing presets, custom crop.
     for marker in ('id="btn-toggle-mirror"', 'id="recap-zoom-picker"',
                    'id="recap-crop-presets-toolbar"', 'id="btn-sync-crop"',
@@ -324,7 +333,8 @@ def test_av_step_module_behaviour():
 # ── Drag handles: differentiated and off the subtitle text ──
 
 def test_av_grips_differentiated_and_offset():
-    assert "📝 ⠿" in TAB and "🏷️ ⠿" in TAB and "🌫️ ⠿" in TAB
+    # Batch DD: the title grip is gone with the title box.
+    assert "📝 ⠿" in TAB and "🏷️ ⠿" not in TAB and "🌫️ ⠿" in TAB
     rule = re.search(r"\.preview-sub-box \.sub-grip,\s*\.preview-title-box \.title-grip \{([^}]+)\}",
                      STYLE_CSS)
     assert rule, "grip offset rule missing"
@@ -369,5 +379,5 @@ def test_av_touch_targets_and_text_fit_guards():
 
 def test_av_cache_token_bumped():
     # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ) → r73 (AW) → r74 (BA) → r75 (BB) → r76 (BF) → r77 (BC) → r78 (BG) → r79 (BE) → r80 (BD) → r81 (BH) → r82 (BI) → r83 (BJ) → r84 (BK) → r85 (BM) → r86 (BN) → r87 (BO) → r88 (BP) → r89 (BR) → r90 (BS) → r91 (BT) → r92 (BU) → r93 (BV) → r94 (BW) → r95 (BX) → r96 (BY) → r97 (BZ) → r98 (CA) → r99 (CB) → r100 (CF) → r101 (CC) → r102 (CD) → r103 (CE) → r104 (CG) → r105 (CH) → r106 (CI) → r107 (CJ) → r108 (CK) → r109 (CL) → r110 (CN) → r111 (CO).
-    assert INDEX_HTML.count("r125") == 4
+    assert INDEX_HTML.count("r126") == 4
     assert "r70" not in INDEX_HTML

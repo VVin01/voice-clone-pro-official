@@ -19,6 +19,10 @@ if str(HERE) not in sys.path:
 
 from recap_planner import RecapPlanBuilder
 from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, user_blur_box_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, subtitle_anchor_x, ensure_plate_contains_anchor, _layout_content_box
+# Batch DD: manual blur-box list conversion, protection levels and
+# the Strong post-process live in core beside their single-box /
+# zoom counterparts so render and preview share them.
+from core import manual_blur_boxes_to_canvas_boxes, normalize_protection_level, protection_zoom_factor, protection_speed_factor, apply_protection_strong
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +143,7 @@ def assemble_blur_boxes(
     detected_bands: Optional[list[dict]] = None,
     fallback_box: Optional[dict] = None,
     user_box: Optional[dict] = None,
+    manual_boxes: Optional[list[dict]] = None,
     blur_watermark: bool = False,
     layout: Optional[dict] = None,
     canvas_w: int = 1920,
@@ -271,14 +276,29 @@ def assemble_blur_boxes(
         boxes.append(plate_out)
     if blur_watermark:
         boxes.append(dict(_WATERMARK_BLUR_BOX))
+    # Batch DD: the user's manual blur-box LIST (already converted
+    # to canvas fractions). Unlike the single user_box it does NOT
+    # suppress detection — detected bands keep working alongside
+    # (Ulfa, 2026-11-09) — but the manual boxes are authoritative:
+    # appended verbatim AFTER the merge pass (the AS-4 rule), and
+    # if one strictly overlaps the plate, the plate yields to it.
+    manual = [dict(b) for b in (manual_boxes or []) if isinstance(b, dict)][:5]
+    if manual and include_plate and plate_out is not None and any(
+        _boxes_strictly_overlap(m, plate_out) for m in manual
+    ):
+        boxes = [b for b in boxes if b is not plate_out]
     if user_box is not None:
         # Batch AS (AS-4): the plate/watermark boxes merge among
         # themselves as before; the user box is appended AFTER the
         # merge, verbatim — the Batch J union (including its 0.02
         # near-touch slack) can never widen the box the user set.
-        return merge_overlapping_blur_boxes(boxes) + extras, covered
-    boxes.extend(extras)
-    return merge_overlapping_blur_boxes(boxes), covered
+        merged = merge_overlapping_blur_boxes(boxes) + extras
+    else:
+        boxes.extend(extras)
+        merged = merge_overlapping_blur_boxes(boxes)
+    if manual:
+        return merged + manual, covered
+    return merged, covered
 
 
 def run_recap_pipeline(
@@ -315,6 +335,7 @@ def run_recap_pipeline(
     blur_x: Optional[float] = None,
     blur_w: Optional[float] = None,
     blur_box_explicit: bool = False,
+    blur_boxes: Optional[list] = None,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
     blur_auto_detect: bool = True,
     blur_watermark: bool = False,
@@ -327,8 +348,10 @@ def run_recap_pipeline(
     sub_font_size: int = 16,
     sub_style: str = "yellow",
     sub_font: str = "padauk",
-    title_text: Optional[str] = None,
-    title_position: Optional[list[float]] = None,
+    sub_visual_overrides: Optional[dict] = None,
+    sub_font_custom_path: Optional[str] = None,
+    sub_bold: bool = True,
+    protection_level: str = "standard",
     logo_path: Optional[str] = None,
     logo_position: Optional[list[float]] = None,
     logo_scale: float = 0.16,
@@ -345,7 +368,7 @@ def run_recap_pipeline(
     6. Smart Sync re-timing (30 fps frame-lock, max 1.25x speed, distributed freeze)
     7. Video transformations (Mirror horizontal, Zoom crop, Ratio)
     8. Original subtitle & watermark blur boxes
-    9. Custom branding (Title badge, Logo) & Synced Myanmar subtitles burn
+    9. Custom branding (Logo) & Synced Myanmar subtitles burn
     10. Final Muxing to MP4
 
     Returns dictionary with final_video path, audio path, subtitles_srt, plan, and metrics.
@@ -412,14 +435,17 @@ def run_recap_pipeline(
     plan_path, plan = planner.build(
         source=source,
         job_dir=target_job_dir,
-        source_title=title_text or source.stem,
+        # Batch DD: the title overlay is gone; the planner's
+        # narration context title is just the source file's stem
+        # (previously the overlay title text doubled as context).
+        source_title=source.stem,
         reuse=True,
     )
 
     if stop_check():
         raise InterruptedError("Recap stopped after planning stage.")
 
-    # Build production overlays (Blur boxes, Title badge, Logo, Synced subtitles)
+    # Build production overlays (Blur boxes, Logo, Synced subtitles)
     overlays: dict[str, Any] = {}
     # R39: the render layout is computed once, up front — the subtitle
     # plate geometry (92% band, line-fitted height, letterbox rim
@@ -556,13 +582,21 @@ def run_recap_pipeline(
             _layout["cw"], _layout["ch"], _layout, sub_x=float(sub_x),
         )
     _asm_layout = _band_layout or _layout or {}
-    blur_boxes, _band_covered = assemble_blur_boxes(
+    # Batch DD: the user's manual blur-box LIST — picture fractions
+    # converted through the same layout math as detected bands
+    # (manual_blur_boxes_to_canvas_boxes → source_band_to_canvas_box),
+    # shipped ALONGSIDE detection (it does not suppress it).
+    _manual_boxes = manual_blur_boxes_to_canvas_boxes(
+        blur_boxes, _band_layout or _layout
+    ) if blur_subtitles else []
+    blur_boxes_out, _band_covered = assemble_blur_boxes(
         blur_subtitles=blur_subtitles,
         burn_subtitles=burn_subtitles,
         plate=_plate,
         detected_bands=_canvas_bands,
         fallback_box=_fallback_box,
         user_box=_user_box,
+        manual_boxes=_manual_boxes,
         blur_watermark=blur_watermark,
         layout=_band_layout,
         canvas_w=int(_asm_layout.get("cw") or 1920),
@@ -578,27 +612,13 @@ def run_recap_pipeline(
     _job_warnings: list[str] = []
     if blur_subtitles and (_detection_failed or not _band_covered):
         _job_warnings.append("blur_no_source_band")
-    if blur_boxes:
-        overlays["blur_boxes"] = blur_boxes
+    if blur_boxes_out:
+        overlays["blur_boxes"] = blur_boxes_out
         overlays["blur_strength"] = clamp_blur_strength(blur_strength)
 
-    if title_text and str(title_text).strip():
-        overlays["title_text"] = str(title_text).strip()
-        # Batch AH: caller-supplied placement — a [tx, ty] pair of
-        # 0..1 title-CENTRE fractions (validated/clamped here so a
-        # malformed value degrades to the default instead of failing
-        # the render); absent keeps the historical [0.5, 0.12].
-        _tp = title_position
-        if isinstance(_tp, (list, tuple)) and len(_tp) == 2:
-            try:
-                overlays["title_position"] = [
-                    max(0.0, min(1.0, float(_tp[0]))),
-                    max(0.0, min(1.0, float(_tp[1]))),
-                ]
-            except (TypeError, ValueError):
-                overlays["title_position"] = [0.5, 0.12]
-        else:
-            overlays["title_position"] = [0.5, 0.12]
+    # Batch DD: the title overlay feature is REMOVED — no title
+    # overlays are set here anymore (legacy callers passing title
+    # kwargs are ignored by signature removal upstream).
 
     if logo_path and Path(logo_path).is_file():
         overlays["logo_path"] = str(logo_path)
@@ -643,6 +663,16 @@ def run_recap_pipeline(
     _font_key, _font_family = resolve_subtitle_font(sub_font)
     overlays["sub_font"] = _font_key
     overlays["subtitles_font"] = _font_family
+    # Batch DD: free style controls + custom font + bold toggle ride
+    # the overlays dict; core.overlays_font_path /
+    # build_subtitle_visuals consume them identically in the burn
+    # and the preview composite.
+    if sub_visual_overrides:
+        overlays["sub_visual_overrides"] = dict(sub_visual_overrides)
+    if sub_font_custom_path:
+        overlays["sub_font_custom_path"] = str(sub_font_custom_path)
+    overlays["sub_bold"] = bool(sub_bold)
+    overlays["protection_level"] = normalize_protection_level(protection_level)
     overlays["tts_engine"] = str(tts_engine or "edge_tts")
     # Production-grade options, consumed by EdgeSmartSync (core.py):
     # render_quality picks the encoder preset; gemini_voice names the
@@ -674,7 +704,9 @@ def run_recap_pipeline(
         max_video_speed=1.35,
         max_video_slow=1.20,
         mirror_video=bool(mirror_video),
-        zoom_factor=float(zoom_factor),
+        # Batch DD: Protection Off forces the plain frame (no
+        # zoom-crop); Standard/Strong keep the user's zoom.
+        zoom_factor=protection_zoom_factor(protection_level, float(zoom_factor)),
         smooth_freeze_fallback=False,
         max_freeze_hold=0.75,
         render_final_video=True,
@@ -696,6 +728,18 @@ def run_recap_pipeline(
     runner.short_pauses = True
 
     result = runner.run()
+    # Batch DD: Protection Strong — one post-process over the whole
+    # finished output (micro speed + pitch, grain, metadata strip).
+    # Failure keeps the original file (helper never raises).
+    _strong_factor = protection_speed_factor(
+        protection_level, target_job_dir.name
+    )
+    if _strong_factor is not None and result.get("final"):
+        _final_path = Path(str(result["final"]))
+        if _final_path.is_file():
+            result["final"] = str(apply_protection_strong(
+                ffmpeg_bin, _final_path, _strong_factor, log=_log
+            ))
     _progress(4, 4, "✅ Final Recap Video Ready!")
     _log(f"🎉 Final Video: {result.get('final')}")
 
@@ -797,6 +841,7 @@ def generate_recap_preview(
     blur_x: Optional[float] = None,
     blur_w: Optional[float] = None,
     blur_box_explicit: bool = False,
+    manual_blur_boxes: Optional[list] = None,
     blur_strength: int = DEFAULT_BLUR_STRENGTH,
     blur_auto_detect: bool = True,
     burn_subtitles: bool = True,
@@ -808,9 +853,11 @@ def generate_recap_preview(
     sub_font_size: int = 16,
     sub_style: str = "yellow",
     sub_font: str = "padauk",
+    sub_visual_overrides: Optional[dict] = None,
+    sub_font_custom_path: Optional[str] = None,
+    sub_bold: bool = True,
+    protection_level: str = "standard",
     sample_text: str = "",
-    title_text: Optional[str] = None,
-    title_position: Optional[list[float]] = None,
     output_ratio: str = "Original",
     frame_fill: str = "blur",
     crop_top: float = 0.0,
@@ -925,6 +972,11 @@ def generate_recap_preview(
                 _p_layout["cw"], _p_layout["ch"], _p_layout, sub_x=float(sub_x),
             )
         _p_asm_layout = _p_band_layout or _p_layout or {}
+        # Batch DD: manual blur-box list — same conversion and the
+        # same assembly call as the render path (parity by sharing).
+        _p_manual = manual_blur_boxes_to_canvas_boxes(
+            manual_blur_boxes, _p_band_layout or _p_layout
+        )
         blur_boxes, _p_covered = assemble_blur_boxes(
             blur_subtitles=blur_subtitles,
             burn_subtitles=burn_subtitles,
@@ -932,6 +984,7 @@ def generate_recap_preview(
             detected_bands=_p_bands,
             fallback_box=_p_fallback,
             user_box=_p_user_box,
+            manual_boxes=_p_manual,
             blur_watermark=False,
             layout=_p_band_layout,
             canvas_w=int(_p_asm_layout.get("cw") or 1920),
@@ -945,24 +998,12 @@ def generate_recap_preview(
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
         overlays["sub_y"] = float(sub_y)
-    # Batch AK: bottom-edge anchor + title badge ride the preview
-    # overlays too, so the composited preview shows the placement
-    # and the title exactly as the render burns them.
+    # Batch AK: the bottom-edge anchor rides the preview overlays
+    # too, so the composited preview shows the placement exactly as
+    # the render burns it. (Batch DD: the title badge is gone —
+    # production no longer renders it, so neither does the preview.)
     if sub_margin is not None:
         overlays["sub_margin"] = float(sub_margin)
-    if title_text and str(title_text).strip():
-        overlays["title_text"] = str(title_text).strip()
-        _tp = title_position
-        if isinstance(_tp, (list, tuple)) and len(_tp) == 2:
-            try:
-                overlays["title_position"] = [
-                    max(0.0, min(1.0, float(_tp[0]))),
-                    max(0.0, min(1.0, float(_tp[1]))),
-                ]
-            except (TypeError, ValueError):
-                overlays["title_position"] = [0.5, 0.12]
-        else:
-            overlays["title_position"] = [0.5, 0.12]
     # Batch AG: the preview's sample subtitle honours sub_x through
     # the same overlays dict (extract_preview_with_overlays resolves
     # it via the shared centre-X resolver).
@@ -976,6 +1017,15 @@ def generate_recap_preview(
     _p_font_key, _p_font_family = resolve_subtitle_font(sub_font)
     overlays["sub_font"] = _p_font_key
     overlays["subtitles_font"] = _p_font_family
+    # Batch DD: free style controls + custom font + bold — the
+    # preview resolves them through the same core helpers as the
+    # burn, so the frame shows the render's exact look.
+    if sub_visual_overrides:
+        overlays["sub_visual_overrides"] = dict(sub_visual_overrides)
+    if sub_font_custom_path:
+        overlays["sub_font_custom_path"] = str(sub_font_custom_path)
+    overlays["sub_bold"] = bool(sub_bold)
+    overlays["protection_level"] = normalize_protection_level(protection_level)
 
     if logo_enabled and logo_path:
         overlays["logo_enabled"] = True
@@ -997,7 +1047,7 @@ def generate_recap_preview(
         crop_left=crop_left,
         crop_right=crop_right,
         mirror_video=mirror_video,
-        zoom_factor=zoom_factor,
+        zoom_factor=protection_zoom_factor(protection_level, zoom_factor),
         sample_text=sample_text,
         ffprobe=ffprobe_bin,
     )

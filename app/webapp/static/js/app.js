@@ -411,15 +411,24 @@ const state = {
     // derived centre-% the canvas drag math works in.
     recapSubMargin: 5,
     recapSettingsVersion: 2,
-    // Batch AH: recap title overlay — off by default (the historical
-    // Mini App behaviour: no title badge was rendered); the position
-    // is the title CENTRE as percents of the picture width/height,
-    // the engine's title_position basis. The sliders are the live
-    // source of truth while the studio is open.
-    recapTitleEnabled: false,
-    recapTitleText: "",
-    recapTitleX: 50,
-    recapTitleY: 12,
+    // Batch DD: Step-2 rebuild state — protection level, free
+    // subtitle-style controls, the manual blur-box LIST (percents
+    // of the picture: {x: left, y: centre, w, h, strength}), the
+    // custom-font handle and the subtitle position band. The title
+    // overlay state is GONE with the feature.
+    recapProtection: "standard",
+    recapTextColor: "",
+    recapOutlineColor: "",
+    recapBgColor: "",
+    recapOutlineWidth: null,
+    recapBgOpacity: null,
+    recapSubShadow: false,
+    recapSubBold: true,
+    recapBlurBoxes: [],
+    recapBlurBoxIndex: 0,
+    recapSubFontCustomId: "",
+    recapSubFontCustomName: "",
+    recapSubPosBand: "bottom",
     // Batch AA: identity of the last successfully loaded source
     // ("url:<url>" / "file:<server path>") — the new-source reset
     // fires only when a success event brings a DIFFERENT source.
@@ -1407,19 +1416,46 @@ function subtitleFontFractionOfPicture(sizePt, lines) {
         if (pt >= x0 && pt <= x1) { frac = y0 + (y1 - y0) * ((pt - x0) / (x1 - x0)); break; }
     }
     if (frac == null) frac = pts[pts.length - 1][1];
-    if (parseInt(lines) === 2) frac *= 1.25;
+    if ((parseInt(lines) || 1) !== 1) frac *= 1.25;
     return frac / 100;
 }
 function convertSubCentreToMargin(centrePct, fontSizePt, lines) {
     const PH = 608;
     const fp = Math.max(18, Math.round(PH * subtitleFontFractionOfPicture(fontSizePt || 16, lines || 1)));
-    const textH = fp * ((parseInt(lines) === 2) ? 2.30 : 1.15);
+    const textH = fp * 1.15 * Math.max(1, parseInt(lines) || 1);
     const pad = Math.max(10, fp * 0.40);
     const plateFrac = (textH + 2 * pad) / PH;
     const margin = (100 - centrePct) - (plateFrac * 100) / 2;
     return Math.round(Math.min(95, Math.max(0, margin)));
 }
 window.convertSubCentreToMargin = convertSubCentreToMargin;
+// Batch DD: the Step-2 rebuild's payload fields, shared by the
+// submit payload and the preview-composite payload so both send
+// the SAME normalised values (preview == render). Fields are
+// omitted when unset, so a job with no custom choices parses to
+// exactly the pre-DD config.
+function ddConfigExtras() {
+    const out = {};
+    const boxes = Array.isArray(state.recapBlurBoxes) ? state.recapBlurBoxes : [];
+    if (boxes.length) {
+        out.blur_boxes = boxes.slice(0, 5).map(b => ({
+            x: Math.round(b.x), y: Math.round(b.y),
+            w: Math.round(b.w), h: Math.round(b.h),
+            strength: Math.max(4, Math.min(40, parseInt(b.strength) || 18)),
+        }));
+    }
+    out.protection_level = state.recapProtection || "standard";
+    if (state.recapTextColor) out.sub_text_color = state.recapTextColor;
+    if (state.recapOutlineColor) out.sub_outline_color = state.recapOutlineColor;
+    if (state.recapBgColor) out.sub_bg_color = state.recapBgColor;
+    if (state.recapOutlineWidth != null) out.sub_outline_width = state.recapOutlineWidth;
+    if (state.recapBgOpacity != null) out.sub_bg_opacity = state.recapBgOpacity;
+    if (state.recapSubShadow) out.sub_shadow = true;
+    out.sub_bold = state.recapSubBold !== false;
+    if (state.recapSubFontCustomId) out.sub_font_custom_id = state.recapSubFontCustomId;
+    return out;
+}
+window.ddConfigExtras = ddConfigExtras;
 function collectAccountPrefs() {
     const bs = document.getElementById("slider-blur-strength");
     const sy = document.getElementById("slider-sub-y");
@@ -1464,12 +1500,18 @@ function collectAccountPrefs() {
         // geometry stays out, exactly like its vertical geometry).
         recapSubX: sxEl ? parseInt(sxEl.value) : (state.recapSubX || 50),
         recapSubW: swEl ? parseInt(swEl.value) : (state.recapSubW || 92),
-        // Batch AH: title overlay settings are account preferences
-        // (toggle, custom text, centre position).
-        recapTitleEnabled: !!state.recapTitleEnabled,
-        recapTitleText: state.recapTitleText || "",
-        recapTitleX: state.recapTitleX != null ? state.recapTitleX : 50,
-        recapTitleY: state.recapTitleY != null ? state.recapTitleY : 12,
+        // Batch DD: protection + free style controls + blur-box
+        // list + custom font are account preferences now.
+        recapProtection: state.recapProtection || "standard",
+        recapTextColor: state.recapTextColor || "",
+        recapOutlineColor: state.recapOutlineColor || "",
+        recapBgColor: state.recapBgColor || "",
+        recapOutlineWidth: state.recapOutlineWidth != null ? state.recapOutlineWidth : -1,
+        recapBgOpacity: state.recapBgOpacity != null ? state.recapBgOpacity : 75,
+        recapSubShadow: !!state.recapSubShadow,
+        recapSubBold: state.recapSubBold !== false,
+        recapBlurBoxesJson: JSON.stringify(state.recapBlurBoxes || []),
+        recapSubFontCustomId: state.recapSubFontCustomId || "",
         recapBlurStrength: bs ? parseInt(bs.value) : (state.recapBlurStrength || 18),
         recapZoom: state.recapZoom,
         recapVoice: state.recapVoice,
@@ -1521,15 +1563,23 @@ function applyAccountPrefs(prefs) {
         "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
         "recapSubMargin", "recapSettingsVersion",
         "recapSubX", "recapSubW",
-        // Batch BR: recapTitleEnabled is session-truth — account
-        // prefs must not resurrect the title toggle on load either
-        // (restore's checkbox re-sync reads state, so applying the
-        // key here would silently turn the toggle back ON). The
-        // title text/position still restore as before.
-        "recapTitleText", "recapTitleX", "recapTitleY",
+        // Batch DD keys (protection, free style controls,
+        // blur-box list JSON, custom font handle).
+        "recapProtection", "recapTextColor", "recapOutlineColor",
+        "recapBgColor", "recapOutlineWidth", "recapBgOpacity",
+        "recapSubShadow", "recapSubBold", "recapSubFontCustomId",
         "recapZoom", "recapVoice", "recapGeminiVoice",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
+    // Batch DD: the blur-box list rides prefs as JSON.
+    if (typeof prefs.recapBlurBoxesJson === "string" && prefs.recapBlurBoxesJson) {
+        try {
+            const arr = JSON.parse(prefs.recapBlurBoxesJson);
+            if (Array.isArray(arr)) state.recapBlurBoxes = arr.filter(b => b && typeof b === "object").slice(0, 5);
+        } catch (e) {}
+    }
+    if (state.recapOutlineWidth === -1) state.recapOutlineWidth = null;
+    if (typeof prefs.recapBgOpacity !== "number") state.recapBgOpacity = null;
     cacheAccountPrefs(prefs);
     // Batch AM (M8ii): the recap controls were synced at boot from
     // the LOCAL snapshot; the server prefs above may differ (another
@@ -4997,7 +5047,7 @@ function refreshRecapStep4Facts() {
     } else {
         set("recap-fact-subs", "📝 " + t("recap_fact_off"));
     }
-    set("recap-fact-title", "🏷️ " + t(state.recapTitleEnabled ? "recap_fact_on" : "recap_fact_off"));
+    set("recap-fact-title", "🛡️ " + t("recap_protection_" + (state.recapProtection || "standard")));
     set("recap-fact-blur", "🌫️ " + t(state.recapBlurSubs !== false ? "recap_fact_on" : "recap_fact_off"));
     const qBtn = document.querySelector("#recap-quality-picker .pill-btn.active");
     set("recap-fact-quality", "🎞️ " + (qBtn ? qBtn.textContent.trim() : (state.recapRenderQuality || "standard")));
@@ -5089,8 +5139,6 @@ function setupRecapVisualEditor() {
     const sliderSubY = document.getElementById("slider-sub-y");
     const sliderSubX = document.getElementById("slider-sub-x");
     const sliderSubW = document.getElementById("slider-sub-w");
-    const sliderTitleX = document.getElementById("slider-title-x");
-    const sliderTitleY = document.getElementById("slider-title-y");
 
     const valBlurY = document.getElementById("val-blur-y");
     const valBlurH = document.getElementById("val-blur-h");
@@ -5100,14 +5148,11 @@ function setupRecapVisualEditor() {
     const valSubY = document.getElementById("val-sub-y");
     const valSubX = document.getElementById("val-sub-x");
     const valSubW = document.getElementById("val-sub-w");
-    const valTitleX = document.getElementById("val-title-x");
-    const valTitleY = document.getElementById("val-title-y");
 
     const previewBlur = document.getElementById("preview-blur-box");
     // Batch AK: the CSS plate element is gone — the composited
     // frame carries the engine's real plate (see S2).
     const previewSub = document.getElementById("preview-sub-box");
-    const previewTitle = document.getElementById("preview-title-box");
     const previewLogo = document.getElementById("preview-logo");
     const canvas = document.getElementById("video-bg-canvas");
     const mockupFrame = document.getElementById("recap-mockup-frame");
@@ -5770,8 +5815,6 @@ function setupRecapVisualEditor() {
         const g = (id) => document.getElementById(id);
         const iv = (el, dflt) => el ? parseInt(el.value) : dflt;
         const seek = g("slider-canvas-seek");
-        const titleOn = !!state.recapTitleEnabled;
-        const customTitle = (state.recapTitleText || "").trim();
         // N3: the real first cue once the script editor has one.
         let sample = "";
         const firstSeg = document.querySelector("#recap-script-list .script-seg-text");
@@ -5805,16 +5848,25 @@ function setupRecapVisualEditor() {
             sub_style: state.recapSubStyle || "yellow",
             sub_font: state.recapSubFont || "padauk",
             sample_text: sample || null,
-            // The client resolves the Addition-B fallback (custom
-            // text, else the video's own title) — the preview burns
-            // exactly the text the render will.
-            title_enabled: titleOn,
-            title_text: titleOn ? (customTitle || (state.recapVideoTitle || "") || null) : null,
-            title_x: iv(g("slider-title-x"), state.recapTitleX || 50),
-            title_y: iv(g("slider-title-y"), state.recapTitleY != null ? state.recapTitleY : 12),
+            // Batch DD: protection, free style controls, custom
+            // font and the blur-box list — the composite consumes
+            // the same normalised fields as the submit payload.
+            ...ddConfigExtras(),
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",
         };
+    }
+    // Batch DD: with a blur-box list present, the legacy
+    // single-box flag must not ride along (the list supersedes it).
+    function ddCompositePayload() {
+        const p = recapCompositePayload();
+        if (Array.isArray(p.blur_boxes) && p.blur_boxes.length) p.blur_box_explicit = false;
+        // Batch DD: position band — Top/Centre ride the centre-%
+        // sub_y (and suppress the bottom margin); Bottom is the
+        // margin path, exactly as before.
+        if (state.recapSubPosBand === "top") { p.sub_y = 15; p.sub_bottom_margin = null; }
+        else if (state.recapSubPosBand === "center") { p.sub_y = 50; p.sub_bottom_margin = null; }
+        return p;
     }
     function scheduleRecapCompositeRefresh() {
         if (!state.recapVerifiedSourceUrl && !state.uploadedVideoPath) return;
@@ -5824,7 +5876,7 @@ function setupRecapVisualEditor() {
     window.scheduleRecapCompositeRefresh = scheduleRecapCompositeRefresh;
     async function refreshRecapCompositePreview() {
         if (!state.recapVerifiedSourceUrl && !state.uploadedVideoPath) return;
-        const payload = recapCompositePayload();
+        const payload = ddCompositePayload();
         const hash = JSON.stringify(payload);
         if (hash === recapCompositeHash) return; // nothing changed
         const mySeq = ++recapCompositeSeq;
@@ -6027,106 +6079,26 @@ function setupRecapVisualEditor() {
         return sw * r.pw;
     }
 
-    // Batch AH: title centre as canvas fractions on BOTH axes — the
-    // engine's title_position basis ([tx, ty] are the title CENTRE
-    // as fractions of the PICTURE; core.py overlays the title PNG at
-    // ox + pw*tx − w/2, oy + ph*ty − h/2), so the dragged preview
-    // position is the rendered position.
-    function titleCentreCanvasFrac(xPercent, yPercent) {
+    // Batch AA/AG: the blur box's canvas geometry from its
+    // PICTURE-relative percents — the exact mirror of
+    // core.user_blur_box_to_canvas_box (centre = oy + y × ph,
+    // left = ox + x × pw), so the box the user drags is the box
+    // the render blurs. x/w default to the legacy centred box
+    // (4% / 92%) when not supplied.
+    function blurBoxCanvasGeom(yPercent, hPercent, xPercent, wPercent) {
         const r = recapPictureRect();
-        const tx = Math.max(0, Math.min(100, xPercent)) / 100.0;
-        const ty = Math.max(0, Math.min(100, yPercent)) / 100.0;
+        const y = Math.max(0, Math.min(100, parseFloat(yPercent) || 0)) / 100.0;
+        const h = Math.max(0, Math.min(100, parseFloat(hPercent) || 0)) / 100.0;
+        const x = (xPercent == null ? 4 : Math.max(0, Math.min(100, parseFloat(xPercent) || 0))) / 100.0;
+        const w = (wPercent == null ? 92 : Math.max(0, Math.min(100, parseFloat(wPercent) || 0))) / 100.0;
         return {
-            x: (r.pw < 1 - 0.002) ? r.ox + tx * r.pw : tx,
-            y: ((r.oy + r.ph) < 1 - 0.002) ? r.oy + ty * r.ph : ty,
+            centre: r.oy + y * r.ph,
+            height: h * r.ph,
+            left: r.ox + x * r.pw,
+            width: w * r.pw,
         };
     }
 
-    // Batch AH: paint the title box from the sliders/state — shown
-    // only while the title toggle is on. The text is the user's
-    // custom text, else the source video's own title (the same
-    // fallback the API applies), else the sample label; the box is
-    // capped at the render's 78%-of-picture title width.
-    function syncTitleBoxVisual() {
-        if (!previewTitle) return;
-        const enabled = !!state.recapTitleEnabled;
-        previewTitle.classList.toggle("hidden", !enabled);
-        const x = sliderTitleX ? parseFloat(sliderTitleX.value) : (state.recapTitleX || 50);
-        const y = sliderTitleY ? parseFloat(sliderTitleY.value) : (state.recapTitleY != null ? state.recapTitleY : 12);
-        state.recapTitleX = Math.round(x);
-        state.recapTitleY = Math.round(y);
-        if (valTitleX) valTitleX.innerText = `${Math.round(x)}%`;
-        if (valTitleY) valTitleY.innerText = `${Math.round(y)}%`;
-        syncTitleFallbackHint();
-        // Batch AS (AS-3b): the refresh must ALSO fire when the
-        // title is switched OFF — the composited frame burns the
-        // title, so skipping the refresh on the disabled path left
-        // the burned badge in the preview indefinitely (the DOM
-        // handle hid, the picture kept the title). The scheduler is
-        // hash-guarded and source-guarded, so calling it on every
-        // sync is safe.
-        scheduleRecapCompositeRefresh();
-        if (!enabled) return;
-        const c = titleCentreCanvasFrac(x, y);
-        const r = recapPictureRect();
-        previewTitle.style.left = `${(c.x * 100).toFixed(3)}%`;
-        previewTitle.style.top = `${(c.y * 100).toFixed(3)}%`;
-        previewTitle.style.right = "auto";
-        previewTitle.style.bottom = "auto";
-        previewTitle.style.transform = "translate(-50%, -50%)";
-        previewTitle.style.maxWidth = `${(0.78 * r.pw * 100).toFixed(3)}%`;
-        // Batch AK: the box is an outline handle — the title itself
-        // renders inside the composited frame (the composite refresh
-        // is scheduled above, for BOTH the on and off paths).
-    }
-
-    // Batch AK (Addition B): the fallback hint — visible exactly
-    // when the title toggle is ON and the custom text is empty, the
-    // state where the video's OWN title gets burned for the whole
-    // video. The toggle itself lives in the main form flow (never
-    // buried), so its state is always visible.
-    function syncTitleFallbackHint() {
-        const hint = document.getElementById("recap-title-fallback-hint");
-        if (!hint) return;
-        const show = !!state.recapTitleEnabled && !(state.recapTitleText || "").trim();
-        hint.classList.toggle("hidden", !show);
-    }
-
-    // Batch AA: the blur box is drawn on the PICTURE, exactly like
-    // the subtitle (recapter standard) — blur_y is the box centre as
-    // a fraction of the PICTURE height and blur_h its height as a
-    // fraction of the picture height, end-to-end (sliders → payload
-    // → engine; core.user_blur_box_to_canvas_box converts with this
-    // same layout math at render). Returns the box geometry as
-    // fractions of the CANVAS height for painting: centre =
-    // oy + blur_y × ph, height = blur_h × ph on letterboxed layouts;
-    // identity on full-frame layouts. Width stays 92% centred (CSS).
-    // Batch AG: with xPercent / wPercent given, the horizontal axis
-    // joins the same picture basis — left = ox + blur_x × pw,
-    // width = blur_w × pw (canvas fractions) — and is returned as
-    // left/width for explicit painting; without them the legacy
-    // centred 92% paint is returned (left 0.04, width 0.92).
-    function blurBoxCanvasGeom(yPercent, hPercent, xPercent, wPercent) {
-        const r = recapPictureRect();
-        const y = Math.max(0, Math.min(100, yPercent)) / 100.0;
-        const h = Math.max(0, Math.min(100, hPercent)) / 100.0;
-        let left = 0.04, width = 0.92;
-        if (xPercent !== undefined || wPercent !== undefined) {
-            const wF = (wPercent === undefined ? 92 : Math.max(0, Math.min(100, wPercent))) / 100.0;
-            const xF = (xPercent === undefined ? (1 - wF) * 50 : Math.max(0, Math.min(100, xPercent))) / 100.0;
-            left = r.ox + xF * r.pw;
-            width = wF * r.pw;
-        }
-        if ((r.oy + r.ph) < 1 - 0.002) {
-            return { centre: r.oy + y * r.ph, height: h * r.ph, left, width };
-        }
-        return { centre: y, height: h, left, width };
-    }
-
-    // Batch AA: a NEW source starts from the tight defaults — the
-    // previous video's blur box / subtitle position must not ride
-    // onto a different picture. Resets the sliders, the state, the
-    // persisted snapshot and the explicit-box marker, and repaints.
     // History re-run prefill does NOT go through here (it restores a
     // job's own settings on purpose), and a page reload restoring
     // the same session's snapshot is untouched: this is called only
@@ -6223,6 +6195,8 @@ function setupRecapVisualEditor() {
         // Batch AK: the blur geometry feeds the composited frame —
         // a blur change re-renders it (debounced + hash-guarded).
         scheduleRecapCompositeRefresh();
+        // Batch DD: mirror the geometry into the selected list box.
+        if (typeof ddAfterBlurSync === "function") ddAfterBlurSync();
     }
 
     // Batch AK: fitBlurPlateToCaption and its plate element are
@@ -6324,6 +6298,12 @@ function setupRecapVisualEditor() {
 
     if (sliderSubY && previewSub && valSubY) {
         sliderSubY.addEventListener("input", () => {
+            // Batch DD: touching the margin slider returns the
+            // position band to Bottom (the margin's own band).
+            if (state.recapSubPosBand !== "bottom") {
+                state.recapSubPosBand = "bottom";
+                if (typeof ddSyncPosBandPills === "function") ddSyncPosBandPills();
+            }
             syncSubBoxVisual();
         });
     }
@@ -6337,47 +6317,6 @@ function setupRecapVisualEditor() {
     if (sliderSubW && previewSub && valSubW) {
         sliderSubW.addEventListener("input", () => {
             syncSubBoxVisual();
-        });
-    }
-
-    // Batch AH: title position sliders mirror the canvas drag.
-    if (sliderTitleX && previewTitle && valTitleX) {
-        sliderTitleX.addEventListener("input", () => {
-            syncTitleBoxVisual();
-        });
-    }
-
-    if (sliderTitleY && previewTitle && valTitleY) {
-        sliderTitleY.addEventListener("input", () => {
-            syncTitleBoxVisual();
-        });
-    }
-
-    // Batch BI: auto-detect blur switch — the change lands in state;
-    // the tab-level delegated saver snapshots it like every other
-    // recap setting, and collectAccountPrefs carries it server-side.
-    const blurAutoDetectToggleEl = document.getElementById("recap-blur-autodetect-toggle");
-    if (blurAutoDetectToggleEl) {
-        blurAutoDetectToggleEl.addEventListener("change", () => {
-            state.recapBlurAutoDetect = !!blurAutoDetectToggleEl.checked;
-        });
-    }
-
-    // Batch AH: title enable toggle + custom text (the controls live
-    // in the main form area above the CTA; the box/sliders follow).
-    const titleToggleEl = document.getElementById("recap-title-toggle");
-    const titleTextEl = document.getElementById("recap-title-text");
-    if (titleToggleEl) {
-        titleToggleEl.addEventListener("change", () => {
-            state.recapTitleEnabled = !!titleToggleEl.checked;
-            if (titleTextEl) titleTextEl.classList.toggle("hidden", !state.recapTitleEnabled);
-            syncTitleBoxVisual();
-        });
-    }
-    if (titleTextEl) {
-        titleTextEl.addEventListener("input", () => {
-            state.recapTitleText = titleTextEl.value || "";
-            syncTitleBoxVisual();
         });
     }
 
@@ -6604,25 +6543,6 @@ function setupRecapVisualEditor() {
         return (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
     }, () => [10, 90]);
 
-    // Batch AH: the title box drags on BOTH axes over the full
-    // picture (its centre is the engine's title_position), reusing
-    // the same two drag helpers and picture-scaled deltas.
-    enableVerticalDrag(previewTitle, (y) => {
-        if (sliderTitleY) sliderTitleY.value = y;
-        syncTitleBoxVisual();
-    }, () => sliderTitleY ? parseFloat(sliderTitleY.value) : 12, () => {
-        const r = recapPictureRect();
-        return ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
-    }, () => [0, 100]);
-
-    enableHorizontalDrag(previewTitle, (x) => {
-        if (sliderTitleX) sliderTitleX.value = x;
-        syncTitleBoxVisual();
-    }, () => sliderTitleX ? parseFloat(sliderTitleX.value) : 50, () => {
-        const r = recapPictureRect();
-        return (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
-    }, () => [0, 100]);
-
     // ── Resize Handles for Blur Box Height ──
     const blurResizeTop = previewBlur ? previewBlur.querySelector(".box-resize-handle.top") : null;
     const blurResizeBottom = previewBlur ? previewBlur.querySelector(".box-resize-handle.bottom") : null;
@@ -6775,7 +6695,6 @@ function setupRecapVisualEditor() {
     attachBlurResizeX(blurResizeRight, false);
     syncBlurBoxVisual();
     syncSubBoxVisual();
-    syncTitleBoxVisual();
 
     // Batch AV: the compact-toolbar tab binding was retired with the
     // tab nav itself — the seek panel is always visible, and the
@@ -7203,7 +7122,6 @@ function setupRecapVisualEditor() {
         }
         syncBlurBoxVisual();
         syncSubBoxVisual();
-        syncTitleBoxVisual();
         syncFillPickerState();
         scheduleRecapCompositeRefresh();
     }
@@ -7590,11 +7508,6 @@ function setupRecapVisualEditor() {
         if (sliderBlurX) sliderBlurX.value = "4";
         if (sliderBlurW) sliderBlurW.value = "92";
         if (sliderSubX) sliderSubX.value = "50";
-        // Batch AH: the title position resets with the layout too
-        // (the toggle/text are content choices, not layout — kept).
-        if (sliderTitleX) sliderTitleX.value = "50";
-        if (sliderTitleY) sliderTitleY.value = "12";
-        syncTitleBoxVisual();
         if (sliderBlurStrength) { sliderBlurStrength.value = "18"; syncBlurStrengthVisual(); }
         // Batch AK: the sub slider resets to the 5% bottom margin.
         if (sliderSubY) sliderSubY.value = "5";
@@ -7691,6 +7604,9 @@ function setupRecapVisualEditor() {
         styleSel.addEventListener("change", () => {
             haptic("selection");
             state.recapSubStyle = styleSel.value || "yellow";
+            // Batch DD: a preset SEEDS the free controls (the user
+            // can still tweak them afterwards).
+            if (typeof ddSeedStyleControls === "function") ddSeedStyleControls(state.recapSubStyle);
             // Batch AK: the style renders in the composited frame —
             // refresh it; the drag handle keeps a neutral outline
             // (no per-style CSS classes to keep in sync any more).
@@ -7705,21 +7621,22 @@ function setupRecapVisualEditor() {
         // the engine-composited frame; nothing here draws it.
         return;
     }
-    // 11. Font Size Picker (Synchronized across toolbar & advanced settings)
+    // 11. Font Size — Batch DD: ONE full-width slider (10–26pt)
+    // with a numeric readout, replacing the 4 size pills.
     function syncSubtitleFontSize(sizeVal) {
-        state.recapFontSize = parseInt(sizeVal || "16");
-        document.querySelectorAll("#font-size-picker-toolbar .pill-btn").forEach(p => {
-            p.classList.toggle("active", parseInt(p.getAttribute("data-size")) === state.recapFontSize);
-        });
+        state.recapFontSize = Math.max(10, Math.min(30, parseInt(sizeVal || "16") || 16));
+        const fsSlider = document.getElementById("slider-font-size");
+        if (fsSlider && parseInt(fsSlider.value) !== state.recapFontSize) fsSlider.value = state.recapFontSize;
+        const fsVal = document.getElementById("val-font-size");
+        if (fsVal) fsVal.innerText = `${state.recapFontSize}pt`;
         updateSubtitleVisualPreview();
         scheduleRecapCompositeRefresh();
+        if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
     }
-    document.querySelectorAll("#font-size-picker-toolbar .pill-btn").forEach(pill => {
-        pill.addEventListener("click", () => {
-            haptic("selection");
-            syncSubtitleFontSize(pill.getAttribute("data-size"));
-        });
-    });
+    const fontSizeSliderEl = document.getElementById("slider-font-size");
+    if (fontSizeSliderEl) {
+        fontSizeSliderEl.addEventListener("input", () => syncSubtitleFontSize(fontSizeSliderEl.value));
+    }
 
     // 12. Subtitle Lines Picker (Synchronized across toolbar & advanced settings)
     function syncSubtitleLines(linesVal) {
@@ -7729,6 +7646,7 @@ function setupRecapVisualEditor() {
         });
         updateSubtitleVisualPreview();
         scheduleRecapCompositeRefresh();
+        if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
     }
     document.querySelectorAll("#sub-lines-picker-toolbar .pill-btn").forEach(pill => {
         pill.addEventListener("click", () => {
@@ -7753,6 +7671,432 @@ function setupRecapVisualEditor() {
             scheduleRecapCompositeRefresh();
         });
     });
+
+    // ── Batch DD wiring (Step-2 rebuild) ─────────────────────────
+    // (0) Blur auto-detect re-bind — its original binding sat in
+    // the block removed with the title controls.
+    const ddAutoDetectEl = document.getElementById("recap-blur-autodetect-toggle");
+    if (ddAutoDetectEl) {
+        ddAutoDetectEl.addEventListener("change", () => {
+            state.recapBlurAutoDetect = !!ddAutoDetectEl.checked;
+            scheduleRecapCompositeRefresh();
+            refreshRecapStep2Summary();
+        });
+    }
+
+    // (1) Summary strip + accordion header values.
+    function refreshRecapStep2Summary() {
+        const styleName = t("sub_style_" + (state.recapSubStyle || "yellow"));
+        const prot = t("recap_protection_" + (state.recapProtection || "standard"));
+        const strip = document.getElementById("recap-step2-summary");
+        if (strip) {
+            strip.innerText = [
+                state.recapRatio || "9:16",
+                state.recapRatioFill || "blur",
+                `${state.recapFontSize || 16}pt`,
+                styleName,
+                `🛡️ ${prot}`,
+            ].join(" · ");
+        }
+        const setVal = (id, txt) => {
+            const gEl = document.getElementById(id);
+            const v = gEl ? gEl.querySelector(".dd-acc-val") : null;
+            if (v) v.innerText = txt;
+        };
+        setVal("recap-preview-ratio-group", `${state.recapRatio || "9:16"} · ${state.recapRatioFill || "blur"}`);
+        setVal("recap-subtitle-group", `${state.recapFontSize || 16}pt · ${styleName} · ${state.recapLines || 1}`);
+        const nBoxes = (state.recapBlurBoxes || []).length;
+        setVal("recap-blur-group", `${state.recapBlurAutoDetect !== false ? t("toggle_on") : t("toggle_off")} · ×${nBoxes}`);
+        setVal("recap-logo-group", `${state.recapLogo !== false ? t("toggle_on") : t("toggle_off")} · ${state.recapLogoPos || "top-right"}`);
+        setVal("recap-preview-transform-group", `🛡️ ${prot} · ${state.recapZoom || 1}x`);
+    }
+    window.refreshRecapStep2Summary = refreshRecapStep2Summary;
+
+    // (2) Accordion: every .dd-acc-group gets a header (title +
+    // current values + chevron) and a collapsible body; ALL groups
+    // start collapsed, subtitle included.
+    function setupRecapAccordion() {
+        document.querySelectorAll(".dd-acc-group").forEach(group => {
+            if (group.dataset.accReady) return;
+            group.dataset.accReady = "1";
+            const titleKey = group.getAttribute("data-acc-title-key") || "";
+            const head = document.createElement("button");
+            head.type = "button";
+            head.className = "dd-acc-head";
+            head.setAttribute("aria-expanded", "false");
+            const titleSpan = document.createElement("span");
+            titleSpan.className = "dd-acc-title";
+            titleSpan.textContent = titleKey ? t(titleKey) : "";
+            const valSpan = document.createElement("span");
+            valSpan.className = "dd-acc-val";
+            const chev = document.createElement("span");
+            chev.className = "dd-acc-chevron";
+            chev.textContent = "▸";
+            head.appendChild(titleSpan);
+            head.appendChild(valSpan);
+            head.appendChild(chev);
+            const body = document.createElement("div");
+            body.className = "dd-acc-body hidden";
+            while (group.firstChild) body.appendChild(group.firstChild);
+            group.appendChild(head);
+            group.appendChild(body);
+            group.classList.add("dd-acc");
+            body.querySelectorAll(".recap-detail-group-title, .card-label").forEach(el => {
+                el.classList.add("dd-acc-orig-title");
+            });
+            head.addEventListener("click", () => {
+                const open = group.classList.toggle("open");
+                body.classList.toggle("hidden", !open);
+                head.setAttribute("aria-expanded", open ? "true" : "false");
+            });
+        });
+    }
+
+    // (3) Blur-box LIST editor: sliders + the drag box edit the
+    // SELECTED box; chips select; add/delete manage the list (≤5).
+    // Other boxes paint as outline overlays (click selects).
+    let ddChipsSig = "";
+    let ddExtrasSig = "";
+    function ddBoxes() {
+        if (!Array.isArray(state.recapBlurBoxes)) state.recapBlurBoxes = [];
+        return state.recapBlurBoxes;
+    }
+    function ddReadBoxFromSliders() {
+        return {
+            x: sliderBlurX ? parseInt(sliderBlurX.value) : 4,
+            y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
+            w: sliderBlurW ? parseInt(sliderBlurW.value) : 92,
+            h: sliderBlurH ? parseInt(sliderBlurH.value) : 7,
+            strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
+        };
+    }
+    function ddWriteSelectedBox() {
+        const boxes = ddBoxes();
+        if (!boxes.length) return;
+        const i = Math.max(0, Math.min(boxes.length - 1, state.recapBlurBoxIndex || 0));
+        boxes[i] = ddReadBoxFromSliders();
+    }
+    function ddLoadBoxToSliders(i) {
+        const boxes = ddBoxes();
+        if (!boxes.length) return;
+        state.recapBlurBoxIndex = Math.max(0, Math.min(boxes.length - 1, i));
+        const b = boxes[state.recapBlurBoxIndex];
+        if (sliderBlurY) sliderBlurY.value = b.y;
+        if (sliderBlurH) sliderBlurH.value = b.h;
+        if (sliderBlurX) sliderBlurX.value = b.x;
+        if (sliderBlurW) sliderBlurW.value = b.w;
+        if (sliderBlurStrength) sliderBlurStrength.value = b.strength || 18;
+        syncBlurBoxVisual();
+        if (typeof syncBlurStrengthVisual === "function") syncBlurStrengthVisual();
+        ddRenderBlurChips();
+    }
+    function ddRenderBlurChips() {
+        const boxes = ddBoxes();
+        const idx = Math.max(0, Math.min(Math.max(0, boxes.length - 1), state.recapBlurBoxIndex || 0));
+        const chipsSig = `${boxes.length}:${idx}`;
+        if (chipsSig !== ddChipsSig) {
+            ddChipsSig = chipsSig;
+            const wrap = document.getElementById("blur-box-chips");
+            if (wrap) {
+                wrap.innerHTML = "";
+                boxes.forEach((b, i) => {
+                    const chip = document.createElement("button");
+                    chip.type = "button";
+                    chip.className = "pill-btn sm" + (i === idx ? " active" : "");
+                    chip.textContent = tf("recap_blur_box_n", { n: i + 1 });
+                    chip.addEventListener("click", () => ddLoadBoxToSliders(i));
+                    wrap.appendChild(chip);
+                });
+            }
+            const addBtn = document.getElementById("btn-blur-box-add");
+            if (addBtn) addBtn.classList.toggle("hidden", boxes.length >= 5);
+        }
+        const extrasSig = JSON.stringify(boxes.filter((b, i) => i !== idx));
+        if (extrasSig !== ddExtrasSig && canvas) {
+            ddExtrasSig = extrasSig;
+            canvas.querySelectorAll(".preview-blur-box-extra").forEach(el => el.remove());
+            boxes.forEach((b, i) => {
+                if (i === idx) return;
+                const g = blurBoxCanvasGeom(b.y, b.h, b.x, b.w);
+                const d = document.createElement("div");
+                d.className = "preview-blur-box-extra";
+                d.style.top = `${(g.centre * 100).toFixed(3)}%`;
+                d.style.height = `${(g.height * 100).toFixed(3)}%`;
+                d.style.left = `${(g.left * 100).toFixed(3)}%`;
+                d.style.width = `${(g.width * 100).toFixed(3)}%`;
+                d.addEventListener("click", () => ddLoadBoxToSliders(i));
+                canvas.appendChild(d);
+            });
+        }
+    }
+    function ddAfterBlurSync() {
+        ddWriteSelectedBox();
+        ddRenderBlurChips();
+        refreshRecapStep2Summary();
+    }
+    const ddAddBoxBtn = document.getElementById("btn-blur-box-add");
+    if (ddAddBoxBtn) ddAddBoxBtn.addEventListener("click", () => {
+        const boxes = ddBoxes();
+        if (boxes.length >= 5) return;
+        haptic("selection");
+        if (!boxes.length) boxes.push(ddReadBoxFromSliders());
+        else { ddWriteSelectedBox(); boxes.push({ ...boxes[boxes.length - 1] }); }
+        state.recapBlurBoxTouched = true;
+        ddLoadBoxToSliders(boxes.length - 1);
+        scheduleRecapCompositeRefresh();
+        if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+    });
+    const ddDelBoxBtn = document.getElementById("btn-blur-box-del");
+    if (ddDelBoxBtn) ddDelBoxBtn.addEventListener("click", () => {
+        const boxes = ddBoxes();
+        if (!boxes.length) return;
+        haptic("selection");
+        boxes.splice(Math.max(0, Math.min(boxes.length - 1, state.recapBlurBoxIndex || 0)), 1);
+        state.recapBlurBoxIndex = 0;
+        if (boxes.length) ddLoadBoxToSliders(0);
+        else { ddChipsSig = ""; ddExtrasSig = ""; ddRenderBlurChips(); }
+        scheduleRecapCompositeRefresh();
+        if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+    });
+
+    // (4) Protection level pills.
+    document.querySelectorAll("#recap-protection-picker .pill-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            state.recapProtection = btn.getAttribute("data-protection") || "standard";
+            document.querySelectorAll("#recap-protection-picker .pill-btn").forEach(b => {
+                b.classList.toggle("active", b === btn);
+            });
+            scheduleRecapCompositeRefresh();
+            refreshRecapStep2Summary();
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        });
+    });
+
+    // (5) Free style controls. A preset SEEDS them (ddSeedStyleControls,
+    // called from the style dropdown); the user can still tweak.
+    const DD_PRESET_SEED = {
+        yellow: { text: "#ffd700", outline: "#000000", ow: 2.2, bg: null, bgOp: null },
+        white: { text: "#ffffff", outline: "#1a1a1a", ow: 1.8, bg: null, bgOp: null },
+        boxed: { text: "#ffffff", outline: "#000000", ow: 1.0, bg: "#000000", bgOp: 35 },
+        neon: { text: "#00dbff", outline: "#0066cc", ow: 2.4, bg: null, bgOp: null },
+        band: { text: "#ffffff", outline: "#000000", ow: 1.5, bg: "#000000", bgOp: 40 },
+        heavy: { text: "#ffd94d", outline: "#000000", ow: 3.0, bg: "#000000", bgOp: 20 },
+        soft: { text: "#ffffff", outline: "#222222", ow: 1.2, bg: null, bgOp: null },
+        rose: { text: "#ff69b4", outline: "#000000", ow: 1.6, bg: null, bgOp: null },
+        orange: { text: "#ff8c00", outline: "#000000", ow: 1.6, bg: null, bgOp: null },
+        mint: { text: "#00ff9d", outline: "#151515", ow: 1.8, bg: null, bgOp: null },
+    };
+    function ddStyleChanged() {
+        scheduleRecapCompositeRefresh();
+        refreshRecapStep2Summary();
+        if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+    }
+    function ddSeedStyleControls(styleKey) {
+        const seed = DD_PRESET_SEED[styleKey];
+        if (!seed) return;
+        state.recapTextColor = seed.text;
+        state.recapOutlineColor = seed.outline;
+        state.recapOutlineWidth = seed.ow;
+        state.recapBgColor = seed.bg || "";
+        state.recapBgOpacity = seed.bgOp;
+        const tc = document.getElementById("input-sub-text-color");
+        if (tc) tc.value = seed.text;
+        const oc = document.getElementById("input-sub-outline-color");
+        if (oc) oc.value = seed.outline;
+        const bc = document.getElementById("input-sub-bg-color");
+        if (bc && seed.bg) bc.value = seed.bg;
+        const ow = document.getElementById("slider-outline-width");
+        if (ow) ow.value = Math.round(seed.ow * 10);
+        const owVal = document.getElementById("val-outline-width");
+        if (owVal) owVal.innerText = seed.ow.toFixed(1);
+        if (seed.bgOp != null) {
+            const bo = document.getElementById("slider-bg-opacity");
+            if (bo) bo.value = seed.bgOp;
+            const boVal = document.getElementById("val-bg-opacity");
+            if (boVal) boVal.innerText = `${seed.bgOp}%`;
+        }
+        ddStyleChanged();
+    }
+    [["input-sub-text-color", "recapTextColor"], ["input-sub-outline-color", "recapOutlineColor"], ["input-sub-bg-color", "recapBgColor"]].forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("input", () => { state[key] = el.value; ddStyleChanged(); });
+    });
+    const ddOwSlider = document.getElementById("slider-outline-width");
+    if (ddOwSlider) ddOwSlider.addEventListener("input", () => {
+        state.recapOutlineWidth = parseInt(ddOwSlider.value) / 10;
+        const v = document.getElementById("val-outline-width");
+        if (v) v.innerText = state.recapOutlineWidth.toFixed(1);
+        ddStyleChanged();
+    });
+    const ddBgOpSlider = document.getElementById("slider-bg-opacity");
+    if (ddBgOpSlider) ddBgOpSlider.addEventListener("input", () => {
+        state.recapBgOpacity = parseInt(ddBgOpSlider.value);
+        if (!state.recapBgColor) {
+            state.recapBgColor = "#000000";
+            const bc = document.getElementById("input-sub-bg-color");
+            if (bc) bc.value = "#000000";
+        }
+        const v = document.getElementById("val-bg-opacity");
+        if (v) v.innerText = `${state.recapBgOpacity}%`;
+        ddStyleChanged();
+    });
+    function ddBindMiniToggle(id, get, set) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("click", () => {
+            haptic("selection");
+            const nv = !get();
+            set(nv);
+            el.classList.toggle("active", nv);
+            const tv = el.querySelector(".t-val");
+            if (tv) tv.innerText = nv ? t("toggle_on") : t("toggle_off");
+            ddStyleChanged();
+        });
+    }
+    ddBindMiniToggle("btn-toggle-sub-shadow", () => !!state.recapSubShadow, v => { state.recapSubShadow = v; });
+    ddBindMiniToggle("btn-toggle-sub-bold", () => state.recapSubBold !== false, v => { state.recapSubBold = v; });
+
+    // (6) Subtitle position band pills (Top / Centre / Bottom).
+    function ddSyncPosBandPills() {
+        document.querySelectorAll("#sub-pos-picker .pill-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-pos-band") === (state.recapSubPosBand || "bottom"));
+        });
+    }
+    document.querySelectorAll("#sub-pos-picker .pill-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            state.recapSubPosBand = btn.getAttribute("data-pos-band") || "bottom";
+            ddSyncPosBandPills();
+            scheduleRecapCompositeRefresh();
+            refreshRecapStep2Summary();
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        });
+    });
+
+    // (7) Custom subtitle font: upload -> handle in state; the
+    // engine-composited preview renders with the uploaded file
+    // server-side; FontFace registration covers CSS-side samples.
+    function ddSyncCustomFontUi() {
+        const status = document.getElementById("sub-font-custom-status");
+        const has = !!state.recapSubFontCustomId;
+        if (status) status.innerText = has ? `${t("recap_font_custom_active")}: ${state.recapSubFontCustomName || ""}` : "";
+        const clr = document.getElementById("btn-sub-font-clear");
+        if (clr) clr.classList.toggle("hidden", !has);
+    }
+    const ddFontInput = document.getElementById("input-sub-font-file");
+    if (ddFontInput) ddFontInput.addEventListener("change", async () => {
+        const f = ddFontInput.files && ddFontInput.files[0];
+        if (!f) return;
+        const status = document.getElementById("sub-font-custom-status");
+        if (status) status.innerText = t("recap_font_uploading");
+        try {
+            const fd = new FormData();
+            fd.append("font_file", f);
+            const res = await fetch("/api/recap/upload_sub_font", {
+                method: "POST", headers: getAuthHeaders(), body: fd,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "upload failed");
+            state.recapSubFontCustomId = data.font_id;
+            state.recapSubFontCustomName = data.filename || f.name;
+            try {
+                const ff = new FontFace("DDCustomFont", await f.arrayBuffer());
+                await ff.load();
+                document.fonts.add(ff);
+            } catch (e) {}
+            ddSyncCustomFontUi();
+            scheduleRecapCompositeRefresh();
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        } catch (e) {
+            if (status) status.innerText = t("recap_font_upload_error");
+        }
+    });
+    const ddFontClear = document.getElementById("btn-sub-font-clear");
+    if (ddFontClear) ddFontClear.addEventListener("click", () => {
+        state.recapSubFontCustomId = "";
+        state.recapSubFontCustomName = "";
+        ddSyncCustomFontUi();
+        scheduleRecapCompositeRefresh();
+        if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+    });
+
+    // (8) Restore-path control sync (called from restoreRecapSettings
+    // and applyAccountPrefs' resync).
+    window.ddSyncControlsFromState = function () {
+        document.querySelectorAll("#recap-protection-picker .pill-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-protection") === (state.recapProtection || "standard"));
+        });
+        const setColor = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+        setColor("input-sub-text-color", state.recapTextColor);
+        setColor("input-sub-outline-color", state.recapOutlineColor);
+        setColor("input-sub-bg-color", state.recapBgColor);
+        if (state.recapOutlineWidth != null) {
+            const ow = document.getElementById("slider-outline-width");
+            if (ow) ow.value = Math.round(state.recapOutlineWidth * 10);
+            const v = document.getElementById("val-outline-width");
+            if (v) v.innerText = Number(state.recapOutlineWidth).toFixed(1);
+        }
+        if (state.recapBgOpacity != null) {
+            const bo = document.getElementById("slider-bg-opacity");
+            if (bo) bo.value = state.recapBgOpacity;
+            const v = document.getElementById("val-bg-opacity");
+            if (v) v.innerText = `${state.recapBgOpacity}%`;
+        }
+        const sh = document.getElementById("btn-toggle-sub-shadow");
+        if (sh) {
+            sh.classList.toggle("active", !!state.recapSubShadow);
+            const tv = sh.querySelector(".t-val");
+            if (tv) tv.innerText = state.recapSubShadow ? t("toggle_on") : t("toggle_off");
+        }
+        const bd = document.getElementById("btn-toggle-sub-bold");
+        if (bd) {
+            const on = state.recapSubBold !== false;
+            bd.classList.toggle("active", on);
+            const tv = bd.querySelector(".t-val");
+            if (tv) tv.innerText = on ? t("toggle_on") : t("toggle_off");
+        }
+        ddSyncPosBandPills();
+        ddSyncCustomFontUi();
+        if (ddBoxes().length) ddLoadBoxToSliders(state.recapBlurBoxIndex || 0);
+        ddRenderBlurChips();
+        refreshRecapStep2Summary();
+    };
+
+    // (9) 9:16 preview cap: the sticky frame never exceeds 36% of
+    // the screen height (aspect exact) and shrinks to ~22% once
+    // the settings area is scrolled; it re-expands at the top.
+    function ddFitPreviewFrame() {
+        const frame = document.getElementById("recap-mockup-frame");
+        if (!frame) return;
+        if ((state.recapRatio || "9:16") !== "9:16") {
+            frame.style.height = "";
+            frame.style.width = "";
+            return;
+        }
+        const scrolled = (window.scrollY || 0) > 90;
+        const cap = (scrolled ? 0.22 : 0.36) * window.innerHeight;
+        const parentW = frame.parentElement ? frame.parentElement.clientWidth : 300;
+        const natW = Math.min(300, parentW);
+        const natH = natW * 16 / 9;
+        const h = Math.min(natH, cap);
+        frame.style.height = `${Math.round(h)}px`;
+        frame.style.width = `${Math.round(h * 9 / 16)}px`;
+    }
+    window.addEventListener("scroll", ddFitPreviewFrame, { passive: true });
+    window.addEventListener("resize", ddFitPreviewFrame);
+    ["recap-ratio-picker", "recap-fill-picker"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("click", () => setTimeout(() => {
+            refreshRecapStep2Summary();
+            ddFitPreviewFrame();
+        }, 0));
+    });
+
+    setupRecapAccordion();
+    ddRenderBlurChips();
+    refreshRecapStep2Summary();
+    ddFitPreviewFrame();
 
     // 12. Logo Position Picker
     const logoPosBtns = document.querySelectorAll("#recap-logo-pos-picker .pill-btn");
@@ -8125,30 +8469,26 @@ function setupRecapVisualEditor() {
         recapRatioFill: ["blur", "crop", "black"],
         recapSpeed: ["+0%", "+8%", "+12%", "+18%", "+22%"],
         recapStoryStyle: ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
-        recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft"],
+        recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"],
+        recapProtection: ["off", "standard", "strong"],
         recapSubFont: ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
         recapLogoPos: ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
         recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja", "hi", "my", "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"],
         recapRenderQuality: ["standard", "high", "max"],
         recapTtsEngine: ["voxcpm", "gemini", "edge"],
     };
-    // Batch BR: recapTitleEnabled is deliberately NOT in this list —
-    // the title toggle is session-truth (the Batch AX principle): it
-    // always starts OFF on a fresh form load, whatever any saved
-    // snapshot says. Stored snapshots may still carry the key (older
-    // saves, the account-prefs write-through); restore simply never
-    // applies it. History prefill — an explicit re-create action —
-    // sets it directly from the job's config instead (see below).
-    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched"];
+    // Batch DD: the title keys are gone with the feature — legacy
+    // snapshots carrying them are simply never applied.
+    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched", "recapSubShadow", "recapSubBold"];
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
-        recapFontSize: [12, 30], recapLines: [1, 2], recapSplitMinutes: [1, 10],
+        recapFontSize: [10, 30], recapLines: [1, 3], recapSplitMinutes: [1, 10],
         recapBlurY: [0, 100], recapBlurH: [1, 50], recapSubY: [0, 100],
         recapSubMargin: [0, 95], recapSettingsVersion: [0, 10],
         recapBlurX: [0, 100], recapBlurW: [10, 100],
         recapSubX: [10, 90], recapSubW: [10, 100],
-        recapTitleX: [0, 100], recapTitleY: [0, 100],
+        recapBgOpacity: [0, 100],
         recapBlurStrength: [4, 40],
     };
 
@@ -8181,13 +8521,16 @@ function setupRecapVisualEditor() {
         snap.recapBlurW = bw ? parseInt(bw.value) : 92;
         snap.recapSubX = sx ? parseInt(sx.value) : 50;
         snap.recapSubW = sw ? parseInt(sw.value) : 92;
-        // Batch AH: title placement + custom text ride the snapshot
-        // like the AG horizontal geometry (enabled rides the bools).
-        const tx = document.getElementById("slider-title-x");
-        const ty = document.getElementById("slider-title-y");
-        snap.recapTitleX = tx ? parseInt(tx.value) : 50;
-        snap.recapTitleY = ty ? parseInt(ty.value) : 12;
-        snap.recapTitleText = state.recapTitleText || "";
+        // Batch DD: free style controls + blur-box list + custom
+        // font handle ride the snapshot (protection rides the enums).
+        snap.recapTextColor = state.recapTextColor || "";
+        snap.recapOutlineColor = state.recapOutlineColor || "";
+        snap.recapBgColor = state.recapBgColor || "";
+        snap.recapOutlineWidth = state.recapOutlineWidth;
+        snap.recapSubFontCustomId = state.recapSubFontCustomId || "";
+        snap.recapSubFontCustomName = state.recapSubFontCustomName || "";
+        snap.recapBlurBoxes = state.recapBlurBoxes || [];
+        snap.recapSubPosBand = state.recapSubPosBand || "bottom";
         return snap;
     }
 
@@ -8267,7 +8610,27 @@ function setupRecapVisualEditor() {
         if (Number.isFinite(zoom) && zoom >= 1 && zoom <= 1.2) state.recapZoom = zoom;
         if (typeof saved.recapVoice === "string" && saved.recapVoice) state.recapVoice = saved.recapVoice;
         if (typeof saved.recapGeminiVoice === "string") state.recapGeminiVoice = saved.recapGeminiVoice;
-        if (typeof saved.recapTitleText === "string") state.recapTitleText = saved.recapTitleText;
+        // Batch DD restores (strings / list / band).
+        if (typeof saved.recapTextColor === "string") state.recapTextColor = saved.recapTextColor;
+        if (typeof saved.recapOutlineColor === "string") state.recapOutlineColor = saved.recapOutlineColor;
+        if (typeof saved.recapBgColor === "string") state.recapBgColor = saved.recapBgColor;
+        if (typeof saved.recapOutlineWidth === "number") state.recapOutlineWidth = saved.recapOutlineWidth;
+        if (typeof saved.recapSubFontCustomId === "string") state.recapSubFontCustomId = saved.recapSubFontCustomId;
+        if (typeof saved.recapSubFontCustomName === "string") state.recapSubFontCustomName = saved.recapSubFontCustomName;
+        if (Array.isArray(saved.recapBlurBoxes)) state.recapBlurBoxes = saved.recapBlurBoxes.filter(b => b && typeof b === "object").slice(0, 5);
+        if (["top", "center", "bottom"].includes(saved.recapSubPosBand)) state.recapSubPosBand = saved.recapSubPosBand;
+        // Batch DD migration-on-read: a legacy snapshot with a
+        // deliberately-set single box (recapBlurBoxTouched) and NO
+        // list becomes a one-element list.
+        if ((!state.recapBlurBoxes || !state.recapBlurBoxes.length) && saved.recapBlurBoxTouched) {
+            state.recapBlurBoxes = [{
+                x: Number.isFinite(parseInt(saved.recapBlurX)) ? parseInt(saved.recapBlurX) : 4,
+                y: Number.isFinite(parseInt(saved.recapBlurY)) ? parseInt(saved.recapBlurY) : 85,
+                w: Number.isFinite(parseInt(saved.recapBlurW)) ? parseInt(saved.recapBlurW) : 92,
+                h: Number.isFinite(parseInt(saved.recapBlurH)) ? parseInt(saved.recapBlurH) : 7,
+                strength: Number.isFinite(parseInt(saved.recapBlurStrength)) ? parseInt(saved.recapBlurStrength) : 18,
+            }];
+        }
 
         // ── Re-sync every control so the UI shows the restored state ──
         syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio);
@@ -8362,23 +8725,14 @@ function setupRecapVisualEditor() {
         // other toggles (default ON when nothing was ever saved).
         const blurAutoDetectEl = document.getElementById("recap-blur-autodetect-toggle");
         if (blurAutoDetectEl) blurAutoDetectEl.checked = state.recapBlurAutoDetect !== false;
-        // Batch AH: title controls re-sync (toggle, text, sliders).
-        const titleToggleEl = document.getElementById("recap-title-toggle");
-        if (titleToggleEl) titleToggleEl.checked = !!state.recapTitleEnabled;
-        const titleTextEl = document.getElementById("recap-title-text");
-        if (titleTextEl) {
-            titleTextEl.value = state.recapTitleText || "";
-            titleTextEl.classList.toggle("hidden", !state.recapTitleEnabled);
+        // Batch DD: re-sync the new controls from state.
+        if (typeof window.ddSyncControlsFromState === "function") {
+            try { window.ddSyncControlsFromState(); } catch (e) {}
         }
-        const tix = document.getElementById("slider-title-x");
-        const tiy = document.getElementById("slider-title-y");
-        if (tix && Number.isFinite(state.recapTitleX)) tix.value = state.recapTitleX;
-        if (tiy && Number.isFinite(state.recapTitleY)) tiy.value = state.recapTitleY;
         syncSubtitleFontSize(state.recapFontSize || 16);
         syncSubtitleLines(state.recapLines || 1);
         syncBlurBoxVisual();
         syncSubBoxVisual();
-        syncTitleBoxVisual();
         if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
     }
 
@@ -8439,12 +8793,20 @@ function setupRecapVisualEditor() {
             // keys and restore keeps the current values).
             recapBlurX: cfg.blur_x, recapBlurW: cfg.blur_w,
             recapSubX: cfg.sub_x, recapSubW: cfg.sub_w,
-            // Batch AH: title settings round-trip like the rest
-            // (pre-AH configs carry none of these keys and restore
-            // keeps the current values).
-            recapTitleEnabled: cfg.title_enabled === true,
-            recapTitleText: cfg.title_text || "",
-            recapTitleX: cfg.title_x, recapTitleY: cfg.title_y,
+            // Batch DD: protection / style controls / box list /
+            // custom font round-trip (pre-DD configs carry none of
+            // these keys and restore keeps the current values; a
+            // legacy explicit single box migrates in restore).
+            recapProtection: cfg.protection_level,
+            recapTextColor: cfg.sub_text_color || "",
+            recapOutlineColor: cfg.sub_outline_color || "",
+            recapBgColor: cfg.sub_bg_color || "",
+            recapOutlineWidth: (cfg.sub_outline_width != null) ? cfg.sub_outline_width : null,
+            recapBgOpacity: cfg.sub_bg_opacity,
+            recapSubShadow: cfg.sub_shadow === true,
+            recapSubBold: cfg.sub_bold !== false,
+            recapBlurBoxes: Array.isArray(cfg.blur_boxes) ? cfg.blur_boxes : undefined,
+            recapSubFontCustomId: cfg.sub_font_custom_id || "",
             // Batch AA: a job whose blur box was explicit re-runs
             // with an explicit box — authoritativeness is preserved
             // through the prefill (pre-AA configs have no marker and
@@ -8460,18 +8822,6 @@ function setupRecapVisualEditor() {
         };
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snap)); } catch (e) {}
         restoreRecapSettings();
-        // Batch BR: the title toggle is session-truth — restore no
-        // longer applies recapTitleEnabled from any snapshot — so
-        // this explicit re-create action sets it directly from the
-        // job's own config (the same post-restore pattern as the
-        // script-review toggle below). This is the one path still
-        // allowed to turn the toggle ON.
-        state.recapTitleEnabled = cfg.title_enabled === true;
-        const titleTogglePf = document.getElementById("recap-title-toggle");
-        if (titleTogglePf) titleTogglePf.checked = state.recapTitleEnabled;
-        const titleTextPf = document.getElementById("recap-title-text");
-        if (titleTextPf) titleTextPf.classList.toggle("hidden", !state.recapTitleEnabled);
-        syncTitleBoxVisual();
         // Batch AH: exactly one script-review toggle exists now.
         const srToggle = document.getElementById("recap-script-review-toggle");
         if (srToggle) srToggle.checked = !!cfg.script_review;
@@ -8689,8 +9039,6 @@ async function handleStartRecap() {
         const sliderSubY = document.getElementById("slider-sub-y");
         const sliderSubX = document.getElementById("slider-sub-x");
         const sliderSubW = document.getElementById("slider-sub-w");
-        const sliderTitleXSubmit = document.getElementById("slider-title-x");
-        const sliderTitleYSubmit = document.getElementById("slider-title-y");
 
         const payload = {
             url: url,
@@ -8715,15 +9063,19 @@ async function handleStartRecap() {
             blur_x: sliderBlurX ? parseInt(sliderBlurX.value) : 4,
             blur_w: sliderBlurW ? parseInt(sliderBlurW.value) : 92,
             // Batch AA: the explicit-set marker rides along — the
-            // engine treats a marked box as authoritative.
-            blur_box_explicit: !!state.recapBlurBoxTouched,
+            // engine treats a marked box as authoritative. Batch
+            // DD: a blur-box LIST supersedes it (list sent below).
+            blur_box_explicit: !!state.recapBlurBoxTouched && !(Array.isArray(state.recapBlurBoxes) && state.recapBlurBoxes.length),
             blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
             blur_auto_detect: state.recapBlurAutoDetect !== false,
             burn_subtitles: state.recapBurnSubs !== false,
             // Batch AK: the slider is the bottom-edge margin; sub_y
             // is no longer sent (the server default stands and the
             // margin wins in the engine when present).
-            sub_bottom_margin: sliderSubY ? parseInt(sliderSubY.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5),
+            sub_bottom_margin: (state.recapSubPosBand === "top" || state.recapSubPosBand === "center") ? null : (sliderSubY ? parseInt(sliderSubY.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5)),
+            // Batch DD: position band Top/Centre ride sub_y
+            // (undefined = omitted = the Bottom margin path).
+            sub_y: (state.recapSubPosBand === "top") ? 15 : (state.recapSubPosBand === "center") ? 50 : undefined,
             // Batch AG: subtitle centre X + wrap width (picture
             // width percents), mirroring sub_y's centre semantics.
             sub_x: sliderSubX ? parseInt(sliderSubX.value) : 50,
@@ -8734,13 +9086,9 @@ async function handleStartRecap() {
             sub_lines: state.recapLines || 1,
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",
-            // Batch AH: title overlay — enabled flag, custom text
-            // (null = fall back to the video's own title), and the
-            // centre position in picture percents.
-            title_enabled: !!state.recapTitleEnabled,
-            title_text: (state.recapTitleText || "").trim() || null,
-            title_x: sliderTitleXSubmit ? parseInt(sliderTitleXSubmit.value) : (state.recapTitleX || 50),
-            title_y: sliderTitleYSubmit ? parseInt(sliderTitleYSubmit.value) : (state.recapTitleY != null ? state.recapTitleY : 12),
+            // Batch DD: protection level, free style controls,
+            // custom font handle and the blur-box list.
+            ...ddConfigExtras(),
             duration_seconds: state.recapSourceDuration || null,
             script_review: !!((document.getElementById("recap-script-review-toggle") || {}).checked),
             source_language: state.recapSourceLanguage || "auto",

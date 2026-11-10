@@ -313,7 +313,10 @@ def test_wrap_budgets_scale_with_sub_w():
 
 
 def test_wrap_budget_and_ass_tag_read_the_overlays_dict():
-    assert 'max_chars = _subtitle_max_chars(is_vert, lines_per_cue, self.overlays.get("sub_w"))' in CORE_PY
+    # Batch DD: the production call site is size-aware — the
+    # chosen font size scales the budget (frac ratio).
+    assert 'font_size=int(self.overlays.get("subtitles_font_size", 16))' in CORE_PY
+    assert "_subtitle_max_chars(" in CORE_PY
     assert 'sub_x=self.overlays.get("sub_x"),' in CORE_PY
 
 
@@ -561,7 +564,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261104_r125") == 4
+    assert INDEX_HTML.count("?v=20261104_r126") == 4
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────
@@ -661,29 +664,29 @@ def test_fit_defect_baseline_unfitted_cue_is_wider_than_canvas(tmp_path):
 
 @pytest.mark.parametrize("sub_lines,size_pt", [(1, 16), (1, 22), (2, 16), (2, 22)])
 def test_fit_max_length_cue_fits_default_bound(tmp_path, sub_lines, size_pt):
-    # Batch CX: subtitles are always ONE LINE at the LOCKED size —
-    # the fit never wraps to two lines and never shrinks a
-    # multi-token cue; an overflowing cue returns its first fitting
-    # piece (the production burn shows every piece in turn via
-    # fit_png_cue_pieces). The sub_lines setting no longer changes
-    # the burn: a 2-line cue is one line too.
+    # Batch CX locked the size; Batch DD (2026-11-09) lets the
+    # fit wrap into up to the chosen line count: the width bound
+    # and the locked size still hold for every piece, and a
+    # one-line job still renders one line.
     r = _fit_renderer(tmp_path)
     font_px = core.subtitle_font_px(CW, CH, size_pt, sub_lines, LB)
     lines, px, w = _fit(r, FIT_LONG, sub_lines, font_px)
     assert w <= FIT_BOUND
-    assert len(lines) == 1
+    assert 1 <= len(lines) <= sub_lines
+    if sub_lines == 1:
+        assert len(lines) == 1
     assert px == font_px
 
 
 def test_fit_never_wraps_to_two_lines(tmp_path):
-    # Batch CX replaces the old wrap-first regime: the mid-length
-    # cue renders as ONE line at the locked size (its first fitting
-    # piece when it overflows), never as two wrapped lines.
+    # Batch DD supersedes the CX pin: at Lines=2 the mid-length cue
+    # may wrap into up to two lines at the locked size (never more
+    # than the chosen count, never wider than the bound).
     r = _fit_renderer(tmp_path)
     ff = core.frame_layout("9:16", "blur", 1080, 1920)
     font_px = core.subtitle_font_px(CW, CH, 13, 2, ff)
     lines, px, w = _fit(r, FIT_MID, 2, font_px)
-    assert px == font_px and len(lines) == 1 and w <= FIT_BOUND
+    assert px == font_px and 1 <= len(lines) <= 2 and w <= FIT_BOUND
 
 
 def test_fit_fitting_cue_is_byte_identical(tmp_path):

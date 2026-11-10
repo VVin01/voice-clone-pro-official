@@ -108,9 +108,10 @@ def test_title_handle_paints_no_text_span():
     assert 'id="preview-title-text-el"' not in INDEX_HTML
     assert "preview-title-text" not in INDEX_HTML
     assert ".preview-title-text" not in STYLE_CSS
-    # The grip itself stays.
-    assert 'id="preview-title-box"' in INDEX_HTML
-    assert "title-grip" in INDEX_HTML
+    # Batch DD (Ulfa's order 2026-11-09): the title feature was removed
+    # entirely — the grip box is gone too.
+    assert 'id="preview-title-box"' not in INDEX_HTML
+    assert "title-grip" not in INDEX_HTML
 
 
 # ── M3/M4 residuals: loading state + source label ──────────────────
@@ -186,5 +187,5 @@ def test_blur_payload_master_gate_unchanged():
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_r64():
-    assert INDEX_HTML.count("?v=20261104_r125") == 4
+    assert INDEX_HTML.count("?v=20261104_r126") == 4
     assert "r63" not in INDEX_HTML

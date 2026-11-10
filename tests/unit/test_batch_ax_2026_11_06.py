@@ -320,13 +320,17 @@ def test_ax_payload_and_prefs_invariants_hold():
     # blur_auto_detect (the auto-detect blur switch).
     # Batch BV deliberate pin update: 44 — the payload gained
     # voice_ref_id (the own-voice sample handle).
-    assert len(keys) == 44, keys
+    # Batch DD deliberate pin update: 41 — the four title keys left
+    # (title_enabled/title_text/title_x/title_y), sub_y joined for
+    # the Top/Center position bands, and the DD settings ride the
+    # ddConfigExtras() spread (not literal keys).
+    assert len(keys) == 41, keys
     assert keys[0] == "url" and keys[-1] == "split_minutes"
     assert 'RECAP_SETTINGS_KEY = "vcp_recap_settings"' in APP_JS
 
 
 def test_ax_cache_token_r79():
-    assert INDEX_HTML.count("20261104_r125") == 4
+    assert INDEX_HTML.count("20261104_r126") == 4
     assert "20261104_r69" not in INDEX_HTML
 
 
@@ -370,7 +374,7 @@ def test_ax4r_facts_are_derived_from_live_config():
     assert "function refreshRecapStep4Facts()" in APP_JS
     for marker in ('"9:16": "1080×1920 · 9:16"', '"16:9": "1920×1080 · 16:9"',
                    "state.recapSourceDuration", "state.recapBurnSubs",
-                   "state.recapTitleEnabled", "state.recapBlurSubs",
+                   "state.recapProtection", "state.recapBlurSubs",
                    "#recap-quality-picker .pill-btn.active",
                    "formatRecapQuoteDuration(dur)"):
         assert marker in APP_JS, marker

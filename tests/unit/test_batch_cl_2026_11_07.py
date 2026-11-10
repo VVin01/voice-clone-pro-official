@@ -68,6 +68,7 @@ STYLE_CSS = (ROOT / "app" / "webapp" / "static" / "css" / "style.css").read_text
 FILE_INPUT_IDS = [
     "ref-audio-input",
     "recap-video-file-input",
+    "input-sub-font-file",
     "input-logo-file",
     "recap-own-voice-input",
     "slip-file-input",
@@ -86,7 +87,7 @@ def _label_fors() -> list:
 
 # ── CL-3 pins: every file input is label-activated ──────────────────
 
-def test_cl_exactly_the_five_file_inputs_exist():
+def test_cl_exactly_the_known_file_inputs_exist():
     assert sorted(set(_file_input_ids())) == sorted(FILE_INPUT_IDS)
 
 
@@ -293,5 +294,5 @@ console.log(JSON.stringify(clickCounts));
 # ── Release pin: cache token r109 ───────────────────────────────────
 
 def test_cl_cache_token_is_r109():
-    assert INDEX_HTML.count("20261104_r125") == 4
+    assert INDEX_HTML.count("20261104_r126") == 4
     assert ("20261104_r" + "108") not in INDEX_HTML
