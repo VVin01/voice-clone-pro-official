@@ -60,7 +60,7 @@ def _css_rule(selector: str) -> str:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_r37():
-    assert HTML.count("?v=20261104_r127") == 4
+    assert HTML.count("?v=20261104_r128") == 4
     assert "20261102_ma1" not in HTML
 
 

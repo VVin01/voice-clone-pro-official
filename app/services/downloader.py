@@ -345,6 +345,19 @@ def recap_over_limit_message(duration_sec: float, max_duration_sec: float, is_vi
     )
 
 
+# Batch DF (2026-11-10): the one message every no-audio surface uses —
+# the failure classifier below, the submit guard, and (mirrored copy)
+# the Mini App upload warning. A recap source with NO audio track can
+# never be recapped: the planner's first step extracts the speech
+# track. On 2026-11-10 a new user retried the same silent file four
+# times in six minutes because every failure hid behind the generic
+# technical-error line.
+NO_AUDIO_TRACK_MESSAGE = (
+    "⚠️ ဒီ ဗီဒီယိုမှာ အသံ လုံးဝ မပါဝင်ပါ။ Recap လုပ်ဖို့ အသံပါတဲ့ "
+    "မူရင်း ဗီဒီယို လိုပါတယ် — အသံပါတဲ့ ဖိုင်ဖြင့် ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+)
+
+
 def classify_source_error(err_msg: str, url: str) -> Optional[str]:
     """Map a raw yt-dlp / extractor error to a curated user-facing message.
 
@@ -393,6 +406,15 @@ def classify_source_error(err_msg: str, url: str) -> Optional[str]:
             "⚠️ ဒီ လင့်ခ် အမျိုးအစား ကို မထောက်ပံ့သေးပါ။ "
             "YouTube၊ TikTok၊ Facebook လင့်ခ်များဖြင့် စမ်းကြည့်ပါ။ " + upload_hint
         )
+    if "matches no streams" in low or "failed to set value '0:a" in low:
+        # Batch DF (2026-11-10): the source has NO audio stream, so
+        # the planner's Whisper-prep ffmpeg (-map 0:a:0) aborts with
+        # "Stream map '' matches no streams." — the raw RuntimeError
+        # matched no needle and users saw the generic line, then
+        # retried the same silent file (four attempts in six minutes,
+        # jobs rc_1794268862_*). Retrying cannot help; the user needs
+        # a file that actually carries sound.
+        return NO_AUDIO_TRACK_MESSAGE
     if (
         "could not download the whisper model" in low
         or "local whisper backend" in low

@@ -5180,6 +5180,9 @@ function setupRecapVisualEditor() {
     if (btnModeUrl && btnModeFile) {
         btnModeUrl.addEventListener("click", () => {
             haptic("selection");
+            // Batch DF: the no-audio verdict belongs to the uploaded
+            // FILE — switching to a link source clears it.
+            state.recapNoAudio = false;
             btnModeUrl.classList.add("active");
             btnModeFile.classList.remove("active");
             if (panelUrl) panelUrl.classList.remove("hidden");
@@ -5578,6 +5581,9 @@ function setupRecapVisualEditor() {
         paintRecapUnverifiedWarning();
         state.recapVideoTitle = data.title || file.name;
         state.recapSourceDuration = data.duration_seconds;
+        // Batch DF: remember a no-audio verdict for THIS file — the
+        // ready-paint below and handleStartRecap both key off it.
+        state.recapNoAudio = data.has_audio === false;
         updateRecapSplitCostHint();
         if (data.width && data.height) {
             state.recapSourceWidth = data.width;
@@ -5656,6 +5662,16 @@ function setupRecapVisualEditor() {
 
         const els = recapUploadEls();
         if (els.bar) { els.bar.classList.remove("busy", "indeterminate"); els.bar.style.width = "100%"; }
+        // Batch DF: a no-audio file can never be recapped — say so
+        // NOW, on the card, and lock the CTA (see recapNoAudio).
+        if (state.recapNoAudio) {
+            if (durSpan) {
+                durSpan.className = "mini-tag text-danger";
+                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${t("recap_no_audio_tag")})</span>`;
+            }
+            setRecapStartEnabled(false);
+            showStudioToast(t("recap_no_audio"), 'warning');
+        }
         setRecapInfoUploadState("ready");
         if (els.label) els.label.innerText = t("upload_ready_label");
         setRecapPreviewState("ready");
@@ -8934,6 +8950,14 @@ async function handleStartRecap() {
     // a recap source — never submit on the strength of a local pick.
     if (state.recapUploadPending) {
         showStudioToast(t("toast_recap_not_uploaded"), 'warning');
+        return;
+    }
+    // Batch DF: an uploaded file with no audio track can never be
+    // recapped — block here with the exact reason (the CTA is already
+    // disabled; this covers every other path to this handler, and the
+    // server refuses it too, before any credit moves).
+    if (state.recapNoAudio) {
+        showStudioToast(t("recap_no_audio"), 'warning');
         return;
     }
     // Batch BV: same rule for the own-voice sample — a selected

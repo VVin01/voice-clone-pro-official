@@ -5379,6 +5379,10 @@ async def upload_recap_video(
         "thumbnail": thumb_url,
         "platform": "Uploaded Video",
         "has_subtitles": True,
+        # Batch DF: the probe already knows whether the file carries
+        # an audio stream — surface it so the app can warn at upload
+        # time instead of after a doomed submit.
+        "has_audio": bool(meta.get("has_audio")),
         "preview_ts": best_ts,
     }
 
@@ -8918,6 +8922,23 @@ async def create_recap_job(
     # Batch AJ M1: refuse new recap work when the disk is nearly full
     # (before any charge) — see _require_disk_headroom.
     _require_disk_headroom()
+
+    # Batch DF: a local upload with NO audio track can never be
+    # recapped — the planner's first step extracts the speech track
+    # and ffmpeg dies on the missing stream map. Until now the job
+    # was charged, failed in ~1 s behind the generic message, and
+    # refunded, so users retried the same silent file blind (four
+    # attempts, 2026-11-10). Refuse here, before any credit moves,
+    # with the exact reason. Only a POSITIVE probe blocks: a file
+    # the probe cannot read keeps the existing behaviour.
+    if _req_url and not _req_url.startswith(("http://", "https://")):
+        from app.services.downloader import NO_AUDIO_TRACK_MESSAGE, probe_local_media
+
+        _df_meta = await asyncio.to_thread(
+            probe_local_media, str(Path(_req_url.strip("'\"")).resolve())
+        )
+        if _df_meta.get("has_video") and not _df_meta.get("has_audio"):
+            raise HTTPException(status_code=400, detail=NO_AUDIO_TRACK_MESSAGE)
 
     # Narrator slug allowlist (stored-XSS fix, hunt #2 X1): voice_slug
     # is persisted as the job's preset_voice and rendered in the admin

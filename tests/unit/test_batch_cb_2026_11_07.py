@@ -425,8 +425,8 @@ def test_fact_sheet_steering_gone_when_admin_sets_cap(monkeypatch):
 
 # ── Release pin: cache token (split-literal, sweep-proof) ──────────
 
-def test_cache_token_is_r127():
-    token = "20261104_r" + "127"
+def test_cache_token_is_r128():
+    token = "20261104_r" + "128"
     stale = "20261104_r" + "122"
     assert INDEX_HTML.count(token) == 4
     assert stale not in INDEX_HTML
