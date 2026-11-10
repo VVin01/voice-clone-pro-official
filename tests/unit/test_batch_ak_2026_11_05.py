@@ -241,5 +241,5 @@ def test_language_parity_with_backend():
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_r64():
-    assert INDEX_HTML.count("?v=20261104_r129") == 4
+    assert INDEX_HTML.count("?v=20261104_r130") == 4
     assert "?v=20261104_r62" not in INDEX_HTML
