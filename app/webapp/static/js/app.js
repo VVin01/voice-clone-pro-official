@@ -4827,6 +4827,12 @@ function showRecapStep(n) {
         const els = recapStepEls(m);
         if (els.card) els.card.classList.toggle("hidden", m !== n);
     });
+    // Batch DH: entering Step 2 re-fits the 9:16 preview frame — the
+    // boot-time fit runs while the pane is hidden (parent width 0), so
+    // the real fit must happen once the step is actually visible.
+    if (n === 2 && typeof window.__ddFitPreviewFrame === "function") {
+        requestAnimationFrame(() => window.__ddFitPreviewFrame());
+    }
     refreshRecapStepIndicator();
     // Batch BO: every step change re-applies the sticky-CTA step
     // gate — the 1-Click CTA bar may show only while Step 4 is the
@@ -8105,6 +8111,16 @@ function setupRecapVisualEditor() {
             return;
         }
         const parentW = frame.parentElement ? frame.parentElement.clientWidth : 300;
+        if (parentW <= 0) {
+            // Batch DH: the editor setup runs at boot while the Recap
+            // pane is hidden — a 0 parent width here must NOT be written
+            // as an inline 0px size (it bricks the preview until a
+            // resize). Clear and let the CSS default size the frame;
+            // showRecapStep re-fits when Step 2 actually opens.
+            frame.style.height = "";
+            frame.style.width = "";
+            return;
+        }
         let w = Math.min(300, parentW);
         if (window.innerHeight < 640) {
             w = Math.min(w, window.innerHeight * 0.44 * 9 / 16);
@@ -8113,6 +8129,7 @@ function setupRecapVisualEditor() {
         frame.style.height = `${Math.round(w * 16 / 9)}px`;
     }
     window.addEventListener("resize", ddFitPreviewFrame);
+    window.__ddFitPreviewFrame = ddFitPreviewFrame;
     ["recap-ratio-picker", "recap-fill-picker"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener("click", () => setTimeout(() => {
