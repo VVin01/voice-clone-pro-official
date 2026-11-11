@@ -66,11 +66,16 @@ class _FakeGeminiEngine:
 
     instances: list["_FakeGeminiEngine"] = []
 
-    def __init__(self, *, ffmpeg, work_dir, rate="+0%", keys=None, direction="", log=None):
+    def __init__(self, *, ffmpeg, work_dir, rate="+0%", keys=None, direction="", log=None,
+                 record_usage=True):
         self.keys = list(keys or [])
         self.work_dir = Path(work_dir)
         self.exhausted = False
         self.behaviour = "ok"  # ok | exhaust | invalid | spent
+        # Batch DN: own-key engines are built with record_usage=False;
+        # the double records which constructions got the flag so the
+        # CG tests can assert BYOK engines never write pool usage.
+        self.record_usage = record_usage
         self.key_error_codes: dict[int, int] = {}
         self.key_error_texts: dict[int, str] = {}
         self.calls = 0
@@ -755,5 +760,5 @@ def test_cg_route_marker_format():
 
 def test_cg_cache_token_is_r104():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261104_r135") == 4
+    assert html.count("20261104_r136") == 4
     assert ("20261104_r" + "105") not in html

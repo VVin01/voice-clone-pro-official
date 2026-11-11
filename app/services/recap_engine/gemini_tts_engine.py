@@ -31,15 +31,25 @@ already uses for Edge TTS (``generate_channel99_voice(text, voice)`` ->
   KeyHealth.order() on this engine's own "gemini_tts" registry
   (Batch O had deliberately left the engine on a stable order), and
   the starting TTS model rotates per call across TTS_MODELS — each
-  preview model carries its own per-project quota bucket, and
+  TTS model carries its own per-project quota bucket, and
   rotation spreads lines across all of them instead of draining the
   first bucket first. Cooled keys are tried last, never dropped;
   failover inside a call is unchanged.
+* Batch DN (2026-11-10): TTS_MODELS migrated ahead of the preview
+  models' 2026-11-17 retirement (see the constant), and the key walk
+  is quota-aware: per model, keys are ordered by remaining daily
+  quota (KeyHealth.order_for_model on counted successes) and every
+  success is recorded via record_usage. BYOK engines built for a
+  user's OWN key pass record_usage=False — their quota is theirs and
+  never enters the shared pool ledger.
 
-Quota note: Gemini TTS preview models carry their own per-key daily
-quota, separate from the text models the planner uses; when it runs
-out mid-recap, the remaining lines degrade to the persona engine with
-fallback_used=true — by design, and surfaced to the user.
+Quota note: Gemini TTS models carry their own per-project daily
+quota, separate from the text models the planner uses. Measured caps
+(AI Studio rate-limit table, Free tier, 2026-11-10): every model in
+TTS_MODELS allows 10 requests/day per project at 3 RPM / 10K TPM.
+When quota runs out mid-recap, the remaining lines degrade to the
+persona engine with fallback_used=true — by design, and surfaced to
+the user.
 """
 from __future__ import annotations
 
@@ -84,7 +94,21 @@ GEMINI_VOICE_DISPLAY_MY: dict[str, str] = {
     "Gacrux": "မသီရိ",
     "Achernar": "မသွန်းရည်",
 }
-TTS_MODELS = ("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
+# Batch DN (2026-11-10): model migration ahead of the 2026-11-17
+# retirement of BOTH preview models on the Gemini API. Rotation order:
+# the GA replacement first (best quality), the current primary next
+# (its remaining pre-retirement days still serve), the GA lite model
+# (fastest), then the current reserve. After Nov 17 the two previews
+# simply fail per call and the existing failover moves on — no second
+# migration is needed at the deadline. gemini-2.5-pro-preview-tts is
+# deliberately ABSENT: its free-tier limits are 0/0/0 (it 429s on
+# every key), so it can never serve a line.
+TTS_MODELS = (
+    "gemini-3.8-flash-tts",
+    "gemini-3.1-flash-tts-preview",
+    "gemini-3.8-flash-lite-tts",
+    "gemini-2.5-flash-preview-tts",
+)
 # Batch U: process-level starting-model rotation cursor (in-memory
 # only, the same lifetime as KeyHealth). Advanced once per _ask() call.
 _TTS_MODEL_LOCK = threading.Lock()
@@ -230,7 +254,7 @@ class GeminiTTSEngine:
     """Same interface as EdgeTTSEngine: generate_channel99_voice(text, voice) -> WAV path."""
 
     def __init__(self, *, ffmpeg: str, work_dir: Path, rate: str = "+0%", keys: Optional[list[str]] = None,
-                 direction: str = "", log: LogFn = print) -> None:
+                 direction: str = "", log: LogFn = print, record_usage: bool = True, **_ignored: Any) -> None:
         self.ffmpeg, self.work_dir, self.log = ffmpeg, Path(work_dir), log
         try:
             self.rate = int(str(rate or "+0%").strip().rstrip("%"))
@@ -250,44 +274,62 @@ class GeminiTTSEngine:
         # the key itself. Inert for the shared pool path.
         self.key_error_codes: dict[int, int] = {}
         self.key_error_texts: dict[int, str] = {}
+        # Batch DN: whether successful syntheses are counted into the
+        # shared "gemini_tts" usage ledger. Pool engines keep the
+        # default (True); engines built around ONE user-owned key
+        # (Batch CG routes) pass False — the user's quota is theirs
+        # alone and must not distort the pool's remaining-quota math.
+        # Cooldown bookkeeping (mark_success / mark_failure) and the
+        # CG key_error_codes classification are unaffected either way.
+        self._record_usage = bool(record_usage)
 
     def fingerprint(self, voice: str) -> str:
         profile = narrator_prompt("", voice, self.direction)
         return voice + "|gemini|" + hashlib.sha256(f"{PROFILE_VERSION}|{profile}|{self.rate}".encode()).hexdigest()
+
+    def _key_order_for_model(self, model: str, tts_health: Any) -> list[int]:
+        """Candidate key indices for ONE TTS model (Batch DN).
+
+        Starts from the _last_key offset, then re-sorts by the health
+        registry's quota-aware order for THIS model: the registry
+        omits cooled keys (tail-appended here, never dropped — Batch
+        U semantics) and sorts the rest richest-quota-first with
+        rotation preserved inside ties. The order is recomputed per
+        model because remaining quota is per (key, model): a key
+        drained on one model still leads on another model's untouched
+        bucket. Any registry failure degrades to the plain rotated
+        offset order."""
+        order = list(range(len(self.keys)))
+        order = order[self._last_key:] + order[:self._last_key]
+        if tts_health is None:
+            return order
+        try:
+            ranked_keys = tts_health.order_for_model(list(self.keys), model)
+            _seen_keys = set(ranked_keys)
+            ranked_keys += [k for k in self.keys if k not in _seen_keys]
+            rank = {key: pos for pos, key in enumerate(ranked_keys)}
+            return sorted(order, key=lambda i: rank[self.keys[i]])
+        except Exception:
+            return order
 
     def _ask(self, prompt: str, voice_name: str) -> bytes:
         from google.genai import types
 
         config = types.GenerateContentConfig(response_modalities=["AUDIO"], speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name))))
-        order = list(range(len(self.keys)))
-        order = order[self._last_key:] + order[:self._last_key]
-        # TTS keeps its OWN registry ("gemini_tts"): the preview
-        # models' per-key quota is separate from the text models', so
-        # a TTS-dead key must not sideline the planner.
+        # TTS keeps its OWN registry ("gemini_tts"): the TTS models'
+        # per-key quota is separate from the text models', so a
+        # TTS-dead key must not sideline the planner.
         tts_health = _key_rotation.health_for("gemini_tts") if _key_rotation is not None else None
-        if tts_health is not None:
-            # Batch U (2026-11-04): per-call key rotation — the same
-            # KeyHealth.order() mechanism the planner and Group AI use
-            # (Batch O deliberately left this engine unrotated, on
-            # prioritized()). order() omits cooled keys, so any it
-            # leaves out are appended at the tail in their original
-            # relative order, exactly as the planner does: a cooled
-            # key is tried last, never dropped.
-            try:
-                rotated_keys = tts_health.order(list(self.keys))
-                _seen_keys = set(rotated_keys)
-                rotated_keys += [k for k in self.keys if k not in _seen_keys]
-                rank = {key: pos for pos, key in enumerate(rotated_keys)}
-                order = sorted(order, key=lambda i: rank[self.keys[i]])
-            except Exception:
-                pass
         models = _rotated_tts_models()
         last = ""
         attempts = 0
         for _round_no in range(BUSY_ROUNDS):
             busy = False
             for model in models:
+                # Batch DN: per-model quota-aware key order (richest
+                # key first for THIS model) — see _key_order_for_model.
+                order = self._key_order_for_model(model, tts_health)
                 for i in order:
                     if (model, i) in self._dead:
                         continue
@@ -312,6 +354,18 @@ class GeminiTTSEngine:
                                 self._last_key = i
                                 if tts_health is not None:
                                     tts_health.mark_success(self.keys[i])
+                                    # Batch DN: count the success
+                                    # against this (key, model)'s
+                                    # daily cap so later calls start
+                                    # from a richer key. BYOK engines
+                                    # (record_usage=False) skip this —
+                                    # a user's own quota never enters
+                                    # the shared pool ledger.
+                                    if self._record_usage:
+                                        try:
+                                            tts_health.record_usage(self.keys[i], model)
+                                        except Exception:
+                                            pass
                                 return data
                         last = f"{model}: no audio in the answer"
                     except Exception as exc:  # noqa: BLE001

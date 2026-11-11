@@ -359,6 +359,9 @@ def _build_routed_engine(ctx, ffmpeg: str, work_dir: Path, rate: str):
             own_engine = GeminiTTSEngine(
                 ffmpeg=ffmpeg, work_dir=work_dir, rate=rate,
                 keys=[ctx.own_key],
+                # Batch DN: a user-owned key's quota is theirs alone —
+                # its successes must not enter the shared pool ledger.
+                record_usage=False,
                 log=lambda msg: logger.info("TTS gemini (own key): %s", msg),
             )
         except Exception:

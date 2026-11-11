@@ -28,6 +28,15 @@ Semantics, mirroring the VoxCPM token pool:
 * Thread-safe: one lock guards cooldowns and the rotation cursor.
 * Keys are identified by a short SHA-256 digest (``key_id``); raw key
   material is never stored in this module's state and never logged.
+* Batch DN (2026-11-10): quota-aware ordering. Google exposes no
+  remaining-quota API and a 429 carries no remaining count, so
+  KeyHealth keeps a per-(model, key-digest) ledger of OUR OWN
+  successful calls, counted against the measured per-model daily caps
+  (``MODEL_DAILY_CAPS``) on Google's Pacific quota day.
+  ``order_for_model`` starts a call from the key with the most
+  remaining quota for that model; rotation survives inside ties so
+  the richest keys share the per-minute RPM cap instead of one key
+  absorbing every call.
 """
 from __future__ import annotations
 
@@ -38,12 +47,45 @@ import os
 import re
 import threading
 import time
+from datetime import datetime
 from typing import Callable, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
 # Same 30 minutes the VoxCPM token pool uses for quota-class failures.
 DEFAULT_COOLDOWN_SECONDS = 1800.0
+
+# Batch DN: per-model DAILY request caps (requests per day per key /
+# project), measured firsthand from the AI Studio rate-limit table
+# (Free tier, 2026-11-10). Only models the shared pool serves are
+# listed; a model missing here carries DEFAULT_MODEL_DAILY_CAP.
+MODEL_DAILY_CAPS: dict[str, int] = {
+    # Gemini TTS models — 3 RPM / 10K TPM / 10 RPD each.
+    "gemini-3.8-flash-tts": 10,
+    "gemini-3.1-flash-tts-preview": 10,
+    "gemini-3.8-flash-lite-tts": 10,
+    "gemini-2.5-flash-preview-tts": 10,
+    # Full text models — 5 RPM / 250K TPM / 20 RPD.
+    "gemini-3.6-flash": 20,
+    "gemini-3.5-flash": 20,
+    "gemini-3.8-flash": 20,
+    "gemini-2.5-flash": 20,
+    "gemini-2.5-flash-lite": 20,
+    "gemini-flash-latest": 20,
+    "gemini-pro-latest": 20,
+    # Lite text models — 15 RPM / 250K TPM / 500 RPD.
+    "gemini-3.5-flash-lite": 500,
+    "gemini-3.1-flash-lite": 500,
+    "gemini-flash-lite-latest": 500,
+}
+
+# Conservative daily cap assumed for a model missing from
+# MODEL_DAILY_CAPS (the full-text tier's cap).
+DEFAULT_MODEL_DAILY_CAP = 20
+
+# Google's quota day is the Pacific date.
+_PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
 # ---------------------------------------------------------------------------
 # BotSetting sync store (Batch AJ / M12 persistence backstop)
@@ -191,6 +233,9 @@ class KeyHealth:
         self._lock = threading.Lock()
         self._cooldowns: dict[str, float] = {}  # key_id -> cooldown expiry
         self._cursor = 0
+        # Batch DN usage ledger: model -> key_id -> [pacific_day, count]
+        # of SUCCESSFUL calls. Digests only, like the cooldowns.
+        self._usage: dict[str, dict[str, list]] = {}
         # Batch AJ (M12) persistence backstop — off for direct instances.
         self._persist_provider: str | None = None
         self._persist_loaded = False
@@ -198,8 +243,11 @@ class KeyHealth:
 
     # -- Batch AJ (M12) persistence -----------------------------------
     # Persisted form: {"v": 1, "cooldowns": {key_id: expiry_epoch},
-    # "cursor": int} under BotSetting key "aj_kh:<provider>". Only
-    # digests and timestamps — never raw key material, never text.
+    # "cursor": int, "usage": {model: {key_id: count}}} under BotSetting
+    # key "aj_kh:<provider>". Only digests and timestamps — never raw
+    # key material, never text. Batch DN adds the "usage" section;
+    # snapshots written before DN have no "usage" key and restore
+    # cleanly (restore tolerates its absence).
 
     def _store_key(self) -> str | None:
         if not self._persist_provider:
@@ -211,7 +259,10 @@ class KeyHealth:
         self._persist_provider = str(provider or "").strip().lower() or None
 
     def snapshot_state(self) -> dict:
-        """JSON-serialisable snapshot (digests + expiries + cursor)."""
+        """JSON-serialisable snapshot (digests + expiries + cursor +
+        today's usage counts, Batch DN). Usage entries from a stale
+        Pacific day are pruned here so a snapshot never carries
+        yesterday's counts into a restore."""
         with self._lock:
             now = self._clock()
             cooldowns = {
@@ -219,7 +270,22 @@ class KeyHealth:
                 for kid, until in self._cooldowns.items()
                 if until > now
             }
-            return {"v": 1, "cooldowns": cooldowns, "cursor": int(self._cursor)}
+            day = self._pacific_day()
+            usage: dict[str, dict[str, int]] = {}
+            for model, per_key in self._usage.items():
+                rows = {
+                    kid: int(entry[1])
+                    for kid, entry in per_key.items()
+                    if entry and entry[0] == day and int(entry[1]) > 0
+                }
+                if rows:
+                    usage[model] = rows
+            return {
+                "v": 1,
+                "cooldowns": cooldowns,
+                "cursor": int(self._cursor),
+                "usage": usage,
+            }
 
     def restore_state(self, state: object) -> None:
         """Merge a snapshot back in; expired cooldowns are pruned."""
@@ -240,6 +306,31 @@ class KeyHealth:
                 self._cursor = int(state.get("cursor") or 0)
             except (TypeError, ValueError):
                 pass
+            # Batch DN: usage section (absent in pre-DN snapshots —
+            # tolerated). Restored counts are stamped with the CURRENT
+            # Pacific day: snapshots only ever contain same-day counts
+            # (snapshot_state prunes stale days), and a count restored
+            # just after a Pacific midnight errs conservative (a key
+            # looks slightly MORE used than it is), never the reverse.
+            raw_usage = state.get("usage") or {}
+            if isinstance(raw_usage, dict):
+                day = self._pacific_day()
+                for model, per_key in raw_usage.items():
+                    if not isinstance(per_key, dict):
+                        continue
+                    target = self._usage.setdefault(str(model), {})
+                    for kid, count in per_key.items():
+                        try:
+                            count = int(count)
+                        except (TypeError, ValueError):
+                            continue
+                        if count <= 0:
+                            continue
+                        existing = target.get(str(kid))
+                        if existing is not None and existing[0] == day:
+                            existing[1] = max(int(existing[1]), count)
+                        else:
+                            target[str(kid)] = [day, count]
 
     def load_persisted(self) -> bool:
         """Lazy one-shot load from the store. True when state was read."""
@@ -304,6 +395,102 @@ class KeyHealth:
             self._cooldowns.pop(kid, None)
         self._schedule_persist()
 
+    # -- Batch DN: usage ledger + quota-aware ordering -----------------
+
+    def _pacific_day(self) -> str:
+        """Today's date (ISO) in America/Los_Angeles — Google's quota
+        day. Derived from the injected clock, like cooldown expiry."""
+        return datetime.fromtimestamp(self._clock(), tz=_PACIFIC_TZ).date().isoformat()
+
+    def _usage_count_today(self, kid: str, model: str) -> int:
+        """Counted successes for (model, kid) on the current Pacific
+        day. Caller holds the lock. A stale-day entry reads as 0 —
+        the lazy reset: it is only rewritten by the next record."""
+        entry = self._usage.get(model, {}).get(kid)
+        if not entry or entry[0] != self._pacific_day():
+            return 0
+        return int(entry[1])
+
+    def record_usage(self, key: str, model: str, n: int = 1) -> None:
+        """Count `n` SUCCESSFUL calls of `model` against `key`.
+
+        Success-only by design: a failed call must not consume the
+        ledger — a 429 already routes the key into cooldown, so
+        counting failures too would double-punish it. Only the key
+        digest is ever stored."""
+        self._maybe_load()
+        model = str(model or "").strip()
+        if not model:
+            return
+        kid = key_id(key)
+        step = max(0, int(n))
+        with self._lock:
+            day = self._pacific_day()
+            per_model = self._usage.setdefault(model, {})
+            entry = per_model.get(kid)
+            if entry is None or entry[0] != day:
+                per_model[kid] = [day, step]
+            else:
+                entry[1] = int(entry[1]) + step
+        self._schedule_persist()
+
+    def remaining(self, key: str, model: str) -> Optional[int]:
+        """Estimated requests left for (key, model) today: the model's
+        daily cap minus our counted successes (stale-day usage counts
+        as 0, so a fresh day reads as the full cap).
+
+        None when the model has NO KNOWN CAP — decided by membership
+        in MODEL_DAILY_CAPS alone, independent of the ledger. A model
+        the cap table does not know carries the conservative
+        DEFAULT_MODEL_DAILY_CAP for ordering purposes
+        (order_for_model), but reporting a number for it here would
+        present an assumption as a measurement, so it stays None."""
+        model = str(model or "").strip()
+        if not model or model not in MODEL_DAILY_CAPS:
+            return None
+        self._maybe_load()
+        kid = key_id(key)
+        with self._lock:
+            return MODEL_DAILY_CAPS[model] - self._usage_count_today(kid, model)
+
+    def order_for_model(self, keys: Sequence[str], model: str) -> list[str]:
+        """Quota-aware candidate order for ONE model (Batch DN).
+
+        1. Build the rotated list exactly like :meth:`order` (same
+           cursor advance) and drop keys in cooldown; if EVERY key is
+           cooling, keep the full rotated list — the never-fully-
+           offline rule is unchanged.
+        2. Stable-sort by today's counted usage for `model`
+           ASCENDING — i.e. remaining quota (cap − used) DESCENDING,
+           since the cap is per-model. Ties keep the rotated order,
+           so consecutive calls start on different keys inside the
+           richest group; that rotation is what protects the tight
+           per-minute RPM cap (3/min on the TTS models) from one rich
+           key absorbing every call.
+
+        An empty/blank model behaves exactly like :meth:`order`. A
+        model missing from MODEL_DAILY_CAPS orders with
+        DEFAULT_MODEL_DAILY_CAP (it only shifts the sort, never the
+        cap arithmetic callers see via :meth:`remaining`)."""
+        model = str(model or "").strip()
+        if not model:
+            return self.order(keys)
+        self._maybe_load()
+        pool = list(keys)
+        if not pool:
+            return pool
+        with self._lock:
+            start = self._cursor % len(pool)
+            self._cursor += 1
+            now = self._clock()
+            cooling = {kid for kid, until in self._cooldowns.items() if until > now}
+            used = {key_id(k): self._usage_count_today(key_id(k), model) for k in pool}
+        self._schedule_persist()  # cursor advanced — coalesced write
+        rotated = pool[start:] + pool[:start]
+        healthy = [k for k in rotated if key_id(k) not in cooling]
+        candidates = healthy or rotated
+        return sorted(candidates, key=lambda k: used[key_id(k)])
+
     def order(self, keys: Sequence[str]) -> list[str]:
         """Candidate order for the next call.
 
@@ -354,6 +541,7 @@ class KeyHealth:
     def reset(self) -> None:
         with self._lock:
             self._cooldowns.clear()
+            self._usage.clear()
             self._cursor = 0
         # A reset is also a persisted reset: a later process must not
         # resurrect state this process deliberately cleared.
@@ -433,6 +621,8 @@ def collect_gemini_key_pool(env: Mapping[str, str] | None = None) -> list[tuple[
 
 __all__ = [
     "DEFAULT_COOLDOWN_SECONDS",
+    "DEFAULT_MODEL_DAILY_CAP",
+    "MODEL_DAILY_CAPS",
     "KeyHealth",
     "botsetting_sync_delete",
     "botsetting_sync_read",

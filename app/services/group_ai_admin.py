@@ -1311,15 +1311,20 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
     # Batch O (DECISION backlog item 3): the starting key also ROTATES
     # per message via KeyHealth.order(); keys it omits (cooled) are
     # appended at the tail so the pool never shrinks.
+    # Batch DN: the per-message order is quota-aware for the chain's
+    # head model — the model every key is attempted on first — via
+    # order_for_model (richest remaining quota first, rotation inside
+    # ties); keys it omits (cooled) are still tail-appended. Successes
+    # record_usage against the model that actually served (below).
     health = _key_rotation.health_for("gemini")
+    models = gemini_model_chain()
     _pool_keys = [key for _label, key in pool]
-    ordered = health.order(_pool_keys)
+    ordered = health.order_for_model(_pool_keys, models[0] if models else "")
     _seen = set(ordered)
     ordered = ordered + [k for k in _pool_keys if k not in _seen]
     if ordered != _pool_keys:
         rank = {key: idx for idx, key in enumerate(ordered)}
         pool = sorted(pool, key=lambda item: rank[item[1]])
-    models = gemini_model_chain()
     last_exc: Exception | None = None
     # Batch AQ: count attempts against AI_MAX_ATTEMPTS (see the
     # constant). Bookkeeping (mark_success / mark_failure) is
@@ -1345,6 +1350,10 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
                 text = str(getattr(response, "text", "") or "").strip()
                 if text:
                     health.mark_success(key)
+                    # Batch DN: count the success against the model
+                    # that actually served, so later messages start
+                    # from richer keys for that model.
+                    health.record_usage(key, model)
                     return text
                 last_exc = RuntimeError(f"empty response from {model}")
             except Exception as exc:

@@ -5733,6 +5733,9 @@ class EdgeSmartSync:
                                 work_dir=paths.work / "gemini_tts",
                                 rate=effective_rate,
                                 keys=[_ctx.own_key],
+                                # Batch DN: user-owned key — its usage
+                                # never enters the shared pool ledger.
+                                record_usage=False,
                                 log=self.log,
                             )
                         except Exception:

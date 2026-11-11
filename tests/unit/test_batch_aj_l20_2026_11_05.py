@@ -174,9 +174,10 @@ def test_tts_unclassified_errors_mark_key_dead_for_the_run(tmp_path, monkeypatch
     eng = _tts_engine(tmp_path, monkeypatch, recorder, keys=["k1", "k2", "k3"])
     with pytest.raises(gte.GeminiTTSError):
         eng._ask("prompt", "Charon")
-    # Each (model, key) is tried exactly ONCE: 2 models x 3 keys.
+    # Each (model, key) is tried exactly ONCE: models x 3 keys
+    # (Batch DN: 4 TTS models, was 2 -> 12 attempts, still bounded).
     # Before the fix the unmarked keys were retried every busy round.
-    assert len(recorder.calls) == 2 * 3
+    assert len(recorder.calls) == len(gte.TTS_MODELS) * 3
     assert len(set(recorder.calls)) == len(recorder.calls)
 
 
