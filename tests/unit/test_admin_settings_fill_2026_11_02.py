@@ -320,5 +320,5 @@ def test_api_source_carries_gap_keys():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261104_r135") == 4
+    assert INDEX_HTML.count("?v=20261104_r136") == 4
     assert "20261102_ga1" not in INDEX_HTML

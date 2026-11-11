@@ -29,8 +29,8 @@ INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 
 # ── Release pin: cache token ─────────────────────────────────────
 
-def test_cy_cache_token_is_r135():
-    assert INDEX_HTML.count("20261104_r135") == 4
+def test_cy_cache_token_is_r136():
+    assert INDEX_HTML.count("20261104_r136") == 4
     assert "20261104_r" + "122" not in INDEX_HTML
 
 
@@ -141,6 +141,9 @@ class _BusyRecorder:
                 # model's key loop), so the first
                 # busy_rounds * len(TTS_MODELS) calls are the busy
                 # rounds — independent of the per-call model rotation.
+                # (Parameter name is `rounds` since Batch DN: with 4
+                # TTS models, counting raw "rounds" of calls no longer
+                # matches the constant's old 2-model wording.)
                 if len(recorder.calls) <= recorder.busy_rounds * len(gte.TTS_MODELS):
                     err = RuntimeError("503 service unavailable")
                     err.code = 503
@@ -174,7 +177,8 @@ def test_busy_all_rounds_fail_over_with_one_short_wait(tmp_path, monkeypatch):
     eng = _busy_engine(tmp_path, monkeypatch, recorder, sleeps)
     with pytest.raises(gte.GeminiTTSError):
         eng._ask("prompt", "Charon")
-    # 2 rounds x 2 models (503 breaks each model's key loop).
+    # 2 rounds x 4 models (503 breaks each model's key loop;
+    # Batch DN: 4 TTS models, was 2 — count follows the tuple).
     assert len(recorder.calls) == 2 * len(gte.TTS_MODELS)
     # Exactly ONE inter-round wait of the trimmed 10 s — and NO
     # trailing wait after the final round (pre-CY: 3 rounds and up

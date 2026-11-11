@@ -252,11 +252,13 @@ def test_group_ai_rotates_start_key_per_message(monkeypatch):
 def test_gemini_tts_engine_keeps_prioritized():
     # SUPERSEDED by Batch U (2026-11-04, owner scope extension "tts
     # ကိုလဲသုံးနော်"): the TTS engine now rotates its starting key per
-    # call via KeyHealth.order() like the planner and Group AI, so
-    # this Batch O pin is deliberately inverted. Behavioural coverage
+    # call via KeyHealth like the planner and Group AI, so this
+    # Batch O pin is deliberately inverted. Behavioural coverage
     # lives in test_gemini_model_rotation_batch_u_2026_11_04.py.
+    # (Batch DN: the per-model ordering call is order_for_model —
+    # the same rotation, additionally quota-sorted.)
     src = (ROOT / "app/services/recap_engine/gemini_tts_engine.py").read_text(encoding="utf-8")
-    assert "tts_health.order(" in src
+    assert "tts_health.order_for_model(" in src
     assert "tts_health.prioritized(" not in src
 
 

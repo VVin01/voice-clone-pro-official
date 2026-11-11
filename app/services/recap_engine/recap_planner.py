@@ -302,29 +302,11 @@ def _configure_gemini_key_pool(
     if not key_pool:
         return
 
-    # Audit fix E: keys cooled down by quota/auth failures in earlier
-    # jobs start LAST for this job. Relative order is preserved and the
-    # pool never shrinks, so the model/key fallback chain below (and
-    # the env sync in activate()) behaves exactly as before — the
-    # cooldown only changes which key a job starts from.
-    # Batch O (DECISION backlog item 3): the starting key now also
-    # ROTATES per job via KeyHealth.order() — consecutive jobs begin at
-    # different keys instead of every job hammering key #1 first.
-    # order() omits cooled keys, so any it leaves out are appended at
-    # the tail in their original relative order: still last-resort
-    # candidates for this job, never silently dropped.
-    if _key_rotation is not None:
-        try:
-            _pool_keys = [key for _label, key in key_pool]
-            _ordered = _key_rotation.health_for("gemini").order(_pool_keys)
-            _seen = set(_ordered)
-            _ordered = _ordered + [k for k in _pool_keys if k not in _seen]
-            if _ordered != _pool_keys:
-                _rank = {key: idx for idx, key in enumerate(_ordered)}
-                key_pool = sorted(key_pool, key=lambda item: _rank[item[1]])
-        except Exception:
-            pass
-
+    # The key-pool ordering (audit fix E + Batch O + Batch DN) runs
+    # AFTER the model chain below is finalised: Batch DN orders the
+    # pool by remaining quota for the chain's head model, so the
+    # chain must exist first. See the block following the chain
+    # construction.
     try:
         from app.config import settings
         primary = getattr(settings, "gemini_primary_model", None)
@@ -359,6 +341,39 @@ def _configure_gemini_key_pool(
 
     if not models:
         models = list(GEMINI_MODEL_FALLBACK_CHAIN)
+
+    # Audit fix E: keys cooled down by quota/auth failures in earlier
+    # jobs start LAST for this job. Relative order is preserved and the
+    # pool never shrinks, so the model/key fallback chain below (and
+    # the env sync in activate()) behaves exactly as before — the
+    # cooldown only changes which key a job starts from.
+    # Batch O (DECISION backlog item 3): the starting key also ROTATES
+    # per job — consecutive jobs begin at different keys instead of
+    # every job hammering key #1 first. The ordering omits cooled
+    # keys, so any it leaves out are appended at the tail in their
+    # original relative order: still last-resort candidates for this
+    # job, never silently dropped.
+    # Batch DN: the per-job order is now quota-aware for the chain's
+    # HEAD model via order_for_model — richest remaining quota first,
+    # rotation preserved inside ties. The pool order stays FIXED for
+    # the whole job (Batch U pins that every logical call restarts at
+    # Key 1 of this order; only the starting MODEL rotates per call),
+    # and _gemini_json records each success against the model that
+    # actually served, so the NEXT job's order reflects real usage
+    # across the whole chain.
+    if _key_rotation is not None:
+        try:
+            _pool_keys = [key for _label, key in key_pool]
+            _ordered = _key_rotation.health_for("gemini").order_for_model(
+                _pool_keys, models[0] if models else ""
+            )
+            _seen = set(_ordered)
+            _ordered = _ordered + [k for k in _pool_keys if k not in _seen]
+            if _ordered != _pool_keys:
+                _rank = {key: idx for idx, key in enumerate(_ordered)}
+                key_pool = sorted(key_pool, key=lambda item: _rank[item[1]])
+        except Exception:
+            pass
 
     model_index = 0
     key_index = 0
@@ -1370,6 +1385,20 @@ def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = 
                 response = ai.client.models.generate_content(model=ai.text_model, contents=prompt)
             finally:
                 ai._disable_proxy()
+            # Batch DN: the request succeeded — count it against the
+            # serving (key, model) so the next job's pool order starts
+            # from richer keys. The HTTP call consumed quota even if
+            # payload extraction below rejects the body, so recording
+            # happens before extraction. Best-effort: usage accounting
+            # must never break a planner call.
+            if _key_rotation is not None:
+                try:
+                    _key_rotation.health_for("gemini").record_usage(
+                        str(getattr(ai, "api_key", "") or ""),
+                        str(getattr(ai, "_recap_active_model", "") or getattr(ai, "text_model", "") or ""),
+                    )
+                except Exception:
+                    pass
             return _extract_json_payload(getattr(response, "text", ""))
         except Exception as exc:
             last = exc

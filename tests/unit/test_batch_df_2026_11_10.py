@@ -86,6 +86,6 @@ def test_df_i18n_keys_complete_both_languages():
         assert I18N.count(key) == 2, key  # my + en
 
 
-def test_df_cache_token_is_r135():
-    assert INDEX.count("20261104_r135") == 4
+def test_df_cache_token_is_r136():
+    assert INDEX.count("20261104_r136") == 4
     assert "20261104_r127" not in INDEX

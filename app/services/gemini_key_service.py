@@ -121,6 +121,9 @@ def validate_gemini_key(candidate: str) -> tuple[bool, str]:
             ffmpeg=shutil.which("ffmpeg") or "ffmpeg",
             work_dir=work_dir,
             keys=[candidate],
+            # Batch DN: the candidate is a user's own key — validating
+            # it must not write into the shared pool usage ledger.
+            record_usage=False,
             log=lambda msg: None,
         )
         engine.generate_channel99_voice(_VALIDATION_TEXT, _VALIDATION_VOICE)
