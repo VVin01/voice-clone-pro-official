@@ -122,6 +122,58 @@ def configure_sync_store(url: str | None) -> None:
             _SYNC_ENGINE_URL = None
 
 
+# Batch DO: asyncpg spells TLS as ?ssl=<mode>; psycopg2 rejects the
+# ``ssl`` DSN option outright ("invalid connection option \"ssl\"") —
+# it wants ``sslmode``. The Supabase pooler URL carries ?ssl=require,
+# which silently killed every sync-store read/write after the
+# 2026-11-08 cutover (failures surface only at debug log level).
+_ASYNC_PG_SSL_TO_SSLMODE = {
+    "require": "require",
+    "true": "require",
+    "prefer": "prefer",
+    "disable": "disable",
+    "verify-ca": "verify-ca",
+    "verify-full": "verify-full",
+}
+
+
+def _to_sync_url(url: str) -> str:
+    """Convert an async DATABASE_URL into its sync-driver equivalent.
+
+    Driver swaps: ``sqlite+aiosqlite:`` -> ``sqlite:`` and the asyncpg
+    drivers -> ``postgresql+psycopg2:``. For psycopg2 URLs the query
+    string is translated too (Batch DO): an ``ssl`` param is removed
+    and ``sslmode`` is set from it (an existing ``sslmode`` wins);
+    every other query param is preserved. Non-psycopg2 URLs keep the
+    historical driver-swap-only behaviour."""
+    sync_url = (
+        str(url or "")
+        .replace("sqlite+aiosqlite:", "sqlite:")
+        .replace("postgresql+asyncpg:", "postgresql+psycopg2:")
+        .replace("postgres+asyncpg:", "postgresql+psycopg2:")
+    )
+    if "+psycopg2:" not in sync_url:
+        return sync_url
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    try:
+        parts = urlsplit(sync_url)
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+    except Exception:
+        return sync_url
+    ssl_values = [value for name, value in pairs if name == "ssl"]
+    if not ssl_values:
+        return sync_url
+    kept = [(name, value) for name, value in pairs if name != "ssl"]
+    if not any(name == "sslmode" for name, _value in kept):
+        sslmode = _ASYNC_PG_SSL_TO_SSLMODE.get(
+            ssl_values[0].strip().lower(), "require")
+        kept.append(("sslmode", sslmode))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment)
+    )
+
+
 def _sync_engine():
     """Lazily build the sync engine, or None when persistence is off."""
     global _SYNC_ENGINE, _SYNC_ENGINE_URL
@@ -137,11 +189,7 @@ def _sync_engine():
             url = os.environ.get("DATABASE_URL", "")
     if not url or ":memory:" in url:
         return None
-    sync_url = (
-        url.replace("sqlite+aiosqlite:", "sqlite:")
-        .replace("postgresql+asyncpg:", "postgresql+psycopg2:")
-        .replace("postgres+asyncpg:", "postgresql+psycopg2:")
-    )
+    sync_url = _to_sync_url(url)
     with _SYNC_STORE_LOCK:
         if _SYNC_ENGINE is not None and _SYNC_ENGINE_URL == sync_url:
             return _SYNC_ENGINE

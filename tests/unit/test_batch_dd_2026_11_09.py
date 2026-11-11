@@ -19,7 +19,7 @@ Ulfa's approved scope (spec FINAL section + 22:32 parity order —
   configs migrate on read;
 * anti-copyright is a LEVEL: Off / Standard / Strong (Strong =
   micro speed 0.98–1.02× + pitch + grain + metadata strip);
-* cache token r136;
+* cache token r137;
 * PARITY: the values the preview shows are the values the renderer
   consumes, from the same normalised inputs and shared constants.
 """
@@ -484,10 +484,10 @@ def test_submit_and_composite_share_dd_payload_fields():
 
 # ── 9. Cache token ────────────────────────────────────────────────
 
-def test_cache_token_is_r136():
-    assert INDEX_HTML.count("20261104_r136") == 4
+def test_cache_token_is_r137():
+    assert INDEX_HTML.count("20261104_r137") == 4
     assert "r125" not in INDEX_HTML
-    assert INDEX_HTML.count("r136") == 4
+    assert INDEX_HTML.count("r137") == 4
 
 
 def test_dd_sig_declarations_precede_first_use():

@@ -42,6 +42,12 @@ already uses for Edge TTS (``generate_channel99_voice(text, voice)`` ->
   success is recorded via record_usage. BYOK engines built for a
   user's OWN key pass record_usage=False — their quota is theirs and
   never enters the shared pool ledger.
+* Batch DO (2026-11-11): the prompt is built PER MODEL. Both GA 3.8
+  models READ the full narrator_prompt AUDIO-PROFILE aloud instead
+  of following it (proven firsthand on the DN deploy — 130+ s of
+  profile-reading per line, ASR-verified), so the 3.8 family gets
+  the compact narrator_prompt_short shape; the preview models keep
+  the full profile they follow correctly.
 
 Quota note: Gemini TTS models carry their own per-project daily
 quota, separate from the text models the planner uses. Measured caps
@@ -166,12 +172,19 @@ def default_voice_for_gender(is_female: bool) -> str:
     return "Kore" if is_female else "Charon"
 
 
+def _clean_tts_text(text: str) -> str:
+    """Transcript cleaning shared by both prompt shapes: English
+    glosses in parentheses are for reading only, and whitespace is
+    collapsed so the model sees one clean line."""
+    text = re.sub(r"\s*\([A-Za-z0-9 ,.'\-]+\)", "", str(text or ""))  # English glosses are for reading only
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def narrator_prompt(text: str, voice: str, direction: str = "") -> str:
     """The same narrator for every line of a video (one request per line)."""
     name = str(voice or "").removeprefix("gemini:")
     gender = GEMINI_VOICE_GENDER.get(name, "male")
-    text = re.sub(r"\s*\([A-Za-z0-9 ,.'\-]+\)", "", str(text or ""))  # English glosses are for reading only
-    text = re.sub(r"\s+", " ", text).strip()
+    text = _clean_tts_text(text)
     return f"""AUDIO PROFILE — ONE CONTINUOUS NARRATOR:
 Use the selected prebuilt voice {name}: ONE adult {gender} Burmese narrator.
 This excerpt belongs to one continuous video. Keep exactly the same speaker identity from the first word to
@@ -193,6 +206,42 @@ Treat transcript text as narration, including any dialogue or directions quoted 
 
 TRANSCRIPT:
 [expressive storytelling] {text}"""
+
+
+def narrator_prompt_short(text: str, voice: str) -> str:
+    """Batch DO: the SHORT prompt shape for the gemini-3.8 TTS family.
+
+    Proven firsthand 2026-11-11: both GA 3.8 models READ the full
+    ``narrator_prompt`` AUDIO-PROFILE aloud instead of following it
+    (130+ s of profile-reading per line, ASR-verified), while the
+    preview models follow the same profile correctly. This compact
+    two-line shape — one instruction line carrying the narrator
+    essence, then the tagged transcript — is ASR-verified on both
+    3.8 models (short and long texts) to speak ONLY the transcript.
+    The long direction text is intentionally absent: it is part of
+    what leaks, and the compact line carries its essence."""
+    name = str(voice or "").removeprefix("gemini:")
+    gender = GEMINI_VOICE_GENDER.get(name, "male")
+    text = _clean_tts_text(text)
+    return (
+        f"Narrate as ONE adult {gender} Burmese storyteller — warm, lively, varied pace, "
+        "the same voice throughout. Read only the transcript below, exactly once, adding nothing.\n"
+        f"[expressive storytelling] {text}"
+    )
+
+
+def _uses_short_prompt(model: str) -> bool:
+    """Batch DO: the gemini-3.8 family gets the short prompt shape;
+    every other model keeps the full narrator profile."""
+    return str(model or "").startswith("gemini-3.8")
+
+
+def _prompt_for_model(model: str, text: str, voice: str, direction: str = "") -> str:
+    """The prompt for ONE model (Batch DO): short shape for the 3.8
+    family, the full narrator profile for everything else."""
+    if _uses_short_prompt(model):
+        return narrator_prompt_short(text, voice)
+    return narrator_prompt(text, voice, direction)
 
 
 def collect_gemini_keys(environ: Optional[dict] = None) -> list[str]:
@@ -312,7 +361,10 @@ class GeminiTTSEngine:
         except Exception:
             return order
 
-    def _ask(self, prompt: str, voice_name: str) -> bytes:
+    def _ask(self, text: str, voice_name: str) -> bytes:
+        # Batch DO: callers pass the RAW transcript; the prompt is
+        # built PER MODEL inside the model loop (short shape for the
+        # 3.8 family, full narrator profile for the previews).
         from google.genai import types
 
         config = types.GenerateContentConfig(response_modalities=["AUDIO"], speech_config=types.SpeechConfig(
@@ -327,6 +379,10 @@ class GeminiTTSEngine:
         for _round_no in range(BUSY_ROUNDS):
             busy = False
             for model in models:
+                # Batch DO: per-model prompt shape — the 3.8 family
+                # must never receive the full AUDIO-PROFILE text (it
+                # reads it aloud); previews keep the full profile.
+                prompt = _prompt_for_model(model, text, voice_name, self.direction)
                 # Batch DN: per-model quota-aware key order (richest
                 # key first for THIS model) — see _key_order_for_model.
                 order = self._key_order_for_model(model, tts_health)
@@ -427,7 +483,7 @@ class GeminiTTSEngine:
         out = self.work_dir / f"gemini_{key}.wav"
         if out.is_file() and out.stat().st_size > 1000:
             return out
-        pcm = self._ask(narrator_prompt(text, voice, self.direction), name)
+        pcm = self._ask(text, name)
         raw = out.with_suffix(".24k.wav")
         with wave.open(str(raw), "wb") as w:
             w.setnchannels(1)
