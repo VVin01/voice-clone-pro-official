@@ -325,6 +325,10 @@ async def _dispatch_oldest_queued_recap() -> bool:
                 is_vip=plan["is_vip"],
                 credit_deducted=plan["credit_deducted"],
                 phase=plan["phase"],
+                # Batch DP: a re-dispatched parked job carries its
+                # owner's voice choice + the deadline exemption.
+                voice_choice_mode=plan.get("voice_choice_mode"),
+                dp_resume=bool(plan.get("dp_resume")),
             )
         )
         return True
@@ -542,8 +546,44 @@ async def lifespan(app: FastAPI):
                 _log.warning("Recap queue worker cycle failed", exc_info=True)
             await asyncio.sleep(3)
 
+    # Batch DP: park-and-ask resumer loop — resumes WAITING_CHOICE
+    # jobs (edge-choice backstop + capacity-driven wait resumes) and
+    # fails jobs parked past the 48 h safety valve through the
+    # existing failure paths. Mirrors the queue worker's shape.
+    async def _voice_choice_resumer():
+        """Periodically sweep parked (WAITING_CHOICE) jobs."""
+        import logging
+
+        from app.config import settings as _dp_settings
+        from app.services import voice_choice as _vc
+
+        _log = logging.getLogger("VoiceChoiceResumer")
+        while True:
+            try:
+                _bot = None
+                try:
+                    from aiogram import Bot
+                    from aiogram.client.default import DefaultBotProperties
+                    from aiogram.enums import ParseMode
+
+                    _bot = Bot(token=getattr(_dp_settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                except Exception:
+                    _bot = None
+                try:
+                    await _vc.sweep_parked_jobs(bot=_bot)
+                finally:
+                    if _bot is not None:
+                        try:
+                            await _bot.session.close()
+                        except Exception:
+                            pass
+            except Exception:
+                _log.warning("Voice-choice resumer cycle failed", exc_info=True)
+            await asyncio.sleep(_vc.RESUMER_INTERVAL_SECONDS)
+
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     recap_worker_task = asyncio.create_task(_recap_queue_worker())
+    voice_choice_task = asyncio.create_task(_voice_choice_resumer())
 
     # Telegram webhook registration when in webhook mode and bot attached
     try:
@@ -575,6 +615,7 @@ async def lifespan(app: FastAPI):
 
     cleanup_task.cancel()
     recap_worker_task.cancel()
+    voice_choice_task.cancel()
 
 
 webapp_app = FastAPI(

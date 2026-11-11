@@ -611,6 +611,12 @@ class Job(Base):
     # instead of rebuilding it with default settings. Nullable: rows
     # created before this column existed simply have no persisted state.
     recap_config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Batch DP: park-and-ask state (JSON) — written when a paid job
+    # parks on VoxCPM quota exhaustion: the owner's choice
+    # (none/wait/edge_all/edge_mix), the prompt message id and the
+    # park timestamp. The DB column is the resumer's one source of
+    # truth; NULL for every job that never parked.
+    voice_choice_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -621,7 +627,7 @@ class Job(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('PENDING', 'QUEUED', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED')",
+            "status IN ('PENDING', 'QUEUED', 'RUNNING', 'WAITING_CHOICE', 'SUCCESS', 'FAILED', 'CANCELLED')",
             name="chk_job_status",
         ),
     )

@@ -46,6 +46,7 @@ from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.download_names import branded_download_filename
 from app.services.curated_voices import list_curated_voices, get_curated_voice
 from app.services import recap_eta
+from app.services import voice_choice as _voice_choice
 from app.webapp.auth import (
     ADMIN_INIT_DATA_MAX_AGE_SECONDS,
     init_data_auth_date,
@@ -2653,12 +2654,21 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         "max_quality_surcharge": max_quality_surcharge,
         "parts_count": None,
     }
+    # Batch DP: a re-dispatched PARKED job resumes past its original
+    # 1-hour deadline (dp_resume) and with the owner's recorded voice
+    # choice (voice_choice_mode) read from the DB choice-state — the
+    # resumer's one source of truth.
+    _dp_state = _voice_choice.parse_choice_state(
+        getattr(job, "voice_choice_state", None)
+    )
     return {
         "cfg": cfg,
         "entry": entry,
         "is_vip": is_vip,
         "credit_deducted": credit_deducted,
         "phase": phase,
+        "voice_choice_mode": _voice_choice.choice_mode(_dp_state),
+        "dp_resume": _dp_state is not None,
     }
 
 
@@ -7320,6 +7330,8 @@ async def _run_recap_background_job(
     credit_deducted: bool = False,
     phase: str = "full",
     resume_source: Optional[str] = None,
+    voice_choice_mode: Optional[str] = None,
+    dp_resume: bool = False,
 ):
     """Capped entry point for every recap execution (deep-hunt #4 D2).
 
@@ -7329,6 +7341,10 @@ async def _run_recap_background_job(
     cannot get a slot yet waits inside this coroutine — its registry
     entry stays QUEUED and the queue worker's guard sees that status,
     so it is never re-dispatched, failed, or dropped while waiting.
+
+    Batch DP: ``voice_choice_mode`` / ``dp_resume`` carry a parked
+    job's owner choice into the resumed execution (see
+    _recap_redispatch_plan); both default to the pre-DP behaviour.
     """
     async with RECAP_EXECUTION_SEMAPHORE:
         await _execute_recap_background_job(
@@ -7340,6 +7356,8 @@ async def _run_recap_background_job(
             credit_deducted=credit_deducted,
             phase=phase,
             resume_source=resume_source,
+            voice_choice_mode=voice_choice_mode,
+            dp_resume=dp_resume,
         )
 
 
@@ -7352,7 +7370,12 @@ async def _execute_recap_background_job(
     credit_deducted: bool = False,
     phase: str = "full",
     resume_source: Optional[str] = None,
+    voice_choice_mode: Optional[str] = None,
+    dp_resume: bool = False,
 ):
+    # Batch DP: the park signal raised by the recap engine's TTS stage
+    # when a paid job's VoxCPM walk exhausts the pool.
+    from app.services.recap_engine.core import RecapParkRequested
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if not entry:
         return
@@ -7421,7 +7444,10 @@ async def _execute_recap_background_job(
         # planning phases — previously those phases had no budget at
         # all. Render-resume runs (resume_source set, after SCRIPT_READY
         # parking) are exempt: the parking window has its own 24 h TTL.
-        if resume_source is None and await _recap_job_deadline_exceeded(job_id):
+        # Batch DP: a parked-and-resumed run (dp_resume) is exempt for
+        # the same reason — the park window is bounded by the 48 h
+        # safety valve in the resumer, not by this deadline.
+        if resume_source is None and not dp_resume and await _recap_job_deadline_exceeded(job_id):
             raise RuntimeError(
                 "Recap job exceeded its 1-hour deadline before processing started"
             )
@@ -7812,6 +7838,12 @@ async def _execute_recap_background_job(
             narrative_style=req.story_style,
             voice_speed=req.voice_speed,
             tts_engine=tts_engine,
+            # Batch DP: paid tier (VIP or admin) drives the reserve
+            # walk + park-and-ask; a resumed run carries the owner's
+            # voice choice. Free jobs pass paid_tier=False and behave
+            # exactly as before.
+            paid_tier=bool(is_vip or is_admin_user),
+            voice_choice_mode=voice_choice_mode,
             voxcpm_control=voxcpm_control,
             voxcpm_ref_audio=voxcpm_ref_audio,
             is_female=is_female,
@@ -8277,7 +8309,122 @@ async def _execute_recap_background_job(
             except Exception as notify_err:
                 logger.warning(f"Could not send recap completion notification to user {chat_id}: {notify_err}")
 
+        # Batch DP: a job that parked earlier and has now completed —
+        # retire the choice prompt's buttons so a late tap can't act
+        # on a finished job (the callback refuses non-parked jobs
+        # anyway; this keeps the chat tidy).
+        try:
+            async with AsyncSessionLocal() as _dp_session:
+                _dp_job = await _dp_session.get(Job, job_id)
+            if _dp_job is not None and getattr(_dp_job, "voice_choice_state", None):
+                from aiogram import Bot
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+
+                _dp_bot = Bot(token=getattr(settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                try:
+                    await _voice_choice.clear_prompt_for_job(_dp_bot, _dp_job)
+                finally:
+                    await _dp_bot.session.close()
+        except Exception:
+            pass
+
         logger.info(f"Recap job {job_id} successfully finished.")
+
+    except RecapParkRequested:
+        # Batch DP (Item 3): a PAID job hit VoxCPM quota exhaustion.
+        # PARK — never fail: the charge stays held (NO refund fires),
+        # the segments already produced stay in the job dir for the
+        # resume, and the owner is asked how to continue. The guarded
+        # status write means a cancel that raced the park (its path
+        # already settled billing) wins silently instead.
+        logger.info(f"Recap job {job_id} parking (WAITING_CHOICE): VoxCPM quota exhausted")
+        _dp_state = _voice_choice.new_choice_state(_voice_choice.KIND_RECAP)
+        _dp_repark = False
+        _dp_lang = "my"
+        _dp_parked = False
+        try:
+            async with AsyncSessionLocal() as session:
+                _dp_row = await session.get(Job, job_id)
+                _dp_existing = (
+                    _voice_choice.parse_choice_state(
+                        getattr(_dp_row, "voice_choice_state", None)
+                    )
+                    if _dp_row is not None
+                    else None
+                )
+                if _dp_existing and _dp_existing.get("prompt_message_id"):
+                    # Re-park (spec Item 3): the job resumed on a
+                    # wait/no-choice and exhausted again — keep the
+                    # recorded state and the SAME prompt message
+                    # (refreshed in place below, never re-sent).
+                    _dp_state = _dp_existing
+                    _dp_state["parked_at"] = time.time()
+                    _dp_state.pop("resumed_at", None)
+                    _dp_repark = True
+                _dp_res = await session.execute(
+                    update(Job)
+                    .where(Job.id == job_id, Job.status == JobStatus.RUNNING.value)
+                    .values(
+                        status=JobStatus.WAITING_CHOICE.value,
+                        voice_choice_state=_voice_choice.dump_choice_state(_dp_state),
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                await session.commit()
+                _dp_parked = _dp_res.rowcount == 1
+                if _dp_parked:
+                    _dp_user = await session.get(User, user_id)
+                    _dp_lang = getattr(_dp_user, "language_code", None) or "my"
+        except Exception as park_err:
+            logger.warning(f"Recap job {job_id}: park state write failed: {park_err}")
+        if _dp_parked:
+            entry["status"] = "WAITING_CHOICE"
+            entry["progress_label"] = t("dp_parked_label", _dp_lang)
+            # Persist the held charge state so a later re-dispatch
+            # restores it verbatim (the refund guards read it too).
+            await _persist_recap_credits_charged(entry)
+            # Ask the owner (best-effort: a prompt-less park still
+            # resumes on capacity via the periodic resumer).
+            try:
+                from aiogram import Bot
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+
+                _dp_bot = Bot(token=getattr(settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                try:
+                    if _dp_repark:
+                        await _voice_choice.refresh_choice_prompt(
+                            _dp_bot,
+                            chat_id=_dp_state.get("prompt_chat_id") or chat_id or user_id,
+                            message_id=_dp_state.get("prompt_message_id"),
+                            job_id=job_id,
+                            kind=_voice_choice.KIND_RECAP,
+                            lang=_dp_lang,
+                        )
+                    else:
+                        _dp_msg_id = await _voice_choice.send_choice_prompt(
+                            _dp_bot,
+                            chat_id=chat_id or user_id,
+                            job_id=job_id,
+                            kind=_voice_choice.KIND_RECAP,
+                            lang=_dp_lang,
+                        )
+                        if _dp_msg_id:
+                            _dp_state["prompt_chat_id"] = chat_id or user_id
+                            _dp_state["prompt_message_id"] = _dp_msg_id
+                            async with AsyncSessionLocal() as session:
+                                await session.execute(
+                                    update(Job)
+                                    .where(Job.id == job_id)
+                                    .values(voice_choice_state=_voice_choice.dump_choice_state(_dp_state))
+                                )
+                                await session.commit()
+                finally:
+                    await _dp_bot.session.close()
+            except Exception as prompt_err:
+                logger.warning(f"Recap job {job_id}: park prompt failed: {prompt_err}")
+        return
 
     except asyncio.CancelledError:
         # Cancellation is BaseException, not Exception: without this the

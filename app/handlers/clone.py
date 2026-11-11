@@ -691,6 +691,63 @@ async def _submit_voxcpm_job(
 
 # ── On-Demand Delivery Callbacks from Completion Alert Notifications ───────────
 
+@clone_router.callback_query(F.data.startswith("dp:"))
+async def handle_voice_choice_callback(callback: CallbackQuery):
+    """Batch DP: the parked-job choice buttons (dp:wait:<job_id> /
+    dp:edgeall:<job_id> / dp:edgemix:<job_id>). Owner-only — enforced
+    in voice_choice.apply_user_choice, never trusted from the tap
+    alone. "wait" keeps the job parked with its buttons live; an Edge
+    choice re-queues the job immediately."""
+    from app.services import voice_choice as _vc
+
+    parts = (callback.data or "").split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    job_id = parts[2] if len(parts) > 2 else ""
+    choice = {
+        "wait": _vc.CHOICE_WAIT,
+        "edgeall": _vc.CHOICE_EDGE_ALL,
+        "edgemix": _vc.CHOICE_EDGE_MIX,
+    }.get(action, "")
+    try:
+        async with AsyncSessionLocal() as _s:
+            _u, _ = await get_or_create_user(_s, callback.from_user.id)
+            lang = _u.language_code or "my"
+    except Exception:
+        lang = "my"
+    outcome = "not_parked"
+    if choice and job_id:
+        try:
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Job, job_id)
+                outcome = await _vc.apply_user_choice(
+                    session, job, choice, callback.from_user.id
+                )
+        except Exception:
+            logger.warning("DP choice callback failed for job %s", job_id, exc_info=True)
+            outcome = "not_parked"
+    if outcome == "ok_resume" and getattr(callback, "message", None) is not None:
+        # Edge choice: the job resumes NOW — retire the prompt's
+        # buttons (a "wait" answer deliberately keeps them live so
+        # the owner can still switch to Edge later).
+        try:
+            await callback.bot.edit_message_reply_markup(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                reply_markup=None,
+            )
+        except Exception:
+            pass
+    answer_key = {
+        "ok_wait": "dp_choice_wait_answer",
+        "ok_resume": "dp_choice_resume_answer",
+        "not_owner": "dp_choice_not_owner",
+    }.get(outcome, "dp_choice_not_parked")
+    try:
+        await callback.answer(t(answer_key, lang))
+    except Exception:
+        pass
+
+
 @clone_router.callback_query(F.data.startswith("send_audio_"))
 async def handle_send_audio_callback(callback: CallbackQuery):
     job_id = callback.data.replace("send_audio_", "").strip()

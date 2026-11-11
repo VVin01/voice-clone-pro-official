@@ -509,5 +509,16 @@
   "gemini_key_invalid_error": "Google did not accept this Gemini key — please check the key and try again.",
   "gemini_key_unverifiable_error": "The key could not be verified right now — please try again shortly.",
   "private_ai_deferral_sensitive": "This one is about your account, so I can't answer it right here. I've let the admin team know — they'll check it and get back to you.",
-  "private_ai_deferral_unsure": "I've asked the admin team about this one so we can be sure. I'll let you know as soon as they reply."
+  "private_ai_deferral_unsure": "I've asked the admin team about this one so we can be sure. I'll let you know as soon as they reply.",
+  "dp_park_prompt_recap": "⏸️ Narration is paused for a moment\n\nThe clone-voice system's quota is full, so this Recap job is paused. Your paid Recap Credit is safe and the job is not lost.\n\nEstimated quota return: around {reset_time} (Yangon time). If you choose nothing, the job resumes automatically with the clone voice as soon as quota is back. How would you like to continue?",
+  "dp_park_prompt_clone": "⏸️ Voice generation is paused for a moment\n\nThe clone-voice system's quota is full, so this Voice Clone job is paused. Your purchased voice minutes are safe and the job is not lost.\n\nEstimated quota return: around {reset_time} (Yangon time). If you choose nothing, the job resumes automatically with the clone voice as soon as quota is back. How would you like to continue?",
+  "dp_btn_wait": "Wait for the clone voice",
+  "dp_btn_edge_all": "Edge only (redo everything in Edge)",
+  "dp_btn_edge_mix": "Replace only the affected parts with Edge",
+  "dp_choice_wait_answer": "Got it — we'll continue with the clone voice as soon as it's back",
+  "dp_choice_resume_answer": "Continuing with the Edge voice now",
+  "dp_choice_not_owner": "Only the job's owner can make this choice",
+  "dp_choice_not_parked": "This job is no longer waiting for a choice",
+  "dp_park_expired_error": "The job was stopped because voice quota did not return in time. Your payment has been refunded.",
+  "dp_parked_label": "Waiting for your voice choice"
 }

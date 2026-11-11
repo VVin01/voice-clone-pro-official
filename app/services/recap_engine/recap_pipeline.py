@@ -312,6 +312,8 @@ def run_recap_pipeline(
     render_quality: str = "standard",
     gemini_voice: Optional[str] = None,
     gemini_route: Any = None,
+    paid_tier: bool = False,
+    voice_choice_mode: Optional[str] = None,
     voxcpm_control: Optional[str] = None,
     voxcpm_ref_audio: Optional[str] = None,
     is_female: bool = False,
@@ -723,6 +725,9 @@ def run_recap_pipeline(
         # Batch CG: BYOK route context (in-memory only — never in
         # overlays, which are persisted into plan/checkpoint JSON).
         gemini_route=gemini_route,
+        # Batch DP: park-and-ask plumbing (paid tier + owner choice).
+        paid_tier=paid_tier,
+        voice_choice_mode=voice_choice_mode,
     )
     runner.voice_volume_percent = 100
     runner.short_pauses = True

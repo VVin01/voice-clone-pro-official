@@ -56,5 +56,5 @@ def test_fit_still_registered_on_resize_and_ratio_change():
     assert 'frame.style.width = ""' in fn and 'frame.style.height = ""' in fn
 
 
-def test_cache_token_is_r137():
-    assert INDEX.count("20261104_r137") == 4
+def test_cache_token_is_r138():
+    assert INDEX.count("20261104_r138") == 4
