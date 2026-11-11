@@ -59,6 +59,14 @@ def _noop(_: str) -> None:
     pass
 
 
+class RecapParkRequested(Exception):
+    """Batch DP (Item 3): a PAID recap job hit VoxCPM quota exhaustion
+    with no owner choice in force. Raised out of the TTS stage instead
+    of silently degrading the segment to the persona/Edge engine; the
+    webapp driver catches it and parks the job (WAITING_CHOICE) with
+    its charge held — never a failure, never a refund trigger."""
+
+
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -5189,6 +5197,13 @@ def make_paths(job_dir: Path) -> PipelinePaths:
 
 
 class EdgeSmartSync:
+    # Batch DP: class-level defaults so partially-constructed
+    # instances (older tests build EdgeSmartSync via __new__ and set
+    # only the attributes they exercise) read as a FREE job with no
+    # voice-choice mode; __init__ shadows these per instance.
+    paid_tier: bool = False
+    voice_choice_mode: str | None = None
+
     def __init__(
         self,
         *,
@@ -5220,6 +5235,8 @@ class EdgeSmartSync:
         max_run_seconds: float | None = None,
         tts_workers: int | None = None,
         gemini_route: Any = None,
+        paid_tier: bool = False,
+        voice_choice_mode: str | None = None,
     ) -> None:
         self.job_dir = Path(job_dir).resolve()
         self.source_path = Path(source_path).resolve() if source_path else (self.job_dir / "source.mp4")
@@ -5253,6 +5270,19 @@ class EdgeSmartSync:
         self.gemini_route = gemini_route
         self._gemini_outcome: Optional[dict] = None
         self._gemini_routed: Any = None
+        # Batch DP: park-and-ask plumbing. ``paid_tier`` marks a job
+        # whose owner pays (PURCHASED or admin): its VoxCPM walks use
+        # the paid reserve and quota exhaustion PARKS the job instead
+        # of degrading a segment. ``voice_choice_mode`` is the owner's
+        # resumed choice ("edge_all" / "edge_mix") or None; run()
+        # also adopts a mode persisted in the checkpoint when the
+        # caller passes none, so a resumed run can never drift back.
+        self.paid_tier = bool(paid_tier)
+        self.voice_choice_mode = (
+            voice_choice_mode
+            if voice_choice_mode in ("edge_all", "edge_mix")
+            else None
+        )
         # Short pauses: see trim_edge_silence. Trims excessive TTS dead air while keeping natural breath.
         self.short_pauses = True
         self.overlays = dict(overlays or {})
@@ -5328,7 +5358,15 @@ class EdgeSmartSync:
         dst = paths.tts_parts / f"{base}.wav"
         fp = segment_fingerprint(seg, fingerprint_voice)
         rec = checkpoint["audio"].get(base, {})
-        reusable = rec.get("fingerprint") == fp and dst.is_file() and dst.stat().st_size > 1000
+        # Batch DP: an "edge_all" resume redoes EVERY segment in the
+        # Edge/persona voice (one consistent voice — the owner's
+        # explicit choice), so finished clone segments are NOT reused.
+        reusable = (
+            self.voice_choice_mode != "edge_all"
+            and rec.get("fingerprint") == fp
+            and dst.is_file()
+            and dst.stat().st_size > 1000
+        )
         record: dict[str, Any] | None = None
         fell_back = False
         if reusable:
@@ -5347,7 +5385,7 @@ class EdgeSmartSync:
             # path below and is recorded in fallback_segments —
             # the same transparency rule as VoxCPM fallbacks.
             seg_provider = "edge_tts"
-            if use_gemini:
+            if use_gemini and self.voice_choice_mode is None:
                 if gem_engine is not None:
                     self.progress(idx - 1, total_segments, f"Gemini TTS {idx}/{total_segments}")
                     self.log(f"✨ [{idx}/{total_segments}] {base} generate via Gemini TTS ({gemini_voice_name})")
@@ -5378,7 +5416,7 @@ class EdgeSmartSync:
             # (voice starts with "voxcpm"), and without this gate
             # VoxCPM would overwrite the Gemini segment produced
             # above and misreport the provider.
-            if use_voxcpm and vox_engine and not use_gemini:
+            if use_voxcpm and vox_engine and not use_gemini and self.voice_choice_mode is None:
                 self.progress(idx - 1, total_segments, f"VoxCPM 2 {idx}/{total_segments}")
                 self.log(f"🎙️ [{idx}/{total_segments}] {base} generate via VoxCPM 2 Cloud AI")
                 ctrl_prompt = (
@@ -5399,6 +5437,22 @@ class EdgeSmartSync:
                     ),
                 )
                 if vox_err is not None:
+                    # Batch DP (Item 3): a PAID job never silently
+                    # degrades — quota exhaustion parks the whole job
+                    # and asks its owner (the driver turns this into
+                    # WAITING_CHOICE with the charge held). A resumed
+                    # edge_* run never reaches this step (the VoxCPM
+                    # step is gated off above), and free jobs keep the
+                    # per-segment fallback below, unchanged.
+                    if (
+                        self.paid_tier
+                        and _VoxCPMQuotaExhaustedError is not None
+                        and isinstance(vox_err, _VoxCPMQuotaExhaustedError)
+                    ):
+                        raise RecapParkRequested(
+                            f"VoxCPM quota exhausted at segment {idx}; "
+                            "parking the paid job for its owner's choice"
+                        )
                     self.log(
                         f"⚠️ EDGE_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona (Edge TTS) "
                         f"after retries ({vox_err}); other lines keep VoxCPM 2"
@@ -5410,6 +5464,15 @@ class EdgeSmartSync:
 
             # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
             if not produced or not Path(produced).is_file():
+                # Batch DP: on an edge_all / edge_mix resume the
+                # persona step is the owner's CHOSEN voice for this
+                # segment — recorded with the existing fallback
+                # bookkeeping so the completion transparency fields
+                # (fallback_used / fallback_segments) name exactly
+                # the segments that are not clone-voiced.
+                if self.voice_choice_mode in ("edge_all", "edge_mix"):
+                    fell_back = True
+                    seg_provider = "edge_fallback"
                 curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
                 self.progress(idx - 1, total_segments, f"Studio TTS {idx}/{total_segments}")
                 self.log(f"🗣️ [{idx}/{total_segments}] {base} generate via Studio Persona ({curr_persona})")
@@ -5574,6 +5637,7 @@ class EdgeSmartSync:
                     retries=2,
                     allow_fallback=False,
                     total_timeout=budget_seconds,
+                    tier="paid" if self.paid_tier else "free",
                 )
                 return produced, None
             except Exception as exc:
@@ -5611,6 +5675,17 @@ class EdgeSmartSync:
         checkpoint = self._checkpoint_load(paths)
         checkpoint.setdefault("audio", {})
         checkpoint.setdefault("video", {})
+        # Batch DP: adopt a persisted owner choice when the caller
+        # passed none, and persist an explicit one, so the mode
+        # survives the park/resume boundary inside the job directory
+        # itself (the DB choice-state stays the resumer's truth; this
+        # is the in-job guard against a drifted re-entry).
+        if self.voice_choice_mode is None:
+            _saved_mode = checkpoint.get("voice_choice_mode")
+            if _saved_mode in ("edge_all", "edge_mix"):
+                self.voice_choice_mode = _saved_mode
+        if self.voice_choice_mode is not None:
+            checkpoint["voice_choice_mode"] = self.voice_choice_mode
         checkpoint["engine"] = "edge_tts"
         checkpoint["voice"] = self.voice
 

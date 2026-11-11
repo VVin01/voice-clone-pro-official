@@ -743,7 +743,7 @@ function liveJobsIsTerminal(status) {
     return LIVE_JOB_TERMINAL_STATUSES.includes(String(status || "").toUpperCase());
 }
 function liveJobsIsActive(status) {
-    return ["PENDING", "QUEUED", "RUNNING", "SCRIPT_READY"].includes(String(status || "").toUpperCase());
+    return ["PENDING", "QUEUED", "RUNNING", "SCRIPT_READY", "WAITING_CHOICE"].includes(String(status || "").toUpperCase());
 }
 function liveJobsMergeJob(prev, next) {
     if (!next) return prev || null;
@@ -889,6 +889,9 @@ function liveJobStageText(job) {
             : t("live_job_queued");
     }
     if (job.status === "SCRIPT_READY") return t("hist_script_ready_badge");
+    // Batch DP: a parked job is waiting on its owner's voice choice
+    // (bot prompt) — name that state instead of a stale stage label.
+    if (job.status === "WAITING_CHOICE") return t("live_job_status_waiting_choice");
     if (job.progress_stage) {
         const stageText = t("recap_stage_" + job.progress_stage);
         if (stageText && stageText !== "recap_stage_" + job.progress_stage) return stageText;

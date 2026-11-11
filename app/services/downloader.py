@@ -2155,6 +2155,8 @@ class MediaDownloader:
         render_quality: str = "standard",
         gemini_voice: Optional[str] = None,
         gemini_route=None,
+        paid_tier: bool = False,
+        voice_choice_mode: Optional[str] = None,
         voxcpm_control: Optional[str] = None,
         voxcpm_ref_audio: Optional[str] = None,
         is_female: bool = False,
@@ -2262,6 +2264,9 @@ class MediaDownloader:
             # Batch CG: BYOK route context (in-memory object, never
             # serialised by the pipeline).
             gemini_route=gemini_route,
+            # Batch DP: park-and-ask plumbing (paid tier + choice).
+            paid_tier=paid_tier,
+            voice_choice_mode=voice_choice_mode,
             voxcpm_control=voxcpm_control,
             voxcpm_ref_audio=voxcpm_ref_audio,
             is_female=is_female,

@@ -162,6 +162,19 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preset_voice VARCHAR(50)"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_config TEXT"))
+                # Batch DP: park-and-ask state column + the widened
+                # job-status constraint. Existing rows only ever hold
+                # the old status set (a subset of the new one), so
+                # dropping and re-adding the constraint validates
+                # cleanly. Both statements are idempotent: the DROP
+                # uses IF EXISTS and the re-ADD is a no-op in effect
+                # when the constraint already carries the new set.
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS voice_choice_state TEXT"))
+                connection.execute(text("ALTER TABLE jobs DROP CONSTRAINT IF EXISTS chk_job_status"))
+                connection.execute(text(
+                    "ALTER TABLE jobs ADD CONSTRAINT chk_job_status CHECK "
+                    "(status IN ('PENDING', 'QUEUED', 'RUNNING', 'WAITING_CHOICE', 'SUCCESS', 'FAILED', 'CANCELLED'))"
+                ))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS reference_trimmed BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tts_fallback_used BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tts_route VARCHAR(24)"))
@@ -202,6 +215,8 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN source_audio_path TEXT"))
                 if "recap_config" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN recap_config TEXT"))
+                if "voice_choice_state" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN voice_choice_state TEXT"))
                 if "reference_trimmed" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN reference_trimmed BOOLEAN DEFAULT 0"))
                 if "tts_fallback_used" not in cols_jobs:

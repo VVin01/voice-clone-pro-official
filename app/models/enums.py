@@ -57,6 +57,12 @@ class JobStatus(str, Enum):
     PENDING = "PENDING"
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
+    # Batch DP: a paid job parked on VoxCPM quota exhaustion, waiting
+    # for its owner's voice choice (wait / Edge). Deliberately NOT
+    # terminal and NOT counted as active work: the charge stays held,
+    # no refund fires, and the periodic resumer (or the owner's tap)
+    # moves the job back to QUEUED.
+    WAITING_CHOICE = "WAITING_CHOICE"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"

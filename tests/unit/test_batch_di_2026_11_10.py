@@ -330,7 +330,11 @@ def test_di_balance_tiers():
 def test_di_walk_starts_from_richest_token(tmp_path, monkeypatch):
     result = _write_wav(tmp_path / "ok.wav")
     engine = _bal_engine(tmp_path, monkeypatch, tokens=["hf_a", "hf_b", "hf_c"])
-    VoxCPMEngine._token_balances = {"hf_a": 60.0, "hf_b": 2400.0, "hf_c": 300.0}
+    # Batch DP note: hf_b stays the RICHEST token but below the
+    # 900 s learned-rich reserve threshold — at >= 900 s a free-tier
+    # call would (correctly, per DP Item 1) never attempt it, which
+    # is not what this DI ordering test exercises.
+    VoxCPMEngine._token_balances = {"hf_a": 60.0, "hf_b": 800.0, "hf_c": 300.0}
     VoxCPMEngine._last_admission_price = 94.0
     record: list = []
     _patch_bal_clients(monkeypatch, {

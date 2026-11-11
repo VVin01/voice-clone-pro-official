@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 import re
 import shutil
+import time
 from aiogram import Bot
 from aiogram.types import FSInputFile
 from sqlalchemy import select, update
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
-from app.models.enums import JobStatus
+from app.models.enums import AccountCategory, JobStatus
 from app.models.schema import AuditLog, Job, User, VoiceModel, utc_now
 from app.services.audio import (
     GENDER_PITCH_MAP,
@@ -28,6 +29,7 @@ from app.services.i18n import t
 from app.services.ledger import consume_seconds
 from app.services.models import get_authorized_model
 from app.services.progress import JobProgressTracker, render_stepper_progress, safe_edit_status
+from app.services import voice_choice as _vc
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +180,8 @@ def _synthesize_voxcpm_voice_job(
     progress_cb,
     reference_transcript: str = "",
     reference_seconds: float = 0.0,
+    tier: str = "free",
+    allow_fallback: bool = True,
 ) -> Path:
     """Batch CH: VoxCPM synthesis for a voice-clone job, chunked when
     the text cannot fit the model's 2,096-token input cap in one call.
@@ -191,8 +195,24 @@ def _synthesize_voxcpm_voice_job(
     into the caller's EXISTING whole-job resilient fallback, and the
     parts are concatenated only after every chunk succeeded, so a
     mixed-voice output is never produced. Runs in an executor.
+
+    Batch DP: ``tier`` / ``allow_fallback`` are the caller's tier
+    plumbing — paid jobs walk the reserve and run with the engine's
+    internal Edge fallback DISABLED end-to-end (a quota exhaustion
+    must surface as VoxCPMQuotaExhaustedError so the caller can park
+    the job, never as silently-switched persona audio). Free jobs
+    keep the defaults and are byte-identical to before.
     """
     from app.services.voice_chunking import plan_text_chunks
+
+    # Only non-default tier/fallback values are passed through: a
+    # default (free) job's engine call stays byte-identical to the
+    # pre-DP shape (Batch CH pins the single call's argument set).
+    _dp_kwargs: dict = {}
+    if tier != "free":
+        _dp_kwargs["tier"] = tier
+    if not allow_fallback:
+        _dp_kwargs["allow_fallback"] = False
 
     chunks = plan_text_chunks(
         text,
@@ -209,6 +229,7 @@ def _synthesize_voxcpm_voice_job(
             preset_voice=preset_voice,
             speed=speed,
             progress_cb=progress_cb,
+            **_dp_kwargs,
         )
 
     logger.info(
@@ -227,6 +248,7 @@ def _synthesize_voxcpm_voice_job(
                 speed=speed,
                 progress_cb=progress_cb,
                 allow_fallback=False,
+                **({"tier": tier} if tier != "free" else {}),
             )
             parts.append(part)
         concat_wav_files(parts, output_wav)
@@ -259,6 +281,23 @@ async def process_single_job(
     lang = user.language_code if user else "my"
     target_chat_id = chat_id or job.chat_id or job.user_id
     target_msg_id = status_msg_id or job.status_message_id
+
+    # Batch DP: park-and-ask state for THIS run. ``parked`` tells the
+    # finally block to preserve the job's reference audio (a parked
+    # job resumes later; its inputs must survive). ``_dp_paid`` is
+    # the tier: PURCHASED or admin. ``_dp_choice_state`` is the
+    # owner's previously recorded choice when this run IS a resume.
+    parked = False
+    _dp_choice_state = _vc.parse_choice_state(
+        getattr(job, "voice_choice_state", None)
+    )
+    _dp_paid = bool(
+        settings.is_admin(job.user_id)
+        or (
+            user is not None
+            and user.account_category == AccountCategory.PURCHASED.value
+        )
+    )
 
     tracker: JobProgressTracker | None = None
     try:
@@ -396,7 +435,7 @@ async def process_single_job(
             if is_voxcpm:
                 logger.info("Starting VoxCPM 2 Cloud AI synthesis for job %s", job.id)
                 import functools
-                from app.services.voxcpm_engine import VoxCPMEngine
+                from app.services.voxcpm_engine import VoxCPMEngine, VoxCPMQuotaExhaustedError
                 engine_inst = VoxCPMEngine(work_dir=temp_dir)
 
                 ref_wav = None
@@ -459,28 +498,112 @@ async def process_single_job(
                     except Exception:
                         reference_seconds = 0.0
 
-                try:
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(
-                        None,
-                        functools.partial(
-                            _synthesize_voxcpm_voice_job,
-                            engine_inst,
-                            job_id=str(job.id),
-                            text=clean_text,
-                            output_wav=converted_wav_path,
-                            reference_wav=ref_wav,
-                            control_instruction=control_instruction,
-                            preset_voice=getattr(job, "preset_voice", None),
-                            speed=job.speed_preset or "normal",
-                            progress_cb=tracker.set_custom_note,
-                            reference_transcript=reference_transcript,
-                            reference_seconds=reference_seconds,
-                        ),
+                # Batch DP: an owner who already chose Edge-only on
+                # the park prompt skips the clone attempt entirely;
+                # a paid job's quota exhaustion PARKS instead of
+                # reaching the resilient fallback below.
+                _dp_edge_all = (
+                    _dp_choice_state is not None
+                    and _vc.choice_mode(_dp_choice_state) == _vc.CHOICE_EDGE_ALL
+                )
+                _vox_error: Exception | None = None
+                if _dp_edge_all:
+                    _vox_error = RuntimeError(
+                        "Owner chose Edge-only delivery at the park prompt (Batch DP)"
                     )
-                except Exception as e_vox:
+                else:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(
+                            None,
+                            functools.partial(
+                                _synthesize_voxcpm_voice_job,
+                                engine_inst,
+                                job_id=str(job.id),
+                                text=clean_text,
+                                output_wav=converted_wav_path,
+                                reference_wav=ref_wav,
+                                control_instruction=control_instruction,
+                                preset_voice=getattr(job, "preset_voice", None),
+                                speed=job.speed_preset or "normal",
+                                progress_cb=tracker.set_custom_note,
+                                reference_transcript=reference_transcript,
+                                reference_seconds=reference_seconds,
+                                tier="paid" if _dp_paid else "free",
+                                allow_fallback=not _dp_paid,
+                            ),
+                        )
+                    except VoxCPMQuotaExhaustedError as e_quota:
+                        if _dp_paid:
+                            # Batch DP (Item 4): park the paid job and
+                            # ASK — never silently switch its voice.
+                            # No charge has been made (billing is stage
+                            # 4), so parking holds everything as-is.
+                            # A re-park (this run was itself a resume)
+                            # keeps the recorded state + prompt and
+                            # refreshes the prompt in place — no new
+                            # message.
+                            _dp_repark = bool(
+                                _dp_choice_state
+                                and _dp_choice_state.get("prompt_message_id")
+                            )
+                            if _dp_repark:
+                                _dp_state = _dp_choice_state
+                                _dp_state["parked_at"] = time.time()
+                                _dp_state.pop("resumed_at", None)
+                            else:
+                                _dp_state = _vc.new_choice_state(_vc.KIND_CLONE)
+                                # Preserve the reference audio: the
+                                # finally below deletes temp inputs,
+                                # and a parked job must resume later —
+                                # move it to the durable park store and
+                                # point the row at the copy.
+                                _src_path = getattr(job, "source_audio_path", None)
+                                if _src_path and Path(_src_path).is_file() and "temp" in str(_src_path):
+                                    _dp_ref_dir = settings.storage_root / "dp_refs"
+                                    _dp_ref_dir.mkdir(parents=True, exist_ok=True)
+                                    _dp_ref_copy = _dp_ref_dir / f"{job.id}{Path(_src_path).suffix or '.wav'}"
+                                    shutil.copy2(_src_path, _dp_ref_copy)
+                                    job.source_audio_path = str(_dp_ref_copy)
+                            job.status = JobStatus.WAITING_CHOICE.value
+                            job.voice_choice_state = _vc.dump_choice_state(_dp_state)
+                            await session.commit()
+                            parked = True
+                            if bot is not None:
+                                if _dp_repark:
+                                    await _vc.refresh_choice_prompt(
+                                        bot,
+                                        chat_id=_dp_state.get("prompt_chat_id") or target_chat_id,
+                                        message_id=_dp_state.get("prompt_message_id"),
+                                        job_id=str(job.id),
+                                        kind=_vc.KIND_CLONE,
+                                        lang=lang,
+                                    )
+                                else:
+                                    _dp_mid = await _vc.deliver_choice_prompt(
+                                        bot,
+                                        chat_id=target_chat_id,
+                                        message_id=target_msg_id,
+                                        job_id=str(job.id),
+                                        kind=_vc.KIND_CLONE,
+                                        lang=lang,
+                                    )
+                                    if _dp_mid:
+                                        _dp_state["prompt_chat_id"] = target_chat_id
+                                        _dp_state["prompt_message_id"] = _dp_mid
+                                        job.voice_choice_state = _vc.dump_choice_state(_dp_state)
+                                        await session.commit()
+                            logger.info(
+                                "Voice job %s parked (WAITING_CHOICE): VoxCPM quota exhausted",
+                                job.id,
+                            )
+                            return False
+                        _vox_error = e_quota
+                    except Exception as e_vox:
+                        _vox_error = e_vox
+                if _vox_error is not None:
                     used_fallback = True
-                    logger.warning("VoxCPM 2 primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", e_vox)
+                    logger.warning("VoxCPM 2 primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", _vox_error)
                     try:
                         tracker.set_custom_note("⚠️ မူရင်း အသံ Engine အလုပ်များနေသဖြင့် အရန် အသံဖြင့် ထုတ်ပေးနေပါသည်…")
                     except Exception:
@@ -771,6 +894,11 @@ async def process_single_job(
             job.status = JobStatus.SUCCESS.value
             job.finished_at = utc_now()
 
+        # Batch DP: a resumed parked job that has now completed —
+        # retire its choice prompt's buttons.
+        if _dp_choice_state is not None and bot is not None:
+            await _vc.clear_prompt_for_job(bot, job)
+
         logger.info("Successfully completed voice job %s (duration=%ss)", job.id, duration_seconds)
         return True
 
@@ -822,7 +950,10 @@ async def process_single_job(
         if getattr(job, "source_audio_path", None):
             try:
                 p = Path(job.source_audio_path)
-                if p.is_file() and "temp" in str(p):
+                # Batch DP: a PARKED job keeps its reference (the
+                # resume needs it); a finished job's preserved
+                # dp_refs copy is cleaned up like any temp input.
+                if p.is_file() and not parked and ("temp" in str(p) or "dp_refs" in str(p)):
                     p.unlink(missing_ok=True)
             except Exception:
                 pass
