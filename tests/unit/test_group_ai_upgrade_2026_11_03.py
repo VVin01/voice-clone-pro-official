@@ -474,12 +474,12 @@ def test_prompt_includes_context_and_replied_to():
 
 def test_context_buffer_cap_and_truncation():
     buf = gai.GroupContextBuffer()
-    for i in range(12):
+    for i in range(18):
         buf.push(GROUP_ID, f"U{i}", f"စာ {i}")
     lines = buf.snapshot(GROUP_ID)
-    assert len(lines) == 10  # capped at the newest 10
+    assert len(lines) == 16  # capped at the newest 16 (Batch GA; was 10)
     assert lines[0] == "U2: စာ 2"
-    assert lines[-1] == "U11: စာ 11"
+    assert lines[-1] == "U17: စာ 17"
     assert buf.snapshot(-100111) == []  # other chats unaffected
 
     buf.push(GROUP_ID, "Long", "က" * 400)

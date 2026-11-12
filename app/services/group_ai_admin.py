@@ -703,7 +703,7 @@ def build_maintenance_reply() -> str:
 # never written to the database or the logs.
 # ---------------------------------------------------------------------------
 
-CONTEXT_BUFFER_MAX = 10  # candidate messages kept per chat
+CONTEXT_BUFFER_MAX = 16  # candidate messages kept per chat (Batch GA: 10 cycled too fast in two-member bursts)
 CONTEXT_TEXT_MAX_CHARS = 300  # per-message truncation for the prompt
 
 
@@ -925,6 +925,12 @@ def build_fact_sheet() -> str:
         # (settings.free_daily_job_limit), the SENTENCE was the bug.
         f"• အခမဲ့ (Free): အသံ {free_seconds} စက္ကန့် ({free_minutes} မိနစ်) တစ်လ၊ "
         "Recap Credit 3 ခု (ပထမဆုံး တစ်ကြိမ်သာ)။",
+        # Batch GA (2026-11-12): one explicit summary line — the trio
+        # was scattered across the sheet, so the live question
+        # "တခါပဲပေးတာလား နေ့တိုင်းပေးလား" drew partial answers.
+        f"• အခမဲ့ အကျဉ်းချုပ်: Voice Clone = တစ်လ {free_minutes} မိနစ် (လ စတိုင်း ပြန်ပြည့်)၊ "
+        "Recap Credit = ပထမဆုံး တစ်ကြိမ်သာ ၃ ခု၊ "
+        f"TTS Tab = တစ်နေ့ {tts_daily_free} မိနစ် (နေ့တိုင်း ပြန်ပြည့်)။",
         f"• Voice Clone တစ်နေ့ ကန့်သတ်ချက်: Free {voice_free_daily_phrase}၊ "
         f"Plan ဝယ်ထားသူ {_daily_cap_phrase(voice_daily_paid)}။",
         # Batch CB Item 6: the steering line rides only while the
@@ -965,6 +971,22 @@ def build_fact_sheet() -> str:
         "WavePay နံပါတ်ကို ငွေလွှဲ → ပြေစာ (Slip) ပုံ ပို့ → Admin အတည်ပြုပြီးတာနဲ့ "
         "မိနစ်/Credit ဝင်ပါတယ်။ (ငွေလွှဲ နံပါတ်တွေကို Group ထဲမှာ မပြောရပါ — Bot ထဲက "
         "VIP နေရာမှာ ကြည့်ခိုင်းပါ။)",
+        # Batch GA (owner order 2026-11-12): the sheet carried NO
+        # expiry fact, so the AI invented a 1-month expiry for
+        # purchased balances live in the group (2026-11-12 11:48) and
+        # the owner had to correct it by hand. Ground truth: purchased
+        # minutes/credits NEVER expire — no ledger expiry exists and
+        # the product copy states သက်တမ်းမကုန်. Say it outright,
+        # forbid the တစ်လစာ (monthly-plan) framing, and fence the
+        # fact off from the FREE monthly allowance, which does reset.
+        "• သက်တမ်း (အရေးကြီး): ဝယ်ယူထားတဲ့ Voice မိနစ် နဲ့ Recap Credit တွေမှာ "
+        "သက်တမ်း လုံးဝ မရှိပါ — တစ်လ ကန့်သတ်ချက် မဟုတ်ပါ။ ကိုယ်ဝယ်ထားတဲ့ ပမာဏ "
+        "ကုန်တဲ့အထိ ကြိုက်တဲ့အချိန် ခွဲသုံးနိုင်ပါတယ်။",
+        "• Plan တွေကို အချိန် (တစ်လစာ) နဲ့ ရောင်းတာ မဟုတ်ဘဲ ပမာဏ (မိနစ် / Credit) "
+        "နဲ့ ရောင်းတာပါ။ အဖွဲ့ဝင်က 'တစ်လစာ' လို့ မေးလာရင် ပမာဏ အကြောင်း ပြန်ရှင်းပါ — "
+        "Plan ကို တစ်လစာ လို့ မပြောပါနှင့်။",
+        "• မရောပါနှင့်: Free ရဲ့ လစဉ် အခမဲ့ ပမာဏ ကသာ လ အလိုက် ပြန်ပြည့်တာပါ "
+        "(မသုံးဖြစ်ရင် နောက်လ ဆက်မသွားပါ)။ ဝယ်ထားတဲ့ ပမာဏနဲ့ လုံးဝ မဆိုင်ပါ။",
         f"• Refer & Earn: ကိုယ့် Refer လင့်ခ်နဲ့ သူငယ်ချင်း ဖိတ်ခေါ်ပြီး သူငယ်ချင်း က "
         f"အဖွဲ့ဝင် ဖြစ်လာရင် တစ်ယောက်ကို TTS အသံ {referral_seconds} စက္ကန့် ဆု ရပါတယ် (အများဆုံး {referral_max} ယောက် "
         f"အထိ = {referral_cap_min} မိနစ်၊ TTS Tab တွင်သာ သုံးနိုင်ပါတယ်)။ Refer လင့်ခ်ကို Home Tab မှာ ယူလို့ ရပါတယ်။",
@@ -1038,6 +1060,8 @@ SYSTEM_INSTRUCTIONS = """သင်သည် "Voice Clone Pro Community" Telegram
 - "စမ်းချင်တယ်"၊ "want to try" လို စတင်ချင်တဲ့ ရည်ရွယ်ချက် တွေ့ရင် စတင်နည်း လမ်းညွှန် တစ်ကြောင်း ပြောပြပါ။
 - Voice Clone Pro နဲ့ ပတ်သက်တဲ့ မေးခွန်း အားလုံး — ဘာတွေ လုပ်လို့ရလဲ၊ ဘာတွေ ရှိလဲ၊ သတ်မှတ်ချက်တွေ၊ သုံးနည်း၊ စျေး၊ Free ဘယ်လောက်၊ Error ဖြစ်တာ၊ အသံ ပြဿနာ စသည် — ကို အောက်က KNOWLEDGE SHEET နဲ့ ဖြေပါ။
 - Admin ကို တိုက်ရိုက် အကူအညီ တောင်းတဲ့ စာတွေ။
+- နောက်ဆက် မေးခွန်းတွေ (Batch GA): အရင် အဖြေထဲ မပါသေးတဲ့ အချက် အသစ် မေးတဲ့ နောက်ဆက် စာ ဟာ မေးခွန်း အသစ်ပါ — အကြောင်းအရာ ဆင်တူတယ်ဆိုပြီး NO_REPLY မထုတ်ပါနှင့်။ အရင် အဖြေကို ပြန်မပြောဘဲ မေးတဲ့ အပိုင်းကိုသာ ဖြေပါ။
+- "မဖြေသေးဘူး"၊ "ပြန်ဖြေပေးဦး"၊ "ဖြေပေးပါဦး" လို့ ပြောလာရင် (Batch GA): အဲဒီ အဖွဲ့ဝင်ရဲ့ အနီးဆုံး စကားဝိုင်းထဲက နောက်ဆုံး မဖြေရသေးတဲ့ မေးခွန်းကို ရှာပြီး အဲဒါကို ဖြေပါ။ အရင် ဖြေပြီးသား အဖြေကို အတိအကျ ပြန်ပို့တာ လုံးဝ မလုပ်ပါနှင့်။
 တိတ်ဆိတ် ရမယ့် အရာများ (NO_REPLY သာ ထုတ်ပါ):
 - အဖွဲ့ဝင် အချင်းချင်း ပြောနေတဲ့ စကားဝိုင်း (အကူအညီ မတောင်းထားရင်)။
 - ပစ္စည်းနဲ့ မဆိုင်တဲ့ အကြောင်းအရာ — ဘောလုံးပွဲ၊ အခြား App/Service၊ နိုင်ငံရေး စသည်။
