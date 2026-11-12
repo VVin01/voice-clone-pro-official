@@ -165,7 +165,62 @@ def test_phase4_i18n_keys_complete_in_my_and_en():
         "recap_blur_l2_title",
         "btn_logo_vip_upsell",
         "dl_use_in_recap_ready_toast",
+        "recap_sub_sample_specimen",
+        "badge_vip",
+        "tier_badge_admin",
+        "recap_own_voice_saved_toast",
+        "home_recent_fallback_recap",
+        "home_recent_fallback_tts",
+        "home_recent_fallback_voice",
+        "status_badge_success",
+        "status_badge_running",
+        "status_badge_queued",
+        "status_badge_failed",
+        "status_badge_other",
+        "home_recent_action_open_history",
+        "unit_min_short",
+        "unit_credit_short",
     ]
     for key in required_keys:
         matches = re.findall(rf"\b{re.escape(key)}\s*:", I18N_JS)
         assert len(matches) == 2, f"i18n key {key} expected in both my & en, found {len(matches)}"
+
+
+def test_phase1_to_4_retroactive_i18n_and_bug_fixes():
+    # Specimen text on all 10 subtitle sample cards must be under i18n
+    sample_spans = re.findall(r'<span class="vcp-sub-sample[^"]*"[^>]*>', INDEX_HTML)
+    assert len(sample_spans) == 10
+    assert all('data-i18n="recap_sub_sample_specimen"' in span for span in sample_spans)
+    assert INDEX_HTML.count('id="recap-my-presets-vip-badge" data-i18n="badge_vip"') == 1
+    assert INDEX_HTML.count('id="recap-logo-vip-badge" data-i18n="badge_vip"') == 1
+
+    # No duplicate translation keys in my or en blocks
+    my_block = I18N_JS.split("    my: {", 1)[1].split("    en: {", 1)[0]
+    en_block = I18N_JS.split("    en: {", 1)[1].split("\n};", 1)[0]
+    for lang_name, block in (("my", my_block), ("en", en_block)):
+        keys = re.findall(r"^\s{8}([A-Za-z0-9_]+)\s*:", block, flags=re.MULTILINE)
+        dups = [k for k in set(keys) if keys.count(k) > 1]
+        assert not dups, f"Duplicate keys in {lang_name}: {dups}"
+
+    # Custom voice upload in Voice Studio must hit real backend route
+    assert "/api/user/custom-voice" not in APP_JS
+    assert "/api/recap/upload_voice_ref" in APP_JS
+
+    # Master preset strict_safe uses valid 1.06x pill & parameterized toast
+    assert "recapZoom: 1.06" in APP_JS
+    assert 'tf("recap_master_preset_applied_toast", { name: presetLabel })' in APP_JS
+
+    # setLanguage handles data-i18n-aria & refreshes dynamic Phase 1-4 UI
+    assert "[data-i18n-aria]" in I18N_JS
+    assert "refreshPhase1to4LanguageSurfaces" in I18N_JS
+    assert "function refreshPhase1to4LanguageSurfaces(" in APP_JS
+
+    # Sticky preview not broken by body overflow-x: hidden alone
+    assert "overflow-x: clip;" in STYLE_CSS
+
+    # Home Recent Projects actions switch tab before opening sub-views
+    assert "function openRecentProjectAction(" in APP_JS
+
+    # BackButton/ESC closer handles real adm-user-detail & slip-modal IDs
+    assert '"adm-user-detail"' in APP_JS
+    assert '"slip-modal"' in APP_JS

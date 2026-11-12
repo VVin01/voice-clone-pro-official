@@ -576,9 +576,10 @@ function closeTopmostOverlay() {
     const overlayIds = [
         ["live-jobs-sheet", closeLiveJobsSheet],
         ["income-detail-sheet", closeIncomeDetail],
+        ["slip-modal", () => { if (typeof closeSlipModal === "function") closeSlipModal(); else document.getElementById("slip-modal")?.classList.add("hidden"); }],
         ["tts-key-prompt-modal", () => document.getElementById("tts-key-prompt-modal")?.classList.add("hidden")],
         ["admin-media-modal", () => { if (typeof closeAdminMediaModal === "function") closeAdminMediaModal(); else document.getElementById("admin-media-modal")?.classList.add("hidden"); }],
-        ["admin-user-modal", () => { if (typeof closeAdminUserModal === "function") closeAdminUserModal(); else document.getElementById("admin-user-modal")?.classList.add("hidden"); }],
+        ["adm-user-detail", () => { if (typeof closeAdminUserDetail === "function") closeAdminUserDetail(); else document.getElementById("adm-user-detail")?.classList.add("hidden"); }],
         ["payment-box", closePaymentDrawer],
     ];
     for (const [id, closer] of overlayIds) {
@@ -596,7 +597,7 @@ window.closeTopmostOverlay = closeTopmostOverlay;
 function hasOpenOverlay() {
     if (document.getElementById("studio-confirm-modal") || document.getElementById("studio-input-modal")) return true;
     if (document.querySelector(".vcp-sheet-backdrop.is-open")) return true;
-    const ids = ["live-jobs-sheet", "income-detail-sheet", "tts-key-prompt-modal", "admin-media-modal", "admin-user-modal", "payment-box"];
+    const ids = ["live-jobs-sheet", "income-detail-sheet", "slip-modal", "tts-key-prompt-modal", "admin-media-modal", "adm-user-detail", "payment-box"];
     return ids.some(id => {
         const el = document.getElementById(id);
         return !!(el && !el.classList.contains("hidden"));
@@ -14596,10 +14597,10 @@ function paintHomeStatusStrip(data) {
     if (tierEl) {
         if (data.is_admin) {
             tierEl.className = "vcp-badge vcp-badge-gold";
-            tierEl.textContent = "👑 ADMIN";
+            tierEl.textContent = t("tier_badge_admin");
         } else if (data.is_vip) {
             tierEl.className = "vcp-badge vcp-badge-gold";
-            tierEl.textContent = "👑 VIP";
+            tierEl.textContent = t("badge_vip");
         } else {
             tierEl.className = "vcp-badge vcp-badge-info";
             tierEl.textContent = t("vip_free");
@@ -14607,13 +14608,15 @@ function paintHomeStatusStrip(data) {
     }
     const sumEl = document.getElementById("home-bal-summary");
     if (sumEl) {
-        const vPart = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes ?? 0}m`;
-        const rPart = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits ?? 0}c`;
+        const mUnit = t("unit_min_short");
+        const cUnit = t("unit_credit_short");
+        const vPart = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes ?? 0}${mUnit}`;
+        const rPart = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits ?? 0}${cUnit}`;
         let tPart = "🎧 —";
         const rem = data.tts_today_remaining_seconds;
         if (data.is_admin || data.tts_daily_limit_seconds === 0) tPart = "🎧 ∞";
-        else if (typeof rem === "number") tPart = `🎧 ${(rem / 60).toFixed(1)}m`;
-        else if (typeof data.tts_balance_seconds === "number") tPart = `🎧 ${(data.tts_balance_seconds / 60).toFixed(1)}m`;
+        else if (typeof rem === "number") tPart = `🎧 ${(rem / 60).toFixed(1)}${mUnit}`;
+        else if (typeof data.tts_balance_seconds === "number") tPart = `🎧 ${(data.tts_balance_seconds / 60).toFixed(1)}${mUnit}`;
         sumEl.textContent = `${vPart} · ${rPart} · ${tPart}`;
     }
 }
@@ -14624,13 +14627,15 @@ function paintHomeStatusStripFromQuota(q) {
     const sumEl = document.getElementById("home-bal-summary");
     if (!sumEl) return;
     const u = state.user;
-    const vPart = u.is_admin ? "🎙️ ∞" : `🎙️ ${u.balance_minutes ?? 0}m`;
-    const rPart = u.is_admin ? "🎬 ∞" : `🎬 ${u.recap_credits ?? 0}c`;
+    const mUnit = t("unit_min_short");
+    const cUnit = t("unit_credit_short");
+    const vPart = u.is_admin ? "🎙️ ∞" : `🎙️ ${u.balance_minutes ?? 0}${mUnit}`;
+    const rPart = u.is_admin ? "🎬 ∞" : `🎬 ${u.recap_credits ?? 0}${cUnit}`;
     let tPart = "🎧 —";
     if (q.is_admin || q.unlimited) tPart = "🎧 ∞";
     else {
         const total = (q.referral_seconds || 0) + (q.remaining_seconds || 0);
-        tPart = `🎧 ${(total / 60).toFixed(1)}m`;
+        tPart = `🎧 ${(total / 60).toFixed(1)}${mUnit}`;
     }
     sumEl.textContent = `${vPart} · ${rPart} · ${tPart}`;
 }
@@ -14679,21 +14684,53 @@ function computeRetentionBadgeHtml(j) {
 
 function computeHomeRecentStatusBadgeHtml(j) {
     const st = String(j.status || "").toUpperCase();
-    if (st === "SUCCESS") return `<span class="vcp-badge vcp-badge-success">✅ ${escapeHtml(st)}</span>`;
-    if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info">⏳ ${escapeHtml(st)}</span>`;
-    if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning">🕒 ${escapeHtml(st)}</span>`;
-    if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger">❌ ${escapeHtml(st)}</span>`;
-    return `<span class="vcp-badge vcp-badge-info">ℹ️ ${escapeHtml(st || "—")}</span>`;
+    if (st === "SUCCESS") return `<span class="vcp-badge vcp-badge-success">✅ ${escapeHtml(t("status_badge_success"))}</span>`;
+    if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info">⏳ ${escapeHtml(t("status_badge_running"))}</span>`;
+    if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning">🕒 ${escapeHtml(t("status_badge_queued"))}</span>`;
+    if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger">❌ ${escapeHtml(t("status_badge_failed"))}</span>`;
+    return `<span class="vcp-badge vcp-badge-info">ℹ️ ${escapeHtml(t("status_badge_other"))}</span>`;
 }
+
+function openRecentProjectAction(jobId, mode) {
+    haptic("light");
+    if (mode === "review") {
+        switchTab("tab-recap");
+        if (typeof showRecapStep === "function") showRecapStep(4);
+        if (typeof openRecapScriptEditor === "function") openRecapScriptEditor(jobId);
+        return;
+    }
+    if (mode === "recap") {
+        switchTab("tab-recap");
+        if (typeof showRecapStep === "function") showRecapStep(4);
+        if (typeof openRecapDetail === "function") openRecapDetail(jobId);
+        return;
+    }
+    if (mode === "tts") {
+        switchTab("tab-tts");
+        return;
+    }
+    if (mode === "voice") {
+        switchTab("tab-voice");
+        if (typeof openVoiceDetail === "function") openVoiceDetail(jobId);
+        return;
+    }
+    if (mode === "retry") {
+        switchTab("tab-recap");
+        if (typeof retryRecapJob === "function") retryRecapJob(jobId);
+    }
+}
+window.openRecentProjectAction = openRecentProjectAction;
 
 function computeHomeRecentActionHtml(j) {
     const isRecap = j.job_type === "RECAP";
+    const isTts = j.job_type === "TTS";
+    const safeId = escapeHtml(j.id);
     if (isRecap && j.script_ready) {
-        return `<button type="button" class="vcp-chip active" onclick="openRecapScriptEditor('${j.id}')">${escapeHtml(t("home_recent_action_review"))}</button>`;
+        return `<button type="button" class="vcp-chip active" onclick="openRecentProjectAction('${safeId}','review')">${escapeHtml(t("home_recent_action_review"))}</button>`;
     }
     if (j.status === "RUNNING" || j.status === "QUEUED") {
-        const fn = isRecap ? `openRecapDetail('${j.id}')` : `openVoiceDetail('${j.id}')`;
-        return `<button type="button" class="vcp-chip active" onclick="${fn}">${escapeHtml(t("home_recent_action_continue"))}</button>`;
+        const mode = isRecap ? "recap" : (isTts ? "tts" : "voice");
+        return `<button type="button" class="vcp-chip active" onclick="openRecentProjectAction('${safeId}','${mode}')">${escapeHtml(t("home_recent_action_continue"))}</button>`;
     }
     if (j.status === "SUCCESS" && !j.is_expired) {
         if (isRecap && j.deliverables && j.deliverables.video) {
@@ -14704,9 +14741,9 @@ function computeHomeRecentActionHtml(j) {
         }
     }
     if (j.status === "FAILED" && isRecap && j.can_retry !== false) {
-        return `<button type="button" class="vcp-chip" onclick="retryRecapJob('${j.id}')">${escapeHtml(t("home_recent_action_retry"))}</button>`;
+        return `<button type="button" class="vcp-chip" onclick="openRecentProjectAction('${safeId}','retry')">${escapeHtml(t("home_recent_action_retry"))}</button>`;
     }
-    return `<button type="button" class="vcp-chip" onclick="openHistoryHub()">›</button>`;
+    return `<button type="button" class="vcp-chip" onclick="openHistoryHub()" aria-label="${escapeHtml(t("home_recent_action_open_history"))}">›</button>`;
 }
 
 function renderHomeRecentProjects() {
@@ -14733,7 +14770,7 @@ function renderHomeRecentProjects() {
         const isRecap = j.job_type === "RECAP";
         const isTts = j.job_type === "TTS";
         const icon = isRecap ? "🎬" : isTts ? "🎧" : "🎙️";
-        const snippet = j.input_snippet || (isRecap ? "Movie Recap" : isTts ? "TTS" : "Voice Synthesis");
+        const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
         return `
         <div class="home-recent-row" data-recent-job-id="${j.id}">
             <div class="home-recent-main">
@@ -14826,6 +14863,7 @@ function trimVoiceTextToLimit() {
 window.trimVoiceTextToLimit = trimVoiceTextToLimit;
 
 function setCustomCloneStep(stepNum, file) {
+    state.customCloneStep = stepNum;
     const stepper = document.getElementById("custom-clone-stepper");
     if (stepper) {
         stepper.querySelectorAll("[data-clone-step]").forEach(el => {
@@ -14836,8 +14874,9 @@ function setCustomCloneStep(stepNum, file) {
     }
     const checkEl = document.getElementById("custom-clone-check-status");
     if (checkEl) {
-        if (file && stepNum >= 2) {
-            checkEl.textContent = tf("clone_check_ok", { kb: Math.max(1, Math.round(file.size / 1024)) });
+        const refFile = file || state.selectedReferenceFile;
+        if (refFile && stepNum >= 2) {
+            checkEl.textContent = tf("clone_check_ok", { kb: Math.max(1, Math.round(refFile.size / 1024)) });
             checkEl.classList.remove("hidden");
         } else if (!file) {
             checkEl.textContent = "";
@@ -14849,29 +14888,44 @@ window.setCustomCloneStep = setCustomCloneStep;
 
 async function saveCurrentRefAsCustomVoice() {
     haptic("light");
-    if (!state.selectedReferenceFile) return;
-    if (!(state.user && (state.user.is_vip || state.user.is_admin))) {
+    const file = state.selectedReferenceFile;
+    if (!file) return;
+    const allowed = typeof canUseRecapCloneEngine === "function"
+        ? canUseRecapCloneEngine()
+        : Boolean(state.user && (state.user.is_vip || state.user.is_admin));
+    if (!allowed) {
+        showStudioToast(t("recap_own_voice_locked_hint"), "warning");
         switchTab("tab-vip");
         return;
     }
+    const saveBtn = document.getElementById("btn-save-custom-voice-from-result");
+    if (typeof setVcpButtonLoading === "function") setVcpButtonLoading(saveBtn, true);
     try {
         const fd = new FormData();
-        fd.append("file", state.selectedReferenceFile);
+        fd.append("reference_audio", file);
         const headers = {};
         if (state.tg && state.tg.initData) {
             headers["X-Telegram-Init-Data"] = state.tg.initData;
         }
-        const res = await fetchWithTimeout("/api/user/custom-voice", {
+        const res = await fetchWithTimeout("/api/recap/upload_voice_ref", {
             method: "POST",
             headers,
             body: fd,
-        }, 60000);
+        }, 120000);
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || t("err_generic"));
-        setCustomCloneStep(5);
-        showStudioToast(t("recap_own_voice_saved_toast") || "✅ Saved", "success");
+        if (!res.ok || !data.ref_id) throw new Error(data.detail || t("err_generic"));
+        state.recapOwnVoiceRefId = data.ref_id;
+        state.recapOwnVoiceFile = file;
+        state.recapOwnVoiceFileName = data.filename || file.name || "";
+        state.recapOwnVoiceStatus = "ready";
+        state.recapOwnVoiceSelected = true;
+        if (typeof syncRecapOwnVoiceCard === "function") syncRecapOwnVoiceCard();
+        setCustomCloneStep(5, file);
+        showStudioToast(t("recap_own_voice_saved_toast"), "success");
     } catch (err) {
         showStudioToast((err && err.message) || t("err_generic"), "error");
+    } finally {
+        if (typeof setVcpButtonLoading === "function") setVcpButtonLoading(saveBtn, false);
     }
 }
 window.saveCurrentRefAsCustomVoice = saveCurrentRefAsCustomVoice;
@@ -15026,7 +15080,7 @@ const RECAP_MASTER_PRESETS = {
         recapBlurSubs: true,
         recapBlurAutoDetect: true,
         recapMirror: true,
-        recapZoom: 1.05,
+        recapZoom: 1.06,
         recapTextColor: "",
         recapOutlineColor: "",
         recapBgColor: "",
@@ -15139,7 +15193,11 @@ function applyRecapMasterPreset(presetKey) {
     if (typeof haptic === "function") haptic("medium");
     applyRecapPresetObject(patch);
     if (typeof showStudioToast === "function" && typeof t === "function") {
-        showStudioToast(t("recap_master_preset_applied_toast"), "success");
+        const presetLabel = t(`preset_${presetKey}_name`);
+        const msg = typeof tf === "function"
+            ? tf("recap_master_preset_applied_toast", { name: presetLabel })
+            : t("recap_master_preset_applied_toast");
+        showStudioToast(msg, "success");
     }
 }
 window.applyRecapMasterPreset = applyRecapMasterPreset;
@@ -15225,8 +15283,8 @@ function renderMyRecapPresets() {
 
     const presets = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
     if (!presets.length) {
-        const emptyText = typeof t === "function" ? t("recap_my_preset_empty") : "No saved presets yet";
-        listEl.innerHTML = `<div class="vcp-my-preset-empty">${escapeHtml(emptyText)}</div>`;
+        const emptyText = typeof t === "function" ? t("recap_my_preset_empty") : "";
+        listEl.innerHTML = `<div class="vcp-my-preset-empty" data-i18n="recap_my_preset_empty">${escapeHtml(emptyText)}</div>`;
         return;
     }
 
@@ -15347,7 +15405,7 @@ function toggleRecapSubL2Detail(forceOpen) {
     const isOpen = typeof forceOpen === "boolean" ? forceOpen : body.classList.contains("hidden");
     body.classList.toggle("hidden", !isOpen);
     if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    if (chev) chev.textContent = isOpen ? "▲" : "▼";
+    if (chev) chev.textContent = "▼";
     if (isOpen && typeof moveSegPills === "function") {
         requestAnimationFrame(() => { try { moveSegPills(); } catch (e) {} });
     }
@@ -15363,6 +15421,40 @@ function toggleRecapBlurL2Detail(forceOpen) {
     const isOpen = typeof forceOpen === "boolean" ? forceOpen : body.classList.contains("hidden");
     body.classList.toggle("hidden", !isOpen);
     if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    if (chev) chev.textContent = isOpen ? "▲" : "▼";
+    if (chev) chev.textContent = "▼";
 }
 window.toggleRecapBlurL2Detail = toggleRecapBlurL2Detail;
+
+function refreshPhase1to4LanguageSurfaces() {
+    try {
+        if (state && state.user && typeof paintHomeStatusStrip === "function") {
+            paintHomeStatusStrip(state.user);
+        }
+        if (typeof renderHomeRecentProjects === "function") {
+            renderHomeRecentProjects();
+        }
+        const sampleAudio = document.getElementById("sample-audio-voice");
+        const tryBtn = document.getElementById("welcome-try-sample-btn");
+        if (sampleAudio && tryBtn && typeof t === "function") {
+            const playing = !sampleAudio.paused && !sampleAudio.ended;
+            tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
+        }
+        const u = (state && state.user) || {};
+        const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+        const vInp = document.getElementById("voice-text-input");
+        if (vInp && typeof syncVoiceExcessAndCost === "function") {
+            syncVoiceExcessAndCost((vInp.value || "").length, max);
+        }
+        const tInp = document.getElementById("tts-text-input");
+        if (tInp && typeof syncTtsExcessAndCost === "function") {
+            syncTtsExcessAndCost((tInp.value || "").length, max);
+        }
+        if (state && state.selectedReferenceFile && typeof setCustomCloneStep === "function") {
+            setCustomCloneStep(state.customCloneStep || 2, state.selectedReferenceFile);
+        }
+        if (typeof renderMyRecapPresets === "function") {
+            renderMyRecapPresets();
+        }
+    } catch (e) {}
+}
+window.refreshPhase1to4LanguageSurfaces = refreshPhase1to4LanguageSurfaces;

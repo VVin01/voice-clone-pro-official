@@ -1254,6 +1254,21 @@ const translations = {
         recap_blur_l2_title: "📐 Blur Box နေရာနှင့် အရွယ်အစား အသေးစိတ် (X/Y/W/H)",
         btn_logo_vip_upsell: "👑 VIP ဝယ်မည်",
         dl_use_in_recap_ready_toast: "✅ ဗီဒီယိုကို Recap သို့ ပို့ပြီးပါပြီ — ပြန်တင်စရာ မလိုပါ",
+        recap_sub_sample_specimen: "မြန်မာစာတန်း",
+        badge_vip: "👑 VIP",
+        tier_badge_admin: "👑 ADMIN",
+        recap_own_voice_saved_toast: "✅ ကိုယ်ပိုင်အသံအဖြစ် သိမ်းဆည်းပြီးပါပြီ",
+        home_recent_fallback_recap: "ဇာတ်လမ်း Recap",
+        home_recent_fallback_tts: "TTS အသံ",
+        home_recent_fallback_voice: "Voice Clone အသံ",
+        status_badge_success: "ပြီးစီး",
+        status_badge_running: "လုပ်ဆောင်နေ",
+        status_badge_queued: "တန်းစီနေ",
+        status_badge_failed: "မအောင်မြင်",
+        status_badge_other: "—",
+        home_recent_action_open_history: "မှတ်တမ်း ဖွင့်ရန်",
+        unit_min_short: "မိနစ်",
+        unit_credit_short: "Cr",
     },
     en: {
         // App Top Bar & Brand
@@ -2503,6 +2518,21 @@ const translations = {
         recap_blur_l2_title: "📐 Blur Box Geometry Details (X/Y/W/H)",
         btn_logo_vip_upsell: "👑 Upgrade to VIP",
         dl_use_in_recap_ready_toast: "✅ Video sent to Recap — no re-upload needed",
+        recap_sub_sample_specimen: "Sample Subtitle",
+        badge_vip: "👑 VIP",
+        tier_badge_admin: "👑 ADMIN",
+        recap_own_voice_saved_toast: "✅ Saved to Custom Own Voice",
+        home_recent_fallback_recap: "Movie Recap",
+        home_recent_fallback_tts: "Text to Speech",
+        home_recent_fallback_voice: "Voice Synthesis",
+        status_badge_success: "SUCCESS",
+        status_badge_running: "RUNNING",
+        status_badge_queued: "QUEUED",
+        status_badge_failed: "FAILED",
+        status_badge_other: "—",
+        home_recent_action_open_history: "Open History",
+        unit_min_short: "m",
+        unit_credit_short: "c",
     }
 };
 
@@ -2592,6 +2622,20 @@ function setLanguage(lang) {
             el.title = translations[lang][key];
         }
     });
+
+    // Apply aria-label attributes so accessible labels track UI language
+    document.querySelectorAll("[data-i18n-aria]").forEach(el => {
+        const key = el.getAttribute("data-i18n-aria");
+        if (key && translations[lang] && translations[lang][key]) {
+            el.setAttribute("aria-label", translations[lang][key]);
+        }
+    });
+
+    // Refresh Phase 1-4 dynamic i18n surfaces (status strip, recent projects,
+    // custom presets, voice/TTS cost badges & excess banners)
+    if (typeof window.refreshPhase1to4LanguageSurfaces === "function") {
+        window.refreshPhase1to4LanguageSurfaces();
+    }
 
     // Notify backend if user is authenticated. The promise is kept
     // on window so an explicit language toggle can await persistence

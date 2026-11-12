@@ -100,6 +100,7 @@ body {
     -webkit-font-smoothing: antialiased;
     -webkit-tap-highlight-color: transparent;
     overflow-x: hidden;
+    overflow-x: clip;
 }
 
 img, video { max-width: 100%; }
@@ -5447,14 +5448,14 @@ body.lite .modal-content {
     text-align: center;
 }
 .vcp-slider-row__reset {
-    min-width: 32px;
-    min-height: 32px;
-    padding: 2px 6px;
-    border-radius: 6px;
+    min-width: var(--vcp-touch-min);
+    min-height: var(--vcp-touch-min);
+    padding: 4px 10px;
+    border-radius: 8px;
     border: 1px solid var(--border-strong);
     background: rgba(255, 255, 255, 0.75);
     color: var(--vcp-text-secondary);
-    font-size: 12px;
+    font-size: var(--vcp-fs-body-sm);
     cursor: pointer;
 }
 input[type="range"],
@@ -5860,9 +5861,9 @@ input[type="range"]::-moz-range-thumb,
     border-top: 1px solid rgba(148, 163, 184, 0.16);
 }
 .vcp-btn-est-cost {
-    font-size: 13px;
+    font-size: var(--vcp-fs-body-sm);
     font-weight: 700;
-    opacity: 0.92;
+    opacity: 0.94;
     margin-inline-start: 4px;
 }
 
@@ -5889,15 +5890,17 @@ body.lite .vcp-step2-sticky-preview {
 .vcp-preview-stage-bar {
     position: relative;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: var(--vcp-touch-min);
     gap: var(--vcp-sp-2);
 }
 .vcp-preview-corner-reset {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    z-index: 6;
+    margin-left: auto;
+    flex: 0 0 auto;
     min-height: var(--vcp-touch-min);
     min-width: var(--vcp-touch-min);
     padding: 6px 12px;
@@ -5993,11 +5996,15 @@ body.lite .vcp-step2-sticky-preview {
     font-weight: 700;
     line-height: 1.45;
     color: var(--vcp-text-primary);
+    width: 100%;
+    overflow-wrap: break-word;
 }
 .vcp-preset-desc {
     font-size: var(--vcp-fs-helper);
     line-height: 1.5;
     color: var(--vcp-text-secondary);
+    width: 100%;
+    overflow-wrap: break-word;
 }
 
 /* My Presets (VIP, max 3) */
@@ -6009,18 +6016,21 @@ body.lite .vcp-step2-sticky-preview {
 }
 .vcp-my-preset-save-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--vcp-sp-2);
 }
 .vcp-my-preset-save-row .vcp-input {
-    flex: 1 1 auto;
+    flex: 1 1 180px;
     min-width: 0;
     min-height: var(--vcp-touch-min);
     font-size: var(--vcp-fs-input);
 }
 .vcp-my-preset-save-row .vcp-btn {
+    flex: 0 1 auto;
     min-height: var(--vcp-touch-min);
-    white-space: nowrap;
+    white-space: normal;
+    text-align: center;
 }
 .vcp-my-presets-list {
     display: flex;
@@ -6158,10 +6168,18 @@ body.lite .vcp-step2-sticky-preview {
     text-shadow: 0 1px 2px #000000, 0 0 4px rgba(94, 242, 184, 0.4);
 }
 .vcp-sub-card-name {
-    font-size: var(--vcp-fs-helper);
+    font-size: var(--vcp-fs-body-sm);
     font-weight: 600;
-    line-height: 1.4;
+    line-height: 1.45;
     color: var(--vcp-text-primary);
+    width: 100%;
+    overflow-wrap: break-word;
+}
+@media (max-width: 340px) {
+    .vcp-preset-grid,
+    .vcp-sub-style-cards-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 
