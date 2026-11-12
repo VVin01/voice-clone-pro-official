@@ -283,7 +283,24 @@ def test_bg_persona_work_intact_and_not_restyled():
     assert ".persona-category" in CSS                      # BG-1
     assert '"public, max-age=86400"' not in API_PY          # BG-5 stays fixed
     assert API_PY.count("no-cache") >= 2
-    assert ".persona-card" not in BD_CSS                    # BD does not touch the cards
+    # Phase 1 glass-performance rule flattens backdrop-filter inside .tab-pane;
+    # Batch BD itself must not touch .persona-card, and Phase 1+ must preserve layout/colours.
+    bd_only_css, _, phase_css = BD_CSS.partition("PHASE 1 — VCP DESIGN SYSTEM TOKENS")
+    assert ".persona-card" not in bd_only_css
+    stripped = re.sub(r"/\*.*?\*/", "", phase_css, flags=re.S)
+    persona_rules = [
+        (sel.strip(), body.strip())
+        for sel, body in re.findall(r"([^{}]+)\{([^{}]+)\}", stripped)
+        if ".persona-card" in sel
+    ]
+    assert persona_rules, "Expected Phase 1 tab-pane flat-glass rule for .persona-card"
+    for sel, body in persona_rules:
+        assert ".tab-pane .persona-card" in sel
+        decls = [d.strip() for d in body.split(";") if d.strip()]
+        assert decls and all(
+            d in {"backdrop-filter: none !important", "-webkit-backdrop-filter: none !important"}
+            for d in decls
+        ), f"Persona card restyled beyond backdrop-filter flattening: {sel} -> {body}"
     assert ".persona-sample-listen" not in BD_CSS
 
 
