@@ -1175,6 +1175,14 @@ const translations = {
         alert_default_title: "အသိပေးချက်",
         alert_default_desc: "လုပ်ဆောင်ချက် အောင်မြင်စွာ ပြီးစီးပါပြီ!",
         alert_btn_view: "ကြည့်မည်",
+        // Phase 1: VCP Design System & UI State Machine
+        ui_state_loading: "⏳ ဒေတာများ ရယူနေပါသည်…",
+        ui_state_empty: "📭 ပြသရန် အချက်အလက် မရှိသေးပါ",
+        ui_state_error: "⚠️ ဒေတာ ရယူ၍ မရပါ — အင်တာနက် စစ်ဆေးပြီး ပြန်စမ်းကြည့်ပါ",
+        ui_state_retry: "🔄 ပြန်စမ်းမည်",
+        vcp_reset_default: "↺ မူလအတိုင်း",
+        vcp_close: "ပိတ်မည်",
+        vcp_advanced_settings: "⚙️ အသေးစိတ် ဆက်တင်များ",
     },
     en: {
         // App Top Bar & Brand
@@ -2345,6 +2353,14 @@ const translations = {
         alert_default_title: "Notice",
         alert_default_desc: "Completed successfully!",
         alert_btn_view: "View",
+        // Phase 1: VCP Design System & UI State Machine
+        ui_state_loading: "⏳ Loading data…",
+        ui_state_empty: "📭 Nothing to show yet",
+        ui_state_error: "⚠️ Could not load data — check your connection and try again",
+        ui_state_retry: "🔄 Retry",
+        vcp_reset_default: "↺ Reset",
+        vcp_close: "Close",
+        vcp_advanced_settings: "⚙️ Advanced Settings",
     }
 };
 

@@ -458,14 +458,284 @@ const state = {
     alertDismissTimer: null,
 };
 
-// ── Telegram WebApp Initialization ─────────────────────────────────────────
+// ── Telegram WebApp Initialization & Native Integrations (Phase 1) ─────────
+function initLitePerformanceMode() {
+    try {
+        const forced = localStorage.getItem("vcp_lite_mode");
+        if (forced === "0") {
+            document.documentElement.classList.remove("lite");
+            document.body?.classList.remove("lite");
+            return false;
+        }
+        const cores = Number(navigator.hardwareConcurrency || 8);
+        const mem = Number(navigator.deviceMemory || 8);
+        const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const isLite = forced === "1" || reducedMotion || cores <= 4 || mem <= 3;
+        document.documentElement.classList.toggle("lite", isLite);
+        if (document.body) document.body.classList.toggle("lite", isLite);
+        return isLite;
+    } catch (e) {
+        return false;
+    }
+}
+window.initLitePerformanceMode = initLitePerformanceMode;
+
+/**
+ * setSectionState(sectionOrId, stateName, options)
+ * Unified UI state machine helper for data-ui-state="loading|empty|error|ready"
+ */
+function setSectionState(sectionOrId, stateName = "ready", options = {}) {
+    const el = typeof sectionOrId === "string" ? document.getElementById(sectionOrId) : sectionOrId;
+    if (!el) return;
+    const valid = ["loading", "empty", "error", "ready"];
+    const nextState = valid.includes(stateName) ? stateName : "ready";
+    el.setAttribute("data-ui-state", nextState);
+    if (options.message) {
+        const msgEl = el.querySelector(`.vcp-state-${nextState} .vcp-state-msg`);
+        if (msgEl) msgEl.textContent = options.message;
+    }
+    if (typeof options.onRetry === "function") {
+        const retryBtn = el.querySelector(`.vcp-state-error .vcp-state-retry-btn`);
+        if (retryBtn) retryBtn.onclick = options.onRetry;
+    }
+}
+window.setSectionState = setSectionState;
+
+/**
+ * Standard vcp-* Component Helpers (Bottom Sheet, Accordion, Slider Reset, Button Loading)
+ */
+function openVcpSheet(sheetId) {
+    const el = typeof sheetId === "string" ? document.getElementById(sheetId) : sheetId;
+    if (!el) return;
+    haptic("light");
+    el.classList.remove("hidden");
+    requestAnimationFrame(() => {
+        el.classList.add("is-open");
+        syncTelegramBackButton();
+    });
+}
+window.openVcpSheet = openVcpSheet;
+
+function closeVcpSheet(sheetId) {
+    const el = typeof sheetId === "string" ? document.getElementById(sheetId) : sheetId;
+    if (!el) return;
+    el.classList.remove("is-open");
+    setTimeout(() => {
+        if (!el.classList.contains("is-open")) el.classList.add("hidden");
+        syncTelegramBackButton();
+    }, 240);
+}
+window.closeVcpSheet = closeVcpSheet;
+
+function toggleVcpAccordion(btnOrId, force) {
+    const el = typeof btnOrId === "string" ? document.getElementById(btnOrId) : btnOrId;
+    if (!el) return;
+    const acc = el.classList.contains("vcp-accordion") ? el : el.closest(".vcp-accordion");
+    if (!acc) return;
+    haptic("selection");
+    const open = typeof force === "boolean" ? force : !(acc.classList.contains("is-open") || acc.classList.contains("open"));
+    acc.classList.toggle("is-open", open);
+    acc.classList.toggle("open", open);
+    const head = acc.querySelector(".vcp-accordion-head, .vcp-accordion__trigger");
+    if (head) head.setAttribute("aria-expanded", open ? "true" : "false");
+    const body = acc.querySelector(".vcp-accordion-body, .vcp-accordion__body");
+    if (body) body.classList.toggle("hidden", !open);
+}
+window.toggleVcpAccordion = toggleVcpAccordion;
+
+function resetVcpSlider(sliderId, defaultVal) {
+    const slider = typeof sliderId === "string" ? document.getElementById(sliderId) : sliderId;
+    if (!slider) return;
+    haptic("light");
+    const val = defaultVal !== undefined ? defaultVal : slider.getAttribute("data-default");
+    if (val === null || val === undefined) return;
+    slider.value = val;
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+}
+window.resetVcpSlider = resetVcpSlider;
+
+function setVcpButtonLoading(btnOrId, loading) {
+    const btn = typeof btnOrId === "string" ? document.getElementById(btnOrId) : btnOrId;
+    if (!btn) return;
+    btn.classList.toggle("is-loading", !!loading);
+    btn.disabled = !!loading;
+}
+window.setVcpButtonLoading = setVcpButtonLoading;
+
+function closeTopmostOverlay() {
+    const confirmModal = document.getElementById("studio-confirm-modal");
+    if (confirmModal) { confirmModal.remove(); return true; }
+    const inputModal = document.getElementById("studio-input-modal");
+    if (inputModal) { inputModal.remove(); return true; }
+    const openSheets = document.querySelectorAll(".vcp-sheet-backdrop.is-open");
+    if (openSheets.length > 0) {
+        closeVcpSheet(openSheets[openSheets.length - 1]);
+        return true;
+    }
+    const overlayIds = [
+        ["live-jobs-sheet", closeLiveJobsSheet],
+        ["income-detail-sheet", closeIncomeDetail],
+        ["tts-key-prompt-modal", () => document.getElementById("tts-key-prompt-modal")?.classList.add("hidden")],
+        ["admin-media-modal", () => { if (typeof closeAdminMediaModal === "function") closeAdminMediaModal(); else document.getElementById("admin-media-modal")?.classList.add("hidden"); }],
+        ["admin-user-modal", () => { if (typeof closeAdminUserModal === "function") closeAdminUserModal(); else document.getElementById("admin-user-modal")?.classList.add("hidden"); }],
+        ["payment-box", closePaymentDrawer],
+    ];
+    for (const [id, closer] of overlayIds) {
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains("hidden")) {
+            closer();
+            syncTelegramBackButton();
+            return true;
+        }
+    }
+    return false;
+}
+window.closeTopmostOverlay = closeTopmostOverlay;
+
+function hasOpenOverlay() {
+    if (document.getElementById("studio-confirm-modal") || document.getElementById("studio-input-modal")) return true;
+    if (document.querySelector(".vcp-sheet-backdrop.is-open")) return true;
+    const ids = ["live-jobs-sheet", "income-detail-sheet", "tts-key-prompt-modal", "admin-media-modal", "admin-user-modal", "payment-box"];
+    return ids.some(id => {
+        const el = document.getElementById(id);
+        return !!(el && !el.classList.contains("hidden"));
+    });
+}
+
+function syncTelegramBackButton() {
+    try {
+        const bb = state.tg?.BackButton;
+        if (!bb) return;
+        const activePane = document.querySelector(".tab-pane.active");
+        const activeTabId = activePane ? activePane.id : "tab-home";
+        const shouldShow = hasOpenOverlay()
+            || (activeTabId === "tab-recap" && (state.recapDetailOpen || (typeof recapCurrentStep === "number" && recapCurrentStep > 1)))
+            || (activeTabId === "tab-voice" && state.voiceDetailOpen)
+            || (activeTabId !== "tab-home");
+        if (shouldShow) {
+            if (typeof bb.show === "function") bb.show();
+        } else {
+            if (typeof bb.hide === "function") bb.hide();
+        }
+    } catch (e) {}
+}
+window.syncTelegramBackButton = syncTelegramBackButton;
+
+function handleTelegramBackButton() {
+    haptic("light");
+    if (closeTopmostOverlay()) {
+        syncTelegramBackButton();
+        return;
+    }
+    const activePane = document.querySelector(".tab-pane.active");
+    const activeTabId = activePane ? activePane.id : "tab-home";
+    if (activeTabId === "tab-recap") {
+        if (state.recapDetailOpen && typeof window.backToStudio === "function") {
+            window.backToStudio("recap");
+            syncTelegramBackButton();
+            return;
+        }
+        if (typeof recapCurrentStep === "number" && recapCurrentStep > 1 && typeof window.showRecapStep === "function") {
+            window.showRecapStep(recapCurrentStep - 1);
+            syncTelegramBackButton();
+            return;
+        }
+    }
+    if (activeTabId === "tab-voice" && state.voiceDetailOpen && typeof window.backToStudio === "function") {
+        window.backToStudio("voice");
+        syncTelegramBackButton();
+        return;
+    }
+    if (activeTabId !== "tab-home") {
+        switchTab("tab-home");
+        syncTelegramBackButton();
+    }
+}
+window.handleTelegramBackButton = handleTelegramBackButton;
+
+function setupViewportAndKeyboardSync() {
+    const applyViewportVars = () => {
+        try {
+            const vh = (state.tg && state.tg.viewportHeight) ? state.tg.viewportHeight : window.innerHeight;
+            const sh = (state.tg && state.tg.viewportStableHeight) ? state.tg.viewportStableHeight : window.innerHeight;
+            if (vh > 0) document.documentElement.style.setProperty("--tg-viewport-height", `${vh}px`);
+            if (sh > 0) document.documentElement.style.setProperty("--tg-viewport-stable-height", `${sh}px`);
+        } catch (e) {}
+    };
+    applyViewportVars();
+    window.addEventListener("resize", applyViewportVars);
+    if (state.tg && typeof state.tg.onEvent === "function") {
+        try { state.tg.onEvent("viewportChanged", applyViewportVars); } catch (e) {}
+    }
+    document.addEventListener("focusin", (e) => {
+        const tEl = e.target;
+        if (!tEl || !tEl.matches || !tEl.matches("input:not([type='range']):not([type='file']):not([type='checkbox']), textarea, select")) return;
+        document.body.classList.add("vcp-kb-open");
+        setTimeout(() => {
+            try { tEl.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (err) {}
+        }, 260);
+    });
+    document.addEventListener("focusout", () => {
+        setTimeout(() => {
+            const active = document.activeElement;
+            if (!active || !active.matches || !active.matches("input, textarea, select")) {
+                document.body.classList.remove("vcp-kb-open");
+            }
+        }, 150);
+    });
+}
+window.setupViewportAndKeyboardSync = setupViewportAndKeyboardSync;
+
+function hasUnsavedWork() {
+    if (state.recapUploadPending) return true;
+    const slipInput = document.getElementById("slip-file-input");
+    if (slipInput && slipInput.files && slipInput.files.length > 0) return true;
+    const scriptBox = document.getElementById("recap-script-box");
+    if (scriptBox && !scriptBox.classList.contains("hidden")) {
+        const segs = scriptBox.querySelectorAll(".script-seg-text");
+        for (const ta of segs) {
+            if (ta.value !== ta.dataset.original) return true;
+        }
+    }
+    return false;
+}
+window.hasUnsavedWork = hasUnsavedWork;
+
+function syncUnsavedWorkGuard() {
+    const dirty = hasUnsavedWork();
+    try {
+        if (state.tg) {
+            if (dirty && typeof state.tg.enableClosingConfirmation === "function") {
+                state.tg.enableClosingConfirmation();
+            } else if (!dirty && typeof state.tg.disableClosingConfirmation === "function") {
+                state.tg.disableClosingConfirmation();
+            }
+        }
+    } catch (e) {}
+}
+window.syncUnsavedWorkGuard = syncUnsavedWorkGuard;
+
+window.addEventListener("beforeunload", (e) => {
+    if (hasUnsavedWork()) {
+        e.preventDefault();
+        e.returnValue = "";
+    }
+});
+
 function initTelegram() {
+    initLitePerformanceMode();
     if (state.tg) {
         state.tg.ready();
         state.tg.expand();
         try {
             state.tg.setHeaderColor("#dcebf7");
             state.tg.setBackgroundColor("#dcebf7");
+        } catch (e) {}
+        try {
+            if (state.tg.BackButton && typeof state.tg.BackButton.onClick === "function") {
+                state.tg.BackButton.onClick(handleTelegramBackButton);
+            }
         } catch (e) {}
     }
 }
@@ -1009,11 +1279,13 @@ function openLiveJobsSheet() {
     if (sheet) sheet.classList.remove("hidden");
     renderLiveJobsSheet();
     LiveJobs.fetchNow();
+    syncTelegramBackButton();
 }
 window.openLiveJobsSheet = openLiveJobsSheet;
 function closeLiveJobsSheet() {
     const sheet = document.getElementById("live-jobs-sheet");
     if (sheet) sheet.classList.add("hidden");
+    syncTelegramBackButton();
 }
 window.closeLiveJobsSheet = closeLiveJobsSheet;
 
@@ -1029,11 +1301,13 @@ function openIncomeDetail(period) {
     const sheet = document.getElementById("income-detail-sheet");
     if (sheet) sheet.classList.remove("hidden");
     loadIncomeDetail();
+    syncTelegramBackButton();
 }
 window.openIncomeDetail = openIncomeDetail;
 function closeIncomeDetail() {
     const sheet = document.getElementById("income-detail-sheet");
     if (sheet) sheet.classList.add("hidden");
+    syncTelegramBackButton();
 }
 window.closeIncomeDetail = closeIncomeDetail;
 function setIncomeDetailPeriod(period) {
@@ -1152,6 +1426,7 @@ function openVoiceDetail(jobId) {
         box.scrollIntoView({ behavior: "smooth" });
     }
     if (jobId && !state.pollTimer) startJobPolling(jobId);
+    syncTelegramBackButton();
 }
 window.openVoiceDetail = openVoiceDetail;
 function openRecapDetail(jobId) {
@@ -1162,6 +1437,7 @@ function openRecapDetail(jobId) {
         box.scrollIntoView({ behavior: "smooth" });
     }
     if (jobId && !state.recapPollTimer) startRecapJobPolling(jobId);
+    syncTelegramBackButton();
 }
 window.openRecapDetail = openRecapDetail;
 window.openCurrentVoiceDetail = function() { openVoiceDetail(state.activeJobId); };
@@ -1180,6 +1456,7 @@ window.backToStudio = function(kind) {
         const tab = document.getElementById("tab-voice");
         if (tab) tab.scrollIntoView({ behavior: "smooth" });
     }
+    syncTelegramBackButton();
 };
 function showLiveSubmitLimit(kind) {
     // The server concurrency rule (1 active job per user) explained IN
@@ -2604,6 +2881,7 @@ function switchTab(tabId) {
     if (tabId === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
         window.maybePrefillTtsSample();
     }
+    syncTelegramBackButton();
 }
 window.switchTab = switchTab;
 
@@ -2704,6 +2982,7 @@ function setupTabs() {
                     window.adminQueueInterval = null;
                 }
             }
+            syncTelegramBackButton();
         });
     });
 }
@@ -4862,6 +5141,7 @@ function showRecapStep(n) {
     requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     const nav = document.getElementById("recap-steps-nav");
     if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
+    syncTelegramBackButton();
 }
 window.showRecapStep = showRecapStep;
 
@@ -10280,6 +10560,7 @@ async function openPaymentDrawer(packageCode, amount, title) {
         drawer.classList.remove("hidden");
         drawer.scrollIntoView({ behavior: "smooth" });
     }
+    syncTelegramBackButton();
 
     // Dynamic sync of payment account numbers from API
     try {
@@ -10321,6 +10602,7 @@ async function openPaymentDrawer(packageCode, amount, title) {
 function closePaymentDrawer() {
     const drawer = document.getElementById("payment-box");
     if (drawer) drawer.classList.add("hidden");
+    syncTelegramBackButton();
 }
 
 function copyAccount(accNum) {
@@ -14230,6 +14512,7 @@ function applyDesktopDropHint() {
 
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
+    setupViewportAndKeyboardSync();
     applyDesktopDropHint();
     initEntryGate();
     setLanguage(currentLang);
@@ -14245,6 +14528,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupSlipPreview();
     setupStickyCtas();
     setupSamplePlayers();
+    syncTelegramBackButton();
 
     loadUserProfile();
     loadCuratedVoices();
