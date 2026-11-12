@@ -3550,6 +3550,7 @@ function setupVoiceStudio() {
                 if (refLabel) refLabel.innerText = `🎵 ${file.name} (${Math.round(file.size / 1024)} KB)`;
                 if (btnClearRef) btnClearRef.classList.remove("hidden");
                 if (fileUploadBtn) fileUploadBtn.classList.add("has-file");
+                setCustomCloneStep(2, file);
                 haptic("selection");
             }
         });
@@ -3564,6 +3565,7 @@ function setupVoiceStudio() {
             pill.classList.add("active");
             state.speed = pill.getAttribute("data-speed");
             moveSpeedPill(document.getElementById("speed-selector"));
+            updateVoicePreflight();
         });
     });
 
@@ -3584,6 +3586,7 @@ function clearRefAudio() {
     if (refLabel) refLabel.innerText = t("ref_file_btn");
     if (btnClearRef) btnClearRef.classList.add("hidden");
     if (fileUploadBtn) fileUploadBtn.classList.remove("has-file");
+    setCustomCloneStep(1, null);
     haptic("light");
 }
 
@@ -4461,6 +4464,7 @@ function updateVoicePreflight() {
     else if (!u.is_admin && (u.balance_minutes ?? 0) <= 0) line += t("preflight_balance_empty");
     box.innerText = line;
     box.classList.toggle("preflight-warn", len > max || (!u.is_admin && (u.balance_minutes ?? 0) <= 0));
+    syncVoiceExcessAndCost(len, max);
 }
 
 // ── Submit Voice Job & Live Polling ─────────────────────────────────────────
@@ -4522,6 +4526,7 @@ async function handleVoiceGenerate() {
         const targetModelSlug = "voxcpm-cloud-ai";
 
         if (state.selectedReferenceFile) {
+            setCustomCloneStep(3);
             const formData = new FormData();
             formData.append("text", text);
             formData.append("model_slug", targetModelSlug);
@@ -4681,6 +4686,11 @@ function startJobPolling(jobId) {
                     // it by choice and the studio stays where it was.
                 }
                 if (btnGen) btnGen.disabled = false;
+                if (state.selectedReferenceFile) {
+                    setCustomCloneStep(4);
+                    const saveBtn = document.getElementById("btn-save-custom-voice-from-result");
+                    if (saveBtn) saveBtn.classList.remove("hidden");
+                }
 
                 const btnTg = document.getElementById("btn-voice-send-telegram");
                 if (btnTg) {
@@ -4717,6 +4727,7 @@ function startJobPolling(jobId) {
                 showStudioToast(mapErrorToToast(data.error_message, 'voice'), 'error');
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
+                if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
             } else if (data.status === "CANCELLED") {
                 // Final-audit batch M: cancelled on another surface
                 // (admin console) — stop instead of polling to the
@@ -4724,6 +4735,7 @@ function startJobPolling(jobId) {
                 clearInterval(state.pollTimer);
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
+                if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
                 showStudioToast(t("voice_cancelled_toast"), 'info', 5000);
                 loadUserProfile();
                 loadUserHistory();
@@ -10957,6 +10969,7 @@ function updateTtsCharCount() {
         const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
         counter.textContent = `${len} / ${max} ${t("char_counter_unit")}`;
         counter.style.color = len > max ? "#ef4444" : "var(--text-muted)";
+        syncTtsExcessAndCost(len, max);
     }
 }
 function insertTtsSampleText(txt) {
@@ -10981,6 +10994,10 @@ let _cgQuotaCache = null;
 function paintTtsGeminiKeyState(q) {
     const stateEl = document.getElementById("tts-key-state");
     const delBtn = document.getElementById("btn-tts-key-delete");
+    const activeBadge = document.getElementById("tts-key-active-badge");
+    if (activeBadge) {
+        activeBadge.classList.toggle("hidden", !(q && q.has_own_key && q.own_key_state !== "invalid"));
+    }
     if (!stateEl) return;
     if (q && q.has_own_key) {
         stateEl.removeAttribute("data-i18n");
@@ -11080,6 +11097,7 @@ async function _cgTasteBlocked() {
 function _cgPromptAddKey() {
     const modal = document.getElementById("tts-key-prompt-modal");
     if (modal) modal.classList.add("hidden");
+    toggleTtsByokAdvanced(true);
     const card = document.getElementById("tts-gemini-key-card");
     if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
     const input = document.getElementById("tts-key-input");
@@ -11153,6 +11171,11 @@ function initTtsTab() {
                 b => b.classList.toggle("active", b === btn)
             );
             moveSpeedPill(document.getElementById("tts-speed-picker"));
+            const inp = document.getElementById("tts-text-input");
+            if (inp) {
+                const maxC = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+                syncTtsExcessAndCost((inp.value || "").length, maxC);
+            }
         });
     });
     const input = document.getElementById("tts-text-input");
@@ -14706,6 +14729,157 @@ function toggleVcpHelpHub(forceOpen) {
     }
 }
 window.toggleVcpHelpHub = toggleVcpHelpHub;
+
+// ── Phase 3: Voice & TTS Helpers (Excess Banner, Cost Estimate, Custom Clone Steps & BYOK) ──
+function estimateSpeechMinutesFromText(charCount, speedModeOrRate) {
+    if (!charCount || charCount <= 0) return null;
+    // Standard Burmese speech rate ~550 chars/min at 1.0x
+    let mult = 1.0;
+    if (speedModeOrRate === "slow") mult = 1.25;
+    else if (speedModeOrRate === "fast") mult = 0.85;
+    else if (typeof speedModeOrRate === "string" && speedModeOrRate.includes("%")) {
+        const pct = parseFloat(speedModeOrRate.replace("%", "")) || 0;
+        mult = 1.0 / Math.max(0.5, 1 + pct / 100);
+    }
+    const mins = Math.max(0.1, (charCount / 550) * mult);
+    return mins.toFixed(1);
+}
+window.estimateSpeechMinutesFromText = estimateSpeechMinutesFromText;
+
+function syncVoiceExcessAndCost(len, max) {
+    const banner = document.getElementById("voice-char-excess-banner");
+    const txt = document.getElementById("voice-char-excess-text");
+    const vipBtn = document.getElementById("btn-voice-excess-vip");
+    if (banner && txt) {
+        if (len > max) {
+            txt.textContent = tf("char_excess_warning", { excess: len - max });
+            banner.classList.remove("hidden");
+            if (vipBtn) vipBtn.classList.toggle("hidden", !!(state.user && (state.user.is_vip || state.user.is_admin)));
+        } else {
+            banner.classList.add("hidden");
+        }
+    }
+    const costBadge = document.getElementById("voice-btn-est-cost");
+    if (costBadge) {
+        const estMin = estimateSpeechMinutesFromText(len, state.speed || "normal");
+        costBadge.textContent = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+    }
+}
+window.syncVoiceExcessAndCost = syncVoiceExcessAndCost;
+
+function trimVoiceTextToLimit() {
+    haptic("light");
+    const input = document.getElementById("voice-text-input");
+    if (!input) return;
+    const u = state.user || {};
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+    if (input.value.length > max) {
+        input.value = input.value.slice(0, max);
+        input.dispatchEvent(new Event("input"));
+    }
+}
+window.trimVoiceTextToLimit = trimVoiceTextToLimit;
+
+function setCustomCloneStep(stepNum, file) {
+    const stepper = document.getElementById("custom-clone-stepper");
+    if (stepper) {
+        stepper.querySelectorAll("[data-clone-step]").forEach(el => {
+            const n = parseInt(el.getAttribute("data-clone-step") || "1", 10);
+            el.classList.toggle("is-active", n === stepNum);
+            el.classList.toggle("is-done", n < stepNum);
+        });
+    }
+    const checkEl = document.getElementById("custom-clone-check-status");
+    if (checkEl) {
+        if (file && stepNum >= 2) {
+            checkEl.textContent = tf("clone_check_ok", { kb: Math.max(1, Math.round(file.size / 1024)) });
+            checkEl.classList.remove("hidden");
+        } else if (!file) {
+            checkEl.textContent = "";
+            checkEl.classList.add("hidden");
+        }
+    }
+}
+window.setCustomCloneStep = setCustomCloneStep;
+
+async function saveCurrentRefAsCustomVoice() {
+    haptic("light");
+    if (!state.selectedReferenceFile) return;
+    if (!(state.user && (state.user.is_vip || state.user.is_admin))) {
+        switchTab("tab-vip");
+        return;
+    }
+    try {
+        const fd = new FormData();
+        fd.append("file", state.selectedReferenceFile);
+        const headers = {};
+        if (state.tg && state.tg.initData) {
+            headers["X-Telegram-Init-Data"] = state.tg.initData;
+        }
+        const res = await fetchWithTimeout("/api/user/custom-voice", {
+            method: "POST",
+            headers,
+            body: fd,
+        }, 60000);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || t("err_generic"));
+        setCustomCloneStep(5);
+        showStudioToast(t("recap_own_voice_saved_toast") || "✅ Saved", "success");
+    } catch (err) {
+        showStudioToast((err && err.message) || t("err_generic"), "error");
+    }
+}
+window.saveCurrentRefAsCustomVoice = saveCurrentRefAsCustomVoice;
+
+function syncTtsExcessAndCost(len, max) {
+    const banner = document.getElementById("tts-char-excess-banner");
+    const txt = document.getElementById("tts-char-excess-text");
+    const vipBtn = document.getElementById("btn-tts-excess-vip");
+    if (banner && txt) {
+        if (len > max) {
+            txt.textContent = tf("char_excess_warning", { excess: len - max });
+            banner.classList.remove("hidden");
+            if (vipBtn) vipBtn.classList.toggle("hidden", !!(state.user && (state.user.is_vip || state.user.is_admin)));
+        } else {
+            banner.classList.add("hidden");
+        }
+    }
+    const costBadge = document.getElementById("tts-btn-est-cost");
+    if (costBadge) {
+        const estMin = estimateSpeechMinutesFromText(len, (typeof ttsState !== "undefined" && ttsState.speed) || "+12%");
+        costBadge.textContent = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+    }
+}
+window.syncTtsExcessAndCost = syncTtsExcessAndCost;
+
+function trimTtsTextToLimit() {
+    haptic("light");
+    const input = document.getElementById("tts-text-input");
+    if (!input) return;
+    const u = state.user || {};
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+    if (input.value.length > max) {
+        input.value = input.value.slice(0, max);
+        input.dispatchEvent(new Event("input"));
+    }
+}
+window.trimTtsTextToLimit = trimTtsTextToLimit;
+
+function toggleTtsByokAdvanced(forceOpen) {
+    haptic("light");
+    const body = document.getElementById("tts-byok-advanced-body");
+    const head = document.getElementById("tts-byok-advanced-toggle");
+    if (!body) return;
+    const isOpen = typeof forceOpen === "boolean"
+        ? forceOpen
+        : body.classList.contains("hidden");
+    body.classList.toggle("hidden", !isOpen);
+    if (head) {
+        head.classList.toggle("open", isOpen);
+        head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    }
+}
+window.toggleTtsByokAdvanced = toggleTtsByokAdvanced;
 
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();

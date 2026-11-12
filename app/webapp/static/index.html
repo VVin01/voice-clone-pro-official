@@ -460,6 +460,20 @@
                                 <div class="card-label" data-i18n="custom_ref_title">🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)</div>
                                 <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့်</span>
                             </div>
+                            <!-- Phase 3: Custom clone as 5 visible guided steps (upload → check → create → test-listen → save) -->
+                            <div class="vcp-clone-steps-bar" id="custom-clone-stepper">
+                                <span class="vcp-clone-step is-active" data-clone-step="1" data-i18n="clone_step_1_upload">၁။ ဖိုင်တင်</span>
+                                <span class="vcp-clone-step" data-clone-step="2" data-i18n="clone_step_2_check">၂။ စစ်ဆေး</span>
+                                <span class="vcp-clone-step" data-clone-step="3" data-i18n="clone_step_3_create">၃။ ဖန်တီး</span>
+                                <span class="vcp-clone-step" data-clone-step="4" data-i18n="clone_step_4_listen">၄။ နားထောင်</span>
+                                <span class="vcp-clone-step" data-clone-step="5" data-i18n="clone_step_5_save">၅။ သိမ်းဆည်း</span>
+                            </div>
+                            <!-- File requirements shown clearly before upload -->
+                            <div class="vcp-clone-req-box" id="custom-clone-req-box">
+                                <span class="vcp-clone-req-item" data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50s)</span>
+                                <span class="vcp-clone-req-item" data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 20 MB)</span>
+                                <span class="vcp-clone-req-item" data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</span>
+                            </div>
                             <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် — ပိုရှည်ပါက ပထမ 45 စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်၊ WAV/MP3) တင်ပါ။ မတင်ပါက Default မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
                             <div class="ref-upload-row">
                                 <label class="btn-file-upload" for="ref-audio-input">
@@ -468,10 +482,11 @@
                                 <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
                                 <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
                             </div>
+                            <div class="vcp-clone-check-status hidden" id="custom-clone-check-status"></div>
                         </div>
                     </div>
-                </div><!-- Step 2: Unified Text Input & Speed Controls Card -->
-                <div class="card glass input-card">
+                </div><!-- Step 2: Unified Text Input & Speed Controls Card (Visually ordered 1st via Text-First layout) -->
+                <div class="card glass input-card" id="voice-input-card">
                     <div class="card-header-row">
                         <div class="step-badge-title">
                             <span class="step-num-pill">1</span>
@@ -480,6 +495,14 @@
                         <span class="char-counter" id="char-count">0 / 1000 chars</span>
                     </div>
                     <textarea id="voice-text-input" data-i18n-ph="text_placeholder" placeholder="မြန်မာစာသား ရိုက်ထည့်ပါ / ကူးထည့်ပါ…" rows="5"></textarea>
+                    <!-- Phase 3: Non-destructive character excess highlight & actions -->
+                    <div class="vcp-excess-banner hidden" id="voice-char-excess-banner" role="status">
+                        <span class="vcp-excess-text" id="voice-char-excess-text"></span>
+                        <div class="vcp-excess-actions">
+                            <button type="button" class="vcp-chip" id="btn-voice-excess-trim" onclick="trimVoiceTextToLimit()" data-i18n="char_excess_use_free_part">✂️ ကန့်သတ်ချက်အတွင်း အပိုင်းကိုသာ သုံးမည်</button>
+                            <button type="button" class="vcp-chip active" id="btn-voice-excess-vip" onclick="switchTab('tab-vip')" data-i18n="char_excess_upgrade_vip">👑 VIP (5,000 လုံး) သို့ မြှင့်မည်</button>
+                        </div>
+                    </div>
                     <div class="sample-chips">
                         <button class="mini-chip" onclick="insertSampleText('မင်္ဂလာပါခင်ဗျာ၊ Voice Clone Pro Studio မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။')" data-i18n="sample_greeting">💡 မင်္ဂလာပါ</button>
                         <button class="mini-chip" onclick="insertSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')" data-i18n="sample_tech">💡 AI နည်းပညာ</button>
@@ -498,7 +521,7 @@
 
 
                 <!-- Step 3: Generate -->
-                <div class="cta-block">
+                <div class="cta-block" id="voice-cta-block">
                     <div class="step-badge-title">
                         <span class="step-num-pill">2</span>
                         <span class="step-title" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
@@ -507,6 +530,7 @@
                     <p id="voice-tts-balance-line" class="hidden" style="font-size:12px; opacity:0.85; margin-top:6px;"></p>
                     <button class="btn gold-gradient-btn" id="btn-generate-voice">
                         <span class="btn-text" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
+                        <span class="vcp-btn-est-cost" id="voice-btn-est-cost"></span>
                     </button>
                     <div class="queue-notice-banner" id="voice-queue-notice">
                         <span class="notice-text" data-i18n="queue_notice_voxcpm">⚡ ပုံမှန်အားဖြင့် ၁–၂ မိနစ် ခန့် ကြာနိုင်ပါတယ်</span>
@@ -547,6 +571,9 @@
                             <span class="btn-icon">📱</span> <span data-i18n="btn_send_voice_telegram">Telegram သို့ ပို့မည်</span>
                         </button>
                     </div>
+                    <button type="button" class="vcp-btn vcp-btn-glass mt-2 w-100 hidden" id="btn-save-custom-voice-from-result" onclick="saveCurrentRefAsCustomVoice()">
+                        <span data-i18n="clone_step5_save_btn">💾 ဤအသံနမူနာကို ကျွန်ုပ်၏ ကိုယ်ပိုင်အသံအဖြစ် သိမ်းဆည်းမည်</span>
+                    </button>
                     <p id="voice-oversize-note" class="hidden mt-2" data-i18n="note_over_50mb_download" style="font-size:12px; opacity:0.9;">📥 ဒီဖိုင်က 50 MB ထက် ကြီးနေလို့ Telegram နဲ့ တိုက်ရိုက် ပို့လို့ မရပါ — Download ရယူပါ။</p>
                     <p id="voice-fallback-note" class="hidden mt-2" style="font-size:12px; opacity:0.9;"></p>
                 </div>
@@ -622,40 +649,45 @@
                     </div>
                 </div>
 
-                <!-- Batch CG: bring-your-own Gemini key. Sits directly
-                     under the engine card — it is where Gemini is
-                     chosen, where the taste note points, and where
-                     the Item 3b generate-time prompt sends the user.
-                     The saved key is only ever shown masked
-                     (•••• + last 4) from the server's masked view. -->
+                <!-- Batch CG + Phase 3: bring-your-own Gemini key under Advanced accordion;
+                     when a key is active, shows ✅ Key Active badge on header. -->
                 <div class="card glass input-card" id="tts-gemini-key-card">
-                    <div class="card-label" data-i18n="tts_key_card_title">🔑 ကိုယ်ပိုင် Gemini Key</div>
-                    <p class="ref-desc" id="tts-key-state" data-i18n="tts_key_state_none">Key မထည့်ရသေးပါ</p>
-                    <div class="control-row mt-2">
-                        <input type="password" id="tts-key-input" class="studio-input" data-i18n-ph="tts_key_input_placeholder" placeholder="Gemini API Key ထည့်ပါ…" autocomplete="off" spellcheck="false">
-                    </div>
-                    <div class="btn-row mt-2">
-                        <button type="button" class="btn secondary-btn" id="btn-tts-key-save" data-i18n="tts_key_save_btn">Key သိမ်းမယ်</button>
-                        <button type="button" class="btn secondary-btn hidden" id="btn-tts-key-delete" data-i18n="tts_key_delete_btn">Key ဖျက်မယ်</button>
-                    </div>
-                    <!-- Batch CN: the how-to + privacy notes are one
-                         tap-to-expand block (the guide title row is the
-                         toggle); the state line, input and save/delete
-                         above stay always visible. -->
-                    <button type="button" class="detail-toggle mt-2" id="tts-key-guide-toggle" aria-expanded="false" data-detail-target="tts-key-guide-body" onclick="toggleTtsDetail(this)">
-                        <span data-i18n="tts_key_guide_title">Key ရယူနည်း (အခမဲ့):</span>
+                    <button type="button" class="tts-byok-advanced-head" id="tts-byok-advanced-toggle" aria-expanded="false" onclick="toggleTtsByokAdvanced()">
+                        <span class="card-label" data-i18n="tts_key_card_title">🔑 ကိုယ်ပိုင် Gemini Key</span>
+                        <span class="tts-byok-badges">
+                            <span class="vcp-badge vcp-badge-info" data-i18n="vcp_advanced_settings">⚙️ အသေးစိတ် ဆက်တင်များ</span>
+                            <span class="vcp-badge vcp-badge-success hidden" id="tts-key-active-badge" data-i18n="tts_key_active_badge">✅ Key Active</span>
+                        </span>
                         <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
                     </button>
-                    <div class="hidden" id="tts-key-guide-body">
-                        <p class="ref-desc" data-i18n="tts_key_guide_1">၁။ Google AI Studio (aistudio.google.com) မှာ Google အကောင့်နဲ့ ဝင်ပါ</p>
-                        <p class="ref-desc" data-i18n="tts_key_guide_2">၂။ "Get API key" → "Create API key" ကို နှိပ်ပြီး Key ကို ကူးယူပါ</p>
-                        <p class="ref-desc" data-i18n="tts_key_guide_3">၃။ ကူးထားတဲ့ Key ကို ဒီမှာ ထည့်ပြီး သိမ်းပါ</p>
-                        <p class="ref-desc" data-i18n="tts_key_honest_1">ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။</p>
-                        <p class="ref-desc" data-i18n="tts_key_honest_2">Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။</p>
+                    <div class="tts-byok-advanced-body hidden" id="tts-byok-advanced-body">
+                        <p class="ref-desc" id="tts-key-state" data-i18n="tts_key_state_none">Key မထည့်ရသေးပါ</p>
+                        <div class="control-row mt-2">
+                            <input type="password" id="tts-key-input" class="studio-input" data-i18n-ph="tts_key_input_placeholder" placeholder="Gemini API Key ထည့်ပါ…" autocomplete="off" spellcheck="false">
+                        </div>
+                        <div class="btn-row mt-2">
+                            <button type="button" class="btn secondary-btn" id="btn-tts-key-save" data-i18n="tts_key_save_btn">Key သိမ်းမယ်</button>
+                            <button type="button" class="btn secondary-btn hidden" id="btn-tts-key-delete" data-i18n="tts_key_delete_btn">Key ဖျက်မယ်</button>
+                        </div>
+                        <!-- Batch CN: the how-to + privacy notes are one
+                             tap-to-expand block (the guide title row is the
+                             toggle); the state line, input and save/delete
+                             above stay always visible. -->
+                        <button type="button" class="detail-toggle mt-2" id="tts-key-guide-toggle" aria-expanded="false" data-detail-target="tts-key-guide-body" onclick="toggleTtsDetail(this)">
+                            <span data-i18n="tts_key_guide_title">Key ရယူနည်း (အခမဲ့):</span>
+                            <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
+                        </button>
+                        <div class="hidden" id="tts-key-guide-body">
+                            <p class="ref-desc" data-i18n="tts_key_guide_1">၁။ Google AI Studio (aistudio.google.com) မှာ Google အကောင့်နဲ့ ဝင်ပါ</p>
+                            <p class="ref-desc" data-i18n="tts_key_guide_2">၂။ "Get API key" → "Create API key" ကို နှိပ်ပြီး Key ကို ကူးယူပါ</p>
+                            <p class="ref-desc" data-i18n="tts_key_guide_3">၃။ ကူးထားတဲ့ Key ကို ဒီမှာ ထည့်ပြီး သိမ်းပါ</p>
+                            <p class="ref-desc" data-i18n="tts_key_honest_1">ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။</p>
+                            <p class="ref-desc" data-i18n="tts_key_honest_2">Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။</p>
+                        </div>
                     </div>
                 </div>
 
-                <div class="card glass input-card">
+                <div class="card glass input-card" id="tts-text-card">
                     <div class="card-header-row">
                         <div class="step-badge-title">
                             <span class="step-num-pill">1</span>
@@ -664,6 +696,14 @@
                         <span class="char-counter" id="tts-char-count">0 / 1000 chars</span>
                     </div>
                     <textarea id="tts-text-input" data-i18n-ph="tts_text_placeholder" placeholder="အသံပြောင်းမည့် စာသား ရိုက်ထည့်ပါ…" rows="5"></textarea>
+                    <!-- Phase 3: Non-destructive character excess highlight & actions for TTS -->
+                    <div class="vcp-excess-banner hidden" id="tts-char-excess-banner" role="status">
+                        <span class="vcp-excess-text" id="tts-char-excess-text"></span>
+                        <div class="vcp-excess-actions">
+                            <button type="button" class="vcp-chip" id="btn-tts-excess-trim" onclick="trimTtsTextToLimit()" data-i18n="char_excess_use_free_part">✂️ ကန့်သတ်ချက်အတွင်း အပိုင်းကိုသာ သုံးမည်</button>
+                            <button type="button" class="vcp-chip active" id="btn-tts-excess-vip" onclick="switchTab('tab-vip')" data-i18n="char_excess_upgrade_vip">👑 VIP (5,000 လုံး) သို့ မြှင့်မည်</button>
+                        </div>
+                    </div>
                     <div class="sample-chips">
                         <button type="button" class="mini-chip" onclick="insertTtsSampleText('မင်္ဂလာပါခင်ဗျာ၊ Voice Clone Pro Studio မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။')" data-i18n="sample_greeting">💡 မင်္ဂလာပါ</button>
                         <button type="button" class="mini-chip" onclick="insertTtsSampleText('ယနေ့ခေတ် AI နည်းပညာတွေဟာ အံ့ဩလောက်အောင် လျင်မြန်စွာ တိုးတက်လာနေပါပြီခင်ဗျာ။')" data-i18n="sample_tech">💡 AI နည်းပညာ</button>
@@ -682,7 +722,7 @@
                     </div>
                 </div>
 
-                <div class="cta-block">
+                <div class="cta-block" id="tts-cta-block">
                     <div class="step-badge-title">
                         <span class="step-num-pill">2</span>
                         <span class="step-title" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
@@ -690,6 +730,7 @@
                     <div id="tts-preflight" class="voice-preflight" aria-live="polite"></div>
                     <button type="button" class="btn gold-gradient-btn" id="btn-generate-tts" onclick="generateTTS()">
                         <span class="btn-text" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
+                        <span class="vcp-btn-est-cost" id="tts-btn-est-cost"></span>
                     </button>
                     <div class="queue-notice-banner">
                         <span class="notice-text" data-i18n="tts_queue_notice">⚡ ပုံမှန်အားဖြင့် စက္ကန့်ပိုင်းမှ ၁ မိနစ် ခန့် ကြာနိုင်ပါတယ်</span>

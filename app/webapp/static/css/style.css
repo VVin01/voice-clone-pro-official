@@ -5724,4 +5724,147 @@ input[type="range"]::-moz-range-thumb,
     display: none;
 }
 
+/* ════ PHASE 3: VOICE & TTS STUDIOS (TEXT-FIRST ORDER, EXCESS BANNER, CLONE STEPS & BYOK) ════ */
+/* Addendum A #1: Text-First visual flow (Script Input → Voice/Engine → Speed → Cost & Generate)
+   while preserving exact DOM order for existing test pins. */
+#tab-voice.active,
+#tab-tts.active {
+    display: flex;
+    flex-direction: column;
+}
+#tab-voice > #voice-tutorial-banner { order: 1; }
+#tab-voice > #home-load-error { order: 2; }
+#tab-voice > #voice-input-card { order: 3; }
+#tab-voice > #voxcpm-mode-section { order: 4; }
+#tab-voice > #voice-cta-block { order: 5; }
+#tab-voice > #voice-inline-status,
+#tab-voice > #voice-progress-box,
+#tab-voice > #voice-result-box,
+#tab-voice > .hub-link { order: 6; }
+
+#tab-tts > .pane-header { order: 1; }
+#tab-tts > #tts-text-card { order: 2; }
+#tab-tts > .input-card:not(#tts-text-card) { order: 3; }
+#tab-tts > #tts-cta-block { order: 4; }
+#tab-tts > #tts-progress-box,
+#tab-tts > #tts-result-box,
+#tab-tts > .hub-link { order: 5; }
+
+/* Non-destructive character excess highlight banner */
+.vcp-excess-banner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--vcp-sp-2);
+    margin-top: var(--vcp-sp-2);
+    padding: var(--vcp-sp-3);
+    border-radius: var(--vcp-radius-md);
+    background: var(--vcp-warning-soft);
+    border: 1px solid var(--vcp-warning-border);
+}
+.vcp-excess-text {
+    font-size: var(--vcp-fs-helper);
+    font-weight: 600;
+    color: var(--vcp-warning);
+    line-height: var(--vcp-lh-body);
+}
+.vcp-excess-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--vcp-sp-2);
+    flex-wrap: wrap;
+}
+
+/* Custom Clone 5-Step Guided Flow & File Requirements */
+.vcp-clone-steps-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: var(--vcp-sp-2) 0;
+}
+.vcp-clone-step {
+    padding: 4px 10px;
+    border-radius: var(--vcp-radius-pill);
+    font-size: var(--vcp-fs-badge);
+    font-weight: 700;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: var(--vcp-text-muted);
+}
+.vcp-clone-step.is-active {
+    background: var(--vcp-primary-soft);
+    border-color: var(--vcp-primary-border);
+    color: #93c5fd;
+}
+.vcp-clone-step.is-done {
+    background: var(--vcp-success-soft);
+    border-color: var(--vcp-success-border);
+    color: var(--vcp-success);
+}
+.vcp-clone-req-box {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: var(--vcp-sp-3);
+    margin-bottom: var(--vcp-sp-2);
+    border-radius: var(--vcp-radius-md);
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+}
+.vcp-clone-req-item {
+    font-size: var(--vcp-fs-helper);
+    color: var(--vcp-text-secondary);
+    line-height: 1.6;
+}
+.vcp-clone-check-status {
+    margin-top: var(--vcp-sp-2);
+    padding: var(--vcp-sp-2) var(--vcp-sp-3);
+    border-radius: var(--vcp-radius-md);
+    background: var(--vcp-success-soft);
+    border: 1px solid var(--vcp-success-border);
+    color: var(--vcp-success);
+    font-size: var(--vcp-fs-helper);
+    font-weight: 600;
+}
+
+/* TTS BYOK Advanced Accordion Header & Active Badge */
+.tts-byok-advanced-head {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--vcp-sp-2);
+    padding: 4px 0;
+    background: transparent;
+    border: none;
+    color: var(--vcp-text-primary);
+    text-align: left;
+    cursor: pointer;
+    min-height: 44px;
+}
+.tts-byok-advanced-head .card-label {
+    margin-bottom: 0;
+}
+.tts-byok-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.tts-byok-advanced-head.open .detail-toggle-chevron {
+    transform: rotate(180deg);
+}
+.tts-byok-advanced-body {
+    margin-top: var(--vcp-sp-3);
+    padding-top: var(--vcp-sp-3);
+    border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+.vcp-btn-est-cost {
+    font-size: 13px;
+    font-weight: 700;
+    opacity: 0.92;
+    margin-inline-start: 4px;
+}
+
+
 

@@ -1204,6 +1204,22 @@ const translations = {
         home_recent_action_retry: "🔄 ပြန်စမ်းမည်",
         home_help_entry_title: "နမူနာ အသံများ နှင့် အသုံးပြုနည်း လမ်းညွှန်",
         home_help_entry_desc: "Voice/Recap အသံ နမူနာများ နားထောင်ရန် နှင့် Tutorial ၁၀ ခု ကြည့်ရန်",
+        // Phase 3: Voice & TTS Studios (Text-First, Excess Banner, Custom Clone Steps, BYOK & Cost)
+        clone_step_1_upload: "၁။ ဖိုင်တင်",
+        clone_step_2_check: "၂။ စစ်ဆေး",
+        clone_step_3_create: "၃။ ဖန်တီး",
+        clone_step_4_listen: "၄။ နားထောင်",
+        clone_step_5_save: "၅။ သိမ်းဆည်း",
+        clone_req_duration: "⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50s)",
+        clone_req_format: "🎵 WAV / MP3 / OGG / M4A (≤ 20 MB)",
+        clone_req_clean: "🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်",
+        clone_check_ok: "✅ ဖိုင်စစ်ဆေးပြီး ({kb} KB) — အသံတူ ဖန်တီးရန် အသင့်ဖြစ်ပါပြီ",
+        clone_step5_save_btn: "💾 ဤအသံနမူနာကို ကျွန်ုပ်၏ ကိုယ်ပိုင်အသံအဖြစ် သိမ်းဆည်းမည်",
+        char_excess_warning: "⚠️ စာလုံးရေ ကန့်သတ်ချက်ထက် +{excess} လုံး ပိုနေပါသည် (သင့်စာသားကို မဖျက်ပါ)",
+        char_excess_use_free_part: "✂️ ကန့်သတ်ချက်အတွင်း အပိုင်းကိုသာ သုံးမည်",
+        char_excess_upgrade_vip: "👑 VIP (5,000 လုံး) သို့ မြှင့်မည်",
+        est_cost_min_badge: "(~{min} မိနစ်)",
+        tts_key_active_badge: "✅ Key အသင့်ရှိသည်",
     },
     en: {
         // App Top Bar & Brand
@@ -2403,6 +2419,22 @@ const translations = {
         home_recent_action_retry: "🔄 Retry",
         home_help_entry_title: "Voice Samples & Tutorial Guides",
         home_help_entry_desc: "Listen to Voice/Recap samples and watch all 10 tutorials",
+        // Phase 3: Voice & TTS Studios (Text-First, Excess Banner, Custom Clone Steps, BYOK & Cost)
+        clone_step_1_upload: "1. Upload",
+        clone_step_2_check: "2. Check",
+        clone_step_3_create: "3. Create",
+        clone_step_4_listen: "4. Listen",
+        clone_step_5_save: "5. Save",
+        clone_req_duration: "⏱️ 10–30 sec best (max 50s)",
+        clone_req_format: "🎵 WAV / MP3 / OGG / M4A (≤ 20 MB)",
+        clone_req_clean: "🔇 Clean speech without background music",
+        clone_check_ok: "✅ File checked ({kb} KB) — ready to create custom voice",
+        clone_step5_save_btn: "💾 Save this reference as My Custom Voice",
+        char_excess_warning: "⚠️ +{excess} characters over limit (your text is preserved)",
+        char_excess_use_free_part: "✂️ Use first part within limit",
+        char_excess_upgrade_vip: "👑 Upgrade to VIP (5,000 chars)",
+        est_cost_min_badge: "(~{min} min)",
+        tts_key_active_badge: "✅ Key Active",
     }
 };
 
