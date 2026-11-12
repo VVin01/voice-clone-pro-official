@@ -54,7 +54,7 @@ from app.db.base import Base
 from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import BotSetting, Job, User
 from app.services.dynamic_settings import set_dynamic_setting
-from app.services.ledger import get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user
 from app.webapp import api as api_mod
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -220,6 +220,9 @@ async def test_retry_creates_new_job_same_config_and_charges_anew(db_session, _n
     # the config exactly as persisted.
     owner.account_category = AccountCategory.PURCHASED.value
     owner.recap_credits = 2
+    # Phase 5 Option B: voxcpm retry requires Voice Clone Minutes to cover the hold.
+    bal = await get_minute_balance(db_session, owner.id)
+    bal.purchased_seconds = 600
     state = _recap_state()
     db_session.add(_job("rc_l_retry_src", owner.id, state))
     await db_session.commit()
@@ -306,6 +309,9 @@ async def test_retry_upload_source_present_succeeds(db_session, tmp_path, monkey
 
     owner, _ = await get_or_create_user(db_session, telegram_id=OWNER_TG)
     owner.recap_credits = 1
+    # Phase 5 Option B: default voxcpm retry also holds Voice Clone Minutes.
+    bal = await get_minute_balance(db_session, owner.id)
+    bal.purchased_seconds = 600
     db_session.add(_job(
         "rc_l_retry_upload", owner.id, _recap_state(url=str(upload))
     ))

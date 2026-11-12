@@ -6182,6 +6182,238 @@ body.lite .vcp-step2-sticky-preview {
     }
 }
 
+/* ═══ Phase 5: Recap Steps 3–4, Option B Dual Quote, Result/Failure Polish ═══ */
+.vcp-engine-billing-hint {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: var(--vcp-radius-md);
+    background: var(--vcp-flat-glass-bg);
+    border: 1px solid var(--vcp-flat-glass-border);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--vcp-text-secondary);
+}
+.vcp-persona-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+.vcp-billing-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.4;
+    background: rgba(10, 132, 255, 0.14);
+    color: #93c5fd;
+    border: 1px solid rgba(10, 132, 255, 0.30);
+    white-space: nowrap;
+}
+.vcp-billing-badge.is-credit-only {
+    background: rgba(16, 185, 129, 0.14);
+    color: #6ee7b7;
+    border-color: rgba(16, 185, 129, 0.32);
+}
+.vcp-billing-badge.is-vip {
+    background: rgba(245, 196, 81, 0.15);
+    color: #fde68a;
+    border-color: rgba(245, 196, 81, 0.35);
+}
+.vcp-own-voice-upsell-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+.vcp-own-voice-vip-btn {
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 700;
+    border: 1px solid rgba(245, 196, 81, 0.45);
+    background: rgba(245, 196, 81, 0.14);
+    color: #fde68a;
+    cursor: pointer;
+}
+.vcp-lang-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.vcp-lang-sheet-btn {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--vcp-flat-glass-border);
+    background: var(--vcp-flat-glass-bg);
+    color: var(--vcp-text-primary);
+    cursor: pointer;
+}
+.vcp-script-review-card {
+    padding: 12px 14px;
+    border-radius: var(--vcp-radius-lg);
+    background: var(--vcp-flat-glass-bg);
+    border: 1px solid var(--vcp-flat-glass-border);
+}
+.vcp-dual-quote-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+.vcp-quote-balance-math {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--vcp-text-secondary);
+}
+.vcp-quote-voice-panel {
+    padding-top: 10px;
+    border-top: 1px solid var(--vcp-flat-glass-border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.vcp-quote-voice-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.vcp-quote-voice-val {
+    font-size: 18px;
+    font-weight: 800;
+    color: #93c5fd;
+}
+.vcp-quote-voice-settle-note {
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--vcp-text-secondary);
+}
+.vcp-quote-credit-only-note {
+    padding-top: 8px;
+    border-top: 1px solid var(--vcp-flat-glass-border);
+    font-size: 12px;
+    font-weight: 600;
+    color: #6ee7b7;
+}
+.vcp-insuf-min-card {
+    margin-top: 10px;
+    padding: 12px 14px;
+    border-radius: var(--vcp-radius-lg);
+    border: 1px solid rgba(251, 146, 60, 0.45);
+    background: rgba(251, 146, 60, 0.10);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.vcp-insuf-min-title {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #fdba74;
+}
+.vcp-insuf-min-desc {
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--vcp-text-primary);
+}
+.vcp-insuf-min-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.vcp-insuf-min-actions .btn {
+    flex: 1 1 140px;
+    min-height: 38px;
+    font-size: 12.5px;
+}
+.vcp-quality-surcharge-tag {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(245, 196, 81, 0.16);
+    color: #fde68a;
+    border: 1px solid rgba(245, 196, 81, 0.35);
+}
+.vcp-refund-badges {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    margin-bottom: 6px;
+}
+.vcp-refund-badge {
+    padding: 8px 12px;
+    border-radius: var(--vcp-radius-md);
+    background: rgba(16, 185, 129, 0.13);
+    border: 1px solid rgba(16, 185, 129, 0.36);
+    font-size: 12.5px;
+    font-weight: 700;
+    line-height: 1.55;
+    color: #6ee7b7;
+}
+.vcp-lang-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    background: rgba(5, 10, 20, 0.72);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 12px;
+}
+.vcp-lang-sheet-backdrop.hidden {
+    display: none;
+}
+.vcp-lang-sheet {
+    width: 100%;
+    max-width: 480px;
+    max-height: 75vh;
+    overflow-y: auto;
+    border-radius: var(--vcp-radius-xl);
+    background: var(--vcp-bg-elevated, #121a2b);
+    border: 1px solid var(--vcp-flat-glass-border);
+    padding: 16px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+.vcp-lang-sheet-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+}
+.vcp-lang-chip {
+    padding: 10px 10px;
+    border-radius: var(--vcp-radius-md);
+    border: 1px solid var(--vcp-flat-glass-border);
+    background: var(--vcp-flat-glass-bg);
+    color: var(--vcp-text-primary);
+    font-size: 12.5px;
+    font-weight: 600;
+    text-align: left;
+    line-height: 1.45;
+    cursor: pointer;
+}
+.vcp-lang-chip.active {
+    border-color: var(--vcp-primary);
+    background: rgba(10, 132, 255, 0.16);
+}
+
+
 
 
 

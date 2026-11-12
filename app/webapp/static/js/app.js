@@ -833,7 +833,7 @@ function renderStageStepper(el, labels, activeIndex, completeAll) {
     }).join("");
 }
 function voiceStageLabels() { return [t("stage_script"), t("stage_voice"), t("stage_ready")]; }
-function recapStageLabels() { return [t("stage_script"), t("stage_voice"), t("stage_video"), t("stage_ready")]; }
+function recapStageLabels() { return [t("recap_stage_download_lbl"), t("recap_stage_script_lbl"), t("recap_stage_voice_lbl"), t("recap_stage_render_lbl")]; }
 function setVoiceStage(mode) {
     const el = document.getElementById("voice-stage-stepper");
     if (!el) return;
@@ -847,8 +847,9 @@ function setRecapStage(stepStr, status) {
     if (status === "SUCCESS") { renderStageStepper(el, recapStageLabels(), 3, true); return; }
     if (status === "SCRIPT_READY") { renderStageStepper(el, recapStageLabels(), 1, false); return; }
     const n = parseInt(String(stepStr || "0").split("/")[0], 10) || 0;
-    if (n >= 4) renderStageStepper(el, recapStageLabels(), 3, true);
+    if (n >= 4) renderStageStepper(el, recapStageLabels(), 3, false);
     else if (n === 3) renderStageStepper(el, recapStageLabels(), 2, false);
+    else if (n === 2) renderStageStepper(el, recapStageLabels(), 1, false);
     else renderStageStepper(el, recapStageLabels(), 0, false);
 }
 window.setVoiceStage = setVoiceStage;
@@ -3031,6 +3032,7 @@ async function loadUserProfile() {
         try { writeCachedUserProfile(data); } catch (e) {}
         // Admins are never entry-gate locked (see entry-gate section).
         if (data.is_admin) unlockEntryGate();
+        state.recapInsufMinutesServer = null;
         updateRecapSplitCostHint();
 
         if (data) {
@@ -4157,28 +4159,44 @@ window.refreshRecapQualityLock = refreshRecapQualityLock;
 // Batch AW-3: free-tier recap narration is Gemini TTS or Edge TTS
 // only — the Persona/Clone engine (voxcpm) is purchased + admin.
 // Mirrors the Batch AU quality lock exactly: same tier source
-// (state.user), the voxcpm pill is disabled with the lock affordance
-// while a FREE profile is known, and a saved "voxcpm" preference
-// resolves to "gemini" on load for a free profile (the server clamp
-// enforces the same rule at submit + execution regardless).
+// Phase 5: FREE users CAN pick the VoxCPM Persona Engine (using the 12 Persona
+// voices when they hold enough Recap Credits AND Voice Clone Minutes).
+// Only "My Own Clone Voice" remains paid/VIP-only — checked via canUseRecapCloneEngine().
 function canUseRecapCloneEngine() {
     const u = state.user || {};
     return !!(u.is_admin || u.account_category === "PURCHASED");
 }
 function syncRecapEngineAreas() {
+    const eng = state.recapTtsEngine || "voxcpm";
     const gv = document.getElementById("recap-gemini-voice-wrap");
-    if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
+    if (gv) gv.classList.toggle("hidden", eng !== "gemini");
     const pa = document.getElementById("recap-persona-area");
-    if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
+    if (pa) pa.classList.toggle("hidden", eng === "gemini");
     // Batch BV: the own-voice card exists only on the clone engine —
     // on Gemini/Edge an uploaded sample could never narrate, so the
     // card (and its selection) does not apply there.
     const ow = document.getElementById("recap-own-voice-wrap");
-    if (ow) ow.classList.toggle("hidden", state.recapTtsEngine !== "voxcpm");
+    if (ow) ow.classList.toggle("hidden", eng !== "voxcpm");
     // Batch BX: on the Edge engine the persona grid is a base-voice
     // picker, not a clone — say so honestly above the grid.
     const note = document.getElementById("recap-persona-engine-note");
-    if (note) note.classList.toggle("hidden", state.recapTtsEngine !== "edge");
+    if (note) note.classList.toggle("hidden", eng !== "edge");
+    const billingHint = document.getElementById("recap-engine-billing-hint");
+    if (billingHint) {
+        const hintKey = eng === "edge"
+            ? "recap_engine_hint_edge"
+            : (eng === "gemini" ? "recap_engine_hint_gemini" : "recap_engine_hint_voxcpm");
+        billingHint.setAttribute("data-i18n", hintKey);
+        billingHint.textContent = t(hintKey);
+    }
+    const vBadge = document.getElementById("recap-voice-billing-badge");
+    if (vBadge) {
+        const isCreditOnly = eng !== "voxcpm";
+        const badgeKey = isCreditOnly ? "recap_badge_credit_only" : "recap_badge_credit_plus_min";
+        vBadge.setAttribute("data-i18n", badgeKey);
+        vBadge.textContent = t(badgeKey);
+        vBadge.classList.toggle("is-credit-only", isCreditOnly);
+    }
 }
 function refreshRecapEngineLock() {
     const u = state.user;
@@ -4186,25 +4204,20 @@ function refreshRecapEngineLock() {
         u && (u.is_admin !== undefined || typeof u.account_category === "string")
     );
     const canUse = canUseRecapCloneEngine();
-    if (tierKnown && !canUse && state.recapTtsEngine === "voxcpm") {
-        state.recapTtsEngine = "gemini";
-    }
+    // Phase 5: VoxCPM Persona engine is unlocked for ALL tiers (FREE + VIP + Admin).
     document.querySelectorAll("#recap-engine-picker .pill-btn").forEach(btn => {
         const engine = btn.getAttribute("data-engine");
         if (engine === "voxcpm") {
-            const locked = tierKnown && !canUse;
-            btn.disabled = locked;
-            btn.classList.toggle("engine-locked", locked);
-            btn.setAttribute("aria-disabled", locked ? "true" : "false");
+            btn.disabled = false;
+            btn.classList.remove("engine-locked");
+            btn.setAttribute("aria-disabled", "false");
         }
         btn.classList.toggle("active", engine === state.recapTtsEngine);
     });
     moveSegPill(document.getElementById("recap-engine-picker"));
     syncRecapEngineAreas();
-    // Batch BV: the own-voice card inherits the same lock — clone
-    // narration is purchased + admin, so a FREE profile sees the
-    // card locked (badge + hint, clicks inert), exactly like the
-    // voxcpm pill above. The server clamp enforces the same rule.
+    // Batch BV / Phase 5: Own Clone Voice remains VIP + Admin only, so
+    // a FREE profile still sees #recap-own-voice-card locked with upsell.
     const owCard = document.getElementById("recap-own-voice-card");
     if (owCard) {
         const owLocked = tierKnown && !canUse;
@@ -4214,6 +4227,11 @@ function refreshRecapEngineLock() {
         if (badge) badge.classList.toggle("hidden", !owLocked);
         const hint = document.getElementById("recap-own-voice-locked-hint");
         if (hint) hint.classList.toggle("hidden", !owLocked);
+        const vipBtn = document.getElementById("btn-recap-own-voice-vip");
+        if (vipBtn) vipBtn.classList.toggle("hidden", !owLocked);
+        if (owLocked && state.recapOwnVoiceSelected && typeof deselectRecapOwnVoice === "function") {
+            deselectRecapOwnVoice();
+        }
     }
 }
 window.refreshRecapEngineLock = refreshRecapEngineLock;
@@ -5160,6 +5178,7 @@ function showRecapStep(n) {
     // The refresh is cache-keyed + sequence-guarded, so this extra
     // call is a no-op when the shape has not changed.
     if (n === 4) { refreshRecapStep4Output(); refreshRecapStep4Eta(); }
+    if (n === 4) { updateRecapSplitCostHint(); }
     // Batch BB-2: the incoming step card may hold the speed capsule —
     // re-measure its pill now that the card has layout.
     requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
@@ -5228,9 +5247,134 @@ function refreshRecapStep4Choices() {
 }
 window.refreshRecapStep4Choices = refreshRecapStep4Choices;
 
+function getRecapAvailVoiceSeconds() {
+    const u = state.user;
+    if (!u) return 0;
+    if (u.is_admin) return Infinity;
+    if (typeof u.balance_seconds === "number") return Math.max(0, u.balance_seconds);
+    return Math.max(0, Math.round((Number(u.balance_minutes) || 0) * 60));
+}
+
+function getRecapEstVoiceSeconds() {
+    const u = state.user;
+    if (u && u.is_admin) return 0;
+    const eng = state.recapTtsEngine || "voxcpm";
+    if (eng !== "voxcpm") return 0;
+    const dur = Number(state.recapSourceDuration || 0);
+    if (!(dur > 0)) return 60;
+    const toggle = document.getElementById("recap-split-toggle");
+    const segmented = !!(toggle && toggle.checked && u && u.is_vip);
+    const maxAllowed = recapNormalMaxSeconds();
+    const eff = segmented ? dur : Math.min(dur, maxAllowed || dur);
+    return Math.max(1, Math.ceil(eff * 1.0));
+}
+
+function paintRecapDualQuote(creditsCost) {
+    const u = state.user;
+    const isAdmin = !!(u && u.is_admin);
+    const eng = state.recapTtsEngine || "voxcpm";
+    const cost = Math.max(1, parseInt(creditsCost, 10) || 1);
+
+    const creditMathEl = document.getElementById("recap-step4-credit-math");
+    const surchargeTag = document.getElementById("recap-quality-max-surcharge-tag");
+    if (surchargeTag) surchargeTag.classList.toggle("hidden", isAdmin);
+    if (creditMathEl) {
+        if (isAdmin) {
+            creditMathEl.textContent = t("recap_step4_credit_admin");
+            creditMathEl.classList.remove("hidden");
+        } else if (u && typeof u.recap_credits === "number") {
+            const before = u.recap_credits;
+            const after = Math.max(0, before - cost);
+            creditMathEl.textContent = tf("recap_step4_credit_math", { before, cost, after });
+            creditMathEl.style.color = before < cost ? "#f87171" : "";
+            creditMathEl.classList.remove("hidden");
+        } else {
+            creditMathEl.classList.add("hidden");
+        }
+    }
+
+    const voicePanel = document.getElementById("recap-step4-voice-panel");
+    const creditOnlyEl = document.getElementById("recap-step4-voice-credit-only");
+    const voiceEstEl = document.getElementById("recap-step4-voice-est");
+    const voiceMathEl = document.getElementById("recap-step4-voice-math");
+    const insufBox = document.getElementById("recap-insufficient-minutes-box");
+    const insufDesc = document.getElementById("recap-insuf-min-desc");
+
+    if (isAdmin) {
+        if (voicePanel) voicePanel.classList.add("hidden");
+        if (creditOnlyEl) creditOnlyEl.classList.add("hidden");
+        if (insufBox) insufBox.classList.add("hidden");
+        return;
+    }
+
+    const availSec = getRecapAvailVoiceSeconds();
+    const estSec = getRecapEstVoiceSeconds();
+    const hasBalKnown = !!(u && (typeof u.balance_seconds === "number" || typeof u.balance_minutes === "number"));
+
+    if (eng === "voxcpm") {
+        if (creditOnlyEl) creditOnlyEl.classList.add("hidden");
+        if (voicePanel) voicePanel.classList.remove("hidden");
+        const estMin = Math.max(0.1, Math.round((estSec / 60) * 10) / 10);
+        if (voiceEstEl) voiceEstEl.textContent = tf("recap_step4_voice_value", { min: estMin });
+        if (voiceMathEl) {
+            if (hasBalKnown) {
+                const beforeMin = Math.round((availSec / 60) * 10) / 10;
+                const afterMin = Math.max(0, Math.round(((availSec - estSec) / 60) * 10) / 10);
+                voiceMathEl.textContent = tf("recap_step4_voice_math", {
+                    before: beforeMin,
+                    est: estMin,
+                    after: afterMin,
+                });
+                voiceMathEl.style.color = availSec < estSec ? "#f87171" : "";
+                voiceMathEl.classList.remove("hidden");
+            } else {
+                voiceMathEl.classList.add("hidden");
+            }
+        }
+        const srv = state.recapInsufMinutesServer;
+        const showInsuf = !!(srv || (hasBalKnown && availSec < estSec));
+        if (insufBox) {
+            insufBox.classList.toggle("hidden", !showInsuf);
+            if (showInsuf && insufDesc) {
+                const reqSec = srv ? srv.required_seconds : estSec;
+                const avSec = srv ? srv.available_seconds : availSec;
+                insufDesc.textContent = tf("recap_insuf_min_desc", {
+                    req: Math.max(0.1, Math.round((reqSec / 60) * 10) / 10),
+                    avail: Math.max(0, Math.round((avSec / 60) * 10) / 10),
+                });
+            }
+        }
+    } else {
+        if (voicePanel) voicePanel.classList.add("hidden");
+        if (insufBox) insufBox.classList.add("hidden");
+        if (creditOnlyEl) {
+            const engLabel = eng === "edge" ? "Edge TTS" : "Gemini AI";
+            creditOnlyEl.textContent = tf("recap_step4_voice_credit_only_badge", { engine: engLabel });
+            creditOnlyEl.classList.remove("hidden");
+        }
+    }
+}
+
+window.switchRecapTtsEngine = function(engine) {
+    const next = engine || "voxcpm";
+    state.recapTtsEngine = next;
+    state.recapInsufMinutesServer = null;
+    document.querySelectorAll("#recap-engine-picker .pill-btn").forEach(b => {
+        b.classList.toggle("active", b.getAttribute("data-engine") === next);
+    });
+    moveSegPills();
+    syncRecapEngineAreas();
+    refreshRecapStep4Choices();
+    updateRecapSplitCostHint();
+    const engLabel = next === "edge" ? "Edge TTS" : (next === "gemini" ? "Gemini AI" : "Persona Voice");
+    showStudioToast(tf("recap_fallback_switched_toast", { engine: engLabel }), "success");
+};
+
 function setRecapStep4Quote(credits, breakdownText) {
+    const cost = Math.max(1, parseInt(credits, 10) || 1);
+    state._lastStep4QuoteCredits = cost;
     const el = document.getElementById("recap-step4-quote-credits");
-    if (el) el.textContent = String(Math.max(1, parseInt(credits, 10) || 1));
+    if (el) el.textContent = String(cost);
     // Batch BE: the optional breakdown line under the Step-4 total
     // (band + Max surcharge) — shown only when a breakdown applies.
     const bd = document.getElementById("recap-step4-quote-breakdown");
@@ -5238,6 +5382,8 @@ function setRecapStep4Quote(credits, breakdownText) {
         bd.textContent = breakdownText || "";
         bd.classList.toggle("hidden", !breakdownText);
     }
+    paintRecapDualQuote(cost);
+    syncRecapEngineAreas();
     refreshRecapStep4Choices();
 }
 window.setRecapStep4Quote = setRecapStep4Quote;
@@ -7751,10 +7897,47 @@ function setupRecapVisualEditor() {
     // setRecapSourceLanguage; the sync paints the one control, so a
     // saved value (any of the 18) displays correctly on load.
     const langSel = document.getElementById("recap-lang-more");
+    function renderRecapLangSheetGrid() {
+        const grid = document.getElementById("recap-lang-sheet-grid");
+        if (!grid || !langSel) return;
+        const activeCode = state.recapSourceLanguage || "auto";
+        grid.innerHTML = "";
+        Array.from(langSel.options).forEach(opt => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "vcp-lang-chip" + (opt.value === activeCode ? " active" : "");
+            btn.textContent = opt.textContent || opt.value;
+            btn.addEventListener("click", () => {
+                haptic("selection");
+                setRecapSourceLanguage(opt.value);
+                closeRecapLangSheet();
+            });
+            grid.appendChild(btn);
+        });
+    }
+    window.openRecapLangSheet = function() {
+        renderRecapLangSheetGrid();
+        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+        if (backdrop) backdrop.classList.remove("hidden");
+    };
+    window.closeRecapLangSheet = function() {
+        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+        if (backdrop) backdrop.classList.add("hidden");
+    };
+    document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape") {
+            const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+            if (backdrop && !backdrop.classList.contains("hidden")) window.closeRecapLangSheet();
+        }
+    });
     function syncRecapLangViews() {
         if (langSel) {
             const has = Array.from(langSel.options).some(o => o.value === state.recapSourceLanguage);
             langSel.value = has ? state.recapSourceLanguage : "auto";
+        }
+        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+        if (backdrop && !backdrop.classList.contains("hidden")) {
+            renderRecapLangSheetGrid();
         }
     }
     window.syncRecapLangViews = syncRecapLangViews;
@@ -7803,10 +7986,9 @@ function setupRecapVisualEditor() {
             btn.classList.add("active");
             moveSegPill(document.getElementById("recap-engine-picker"));
             state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
+            state.recapInsufMinutesServer = null;
             syncRecapEngineAreas();
-            // Batch CB: the engine is an ETA shape input — refresh
-            // the Step-4 range for the new engine.
-            refreshRecapStep4Eta();
+            updateRecapSplitCostHint();
         });
     });
     refreshRecapEngineLock();
@@ -9493,8 +9675,26 @@ async function handleStartRecap() {
         });
 
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Recap creation failed");
+        if (!res.ok) {
+            if (res.status === 403 && data && data.code === "INSUFFICIENT_VOICE_MINUTES") {
+                state.recapInsufMinutesServer = {
+                    required_seconds: Number(data.required_seconds) || 60,
+                    available_seconds: Number(data.available_seconds) || 0,
+                };
+                paintRecapDualQuote(state._lastStep4QuoteCredits || 1);
+                studioSubmitFailure("recap");
+                if (progressBox) progressBox.classList.add("hidden");
+                if (btn) btn.disabled = false;
+                updateRecapDurationGate();
+                showStudioToast(data.detail || t("recap_insuf_min_title"), "error", 6500);
+                const insufEl = document.getElementById("recap-insufficient-minutes-box");
+                if (insufEl) insufEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                return;
+            }
+            throw new Error(data.detail || "Recap creation failed");
+        }
 
+        state.recapInsufMinutesServer = null;
         state.recapJobId = data.recap_id;
         try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
         loadUserProfile();
@@ -9510,13 +9710,17 @@ async function handleStartRecap() {
         // credits_total (the band total the job will be charged) is
         // the quoted cost. The key is absent in the legacy world,
         // where the chain below is exactly the historical one.
-        const confirmCostText = data.credits_total
+        let confirmCostText = data.credits_total
             ? tf("confirm_cost_recap", { credits: data.credits_total })
             : ((data.estimated_parts && data.estimated_parts > 1)
                 ? tf("confirm_cost_recap_segmented", { parts: data.estimated_parts })
                 : (data.credits_charged
                     ? tf("confirm_cost_recap", { credits: data.credits_charged })
                     : t("confirm_cost_none")));
+        if (data.billing_mode === "credit_plus_voice_minutes" && Number(data.voice_seconds_held || 0) > 0) {
+            const heldMin = Math.max(0.1, Math.round((Number(data.voice_seconds_held) / 60) * 10) / 10);
+            confirmCostText = tf("recap_confirm_voice_hold", { credit_text: confirmCostText, min: heldMin });
+        }
         // Batch CI: an accepted submit retires any stored duration
         // rejection note from an earlier attempt on this source.
         recapSubmitRejectText = "";
@@ -9938,6 +10142,28 @@ function startRecapJobPolling(jobId) {
                             costEl.classList.add("hidden");
                         }
                     }
+                    const vsEl = document.getElementById("recap-voice-settlement-line");
+                    if (vsEl) {
+                        const held = Number(data.voice_seconds_held || 0);
+                        const settled = data.voice_seconds_settled;
+                        const refSec = Number(data.voice_seconds_refunded || 0);
+                        if (data.billing_mode === "credit_plus_voice_minutes" && typeof settled === "number") {
+                            const sMin = (settled / 60).toFixed(1);
+                            if (held > 0 && refSec > 0) {
+                                vsEl.textContent = tf("recap_voice_settlement_used_line", {
+                                    settled: sMin,
+                                    held: (held / 60).toFixed(1),
+                                    refunded: (refSec / 60).toFixed(1),
+                                });
+                            } else {
+                                vsEl.textContent = tf("recap_voice_settlement_exact_line", { settled: sMin });
+                            }
+                            vsEl.classList.remove("hidden");
+                        } else {
+                            vsEl.textContent = "";
+                            vsEl.classList.add("hidden");
+                        }
+                    }
                 }
 
                 haptic("success");
@@ -9968,6 +10194,13 @@ function startRecapJobPolling(jobId) {
                 if (data.credit_refunded) {
                     failToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
                 }
+                const failVoiceRefSec = Number(data.voice_seconds_refunded || 0);
+                if (data.voice_refunded && failVoiceRefSec > 0) {
+                    failToast += " " + tf("recap_failed_voice_refund_badge", {
+                        min: (failVoiceRefSec / 60).toFixed(1),
+                        sec: failVoiceRefSec,
+                    });
+                }
                 showStudioToast(failToast, 'error', 6000);
                 // Batch L: the failed card is the retry surface —
                 // the same curated error text as the toast (mapped,
@@ -9990,6 +10223,18 @@ function startRecapJobPolling(jobId) {
                             frefEl.classList.remove("hidden");
                         } else {
                             frefEl.classList.add("hidden");
+                        }
+                    }
+                    const fvRefEl = document.getElementById("recap-failed-voice-refund");
+                    if (fvRefEl) {
+                        if (data.voice_refunded && failVoiceRefSec > 0) {
+                            fvRefEl.innerText = tf("recap_failed_voice_refund_badge", {
+                                min: (failVoiceRefSec / 60).toFixed(1),
+                                sec: failVoiceRefSec,
+                            });
+                            fvRefEl.classList.remove("hidden");
+                        } else {
+                            fvRefEl.classList.add("hidden");
                         }
                     }
                     const retryBtn = document.getElementById("btn-recap-retry");
@@ -10028,6 +10273,10 @@ function startRecapJobPolling(jobId) {
                 let cancelToast = t("recap_cancelled_toast");
                 if (data.credit_refunded) {
                     cancelToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
+                }
+                if (data.voice_refunded && Number(data.voice_seconds_refunded || 0) > 0) {
+                    const vSec = Number(data.voice_seconds_refunded);
+                    cancelToast += " " + tf("recap_failed_voice_refund_badge", { min: (vSec / 60).toFixed(1), sec: vSec });
                 }
                 showStudioToast(cancelToast, 'info', 5000);
                 loadUserProfile();
@@ -10072,6 +10321,10 @@ async function cancelRecapJobById(jobId) {
             let msg = t("recap_cancelled_toast");
             if (data.credit_refunded) {
                 msg += " " + tf("recap_refunded_line", { credits: data.credits_refunded || 1 });
+            }
+            if (data.voice_refunded && Number(data.voice_seconds_refunded || 0) > 0) {
+                const vSec = Number(data.voice_seconds_refunded);
+                msg += " " + tf("recap_failed_voice_refund_badge", { min: (vSec / 60).toFixed(1), sec: vSec });
             }
             showStudioToast(msg, 'info', 5000);
             loadUserProfile();

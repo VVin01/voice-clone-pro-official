@@ -31,7 +31,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import case, delete, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -596,6 +596,12 @@ def _clamp_recap_render_quality(
     return req.render_quality
 
 
+_RECAP_BILLING_ADMIN_FREE = "admin_free"
+_RECAP_BILLING_CREDIT_ONLY = "credit_only"
+_RECAP_BILLING_CREDIT_PLUS_VOICE = "credit_plus_voice_minutes"
+_RECAP_ALLOWED_TTS_ENGINES = ("voxcpm", "gemini", "edge")
+
+
 def _clamp_recap_tts_engine(
     req: "RecapConfigRequest",
     *,
@@ -603,33 +609,203 @@ def _clamp_recap_tts_engine(
     user_id: Optional[int] = None,
     is_vip: Optional[bool] = None,
 ) -> str:
-    """Batch AW: recap narration engine is tier-gated.
+    """Phase 5: FREE and VIP users may both use Persona voices (``voxcpm``)
+    provided they hold sufficient Recap Credits AND Voice Clone Minutes
+    under Option B combined billing. My Own Clone Voice (``voice_ref_id``)
+    remains strictly paid-only via ``_clamp_recap_voice_ref``.
 
-    FREE users may narrate with Gemini TTS or Edge TTS only; the
-    clone/persona engine (``voxcpm``) is a purchased-tier benefit.
-    This is a clamp, never a rejection: a free user's ``voxcpm``
-    selection runs as ``gemini`` instead (the closest free engine — a
-    real AI voice, no persona) and the substitution is logged at INFO.
-    ``is_vip`` is the execution paths' existing purchased-or-admin
-    flag; submit paths pass the user and reuse the same tier test as
-    the Batch AU quality clamp above. Applied at create_recap_job AND
-    again at execution entry, so a config persisted by an older client
-    — or submitted while purchased and downgraded before the render
-    ran — cannot smuggle clone narration into a free job.
+    Unknown/empty engine values normalize safely to ``gemini``.
     """
     if req is None:
         return "gemini"
-    if is_vip is None:
-        is_vip = _can_use_custom_logo(user) if user is not None else False
     requested = str(getattr(req, "tts_engine", "") or "").strip().lower()
-    if is_vip or requested != "voxcpm":
-        return requested
-    req.tts_engine = "gemini"
-    logger.info(
-        "Recap TTS engine clamped for user %s: requested=voxcpm applied=gemini",
-        user_id if user_id is not None else (user.id if user is not None else None),
+    if requested not in _RECAP_ALLOWED_TTS_ENGINES:
+        req.tts_engine = "gemini"
+        return req.tts_engine
+    req.tts_engine = requested
+    return requested
+
+
+def _recap_billing_mode(tts_engine: str, *, is_admin: bool = False) -> str:
+    """Return the immutable billing mode recorded on a recap job at submit."""
+    if is_admin:
+        return _RECAP_BILLING_ADMIN_FREE
+    if str(tts_engine or "").strip().lower() == "voxcpm":
+        return _RECAP_BILLING_CREDIT_PLUS_VOICE
+    return _RECAP_BILLING_CREDIT_ONLY
+
+
+def _recap_effective_duration_seconds(
+    checked_duration: Optional[float],
+    max_duration_allowed: Optional[float],
+    *,
+    segmented: bool = False,
+) -> float:
+    """Effective source seconds used to estimate Option B clone voice hold."""
+    try:
+        dur = float(checked_duration or 0.0)
+    except (TypeError, ValueError):
+        dur = 0.0
+    if dur <= 0:
+        # Unknown remote source duration: enforce a minimum 60s pre-check/hold
+        # so zero-minute accounts cannot submit VoxCPM free; completion settles
+        # actual duration with the safety-net cap.
+        return 60.0
+    if segmented or not max_duration_allowed or math.isinf(max_duration_allowed):
+        return dur
+    return min(dur, float(max_duration_allowed))
+
+
+def _recap_estimated_voice_seconds(
+    tts_engine: str,
+    checked_duration: Optional[float],
+    max_duration_allowed: Optional[float],
+    *,
+    is_admin: bool = False,
+    segmented: bool = False,
+) -> int:
+    """Compute submit-time clone-voice hold: ceil(effective_duration * 1.0)."""
+    if is_admin or str(tts_engine or "").strip().lower() != "voxcpm":
+        return 0
+    eff = _recap_effective_duration_seconds(
+        checked_duration,
+        max_duration_allowed,
+        segmented=segmented,
     )
-    return req.tts_engine
+    return max(1, math.ceil(eff * 1.0))
+
+
+def _recap_insufficient_voice_minutes_response(
+    *,
+    required_seconds: int,
+    available_seconds: int,
+) -> JSONResponse:
+    """Structured 403 payload before any charge when Voice Clone Minutes fall short."""
+    req_min = round(max(0, int(required_seconds)) / 60.0, 1)
+    avail_min = round(max(0, int(available_seconds)) / 60.0, 1)
+    detail = (
+        f"Persona / Clone အသံဖြင့် Recap ဖန်တီးရန် Voice Clone မိနစ် မလုံလောက်ပါ "
+        f"(လိုအပ်ချက် ~{req_min} မိနစ် • လက်ကျန် {avail_min} မိနစ်)။ "
+        "Gemini AI / Edge TTS (Recap Credit သီးသန့်) သို့ ပြောင်းသုံးနိုင်သည် (သို့) VIP tab တွင် Voice မိနစ် ဖြည့်နိုင်ပါသည်။"
+    )
+    return JSONResponse(
+        status_code=403,
+        content={
+            "detail": detail,
+            "code": "INSUFFICIENT_VOICE_MINUTES",
+            "required_seconds": int(required_seconds),
+            "available_seconds": int(available_seconds),
+            "fallback_engines": ["gemini", "edge"],
+        },
+    )
+
+
+def _probe_single_media_duration(path_str: Optional[str]) -> Optional[float]:
+    """Measure exact duration in seconds for a local WAV/MP3/MP4 output, or None."""
+    if not path_str:
+        return None
+    p = Path(path_str)
+    if not p.is_file():
+        return None
+    # Fast path for PCM WAV (exact frames / rate)
+    try:
+        import wave
+        with wave.open(str(p), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate > 0 and frames > 0:
+                return float(frames) / float(rate)
+    except Exception:
+        pass
+    try:
+        from app.services.recap_engine.core import probe_duration, find_ffprobe
+        val = float(probe_duration(find_ffprobe(), p))
+        if val > 0:
+            return val
+    except Exception:
+        pass
+    try:
+        from app.services.downloader import probe_local_media
+        val = float((probe_local_media(str(p)) or {}).get("duration") or 0.0)
+        if val > 0:
+            return val
+    except Exception:
+        pass
+    return None
+
+
+def _measure_recap_voice_seconds(
+    audio_paths: list[Optional[str]],
+    video_paths: list[Optional[str]],
+) -> Optional[int]:
+    """Sum synthesized narration duration (seconds) from output audio paths,
+    falling back to video outputs if no separate audio path exists. Returns None
+    when neither could be probed.
+    """
+    total = 0.0
+    measured_any = False
+    for ap in audio_paths:
+        dur = _probe_single_media_duration(ap)
+        if dur is not None and dur > 0:
+            total += dur
+            measured_any = True
+    if measured_any:
+        return max(1, math.ceil(total))
+    for vp in video_paths:
+        dur = _probe_single_media_duration(vp)
+        if dur is not None and dur > 0:
+            total += dur
+            measured_any = True
+    if measured_any:
+        return max(1, math.ceil(total))
+    return None
+
+
+async def _refund_recap_voice_minutes(
+    user_id: int,
+    job_id: Optional[str],
+    *,
+    billing_mode: Optional[str] = None,
+    entry: Optional[dict] = None,
+    session: Optional[AsyncSession] = None,
+    note: Optional[str] = None,
+) -> int:
+    """Refund held Voice Clone Minutes for an Option B recap job.
+
+    Strictly checks the job's recorded ``billing_mode`` so pre-deploy /
+    ``credit_only`` / ``admin_free`` jobs never trigger minute refunds.
+    Idempotent via ``net_job_seconds_held`` + ``refund_job_seconds``.
+    """
+    if not job_id or settings.is_admin(user_id):
+        return 0
+    if billing_mode != _RECAP_BILLING_CREDIT_PLUS_VOICE:
+        return 0
+    from app.services.ledger import net_job_seconds_held, refund_job_seconds
+
+    async def _run(s: AsyncSession) -> int:
+        held_before = await net_job_seconds_held(s, user_id, job_id)
+        if held_before <= 0:
+            return 0
+        await refund_job_seconds(
+            s, user_id, job_id, note=note or f"Recap voice hold refund ({job_id})"
+        )
+        held_after = await net_job_seconds_held(s, user_id, job_id)
+        return max(0, held_before - held_after)
+
+    refunded_now = 0
+    if session is not None:
+        refunded_now = await _run(session)
+    else:
+        async with AsyncSessionLocal() as _s:
+            refunded_now = await _run(_s)
+            await _s.commit()
+
+    if entry is not None and refunded_now > 0:
+        entry["voice_refunded"] = True
+        entry["voice_seconds_refunded"] = (
+            int(entry.get("voice_seconds_refunded") or 0) + refunded_now
+        )
+    return refunded_now
 
 
 # ── Batch BV: own-voice recap narration ──────────────────────────────
@@ -1747,6 +1923,12 @@ def _persisted_recap_state(
     source_duration_seconds: float = 0.0,
     tiered_pricing: bool = False,
     max_quality_surcharge: int = 0,
+    billing_mode: Optional[str] = None,
+    voice_seconds_held: int = 0,
+    voice_seconds_settled: Optional[int] = None,
+    voice_settled: bool = False,
+    voice_refunded: bool = False,
+    voice_seconds_refunded: int = 0,
 ) -> str:
     """Serialize everything a recap job needs to survive a restart.
 
@@ -1762,7 +1944,14 @@ def _persisted_recap_state(
     state rides along too, so a restart between a refund and a later
     re-dispatch (or a registry-less admin cancel) can neither lose the
     charge amount nor refund the same charge twice.
+
+    ``billing_mode`` / ``voice_seconds_*`` (Phase 5 Option B): pins the
+    submit-time billing contract so in-flight jobs always settle or
+    refund according to how they were charged, never under later rule changes.
     """
+    resolved_billing_mode = billing_mode or (
+        _RECAP_BILLING_ADMIN_FREE if not credit_deducted else _RECAP_BILLING_CREDIT_ONLY
+    )
     return json.dumps(
         {
             "config": req.model_dump(),
@@ -1773,6 +1962,14 @@ def _persisted_recap_state(
             "credits_estimated": estimated_parts,
             "credit_refunded": bool(credit_refunded),
             "credits_refunded": int(credits_refunded),
+            "billing_mode": resolved_billing_mode,
+            "voice_seconds_held": int(voice_seconds_held or 0),
+            "voice_seconds_settled": (
+                int(voice_seconds_settled) if voice_seconds_settled is not None else None
+            ),
+            "voice_settled": bool(voice_settled),
+            "voice_refunded": bool(voice_refunded),
+            "voice_seconds_refunded": int(voice_seconds_refunded or 0),
             # Batch AO: the submit-resolved source duration and the
             # job's pinned pricing mode ride along, so a re-dispatched
             # worker prices the band from the SAME duration the
@@ -1830,6 +2027,18 @@ async def _persist_recap_credits_charged(entry: dict) -> None:
             state["credit_deducted"] = bool(entry.get("credit_deducted"))
             state["credit_refunded"] = bool(entry.get("credit_refunded"))
             state["credits_refunded"] = int(entry.get("credits_refunded") or 0)
+            if entry.get("billing_mode") is not None:
+                state["billing_mode"] = entry.get("billing_mode")
+            if entry.get("voice_seconds_held") is not None:
+                state["voice_seconds_held"] = int(entry.get("voice_seconds_held") or 0)
+            if entry.get("voice_seconds_settled") is not None:
+                state["voice_seconds_settled"] = int(entry["voice_seconds_settled"])
+            if entry.get("voice_settled") is not None:
+                state["voice_settled"] = bool(entry.get("voice_settled"))
+            if entry.get("voice_refunded") is not None:
+                state["voice_refunded"] = bool(entry.get("voice_refunded"))
+            if entry.get("voice_seconds_refunded") is not None:
+                state["voice_seconds_refunded"] = int(entry.get("voice_seconds_refunded") or 0)
             # Batch AO: keep the pinned pricing mode + pricing
             # duration in step with the live entry when it carries
             # them (the segmented path stamps the worker-probed
@@ -2375,6 +2584,16 @@ async def expire_abandoned_script_ready_jobs() -> int:
                 elif _claim == "already":
                     refund_entry["credit_refunded"] = True
                     refund_entry["credits_refunded"] = _recorded
+        if not refund_entry.get("voice_refunded"):
+            _v_bm = (live_entry or state).get("billing_mode")
+            _v_ref = await _refund_recap_voice_minutes(
+                user_id, job_id, billing_mode=_v_bm, entry=refund_entry
+            )
+            if _v_ref > 0 and live_entry is not None:
+                live_entry["voice_refunded"] = True
+                live_entry["voice_seconds_refunded"] = int(
+                    refund_entry.get("voice_seconds_refunded") or _v_ref
+                )
         try:
             from app.db.session import AsyncSessionLocal
 
@@ -2394,6 +2613,11 @@ async def expire_abandoned_script_ready_jobs() -> int:
                     fresh_state["credits_refunded"] = int(
                         refund_entry.get("credits_refunded") or 0
                     )
+                    if refund_entry.get("voice_refunded"):
+                        fresh_state["voice_refunded"] = True
+                        fresh_state["voice_seconds_refunded"] = int(
+                            refund_entry.get("voice_seconds_refunded") or 0
+                        )
                     job.recap_config = json.dumps(fresh_state, ensure_ascii=False)
                 job.status = JobStatus.FAILED.value
                 job.error_message = _SCRIPT_READY_EXPIRED_MESSAGE
@@ -2409,6 +2633,11 @@ async def expire_abandoned_script_ready_jobs() -> int:
             live_entry["credits_refunded"] = int(
                 refund_entry.get("credits_refunded") or 0
             )
+            if refund_entry.get("voice_refunded"):
+                live_entry["voice_refunded"] = True
+                live_entry["voice_seconds_refunded"] = int(
+                    refund_entry.get("voice_seconds_refunded") or 0
+                )
         # Batch K: an abandoned review previously expired silently.
         # The owner now gets the same failure DM the runner sends —
         # curated (localized) reason plus the refund confirmation.
@@ -2492,6 +2721,11 @@ async def _fail_stranded_recap_job(job_id: str, user_id: int, state: dict) -> bo
                 elif _claim == "already":
                     refunded = True
                     refunded_amount = int(_recorded or 0)
+        voice_refunded_now = 0
+        if not state.get("voice_refunded"):
+            voice_refunded_now = await _refund_recap_voice_minutes(
+                user_id, job_id, billing_mode=state.get("billing_mode")
+            )
         try:
             from app.db.session import AsyncSessionLocal
 
@@ -2503,6 +2737,12 @@ async def _fail_stranded_recap_job(job_id: str, user_id: int, state: dict) -> bo
                 if fresh_state is not None:
                     fresh_state["credit_refunded"] = refunded
                     fresh_state["credits_refunded"] = refunded_amount
+                    if voice_refunded_now > 0:
+                        fresh_state["voice_refunded"] = True
+                        fresh_state["voice_seconds_refunded"] = (
+                            int(fresh_state.get("voice_seconds_refunded") or 0)
+                            + voice_refunded_now
+                        )
                     # Terminal state: the counter's job is done.
                     fresh_state["stranded_reset_count"] = 0
                     fresh_state["stranded_stage"] = None
@@ -2599,6 +2839,17 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         # Batch BE: the pinned Max surcharge is part of the credit
         # state too (None = blob predates it; derived at execution).
         max_quality_surcharge = state.get("max_quality_surcharge") if restore_credit_state else None
+        # Phase 5 Option B: preserve submit-time billing_mode + voice hold.
+        # Legacy blobs lacking billing_mode default safely to credit_only
+        # (or admin_free) so in-flight pre-deploy jobs never touch minutes.
+        billing_mode = state.get("billing_mode") or (
+            _RECAP_BILLING_ADMIN_FREE if not credit_deducted else _RECAP_BILLING_CREDIT_ONLY
+        )
+        voice_seconds_held = int(state.get("voice_seconds_held") or 0) if restore_credit_state else 0
+        voice_seconds_settled = state.get("voice_seconds_settled") if restore_credit_state else None
+        voice_settled = bool(state.get("voice_settled")) if restore_credit_state else False
+        voice_refunded = bool(state.get("voice_refunded")) if restore_credit_state else False
+        voice_seconds_refunded = int(state.get("voice_seconds_refunded") or 0) if restore_credit_state else 0
     else:
         cfg = RecapConfigRequest(
             url=source_url,
@@ -2618,6 +2869,12 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         probed_duration_seconds = 0.0
         tiered_pricing = None
         max_quality_surcharge = None
+        billing_mode = _RECAP_BILLING_ADMIN_FREE
+        voice_seconds_held = 0
+        voice_seconds_settled = None
+        voice_settled = False
+        voice_refunded = False
+        voice_seconds_refunded = 0
 
     entry = {
         "id": job.id,
@@ -2652,6 +2909,12 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         "probed_duration_seconds": probed_duration_seconds,
         "tiered_pricing": tiered_pricing,
         "max_quality_surcharge": max_quality_surcharge,
+        "billing_mode": billing_mode,
+        "voice_seconds_held": voice_seconds_held,
+        "voice_seconds_settled": voice_seconds_settled,
+        "voice_settled": voice_settled,
+        "voice_refunded": voice_refunded,
+        "voice_seconds_refunded": voice_seconds_refunded,
         "parts_count": None,
     }
     # Batch DP: a re-dispatched PARKED job resumes past its original
@@ -2884,40 +3147,35 @@ async def _apply_recap_band_top_up(user_id: int, entry: dict, *, is_admin_user: 
 
 
 async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
-    """Refund whatever a recap job was actually charged — 1 credit for
-    a normal job, N credits for a segmented one — exactly once per job
-    (the registry flag makes repeat failure handlers no-ops, and since
-    Batch O the persisted Job-row claim is taken before the balance
-    moves, so a crash between refund and flag-persist cannot reopen
-    the refund). Mirrors the normal failed-recap semantics: a failed
-    job's full charge is returned, so the user is left exactly whole."""
+    """Refund whatever a recap job was actually charged — both Recap Credits
+    and, for Option B clone jobs (``billing_mode == 'credit_plus_voice_minutes'``),
+    any held Voice Clone Minutes — exactly once per job.
+    """
+    _job_id = entry.get("id")
+    _billing_mode = entry.get("billing_mode")
+    _voice_refunded_now = 0
+    if (
+        _job_id
+        and _billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
+        and not entry.get("voice_refunded")
+    ):
+        try:
+            _voice_refunded_now = await _refund_recap_voice_minutes(
+                user_id, _job_id, billing_mode=_billing_mode, entry=entry
+            )
+        except Exception as _vexc:
+            logger.warning(
+                f"Voice-minute refund failed for recap job {_job_id}: {_vexc}"
+            )
     if entry.get("credit_refunded"):
-        return False
+        if _voice_refunded_now > 0:
+            await _persist_recap_credits_charged(entry)
+        return _voice_refunded_now > 0
     amount = int(entry.get("credits_charged") or 0)
     if amount <= 0 and entry.get("credit_deducted"):
         amount = 1
-    # Claim BEFORE the first await (final-audit batch M): the old
-    # check-then-await-then-set let two concurrent callers sharing
-    # this entry (double-tap cancel, cancel racing the runner's
-    # failure tail) both pass the check and refund twice. Setting the
-    # flag synchronously makes the second caller a no-op; the claim
-    # is rolled back if the refund itself fails so a later retry can
-    # still refund.
-    # Batch AJ repair (verification round): the H11 ledger
-    # reconciliation below AWAITS, so the claim must be taken BEFORE
-    # it — AJ's original ordering (reconcile first, claim after) put
-    # an await ahead of the flag and silently reopened the batch-M
-    # double-refund race (caught by
-    # test_concurrent_refund_calls_refund_exactly_once). The claim
-    # starts with the entry's amount; reconciliation may only RAISE
-    # it, and the recorded claim follows the reconciled figure.
     entry["credit_refunded"] = True
     entry["credits_refunded"] = amount
-    # Batch AJ (H11): mirror of the top-up fix — refund what the
-    # LEDGER says was charged (net), not just what the entry/blob
-    # remembers. A restart that lost a top-up persist otherwise
-    # short-changed the user by the forgotten parts.
-    _job_id = entry.get("id")
     if _job_id:
         try:
             from app.db.session import AsyncSessionLocal
@@ -2937,40 +3195,29 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
                 f"Could not reconcile recap refund total from the ledger for {_job_id}: {exc}"
             )
     if amount <= 0:
-        # Nothing was ever charged — release the in-memory claim so
-        # the entry is left exactly as it was found.
         entry["credit_refunded"] = False
         entry["credits_refunded"] = 0
-        return False
-    # Batch O (billing option C): the claim is ALSO taken in the
-    # persisted Job-row state BEFORE the balance moves. The in-memory
-    # flag alone left a crash window — refund committed, flag persist
-    # (below) never ran — after which a registry-less path (admin
-    # cancel, expiry sweep) could refund the same charge a second
-    # time. "already" means the durable record says this charge was
-    # refunded (or is being refunded under a claim) — sync the entry
-    # and stop. "error" (no Job row / no persisted blob: legacy rows)
-    # falls through to the historical in-memory-only behaviour; the
-    # ledger REFUND row written by _refund_recap_credits still guards
-    # those refunds against a repeat.
+        if _voice_refunded_now > 0:
+            await _persist_recap_credits_charged(entry)
+        return _voice_refunded_now > 0
     _claim_state = "error"
     if _job_id:
         _claim_state, _recorded = await _claim_persisted_recap_refund(_job_id, amount)
         if _claim_state == "already":
             entry["credits_refunded"] = int(_recorded or amount)
-            return False
+            if _voice_refunded_now > 0:
+                await _persist_recap_credits_charged(entry)
+            return _voice_refunded_now > 0
     if await _refund_recap_credits(user_id, amount, job_id=_job_id):
-        # Persist the refund on the Job row too (hunt #5): if the
-        # process restarts now, the re-dispatch plan restores the flag
-        # and a second failure cannot refund the same charge again;
-        # a registry-less admin cancel likewise sees it was refunded.
         await _persist_recap_credits_charged(entry)
         return True
     entry["credit_refunded"] = False
     entry["credits_refunded"] = 0
     if _claim_state == "claimed":
         await _release_persisted_recap_refund_claim(_job_id)
-    return False
+    if _voice_refunded_now > 0:
+        await _persist_recap_credits_charged(entry)
+    return _voice_refunded_now > 0
 
 
 async def _cancel_recap_job_core(
@@ -3026,38 +3273,36 @@ async def _cancel_recap_job_core(
                 RECAP_JOBS_REGISTRY[job.id]["status"] = "FAILED"
                 RECAP_JOBS_REGISTRY[job.id]["error_message"] = registry_error_message
             if await _refund_recap_job_charge(job.user_id, entry):
-                refund_info = {"refunded": True, "recap_credits": int(entry.get("credits_refunded") or 0)}
+                refund_info = {
+                    "refunded": True,
+                    "recap_credits": int(entry.get("credits_refunded") or 0),
+                    "voice_refunded": bool(entry.get("voice_refunded")),
+                    "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
+                }
         else:
-            # Registry lost (server restart): read the charge from
-            # the persisted blob on the Job row (hunt #5) -- a
-            # segmented job may have been charged N credits, not
-            # the submit-time 1 this fallback used to assume, and
-            # a blob that already records the refund must not be
-            # refunded a second time. Legacy rows without a blob
-            # keep the historical behaviour: the submit-time base
-            # credit is the only provable charge. A second cancel
-            # is impossible (status is now CANCELLED).
             persisted = _load_persisted_recap_state(job)
             proven_credits = 1
             already_refunded = False
+            _p_billing_mode = None
             if persisted is not None:
                 already_refunded = bool(persisted.get("credit_refunded"))
+                _p_billing_mode = persisted.get("billing_mode")
                 if persisted.get("credit_deducted"):
                     proven_credits = max(1, int(persisted.get("credits_charged") or 1))
+            _v_ref_sec = 0
+            if not settings.is_admin(job.user_id):
+                _v_ref_sec = await _refund_recap_voice_minutes(
+                    job.user_id, job.id, billing_mode=_p_billing_mode
+                )
             if already_refunded:
                 refund_info = {
                     "refunded": True,
                     "recap_credits": int(persisted.get("credits_refunded") or proven_credits),
+                    "voice_refunded": bool(_v_ref_sec > 0 or persisted.get("voice_refunded")),
+                    "voice_seconds_refunded": int(_v_ref_sec or persisted.get("voice_seconds_refunded") or 0),
                     "note": "charge already refunded before the restart (persisted state)",
                 }
             elif not settings.is_admin(job.user_id):
-                # Batch O (billing option C): claim the refund in the
-                # persisted blob BEFORE the balance moves — this bare
-                # read-then-refund used to leave a crash window in
-                # which another path could refund the same charge
-                # again. Legacy rows (no blob) keep the historical
-                # direct refund; the ledger REFUND row still guards
-                # them against a repeat.
                 _did_refund = False
                 if persisted is not None:
                     _claim, _recorded = await _claim_persisted_recap_refund(
@@ -3067,6 +3312,8 @@ async def _cancel_recap_job_core(
                         refund_info = {
                             "refunded": True,
                             "recap_credits": int(_recorded or proven_credits),
+                            "voice_refunded": bool(_v_ref_sec > 0 or persisted.get("voice_refunded")),
+                            "voice_seconds_refunded": int(_v_ref_sec or persisted.get("voice_seconds_refunded") or 0),
                             "note": "charge already refunded before the restart (persisted state)",
                         }
                     elif _claim == "claimed":
@@ -3074,7 +3321,7 @@ async def _cancel_recap_job_core(
                             _did_refund = True
                         else:
                             await _release_persisted_recap_refund_claim(job.id)
-                    else:  # "error": blob vanished mid-flight — direct refund
+                    else:
                         _did_refund = await _refund_recap_credits(
                             job.user_id, proven_credits, job_id=job.id
                         )
@@ -3086,11 +3333,20 @@ async def _cancel_recap_job_core(
                     refund_info = {
                         "refunded": True,
                         "recap_credits": proven_credits,
+                        "voice_refunded": bool(_v_ref_sec > 0),
+                        "voice_seconds_refunded": int(_v_ref_sec),
                         "note": (
                             "registry unavailable; amount restored from persisted recap state"
                             if persisted is not None
                             else "base credit only (registry unavailable)"
                         ),
+                    }
+                elif _v_ref_sec > 0:
+                    refund_info = {
+                        "refunded": True,
+                        "recap_credits": 0,
+                        "voice_refunded": True,
+                        "voice_seconds_refunded": int(_v_ref_sec),
                     }
     except Exception as exc:
         logger.warning(f"Cancel refund failed for job {job.id}: {exc}")
@@ -7906,6 +8162,7 @@ async def _execute_recap_background_job(
         part_urls: list[dict] = []
         first_part_dest: Optional[str] = None
         _cg_outcomes: list[dict] = []
+        _seg_media_records: list[tuple[int, Optional[str], Optional[str], Optional[float]]] = []
         if segmented_mode:
             # Process every segment through the normal pipeline; each
             # segment render becomes one deliverable part (≤cap each).
@@ -7940,6 +8197,16 @@ async def _execute_recap_background_job(
                 dest = parts_dir / f"recap_part_{seg['n']:02d}.mp4"
                 if Path(seg_video).resolve() != dest.resolve():
                     shutil.move(seg_video, dest)
+                seg_audio = seg_res.get("audio") or seg_res.get("final_audio_path")
+                _seg_explicit_dur = seg_res.get("actual_voice_seconds") or seg_res.get("audio_duration")
+                _seg_media_records.append(
+                    (
+                        int(seg["n"]),
+                        str(seg_audio) if seg_audio else None,
+                        str(dest),
+                        float(_seg_explicit_dur) if _seg_explicit_dur is not None else None,
+                    )
+                )
                 entry[f"part{seg['n']}_path"] = str(dest)
                 part_urls.append({
                     "n": seg["n"],
@@ -7964,6 +8231,16 @@ async def _execute_recap_background_job(
         if segmented_mode and first_part_dest:
             video_path = first_part_dest
         audio_path = recap_res.get("audio") or recap_res.get("final_audio_path")
+        if not segmented_mode:
+            _single_explicit_dur = recap_res.get("actual_voice_seconds") or recap_res.get("audio_duration")
+            _seg_media_records.append(
+                (
+                    1,
+                    str(audio_path) if audio_path else None,
+                    str(video_path) if video_path else None,
+                    float(_single_explicit_dur) if _single_explicit_dur is not None else None,
+                )
+            )
         srt_path = recap_res.get("subtitles_srt")
         script_path = _build_clean_recap_script_file(job_dir, job_id, req.story_style, srt_path)
 
@@ -8172,6 +8449,71 @@ async def _execute_recap_background_job(
 
         # Batch AB: terminal state clears the stranded-reset count.
         await _clear_recap_stranded_reset_count(job_id)
+
+        # Phase 5 Option B settlement: use the job's recorded billing_mode
+        # from submit time — never re-compute from changed rules/engines.
+        if (
+            entry.get("billing_mode") == _RECAP_BILLING_CREDIT_PLUS_VOICE
+            and not entry.get("voice_settled")
+            and not settings.is_admin(user_id)
+        ):
+            try:
+                from app.services.ledger import settle_recap_voice_seconds
+
+                _fb_set = {int(x) for x in (_fb_segs or []) if str(x).isdigit()}
+                _total_recs = len(_seg_media_records)
+                _dp_switched_away = bool(dp_resume and tts_engine != "voxcpm")
+                if _dp_switched_away or (_fb_used and (_total_recs <= 1 or len(_fb_set) >= _total_recs)):
+                    _actual_voice_seconds = 0
+                else:
+                    _vox_recs = [
+                        rec
+                        for rec in _seg_media_records
+                        if not _fb_used or int(rec[0]) not in _fb_set
+                    ]
+                    _explicit_vals = [rec[3] for rec in _vox_recs if rec[3] is not None]
+                    if _explicit_vals and len(_explicit_vals) == len(_vox_recs):
+                        _actual_voice_seconds = max(0, math.ceil(sum(_explicit_vals)))
+                    else:
+                        _measured_voice = _measure_recap_voice_seconds(
+                            [rec[1] for rec in _vox_recs],
+                            [rec[2] for rec in _vox_recs],
+                        )
+                        if _measured_voice is not None:
+                            _actual_voice_seconds = _measured_voice
+                        else:
+                            _actual_voice_seconds = int(entry.get("voice_seconds_held") or 0)
+
+                async with AsyncSessionLocal() as _settle_session:
+                    _j_row = await _settle_session.get(Job, job_id)
+                    _j_state = _load_persisted_recap_state(_j_row) if _j_row is not None else None
+                    if _j_state is None or not _j_state.get("voice_settled"):
+                        _settle_res = await settle_recap_voice_seconds(
+                            _settle_session,
+                            user_id,
+                            job_id,
+                            _actual_voice_seconds,
+                            note=f"Recap clone settle ({job_id})",
+                        )
+                        await _settle_session.commit()
+                        entry["voice_settled"] = True
+                        entry["voice_seconds_held"] = int(
+                            _settle_res["held_seconds"] or entry.get("voice_seconds_held") or 0
+                        )
+                        entry["voice_seconds_settled"] = int(_settle_res["settled_seconds"])
+                        entry["voice_seconds_refunded"] = int(_settle_res["refunded_seconds"])
+                    else:
+                        entry["voice_settled"] = True
+                        entry["voice_seconds_settled"] = _j_state.get("voice_seconds_settled")
+                        entry["voice_seconds_refunded"] = int(_j_state.get("voice_seconds_refunded") or 0)
+                await _persist_recap_credits_charged(entry)
+            except Exception as _settle_err:
+                logger.warning(
+                    "Recap job %s: Option B voice settlement failed (job remains completed): %s",
+                    job_id,
+                    _settle_err,
+                    exc_info=True,
+                )
 
         await _persist_recap_warnings(entry)
 
@@ -9351,11 +9693,27 @@ async def create_recap_job(
     # now blocks on the row lock until the winner commits, then counts
     # the winner's committed job and is rejected BEFORE any credit
     # moves. SQLite (tests) ignores FOR UPDATE; Postgres honours it.
+    submit_billing_mode = _recap_billing_mode(req.tts_engine, is_admin=is_admin_user)
+    estimated_voice_seconds = _recap_estimated_voice_seconds(
+        req.tts_engine,
+        checked_duration,
+        max_duration_allowed,
+        is_admin=is_admin_user,
+        segmented=(submit_decision == "segment"),
+    )
+    job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    remaining_voice_seconds: Optional[int] = None
+
     _submit_locked = not settings.is_admin(user.id)
     if _submit_locked:
-        await db.execute(
-            select(User).where(User.id == user.id).with_for_update()
-        )
+        locked_user = (
+            await db.execute(
+                select(User)
+                .where(User.id == user.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
         if await _recap_active_job_count(db, user.id) >= max(1, settings.max_concurrent_jobs_per_user):
             await db.rollback()
             raise HTTPException(
@@ -9363,14 +9721,60 @@ async def create_recap_job(
                 detail="A recap job is already running for your account. Please wait for it to finish before starting another.",
             )
 
-    # Deduct the submit credit: unconditional for non-admins. (It used
-    # to be conditional on a positive balance, which is what let
-    # 0-credit VIP users run free.) Admins are never charged.
-    # Atomic conditional UPDATE (hunt F5): the gate above read the
-    # balance in this session, but a concurrent submit in another
-    # session could have taken the last credit in between — the WHERE
-    # clause re-checks at write time, and 0 rows means the race was
-    # lost, which is answered exactly like the gate's own rejection.
+        locked_credits = int(getattr(locked_user or user, "recap_credits", 0) or 0)
+        if tiered_on and checked_duration:
+            needed_submit_credits = max(
+                1, _recap_band_credits(float(checked_duration)) + submit_max_surcharge
+            )
+        elif submit_decision == "segment":
+            needed_submit_credits = max(1, int(estimated_parts or 1))
+        else:
+            needed_submit_credits = 1
+        if locked_credits < needed_submit_credits:
+            await db.rollback()
+            if tiered_on and checked_duration:
+                raise HTTPException(
+                    status_code=403,
+                    detail=_tiered_credits_message(needed_submit_credits, balance=locked_credits),
+                )
+            if submit_decision == "segment":
+                raise HTTPException(
+                    status_code=403,
+                    detail=_segmented_credits_message(needed_submit_credits, balance=locked_credits),
+                )
+            raise HTTPException(
+                status_code=403,
+                detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
+            )
+
+        if (
+            submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
+            and estimated_voice_seconds > 0
+        ):
+            from app.services.ledger import get_minute_balance
+
+            bal_row = (
+                await db.execute(
+                    select(MinuteBalance)
+                    .where(MinuteBalance.user_id == user.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+            if bal_row is None:
+                bal_row = await get_minute_balance(db, user.id)
+            _avail_clone_sec = int(bal_row.clone_spendable_seconds)
+            if _avail_clone_sec < estimated_voice_seconds:
+                await db.rollback()
+                return _recap_insufficient_voice_minutes_response(
+                    required_seconds=estimated_voice_seconds,
+                    available_seconds=_avail_clone_sec,
+                )
+
+    # Deduct the submit credit: unconditional for non-admins. Admins are
+    # never charged. Option B voice minutes are held in this SAME locked
+    # transaction via consume_seconds so credits + minutes + job row move
+    # atomically or roll back together.
     deducted_credit = False
     if not settings.is_admin(user.id):
         charge_result = await db.execute(
@@ -9384,13 +9788,32 @@ async def create_recap_job(
                 status_code=403,
                 detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
             )
-        # No commit here (batch N): the charge commits together with
-        # the Job-row insert below, still under the row lock, so a
-        # concurrent submit can never observe "charged but jobless"
-        # or slip its own count check in between the two.
         deducted_credit = True
 
-    job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        if (
+            submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
+            and estimated_voice_seconds > 0
+        ):
+            from app.services.ledger import consume_seconds, get_minute_balance
+
+            try:
+                bal_after = await consume_seconds(
+                    db,
+                    user.id,
+                    estimated_voice_seconds,
+                    job_id=job_id,
+                    note=f"Recap clone voice hold ({job_id})",
+                )
+            except ValueError:
+                await db.rollback()
+                bal_now = await get_minute_balance(db, user.id)
+                _avail_after_sec = int(bal_now.clone_spendable_seconds)
+                return _recap_insufficient_voice_minutes_response(
+                    required_seconds=estimated_voice_seconds,
+                    available_seconds=_avail_after_sec,
+                )
+            remaining_voice_seconds = int(bal_after.clone_spendable_seconds)
+
     clean_display_title = _clean_recap_display_title(req.title, req.url)
     RECAP_JOBS_REGISTRY[job_id] = {
         "id": job_id,
@@ -9435,6 +9858,12 @@ async def create_recap_job(
         # Batch BE: the pinned Max-quality surcharge for this job
         # (0 unless tiered pricing was armed AND quality is Max).
         "max_quality_surcharge": submit_max_surcharge,
+        "billing_mode": submit_billing_mode,
+        "voice_seconds_held": int(estimated_voice_seconds),
+        "voice_seconds_settled": None,
+        "voice_settled": False,
+        "voice_refunded": False,
+        "voice_seconds_refunded": 0,
         "parts_count": None,
     }
 
@@ -9457,9 +9886,13 @@ async def create_recap_job(
         # in /history display "120s" forever. Estimate from the
         # source duration verified above; the real output duration
         # replaces it in seconds_consumed on completion.
-        seconds_estimated=int(checked_duration) if checked_duration else 0,
-        # Full config + credit state, so a restart/deploy
-        # re-dispatch restores THIS job instead of a default one.
+        seconds_estimated=(
+            int(checked_duration)
+            if checked_duration
+            else (int(estimated_voice_seconds) if estimated_voice_seconds else 0)
+        ),
+        # Full config + credit + Option B state, so a restart/deploy
+        # re-dispatch restores THIS job and its exact billing contract.
         recap_config=_persisted_recap_state(
             req,
             credit_deducted=deducted_credit,
@@ -9470,6 +9903,8 @@ async def create_recap_job(
             source_duration_seconds=float(checked_duration or 0),
             tiered_pricing=tiered_on,
             max_quality_surcharge=submit_max_surcharge,
+            billing_mode=submit_billing_mode,
+            voice_seconds_held=int(estimated_voice_seconds),
         ),
     )
     if deducted_credit:
@@ -9529,6 +9964,16 @@ async def create_recap_job(
                     await _release_persisted_recap_refund_claim(job_id)
             elif _claim == "error":
                 await _refund_recap_credits(user.id, 1, job_id=job_id)
+        if (
+            submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
+            and estimated_voice_seconds > 0
+        ):
+            await _refund_recap_voice_minutes(
+                user.id,
+                job_id,
+                billing_mode=submit_billing_mode,
+                entry=RECAP_JOBS_REGISTRY.get(job_id),
+            )
         raise
 
     # Batch CB Item 3: the honest total range for THIS job's shape,
@@ -9550,9 +9995,13 @@ async def create_recap_job(
         "remaining_credits": getattr(user, "recap_credits", 0),
         "estimated_parts": estimated_parts,
         "credits_charged": 1 if deducted_credit else 0,
+        "billing_mode": submit_billing_mode,
+        "voice_seconds_held": int(estimated_voice_seconds),
         "eta_range_seconds": _submit_eta_range,
         "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
     }
+    if remaining_voice_seconds is not None:
+        response["remaining_voice_seconds"] = remaining_voice_seconds
     if tiered_on:
         # Batch AO: the authoritative total this submission will be
         # charged (the band total, when the duration is known) — the
@@ -9699,6 +10148,12 @@ async def get_recap_status(
             "credit_refunded": bool(entry.get("credit_refunded")),
             "credits_refunded": int(entry.get("credits_refunded") or 0),
             "credits_estimated": entry.get("credits_estimated"),
+            "billing_mode": entry.get("billing_mode"),
+            "voice_seconds_held": int(entry.get("voice_seconds_held") or 0),
+            "voice_seconds_settled": entry.get("voice_seconds_settled"),
+            "voice_settled": bool(entry.get("voice_settled")),
+            "voice_refunded": bool(entry.get("voice_refunded")),
+            "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
         }
 
     # Cold path only (registry miss): open the one DB session this
@@ -9808,6 +10263,12 @@ async def get_recap_status(
         ),
         "credit_refunded": bool(_db_state.get("credit_refunded")),
         "credits_refunded": int(_db_state.get("credits_refunded") or 0),
+        "billing_mode": _db_state.get("billing_mode"),
+        "voice_seconds_held": int(_db_state.get("voice_seconds_held") or 0),
+        "voice_seconds_settled": _db_state.get("voice_seconds_settled"),
+        "voice_settled": bool(_db_state.get("voice_settled")),
+        "voice_refunded": bool(_db_state.get("voice_refunded")),
+        "voice_seconds_refunded": int(_db_state.get("voice_seconds_refunded") or 0),
         "is_expired": is_expired,
         "download_urls": _with_stream_url({
             "video": f"/api/recap/download/{job_id}/video" if media_available else None,
@@ -10066,6 +10527,8 @@ async def cancel_recap_job(
         refund_info = {
             "refunded": bool(refunded),
             "recap_credits": int(entry.get("credits_refunded") or 0),
+            "voice_refunded": bool(entry.get("voice_refunded")),
+            "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
         }
 
     return {
@@ -10074,6 +10537,8 @@ async def cancel_recap_job(
         "refund": refund_info,
         "credit_refunded": bool(refund_info.get("refunded")),
         "credits_refunded": int(refund_info.get("recap_credits") or 0),
+        "voice_refunded": bool(refund_info.get("voice_refunded")),
+        "voice_seconds_refunded": int(refund_info.get("voice_seconds_refunded") or 0),
     }
 
 
@@ -12976,6 +13441,31 @@ async def retry_queued_job(
                 _state["credits_charged"] = _debit_total
                 _state["credit_refunded"] = False
                 _state["credits_refunded"] = 0
+                if (
+                    _state.get("billing_mode") == _RECAP_BILLING_CREDIT_PLUS_VOICE
+                    and int(_state.get("voice_seconds_held") or 0) > 0
+                    and not settings.is_admin(job.user_id)
+                ):
+                    from app.services.ledger import consume_seconds, net_job_seconds_held
+
+                    if await net_job_seconds_held(db, job.user_id, job_id) <= 0:
+                        try:
+                            await consume_seconds(
+                                db,
+                                job.user_id,
+                                int(_state["voice_seconds_held"]),
+                                job_id=job_id,
+                                note=f"Admin queue retry voice hold ({job_id})",
+                            )
+                        except ValueError:
+                            raise HTTPException(
+                                status_code=402,
+                                detail="အသုံးပြုသူ၏ Voice Clone မိနစ် မလုံလောက်သောကြောင့် ဒီအလုပ်ကို ပြန်စရန် မဖြစ်နိုင်ပါ။",
+                            )
+                    _state["voice_refunded"] = False
+                    _state["voice_seconds_refunded"] = 0
+                    _state["voice_settled"] = False
+                    _state["voice_seconds_settled"] = None
                 job.recap_config = json.dumps(_state, ensure_ascii=False)
         elif _debit_total > 0:
             # Charged and NOT (fully) refunded: make the persisted

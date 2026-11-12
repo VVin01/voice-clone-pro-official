@@ -413,7 +413,7 @@ def _submit(ledger, monkeypatch, *, uid=USER_ID, credits=5,
     runner, returning (response, user_balance_after)."""
     from fastapi import HTTPException
 
-    from app.models.schema import User
+    from app.models.schema import MinuteBalance, User
     from app.webapp import api as api_mod
 
     calls = []
@@ -444,6 +444,8 @@ def _submit(ledger, monkeypatch, *, uid=USER_ID, credits=5,
                         account_category=category,
                     )
                 )
+                # Phase 5 Option B: default tts_engine="voxcpm" pre-checks Voice Clone Minutes.
+                s.add(MinuteBalance(user_id=uid, purchased_seconds=3600))
                 await s.commit()
                 user = await s.get(User, uid)
             req = api_mod.RecapConfigRequest(**base)

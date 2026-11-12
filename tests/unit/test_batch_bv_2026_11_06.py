@@ -441,7 +441,7 @@ def _submit(ledger, monkeypatch, *, uid, credits=5, category="PURCHASED",
             **req_over):
     """Drive create_recap_job with a fake runner; returns
     (outcome, captured) where captured lists (job_id, req)."""
-    from app.models.schema import User
+    from app.models.schema import MinuteBalance, User
 
     captured = []
 
@@ -460,6 +460,8 @@ def _submit(ledger, monkeypatch, *, uid, credits=5, category="PURCHASED",
             if user is None:
                 s.add(User(id=uid, recap_credits=credits,
                            account_category=category))
+                # Phase 5 Option B: VoxCPM clone-voice jobs pre-check & hold Voice Clone Minutes.
+                s.add(MinuteBalance(user_id=uid, purchased_seconds=1800))
                 await s.commit()
                 user = await s.get(User, uid)
             req = api_mod.RecapConfigRequest(**base)

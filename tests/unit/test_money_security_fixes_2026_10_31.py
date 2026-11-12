@@ -209,6 +209,10 @@ async def test_f2_purchased_user_with_one_credit_is_charged(db_session, recap_ru
         db_session, 880202,
         account_category=AccountCategory.PURCHASED.value, recap_credits=1,
     )
+    # Phase 5 Option B: default voxcpm submit also requires Voice Clone Minutes.
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 600
+    await db_session.commit()
     resp = await api_mod.create_recap_job(_recap_req(), user=user, db=db_session, _gate=user)
     await asyncio.sleep(0)
     assert resp["success"] is True
