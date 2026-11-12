@@ -158,6 +158,25 @@ BUSY_ROUNDS, BUSY_WAIT_SECONDS = 2, 10
 # errors are now marked dead for the run exactly like quota deaths,
 # and this cap bounds whatever mix remains.
 GEMINI_TTS_MAX_ATTEMPTS_PER_CALL = 24
+
+
+def _pcm_seconds(data: bytes) -> float:
+    """Duration of a raw Gemini TTS PCM payload: the engine's audio
+    is 16-bit mono at 24 kHz (see the WAV writer in
+    generate_channel99_voice), i.e. 48,000 bytes per second."""
+    return len(data) / 48000.0
+
+
+def _max_plausible_seconds(chars: int) -> float:
+    """Batch DQ: the longest audio a transcript of ``chars`` cleaned
+    characters could plausibly produce. Clean Burmese narration
+    measures 13–16 chars/s; 9 chars/s is a slower-than-any-real-read
+    floor and the +4 s slack absorbs natural pauses — 79 chars →
+    12.8 s (clean reads measured 5.2–6.0 s; a prompt-leaking read
+    measured 18.4 s), 150 chars → 20.7 s (clean 9–11 s)."""
+    return chars / 9.0 + 4.0
+
+
 # Batch AJ / L21: the ffmpeg trim/resample below may only open
 # local files and pipes — never network protocols.
 MEDIA_PROTOCOL_WHITELIST = "file,pipe"
@@ -374,6 +393,10 @@ class GeminiTTSEngine:
         # TTS-dead key must not sideline the planner.
         tts_health = _key_rotation.health_for("gemini_tts") if _key_rotation is not None else None
         models = _rotated_tts_models()
+        # Batch DQ: the output-duration gate's yardstick — the
+        # CLEANED transcript length, computed once per call (the
+        # prompts are built from this same cleaned text).
+        cleaned_chars = len(_clean_tts_text(text))
         last = ""
         attempts = 0
         for _round_no in range(BUSY_ROUNDS):
@@ -404,6 +427,7 @@ class GeminiTTSEngine:
                     try:
                         client = _client(self.keys[i])  # kept in a variable: a dropped genai Client closes itself
                         response = client.models.generate_content(model=model, contents=prompt, config=config)
+                        rejected = False
                         for part in response.candidates[0].content.parts:
                             data = getattr(getattr(part, "inline_data", None), "data", None)
                             if data:
@@ -422,8 +446,32 @@ class GeminiTTSEngine:
                                             tts_health.record_usage(self.keys[i], model)
                                         except Exception:
                                             pass
+                                # Batch DQ: output-duration gate.
+                                # The 3.8 family STOCHASTICALLY reads
+                                # its (short) instruction line aloud
+                                # and/or repeats the transcript (probe
+                                # 2026-11-11: 5.96 / 18.41 / 5.21 /
+                                # 5.85 s on identical input, ASR-
+                                # verified) — no prompt shape can rule
+                                # that out, so the OUTPUT is verified
+                                # instead: an impossibly long read is
+                                # rejected and the walk continues to
+                                # the next key/model. The bookkeeping
+                                # above already fired exactly as for
+                                # an accept — the request really
+                                # consumed quota and the key is
+                                # healthy — so the (model, key) is
+                                # NOT marked dead and no busy state
+                                # is set.
+                                secs = _pcm_seconds(data)
+                                if cleaned_chars >= 1 and secs > _max_plausible_seconds(cleaned_chars):
+                                    self.log(f"🛡️ Gemini TTS output rejected — {secs:.1f}s for {cleaned_chars} chars on {model} (possible prompt leak); retrying")
+                                    last = f"{model}: output too long ({secs:.1f}s for {cleaned_chars} chars) — rejected as a possible prompt leak"
+                                    rejected = True
+                                    break
                                 return data
-                        last = f"{model}: no audio in the answer"
+                        if not rejected:
+                            last = f"{model}: no audio in the answer"
                     except Exception as exc:  # noqa: BLE001
                         code = _code(exc)
                         self.key_error_codes[i] = code

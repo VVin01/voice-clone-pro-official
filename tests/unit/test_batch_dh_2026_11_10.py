@@ -50,7 +50,7 @@ def test_dg_width_first_rule_kept():
     assert "window.innerHeight < 640" in fn
 
 
-def test_cache_token_is_r138():
+def test_cache_token_is_r139():
     html = INDEX.read_text(encoding="utf-8")
-    assert html.count("20261104_r138") == 4
+    assert html.count("20261104_r139") == 4
     assert "20261104_r129" not in html
