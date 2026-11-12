@@ -35,11 +35,11 @@
             </div>
 
             <div class="user-pill" id="user-pill">
-                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free">FREE</span>
+                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="switchTab('tab-vip')" role="button" tabindex="0">FREE</span>
                 <span class="live-dot" title="Live"><span class="live-dot-pulse"></span>LIVE</span>
                 <div class="balance-chips">
-                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title">🎙️ —</span>
-                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title">🎬 —</span>
+                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title" onclick="switchTab('tab-vip')" role="button" tabindex="0">🎙️ —</span>
+                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title" onclick="switchTab('tab-vip')" role="button" tabindex="0">🎬 —</span>
                     <!-- Batch BZ: today's TTS spendable (referral + daily
                          quota remainder, from /api/me) — a button so the
                          chip itself is the one-tap route to the TTS tab;
@@ -75,20 +75,34 @@
             
             <!-- ════ TAB: HOME (landing — start, tools, samples, tutorials, refer, support) ════ -->
             <section id="tab-home" class="tab-pane active">
+                <!-- Phase 2: Thin status strip (greeting + tier badge + balances summary, taps through to VIP) -->
+                <div class="vcp-card home-status-strip" id="home-status-strip" onclick="switchTab('tab-vip')" role="button" tabindex="0">
+                    <div class="home-status-left">
+                        <span class="home-greeting-text" id="home-greeting-text" data-i18n="home_greeting_default">မင်္ဂလာပါ 👋</span>
+                        <span class="vcp-badge vcp-badge-info" id="home-tier-badge" data-i18n="vip_free">FREE</span>
+                    </div>
+                    <div class="home-status-right">
+                        <span class="home-bal-summary" id="home-bal-summary">🎙️ — · 🎬 — · 🎧 —</span>
+                        <span class="home-status-chevron" aria-hidden="true">›</span>
+                    </div>
+                </div>
+
                 <!-- One-time welcome strip: shown by refreshWelcomeStrip()
                      ONLY to a Free-plan account with zero completed jobs
                      that has not dismissed it on this device. Slim single
                      strip inside the Home flow — not a card, not a
-                     persistent banner. Hidden by default. -->
+                     persistent banner. Hidden by default.
+                     Phase 2: includes 1-tap pre-generated sample audio play button
+                     (plays static /api/voices/sample/komin without calling any generation API). -->
                 <div id="home-welcome-strip" class="welcome-strip hidden">
                     <span class="welcome-strip-text" id="welcome-strip-text"></span>
-                    <button type="button" class="welcome-strip-btn" data-i18n="welcome_strip_btn" onclick="switchTab('tab-recap')">🎬 Recap စလုပ်မည်</button>
+                    <div class="welcome-strip-actions">
+                        <button type="button" class="welcome-strip-sample-btn" id="welcome-try-sample-btn" data-i18n="welcome_try_sample_btn" onclick="playWelcomeTrySample()">▶️ နမူနာ အသံ နားထောင်မည်</button>
+                        <button type="button" class="welcome-strip-btn" data-i18n="welcome_strip_btn" onclick="switchTab('tab-recap')">🎬 Recap စလုပ်မည်</button>
+                    </div>
                     <button type="button" class="welcome-strip-x" aria-label="Dismiss" onclick="dismissWelcomeStrip()">✕</button>
                 </div>
-                <!-- Start creating (Batch AY hero): the two studios as
-                     large side-by-side tiles — the tab's primary visual.
-                     Same destinations as the stacked rows they replace
-                     (Batch AY-1); hints reuse the rows' desc strings. -->
+                <!-- Start creating (Batch AY hero + Phase 2 Quick Create cards: Voice / Recap / TTS) -->
                 <div class="card glass" id="home-start-card">
                     <div class="card-label" data-i18n="home_start_title">စတင် ဖန်တီးရန်</div>
                     <div class="home-tile-grid">
@@ -108,22 +122,31 @@
                             </span>
                             <span class="home-tile-hint" data-i18n="home_start_recap_desc">ဗီဒီယိုမှ Recap ဇာတ်လမ်း ဖန်တီးရန်</span>
                         </button>
+                        <button type="button" class="home-tile-tts" id="home-start-tts-tile" onclick="switchTab('tab-tts')">
+                            <span class="home-tile-icon">🎧</span>
+                            <span class="home-tile-name-row">
+                                <span class="home-tile-name" data-i18n="home_start_tts_name">TTS Studio</span>
+                                <span class="home-tile-chevron">›</span>
+                            </span>
+                            <span class="home-tile-hint" data-i18n="home_start_tts_desc">မြန်မာစာသားမှ အသံဖိုင် အမြန်ဖန်တီးရန် (နေ့စဉ် အခမဲ့)</span>
+                        </button>
                     </div>
                 </div>
 
-                <!-- Batch BZ: "Free today" — the day's free allowances
-                     in one card (TTS today / Voice balance / Recap
-                     credits), each row a one-tap jump to its tab via
-                     switchTab. Values paint from /api/me through
-                     paintTtsTodaySurfaces; placeholders stay neutral
-                     (—, never a false 0) until the profile lands. -->
+                <!-- Batch BZ + Phase 2: "Free today" — the day's free allowances
+                     in one card (TTS today / Voice balance / Recap credits),
+                     each row showing unit + reset-period badge + remaining,
+                     and a one-tap jump to its tab via switchTab. -->
                 <div class="card glass" id="home-free-card">
                     <div class="card-label" data-i18n="home_free_title">🎁 ဒီနေ့ အခမဲ့</div>
                     <div class="home-free-list">
                         <button type="button" class="home-free-row" onclick="switchTab('tab-tts')">
                             <span class="home-free-icon">🎧</span>
                             <span class="home-free-text">
-                                <span class="home-free-name" data-i18n="home_free_tts_label">TTS အသံ (ဒီနေ့ သုံးနိုင်သေးသည်)</span>
+                                <span class="home-free-name-wrap">
+                                    <span class="home-free-name" data-i18n="home_free_tts_label">TTS အသံ (ဒီနေ့ သုံးနိုင်သေးသည်)</span>
+                                    <span class="vcp-badge vcp-badge-info home-free-period-badge" data-i18n="home_free_tts_period">15m / နေ့စဉ်</span>
+                                </span>
                                 <span class="home-free-note hidden" id="home-free-tts-note"></span>
                             </span>
                             <span class="home-free-value" id="home-free-tts-value">—</span>
@@ -132,7 +155,10 @@
                         <button type="button" class="home-free-row" onclick="switchTab('tab-voice')">
                             <span class="home-free-icon">🎙️</span>
                             <span class="home-free-text">
-                                <span class="home-free-name" data-i18n="home_free_voice_label">Voice Clone လက်ကျန်</span>
+                                <span class="home-free-name-wrap">
+                                    <span class="home-free-name" data-i18n="home_free_voice_label">Voice Clone လက်ကျန်</span>
+                                    <span class="vcp-badge vcp-badge-info home-free-period-badge" data-i18n="home_free_voice_period">180s / လစဉ်</span>
+                                </span>
                             </span>
                             <span class="home-free-value" id="home-free-voice-value">—</span>
                             <span class="home-free-chevron">›</span>
@@ -140,11 +166,38 @@
                         <button type="button" class="home-free-row" onclick="switchTab('tab-recap')">
                             <span class="home-free-icon">🎬</span>
                             <span class="home-free-text">
-                                <span class="home-free-name" data-i18n="home_free_recap_label">Recap Credit လက်ကျန်</span>
+                                <span class="home-free-name-wrap">
+                                    <span class="home-free-name" data-i18n="home_free_recap_label">Recap Credit လက်ကျန်</span>
+                                    <span class="vcp-badge vcp-badge-gold home-free-period-badge" data-i18n="home_free_recap_period">3 Credits / စာရင်းသွင်းစဉ်</span>
+                                </span>
                             </span>
                             <span class="home-free-value" id="home-free-recap-value">—</span>
                             <span class="home-free-chevron">›</span>
                         </button>
+                    </div>
+                </div>
+
+                <!-- Phase 2: Recent Projects card (3–5 most recent jobs, status + 24h time-left + download/continue, See All → History) -->
+                <div class="card glass home-recent-card" id="home-recent-projects-card" data-ui-state="loading">
+                    <div class="home-recent-header">
+                        <span class="card-label" data-i18n="home_recent_title">⏱️ လတ်တလော ပရောဂျက်များ</span>
+                        <button type="button" class="vcp-chip home-recent-see-all" id="home-recent-see-all" onclick="openHistoryHub()">
+                            <span data-i18n="home_recent_see_all">အားလုံးကြည့်ရန်</span>
+                            <span aria-hidden="true">›</span>
+                        </button>
+                    </div>
+                    <div class="vcp-state-loading">
+                        <span data-i18n="ui_state_loading">⏳ အချက်အလက် ရယူနေပါသည်...</span>
+                    </div>
+                    <div class="vcp-state-empty">
+                        <span data-i18n="home_recent_empty">ဖန်တီးထားသော ပရောဂျက် မရှိသေးပါ</span>
+                    </div>
+                    <div class="vcp-state-error">
+                        <span class="vcp-state-error-msg" data-i18n="ui_state_error">⚠️ အချက်အလက် ရယူ၍ မရပါ</span>
+                        <button type="button" class="vcp-chip" onclick="loadUserHistory()" data-i18n="ui_state_retry">🔄 ပြန်စမ်းမည်</button>
+                    </div>
+                    <div class="vcp-state-ready">
+                        <div class="home-recent-list" id="home-recent-projects-list"></div>
                     </div>
                 </div>
 
@@ -174,6 +227,21 @@
                             <span class="home-tile-hint" data-i18n="home_tools_history_desc">ဖန်တီးခဲ့သော အသံနှင့် Recap အလုပ်များ အားလုံး</span>
                         </button>
                     </div>
+                </div>
+
+                <!-- Phase 2: ONE Help entry point containing all tutorials and voice samples
+                     (removes the separate tutorial & sample cards from the default Home scroll flow;
+                     tapping unfolds both #home-samples-card and #home-tutorials-card together). -->
+                <div class="card glass home-help-entry-card" id="home-help-entry-card">
+                    <button type="button" class="home-help-entry-btn" id="btn-home-help-hub" aria-expanded="false" onclick="toggleVcpHelpHub()">
+                        <span class="home-help-entry-icon">🎧</span>
+                        <span class="home-help-entry-text">
+                            <span class="home-help-entry-title" data-i18n="home_help_entry_title">နမူနာ အသံများ နှင့် အသုံးပြုနည်း လမ်းညွှန်</span>
+                            <span class="home-help-entry-desc" data-i18n="home_help_entry_desc">Voice/Recap အသံ နမူနာများ နားထောင်ရန် နှင့် Tutorial ၁၀ ခု ကြည့်ရန်</span>
+                        </span>
+                        <span class="vcp-badge vcp-badge-info" data-i18n="home_tut_count">၁၀ ခု</span>
+                        <span class="home-help-entry-chevron" id="home-help-entry-chevron" aria-hidden="true">▾</span>
+                    </button>
                 </div>
 
                 <!-- Samples card: real persona samples served by the app's

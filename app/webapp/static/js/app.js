@@ -10728,6 +10728,7 @@ function paintTtsTodaySurfaces(data) {
     if (voiceVal) voiceVal.innerText = data.is_admin ? "∞" : tf("home_free_value_min", { min: data.balance_minutes });
     const recapVal = document.getElementById("home-free-recap-value");
     if (recapVal) recapVal.innerText = data.is_admin ? "∞" : tf("home_free_value_credits", { count: data.recap_credits || 0 });
+    paintHomeStatusStrip(data);
 }
 
 // The same two surfaces refreshed from a /api/tts/quota response —
@@ -10754,6 +10755,7 @@ function paintTtsChipFromQuota(q) {
             note.classList.add("hidden");
         }
     }
+    paintHomeStatusStripFromQuota(q);
 }
 
 function paintVoiceTtsBalanceLine(profile) {
@@ -14073,6 +14075,7 @@ function hubHistoryRowHtml(j) {
 }
 
 function renderHistoryHub() {
+    renderHomeRecentProjects();
     const container = document.getElementById("hub-history-list");
     if (!container) return;
 
@@ -14509,6 +14512,200 @@ function applyDesktopDropHint() {
         if (hint) hint.hidden = false;
     } catch (e) { /* hint stays hidden */ }
 }
+
+// ── Phase 2: Home Dashboard, Status Strip, Recent Projects & Help Hub ──────
+function paintHomeStatusStrip(data) {
+    if (!data) return;
+    const greetEl = document.getElementById("home-greeting-text");
+    if (greetEl) {
+        const tgFirst = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name;
+        const displayName = data.first_name || data.username || tgFirst || "";
+        greetEl.textContent = displayName
+            ? tf("home_greeting_named", { name: displayName })
+            : t("home_greeting_default");
+    }
+    const tierEl = document.getElementById("home-tier-badge");
+    if (tierEl) {
+        if (data.is_admin) {
+            tierEl.className = "vcp-badge vcp-badge-gold";
+            tierEl.textContent = "👑 ADMIN";
+        } else if (data.is_vip) {
+            tierEl.className = "vcp-badge vcp-badge-gold";
+            tierEl.textContent = "👑 VIP";
+        } else {
+            tierEl.className = "vcp-badge vcp-badge-info";
+            tierEl.textContent = t("vip_free");
+        }
+    }
+    const sumEl = document.getElementById("home-bal-summary");
+    if (sumEl) {
+        const vPart = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes ?? 0}m`;
+        const rPart = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits ?? 0}c`;
+        let tPart = "🎧 —";
+        const rem = data.tts_today_remaining_seconds;
+        if (data.is_admin || data.tts_daily_limit_seconds === 0) tPart = "🎧 ∞";
+        else if (typeof rem === "number") tPart = `🎧 ${(rem / 60).toFixed(1)}m`;
+        else if (typeof data.tts_balance_seconds === "number") tPart = `🎧 ${(data.tts_balance_seconds / 60).toFixed(1)}m`;
+        sumEl.textContent = `${vPart} · ${rPart} · ${tPart}`;
+    }
+}
+window.paintHomeStatusStrip = paintHomeStatusStrip;
+
+function paintHomeStatusStripFromQuota(q) {
+    if (!q || !state.user) return;
+    const sumEl = document.getElementById("home-bal-summary");
+    if (!sumEl) return;
+    const u = state.user;
+    const vPart = u.is_admin ? "🎙️ ∞" : `🎙️ ${u.balance_minutes ?? 0}m`;
+    const rPart = u.is_admin ? "🎬 ∞" : `🎬 ${u.recap_credits ?? 0}c`;
+    let tPart = "🎧 —";
+    if (q.is_admin || q.unlimited) tPart = "🎧 ∞";
+    else {
+        const total = (q.referral_seconds || 0) + (q.remaining_seconds || 0);
+        tPart = `🎧 ${(total / 60).toFixed(1)}m`;
+    }
+    sumEl.textContent = `${vPart} · ${rPart} · ${tPart}`;
+}
+
+// Plays the pre-generated static sample audio (/api/voices/sample/komin)
+// via the existing #sample-btn-voice / #sample-audio-voice element.
+// Never calls any generation API or consumes user quota.
+function playWelcomeTrySample() {
+    haptic("light");
+    const sampleBtn = document.getElementById("sample-btn-voice");
+    const audio = document.getElementById("sample-audio-voice");
+    const tryBtn = document.getElementById("welcome-try-sample-btn");
+    if (sampleBtn) {
+        sampleBtn.click();
+    } else if (audio) {
+        if (audio.paused) audio.play().catch(() => {});
+        else audio.pause();
+    }
+    if (audio && tryBtn && !audio.dataset.welcomeTryWired) {
+        audio.dataset.welcomeTryWired = "1";
+        const syncTryLabel = () => {
+            const playing = !audio.paused && !audio.ended;
+            tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
+        };
+        audio.addEventListener("play", syncTryLabel);
+        audio.addEventListener("pause", syncTryLabel);
+        audio.addEventListener("ended", syncTryLabel);
+    }
+}
+window.playWelcomeTrySample = playWelcomeTrySample;
+
+function computeRetentionBadgeHtml(j) {
+    if (j.is_expired) {
+        return `<span class="vcp-badge vcp-badge-danger">${escapeHtml(t("hist_expired"))}</span>`;
+    }
+    if (!j.created_at) return "";
+    const createdMs = Date.parse(j.created_at);
+    if (Number.isNaN(createdMs)) return "";
+    const hoursLeft = Math.max(0, Math.ceil(24 - (Date.now() - createdMs) / 3600000));
+    if (hoursLeft <= 0) {
+        return `<span class="vcp-badge vcp-badge-danger">${escapeHtml(t("hist_expired"))}</span>`;
+    }
+    const cls = hoursLeft <= 4 ? "vcp-badge-warning" : "vcp-badge-info";
+    return `<span class="vcp-badge ${cls}">${escapeHtml(tf("home_recent_time_left_hours", { hours: hoursLeft }))}</span>`;
+}
+
+function computeHomeRecentStatusBadgeHtml(j) {
+    const st = String(j.status || "").toUpperCase();
+    if (st === "SUCCESS") return `<span class="vcp-badge vcp-badge-success">✅ ${escapeHtml(st)}</span>`;
+    if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info">⏳ ${escapeHtml(st)}</span>`;
+    if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning">🕒 ${escapeHtml(st)}</span>`;
+    if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger">❌ ${escapeHtml(st)}</span>`;
+    return `<span class="vcp-badge vcp-badge-info">ℹ️ ${escapeHtml(st || "—")}</span>`;
+}
+
+function computeHomeRecentActionHtml(j) {
+    const isRecap = j.job_type === "RECAP";
+    if (isRecap && j.script_ready) {
+        return `<button type="button" class="vcp-chip active" onclick="openRecapScriptEditor('${j.id}')">${escapeHtml(t("home_recent_action_review"))}</button>`;
+    }
+    if (j.status === "RUNNING" || j.status === "QUEUED") {
+        const fn = isRecap ? `openRecapDetail('${j.id}')` : `openVoiceDetail('${j.id}')`;
+        return `<button type="button" class="vcp-chip active" onclick="${fn}">${escapeHtml(t("home_recent_action_continue"))}</button>`;
+    }
+    if (j.status === "SUCCESS" && !j.is_expired) {
+        if (isRecap && j.deliverables && j.deliverables.video) {
+            return `<a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
+        }
+        if (!isRecap && j.download_url) {
+            return `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
+        }
+    }
+    if (j.status === "FAILED" && isRecap && j.can_retry !== false) {
+        return `<button type="button" class="vcp-chip" onclick="retryRecapJob('${j.id}')">${escapeHtml(t("home_recent_action_retry"))}</button>`;
+    }
+    return `<button type="button" class="vcp-chip" onclick="openHistoryHub()">›</button>`;
+}
+
+function renderHomeRecentProjects() {
+    const card = document.getElementById("home-recent-projects-card");
+    const list = document.getElementById("home-recent-projects-list");
+    if (!card || !list) return;
+
+    if (hubHistoryCache === null && !hubHistoryError) {
+        setSectionState(card, "loading");
+        return;
+    }
+    if (hubHistoryError) {
+        setSectionState(card, "error");
+        return;
+    }
+    const all = hubHistoryCache || [];
+    if (all.length === 0) {
+        setSectionState(card, "empty");
+        return;
+    }
+    setSectionState(card, "ready");
+    const recent = all.slice(0, 5);
+    list.innerHTML = recent.map(j => {
+        const isRecap = j.job_type === "RECAP";
+        const isTts = j.job_type === "TTS";
+        const icon = isRecap ? "🎬" : isTts ? "🎧" : "🎙️";
+        const snippet = j.input_snippet || (isRecap ? "Movie Recap" : isTts ? "TTS" : "Voice Synthesis");
+        return `
+        <div class="home-recent-row" data-recent-job-id="${j.id}">
+            <div class="home-recent-main">
+                <span class="home-recent-icon">${icon}</span>
+                <div class="home-recent-meta">
+                    <span class="home-recent-name">${escapeHtml(snippet)}</span>
+                    <div class="home-recent-badges">
+                        ${computeHomeRecentStatusBadgeHtml(j)}
+                        ${computeRetentionBadgeHtml(j)}
+                    </div>
+                </div>
+            </div>
+            <div class="home-recent-action">
+                ${computeHomeRecentActionHtml(j)}
+            </div>
+        </div>`;
+    }).join("");
+}
+window.renderHomeRecentProjects = renderHomeRecentProjects;
+
+function toggleVcpHelpHub(forceOpen) {
+    haptic("light");
+    const homeTab = document.getElementById("tab-home");
+    const btn = document.getElementById("btn-home-help-hub");
+    if (!homeTab) return;
+    const isOpen = typeof forceOpen === "boolean"
+        ? forceOpen
+        : !homeTab.classList.contains("vcp-help-hub-open");
+    homeTab.classList.toggle("vcp-help-hub-open", isOpen);
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (isOpen) {
+        const tutMore = document.getElementById("home-tut-more");
+        const tutHead = document.getElementById("home-tut-expand");
+        if (tutMore && tutMore.classList.contains("hidden")) {
+            tutMore.classList.remove("hidden");
+            if (tutHead) tutHead.setAttribute("aria-expanded", "true");
+        }
+    }
+}
+window.toggleVcpHelpHub = toggleVcpHelpHub;
 
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
