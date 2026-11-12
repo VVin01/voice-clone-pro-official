@@ -1456,7 +1456,7 @@ window.backToStudio = function(kind) {
         const tab = document.getElementById("tab-voice");
         if (tab) tab.scrollIntoView({ behavior: "smooth" });
     }
-    syncTelegramBackButton();
+    if (typeof syncTelegramBackButton === "function") syncTelegramBackButton();
 };
 function showLiveSubmitLimit(kind) {
     // The server concurrency rule (1 active job per user) explained IN
@@ -1796,6 +1796,8 @@ function collectAccountPrefs() {
         recapZoom: state.recapZoom,
         recapVoice: state.recapVoice,
         recapGeminiVoice: state.recapGeminiVoice || "",
+        // Phase 4: up to 3 named Step-2 presets ("My Presets"), JSON.
+        recap_presets: serializeMyRecapPresets(),
     };
 }
 function cacheAccountPrefs(prefs) {
@@ -1860,6 +1862,11 @@ function applyAccountPrefs(prefs) {
     }
     if (state.recapOutlineWidth === -1) state.recapOutlineWidth = null;
     if (typeof prefs.recapBgOpacity !== "number") state.recapBgOpacity = null;
+    // Phase 4: My Presets ride the account prefs as a JSON string.
+    if (typeof prefs.recap_presets === "string") {
+        state.recapCustomPresets = parseMyRecapPresets(prefs.recap_presets);
+        if (typeof renderMyRecapPresets === "function") { try { renderMyRecapPresets(); } catch (e) {} }
+    }
     cacheAccountPrefs(prefs);
     // Batch AM (M8ii): the recap controls were synced at boot from
     // the LOCAL snapshot; the server prefs above may differ (another
@@ -4043,6 +4050,7 @@ function paintCachedUserHeader(data) {
     refreshLogoUi();
     refreshRecapQualityLock();
     refreshRecapEngineLock();
+    if (typeof renderMyRecapPresets === "function") renderMyRecapPresets();
     paintVoiceTtsBalanceLine(data);
     paintTtsTodaySurfaces(data);
 }
@@ -5029,6 +5037,9 @@ function setRecapPreviewState(mode) {
     if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
     if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
     if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
+    if ((ready || recapHasSource()) && typeof applyActiveRecapStep2Category === "function") {
+        applyActiveRecapStep2Category();
+    }
     // Batch BB-2: the speed capsule lives inside speedGroup — when it
     // unhides, the sliding pill measures against real layout.
     if (ready) requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
@@ -7932,6 +7943,9 @@ function setupRecapVisualEditor() {
             // Batch DD: a preset SEEDS the free controls (the user
             // can still tweak them afterwards).
             if (typeof ddSeedStyleControls === "function") ddSeedStyleControls(state.recapSubStyle);
+            // Phase 4: keep the 10 visual sample cards in step with
+            // the dropdown (both write the SAME state.recapSubStyle).
+            if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
             // Batch AK: the style renders in the composited frame —
             // refresh it; the drag handle keeps a neutral outline
             // (no per-style CSS classes to keep in sync any more).
@@ -8547,13 +8561,25 @@ function setupRecapVisualEditor() {
             clearRecapInfoCard();
 
             try {
-                const res = await fetchWithTimeout("/api/downloader/extract", {
-                    method: "POST",
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ url: url }),
-                }, 60000);
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || "Analysis failed");
+                // Phase 4: a Downloader "Use in Recap" hand-off carries
+                // the SAME /api/downloader/extract payload the Downloader
+                // already verified for this exact URL — reuse it instead
+                // of re-probing (no re-upload, no second extract). Every
+                // paint / gate / composite step below runs unchanged.
+                let data = null;
+                const handoff = state.recapExtractHandoff;
+                state.recapExtractHandoff = null;
+                if (handoff && handoff.data && (handoff.url === url || handoff.data.url === url)) {
+                    data = handoff.data;
+                } else {
+                    const res = await fetchWithTimeout("/api/downloader/extract", {
+                        method: "POST",
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({ url: url }),
+                    }, 60000);
+                    data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || "Analysis failed");
+                }
 
                 if (recapInfoBox) recapInfoBox.classList.remove("hidden");
                 const thumbImg = document.getElementById("recap-info-thumb");
@@ -8877,6 +8903,10 @@ function setupRecapVisualEditor() {
     function saveRecapSettings() {
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snapshotRecapSettings())); } catch (e) {}
     }
+    // Phase 4: My Presets read the live settings slice through the
+    // SAME snapshot the persistence path writes (no forked key list).
+    window.__snapshotRecapSettings = snapshotRecapSettings;
+    window.__saveRecapSettingsNow = saveRecapSettings;
     let recapSaveTimer = null;
     function saveRecapSettingsSoon() {
         if (recapSaveTimer) clearTimeout(recapSaveTimer);
@@ -9033,6 +9063,7 @@ function setupRecapVisualEditor() {
         // its value directly (same state field as before).
         const subStyleSel = document.getElementById("sub-style-picker");
         if (subStyleSel) subStyleSel.value = state.recapSubStyle;
+        if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
         // Batch AK: the handle's classes are fixed (the style lives
         // in the composited frame, not in CSS classes).
         if (previewSub) previewSub.className = "preview-sub-box draggable-box";
@@ -9074,6 +9105,7 @@ function setupRecapVisualEditor() {
         syncBlurBoxVisual();
         syncSubBoxVisual();
         if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
+        if (typeof syncRecapMasterPresetActive === "function") syncRecapMasterPresetActive();
     }
 
     const recapTabEl = document.getElementById("tab-recap");
@@ -10444,7 +10476,7 @@ function setupDownloader() {
                 }
                 setCardThumb(dlThumb, data.thumbnail || null);
 
-                dlCurrent = { url: data.url || url, has_subtitles: data.has_subtitles };
+                dlCurrent = { url: data.url || url, has_subtitles: data.has_subtitles, extractData: data };
                 dlSetSrtCardState(data.has_subtitles);
                 const dlActions = document.getElementById("dl-delivery-actions");
                 if (dlActions) dlActions.innerHTML = "";
@@ -10485,21 +10517,34 @@ function setupDownloader() {
                 if (!url) return;
 
                 haptic("success");
+                const handoffUrl = (dlCurrent && dlCurrent.url) || url;
+                if (dlCurrent && dlCurrent.extractData) {
+                    state.recapExtractHandoff = { url: handoffUrl, data: dlCurrent.extractData };
+                    if (typeof showStudioToast === "function" && typeof t === "function") {
+                        showStudioToast(t("dl_use_in_recap_ready_toast"), "success");
+                    }
+                } else {
+                    state.recapExtractHandoff = null;
+                }
+
                 // 1. Switch to tab-recap
                 const tabRecapBtn = document.querySelector('[data-tab="tab-recap"]');
                 if (tabRecapBtn) tabRecapBtn.click();
 
-                // 2. Set recap URL and trigger inspection
+                // 2. Set recap URL and apply hand-off immediately without re-upload/re-probe
                 const recapInput = document.getElementById("recap-url-input");
                 if (recapInput) {
-                    recapInput.value = url;
-                    // Trigger mode URL if currently on File mode
+                    recapInput.value = handoffUrl;
                     const btnModeUrl = document.getElementById("btn-source-mode-url");
                     if (btnModeUrl) btnModeUrl.click();
 
                     const btnExtract = document.getElementById("btn-fetch-recap-info");
                     if (btnExtract) {
-                        setTimeout(() => btnExtract.click(), 300);
+                        if (state.recapExtractHandoff) {
+                            btnExtract.click();
+                        } else {
+                            setTimeout(() => btnExtract.click(), 300);
+                        }
                     }
                 }
             });
@@ -14894,6 +14939,19 @@ document.addEventListener("DOMContentLoaded", () => {
     setupVoiceStudio();
     setupRecapVisualEditor();
     initRecapSteps();
+    switchRecapStep2Category(state.recapStep2Cat || "preset", true);
+    syncRecapMasterPresetActive();
+    syncRecapSubStyleCards();
+    renderMyRecapPresets();
+    const recapStep2El = document.getElementById("recap-step-2");
+    if (recapStep2El) {
+        recapStep2El.addEventListener("click", () => {
+            setTimeout(() => {
+                if (typeof syncRecapMasterPresetActive === "function") syncRecapMasterPresetActive();
+                if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
+            }, 0);
+        });
+    }
     setupAlertCarousel();
     setupDownloader();
     setupSlipPreview();
@@ -14912,3 +14970,399 @@ document.addEventListener("DOMContentLoaded", () => {
     setupSubmitGuards();
     loadAccountPrefs();
 });
+
+// ==================== PHASE 4: RECAP STEP 2 SPLIT-SCREEN 5-TAB EDITOR ====================
+
+const RECAP_MASTER_PRESETS = {
+    tiktok: {
+        recapRatio: "9:16",
+        recapRatioFill: "blur",
+        recapSubStyle: "yellow",
+        recapLines: 1,
+        recapProtection: "standard",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapMirror: true,
+        recapZoom: 1.0,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+    fb_story: {
+        recapRatio: "9:16",
+        recapRatioFill: "crop",
+        recapSubStyle: "boxed",
+        recapLines: 2,
+        recapProtection: "standard",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapMirror: true,
+        recapZoom: 1.0,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+    yt_16_9: {
+        recapRatio: "16:9",
+        recapRatioFill: "blur",
+        recapSubStyle: "white",
+        recapLines: 1,
+        recapProtection: "standard",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapMirror: true,
+        recapZoom: 1.0,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+    strict_safe: {
+        recapRatio: "9:16",
+        recapRatioFill: "blur",
+        recapSubStyle: "band",
+        recapLines: 1,
+        recapProtection: "strong",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapBlurAutoDetect: true,
+        recapMirror: true,
+        recapZoom: 1.05,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+};
+
+const PORTABLE_RECAP_PRESET_KEYS = [
+    "recapRatio", "recapRatioFill",
+    "recapCropTop", "recapCropBottom", "recapCropLeft", "recapCropRight", "recapSyncCrop",
+    "recapMirror", "recapZoom", "recapProtection",
+    "recapBurnSubs", "recapSubStyle", "recapSubFont", "recapFontSize", "recapLines",
+    "recapSubMargin", "recapSubX", "recapSubW",
+    "recapTextColor", "recapOutlineColor", "recapBgColor",
+    "recapOutlineWidth", "recapBgOpacity", "recapSubShadow", "recapSubBold", "recapSubPosBand",
+    "recapBlurSubs", "recapBlurAutoDetect",
+];
+
+function applyActiveRecapStep2Category() {
+    const valid = ["preset", "frame", "subtitle", "blur", "protection"];
+    const cat = valid.includes(state.recapStep2Cat) ? state.recapStep2Cat : "preset";
+    state.recapStep2Cat = cat;
+
+    document.querySelectorAll("#recap-step2-cat-tabs [data-step2-cat]").forEach(btn => {
+        const match = btn.getAttribute("data-step2-cat") === cat;
+        btn.classList.toggle("active", match);
+        btn.setAttribute("aria-selected", match ? "true" : "false");
+    });
+
+    const setAccOpen = (id, open) => {
+        const grp = document.getElementById(id);
+        if (!grp) return;
+        grp.classList.toggle("open", open);
+        const body = grp.querySelector(":scope > .dd-acc-body");
+        if (body) body.classList.toggle("hidden", !open);
+        const hd = grp.querySelector(":scope > .dd-acc-hd");
+        if (hd) hd.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+
+    const presetPanel = document.getElementById("recap-cat-preset");
+    if (presetPanel) presetPanel.classList.toggle("hidden", cat !== "preset");
+
+    const ratioGroup = document.getElementById("recap-preview-ratio-group");
+    if (ratioGroup) {
+        ratioGroup.classList.toggle("hidden", cat !== "frame");
+        if (cat === "frame") setAccOpen("recap-preview-ratio-group", true);
+    }
+
+    const inFine = cat === "subtitle" || cat === "blur" || cat === "protection";
+    const fineWrap = document.querySelector("#recap-step-2 .recap-fine");
+    const fineHeader = document.querySelector("#recap-step-2 .recap-fine-header");
+    if (fineWrap) fineWrap.classList.toggle("hidden", !inFine);
+    if (fineHeader) fineHeader.classList.toggle("vcp-tab-mode-hidden", inFine);
+
+    if (typeof toggleRecapFineSettings === "function") {
+        toggleRecapFineSettings(inFine);
+    }
+
+    const groupCatMap = {
+        "recap-subtitle-group": "subtitle",
+        "recap-blur-group": "blur",
+        "recap-logo-group": "protection",
+        "recap-preview-transform-group": "protection",
+    };
+    Object.keys(groupCatMap).forEach(id => {
+        const grp = document.getElementById(id);
+        if (!grp) return;
+        const show = groupCatMap[id] === cat;
+        grp.classList.toggle("hidden", !show);
+        if (show) setAccOpen(id, true);
+    });
+
+    const blurBox = document.getElementById("preview-blur-box");
+    if (blurBox) blurBox.classList.toggle("label-on", cat === "blur");
+
+    if (typeof moveSegPills === "function" || typeof window.__ddFitPreviewFrame === "function") {
+        requestAnimationFrame(() => {
+            try { moveSpeedPills(); } catch (e) {}
+            try { moveSegPills(); } catch (e) {}
+            try { if (window.__ddFitPreviewFrame) window.__ddFitPreviewFrame(); } catch (e) {}
+        });
+    }
+}
+window.applyActiveRecapStep2Category = applyActiveRecapStep2Category;
+
+function switchRecapStep2Category(cat, silent) {
+    if (!silent && typeof haptic === "function") haptic("light");
+    const valid = ["preset", "frame", "subtitle", "blur", "protection"];
+    state.recapStep2Cat = valid.includes(cat) ? cat : "preset";
+    applyActiveRecapStep2Category();
+}
+window.switchRecapStep2Category = switchRecapStep2Category;
+
+function applyRecapPresetObject(patch) {
+    if (!patch || typeof patch !== "object") return;
+    const base = typeof window.__snapshotRecapSettings === "function"
+        ? window.__snapshotRecapSettings()
+        : {};
+    const next = Object.assign({}, base, patch);
+    try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(next)); } catch (e) {}
+    if (typeof restoreRecapSettings === "function") restoreRecapSettings();
+    if (typeof window.__saveRecapSettingsNow === "function") window.__saveRecapSettingsNow();
+    if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
+    syncRecapSubStyleCards();
+    syncRecapMasterPresetActive();
+}
+
+function applyRecapMasterPreset(presetKey) {
+    const patch = RECAP_MASTER_PRESETS[presetKey];
+    if (!patch) return;
+    if (typeof haptic === "function") haptic("medium");
+    applyRecapPresetObject(patch);
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        showStudioToast(t("recap_master_preset_applied_toast"), "success");
+    }
+}
+window.applyRecapMasterPreset = applyRecapMasterPreset;
+
+function syncRecapMasterPresetActive() {
+    const cards = document.querySelectorAll("#recap-master-presets-grid [data-master-preset]");
+    if (!cards.length) return;
+    const curRatio = state.recapRatio || "9:16";
+    const curFill = state.recapRatioFill || "blur";
+    const curStyle = state.recapSubStyle || "yellow";
+    const curLines = Number(state.recapLines || 1);
+    const curProt = state.recapProtection || "standard";
+    cards.forEach(btn => {
+        const key = btn.getAttribute("data-master-preset");
+        const p = RECAP_MASTER_PRESETS[key];
+        const match = Boolean(p)
+            && p.recapRatio === curRatio
+            && p.recapRatioFill === curFill
+            && p.recapSubStyle === curStyle
+            && Number(p.recapLines) === curLines
+            && p.recapProtection === curProt;
+        btn.classList.toggle("active", match);
+        btn.setAttribute("aria-pressed", match ? "true" : "false");
+    });
+}
+window.syncRecapMasterPresetActive = syncRecapMasterPresetActive;
+
+function extractPortablePresetSettings() {
+    const snap = typeof window.__snapshotRecapSettings === "function"
+        ? window.__snapshotRecapSettings()
+        : state;
+    const out = {};
+    PORTABLE_RECAP_PRESET_KEYS.forEach(k => {
+        if (snap && Object.prototype.hasOwnProperty.call(snap, k) && snap[k] !== undefined) {
+            out[k] = snap[k];
+        }
+    });
+    return out;
+}
+
+function parseMyRecapPresets(raw) {
+    let arr = [];
+    if (Array.isArray(raw)) {
+        arr = raw;
+    } else if (typeof raw === "string" && raw.trim()) {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) arr = parsed;
+        } catch (e) {
+            return [];
+        }
+    }
+    const clean = [];
+    arr.slice(0, 3).forEach(item => {
+        if (!item || typeof item !== "object") return;
+        const name = String(item.name || "").trim().slice(0, 32);
+        const settings = item.settings && typeof item.settings === "object" && !Array.isArray(item.settings)
+            ? item.settings
+            : null;
+        if (name && settings) clean.push({ name, settings });
+    });
+    return clean;
+}
+window.parseMyRecapPresets = parseMyRecapPresets;
+
+function serializeMyRecapPresets() {
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
+    try {
+        return JSON.stringify(list.slice(0, 3));
+    } catch (e) {
+        return "[]";
+    }
+}
+window.serializeMyRecapPresets = serializeMyRecapPresets;
+
+function renderMyRecapPresets() {
+    const isVip = Boolean(state.user && state.user.is_vip);
+    const badge = document.getElementById("recap-my-presets-vip-badge");
+    if (badge) badge.classList.toggle("hidden", isVip);
+
+    const listEl = document.getElementById("recap-my-presets-list");
+    if (!listEl) return;
+
+    const presets = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
+    if (!presets.length) {
+        const emptyText = typeof t === "function" ? t("recap_my_preset_empty") : "No saved presets yet";
+        listEl.innerHTML = `<div class="vcp-my-preset-empty">${escapeHtml(emptyText)}</div>`;
+        return;
+    }
+
+    listEl.innerHTML = presets.map((p, idx) => {
+        const metaParts = [
+            p.settings && p.settings.recapRatio ? p.settings.recapRatio : "9:16",
+            p.settings && p.settings.recapSubStyle ? p.settings.recapSubStyle : "yellow",
+        ];
+        const applyLabel = typeof t === "function" ? t("recap_my_preset_apply") : "Apply";
+        const delLabel = typeof t === "function" ? t("recap_my_preset_delete") : "Delete";
+        return `
+            <div class="vcp-my-preset-item">
+                <button type="button" class="vcp-my-preset-apply" onclick="applyMyRecapPreset(${idx})" title="${escapeHtml(applyLabel)}">
+                    <span class="vcp-my-preset-name">${escapeHtml(p.name)}</span>
+                    <span class="vcp-my-preset-meta">${escapeHtml(metaParts.join(" · "))}</span>
+                </button>
+                <button type="button" class="vcp-my-preset-del" onclick="deleteMyRecapPreset(${idx})" aria-label="${escapeHtml(delLabel)} ${escapeHtml(p.name)}" title="${escapeHtml(delLabel)}">✕</button>
+            </div>
+        `;
+    }).join("");
+}
+window.renderMyRecapPresets = renderMyRecapPresets;
+
+function saveCurrentAsMyRecapPreset() {
+    if (typeof haptic === "function") haptic("light");
+    const isVip = Boolean(state.user && state.user.is_vip);
+    if (!isVip) {
+        if (typeof showStudioToast === "function" && typeof t === "function") {
+            showStudioToast(t("recap_my_preset_vip_only"), "warning");
+        }
+        return;
+    }
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.slice() : [];
+    if (list.length >= 3) {
+        if (typeof showStudioToast === "function" && typeof t === "function") {
+            showStudioToast(t("recap_my_preset_max_toast"), "warning");
+        }
+        return;
+    }
+    const input = document.getElementById("input-my-preset-name");
+    const rawName = input ? input.value.trim() : "";
+    const defTpl = (typeof t === "function" && t("recap_my_preset_default_name")) || "My Preset {n}";
+    const name = (rawName || defTpl.replace("{n}", String(list.length + 1))).slice(0, 32);
+    list.push({ name, settings: extractPortablePresetSettings() });
+    if (JSON.stringify(list).length > 3900) {
+        if (typeof showStudioToast === "function" && typeof t === "function") {
+            showStudioToast(t("recap_my_preset_too_large"), "warning");
+        }
+        return;
+    }
+    state.recapCustomPresets = list;
+    if (input) input.value = "";
+    renderMyRecapPresets();
+    if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        showStudioToast(t("recap_my_preset_saved_toast"), "success");
+    }
+}
+window.saveCurrentAsMyRecapPreset = saveCurrentAsMyRecapPreset;
+
+function applyMyRecapPreset(idx) {
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
+    const item = list[idx];
+    if (!item || !item.settings) return;
+    if (typeof haptic === "function") haptic("medium");
+    applyRecapPresetObject(item.settings);
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        showStudioToast(t("recap_my_preset_applied_toast"), "success");
+    }
+}
+window.applyMyRecapPreset = applyMyRecapPreset;
+
+function deleteMyRecapPreset(idx) {
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.slice() : [];
+    if (idx < 0 || idx >= list.length) return;
+    if (typeof haptic === "function") haptic("light");
+    list.splice(idx, 1);
+    state.recapCustomPresets = list;
+    renderMyRecapPresets();
+    if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        showStudioToast(t("recap_my_preset_deleted_toast"), "info");
+    }
+}
+window.deleteMyRecapPreset = deleteMyRecapPreset;
+
+function syncRecapSubStyleCards() {
+    const sel = document.getElementById("sub-style-picker");
+    const cur = state.recapSubStyle || (sel ? sel.value : "yellow") || "yellow";
+    document.querySelectorAll("#sub-style-cards-grid [data-style-card]").forEach(btn => {
+        const match = btn.getAttribute("data-style-card") === cur;
+        btn.classList.toggle("active", match);
+        btn.setAttribute("aria-pressed", match ? "true" : "false");
+    });
+}
+window.syncRecapSubStyleCards = syncRecapSubStyleCards;
+
+function selectRecapSubStyleCard(styleKey) {
+    if (typeof haptic === "function") haptic("light");
+    const sel = document.getElementById("sub-style-picker");
+    if (sel) {
+        sel.value = styleKey;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+        state.recapSubStyle = styleKey;
+        syncRecapSubStyleCards();
+    }
+    syncRecapMasterPresetActive();
+}
+window.selectRecapSubStyleCard = selectRecapSubStyleCard;
+
+function toggleRecapSubL2Detail(forceOpen) {
+    if (typeof haptic === "function") haptic("light");
+    const body = document.getElementById("recap-sub-l2-body");
+    const btn = document.getElementById("btn-toggle-sub-l2-detail");
+    const chev = document.getElementById("sub-l2-chevron");
+    if (!body) return;
+    const isOpen = typeof forceOpen === "boolean" ? forceOpen : body.classList.contains("hidden");
+    body.classList.toggle("hidden", !isOpen);
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (chev) chev.textContent = isOpen ? "▲" : "▼";
+    if (isOpen && typeof moveSegPills === "function") {
+        requestAnimationFrame(() => { try { moveSegPills(); } catch (e) {} });
+    }
+}
+window.toggleRecapSubL2Detail = toggleRecapSubL2Detail;
+
+function toggleRecapBlurL2Detail(forceOpen) {
+    if (typeof haptic === "function") haptic("light");
+    const body = document.getElementById("recap-blur-l2-body");
+    const btn = document.getElementById("btn-toggle-blur-l2-detail");
+    const chev = document.getElementById("blur-l2-chevron");
+    if (!body) return;
+    const isOpen = typeof forceOpen === "boolean" ? forceOpen : body.classList.contains("hidden");
+    body.classList.toggle("hidden", !isOpen);
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (chev) chev.textContent = isOpen ? "▲" : "▼";
+}
+window.toggleRecapBlurL2Detail = toggleRecapBlurL2Detail;

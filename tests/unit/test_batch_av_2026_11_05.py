@@ -246,41 +246,40 @@ def test_av_step2_visible_vs_detail_split():
     step2 = _step_slice(2)
     fine_at = step2.index('id="recap-fine-body"')
     visible, detail = step2[:fine_at], step2[fine_at:]
-    # Visible: stage, aspect/fill dock, ONE consolidated seek cluster,
-    # the frequent blur gate.
-    for marker in ('id="recap-mockup-wrap"', 'id="recap-preview-ratio-group"',
-                   'id="tb-panel-seek"', 'id="slider-canvas-seek"',
-                   'id="btn-seek-prev-5"', 'id="btn-seek-next-5"',
-                   'class="seek-presets-pills"', 'id="btn-toggle-blur"'):
+    # Phase 4 Split-Screen 5-Tab Editor:
+    # Visible before fine-body: sticky preview stage + seek bar + corner reset,
+    # 5-category segmented tabs, Master Presets, and Category 2 Frame/Crop group.
+    for marker in ('id="recap-step2-sticky-preview"', 'id="recap-mockup-wrap"',
+                   'id="btn-preview-corner-reset"', 'id="tb-panel-seek"',
+                   'id="slider-canvas-seek"', 'id="btn-seek-prev-5"',
+                   'id="btn-seek-next-5"', 'class="seek-presets-pills"',
+                   'id="recap-step2-cat-tabs"', 'id="recap-cat-preset"',
+                   'id="recap-preview-ratio-group"', 'id="recap-crop-presets-toolbar"',
+                   'id="btn-sync-crop"', 'id="slider-crop-top"'):
         assert marker in visible, marker
-    # Detail: the unified subtitle group (toggle, style, lines, size,
-    # font, position sliders together — never split across groups).
+    # Detail (#recap-fine-body): Subtitle group (all subtitle controls together).
     sub = detail[detail.index('id="recap-subtitle-group"'):detail.index('id="recap-blur-group"')]
-    for marker in ('id="btn-toggle-subs"', 'id="sub-style-picker"',
-                   'id="sub-lines-picker-toolbar"', 'id="slider-font-size"',
-                   'id="recap-sub-font-picker"', 'id="slider-sub-y"',
-                   'id="slider-sub-x"', 'id="slider-sub-w"'):
+    for marker in ('id="btn-toggle-subs"', 'id="sub-style-cards-grid"',
+                   'id="sub-style-picker"', 'id="sub-lines-picker-toolbar"',
+                   'id="slider-font-size"', 'id="recap-sub-font-picker"',
+                   'id="slider-sub-y"', 'id="slider-sub-x"', 'id="slider-sub-w"'):
         assert marker in sub, marker
-    # Blur-box group separate from the subtitle group.
-    blur = detail[detail.index('id="recap-blur-group"'):]
-    for marker in ('id="slider-blur-y"', 'id="slider-blur-h"', 'id="slider-blur-x"',
-                   'id="slider-blur-w"', 'id="slider-blur-strength"'):
+    # Blur-box group separate from subtitle group (now holds Category 4 toggle + sliders).
+    blur = detail[detail.index('id="recap-blur-group"'):detail.index('id="recap-logo-group"')]
+    for marker in ('id="btn-toggle-blur"', 'id="slider-blur-y"', 'id="slider-blur-h"',
+                   'id="slider-blur-x"', 'id="slider-blur-w"', 'id="slider-blur-strength"'):
         assert marker in blur, marker
     assert 'id="slider-sub-y"' not in blur
     # Batch DD: there is no title group in the detail area at all.
     for marker in ('id="recap-title-toggle"', 'id="recap-title-text"',
                    'id="slider-title-x"', 'id="slider-title-y"'):
         assert marker not in detail, marker
-    # Picture/transform group: mirror, zoom, framing presets, custom crop.
-    for marker in ('id="btn-toggle-mirror"', 'id="recap-zoom-picker"',
-                   'id="recap-crop-presets-toolbar"', 'id="btn-sync-crop"',
-                   'id="slider-crop-top"'):
-        assert marker in detail, marker
-    # Logo group.
+    # Category 5 Protection & Logo groups.
     for marker in ('id="btn-toggle-logo"', 'id="recap-logo-pos-picker"',
-                   'id="recap-logo-manager"'):
+                   'id="recap-logo-manager"', 'id="btn-toggle-mirror"',
+                   'id="recap-zoom-picker"'):
         assert marker in detail, marker
-    # Reset Layout closes the detail panel.
+    # Reset Layout remains available.
     assert 'id="btn-reset-canvas-layout"' in detail
 
 

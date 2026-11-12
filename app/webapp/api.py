@@ -4194,6 +4194,7 @@ USER_PREF_STRINGS: Dict[str, int] = {
     # title feature — legacy stored values are dropped on read.)
     "recapTextColor": 7, "recapOutlineColor": 7, "recapBgColor": 7,
     "recapBlurBoxesJson": 2000, "recapSubFontCustomId": 80,
+    "recap_presets": 4000,
 }
 USER_PREF_FLOATS: Dict[str, tuple] = {
     "recapZoom": (1.0, 1.2),
@@ -4253,6 +4254,7 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapZoom": 1.0,
     "recapVoice": "komin",
     "recapGeminiVoice": "",
+    "recap_presets": "",
 }
 
 
@@ -4268,6 +4270,12 @@ def _sanitize_user_prefs(raw) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         return out
     raw = dict(raw)
+    if isinstance(raw.get("recap_presets"), list):
+        valid_presets = [
+            p for p in raw["recap_presets"][:3]
+            if isinstance(p, dict) and isinstance(p.get("name"), str) and isinstance(p.get("settings"), dict)
+        ]
+        raw["recap_presets"] = json.dumps(valid_presets, ensure_ascii=False)
     _legacy_fonts = {"default": "padauk", "serif": "noto_serif"}
     if raw.get("recapSubFont") in _legacy_fonts:
         raw["recapSubFont"] = _legacy_fonts[raw["recapSubFont"]]

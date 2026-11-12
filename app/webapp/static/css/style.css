@@ -5866,5 +5866,304 @@ input[type="range"]::-moz-range-thumb,
     margin-inline-start: 4px;
 }
 
+/* ── Phase 4: Recap Step 2 Split-Screen 5-Tab Editor ────────────────── */
+.vcp-step2-sticky-preview {
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    padding: var(--vcp-sp-2) var(--vcp-sp-3);
+    border-radius: var(--vcp-radius-lg);
+    background: rgba(242, 247, 255, 0.90);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--vcp-flat-glass-border);
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+    margin-bottom: var(--vcp-sp-2);
+}
+body.lite .vcp-step2-sticky-preview {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(244, 248, 255, 0.98);
+}
+
+.vcp-preview-stage-bar {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--vcp-sp-2);
+}
+.vcp-preview-corner-reset {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 6;
+    min-height: var(--vcp-touch-min);
+    min-width: var(--vcp-touch-min);
+    padding: 6px 12px;
+    border-radius: var(--vcp-radius-pill);
+    border: 1px solid var(--vcp-primary-border);
+    background: rgba(255, 255, 255, 0.90);
+    color: var(--vcp-text-primary);
+    font-family: inherit;
+    font-size: var(--vcp-fs-helper);
+    font-weight: 700;
+    line-height: 1.35;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.10);
+}
+.vcp-preview-corner-reset:active { transform: scale(0.97); }
+
+/* 5-Category Segmented Tab Bar */
+.vcp-step2-cat-tabs {
+    flex-wrap: wrap;
+    gap: var(--vcp-sp-1);
+    overflow-x: visible;
+}
+.vcp-step2-cat-tabs .vcp-seg-btn {
+    flex: 1 1 auto;
+    min-width: max-content;
+    min-height: var(--vcp-touch-min);
+    padding: 8px 10px;
+    border: none;
+    border-radius: var(--vcp-radius-md);
+    background: transparent;
+    color: var(--vcp-text-secondary);
+    font-family: inherit;
+    font-size: var(--vcp-fs-body-sm);
+    font-weight: 700;
+    line-height: 1.45;
+    letter-spacing: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease, transform 0.1s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.vcp-step2-cat-tabs .vcp-seg-btn:active { transform: scale(0.97); }
+.vcp-step2-cat-tabs .vcp-seg-btn.active,
+.vcp-step2-cat-tabs .vcp-seg-btn[aria-selected="true"] {
+    background: linear-gradient(135deg, #0a84ff, #38bdf8);
+    color: #ffffff;
+    box-shadow: 0 3px 10px rgba(10, 132, 255, 0.28);
+}
+
+.recap-fine-header.vcp-tab-mode-hidden {
+    display: none;
+}
+
+/* Category 1: Master Presets (2-column flat glass cards) */
+.vcp-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--vcp-sp-2);
+}
+.vcp-preset-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    min-height: 86px;
+    padding: var(--vcp-sp-3);
+    border-radius: var(--vcp-radius-md);
+    border: 1px solid var(--vcp-flat-glass-border);
+    background: var(--vcp-flat-glass-bg);
+    color: var(--vcp-text-primary);
+    text-align: left;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.vcp-preset-card:active { transform: scale(0.98); }
+.vcp-preset-card.active {
+    border-color: var(--vcp-primary);
+    background: rgba(10, 132, 255, 0.12);
+    box-shadow: 0 0 0 1px var(--vcp-primary-border);
+}
+.vcp-preset-icon { font-size: 18px; line-height: 1.2; }
+.vcp-preset-name {
+    font-size: var(--vcp-fs-body-sm);
+    font-weight: 700;
+    line-height: 1.45;
+    color: var(--vcp-text-primary);
+}
+.vcp-preset-desc {
+    font-size: var(--vcp-fs-helper);
+    line-height: 1.5;
+    color: var(--vcp-text-secondary);
+}
+
+/* My Presets (VIP, max 3) */
+.vcp-my-presets-box {
+    padding: var(--vcp-sp-3);
+    border-radius: var(--vcp-radius-md);
+    border: 1px solid var(--vcp-flat-glass-border);
+    background: var(--vcp-flat-glass-bg);
+}
+.vcp-my-preset-save-row {
+    display: flex;
+    align-items: center;
+    gap: var(--vcp-sp-2);
+}
+.vcp-my-preset-save-row .vcp-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--vcp-touch-min);
+    font-size: var(--vcp-fs-input);
+}
+.vcp-my-preset-save-row .vcp-btn {
+    min-height: var(--vcp-touch-min);
+    white-space: nowrap;
+}
+.vcp-my-presets-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--vcp-sp-2);
+}
+.vcp-my-preset-empty {
+    font-size: var(--vcp-fs-helper);
+    color: var(--vcp-text-muted);
+    line-height: 1.5;
+}
+.vcp-my-preset-item {
+    display: flex;
+    align-items: stretch;
+    gap: var(--vcp-sp-2);
+}
+.vcp-my-preset-apply {
+    flex: 1 1 auto;
+    min-height: var(--vcp-touch-min);
+    padding: 8px 12px;
+    border-radius: var(--vcp-radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--vcp-flat-glass-inset);
+    color: var(--vcp-text-primary);
+    text-align: left;
+    font-family: inherit;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    cursor: pointer;
+}
+.vcp-my-preset-name {
+    font-size: var(--vcp-fs-body-sm);
+    font-weight: 700;
+    line-height: 1.4;
+}
+.vcp-my-preset-meta {
+    font-size: var(--vcp-fs-badge);
+    color: var(--vcp-text-muted);
+}
+.vcp-my-preset-del {
+    min-width: var(--vcp-touch-min);
+    min-height: var(--vcp-touch-min);
+    border-radius: var(--vcp-radius-sm);
+    border: 1px solid var(--vcp-danger-border);
+    background: var(--vcp-danger-soft);
+    color: var(--vcp-danger);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+/* Category 3: 10 Visual Subtitle Style Sample Cards */
+.vcp-sub-style-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--vcp-sp-2);
+}
+.vcp-sub-style-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-height: 68px;
+    padding: 8px;
+    border-radius: var(--vcp-radius-md);
+    border: 1px solid var(--vcp-flat-glass-border);
+    background: var(--vcp-flat-glass-bg);
+    color: var(--vcp-text-primary);
+    text-align: center;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.vcp-sub-style-card.active {
+    border-color: var(--vcp-primary);
+    background: rgba(10, 132, 255, 0.10);
+    box-shadow: 0 0 0 1px var(--vcp-primary-border);
+}
+.vcp-sub-sample {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: #141b29;
+    font-size: var(--vcp-fs-body-sm);
+    font-weight: 700;
+    line-height: 1.4;
+}
+.vcp-sub-sample.sample-yellow {
+    color: #ffe033;
+    text-shadow: 0 1px 2px #000000, 0 0 3px #000000;
+}
+.vcp-sub-sample.sample-white {
+    color: #ffffff;
+    text-shadow: 0 1px 2px #000000, 0 0 3px #000000;
+}
+.vcp-sub-sample.sample-boxed {
+    color: #ffffff;
+    background: #0d111a;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+}
+.vcp-sub-sample.sample-neon {
+    color: #38f3ff;
+    text-shadow: 0 0 6px rgba(56, 243, 255, 0.75), 0 1px 2px #000000;
+}
+.vcp-sub-sample.sample-band {
+    color: #ffffff;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.96));
+    border-top: 2px solid #ffe033;
+    border-bottom: 2px solid #ffe033;
+}
+.vcp-sub-sample.sample-heavy {
+    color: #ffffff;
+    background: #000000;
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.16);
+}
+.vcp-sub-sample.sample-soft {
+    color: #f8fafc;
+    background: rgba(15, 23, 42, 0.65);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+.vcp-sub-sample.sample-rose {
+    color: #ff8ec7;
+    text-shadow: 0 1px 2px #000000, 0 0 4px rgba(255, 105, 180, 0.45);
+}
+.vcp-sub-sample.sample-orange {
+    color: #ff9c3b;
+    text-shadow: 0 1px 2px #000000, 0 0 4px rgba(255, 140, 0, 0.4);
+}
+.vcp-sub-sample.sample-mint {
+    color: #5ef2b8;
+    text-shadow: 0 1px 2px #000000, 0 0 4px rgba(94, 242, 184, 0.4);
+}
+.vcp-sub-card-name {
+    font-size: var(--vcp-fs-helper);
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--vcp-text-primary);
+}
+
+
 
 

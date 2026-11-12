@@ -914,149 +914,72 @@
         </span>
     </div>
     <div class="recap-step-body" id="recap-step-2-body">
-        <span class="hint-tag hidden" id="preview-hint-tag" data-i18n="preview_hint">Slider များကို ရွှေ့၍ နေရာညှိပါ</span>
-        <div class="preview-empty-state mt-2" id="recap-preview-empty">
-            <div class="preview-empty-inner" id="recap-preview-empty-inner">
-                <span class="preview-empty-icon">🎬</span>
-                <span class="preview-empty-title" data-i18n="recap_preview_empty_title">အရင် ဗီဒီယို ထည့်ပေးပါ</span>
-                <span class="preview-empty-desc" data-i18n="recap_preview_empty_desc">အဆင့် ၁ မှာ Video Link ထည့်ပါ (သို့) ဖိုင် တင်ပါ — ဗီဒီယို အဆင်သင့် ဖြစ်တာနဲ့ စာတန်း နဲ့ Blur နေရာ ချိန်ညှိဖို့ ဒီနေရာမှာ ပေါ်လာပါမယ်။</span>
+        <div class="vcp-step2-sticky-preview" id="recap-step2-sticky-preview">
+            <div class="vcp-preview-stage-bar">
+                <span class="hint-tag hidden" id="preview-hint-tag" data-i18n="preview_hint">Slider များကို ရွှေ့၍ နေရာညှိပါ</span>
+                <button type="button" class="vcp-preview-corner-reset" id="btn-preview-corner-reset" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title">
+                    <span>🔄</span>
+                    <span data-i18n="btn_reset_layout_short">Reset</span>
+                </button>
             </div>
-            <div class="preview-empty-inner hidden" id="recap-preview-loading-inner">
-                <span class="preview-empty-icon spinner">⏳</span>
-                <span class="preview-empty-title" data-i18n="recap_preview_loading">ဗီဒီယို စစ်ဆေးနေသည်…</span>
-                <span class="preview-progress-shimmer" aria-hidden="true"></span>
-                <span class="preview-empty-desc" data-i18n="recap_preview_unverified_hint">Link ကို စစ်ဆေး၍ မရသေးပါက အချက်အလက် အတည်မပြုရသေးဘဲ ဆက်လုပ်သွားပါမယ် — ဖိုင်တိုက်ရိုက် တင်တာက ပိုသေချာပါတယ်</span>
+            <div class="preview-empty-state mt-2" id="recap-preview-empty">
+                <div class="preview-empty-inner" id="recap-preview-empty-inner">
+                    <span class="preview-empty-icon">🎬</span>
+                    <span class="preview-empty-title" data-i18n="recap_preview_empty_title">အရင် ဗီဒီယို ထည့်ပေးပါ</span>
+                    <span class="preview-empty-desc" data-i18n="recap_preview_empty_desc">အဆင့် ၁ မှာ Video Link ထည့်ပါ (သို့) ဖိုင် တင်ပါ — ဗီဒီယို အဆင်သင့် ဖြစ်တာနဲ့ စာတန်း နဲ့ Blur နေရာ ချိန်ညှိဖို့ ဒီနေရာမှာ ပေါ်လာပါမယ်။</span>
+                </div>
+                <div class="preview-empty-inner hidden" id="recap-preview-loading-inner">
+                    <span class="preview-empty-icon spinner">⏳</span>
+                    <span class="preview-empty-title" data-i18n="recap_preview_loading">ဗီဒီယို စစ်ဆေးနေသည်…</span>
+                    <span class="preview-progress-shimmer" aria-hidden="true"></span>
+                    <span class="preview-empty-desc" data-i18n="recap_preview_unverified_hint">Link ကို စစ်ဆေး၍ မရသေးပါက အချက်အလက် အတည်မပြုရသေးဘဲ ဆက်လုပ်သွားပါမယ် — ဖိုင်တိုက်ရိုက် တင်တာက ပိုသေချာပါတယ်</span>
+                </div>
             </div>
-        </div>
-        <div class="mockup-screen-container mt-2 hidden" id="recap-mockup-wrap">
-            <div class="mockup-screen ratio-9-16" id="recap-mockup-frame">
-                <div class="video-bg-placeholder mirrored" id="video-bg-canvas">
-                    <!-- Blurred source backdrop for the letterbox area in
-                         video mode (mirrors the real render's blurred fill) -->
-                    <div class="video-backdrop-blur" id="video-backdrop-blur"></div>
-                    <!-- Inner Movie Visualizer with Crop guides -->
-                    <div class="mockup-inner-movie" id="mockup-inner-movie">
-                        <!-- Embedded HTML5 Video Player for Instant Frame Seeking -->
-                        <video id="canvas-video-player" playsinline muted loop class="canvas-video-player hidden"></video>
-                        <!-- Batch AK (preview unification): the
-                             ENGINE-composited preview frame (all 7
-                             subtitle styles, engine plate sizing,
-                             title badge) served by
-                             /recap/preview-composite. The CSS drag
-                             boxes below are placement handles over
-                             it, not renderers. -->
-                        <img id="canvas-composite-img" class="canvas-composite-img hidden" alt="">
+            <div class="mockup-screen-container mt-2 hidden" id="recap-mockup-wrap">
+                <div class="mockup-screen ratio-9-16" id="recap-mockup-frame">
+                    <div class="video-bg-placeholder mirrored" id="video-bg-canvas">
+                        <div class="video-backdrop-blur" id="video-backdrop-blur"></div>
+                        <div class="mockup-inner-movie" id="mockup-inner-movie">
+                            <video id="canvas-video-player" playsinline muted loop class="canvas-video-player hidden"></video>
+                            <img id="canvas-composite-img" class="canvas-composite-img hidden" alt="">
 
-                        <div class="crop-shade top" id="crop-shade-top"></div>
-                        <div class="crop-shade bottom" id="crop-shade-bottom"></div>
-                        <div class="crop-shade left" id="crop-shade-left"></div>
-                        <div class="crop-shade right" id="crop-shade-right"></div>
-                    </div>
-                    <!-- Designed no-thumbnail surface (shown by
-                         updateCanvasMockupVisuals only when there is
-                         no video/thumbnail media at all). -->
-                    <div class="canvas-no-thumb hidden" id="canvas-no-thumb">
-                        <span class="canvas-no-thumb-icon">🎬</span>
-                        <span class="canvas-no-thumb-text" data-i18n="recap_canvas_no_thumb">နမူနာပုံ မရသေးပါ — စာတန်းနှင့် Blur နေရာကို ကြိုချိန်ညှိနိုင်ပါသည်</span>
-                    </div>
-                    <!-- Batch AM (M3/M4 residuals): an explicit
-                         preparing state while the FIRST engine
-                         composite is in flight (toggled by
-                         refreshRecapCompositePreview), and a
-                         label for the raw source-video surface
-                         (toggled by updateCanvasMockupVisuals)
-                         so its native black letterbox is never
-                         read as the styled preview. -->
-                    <div class="canvas-preview-loading hidden" id="canvas-preview-loading">
-                        <span class="canvas-preview-loading-text" data-i18n="recap_preview_preparing">⏳ နမူနာ ပြင်ဆင်နေသည်…</span>
-                    </div>
-                    <div class="canvas-source-label hidden" id="canvas-source-label" data-i18n="recap_canvas_source_label">မူရင်း ဗီဒီယို</div>
-                    <!-- Demo overlays live OUTSIDE the mirrored movie layer so
-                         their text always renders correctly. -->
-                    <!-- Batch AK (P3/P4): the fake demo subtitle line,
-                         the duplicate "Live Preview" / "Live Canvas"
-                         labels and the "⭐ LOGO" text placeholder are
-                         gone — the composited frame is the preview,
-                         and the logo mark only appears when a real
-                         logo is set (app.js fills #preview-logo). -->
-                    <div class="movie-center-badge" id="mockup-fill-badge">
-                        <span class="badge-play">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.14v13.72c0 .8.87 1.3 1.56.88l10.5-6.86a1.03 1.03 0 0 0 0-1.76L9.56 4.26A1.03 1.03 0 0 0 8 5.14z"/></svg>
-                        </span>
-                    </div>
-                    <div class="video-top-overlay">
-                        <div class="preview-logo-watermark top-right hidden" id="preview-logo"></div>
-                    </div>
-                    <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 85%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
-                        <div class="box-resize-handle top"></div>
-                        <div class="box-resize-handle left"></div>
-                        <span class="drag-grip-icon">🌫️ ⠿</span>
-                        <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
-                        <div class="box-resize-handle right"></div>
-                        <div class="box-resize-handle bottom"></div>
-                    </div>
-                    <!-- Batch AK: no separate plate box — the
-                         composited frame carries the real plate.
-                         The sub box is now an outline-only drag
-                         handle over that frame. -->
-                    <div class="preview-sub-box draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
-                        <span class="drag-grip-icon sub-grip">📝 ⠿</span>
+                            <div class="crop-shade top" id="crop-shade-top"></div>
+                            <div class="crop-shade bottom" id="crop-shade-bottom"></div>
+                            <div class="crop-shade left" id="crop-shade-left"></div>
+                            <div class="crop-shade right" id="crop-shade-right"></div>
+                        </div>
+                        <div class="canvas-no-thumb hidden" id="canvas-no-thumb">
+                            <span class="canvas-no-thumb-icon">🎬</span>
+                            <span class="canvas-no-thumb-text" data-i18n="recap_canvas_no_thumb">နမူနာပုံ မရသေးပါ — စာတန်းနှင့် Blur နေရာကို ကြိုချိန်ညှိနိုင်ပါသည်</span>
+                        </div>
+                        <div class="canvas-preview-loading hidden" id="canvas-preview-loading">
+                            <span class="canvas-preview-loading-text" data-i18n="recap_preview_preparing">⏳ နမူနာ ပြင်ဆင်နေသည်…</span>
+                        </div>
+                        <div class="canvas-source-label hidden" id="canvas-source-label" data-i18n="recap_canvas_source_label">မူရင်း ဗီဒီယို</div>
+                        <div class="movie-center-badge" id="mockup-fill-badge">
+                            <span class="badge-play">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.14v13.72c0 .8.87 1.3 1.56.88l10.5-6.86a1.03 1.03 0 0 0 0-1.76L9.56 4.26A1.03 1.03 0 0 0 8 5.14z"/></svg>
+                            </span>
+                        </div>
+                        <div class="video-top-overlay">
+                            <div class="preview-logo-watermark top-right hidden" id="preview-logo"></div>
+                        </div>
+                        <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 85%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
+                            <div class="box-resize-handle top"></div>
+                            <div class="box-resize-handle left"></div>
+                            <span class="drag-grip-icon">🌫️ ⠿</span>
+                            <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
+                            <div class="box-resize-handle right"></div>
+                            <div class="box-resize-handle bottom"></div>
+                        </div>
+                        <div class="preview-sub-box draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
+                            <span class="drag-grip-icon sub-grip">📝 ⠿</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
-        <div class="recap-dock-section hidden dd-acc-group" id="recap-preview-ratio-group" data-acc-title-key="recap_ratio_label">
-            <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား:</div>
-            <div class="ratio-pills-grid" id="recap-ratio-picker">
-                <!-- Batch AS (AS-1): each card stacks its
-                     three lines — name, usage, dimensions —
-                     instead of squeezing them onto shared
-                     lines inside a pill. -->
-                <button class="ratio-btn active" data-ratio="9:16">
-                    <span class="ratio-icon">📱</span>
-                    <span class="ratio-name" data-i18n="ratio_9_16">9:16</span>
-                    <span class="ratio-sub" data-i18n="ratio_9_16_sub">TikTok / Reels / Shorts</span>
-                    <span class="ratio-dims">1080×1920</span>
-                </button>
-                <button class="ratio-btn" data-ratio="16:9">
-                    <span class="ratio-icon">🖥️</span>
-                    <span class="ratio-name" data-i18n="ratio_16_9">16:9</span>
-                    <span class="ratio-sub" data-i18n="ratio_16_9_sub">YouTube / အလျားလိုက်</span>
-                    <span class="ratio-dims">1920×1080</span>
-                </button>
-                <button class="ratio-btn" data-ratio="1:1">
-                    <span class="ratio-icon">⏹️</span>
-                    <span class="ratio-name" data-i18n="ratio_1_1">1:1</span>
-                    <span class="ratio-sub" data-i18n="ratio_1_1_sub">Square</span>
-                    <span class="ratio-dims">1080×1080</span>
-                </button>
-                <button class="ratio-btn" data-ratio="Original">
-                    <span class="ratio-icon">🎞️</span>
-                    <span class="ratio-name" data-i18n="ratio_original">Original</span>
-                    <span class="ratio-sub" data-i18n="ratio_original_sub">မူရင်းအချိုး</span>
-                    <span class="ratio-dims" data-i18n="ratio_original_dims">အချိုးသာ · native size</span>
-                </button>
-            </div>
 
-            <!-- Aspect Ratio Fill Mode -->
-            <div class="sub-specs-row mt-3">
-                <div class="spec-col span-all">
-                    <span class="spec-lbl" data-i18n="recap_fill_label">ဘောင်ဖြည့်ပုံ:</span>
-                    <div class="pill-group sm" id="recap-fill-picker">
-                        <button class="pill-btn active" data-fill="blur" data-i18n="fill_blur">🌫️ Blur Background (ဝါးဖြည့်)</button>
-                        <button class="pill-btn" data-fill="crop" data-i18n="fill_crop">✂️ Center Crop (အလယ်ဖြတ်)</button>
-                        <button class="pill-btn" data-fill="black" data-i18n="fill_black">⬛ Black Bars (ဘေးဘောင်မည်း)</button>
-                    </div>
-                    <!-- Batch AK (S4/S5/N5): one honest note
-                         under the fill picker — "the whole
-                         picture is kept" for Blur/Black, the
-                         cropped-away share for Center Crop,
-                         hidden when the fill cannot change
-                         anything. Text set by app.js. -->
-                    <div class="fill-note hidden" id="recap-fill-note"></div>
-                </div>
-            </div>
-        </div>
         <div class="recap-dock-section hidden" id="recap-preview-controls-group">
             <div class="canvas-compact-toolbar mt-2" id="canvas-compact-toolbar">
                 <div class="tb-tab-panel active" id="tb-panel-seek">
@@ -1080,14 +1003,161 @@
                         </div>
                     </div>
                 </div>
-                <div class="recap-frequent-settings mt-2" id="recap-frequent-settings">
-                    <div class="overlays-toggle-row">
-                        <button class="mini-toggle active" id="btn-toggle-blur">
-                            <span class="t-lbl" data-i18n="recap_blur_subs_label">🌫️ မူရင်းစာတန်း Blur:</span>
-                            <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
+
+                <!-- 5-Category Segmented Control Deck Tabs -->
+                <div class="vcp-segmented vcp-step2-cat-tabs mt-3" id="recap-step2-cat-tabs" role="tablist">
+                    <button type="button" class="vcp-seg-btn active" data-step2-cat="preset" onclick="switchRecapStep2Category('preset')" role="tab" aria-selected="true">
+                        <span data-i18n="recap_cat_preset">✨ Preset</span>
+                    </button>
+                    <button type="button" class="vcp-seg-btn" data-step2-cat="frame" onclick="switchRecapStep2Category('frame')" role="tab" aria-selected="false">
+                        <span data-i18n="recap_cat_frame">📐 Frame/Crop</span>
+                    </button>
+                    <button type="button" class="vcp-seg-btn" data-step2-cat="subtitle" onclick="switchRecapStep2Category('subtitle')" role="tab" aria-selected="false">
+                        <span data-i18n="recap_cat_subtitle">📝 Subtitle</span>
+                    </button>
+                    <button type="button" class="vcp-seg-btn" data-step2-cat="blur" onclick="switchRecapStep2Category('blur')" role="tab" aria-selected="false">
+                        <span data-i18n="recap_cat_blur">🌫️ Blur</span>
+                    </button>
+                    <button type="button" class="vcp-seg-btn" data-step2-cat="protection" onclick="switchRecapStep2Category('protection')" role="tab" aria-selected="false">
+                        <span data-i18n="recap_cat_protection">🛡️ Logo &amp; Protection</span>
+                    </button>
+                </div>
+
+                <!-- Category 1: Master Presets + Save as My Preset -->
+                <div class="vcp-step2-cat-panel mt-2" id="recap-cat-preset" data-step2-panel="preset">
+                    <div class="style-lbl mb-1" data-i18n="recap_master_presets_title">⚡ အသင့်သုံး Master Presets:</div>
+                    <div class="vcp-preset-grid" id="recap-master-presets-grid">
+                        <button type="button" class="vcp-preset-card active" data-master-preset="tiktok" onclick="applyRecapMasterPreset('tiktok')">
+                            <span class="vcp-preset-icon">📱</span>
+                            <span class="vcp-preset-name" data-i18n="preset_tiktok_name">TikTok / Reels 9:16</span>
+                            <span class="vcp-preset-desc" data-i18n="preset_tiktok_desc">9:16 Blur · Classic Gold · Standard</span>
+                        </button>
+                        <button type="button" class="vcp-preset-card" data-master-preset="fb_story" onclick="applyRecapMasterPreset('fb_story')">
+                            <span class="vcp-preset-icon">📲</span>
+                            <span class="vcp-preset-name" data-i18n="preset_fb_story_name">Facebook Story</span>
+                            <span class="vcp-preset-desc" data-i18n="preset_fb_story_desc">9:16 Crop · Dark Box · 2 Lines</span>
+                        </button>
+                        <button type="button" class="vcp-preset-card" data-master-preset="yt_16_9" onclick="applyRecapMasterPreset('yt_16_9')">
+                            <span class="vcp-preset-icon">🖥️</span>
+                            <span class="vcp-preset-name" data-i18n="preset_yt_16_9_name">YouTube Landscape 16:9</span>
+                            <span class="vcp-preset-desc" data-i18n="preset_yt_16_9_desc">16:9 Blur · Clean White · Standard</span>
+                        </button>
+                        <button type="button" class="vcp-preset-card" data-master-preset="strict_safe" onclick="applyRecapMasterPreset('strict_safe')">
+                            <span class="vcp-preset-icon">🛡️</span>
+                            <span class="vcp-preset-name" data-i18n="preset_strict_safe_name">Strict Safe</span>
+                            <span class="vcp-preset-desc" data-i18n="preset_strict_safe_desc">9:16 Blur · Band · Strong Protection</span>
                         </button>
                     </div>
+
+                    <div class="vcp-my-presets-box mt-3" id="recap-my-presets-section">
+                        <div class="card-header-row">
+                            <span class="style-lbl" data-i18n="recap_my_presets_title">💾 ကိုယ်ပိုင် Preset (အများဆုံး ၃ ခု):</span>
+                            <span class="vcp-badge vcp-badge-gold" id="recap-my-presets-vip-badge">👑 VIP</span>
+                        </div>
+                        <div class="vcp-my-preset-save-row mt-1">
+                            <input type="text" id="input-my-preset-name" class="vcp-input sm" maxlength="32" data-i18n-ph="recap_my_preset_ph" placeholder="Preset အမည် ရေးပါ (ဥပမာ - My TikTok)">
+                            <button type="button" class="vcp-btn vcp-btn-glass sm" id="btn-save-my-preset" onclick="saveCurrentAsMyRecapPreset()">
+                                <span data-i18n="btn_save_my_preset">💾 Save as My Preset</span>
+                            </button>
+                        </div>
+                        <div class="vcp-my-presets-list mt-2" id="recap-my-presets-list"></div>
+                    </div>
                 </div>
+
+                <!-- Category 2: Frame / Crop -->
+                <div class="recap-dock-section hidden dd-acc-group" id="recap-preview-ratio-group" data-acc-title-key="recap_ratio_label">
+                    <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား:</div>
+                    <div class="ratio-pills-grid" id="recap-ratio-picker">
+                        <button class="ratio-btn active" data-ratio="9:16">
+                            <span class="ratio-icon">📱</span>
+                            <span class="ratio-name" data-i18n="ratio_9_16">9:16</span>
+                            <span class="ratio-sub" data-i18n="ratio_9_16_sub">TikTok / Reels / Shorts</span>
+                            <span class="ratio-dims">1080×1920</span>
+                        </button>
+                        <button class="ratio-btn" data-ratio="16:9">
+                            <span class="ratio-icon">🖥️</span>
+                            <span class="ratio-name" data-i18n="ratio_16_9">16:9</span>
+                            <span class="ratio-sub" data-i18n="ratio_16_9_sub">YouTube / အလျားလိုက်</span>
+                            <span class="ratio-dims">1920×1080</span>
+                        </button>
+                        <button class="ratio-btn" data-ratio="1:1">
+                            <span class="ratio-icon">⏹️</span>
+                            <span class="ratio-name" data-i18n="ratio_1_1">1:1</span>
+                            <span class="ratio-sub" data-i18n="ratio_1_1_sub">Square</span>
+                            <span class="ratio-dims">1080×1080</span>
+                        </button>
+                        <button class="ratio-btn" data-ratio="Original">
+                            <span class="ratio-icon">🎞️</span>
+                            <span class="ratio-name" data-i18n="ratio_original">Original</span>
+                            <span class="ratio-sub" data-i18n="ratio_original_sub">မူရင်းအချိုး</span>
+                            <span class="ratio-dims" data-i18n="ratio_original_dims">အချိုးသာ · native size</span>
+                        </button>
+                    </div>
+
+                    <div class="sub-specs-row mt-3">
+                        <div class="spec-col span-all">
+                            <span class="spec-lbl" data-i18n="recap_fill_label">ဘောင်ဖြည့်ပုံ:</span>
+                            <div class="pill-group sm" id="recap-fill-picker">
+                                <button class="pill-btn active" data-fill="blur" data-i18n="fill_blur">🌫️ Blur Background (ဝါးဖြည့်)</button>
+                                <button class="pill-btn" data-fill="crop" data-i18n="fill_crop">✂️ Center Crop (အလယ်ဖြတ်)</button>
+                                <button class="pill-btn" data-fill="black" data-i18n="fill_black">⬛ Black Bars (ဘေးဘောင်မည်း)</button>
+                            </div>
+                            <div class="fill-note hidden" id="recap-fill-note"></div>
+                        </div>
+                    </div>
+
+                    <div class="style-selector-row mt-2">
+                        <span class="style-lbl" data-i18n="recap_crop_presets_label">ဘောင်ဖြတ်ခြင်း (Framing Crop Presets):</span>
+                        <div class="pill-group sm" id="recap-crop-presets-toolbar">
+                            <button class="pill-btn active" data-crop="full" data-i18n="crop_preset_full">📐 မူရင်း (0%)</button>
+                            <button class="pill-btn" data-crop="cinema" data-i18n="crop_preset_cinema">🎞️ CinemaScope (12%)</button>
+                            <button class="pill-btn" data-crop="side" data-i18n="crop_preset_side_toolbar">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
+                        </div>
+                    </div>
+                    <div class="card-header-row mt-3">
+                        <button type="button" class="recap-detail-toggle" id="btn-toggle-crop-detail" onclick="toggleRecapCropDetail()">
+                            <span data-i18n="recap_crop_label">ဘောင် စိတ်ကြိုက်ဖြတ်ခြင်း:</span>
+                            <span class="recap-detail-chevron" id="crop-detail-chevron">▼</span>
+                        </button>
+                        <button class="chip-toggle active" id="btn-sync-crop" title="အပေါ်နှင့်အောက် တပြိုင်နက်ညှိမည်" data-i18n-title="btn_sync_crop_title">
+                            <span class="chip-icon">🔗</span>
+                            <span class="chip-lbl" data-i18n="crop_sync_label">အပေါ်/အောက် တပြိုင်နက်</span>
+                        </button>
+                    </div>
+                    <div class="recap-detail-body hidden" id="recap-crop-detail">
+                        <div class="crop-sliders-grid mt-3">
+                            <div class="slider-group">
+                                <div class="slider-header">
+                                    <span data-i18n="crop_top_label">↕️ အပေါ်ဘောင် (Top):</span>
+                                    <span class="slider-val" id="val-crop-top">0%</span>
+                                </div>
+                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-top">
+                            </div>
+                            <div class="slider-group">
+                                <div class="slider-header">
+                                    <span data-i18n="crop_bottom_label">↕️ အောက်ဘောင် (Bottom):</span>
+                                    <span class="slider-val" id="val-crop-bottom">0%</span>
+                                </div>
+                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-bottom">
+                            </div>
+                            <div class="slider-group">
+                                <div class="slider-header">
+                                    <span data-i18n="crop_left_label">↔️ ဘယ်ဘက် (Left):</span>
+                                    <span class="slider-val" id="val-crop-left">0%</span>
+                                </div>
+                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-left">
+                            </div>
+                            <div class="slider-group">
+                                <div class="slider-header">
+                                    <span data-i18n="crop_right_label">↔️ ညာဘက် (Right):</span>
+                                    <span class="slider-val" id="val-crop-right">0%</span>
+                                </div>
+                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-right">
+                            </div>
+                        </div>
+                    </div><!-- /#recap-crop-detail -->
+                </div>
+
                 <div class="recap-fine mt-3">
                     <button type="button" class="recap-fine-header" id="btn-toggle-recap-fine" onclick="toggleRecapFineSettings()" aria-expanded="false">
                         <span class="recap-fine-title" data-i18n="recap_fine_title">အသေးစိတ် ပြင်ရန်</span>
@@ -1104,10 +1174,50 @@
                         </div>
                         <div class="style-selector-row">
                             <span class="style-lbl" data-i18n="sub_style_label">စာတန်း စတိုင်လ်:</span>
-                            <!-- Batch AZ-11: 7 styles (>5) become ONE compact
-                                 dropdown row; the select keeps the picker's id
-                                 and writes the same state.recapSubStyle. -->
-                            <select id="sub-style-picker" class="studio-select glass-dropdown" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
+                            <!-- Visual sample cards for all 10 subtitle presets (owner confirmed) -->
+                            <div class="vcp-sub-style-cards-grid mt-1" id="sub-style-cards-grid">
+                                <button type="button" class="vcp-sub-style-card active" data-style-card="yellow" onclick="selectRecapSubStyleCard('yellow')">
+                                    <span class="vcp-sub-sample sample-yellow">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="white" onclick="selectRecapSubStyleCard('white')">
+                                    <span class="vcp-sub-sample sample-white">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="boxed" onclick="selectRecapSubStyleCard('boxed')">
+                                    <span class="vcp-sub-sample sample-boxed">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="neon" onclick="selectRecapSubStyleCard('neon')">
+                                    <span class="vcp-sub-sample sample-neon">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="band" onclick="selectRecapSubStyleCard('band')">
+                                    <span class="vcp-sub-sample sample-band">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="recap_sub_band">⬛ Band (အပြည့်ပတ်)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="heavy" onclick="selectRecapSubStyleCard('heavy')">
+                                    <span class="vcp-sub-sample sample-heavy">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="recap_sub_heavy">🔲 Heavy (နောက်ခံထူ)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="soft" onclick="selectRecapSubStyleCard('soft')">
+                                    <span class="vcp-sub-sample sample-soft">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="recap_sub_soft">🌫️ Soft (နောက်ခံပါး)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="rose" onclick="selectRecapSubStyleCard('rose')">
+                                    <span class="vcp-sub-sample sample-rose">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_rose">🌸 Rose Pink (ပန်းရောင်)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="orange" onclick="selectRecapSubStyleCard('orange')">
+                                    <span class="vcp-sub-sample sample-orange">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_orange">🟠 Sunset Orange (လိမ္မော်ရောင်)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="mint" onclick="selectRecapSubStyleCard('mint')">
+                                    <span class="vcp-sub-sample sample-mint">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_mint">🟢 Mint Green (ပူစီနံစိမ်း)</span>
+                                </button>
+                            </div>
+                            <select id="sub-style-picker" class="studio-select glass-dropdown mt-2" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
                                 <option value="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</option>
                                 <option value="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</option>
                                 <option value="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</option>
@@ -1130,6 +1240,14 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="style-selector-row mt-2">
+                            <span class="style-lbl" data-i18n="recap_sub_pos_label">စာတန်း နေရာ:</span>
+                            <div class="pill-group sm" id="sub-pos-picker">
+                                <button type="button" class="pill-btn" data-pos-band="top" data-i18n="recap_sub_pos_top">အပေါ်</button>
+                                <button type="button" class="pill-btn" data-pos-band="center" data-i18n="recap_sub_pos_center">အလယ်</button>
+                                <button type="button" class="pill-btn active" data-pos-band="bottom" data-i18n="recap_sub_pos_bottom">အောက်</button>
+                            </div>
+                        </div>
                         <div class="slider-group mt-2">
                             <div class="slider-header">
                                 <span data-i18n="recap_sub_size_label">စာလုံးအရွယ် (Size):</span>
@@ -1146,7 +1264,7 @@
                                 <button type="button" class="pill-btn" data-font="noto_serif" data-i18n="recap_sub_font_noto_serif">Noto Serif</button>
                             </div>
                         </div>
-                    <div class="style-selector-row mt-2" id="recap-sub-font-custom-row">
+                        <div class="style-selector-row mt-2" id="recap-sub-font-custom-row">
                             <span class="style-lbl" data-i18n="recap_font_custom_label">🔤 ကိုယ်ပိုင် Font:</span>
                             <div class="logo-manager-controls">
                                 <label class="pill-btn" id="btn-sub-font-upload" for="input-sub-font-file"><span data-i18n="recap_font_upload_btn">Font တင်မည်</span></label>
@@ -1155,78 +1273,82 @@
                             </div>
                             <div class="logo-status" id="sub-font-custom-status"></div>
                         </div>
-                        <div class="recap-dd-style-custom mt-2" id="recap-style-custom-controls">
-                            <span class="style-lbl" data-i18n="recap_style_custom_label">🎨 စတိုင်လ် အသေးစိတ် ပြင်ရန်:</span>
-                            <div class="dd-color-row mt-2">
-                                <label class="dd-color-field"><span data-i18n="recap_text_color_label">စာသား အရောင်</span><input type="color" id="input-sub-text-color" value="#ffd94d"></label>
-                                <label class="dd-color-field"><span data-i18n="recap_outline_color_label">အနားသတ် အရောင်</span><input type="color" id="input-sub-outline-color" value="#000000"></label>
-                                <label class="dd-color-field"><span data-i18n="recap_bg_color_label">နောက်ခံ အရောင်</span><input type="color" id="input-sub-bg-color" value="#000000"></label>
-                            </div>
-                            <div class="slider-group mt-2">
-                                <div class="slider-header">
-                                    <span data-i18n="recap_outline_width_label">အနားသတ် အထူ:</span>
-                                    <span class="slider-val" id="val-outline-width">—</span>
+
+                        <!-- L2 Accordion: အရောင်၊ အရိပ်နှင့် နေရာ အသေးစိတ် -->
+                        <div class="vcp-accordion mt-3" id="recap-sub-l2-accordion">
+                            <button type="button" class="vcp-accordion-head" id="btn-toggle-sub-l2-detail" onclick="toggleRecapSubL2Detail()" aria-expanded="false">
+                                <span data-i18n="recap_sub_l2_title">🎨 အရောင်၊ အရိပ်နှင့် နေရာ အသေးစိတ်</span>
+                                <span class="vcp-accordion-chevron" id="sub-l2-chevron">▼</span>
+                            </button>
+                            <div class="vcp-accordion-body hidden" id="recap-sub-l2-body">
+                                <div class="recap-dd-style-custom mt-2" id="recap-style-custom-controls">
+                                    <span class="style-lbl" data-i18n="recap_style_custom_label">🎨 စတိုင်လ် အသေးစိတ် ပြင်ရန်:</span>
+                                    <div class="dd-color-row mt-2">
+                                        <label class="dd-color-field"><span data-i18n="recap_text_color_label">စာသား အရောင်</span><input type="color" id="input-sub-text-color" value="#ffd94d"></label>
+                                        <label class="dd-color-field"><span data-i18n="recap_outline_color_label">အနားသတ် အရောင်</span><input type="color" id="input-sub-outline-color" value="#000000"></label>
+                                        <label class="dd-color-field"><span data-i18n="recap_bg_color_label">နောက်ခံ အရောင်</span><input type="color" id="input-sub-bg-color" value="#000000"></label>
+                                    </div>
+                                    <div class="slider-group mt-2">
+                                        <div class="slider-header">
+                                            <span data-i18n="recap_outline_width_label">အနားသတ် အထူ:</span>
+                                            <span class="slider-val" id="val-outline-width">—</span>
+                                        </div>
+                                        <input type="range" min="0" max="40" step="1" value="18" class="studio-slider" id="slider-outline-width">
+                                    </div>
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="recap_bg_opacity_label">နောက်ခံ အပြည့် %:</span>
+                                            <span class="slider-val" id="val-bg-opacity">75%</span>
+                                        </div>
+                                        <input type="range" min="0" max="100" step="1" value="75" class="studio-slider" id="slider-bg-opacity">
+                                    </div>
+                                    <div class="overlays-toggle-row mt-2">
+                                        <button class="mini-toggle" id="btn-toggle-sub-shadow">
+                                            <span class="t-lbl" data-i18n="recap_shadow_label">🌑 အရိပ် (Shadow):</span>
+                                            <span class="t-val" data-i18n="toggle_off">ပိတ်</span>
+                                        </button>
+                                        <button class="mini-toggle active" id="btn-toggle-sub-bold">
+                                            <span class="t-lbl" data-i18n="recap_bold_label">🅱️ စာလုံးထူ (Bold):</span>
+                                            <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
+                                        </button>
+                                    </div>
                                 </div>
-                                <input type="range" min="0" max="40" step="1" value="18" class="studio-slider" id="slider-outline-width">
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="recap_bg_opacity_label">နောက်ခံ အပြည့် %:</span>
-                                    <span class="slider-val" id="val-bg-opacity">75%</span>
+                                <div class="editor-controls mt-2">
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_sub_y">📝 မြန်မာစာတန်း အောက်ခြေမှ အကွာအဝေး (ပုံအမြင့် %):</span>
+                                            <span class="slider-val" id="val-sub-y">5%</span>
+                                        </div>
+                                        <input type="range" min="0" max="60" value="5" class="studio-slider" id="slider-sub-y">
+                                    </div>
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_sub_x">📝 မြန်မာစာတန်း အနေအထား (Sub X):</span>
+                                            <span class="slider-val" id="val-sub-x">50%</span>
+                                        </div>
+                                        <input type="range" min="10" max="90" value="50" class="studio-slider" id="slider-sub-x">
+                                    </div>
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_sub_w">↔️ စာတန်း အနံ (Sub W):</span>
+                                            <span class="slider-val" id="val-sub-w">92%</span>
+                                        </div>
+                                        <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-sub-w">
+                                    </div>
                                 </div>
-                                <input type="range" min="0" max="100" step="1" value="75" class="studio-slider" id="slider-bg-opacity">
                             </div>
-                            <div class="overlays-toggle-row mt-2">
-                                <button class="mini-toggle" id="btn-toggle-sub-shadow">
-                                    <span class="t-lbl" data-i18n="recap_shadow_label">🌑 အရိပ် (Shadow):</span>
-                                    <span class="t-val" data-i18n="toggle_off">ပိတ်</span>
-                                </button>
-                                <button class="mini-toggle active" id="btn-toggle-sub-bold">
-                                    <span class="t-lbl" data-i18n="recap_bold_label">🅱️ စာလုံးထူ (Bold):</span>
+                        </div>
+                    </div>
+                    <div class="recap-detail-group dd-acc-group" id="recap-blur-group" data-acc-title-key="recap_blur_group_title">
+                        <div class="recap-detail-group-title" data-i18n="recap_blur_group_title">🌫️ Blur Box ဆက်တင်များ</div>
+                        <div class="recap-frequent-settings mt-2" id="recap-frequent-settings">
+                            <div class="overlays-toggle-row">
+                                <button class="mini-toggle active" id="btn-toggle-blur">
+                                    <span class="t-lbl" data-i18n="recap_blur_subs_label">🌫️ မူရင်းစာတန်း Blur:</span>
                                     <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
                                 </button>
                             </div>
                         </div>
-                        <div class="style-selector-row mt-2">
-                            <span class="style-lbl" data-i18n="recap_sub_pos_label">စာတန်း နေရာ:</span>
-                            <div class="pill-group sm" id="sub-pos-picker">
-                                <button type="button" class="pill-btn" data-pos-band="top" data-i18n="recap_sub_pos_top">အပေါ်</button>
-                                <button type="button" class="pill-btn" data-pos-band="center" data-i18n="recap_sub_pos_center">အလယ်</button>
-                                <button type="button" class="pill-btn active" data-pos-band="bottom" data-i18n="recap_sub_pos_bottom">အောက်</button>
-                            </div>
-                        </div>
-                    <div class="editor-controls mt-2">
-                        <div class="slider-group">
-                            <div class="slider-header">
-                                <span data-i18n="slider_sub_y">📝 မြန်မာစာတန်း အောက်ခြေမှ အကွာအဝေး (ပုံအမြင့် %):</span>
-                                <span class="slider-val" id="val-sub-y">5%</span>
-                            </div>
-                            <!-- Batch AK (S3): this slider is now the
-                                 BOTTOM-EDGE margin — 0% = plate sits on
-                                 the picture's bottom edge, higher =
-                                 further up. It keeps the historical
-                                 slider-sub-y id. Stored range is
-                                 [0, 95]; the slider offers [0, 60]. -->
-                            <input type="range" min="0" max="60" value="5" class="studio-slider" id="slider-sub-y">
-                        </div>
-                        <div class="slider-group">
-                            <div class="slider-header">
-                                <span data-i18n="slider_sub_x">📝 မြန်မာစာတန်း အနေအထား (Sub X):</span>
-                                <span class="slider-val" id="val-sub-x">50%</span>
-                            </div>
-                            <input type="range" min="10" max="90" value="50" class="studio-slider" id="slider-sub-x">
-                        </div>
-                        <div class="slider-group">
-                            <div class="slider-header">
-                                <span data-i18n="slider_sub_w">↔️ စာတန်း အနံ (Sub W):</span>
-                                <span class="slider-val" id="val-sub-w">92%</span>
-                            </div>
-                            <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-sub-w">
-                        </div>
-                    </div>
-                    </div>
-                    <div class="recap-detail-group dd-acc-group" id="recap-blur-group" data-acc-title-key="recap_blur_group_title">
-                        <div class="recap-detail-group-title" data-i18n="recap_blur_group_title">🌫️ Blur Box ဆက်တင်များ</div>
                         <label class="script-review-row mt-2" for="recap-blur-autodetect-toggle">
                             <input type="checkbox" id="recap-blur-autodetect-toggle" checked>
                             <span class="script-review-main-text">
@@ -1234,51 +1356,61 @@
                                 <span class="script-review-hint" data-i18n="recap_blur_autodetect_hint">ပိတ်ထားလျှင် ကိုယ်တိုင် ဆွဲထားသော Blur နေရာကိုသာ Blur လုပ်ပါမည်</span>
                             </span>
                         </label>
-                    <div class="blur-box-list-row mt-2" id="blur-box-list-row">
-                        <span class="style-lbl" data-i18n="recap_blur_boxes_label">🔲 Blur Box စာရင်း:</span>
-                        <div class="blur-box-chips" id="blur-box-chips"></div>
-                        <div class="blur-box-actions">
-                            <button type="button" class="pill-btn" id="btn-blur-box-add"><span data-i18n="recap_blur_box_add">➕ Box အသစ်</span></button>
-                            <button type="button" class="pill-btn" id="btn-blur-box-del"><span data-i18n="recap_blur_box_del">🗑️ ဖျက်မည်</span></button>
-                        </div>
-                    </div>
-                    <div class="editor-controls mt-2">
-                        <div class="slider-group">
-                            <div class="slider-header">
-                                <span data-i18n="slider_blur_y">🔲 Blur Box အနေအထား (Y):</span>
-                                <span class="slider-val" id="val-blur-y">85%</span>
+                        <div class="blur-box-list-row mt-2" id="blur-box-list-row">
+                            <span class="style-lbl" data-i18n="recap_blur_boxes_label">🔲 Blur Box စာရင်း:</span>
+                            <div class="blur-box-chips" id="blur-box-chips"></div>
+                            <div class="blur-box-actions">
+                                <button type="button" class="pill-btn" id="btn-blur-box-add"><span data-i18n="recap_blur_box_add">➕ Box အသစ်</span></button>
+                                <button type="button" class="pill-btn" id="btn-blur-box-del"><span data-i18n="recap_blur_box_del">🗑️ ဖျက်မည်</span></button>
                             </div>
-                            <input type="range" min="10" max="95" value="85" class="studio-slider" id="slider-blur-y">
                         </div>
-                        <div class="slider-group">
-                            <div class="slider-header">
-                                <span data-i18n="slider_blur_h">↕️ Blur Box အမြင့် (H):</span>
-                                <span class="slider-val" id="val-blur-h">7%</span>
-                            </div>
-                            <input type="range" min="3" max="22" value="7" class="studio-slider" id="slider-blur-h">
-                        </div>
-                        <div class="slider-group">
-                            <div class="slider-header">
-                                <span data-i18n="slider_blur_x">↔️ Blur Box အနေအထား (X):</span>
-                                <span class="slider-val" id="val-blur-x">4%</span>
-                            </div>
-                            <input type="range" min="0" max="96" value="4" class="studio-slider" id="slider-blur-x">
-                        </div>
-                        <div class="slider-group">
-                            <div class="slider-header">
-                                <span data-i18n="slider_blur_w">↔️ Blur Box အနံ (W):</span>
-                                <span class="slider-val" id="val-blur-w">92%</span>
-                            </div>
-                            <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-blur-w">
-                        </div>
-                        <div class="slider-group">
+                        <div class="slider-group mt-2">
                             <div class="slider-header">
                                 <span data-i18n="slider_blur_strength">🌫️ Blur အား (Strength):</span>
                                 <span class="slider-val" id="val-blur-strength">18</span>
                             </div>
                             <input type="range" min="4" max="40" value="18" class="studio-slider" id="slider-blur-strength">
                         </div>
-                    </div>
+
+                        <!-- L2 Accordion: Blur Box နေရာနှင့် အရွယ်အစား အသေးစိတ် -->
+                        <div class="vcp-accordion mt-3" id="recap-blur-l2-accordion">
+                            <button type="button" class="vcp-accordion-head" id="btn-toggle-blur-l2-detail" onclick="toggleRecapBlurL2Detail()" aria-expanded="false">
+                                <span data-i18n="recap_blur_l2_title">📐 Blur Box နေရာနှင့် အရွယ်အစား အသေးစိတ် (X/Y/W/H)</span>
+                                <span class="vcp-accordion-chevron" id="blur-l2-chevron">▼</span>
+                            </button>
+                            <div class="vcp-accordion-body hidden" id="recap-blur-l2-body">
+                                <div class="editor-controls mt-2">
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_y">🔲 Blur Box အနေအထား (Y):</span>
+                                            <span class="slider-val" id="val-blur-y">85%</span>
+                                        </div>
+                                        <input type="range" min="10" max="95" value="85" class="studio-slider" id="slider-blur-y">
+                                    </div>
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_h">↕️ Blur Box အမြင့် (H):</span>
+                                            <span class="slider-val" id="val-blur-h">7%</span>
+                                        </div>
+                                        <input type="range" min="3" max="22" value="7" class="studio-slider" id="slider-blur-h">
+                                    </div>
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_x">↔️ Blur Box အနေအထား (X):</span>
+                                            <span class="slider-val" id="val-blur-x">4%</span>
+                                        </div>
+                                        <input type="range" min="0" max="96" value="4" class="studio-slider" id="slider-blur-x">
+                                    </div>
+                                    <div class="slider-group">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_w">↔️ Blur Box အနံ (W):</span>
+                                            <span class="slider-val" id="val-blur-w">92%</span>
+                                        </div>
+                                        <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-blur-w">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="recap-detail-group dd-acc-group" id="recap-logo-group" data-acc-title-key="recap_logo_group_title">
                         <div class="overlays-toggle-row">
@@ -1286,115 +1418,62 @@
                                 <span class="t-lbl" data-i18n="recap_logo_toggle_label">⭐ Logo:</span>
                                 <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
                             </button>
+                            <span class="vcp-badge vcp-badge-gold" id="recap-logo-vip-badge">👑 VIP</span>
                         </div>
-
-
-
-
-                            <div class="style-selector-row mt-2">
-                                <span class="style-lbl" data-i18n="recap_specs_title">စာလုံးနှင့် Logo အသေးစိတ် (Subtitle &amp; Logo Specs):</span>
-                                <span class="style-lbl" data-i18n="recap_logo_pos_label">Logo နေရာ:</span>
-                                <div class="pill-group sm" id="recap-logo-pos-picker">
-                            <button class="pill-btn active" data-pos="top-right" data-i18n="pos_top_right">အပေါ် ညာ</button>
-                            <button class="pill-btn" data-pos="top-left" data-i18n="pos_top_left">အပေါ် ဘယ်</button>
-                            <button class="pill-btn" data-pos="bottom-right" data-i18n="pos_bottom_right">အောက် ညာ</button>
-                            <button class="pill-btn" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</button>
+                        <div class="style-selector-row mt-2">
+                            <span class="style-lbl" data-i18n="recap_specs_title">စာလုံးနှင့် Logo အသေးစိတ် (Subtitle &amp; Logo Specs):</span>
+                            <span class="style-lbl" data-i18n="recap_logo_pos_label">Logo နေရာ:</span>
+                            <div class="pill-group sm" id="recap-logo-pos-picker">
+                                <button class="pill-btn active" data-pos="top-right" data-i18n="pos_top_right">အပေါ် ညာ</button>
+                                <button class="pill-btn" data-pos="top-left" data-i18n="pos_top_left">အပေါ် ဘယ်</button>
+                                <button class="pill-btn" data-pos="bottom-right" data-i18n="pos_bottom_right">အောက် ညာ</button>
+                                <button class="pill-btn" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</button>
+                            </div>
                         </div>
+                        <!-- Custom channel logo (paid-only, owner decision 2026-11-02) -->
+                        <div class="style-selector-row mt-2" id="recap-logo-manager">
+                            <span class="style-lbl" data-i18n="recap_logo_custom_label">🖼️ ကိုယ်ပိုင် Logo:</span>
+                            <div class="logo-manager-controls" id="recap-logo-controls">
+                                <img id="recap-logo-thumb" class="logo-thumb hidden" alt="Logo">
+                                <label class="pill-btn" id="btn-logo-upload" for="input-logo-file"><span data-i18n="btn_logo_upload">Logo တင်မည်</span></label>
+                                <button type="button" class="pill-btn hidden" id="btn-logo-remove"><span data-i18n="btn_logo_remove">ဖယ်ရှားမည်</span></button>
+                                <input type="file" id="input-logo-file" accept="image/png,image/jpeg,image/webp" class="hidden-file-input">
                             </div>
-                            <!-- Custom channel logo (paid-only, owner decision 2026-11-02) -->
-                            <div class="style-selector-row mt-2" id="recap-logo-manager">
-                                <span class="style-lbl" data-i18n="recap_logo_custom_label">🖼️ ကိုယ်ပိုင် Logo:</span>
-                                <div class="logo-manager-controls" id="recap-logo-controls">
-                                    <img id="recap-logo-thumb" class="logo-thumb hidden" alt="Logo">
-                                    <label class="pill-btn" id="btn-logo-upload" for="input-logo-file"><span data-i18n="btn_logo_upload">Logo တင်မည်</span></label>
-                                    <button type="button" class="pill-btn hidden" id="btn-logo-remove"><span data-i18n="btn_logo_remove">ဖယ်ရှားမည်</span></button>
-                                    <input type="file" id="input-logo-file" accept="image/png,image/jpeg,image/webp" class="hidden-file-input">
-                                </div>
-                                <div class="logo-vip-hint hidden" id="recap-logo-vip-hint">
-                                    <span data-i18n="recap_logo_vip_hint">🔒 ကိုယ်ပိုင် Logo ထည့်ခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</span>
-                                </div>
-                                <div class="logo-status" id="recap-logo-status"></div>
+                            <div class="logo-vip-hint hidden" id="recap-logo-vip-hint">
+                                <span data-i18n="recap_logo_vip_hint">🔒 ကိုယ်ပိုင် Logo ထည့်ခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</span>
+                                <button type="button" class="vcp-chip active mt-1" id="btn-logo-vip-upsell" onclick="switchTab('tab-vip')" data-i18n="btn_logo_vip_upsell">👑 VIP ဝယ်မည်</button>
                             </div>
-                    </div>
-                                            <div class="recap-adv-group hidden dd-acc-group" id="recap-preview-transform-group" data-acc-title-key="recap_anticopyright_label">
-                                                <div class="card-label" data-i18n="recap_anticopyright_label">ဗီဒီယို ပုံစံပြောင်းမှုများ:</div>
-                                                <div class="style-selector-row mt-2">
-                                                    <span class="style-lbl" data-i18n="recap_protection_label">🛡️ ကာကွယ်မှု အဆင့်:</span>
-                                                    <div class="pill-group sm" id="recap-protection-picker">
-                                                        <button type="button" class="pill-btn" data-protection="off" data-i18n="recap_protection_off">ပိတ်မည်</button>
-                                                        <button type="button" class="pill-btn active" data-protection="standard" data-i18n="recap_protection_standard">စံနှုန်း</button>
-                                                        <button type="button" class="pill-btn" data-protection="strong" data-i18n="recap_protection_strong">အပြင်းစား</button>
-                                                    </div>
-                                                </div>
-                                                <div class="anticopyright-grid mt-2">
-                                                    <div class="spec-col">
-                                                        <span class="spec-lbl" data-i18n="recap_mirror_label">🪞 Mirror (ဘယ်/ညာ လှန်):</span>
-                                                        <button class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true">
-                                                            <span class="toggle-status" data-i18n="mirror_on">ဖွင့်</span>
-                                                        <span class="switch-track" aria-hidden="true"></span>
-                                                        </button>
-                                                    </div>
-                                                    <div class="spec-col">
-                                                        <span class="spec-lbl" data-i18n="recap_zoom_label">🔍 Micro-Zoom:</span>
-                                                        <div class="pill-group sm" id="recap-zoom-picker">
-                                                            <button class="pill-btn active" data-zoom="1.00" data-i18n="zoom_off">1.0x ပုံမှန်</button>
-                                                            <button class="pill-btn" data-zoom="1.06" data-i18n="zoom_std">1.06x စံနှုန်း</button>
-                                                            <button class="pill-btn" data-zoom="1.10" data-i18n="zoom_strong">1.10x အမြင့်</button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                    <div class="style-selector-row mt-2">
-                        <span class="style-lbl" data-i18n="recap_crop_presets_label">ဘောင်ဖြတ်ခြင်း (Framing Crop Presets):</span>
-                        <div class="pill-group sm" id="recap-crop-presets-toolbar">
-                            <button class="pill-btn active" data-crop="full" data-i18n="crop_preset_full">📐 မူရင်း (0%)</button>
-                            <button class="pill-btn" data-crop="cinema" data-i18n="crop_preset_cinema">🎞️ CinemaScope (12%)</button>
-                            <button class="pill-btn" data-crop="side" data-i18n="crop_preset_side_toolbar">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
+                            <div class="logo-status" id="recap-logo-status"></div>
                         </div>
                     </div>
-                                                <div class="card-header-row mt-3">
-                                                    <button type="button" class="recap-detail-toggle" id="btn-toggle-crop-detail" onclick="toggleRecapCropDetail()">
-                                                        <span data-i18n="recap_crop_label">ဘောင် စိတ်ကြိုက်ဖြတ်ခြင်း:</span>
-                                                        <span class="recap-detail-chevron" id="crop-detail-chevron">▼</span>
-                                                    </button>
-                                                    <button class="chip-toggle active" id="btn-sync-crop" title="အပေါ်နှင့်အောက် တပြိုင်နက်ညှိမည်" data-i18n-title="btn_sync_crop_title">
-                                                        <span class="chip-icon">🔗</span>
-                                                        <span class="chip-lbl" data-i18n="crop_sync_label">အပေါ်/အောက် တပြိုင်နက်</span>
-                                                    </button>
-                                                </div>
-                                                <div class="recap-detail-body hidden" id="recap-crop-detail">
-                                                <div class="crop-sliders-grid mt-3">
-                                                    <div class="slider-group">
-                                                        <div class="slider-header">
-                                                            <span data-i18n="crop_top_label">↕️ အပေါ်ဘောင် (Top):</span>
-                                                            <span class="slider-val" id="val-crop-top">0%</span>
-                                                        </div>
-                                                        <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-top">
-                                                    </div>
-                                                    <div class="slider-group">
-                                                        <div class="slider-header">
-                                                            <span data-i18n="crop_bottom_label">↕️ အောက်ဘောင် (Bottom):</span>
-                                                            <span class="slider-val" id="val-crop-bottom">0%</span>
-                                                        </div>
-                                                        <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-bottom">
-                                                    </div>
-                                                    <div class="slider-group">
-                                                        <div class="slider-header">
-                                                            <span data-i18n="crop_left_label">↔️ ဘယ်ဘက် (Left):</span>
-                                                            <span class="slider-val" id="val-crop-left">0%</span>
-                                                        </div>
-                                                        <input type="range" min="0" max="30" value="0" class="studio-slider" id="slider-crop-left">
-                                                    </div>
-                                                    <div class="slider-group">
-                                                        <div class="slider-header">
-                                                            <span data-i18n="crop_right_label">↔️ ညာဘက် (Right):</span>
-                                                            <span class="slider-val" id="val-crop-right">0%</span>
-                                                        </div>
-                                                        <input type="range" min="0" max="30" value="0" class="studio-slider" id="slider-crop-right">
-                                                    </div>
-                                                </div>
-                                            </div><!-- /#recap-crop-detail -->
-                                            </div>
+                    <div class="recap-adv-group hidden dd-acc-group" id="recap-preview-transform-group" data-acc-title-key="recap_anticopyright_label">
+                        <div class="card-label" data-i18n="recap_anticopyright_label">ဗီဒီယို ပုံစံပြောင်းမှုများ:</div>
+                        <div class="style-selector-row mt-2">
+                            <span class="style-lbl" data-i18n="recap_protection_label">🛡️ ကာကွယ်မှု အဆင့်:</span>
+                            <div class="pill-group sm" id="recap-protection-picker">
+                                <button type="button" class="pill-btn" data-protection="off" data-i18n="recap_protection_off">ပိတ်မည်</button>
+                                <button type="button" class="pill-btn active" data-protection="standard" data-i18n="recap_protection_standard">စံနှုန်း</button>
+                                <button type="button" class="pill-btn" data-protection="strong" data-i18n="recap_protection_strong">အပြင်းစား</button>
+                            </div>
+                        </div>
+                        <div class="anticopyright-grid mt-2">
+                            <div class="spec-col">
+                                <span class="spec-lbl" data-i18n="recap_mirror_label">🪞 Mirror (ဘယ်/ညာ လှန်):</span>
+                                <button class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true">
+                                    <span class="toggle-status" data-i18n="mirror_on">ဖွင့်</span>
+                                    <span class="switch-track" aria-hidden="true"></span>
+                                </button>
+                            </div>
+                            <div class="spec-col">
+                                <span class="spec-lbl" data-i18n="recap_zoom_label">🔍 Micro-Zoom:</span>
+                                <div class="pill-group sm" id="recap-zoom-picker">
+                                    <button class="pill-btn active" data-zoom="1.00" data-i18n="zoom_off">1.0x ပုံမှန်</button>
+                                    <button class="pill-btn" data-zoom="1.06" data-i18n="zoom_std">1.06x စံနှုန်း</button>
+                                    <button class="pill-btn" data-zoom="1.10" data-i18n="zoom_strong">1.10x အမြင့်</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="reset-row mt-2">
                         <button type="button" class="mini-btn-seek sm" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title" data-i18n="btn_reset_layout">
                             🔄 မူလနေရာ ပြန်ထားမည် (Reset Layout)
