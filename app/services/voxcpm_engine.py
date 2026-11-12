@@ -974,14 +974,24 @@ class VoxCPMEngine:
         # iterate the configured space order inside each token round.
         # Batch DP (Item 1): tier-aware walk. The reserve set is
         # computed from the CONFIGURED token order (self.hf_tokens),
-        # never from the health-sorted pool below. Paid walks use the
-        # full pool but drain the SHARED tokens first: within each
-        # health class the reserve class sorts AFTER non-reserve
-        # (still ahead of cooling tokens), so the reserve stays a
-        # guaranteed floor a paid job can always land on. Free walks
-        # have reserve pairs filtered out entirely further down.
+        # never from the health-sorted pool below. Free walks have
+        # reserve pairs filtered out entirely further down.
         # ``tier`` defaults to "free" — the safe side: an unplumbed
         # caller can never spend the reserve.
+        # Batch DR REVERSAL (2026-11-12): DP sorted the reserve class
+        # AFTER non-reserve within a health class — drain the shared
+        # tokens first, the reserve stays a guaranteed floor. The
+        # 2026-11-11 evening evidence killed that design: paid
+        # segments burned their whole 45 s failover budget on slow
+        # attempts and fragmented shared balances (75–94 s left vs
+        # 94–180 s admission asks) and died on the clock before the
+        # walk ever REACHED a reserve pair — VIP and admin segments
+        # fell back to Edge while the PRO reserve sat untouched.
+        # Paid walks therefore lead with the reserve INSIDE each
+        # health class: the health class still dominates (a cooling
+        # reserve token never jumps healthy shared tokens), and the
+        # balance ordering still applies within each class. Free
+        # walks are untouched.
         _dp_paid = str(tier or "free").strip().lower() == "paid"
         _dp_reserve = VoxCPMEngine._reserve_token_set(self.hf_tokens)
 
@@ -990,7 +1000,7 @@ class VoxCPMEngine:
             if _dp_paid:
                 return (
                     _token_sort_key(_tok),
-                    1 if _tok in _dp_reserve else 0,
+                    0 if _tok in _dp_reserve else 1,
                     *VoxCPMEngine._balance_sort_key(_tok),
                     _pos,
                 )
@@ -1054,6 +1064,11 @@ class VoxCPMEngine:
         max_attempts = len(pairs)
         attempts_made = 0
         quota_failures = 0
+        # Batch DR: set when the walk is cut short by the total
+        # failover-budget deadline (as opposed to running out of
+        # pairs) — the allow_fallback=False tail below uses it to
+        # recognise the mixed evening failure mode for paid walks.
+        deadline_cut = False
 
         # Failover budget (fix 2026-10-29): each attempt keeps the
         # configured per-attempt timeout (VOXCPM_TIMEOUT / settings,
@@ -1069,6 +1084,7 @@ class VoxCPMEngine:
         space_attempts: dict[str, int] = {}
         for attempt, (space_name, active_token) in enumerate(pairs, 1):
             if time.time() > synth_deadline:
+                deadline_cut = True
                 self._log(f"⏱️ VoxCPM total failover budget ({total_budget:.0f}s) exhausted; stopping further space attempts")
                 break
             if self._pair_blocked_by_job(space_name, active_token):
@@ -1345,7 +1361,27 @@ class VoxCPMEngine:
         # Fallback to the Edge-TTS studio persona engine — ONLY after
         # every suitable space has been tried (fix 2026-10-29).
         if not allow_fallback:
-            if all_pairs_blocked or (attempts_made > 0 and quota_failures >= attempts_made):
+            _pure_quota = all_pairs_blocked or (
+                attempts_made > 0 and quota_failures >= attempts_made
+            )
+            # Batch DR: a PAID walk cut by the failover-budget
+            # deadline after at least one quota-class refusal is
+            # park-eligible too. The pure-quota test misses the
+            # dominant evening failure mode — mixed slow attempts
+            # plus fragmented balances — so those segments silently
+            # fell back to Edge instead of parking (2026-11-11
+            # evidence; DP parks recorded: zero). Pure congestion
+            # with ZERO quota refusals does not match this clause in
+            # either tier, and the free tail is unchanged.
+            _dr_clause = (
+                _dp_paid
+                and deadline_cut
+                and attempts_made >= 1
+                and quota_failures >= 1
+            )
+            if _pure_quota or _dr_clause:
+                if _dr_clause and not _pure_quota:
+                    self._log("🅿️ VoxCPM paid walk cut by the failover budget with quota refusals seen — treating as quota exhaustion (park-eligible)")
                 # Batch AL: purely quota-class failure — a caller-side
                 # retry would re-walk the same exhausted accounts, so
                 # this gets its own error type (see the class docstring).
