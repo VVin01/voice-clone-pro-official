@@ -4,7 +4,9 @@ Item 1 — a paid-only RESERVE slice of the HF token pool: operator-
 designated tokens (HF_RESERVE_TOKENS env var, owner amendment) ∪
 the positional last slice ∪ learned-rich tokens (>= 900 s). Free
 walks never attempt reserve tokens; paid walks use the full pool
-and drain shared tokens before the reserve.
+(Batch DR, 2026-11-12, reversed DP's shared-first order: paid
+walks now lead with the reserve inside each health class — see
+test_batch_dr_2026_11_12.py).
 Item 3 — park-and-ask: a paid job hitting VoxCPM quota exhaustion
 PARKS (WAITING_CHOICE, charge held, no refund), the owner is asked
 via bot prompt (wait / Edge-all / Edge-mix for recap; wait /
@@ -43,9 +45,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 # ── Cache token ─────────────────────────────────────────────────────
 
-def test_dp_cache_token_is_r139():
+def test_dp_cache_token_is_r140():
     html = (REPO / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261104_r139") == 4
+    assert html.count("20261104_r140") == 4
     assert "r137" not in html
 
 
@@ -269,7 +271,13 @@ def test_dp_free_fully_blocked_falls_back_when_allowed(tmp_path, monkeypatch):
     assert engine.last_fallback_used is True  # today's free behaviour
 
 
-def test_dp_paid_walk_drains_shared_before_reserve(tmp_path, monkeypatch):
+def test_dp_paid_walk_reserve_first_since_dr(tmp_path, monkeypatch):
+    # Batch DR (2026-11-12) REVERSED the DP paid order pinned here
+    # originally ("drains shared before reserve"): the 2026-11-11
+    # evening evidence showed paid walks dying on the failover-
+    # budget clock before ever reaching the reserve, so paid walks
+    # now lead with the reserve inside each health class. The full
+    # DR assertions live in test_batch_dr_2026_11_12.py.
     toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
     record: list = []
@@ -278,10 +286,8 @@ def test_dp_paid_walk_drains_shared_before_reserve(tmp_path, monkeypatch):
         text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
         allow_fallback=False, tier="paid",
     )
-    # First attempt is a SHARED token; the reserve stays untouched
-    # while shared capacity serves.
-    assert record[0][1] not in {"hf_t6", "hf_t7"}
-    assert {tok for _sp, tok in record} & {"hf_t6", "hf_t7"} == set()
+    # First attempt is a RESERVE token (DR order).
+    assert record[0][1] in {"hf_t6", "hf_t7"}
 
 
 def test_dp_paid_walk_can_use_reserve(tmp_path, monkeypatch):

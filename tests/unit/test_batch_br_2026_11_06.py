@@ -298,5 +298,5 @@ def test_br_prefill_still_sets_title_from_job_config():
 # ── Token ────────────────────────────────────────────────────────
 
 def test_br_cache_token_is_r89():
-    assert INDEX_HTML.count("20261104_r139") == 4
+    assert INDEX_HTML.count("20261104_r140") == 4
     assert "20261104_r88" not in INDEX_HTML

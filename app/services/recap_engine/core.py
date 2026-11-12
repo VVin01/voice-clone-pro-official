@@ -211,12 +211,20 @@ DEFAULT_TTS_WORKERS = 6
 # absolute ceiling is 2 x 150 s, well under the old ~8 min.
 VOX_FAILOVER_BUDGET_FLOOR_SECONDS = 45.0
 VOX_FAILOVER_BUDGET_CAP_SECONDS = 150.0
+# Batch DR: the paid tier gets a longer clock — same base and slope,
+# only the floor and cap move. The 2026-11-11 evening evidence
+# showed paid segments dying on the 45 s floor while the walk was
+# still working through slow attempts and fragmented shared
+# balances, before it ever reached an admittable pair (the DP
+# reserve included). Free values are unchanged.
+VOX_FAILOVER_BUDGET_PAID_FLOOR_SECONDS = 120.0
+VOX_FAILOVER_BUDGET_PAID_CAP_SECONDS = 300.0
 VOX_FAILOVER_BUDGET_BASE_SECONDS = 25.0
 VOX_FAILOVER_BUDGET_PER_AUDIO_SECOND = 2.5
 VOX_NARRATION_CHARS_PER_SECOND = 21.0
 
 
-def vox_failover_budget(window_seconds: float, text_chars: int) -> float:
+def vox_failover_budget(window_seconds: float, text_chars: int, *, paid: bool = False) -> float:
     """Batch AL + CY: per-segment VoxCPM failover budget, scaled to
     the segment instead of the old flat 240 s for every line.
 
@@ -225,7 +233,11 @@ def vox_failover_budget(window_seconds: float, text_chars: int) -> float:
     synthesis load — see the constants above. The expected spoken
     length is the larger of the video window and the text-implied
     length, so a dense long line in a short window still earns a
-    workable budget."""
+    workable budget.
+
+    Batch DR: ``paid=True`` swaps in the paid floor/cap (120 s /
+    300 s) — the shared base and slope are identical, and the free
+    result is byte-identical to before."""
     try:
         window = float(window_seconds or 0.0)
     except (TypeError, ValueError):
@@ -238,10 +250,16 @@ def vox_failover_budget(window_seconds: float, text_chars: int) -> float:
         max(0.0, window),
         max(0.0, chars) / VOX_NARRATION_CHARS_PER_SECOND,
     )
+    if paid:
+        floor_seconds = VOX_FAILOVER_BUDGET_PAID_FLOOR_SECONDS
+        cap_seconds = VOX_FAILOVER_BUDGET_PAID_CAP_SECONDS
+    else:
+        floor_seconds = VOX_FAILOVER_BUDGET_FLOOR_SECONDS
+        cap_seconds = VOX_FAILOVER_BUDGET_CAP_SECONDS
     return float(min(
-        VOX_FAILOVER_BUDGET_CAP_SECONDS,
+        cap_seconds,
         max(
-            VOX_FAILOVER_BUDGET_FLOOR_SECONDS,
+            floor_seconds,
             VOX_FAILOVER_BUDGET_BASE_SECONDS
             + VOX_FAILOVER_BUDGET_PER_AUDIO_SECOND * expected_audio,
         ),
@@ -5433,7 +5451,8 @@ class EdgeSmartSync:
                     preset_v=preset_v,
                     speed_float=voxcpm_speed_float,
                     budget_seconds=vox_failover_budget(
-                        float(seg["video_end"]) - float(seg["video_start"]), len(speak)
+                        float(seg["video_end"]) - float(seg["video_start"]), len(speak),
+                        paid=self.paid_tier,
                     ),
                 )
                 if vox_err is not None:
