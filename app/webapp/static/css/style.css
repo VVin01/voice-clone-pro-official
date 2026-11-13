@@ -6749,3 +6749,917 @@ body.lite #tab-admin .adm-back-btn {
 
 
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HOME POLISH + VISUAL IDENTITY PASS (feat/home-polish-visual, r142)
+   Glass Performance Rule: NO new backdrop-filter inside scrolling content cards.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── B1. Header Brand Moment ──────────────────────────────────────────────── */
+.top-nav,
+html.lite .top-nav,
+body.lite .top-nav {
+    background: linear-gradient(135deg, #0b1630 0%, #15316b 54%, #1d4ed8 100%) !important;
+    border-bottom: 1px solid rgba(147, 197, 253, 0.28) !important;
+    box-shadow: 0 8px 24px -6px rgba(11, 22, 48, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14) !important;
+}
+
+.top-nav .brand-crest {
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(2, 6, 23, 0.35), 0 0 0 1.5px rgba(255, 255, 255, 0.28);
+}
+
+.top-nav .brand-title-wrap h1 {
+    color: #f8fafc !important;
+    text-shadow: 0 1px 2px rgba(8, 17, 40, 0.35);
+}
+
+.top-nav .sub-brand {
+    color: rgba(219, 234, 254, 0.86) !important;
+}
+
+.top-nav .pro-tag {
+    background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.34) !important;
+    box-shadow: 0 2px 8px rgba(14, 165, 233, 0.32) !important;
+}
+
+.top-nav .tutorial-pill-btn,
+.top-nav .lang-pill-btn,
+html.lite .top-nav .tutorial-pill-btn,
+html.lite .top-nav .lang-pill-btn {
+    background: rgba(255, 255, 255, 0.14) !important;
+    color: #f8fafc !important;
+    border: 1px solid rgba(255, 255, 255, 0.28) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+}
+
+.top-nav .tutorial-pill-btn:active,
+.top-nav .lang-pill-btn:active {
+    background: rgba(255, 255, 255, 0.24) !important;
+}
+
+.top-nav .user-pill,
+html.lite .top-nav .user-pill {
+    background: rgba(255, 255, 255, 0.94) !important;
+    border: 1px solid rgba(255, 255, 255, 0.65) !important;
+    box-shadow: 0 4px 12px -2px rgba(8, 17, 40, 0.22) !important;
+    color: #0f172a !important;
+}
+
+.top-nav .bal-chip {
+    font-weight: 600 !important;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── B4. Main Cards: Two-layer shadow + Gradient hairline border ──────────── */
+.card.glass,
+.vcp-card,
+html.lite .card.glass,
+html.lite .vcp-card {
+    border: 1px solid transparent !important;
+    background-image:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(246, 250, 255, 0.88) 100%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(148, 163, 184, 0.28) 52%, rgba(37, 99, 235, 0.20) 100%) !important;
+    background-origin: border-box !important;
+    background-clip: padding-box, border-box !important;
+    box-shadow:
+        0 2px 6px rgba(15, 23, 42, 0.045),
+        0 12px 28px -10px rgba(15, 42, 74, 0.10) !important;
+}
+
+/* Preserve VIP Master card gold aura inside gradient hairline border */
+#tab-vip .vcp-card--gold,
+html.lite #tab-vip .vcp-card--gold {
+    background-image:
+        linear-gradient(180deg, rgba(255, 252, 240, 0.96) 0%, rgba(254, 243, 199, 0.55) 100%),
+        linear-gradient(135deg, rgba(245, 158, 11, 0.55) 0%, rgba(217, 119, 6, 0.35) 100%) !important;
+    box-shadow:
+        0 2px 8px rgba(180, 83, 9, 0.08),
+        0 14px 30px -10px rgba(217, 119, 6, 0.22) !important;
+}
+
+/* ── B5. Section Titles & Balance Typography ──────────────────────────────── */
+.card-label,
+.vcp-card__title,
+.step-title {
+    font-size: 15.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em;
+    color: #0f172a;
+}
+
+body.lang-my .card-label,
+body.lang-my .vcp-card__title,
+body.lang-my .step-title {
+    line-height: 1.5 !important;
+}
+
+.pane-header h2 {
+    font-size: 20.5px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #0f172a;
+}
+
+.bal-chip,
+.home-bal-summary,
+.home-free-value,
+#profile-balance-min,
+#profile-balance-credits {
+    font-weight: 600 !important;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── B3. Home Greeting Card -> Brand-Gradient Hero ────────────────────────── */
+#tab-home .home-status-strip,
+html.lite #tab-home .home-status-strip {
+    background-image:
+        radial-gradient(circle at 88% 16%, rgba(255, 255, 255, 0.22), transparent 52%),
+        linear-gradient(135deg, #172554 0%, #1d4ed8 56%, #0284c7 100%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.42), rgba(147, 197, 253, 0.34)) !important;
+    background-origin: border-box !important;
+    background-clip: padding-box, padding-box, border-box !important;
+    border: 1px solid transparent !important;
+    border-radius: var(--r-xl, 20px) !important;
+    padding: 15px 16px !important;
+    box-shadow:
+        0 4px 12px rgba(15, 23, 42, 0.12),
+        0 14px 30px -10px rgba(29, 78, 216, 0.36) !important;
+    color: #ffffff !important;
+}
+
+#tab-home .home-status-left {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    flex-wrap: wrap;
+}
+
+#tab-home .home-greeting-text {
+    color: #ffffff !important;
+    font-size: 16.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em;
+}
+
+#tab-home .home-status-strip #home-tier-badge {
+    background: rgba(255, 255, 255, 0.18) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.34) !important;
+    font-weight: 700;
+}
+
+#tab-home .home-status-strip #home-tier-badge.vcp-badge-gold {
+    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+    color: #1e1b4b !important;
+    border-color: rgba(254, 243, 199, 0.85) !important;
+}
+
+#tab-home .home-status-right {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    margin-top: 8px;
+    padding: 7px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.20);
+}
+
+#tab-home .home-bal-summary {
+    color: #f8fafc !important;
+    font-size: 13.5px !important;
+    line-height: 1.5 !important;
+}
+
+#tab-home .home-status-chevron {
+    color: rgba(255, 255, 255, 0.88) !important;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* ── A1. Welcome Strip Wrapping & Light Glass Alignment ───────────────────── */
+#tab-home .welcome-strip.hidden,
+html.lite #tab-home .welcome-strip.hidden {
+    display: none !important;
+}
+
+#tab-home .welcome-strip:not(.hidden),
+html.lite #tab-home .welcome-strip:not(.hidden) {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    column-gap: 10px !important;
+    row-gap: 10px !important;
+    padding: 13px 14px !important;
+    border-radius: var(--r-xl, 20px) !important;
+    background: linear-gradient(135deg, rgba(239, 246, 255, 0.96), rgba(224, 242, 254, 0.90)) !important;
+    border: 1px solid rgba(37, 99, 235, 0.24) !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04), 0 10px 22px -10px rgba(37, 99, 235, 0.18) !important;
+}
+
+#tab-home .welcome-strip-text {
+    display: block !important;
+    order: 1;
+    flex: 1 1 calc(100% - 48px) !important;
+    min-width: 0 !important;
+    font-size: 13.5px !important;
+    font-weight: 600;
+    line-height: 1.65 !important;
+    color: #0f172a !important;
+    white-space: normal !important;
+    overflow-wrap: break-word;
+    word-break: normal;
+}
+
+#tab-home .welcome-strip-x {
+    order: 2;
+    flex: 0 0 auto !important;
+    align-self: flex-start;
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+    min-height: 34px !important;
+    margin-left: auto;
+    border-radius: 999px !important;
+    background: rgba(15, 23, 42, 0.06) !important;
+    color: #334155 !important;
+}
+
+#tab-home .welcome-strip-actions {
+    order: 3;
+    flex: 1 0 100% !important;
+    width: 100%;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center;
+    gap: 8px !important;
+}
+
+#tab-home .welcome-strip-sample-btn,
+html.lite #tab-home .welcome-strip-sample-btn {
+    flex: 1 1 0;
+    min-width: 145px;
+    min-height: 44px;
+    padding: 7px 10px !important;
+    border-radius: 999px !important;
+    border: 1px solid rgba(37, 99, 235, 0.24) !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    color: #1d4ed8 !important;
+    font-size: 11.5px !important;
+    font-weight: 700 !important;
+    line-height: 1.35;
+    text-align: center;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.08);
+}
+
+#tab-home .welcome-strip-btn {
+    flex: 0.9 1 0;
+    min-width: 120px;
+    min-height: 44px !important;
+    padding: 7px 12px !important;
+    border-radius: 999px !important;
+    background: linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%) !important;
+    color: #ffffff !important;
+    font-size: 11.5px !important;
+    font-weight: 700 !important;
+    line-height: 1.35;
+    text-align: center;
+    box-shadow: 0 6px 14px -4px rgba(109, 40, 217, 0.36);
+}
+
+@media (min-width: 580px) {
+    #tab-home .welcome-strip:not(.hidden) {
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+    }
+    #tab-home .welcome-strip-text {
+        flex: 1 1 auto !important;
+    }
+    #tab-home .welcome-strip-actions {
+        order: 2;
+        flex: 0 0 auto !important;
+        width: auto;
+        flex-wrap: nowrap !important;
+    }
+    #tab-home .welcome-strip-x {
+        order: 3;
+        align-self: center;
+    }
+}
+
+/* ── A2 / B2. Fix Dark Slate TTS Tile + Add Studio Accents on Home Tiles ─── */
+#tab-home .home-tile,
+html.lite #tab-home .home-tile {
+    background: rgba(255, 255, 255, 0.88) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04), 0 8px 18px -10px rgba(15, 42, 74, 0.10) !important;
+    border-radius: var(--r-lg, 16px) !important;
+    color: #0f172a !important;
+}
+
+#tab-home .home-tile-tts,
+html.lite #tab-home .home-tile-tts {
+    background: linear-gradient(135deg, rgba(240, 253, 250, 0.96) 0%, rgba(226, 250, 245, 0.90) 100%) !important;
+    border: 1px solid rgba(13, 148, 136, 0.22) !important;
+    box-shadow: 0 2px 6px rgba(13, 148, 136, 0.05), 0 8px 18px -10px rgba(13, 148, 136, 0.14) !important;
+    border-radius: var(--r-lg, 16px) !important;
+    color: #0f172a !important;
+}
+
+#tab-home .home-tile-tts .home-tile-name,
+#tab-home .home-tile-tts .home-tile-chevron {
+    color: #0f172a !important;
+}
+
+#tab-home .home-tile-tts .home-tile-hint {
+    color: #475569 !important;
+}
+
+/* Studio-accented circular icon badges on Home studio launcher tiles */
+#home-start-card .home-tile[onclick*="tab-voice"] .home-tile-icon {
+    background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%) !important;
+    box-shadow: 0 6px 14px -4px rgba(37, 99, 235, 0.42);
+}
+
+#home-start-card .home-tile[onclick*="tab-recap"] .home-tile-icon {
+    background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%) !important;
+    box-shadow: 0 6px 14px -4px rgba(124, 58, 237, 0.42);
+}
+
+#home-start-card .home-tile-tts .home-tile-icon {
+    background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%) !important;
+    box-shadow: 0 6px 14px -4px rgba(13, 148, 136, 0.42);
+}
+
+#home-tools-card .home-tile[onclick*="tab-downloader"] .home-tile-icon {
+    background: linear-gradient(135deg, #b45309 0%, #f59e0b 100%) !important;
+    box-shadow: 0 6px 14px -4px rgba(217, 119, 6, 0.40);
+}
+
+#home-tools-card .home-tile[onclick*="openHistoryHub"] .home-tile-icon {
+    background: linear-gradient(135deg, #334155 0%, #64748b 100%) !important;
+    box-shadow: 0 6px 14px -4px rgba(51, 65, 85, 0.32);
+}
+
+/* ── A2 / A3. Recent Projects: Light Glass Row, Full-Width 2-Line Name, Badges Under Name, Right-Centred Action */
+#tab-home .home-recent-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+#tab-home .home-recent-header .card-label {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#tab-home .vcp-chip.home-recent-see-all,
+#home-recent-see-all {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+    width: auto !important;
+    min-height: 32px !important;
+    height: auto !important;
+    padding: 5px 10px !important;
+    font-size: 12.5px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center;
+    gap: 4px;
+    line-height: 1.35 !important;
+}
+
+#tab-home .home-recent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#tab-home .home-recent-row,
+html.lite #tab-home .home-recent-row {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 9px !important;
+    padding: 12px !important;
+    border-radius: 15px !important;
+    background: rgba(248, 250, 255, 0.92) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04) !important;
+    color: #0f172a !important;
+}
+
+#tab-home .home-recent-main {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+#tab-home .home-recent-icon {
+    flex: 0 0 32px !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 10px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 16px !important;
+    background: rgba(37, 99, 235, 0.12);
+    border: 1px solid rgba(37, 99, 235, 0.22);
+}
+
+#tab-home .home-recent-row[data-job-kind="recap"] .home-recent-icon {
+    background: rgba(124, 58, 237, 0.12);
+    border-color: rgba(124, 58, 237, 0.24);
+}
+
+#tab-home .home-recent-row[data-job-kind="tts"] .home-recent-icon {
+    background: rgba(13, 148, 136, 0.12);
+    border-color: rgba(13, 148, 136, 0.24);
+}
+
+#tab-home .home-recent-meta {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    width: 100% !important;
+}
+
+#tab-home .home-recent-name {
+    display: -webkit-box !important;
+    -webkit-box-orient: vertical !important;
+    -webkit-line-clamp: 2 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    width: 100% !important;
+    font-size: 13.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.5 !important;
+    color: #0f172a !important;
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    word-break: normal !important;
+}
+
+#tab-home .home-recent-footer {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    padding-left: 42px;
+    width: 100% !important;
+    box-sizing: border-box;
+}
+
+#tab-home .home-recent-badges {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+}
+
+#tab-home .home-recent-action {
+    flex: 0 0 auto !important;
+    align-self: center !important;
+    margin-left: auto !important;
+}
+
+#tab-home .home-recent-action .vcp-chip,
+#tab-home .home-recent-action button,
+#tab-home .home-recent-action a {
+    white-space: nowrap !important;
+    min-height: 34px !important;
+    padding: 6px 12px !important;
+    font-size: 12.5px !important;
+    font-weight: 700 !important;
+}
+
+/* ── A4. Free-Today Row First-Line Alignment ──────────────────────────────── */
+#tab-home .home-free-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#tab-home .home-free-row,
+html.lite #tab-home .home-free-row {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    padding: 12px !important;
+    border-radius: 14px !important;
+    background: rgba(248, 250, 255, 0.90) !important;
+    border: 1px solid rgba(15, 23, 42, 0.07) !important;
+}
+
+#tab-home .home-free-icon {
+    flex: 0 0 28px !important;
+    width: 28px !important;
+    height: 24px !important;
+    margin-top: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 17px !important;
+    line-height: 1 !important;
+}
+
+#tab-home .home-free-text {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 4px !important;
+}
+
+#tab-home .home-free-title {
+    font-size: 13.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.5 !important;
+    color: #0f172a !important;
+}
+
+#tab-home .home-free-sub,
+#tab-home .home-free-tts-note {
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+    color: #475569 !important;
+}
+
+#tab-home .home-free-value {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+    font-size: 13.5px !important;
+    line-height: 1.5 !important;
+    min-height: 21px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    color: #0f172a !important;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+
+#tab-home .home-free-chevron {
+    flex: 0 0 auto !important;
+    font-size: 15px !important;
+    line-height: 1.5 !important;
+    min-height: 21px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    color: #64748b !important;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+
+/* ── A6. Help / Samples Accordion Header Alignment & Unified Rhythm ───────── */
+#tab-home .home-help-entry-card {
+    padding: 0 !important;
+    overflow: hidden;
+}
+
+#tab-home .home-help-entry-btn {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 6px !important;
+    padding: 14px 16px !important;
+    background: transparent !important;
+    border: none !important;
+    text-align: left !important;
+    cursor: pointer;
+}
+
+#tab-home .home-help-entry-head {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+#tab-home .home-help-entry-icon {
+    flex: 0 0 36px !important;
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 11px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 18px !important;
+    background: rgba(37, 99, 235, 0.11) !important;
+    border: 1px solid rgba(37, 99, 235, 0.20) !important;
+}
+
+#tab-home .home-help-entry-title {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    font-size: 14.5px !important;
+    font-weight: 700 !important;
+    line-height: 1.45 !important;
+    color: #0f172a !important;
+}
+
+#tab-home .home-help-entry-head .vcp-badge {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+    font-size: 11.5px !important;
+    padding: 2px 9px !important;
+    line-height: 1.55 !important;
+}
+
+#tab-home .home-help-entry-chevron {
+    flex: 0 0 auto !important;
+    font-size: 13px !important;
+    color: #64748b !important;
+    transition: transform 0.18s ease;
+}
+
+#tab-home .home-help-entry-btn[aria-expanded="true"] .home-help-entry-chevron {
+    transform: rotate(180deg);
+}
+
+#tab-home .home-help-entry-text {
+    display: block !important;
+    width: 100% !important;
+    padding-left: 46px !important;
+    box-sizing: border-box !important;
+}
+
+#tab-home .home-help-entry-desc {
+    display: block !important;
+    font-size: 12.5px !important;
+    line-height: 1.5 !important;
+    color: #475569 !important;
+}
+
+#tab-home #home-tutorials-card .home-tut-head {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    padding: 4px 2px !important;
+    min-height: 44px !important;
+}
+
+#tab-home #home-tutorials-card .home-tut-count {
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    background: rgba(37, 99, 235, 0.10) !important;
+    color: #1d4ed8 !important;
+    border-color: rgba(37, 99, 235, 0.22) !important;
+}
+
+/* Uniform vertical card spacing rhythm across Home */
+#tab-home > .card,
+#tab-home > .vcp-card,
+#tab-home > .welcome-strip,
+#tab-home > .home-status-strip,
+#home-help-hub-body > .card {
+    margin-bottom: 14px !important;
+}
+
+/* ── B2. One Accent Per Studio (No Rainbow Noise) ────────────────────────── */
+/* Voice Studio = Blue */
+#tab-voice .step-num-pill {
+    background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 10px -2px rgba(37, 99, 235, 0.38) !important;
+}
+
+#tab-voice .speed-capsule-pill,
+#tab-voice #btn-generate-voice,
+#tab-voice-sticky #btn-generate-voice-sticky,
+#btn-generate-voice-sticky,
+#tab-voice #btn-voice-play-toggle {
+    background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%) !important;
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 10px 22px -8px rgba(37, 99, 235, 0.45) !important;
+}
+
+#tab-voice .badge-studio,
+#tab-voice .tutorial-banner-btn {
+    background: rgba(37, 99, 235, 0.11) !important;
+    color: #1d4ed8 !important;
+    border-color: rgba(37, 99, 235, 0.28) !important;
+}
+
+/* Recap Maker = Violet */
+#tab-recap .step-num-pill {
+    background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 10px -2px rgba(124, 58, 237, 0.38) !important;
+}
+
+#tab-recap .badge-studio {
+    background: rgba(124, 58, 237, 0.12) !important;
+    color: #6d28d9 !important;
+    border: 1px solid rgba(124, 58, 237, 0.28) !important;
+}
+
+#tab-recap .recap-steps-nav-item.is-active {
+    background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 60%, #a855f7 100%) !important;
+    color: #ffffff !important;
+    padding-left: 10px !important;
+    padding-right: 12px !important;
+    box-shadow: 0 6px 14px -4px rgba(124, 58, 237, 0.44) !important;
+}
+
+#tab-recap .recap-steps-nav-item.is-active .recap-steps-nav-num {
+    background: rgba(255, 255, 255, 0.24) !important;
+    color: #ffffff !important;
+}
+
+#tab-recap .speed-capsule-pill,
+#tab-recap .seg-capsule-pill,
+#tab-recap .gold-gradient-btn,
+#tab-recap .primary-btn,
+#btn-start-recap-sticky {
+    background: linear-gradient(135deg, #6d28d9 0%, #7c3aed 54%, #a855f7 100%) !important;
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 10px 22px -8px rgba(124, 58, 237, 0.45) !important;
+}
+
+#tab-recap .source-tab-btn.active,
+#tab-recap .mode-btn.active,
+#tab-recap .recap-mode-pill.active,
+#tab-recap .tutorial-banner-btn {
+    border-color: rgba(124, 58, 237, 0.36) !important;
+    background: rgba(124, 58, 237, 0.11) !important;
+    color: #6d28d9 !important;
+}
+
+/* TTS Studio = Teal */
+#tab-tts .step-num-pill {
+    background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 10px -2px rgba(13, 148, 136, 0.38) !important;
+}
+
+#tab-tts .badge-studio {
+    background: rgba(13, 148, 136, 0.12) !important;
+    color: #0f766e !important;
+    border: 1px solid rgba(13, 148, 136, 0.28) !important;
+}
+
+#tab-tts .speed-capsule-pill,
+#tab-tts .seg-capsule-pill,
+#tab-tts .gold-gradient-btn,
+#tab-tts #btn-generate-tts {
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 54%, #14b8a6 100%) !important;
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 10px 22px -8px rgba(13, 148, 136, 0.44) !important;
+}
+
+#tab-tts .vcp-badge-info {
+    background: rgba(13, 148, 136, 0.11) !important;
+    color: #0f766e !important;
+    border-color: rgba(13, 148, 136, 0.24) !important;
+}
+
+/* Downloader Studio = Amber */
+#tab-downloader .step-num-pill,
+#tab-downloader .primary-btn,
+#tab-downloader .vcp-btn--primary,
+#tab-downloader #btn-extract-dl,
+#tab-downloader #btn-dl-use-in-recap {
+    background: linear-gradient(135deg, #b45309 0%, #d97706 54%, #f59e0b 100%) !important;
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 10px 22px -8px rgba(217, 119, 6, 0.42) !important;
+}
+
+#tab-downloader .dl-empty-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    background: rgba(217, 119, 6, 0.12);
+    border: 1px solid rgba(217, 119, 6, 0.26);
+    margin: 0 auto 8px;
+}
+
+#tab-downloader #dl-url-input:focus {
+    border-color: rgba(217, 119, 6, 0.55) !important;
+    box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.14) !important;
+}
+
+/* VIP = Gold */
+#tab-vip .badge-studio {
+    background: rgba(245, 158, 11, 0.14) !important;
+    color: #92400e !important;
+    border: 1px solid rgba(217, 119, 6, 0.34) !important;
+}
+
+#tab-vip .step-num-pill,
+#tab-vip .gold-gradient-btn,
+#tab-vip .vcp-btn--gold,
+#tab-vip #btn-submit-slip-action {
+    background: linear-gradient(135deg, #b45309 0%, #d97706 50%, #f59e0b 100%) !important;
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    box-shadow: 0 10px 22px -8px rgba(217, 119, 6, 0.42) !important;
+}
+
+#tab-vip .secondary-gold-btn {
+    background: linear-gradient(135deg, rgba(254, 243, 199, 0.85), rgba(253, 230, 138, 0.72)) !important;
+    color: #92400e !important;
+    border: 1px solid rgba(217, 119, 6, 0.32) !important;
+    font-weight: 700 !important;
+}
+
+#tab-vip #profile-balance-credits,
+#tab-vip .text-cyan {
+    color: #b45309 !important;
+}
+
+#tab-vip .plan-tab-btn.active,
+#tab-vip .plan-tab-btn.active .seg-title,
+#tab-vip .vip-tab-btn.active,
+#tab-vip .plan-tab.active,
+#tab-vip .seg-capsule-pill {
+    background: linear-gradient(135deg, #b45309 0%, #d97706 55%, #f59e0b 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 6px 14px -4px rgba(217, 119, 6, 0.38) !important;
+}
+
+#tab-vip .plan-tab-btn.active .seg-title {
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#tab-vip .vip-never-expire-pill,
+#tab-vip .plan-info-pill,
+#tab-vip .vcp-badge-info {
+    background: rgba(245, 158, 11, 0.11) !important;
+    color: #92400e !important;
+    border-color: rgba(217, 119, 6, 0.28) !important;
+}
+
+/* ── B4. Bottom-Nav Active Tab = Filled Accent Pill ───────────────────────── */
+.bottom-nav .nav-pill,
+html.lite .bottom-nav .nav-pill,
+body.lite .bottom-nav .nav-pill {
+    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.32) !important;
+    box-shadow: 0 6px 16px -4px rgba(29, 78, 216, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.26) !important;
+}
+
+.bottom-nav[data-active-tab="tab-voice"] .nav-pill,
+html.lite .bottom-nav[data-active-tab="tab-voice"] .nav-pill {
+    background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%) !important;
+    box-shadow: 0 6px 16px -4px rgba(37, 99, 235, 0.44) !important;
+}
+
+.bottom-nav[data-active-tab="tab-tts"] .nav-pill,
+html.lite .bottom-nav[data-active-tab="tab-tts"] .nav-pill {
+    background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%) !important;
+    box-shadow: 0 6px 16px -4px rgba(13, 148, 136, 0.42) !important;
+}
+
+.bottom-nav[data-active-tab="tab-recap"] .nav-pill,
+html.lite .bottom-nav[data-active-tab="tab-recap"] .nav-pill {
+    background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%) !important;
+    box-shadow: 0 6px 16px -4px rgba(124, 58, 237, 0.44) !important;
+}
+
+.bottom-nav[data-active-tab="tab-vip"] .nav-pill,
+html.lite .bottom-nav[data-active-tab="tab-vip"] .nav-pill {
+    background: linear-gradient(135deg, #b45309 0%, #f59e0b 100%) !important;
+    box-shadow: 0 6px 16px -4px rgba(217, 119, 6, 0.44) !important;
+}
+
+.bottom-nav .nav-item.active,
+.bottom-nav .nav-item.active .nav-label,
+.bottom-nav .nav-item.active .nav-icon,
+html.lite .bottom-nav .nav-item.active .nav-label {
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    text-shadow: 0 1px 2px rgba(15, 23, 42, 0.20);
+}
+
+/* ── Dark-Theme & OS Prefers-Color-Scheme Guardrail ───────────────────────── */
+/* Ensure host dark mode never inverts or washes out our frosted glass palette */
+@media (prefers-color-scheme: dark) {
+    :root,
+    body.dark-theme {
+        color-scheme: light;
+    }
+}

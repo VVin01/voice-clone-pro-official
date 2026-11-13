@@ -2782,7 +2782,12 @@ window.closeFloatingAlert = closeFloatingAlert;
 function moveNavPill() {
     const pill = document.getElementById("nav-active-pill");
     const active = document.querySelector(".bottom-nav .nav-item.active");
-    if (!pill || !active || !active.offsetWidth) return;
+    if (!active) return;
+    const nav = active.closest(".bottom-nav");
+    if (nav && active.dataset.tab) {
+        nav.setAttribute("data-active-tab", active.dataset.tab);
+    }
+    if (!pill || !active.offsetWidth) return;
     pill.style.width = active.offsetWidth + "px";
     pill.style.height = active.offsetHeight + "px";
     pill.style.transform = "translate(" + active.offsetLeft + "px, " + active.offsetTop + "px)";
@@ -3056,8 +3061,6 @@ async function loadUserProfile() {
         const recapBalChip = document.getElementById("user-recap-bal");
         
         const catTag = document.getElementById("profile-category-tag");
-        const balMin = document.getElementById("profile-balance-min");
-        const balCredits = document.getElementById("profile-balance-credits");
         const charCount = document.getElementById("char-count");
         const adminNavBtn = document.getElementById("nav-btn-admin");
         const adminTab = document.getElementById("tab-admin");
@@ -3077,12 +3080,7 @@ async function loadUserProfile() {
             catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
             catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
         }
-        if (balMin) {
-            balMin.innerText = data.is_admin ? t("unlimited") : `${data.balance_minutes} mins`;
-        }
-        if (balCredits) {
-            balCredits.innerText = data.is_admin ? t("unlimited") : `${data.recap_credits || 0} credits`;
-        }
+        paintVipPlanBalances(data);
 
         if (charCount) {
             const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
@@ -4025,6 +4023,25 @@ function readCachedUserProfile() {
     } catch (e) { return null; }
 }
 
+/** Format VIP current-plan balance stats via i18n so Burmese/EN units match Home cards. */
+function paintVipPlanBalances(data) {
+    if (!data) return;
+    const balMin = document.getElementById("profile-balance-min");
+    const balCredits = document.getElementById("profile-balance-credits");
+    const fmt = typeof tf === "function" ? tf : null;
+    if (balMin) {
+        balMin.innerText = data.is_admin
+            ? (typeof t === "function" ? t("unlimited") : "Unlimited")
+            : (fmt ? fmt("home_free_value_min", { min: data.balance_minutes ?? 0 }) : `${data.balance_minutes ?? 0} mins`);
+    }
+    if (balCredits) {
+        balCredits.innerText = data.is_admin
+            ? (typeof t === "function" ? t("unlimited") : "Unlimited")
+            : (fmt ? fmt("home_free_value_credits", { count: data.recap_credits || 0 }) : `${data.recap_credits || 0} credits`);
+    }
+}
+window.paintVipPlanBalances = paintVipPlanBalances;
+
 // Mirrors the header/profile paint in loadUserProfile for the same
 // payload shape — keep the two in step when the header changes.
 function paintCachedUserHeader(data) {
@@ -4032,8 +4049,6 @@ function paintCachedUserHeader(data) {
     const voiceBalChip = document.getElementById("user-voice-bal");
     const recapBalChip = document.getElementById("user-recap-bal");
     const catTag = document.getElementById("profile-category-tag");
-    const balMin = document.getElementById("profile-balance-min");
-    const balCredits = document.getElementById("profile-balance-credits");
     const charCount = document.getElementById("char-count");
     if (vipBadge) {
         vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
@@ -4045,8 +4060,7 @@ function paintCachedUserHeader(data) {
         catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
         catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
     }
-    if (balMin) balMin.innerText = data.is_admin ? t("unlimited") : `${data.balance_minutes} mins`;
-    if (balCredits) balCredits.innerText = data.is_admin ? t("unlimited") : `${data.recap_credits || 0} credits`;
+    paintVipPlanBalances(data);
     if (charCount) {
         const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
         charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
@@ -15210,22 +15224,25 @@ function renderHomeRecentProjects() {
     list.innerHTML = recent.map(j => {
         const isRecap = j.job_type === "RECAP";
         const isTts = j.job_type === "TTS";
+        const kind = isRecap ? "recap" : isTts ? "tts" : "voice";
         const icon = isRecap ? "🎬" : isTts ? "🎧" : "🎙️";
         const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
         return `
-        <div class="home-recent-row" data-recent-job-id="${j.id}">
+        <div class="home-recent-row" data-recent-job-id="${j.id}" data-job-kind="${kind}">
             <div class="home-recent-main">
                 <span class="home-recent-icon">${icon}</span>
                 <div class="home-recent-meta">
                     <span class="home-recent-name">${escapeHtml(snippet)}</span>
-                    <div class="home-recent-badges">
-                        ${computeHomeRecentStatusBadgeHtml(j)}
-                        ${computeRetentionBadgeHtml(j)}
-                    </div>
                 </div>
             </div>
-            <div class="home-recent-action">
-                ${computeHomeRecentActionHtml(j)}
+            <div class="home-recent-footer">
+                <div class="home-recent-badges">
+                    ${computeHomeRecentStatusBadgeHtml(j)}
+                    ${computeRetentionBadgeHtml(j)}
+                </div>
+                <div class="home-recent-action">
+                    ${computeHomeRecentActionHtml(j)}
+                </div>
             </div>
         </div>`;
     }).join("");
@@ -15870,6 +15887,9 @@ function refreshPhase1to4LanguageSurfaces() {
     try {
         if (state && state.user && typeof paintHomeStatusStrip === "function") {
             paintHomeStatusStrip(state.user);
+        }
+        if (state && state.user && typeof paintVipPlanBalances === "function") {
+            paintVipPlanBalances(state.user);
         }
         if (typeof renderHomeRecentProjects === "function") {
             renderHomeRecentProjects();

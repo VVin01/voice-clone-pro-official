@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261113_r141">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261113_r142">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261113_r141" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261113_r142" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -234,13 +234,15 @@
                      tapping unfolds both #home-samples-card and #home-tutorials-card together). -->
                 <div class="card glass home-help-entry-card" id="home-help-entry-card">
                     <button type="button" class="home-help-entry-btn" id="btn-home-help-hub" aria-expanded="false" onclick="toggleVcpHelpHub()">
-                        <span class="home-help-entry-icon">🎧</span>
-                        <span class="home-help-entry-text">
+                        <span class="home-help-entry-head">
+                            <span class="home-help-entry-icon">🎧</span>
                             <span class="home-help-entry-title" data-i18n="home_help_entry_title">နမူနာ အသံများ နှင့် အသုံးပြုနည်း လမ်းညွှန်</span>
+                            <span class="vcp-badge vcp-badge-info" data-i18n="home_tut_count">၁၀ ခု</span>
+                            <span class="home-help-entry-chevron" id="home-help-entry-chevron" aria-hidden="true">▾</span>
+                        </span>
+                        <span class="home-help-entry-text">
                             <span class="home-help-entry-desc" data-i18n="home_help_entry_desc">Voice/Recap အသံ နမူနာများ နားထောင်ရန် နှင့် Tutorial ၁၀ ခု ကြည့်ရန်</span>
                         </span>
-                        <span class="vcp-badge vcp-badge-info" data-i18n="home_tut_count">၁၀ ခု</span>
-                        <span class="home-help-entry-chevron" id="home-help-entry-chevron" aria-hidden="true">▾</span>
                     </button>
                 </div>
 
@@ -2067,11 +2069,11 @@
                         </div>
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_balance_min">အသံမိနစ် လက်ကျန်</span>
-                            <span class="stat-val" id="profile-balance-min">0.0 mins</span>
+                            <span class="stat-val" id="profile-balance-min">—</span>
                         </div>
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_recap_credits">Recap Credit လက်ကျန်</span>
-                            <span class="stat-val text-cyan" id="profile-balance-credits">0 credits</span>
+                            <span class="stat-val text-cyan" id="profile-balance-credits">—</span>
                         </div>
                     </div>
                 </div>
@@ -3407,7 +3409,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261113_r141"></script>
-    <script src="/static/js/app.js?v=20261113_r141"></script>
+    <script src="/static/js/i18n.js?v=20261113_r142"></script>
+    <script src="/static/js/app.js?v=20261113_r142"></script>
 </body>
 </html>
