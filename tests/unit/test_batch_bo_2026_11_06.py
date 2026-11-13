@@ -158,5 +158,5 @@ def test_bo_cta_markup_unchanged():
 
 def test_bo_cache_token_is_r87():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    assert html.count("20261113_r144") == 4
+    assert html.count("20261113_r145") == 4
     assert "20261104_r86" not in html

@@ -6752,6 +6752,7 @@ function setupRecapVisualEditor() {
         previewBlur.style.width = `${(geom.width * 100).toFixed(3)}%`;
         previewBlur.style.right = "auto";
         previewBlur.style.bottom = "auto";
+        previewBlur.classList.toggle("is-near-top", (geom.centre - geom.height * 0.5) < 0.14);
         // Batch AK: the blur geometry feeds the composited frame —
         // a blur change re-renders it (debounced + hash-guarded).
         scheduleRecapCompositeRefresh();
@@ -6789,6 +6790,7 @@ function setupRecapVisualEditor() {
         previewSub.style.right = "auto";
         previewSub.style.transform = "translate(-50%, -50%)";
         previewSub.style.bottom = "auto";
+        previewSub.classList.toggle("is-near-top", subtitleAnchorCanvasFrac(centre) < 0.18);
         syncBlurBoxVisual();
         scheduleRecapCompositeRefresh();
     }
@@ -7314,6 +7316,24 @@ function setupRecapVisualEditor() {
             const stage = recapStageAspect();
             mockupFrame.className = `mockup-screen ${stage.cls}`;
             mockupFrame.style.aspectRatio = stage.css;
+            const stickyWrap = document.getElementById("recap-step2-sticky-preview");
+            if (stickyWrap) {
+                const ratioVal = state.recapRatio || "9:16";
+                const parts = String(stage.css || "9 / 16").split("/");
+                const ratioNum = (parseFloat(parts[0]) || 9) / (parseFloat(parts[1]) || 16);
+                stickyWrap.classList.toggle("is-ratio-9-16", ratioVal === "9:16");
+                stickyWrap.classList.toggle("is-ratio-16-9", ratioVal === "16:9");
+                stickyWrap.classList.toggle("is-ratio-1-1", ratioVal === "1:1");
+                stickyWrap.classList.toggle("is-ratio-orig", ratioVal === "orig");
+                stickyWrap.classList.toggle("is-portrait-stage", ratioNum < 0.85 || stage.cls === "ratio-9-16");
+            }
+            const topNav = document.querySelector(".top-nav");
+            if (topNav && document.documentElement) {
+                const navH = Math.ceil(topNav.getBoundingClientRect().height || 0);
+                if (navH > 40) {
+                    document.documentElement.style.setProperty("--vcp-hdr-sticky-top", `${navH + 14}px`);
+                }
+            }
         }
 
         // 2. Canvas Base Classes & Fill Mode
@@ -9364,6 +9384,11 @@ function setupRecapVisualEditor() {
         syncSubtitleLines(state.recapLines || 1);
         syncBlurBoxVisual();
         syncSubBoxVisual();
+        updateCanvasMockupVisuals();
+        if (typeof ddFitPreviewFrame === "function") ddFitPreviewFrame();
+        if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
+        if (typeof refreshRecapStep4Thumb === "function") refreshRecapStep4Thumb();
+        if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
         if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
         if (typeof syncRecapMasterPresetActive === "function") syncRecapMasterPresetActive();
     }
@@ -9383,6 +9408,14 @@ function setupRecapVisualEditor() {
     // Idempotent by construction: it performs exactly the reads and
     // control syncs the boot restore already performed — no fetch,
     // no submit, no state writes beyond the restore's own.
+    window.__RECAP_SETTINGS_KEY = RECAP_SETTINGS_KEY;
+    window.restoreRecapSettings = restoreRecapSettings;
+    window.__ddFitPreviewFrame = typeof ddFitPreviewFrame === "function" ? ddFitPreviewFrame : null;
+    window.refreshRecapStep2Summary = typeof refreshRecapStep2Summary === "function" ? refreshRecapStep2Summary : null;
+    window.refreshRecapStep4Output = function () {
+        if (typeof refreshRecapStep4Thumb === "function") refreshRecapStep4Thumb();
+        if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
+    };
     window.resyncRecapControlsAfterPrefs = function () {
         restoreRecapSettings();
     };
@@ -15741,10 +15774,22 @@ function applyRecapPresetObject(patch) {
         ? window.__snapshotRecapSettings()
         : {};
     const next = Object.assign({}, base, patch);
-    try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(next)); } catch (e) {}
-    if (typeof restoreRecapSettings === "function") restoreRecapSettings();
+    const settingsKey = window.__RECAP_SETTINGS_KEY || "vcp_recap_settings";
+    try { localStorage.setItem(settingsKey, JSON.stringify(next)); } catch (e) {}
+    if (typeof state === "object" && state) {
+        Object.assign(state, patch);
+    }
+    const restoreFn = typeof window.restoreRecapSettings === "function"
+        ? window.restoreRecapSettings
+        : (typeof window.resyncRecapControlsAfterPrefs === "function" ? window.resyncRecapControlsAfterPrefs : null);
+    if (restoreFn) restoreFn();
+    if (typeof window.updateCanvasMockupVisuals === "function") window.updateCanvasMockupVisuals();
+    if (typeof window.__ddFitPreviewFrame === "function") window.__ddFitPreviewFrame();
+    if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
+    if (typeof window.refreshRecapStep4Output === "function") window.refreshRecapStep4Output();
     if (typeof window.__saveRecapSettingsNow === "function") window.__saveRecapSettingsNow();
     if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
+    if (typeof applyActiveRecapStep2Category === "function") applyActiveRecapStep2Category();
     syncRecapSubStyleCards();
     syncRecapMasterPresetActive();
 }
