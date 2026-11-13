@@ -60,8 +60,10 @@ the user.
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import re
+import struct
 import subprocess
 import threading
 import time
@@ -188,11 +190,92 @@ BUSY_ROUNDS, BUSY_WAIT_SECONDS = 2, 10
 GEMINI_TTS_MAX_ATTEMPTS_PER_CALL = 24
 
 
-def _pcm_seconds(data: bytes) -> float:
-    """Duration of a raw Gemini TTS PCM payload: the engine's audio
-    is 16-bit mono at 24 kHz (see the WAV writer in
-    generate_channel99_voice), i.e. 48,000 bytes per second."""
-    return len(data) / 48000.0
+_PCM_SUBFORMAT_GUID = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
+
+
+def _extract_wav_pcm(data: bytes) -> tuple[bytes, int, int, int]:
+    """Decode a RIFF/WAVE container into raw (pcm_bytes, channels, sampwidth, framerate).
+
+    gemini-3.8-flash-tts and gemini-3.8-flash-lite-tts return audio/wav
+    containers (RIFF header + fmt + data chunk + a trailing ~7,655-byte C2PA
+    chunk after data), whereas 3.1/2.5 return raw L16 PCM. Keeping ONLY the
+    `data` chunk frames prevents header and C2PA metadata bytes from being
+    played as ~0.16s of digital noise on segment tails.
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise GeminiTTSError("Gemini TTS returned malformed RIFF/WAVE container.")
+
+    pcm: bytes | None = None
+    channels, sampwidth, framerate = 1, 2, 24000
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wf:
+            channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            framerate = wf.getframerate()
+            pcm = wf.readframes(wf.getnframes())
+            if channels <= 0 or sampwidth <= 0 or framerate <= 0:
+                raise GeminiTTSError("Gemini TTS returned WAV with invalid audio parameters.")
+    except GeminiTTSError:
+        raise
+    except wave.Error:
+        pcm = None
+
+    if pcm is None:
+        pos = 12
+        fmt_found = False
+        pcm_parts: list[bytes] = []
+        n = len(data)
+        while pos + 8 <= n:
+            chunk_id = data[pos : pos + 4]
+            chunk_size = struct.unpack_from("<I", data, pos + 4)[0]
+            payload_start = pos + 8
+            if chunk_id == b"fmt ":
+                if chunk_size < 16 or payload_start + 16 > n:
+                    raise GeminiTTSError("Gemini TTS returned truncated WAV fmt chunk.")
+                fmt_tag, ch, sr, _br, _ba, bits = struct.unpack_from("<HHIIHH", data, payload_start)
+                is_pcm = fmt_tag == 1
+                if fmt_tag == 0xFFFE and chunk_size >= 40 and payload_start + 40 <= n:
+                    is_pcm = data[payload_start + 24 : payload_start + 40] == _PCM_SUBFORMAT_GUID
+                if not is_pcm:
+                    raise GeminiTTSError(f"Gemini TTS returned unsupported WAV format tag {fmt_tag}.")
+                if ch <= 0 or sr <= 0 or bits <= 0 or bits % 8 != 0:
+                    raise GeminiTTSError("Gemini TTS returned WAV with invalid PCM dimensions.")
+                channels, framerate, sampwidth = int(ch), int(sr), int(bits) // 8
+                fmt_found = True
+            elif chunk_id == b"data":
+                if chunk_size == 0xFFFFFFFF:
+                    pcm_parts.append(data[payload_start:])
+                    break
+                payload_end = min(n, payload_start + chunk_size)
+                pcm_parts.append(data[payload_start:payload_end])
+            pos = payload_start + chunk_size + (chunk_size & 1)
+
+        if not fmt_found or not pcm_parts:
+            raise GeminiTTSError("Gemini TTS returned WAV container without valid fmt/data chunks.")
+        pcm = b"".join(pcm_parts)
+
+    frame_bytes = channels * sampwidth
+    if frame_bytes > 1 and len(pcm) % frame_bytes:
+        pcm = pcm[: (len(pcm) // frame_bytes) * frame_bytes]
+    return pcm, channels, sampwidth, framerate
+
+
+def _unwrap_tts_audio(data: bytes) -> tuple[bytes, int, int, int]:
+    """Normalize a Gemini TTS audio payload into raw PCM + (channels, sampwidth, framerate).
+
+    RIFF payloads (gemini-3.8 family) are parsed as WAV containers keeping only
+    the `data` chunk; raw L16 payloads (3.1/2.5) pass through at 24 kHz mono 16-bit.
+    """
+    if data[:4] == b"RIFF":
+        return _extract_wav_pcm(data)
+    return data, 1, 2, 24000
+
+
+def _pcm_seconds(data: bytes, channels: int = 1, sampwidth: int = 2, framerate: int = 24000) -> float:
+    """Duration of a raw Gemini TTS PCM payload: defaults to 16-bit mono
+    at 24 kHz (see the WAV writer in generate_channel99_voice), i.e. 48,000 bytes per second."""
+    bps = max(1, int(channels) * int(sampwidth) * int(framerate))
+    return len(data) / float(bps)
 
 
 def _max_plausible_seconds(chars: int) -> float:
@@ -378,6 +461,7 @@ class GeminiTTSEngine:
         # Cooldown bookkeeping (mark_success / mark_failure) and the
         # CG key_error_codes classification are unaffected either way.
         self._record_usage = bool(record_usage)
+        self._tls = threading.local()
 
     def fingerprint(self, voice: str) -> str:
         profile = narrator_prompt("", voice, self.direction)
@@ -456,9 +540,20 @@ class GeminiTTSEngine:
                         client = _client(self.keys[i])  # kept in a variable: a dropped genai Client closes itself
                         response = client.models.generate_content(model=model, contents=prompt, config=config)
                         rejected = False
+                        had_invalid_audio = False
                         for part in response.candidates[0].content.parts:
                             data = getattr(getattr(part, "inline_data", None), "data", None)
                             if data:
+                                try:
+                                    pcm, channels, sampwidth, framerate = _unwrap_tts_audio(data)
+                                except GeminiTTSError as wav_err:
+                                    last = f"{model}: {wav_err}"
+                                    had_invalid_audio = True
+                                    break
+                                if not pcm:
+                                    last = f"{model}: empty audio in the answer"
+                                    had_invalid_audio = True
+                                    break
                                 self._last_key = i
                                 if tts_health is not None:
                                     tts_health.mark_success(self.keys[i])
@@ -491,14 +586,21 @@ class GeminiTTSEngine:
                                 # healthy — so the (model, key) is
                                 # NOT marked dead and no busy state
                                 # is set.
-                                secs = _pcm_seconds(data)
+                                secs = _pcm_seconds(
+                                    pcm,
+                                    channels=channels,
+                                    sampwidth=sampwidth,
+                                    framerate=framerate,
+                                )
                                 if cleaned_chars >= 1 and secs > _max_plausible_seconds(cleaned_chars):
                                     self.log(f"🛡️ Gemini TTS output rejected — {secs:.1f}s for {cleaned_chars} chars on {model} (possible prompt leak); retrying")
                                     last = f"{model}: output too long ({secs:.1f}s for {cleaned_chars} chars) — rejected as a possible prompt leak"
                                     rejected = True
                                     break
-                                return data
-                        if not rejected:
+                                if hasattr(self, "_tls"):
+                                    self._tls.pcm_spec = (channels, sampwidth, framerate)
+                                return pcm
+                        if not rejected and not had_invalid_audio:
                             last = f"{model}: no audio in the answer"
                     except Exception as exc:  # noqa: BLE001
                         code = _code(exc)
@@ -559,12 +661,17 @@ class GeminiTTSEngine:
         out = self.work_dir / f"gemini_{key}.wav"
         if out.is_file() and out.stat().st_size > 1000:
             return out
-        pcm = self._ask(text, name)
+        if hasattr(self, "_tls"):
+            self._tls.pcm_spec = None
+        payload = self._ask(text, name)
+        pcm, channels, sampwidth, framerate = _unwrap_tts_audio(payload)
+        if payload[:4] != b"RIFF" and hasattr(self, "_tls") and getattr(self._tls, "pcm_spec", None):
+            channels, sampwidth, framerate = self._tls.pcm_spec
         raw = out.with_suffix(".24k.wav")
         with wave.open(str(raw), "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(24000)
+            w.setnchannels(channels)
+            w.setsampwidth(sampwidth)
+            w.setframerate(framerate)
             w.writeframes(pcm)
         trim = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,"
                 "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.12,areverse")
