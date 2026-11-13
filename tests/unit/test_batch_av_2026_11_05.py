@@ -238,8 +238,8 @@ def test_av_step_structure_and_nav():
     assert 'id="recap-steps-nav"' in TAB
     positions = [TAB.index(f'id="recap-step-{n}"') for n in (1, 2, 3, 4)]
     assert positions == sorted(positions), "steps must render in order 1→2→3→4"
-    # Step 1 carries the owner-mandated name.
-    assert 'data-i18n="recap_step1_title">Source ထည့်သွင်းပါ<' in TAB
+    # Step 1 carries the owner-polished name.
+    assert 'data-i18n="recap_step1_title">ဗီဒီယို ထည့်သွင်းပါ<' in TAB
 
 
 def test_av_step2_visible_vs_detail_split():
@@ -348,7 +348,7 @@ def test_av_new_i18n_keys_in_both_locales():
     en = I18N_JS.index('"en"') if '"en"' in I18N_JS else I18N_JS.index("en: {")
     for key in NEW_I18N_KEYS:
         assert I18N_JS.count(f"{key}:") >= 2, f"{key} missing in one locale"
-    assert 'recap_step1_title: "Source ထည့်သွင်းပါ"' in I18N_JS
+    assert 'recap_step1_title: "ဗီဒီယို ထည့်သွင်းပါ"' in I18N_JS
     assert 'recap_step1_title: "Add Source"' in I18N_JS
     assert my < en  # sanity: my block precedes en block
 

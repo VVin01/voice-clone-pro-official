@@ -295,7 +295,7 @@ def test_p7_info_chips_repaint_on_language_change():
 # ── Copy batch ──────────────────────────────────────────────────────
 
 def test_e1_open_via_telegram_fallback_codepoints():
-    good = "ဖ" + "ွ" + "င" + "့" + "ပ" + "ာ"   # ဖွင့်ပါ
+    good = "ဖ" + "ွ" + "င" + "့" + "်" + "ပ" + "ါ"  # ဖွင့်ပါ
     bad = "ဖ" + "ွ" + "င" + "်" + "္" + "ပ" + "ါ"  # stacked asat+virama, wrong vowel
     assert f"Telegram ထဲမှ {good}" in INDEX_HTML
     assert bad not in INDEX_HTML

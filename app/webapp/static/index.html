@@ -145,7 +145,7 @@
                             <span class="home-free-text">
                                 <span class="home-free-name-wrap">
                                     <span class="home-free-name" data-i18n="home_free_tts_label">TTS အသံ (ဒီနေ့ သုံးနိုင်သေးသည်)</span>
-                                    <span class="vcp-badge vcp-badge-info home-free-period-badge" data-i18n="home_free_tts_period">15m / နေ့စဉ်</span>
+                                    <span class="vcp-badge vcp-badge-info home-free-period-badge" data-i18n="home_free_tts_period">15 မိနစ် / နေ့စဉ်</span>
                                 </span>
                                 <span class="home-free-note hidden" id="home-free-tts-note"></span>
                             </span>
@@ -157,7 +157,7 @@
                             <span class="home-free-text">
                                 <span class="home-free-name-wrap">
                                     <span class="home-free-name" data-i18n="home_free_voice_label">Voice Clone လက်ကျန်</span>
-                                    <span class="vcp-badge vcp-badge-info home-free-period-badge" data-i18n="home_free_voice_period">180s / လစဉ်</span>
+                                    <span class="vcp-badge vcp-badge-info home-free-period-badge" data-i18n="home_free_voice_period">180 စက္ကန့် / လစဉ်</span>
                                 </span>
                             </span>
                             <span class="home-free-value" id="home-free-voice-value">—</span>
@@ -168,7 +168,7 @@
                             <span class="home-free-text">
                                 <span class="home-free-name-wrap">
                                     <span class="home-free-name" data-i18n="home_free_recap_label">Recap Credit လက်ကျန်</span>
-                                    <span class="vcp-badge vcp-badge-gold home-free-period-badge" data-i18n="home_free_recap_period">3 Credits / စာရင်းသွင်းစဉ်</span>
+                                    <span class="vcp-badge vcp-badge-gold home-free-period-badge" data-i18n="home_free_recap_period">3 Credit / တစ်ကြိမ်</span>
                                 </span>
                             </span>
                             <span class="home-free-value" id="home-free-recap-value">—</span>
@@ -413,7 +413,7 @@
                     <div class="card glass" id="curated-personas-card-wrap">
                         <div class="segmented-control sm mb-2">
                             <button class="seg-btn active" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
-                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Curated Voices</span>
+                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 အသင့်သုံး Persona အသံများ</span>
                             </button>
                             <button class="seg-btn" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
                                 <span class="seg-title" data-i18n="btn_mode_custom">🎙️ Custom Voice Clone</span>
@@ -440,7 +440,7 @@
                         <div class="persona-picker-card picker-collapsed" id="persona-picker-card">
                             <div id="curated-personas-card">
                                 <div class="card-header-row">
-                                    <div class="card-label" data-i18n="curated_section_title">Curated အသံများ</div>
+                                    <div class="card-label" data-i18n="curated_section_title">အသင့်သုံး Persona အသံများ</div>
                                     <span class="count-badge" id="personas-count">12 Personas</span>
                                 </div>
                                 <div class="persona-filter-row">
@@ -470,11 +470,11 @@
                             </div>
                             <!-- File requirements shown clearly before upload -->
                             <div class="vcp-clone-req-box" id="custom-clone-req-box">
-                                <span class="vcp-clone-req-item" data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50s)</span>
+                                <span class="vcp-clone-req-item" data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50 စက္ကန့်)</span>
                                 <span class="vcp-clone-req-item" data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 20 MB)</span>
                                 <span class="vcp-clone-req-item" data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</span>
                             </div>
-                            <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် — ပိုရှည်ပါက ပထမ 45 စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်၊ WAV/MP3) တင်ပါ။ မတင်ပါက Default မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
+                            <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် — ပိုရှည်ပါက ပထမ 45 စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်၊ WAV/MP3) တင်ပါ။ မတင်ပါက မူလ မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
                             <div class="ref-upload-row">
                                 <label class="btn-file-upload" for="ref-audio-input">
                                     <span id="ref-audio-label" data-i18n="ref_file_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
@@ -800,7 +800,7 @@
     <div class="recap-steps-capsule">
         <button type="button" class="recap-steps-nav-item is-active" data-step-toggle="1" aria-label="1">
             <span class="recap-steps-nav-num" data-step-pill="1">1</span>
-            <span class="recap-steps-nav-name" data-i18n="recap_step1_title">Source ထည့်သွင်းပါ</span>
+            <span class="recap-steps-nav-name" data-i18n="recap_step1_title">ဗီဒီယို ထည့်သွင်းပါ</span>
         </button>
         <button type="button" class="recap-steps-nav-item" data-step-toggle="2" aria-label="2">
             <span class="recap-steps-nav-num" data-step-pill="2">2</span>
@@ -822,7 +822,7 @@
         <span class="recap-step-word" data-i18n="recap_step_word">အဆင့်</span>
         <span class="step-num-pill" data-step-pill="1">1</span>
         <span class="recap-step-dot" aria-hidden="true">·</span>
-        <span class="step-title" data-i18n="recap_step1_title">Source ထည့်သွင်းပါ</span>
+        <span class="step-title" data-i18n="recap_step1_title">ဗီဒီယို ထည့်သွင်းပါ</span>
     </div>
     <div class="recap-step-body" id="recap-step-1-body">
 
@@ -1090,7 +1090,7 @@
                             <span class="ratio-icon">🎞️</span>
                             <span class="ratio-name" data-i18n="ratio_original">Original</span>
                             <span class="ratio-sub" data-i18n="ratio_original_sub">မူရင်းအချိုး</span>
-                            <span class="ratio-dims" data-i18n="ratio_original_dims">အချိုးသာ · native size</span>
+                            <span class="ratio-dims" data-i18n="ratio_original_dims">မူရင်းအချိုး · မူရင်းအရွယ်</span>
                         </button>
                     </div>
 
@@ -2637,7 +2637,7 @@
                         </div>
 
                         <div class="card glass mt-3">
-                            <div class="card-label" data-i18n="admin_user_jobs">📜 ဒီလူ၏ အလုပ်များ</div>
+                            <div class="card-label" data-i18n="admin_user_jobs">📜 အသုံးပြုသူ၏ အလုပ်များ</div>
                             <div id="adm-user-jobs" class="mt-2">
                                 <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
                             </div>
@@ -3235,7 +3235,7 @@
                     <div class="live-job-row-meta" id="submit-confirm-stage"></div>
                     <div class="live-job-row-bar"><span class="live-job-row-fill" id="submit-confirm-fill" style="width:4%"></span></div>
                 </div>
-                <p class="submit-confirm-hint" data-i18n="confirm_pill_hint">💡 ဒီအလုပ်ကို အောက်က အလုပ်အလုံး (Jobs pill) ကနေလည်း အချိန်မရွေး လိုက်ကြည့်နိုင်ပါတယ်။</p>
+                <p class="submit-confirm-hint" data-i18n="confirm_pill_hint">💡 ဒီအလုပ်ကို အောက်ခြေက လုပ်နေဆဲ အလုပ်များ ခလုတ်ကနေလည်း အချိန်မရွေး ကြည့်နိုင်ပါတယ်။</p>
                 <div class="submit-confirm-actions">
                     <button type="button" class="btn gold-gradient-btn" id="submit-confirm-watch" onclick="submitConfirmWatch()"><span data-i18n="confirm_watch_btn">👀 အလုပ်ကို ကြည့်မည်</span></button>
                     <button type="button" class="btn secondary-btn" id="submit-confirm-back" onclick="submitConfirmBack()"><span data-i18n="studio_back_btn">← စတူဒီယိုသို့ ပြန်မည်</span></button>
@@ -3330,7 +3330,7 @@
     <div id="open-via-telegram-modal" class="image-modal hidden" onclick="closeOpenViaTelegramModal()">
         <div class="modal-content centered" onclick="event.stopPropagation()">
             <div class="modal-emoji">📱</div>
-            <h3 data-i18n="open_via_telegram_title">📱 Telegram ထဲမှ ဖွင့ပာ</h3>
+            <h3 data-i18n="open_via_telegram_title">📱 Telegram ထဲမှ ဖွင့်ပါ</h3>
             <p data-i18n="open_via_telegram_desc" class="modal-desc">ဒီ App ကို Telegram Bot ထဲမှ Mini App အဖြစ် ဖွင့်မှသာ အသုံးပြုနိုင်ပါသည်။ Browser မှ တိုက်ရိုက်ဖွင့်ပါက အကောင့် အတည်ပြုလို့ မရပါ။</p>
             <button class="btn" onclick="closeOpenViaTelegramModal()" data-i18n="open_via_telegram_btn">နားလည်ပါပြီ</button>
         </div>
@@ -3343,7 +3343,7 @@
     <div id="tts-key-prompt-modal" class="image-modal hidden">
         <div class="modal-content centered" onclick="event.stopPropagation()">
             <div class="modal-emoji">✨</div>
-            <h3 data-i18n="tts_key_prompt_title">✨ Gemini အခမဲ့ အပိုင်း ကုန်သွားပါပြီ</h3>
+            <h3 data-i18n="tts_key_prompt_title">✨ ဒီနေ့ Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ</h3>
             <p data-i18n="tts_key_prompt_body" class="modal-desc">ဒီနေ့အတွက် Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ။ ကိုယ်ပိုင် Gemini Key ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။</p>
             <button class="btn gold-gradient-btn" id="btn-tts-prompt-add-key" data-i18n="tts_key_prompt_add">🔑 Key ထည့်မယ်</button>
             <button class="btn secondary-btn mt-2" id="btn-tts-prompt-edge" data-i18n="tts_key_prompt_edge">Edge နဲ့ ဆက်လုပ်မယ်</button>
