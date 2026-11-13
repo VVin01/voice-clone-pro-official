@@ -43,7 +43,7 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.models.enums import AccountCategory, VoiceModelStatus, VoiceModelType
 from app.models.schema import Job, UserVoiceModelGrant, VoiceModel
-from app.services.ledger import get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user
 from app.webapp import api as api_mod
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -168,6 +168,10 @@ async def test_x1_recap_payload_voice_slug_rejected_before_charge(db_session, re
 async def test_x1_recap_curated_and_legacy_slugs_accepted(db_session, recap_runner):
     for i, slug in enumerate(("mahnin", "nilar")):
         user = await _make_user(db_session, 881020 + i, recap_credits=3)
+        # Option B: default tts_engine="voxcpm" pre-checks Voice Clone Minutes.
+        bal = await get_minute_balance(db_session, user.id)
+        bal.purchased_seconds = 3600
+        await db_session.commit()
         resp = await api_mod.create_recap_job(
             _recap_req(voice_slug=slug), user=user, db=db_session, _gate=user
         )

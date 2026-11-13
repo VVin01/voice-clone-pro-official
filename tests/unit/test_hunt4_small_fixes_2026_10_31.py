@@ -34,7 +34,7 @@ import app.services.downloader as dl_mod
 import app.services.url_safety as url_safety_mod
 from app.config import settings
 from app.models.schema import BotSetting, PaymentRequest, User
-from app.services.ledger import get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.payments import get_plan_by_code
 from app.webapp import api as api_mod
 
@@ -317,6 +317,10 @@ async def test_recap_precheck_get_info_runs_off_event_loop(db_session, monkeypat
             db_session, 880812,
             account_category="FREE", recap_credits=1,
         )
+        # Option B: default tts_engine="voxcpm" pre-checks Voice Clone Minutes.
+        bal = await get_minute_balance(db_session, user.id)
+        bal.purchased_seconds = 3600
+        await db_session.commit()
         req = api_mod.RecapConfigRequest(
             url="https://www.youtube.com/watch?v=abc123",
             title="Test Movie",

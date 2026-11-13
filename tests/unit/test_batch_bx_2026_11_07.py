@@ -384,7 +384,10 @@ def test_edge_persona_note_element_and_wiring():
     assert 'id="recap-persona-engine-note"' in index
     assert 'data-i18n="recap_persona_note_edge"' in index
     js = _read("app/webapp/static/js/app.js")
-    assert 'note.classList.toggle("hidden", state.recapTtsEngine !== "edge")' in js
+    sync_start = js.index("function syncRecapEngineAreas()")
+    sync_body = js[sync_start:js.index("function refreshRecapEngineLock()", sync_start)]
+    assert 'const eng = state.recapTtsEngine || "voxcpm";' in sync_body
+    assert 'if (note) note.classList.toggle("hidden", eng !== "edge");' in sync_body
     i18n_js = _read("app/webapp/static/js/i18n.js")
     assert "recap_persona_note_edge" in i18n_js
     assert "recap_step4_edge_voice_note" in i18n_js

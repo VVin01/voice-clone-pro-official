@@ -151,8 +151,9 @@ def test_failed_job_toasts_route_through_mapper():
     assert "${errMsg}" not in APP_JS
     assert "Movie Recap ဖန်တီးမှု အဆင်မပြေဖြစ်သွားပါသည်:" not in APP_JS
     # the recap FAILED toast uses 'error' styling around the mapper call
+    # (Option B voice-refund badge sits between mapper and toast call).
     idx = APP_JS.index("mapErrorToToast(errMsg, 'recap')")
-    assert "showStudioToast(failToast, 'error', 6000)" in APP_JS[idx:idx + 400]
+    assert "showStudioToast(failToast, 'error', 6000)" in APP_JS[idx:idx + 700]
 
 
 def test_submit_and_io_catches_route_through_mapper():

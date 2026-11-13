@@ -34,7 +34,7 @@ import pytest
 
 from app.models.enums import VoiceModelStatus, VoiceModelType
 from app.models.schema import VoiceModel
-from app.services.ledger import get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.myanmar_text import convert_zawgyi_to_unicode, is_probably_zawgyi
 from app.services.queue import create_voice_clone_job
 from app.services.recap_engine.script_editing import (
@@ -352,6 +352,10 @@ def recap_runner(monkeypatch):
 @pytest.mark.asyncio
 async def test_recap_title_is_converted_at_submit(db_session, recap_runner):
     user = await _make_user(db_session, 883003, recap_credits=1)
+    # Option B: default tts_engine="voxcpm" pre-checks Voice Clone Minutes.
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 3600
+    await db_session.commit()
     req = api_mod.RecapConfigRequest(
         url="", title=ZG_MINGALABAR, voice_slug="komin", duration_seconds=60
     )
