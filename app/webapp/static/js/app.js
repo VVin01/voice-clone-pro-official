@@ -1305,14 +1305,16 @@ function liveJobsSheetRowHtml(job) {
         : (overrun
             ? escapeHtml(liveJobOverrunText(job))
             : `${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}`);
-    return `<div class="live-job-row" data-live-job-id="${job.id}">
-        <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
-        <div class="live-job-row-main">
-            <div class="live-job-row-title">${title}</div>
-            <div class="live-job-row-meta">${metaText}${elapsed && !overrun ? " · " + escapeHtml(elapsed) : ""}</div>
-            <div class="live-job-row-bar"><span class="live-job-row-fill" style="width:${pct}%"></span></div>
+    return `<div class="live-job-row vcp-job-card" data-live-job-id="${job.id}">
+        <div class="vcp-job-head">
+            <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
+            <div class="live-job-row-main">
+                <div class="live-job-row-title">${title}</div>
+                <div class="live-job-row-meta">${metaText}${elapsed && !overrun ? " · " + escapeHtml(elapsed) : ""}</div>
+            </div>
         </div>
-        <div class="live-job-row-actions">${action}</div>
+        <div class="live-job-row-bar vcp-job-progress"><span class="live-job-row-fill vcp-job-progress-fill" style="width:${pct}%"></span></div>
+        ${action ? `<div class="live-job-row-actions vcp-job-footer-row">${action}</div>` : ""}
     </div>`;
 }
 function renderLiveJobsSheet() {
@@ -13307,9 +13309,14 @@ async function loadAdminQueue(isSilent = false) {
                 actionsHtml += `<a href="#" data-open-url="${j.download_url}" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
             }
 
+            const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (statusLower === "running" ? 58 : 22)));
+            const progressHtml = (statusLower === "running" || statusLower === "queued")
+                ? `<div class="vcp-job-progress"><span class="vcp-job-progress-fill" style="width:${pct}%"></span></div>`
+                : "";
+
             return `
-                <div class="queue-item" id="queue-item-${j.id}">
-                    <div class="queue-item-header">
+                <div class="queue-item vcp-job-card" id="queue-item-${j.id}">
+                    <div class="queue-item-header vcp-job-badges">
                         <div class="queue-badges-left">
                             <span class="badge-status ${statusLower}">${statusBadgeText}</span>
                             <span class="badge-engine ${engineLower}">${engineLabel}</span>
@@ -13323,8 +13330,9 @@ async function loadAdminQueue(isSilent = false) {
                         <span>#${j.id.slice(0, 8)}</span>
                     </div>
                     <div class="queue-item-body">${escapeHtml(j.input_snippet || "Task Content")}</div>
+                    ${progressHtml}
                     ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(displayJobError(j.error_message))}</div>` : ""}
-                    <div class="queue-item-footer">
+                    <div class="queue-item-footer vcp-job-footer-row">
                         <span class="queue-timing">${escapeHtml(j.created_ago)}</span>
                         <div class="queue-actions-row">${actionsHtml}</div>
                     </div>
@@ -14614,22 +14622,47 @@ function hubHistoryRowHtml(j) {
     const expiryPillHtml = exp.expiresSoon && !exp.expired && j.status === "SUCCESS"
         ? `<span class="vcp-badge vcp-badge-warning hub-expires-soon-badge">${escapeHtml(tf("hist_expires_soon_badge", { time: exp.timeText }))}</span>`
         : "";
+    const isRunningOrQueued = j.status === "RUNNING" || j.status === "QUEUED";
+    const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (j.status === "RUNNING" ? 55 : 22)));
+    const progressHtml = isRunningOrQueued
+        ? `<span class="vcp-job-progress"><span class="vcp-job-progress-fill" style="width:${pct}%"></span></span>`
+        : "";
+    let quickAction = "";
+    if (isRecap && j.script_ready) {
+        quickAction = `<button type="button" class="vcp-chip active" onclick="openRecapScriptEditor('${j.id}')">${escapeHtml(t("btn_review_script"))}</button>`;
+    } else if (isRunningOrQueued) {
+        quickAction = isRecap
+            ? `<button type="button" class="vcp-chip active" onclick="openRecapDetail('${j.id}')">${escapeHtml(t("hist_track_recap"))}</button>`
+            : `<button type="button" class="vcp-chip active" onclick="openVoiceDetail('${j.id}')">${escapeHtml(t("hist_track_voice"))}</button>`;
+    } else if (j.status === "SUCCESS" && !j.is_expired) {
+        if (isRecap && j.deliverables && j.deliverables.video) {
+            quickAction = `<a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
+        } else if (!isRecap && j.download_url) {
+            quickAction = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
+        }
+    } else if (j.status === "FAILED" && isRecap && j.can_retry !== false) {
+        quickAction = `<button type="button" class="vcp-chip" onclick="retryRecapJob('${j.id}')">${escapeHtml(t("btn_retry_job"))}</button>`;
+    }
     return `
-    <div class="hub-row vcp-card vcp-card--compact ${hubStatusBorder(j.status)} ${exp.expiresSoon ? "is-expires-soon" : ""} ${open ? "open" : ""}" data-job-id="${j.id}">
+    <div class="hub-row vcp-card vcp-card--compact vcp-job-card ${hubStatusBorder(j.status)} ${exp.expiresSoon ? "is-expires-soon" : ""} ${open ? "open" : ""}" data-job-id="${j.id}">
         <button type="button" class="hub-row-main" onclick="toggleHistoryDetail('${j.id}')" aria-expanded="${open}">
-            <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
-            <span class="hub-row-text">
-                <span class="hub-row-title">${title}</span>
-                <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} · <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+            <span class="vcp-job-head">
+                <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
+                <span class="hub-row-text">
+                    <span class="hub-row-title">${title}</span>
+                    <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} · <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                </span>
+                <span class="hub-chevron">${open ? "⌃" : "›"}</span>
             </span>
-            <span class="hub-row-badges">
+            <span class="hub-row-badges vcp-job-badges">
+                ${hubStatusBadgeHtml(j)}
+                ${expiryPillHtml}
                 ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
                 ${!isRecap && j.reference_trimmed ? `<span class="history-item-badge hub-fallback-badge">${t("hist_ref_trim_badge")}</span>` : ""}
-                ${expiryPillHtml}
-                ${hubStatusBadgeHtml(j)}
             </span>
-            <span class="hub-chevron">${open ? "⌃" : "›"}</span>
+            ${progressHtml}
         </button>
+        ${quickAction ? `<div class="vcp-job-footer-row hub-quick-footer">${quickAction}</div>` : ""}
         <div class="hub-detail ${open ? "" : "hidden"}">${hubHistoryDetailHtml(j)}</div>
     </div>`;
 }
@@ -15097,6 +15130,11 @@ function applyDesktopDropHint() {
 // ── Phase 2: Home Dashboard, Status Strip, Recent Projects & Help Hub ──────
 function paintHomeStatusStrip(data) {
     if (!data) return;
+    const tier = data.is_admin ? "admin" : (data.is_vip ? "vip" : "free");
+    const homePane = document.getElementById("tab-home");
+    if (homePane) homePane.setAttribute("data-tier", tier);
+    const heroCard = document.getElementById("home-hero-card");
+    if (heroCard) heroCard.setAttribute("data-tier", tier);
     const greetEl = document.getElementById("home-greeting-text");
     if (greetEl) {
         const tgFirst = state.tg && state.tg.initDataUnsafe && state.tg.initDataUnsafe.user && state.tg.initDataUnsafe.user.first_name;
@@ -15281,22 +15319,32 @@ function renderHomeRecentProjects() {
         const isRecap = j.job_type === "RECAP";
         const isTts = j.job_type === "TTS";
         const kind = isRecap ? "recap" : isTts ? "tts" : "voice";
-        const icon = isRecap ? "🎬" : isTts ? "🎧" : "🎙️";
+        const icon = isRecap
+            ? '<svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>'
+            : isTts
+                ? '<svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>'
+                : '<svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>';
         const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
+        const isRunningOrQueued = j.status === "RUNNING" || j.status === "QUEUED";
+        const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (j.status === "RUNNING" ? 55 : 22)));
+        const progressHtml = isRunningOrQueued
+            ? `<div class="vcp-job-progress"><span class="vcp-job-progress-fill" style="width:${pct}%"></span></div>`
+            : "";
         return `
-        <div class="home-recent-row" data-recent-job-id="${j.id}" data-job-kind="${kind}">
-            <div class="home-recent-main">
+        <div class="home-recent-row vcp-job-card" data-recent-job-id="${j.id}" data-job-kind="${kind}">
+            <div class="home-recent-main vcp-job-head">
                 <span class="home-recent-icon">${icon}</span>
                 <div class="home-recent-meta">
                     <span class="home-recent-name">${escapeHtml(snippet)}</span>
                 </div>
             </div>
+            ${progressHtml}
             <div class="home-recent-footer">
                 <div class="home-recent-badges">
                     ${computeHomeRecentStatusBadgeHtml(j)}
                     ${computeRetentionBadgeHtml(j)}
                 </div>
-                <div class="home-recent-action">
+                <div class="home-recent-action vcp-job-footer-row">
                     ${computeHomeRecentActionHtml(j)}
                 </div>
             </div>

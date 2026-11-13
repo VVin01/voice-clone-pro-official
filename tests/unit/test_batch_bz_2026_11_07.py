@@ -173,10 +173,10 @@ def test_header_tts_chip_paint_and_refresh():
 
 def test_home_free_card_position_and_rows():
     assert 'id="home-free-card"' in INDEX_HTML
-    # AY order: Start tiles → Free today → Tools.
+    # V2 4-Zone IA order: Hero Balance Trio (#home-free-card) -> Start Studios -> Tools.
     assert (
-        INDEX_HTML.index('id="home-start-card"')
-        < INDEX_HTML.index('id="home-free-card"')
+        INDEX_HTML.index('id="home-free-card"')
+        < INDEX_HTML.index('id="home-start-card"')
         < INDEX_HTML.index('id="home-tools-card"')
     )
     for row_id in (
@@ -426,7 +426,7 @@ def test_tts_prefill_logic_pins():
 # ===========================================================================
 
 def test_cache_token_is_r97():
-    assert INDEX_HTML.count("20261113_r143") == 4
+    assert INDEX_HTML.count("20261113_r144") == 4
     # Split literal: the previous token must be absent, written so a
     # future token sweep cannot rewrite this negative assertion.
     assert ("20261104_r" + "96") not in INDEX_HTML

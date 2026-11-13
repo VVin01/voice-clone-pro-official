@@ -8212,6 +8212,702 @@ html[data-theme="dark"].lite .card.glass,
 html[data-theme="dark"].lite .vcp-card {
     background-image: linear-gradient(180deg, #162038 0%, #11192E 100%), linear-gradient(135deg, #334155, #1E3A8A) !important;
 }
+
+/* ============================================================================
+   VCP UI REBUILD V2 — PHASE 2: HOME 4-ZONE IA & CHAMPAGNE VIP
+   ============================================================================ */
+.vcp-sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Zone A: Unified Hero + Champagne Pearl VIP / Admin */
+#tab-home .vcp-hero-card {
+    padding: 14px !important;
+    border-radius: 22px !important;
+    background-image: linear-gradient(160deg, rgba(255, 255, 255, 0.96) 0%, rgba(235, 244, 255, 0.90) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.85) !important;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08), inset 0 1.5px 0 rgba(255, 255, 255, 0.98) !important;
+}
+#tab-home .vcp-hero-card[data-tier="vip"],
+#tab-home .vcp-hero-card[data-tier="admin"] {
+    background-image: linear-gradient(155deg, #FFFDF8 0%, #FAF0D7 55%, #F6E6BE 100%) !important;
+    border-color: rgba(212, 160, 56, 0.50) !important;
+    box-shadow: 0 14px 36px rgba(180, 128, 30, 0.14), inset 0 1.5px 0 rgba(255, 255, 255, 0.95) !important;
+}
+#tab-home #home-hero-card #home-status-strip,
+html.lite #tab-home #home-hero-card #home-status-strip,
+body.lite #tab-home #home-hero-card #home-status-strip,
+html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    padding: 0 0 12px 0 !important;
+    margin: 0 !important;
+    min-height: 0 !important;
+    background: transparent !important;
+    background-image: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    cursor: pointer;
+}
+#tab-home #home-hero-card #home-status-strip .vcp-hero-ident,
+#tab-home #home-hero-card #home-status-strip .home-status-left {
+    width: auto !important;
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    gap: 3px !important;
+}
+#tab-home #home-hero-card #home-greeting-text {
+    font-size: 18px !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em;
+    color: var(--vcp-text-primary, #0F172A) !important;
+    line-height: 1.3;
+    word-break: break-word;
+    white-space: normal !important;
+}
+#tab-home .vcp-hero-tagline {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--vcp-text-secondary, #2F435E) !important;
+    line-height: 1.5;
+    white-space: normal !important;
+}
+#tab-home #home-hero-card #home-status-strip .vcp-hero-badges,
+#tab-home #home-hero-card #home-status-strip .home-status-right {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    margin-top: 0 !important;
+    padding: 2px 0 0 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 5px !important;
+}
+#tab-home #home-hero-card #home-tier-badge.vcp-badge-info {
+    background: rgba(37, 99, 235, 0.12) !important;
+    color: #1D4ED8 !important;
+    border: 1px solid rgba(37, 99, 235, 0.28) !important;
+    font-weight: 700 !important;
+}
+#tab-home #home-hero-card #home-tier-badge.vcp-badge-gold {
+    background: linear-gradient(135deg, #F59E0B, #D97706) !important;
+    color: #FFFFFF !important;
+    border: 0 !important;
+    font-weight: 800 !important;
+    box-shadow: 0 2px 8px rgba(217, 119, 6, 0.28) !important;
+}
+#tab-home .home-status-chevron {
+    color: var(--vcp-text-muted, #475569) !important;
+    font-size: 16px;
+    font-weight: 700;
+}
+#tab-home .vcp-hero-ready-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.28);
+    color: #065F46;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+#tab-home .vcp-pulse-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #10B981;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.20);
+}
+
+/* Balance Trio 3-Col Bento */
+#tab-home .vcp-balance-trio {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+#tab-home .vcp-bal-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 10px 8px;
+    min-height: 76px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+#tab-home .vcp-bal-tile:active { transform: scale(0.97); }
+#tab-home .vcp-bal-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--vcp-text-secondary, #2F435E);
+    letter-spacing: 0.01em;
+}
+#tab-home .vcp-bal-head .vcp-ico { color: #2563EB; }
+#tab-home .vcp-hero-card[data-tier="vip"] .vcp-bal-head .vcp-ico,
+#tab-home .vcp-hero-card[data-tier="admin"] .vcp-bal-head .vcp-ico { color: #B45309; }
+#tab-home .vcp-bal-val {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--vcp-text-primary, #0F172A);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.25;
+    word-break: break-word;
+}
+#tab-home .vcp-bal-period {
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    line-height: 1.45 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    color: var(--vcp-text-secondary, #2F435E) !important;
+    max-width: 100%;
+    white-space: normal !important;
+    text-align: left;
+}
+#tab-home .vcp-bal-tile .vcp-bal-period.vcp-badge-gold {
+    color: #9A3412 !important;
+}
+#tab-home .vcp-bal-ref-note:not(.hidden) {
+    grid-column: 1 / -1;
+    display: block;
+    font-size: 11.5px;
+    color: #0369A1;
+    font-weight: 600;
+    padding: 4px 6px 0;
+}
+
+/* First-Run Welcome Callout inside Zone A */
+#tab-home .welcome-strip {
+    margin: 12px 0 0 0 !important;
+    padding: 12px !important;
+    border-radius: 16px !important;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.10) 0%, rgba(6, 182, 212, 0.10) 100%) !important;
+    border: 1px solid rgba(37, 99, 235, 0.24) !important;
+    position: relative;
+}
+#tab-home .welcome-strip:not(.hidden) {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+}
+#tab-home .welcome-strip-text {
+    padding-right: 32px;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.65 !important;
+    color: var(--vcp-text-primary, #0F172A) !important;
+}
+#tab-home .welcome-strip-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+}
+#tab-home .welcome-strip-btn {
+    flex: 1 1 160px;
+    min-height: 44px !important;
+    padding: 9px 14px !important;
+    border-radius: 12px !important;
+    border: 0 !important;
+    background: linear-gradient(135deg, #2563EB, #0891B2) !important;
+    color: #FFFFFF !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28) !important;
+}
+#tab-home .welcome-strip-sample-btn {
+    flex: 0 1 auto;
+    min-height: 44px !important;
+    padding: 9px 12px !important;
+    border-radius: 12px !important;
+    background: rgba(255, 255, 255, 0.88) !important;
+    border: 1px solid rgba(15, 23, 42, 0.14) !important;
+    color: var(--vcp-text-primary, #0F172A) !important;
+    font-size: 12.5px !important;
+    font-weight: 700 !important;
+}
+#tab-home .welcome-strip-x {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 0;
+    background: rgba(15, 23, 42, 0.08);
+    color: var(--vcp-text-secondary, #2F435E);
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Zone B: Studio Launcher Bento (Featured Recap + Twin Voice/TTS) */
+#tab-home .vcp-section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+#tab-home .vcp-section-head .card-label { margin-bottom: 0 !important; }
+#tab-home .vcp-section-hint {
+    font-size: 11.5px;
+    color: var(--vcp-text-muted, #475569);
+    font-weight: 500;
+}
+#tab-home .vcp-studio-hero-tile {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    margin-bottom: 10px;
+    min-height: 76px;
+    border-radius: 18px;
+    border: 1px solid rgba(37, 99, 235, 0.28);
+    background: linear-gradient(135deg, rgba(239, 246, 255, 0.96) 0%, rgba(219, 234, 254, 0.88) 100%);
+    box-shadow: 0 8px 22px rgba(37, 99, 235, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.16s ease;
+}
+#tab-home .vcp-studio-hero-tile:active { transform: scale(0.985); }
+#tab-home .vcp-studio-hero-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+#tab-home .vcp-lg-icon-disc {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    flex: 0 0 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #2563EB, #0891B2);
+    color: #FFFFFF;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+#tab-home #home-start-card .vcp-lg-icon-disc.quiet,
+#tab-home #home-start-card .home-tile[onclick] .home-tile-icon.vcp-lg-icon-disc.quiet {
+    width: 38px !important;
+    height: 38px !important;
+    flex: 0 0 38px !important;
+    border-radius: 12px !important;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(6, 182, 212, 0.12)) !important;
+    color: #1D4ED8 !important;
+    border: 1px solid rgba(37, 99, 235, 0.22) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75) !important;
+}
+#tab-home #home-start-card .home-tile-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+}
+#tab-home #home-start-card .home-tile-grid .home-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 12px !important;
+    min-height: 112px;
+    border-radius: 16px !important;
+    background: rgba(255, 255, 255, 0.86) !important;
+    border: 1px solid rgba(148, 163, 184, 0.26) !important;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.94) !important;
+    color: var(--vcp-text-primary, #0F172A) !important;
+}
+#tab-home #home-start-card .home-tile-grid .home-tile-name-row { width: 100%; justify-content: space-between; }
+#tab-home .home-tile-name { color: var(--vcp-text-primary, #0F172A) !important; font-weight: 750 !important; }
+#tab-home .home-tile-hint { color: var(--vcp-text-secondary, #2F435E) !important; font-size: 12px !important; }
+#tab-home .vcp-studio-hero-tile .home-tile-chevron,
+#tab-home #home-start-card .home-tile-grid .home-tile-chevron {
+    color: var(--vcp-text-muted, #475569);
+    display: inline-flex;
+    align-items: center;
+}
+
+/* Zone C: Skeleton / Empty / Error Glass States + Recent Icon Disc */
+@keyframes vcp-shimmer { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.85; } }
+#tab-home .vcp-skel-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.20);
+    margin-bottom: 8px;
+    animation: vcp-shimmer 1.4s ease-in-out infinite;
+}
+#tab-home .vcp-skel-av { width: 34px; height: 34px; border-radius: 10px; background: rgba(148, 163, 184, 0.28); flex: 0 0 34px; }
+#tab-home .vcp-skel-lines { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+#tab-home .vcp-skel-line { height: 10px; width: 78%; border-radius: 999px; background: rgba(148, 163, 184, 0.28); }
+#tab-home .vcp-skel-line.short { width: 46%; }
+#tab-home .vcp-skel-pill { width: 52px; height: 22px; border-radius: 999px; background: rgba(148, 163, 184, 0.24); }
+#tab-home [data-ui-state="empty"] > .vcp-empty-glass {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 8px;
+    padding: 18px 14px !important;
+    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.72);
+    border: 1px dashed rgba(148, 163, 184, 0.40);
+}
+#tab-home .vcp-empty-medallion {
+    width: 48px;
+    height: 48px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(6, 182, 212, 0.12));
+    color: #2563EB;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+#tab-home .vcp-empty-title { font-size: 14px; font-weight: 700; color: var(--vcp-text-primary, #0F172A); }
+#tab-home .vcp-empty-sub, #tab-home .vcp-error-sub { font-size: 12px; color: var(--vcp-text-secondary, #2F435E); line-height: 1.5; }
+#tab-home .vcp-empty-cta { min-height: 40px; padding: 8px 16px !important; font-weight: 700; }
+#tab-home [data-ui-state="error"] > .vcp-error-glass {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 8px;
+    padding: 14px !important;
+    border-radius: 14px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.22);
+}
+#tab-home .home-recent-icon {
+    width: 34px !important;
+    height: 34px !important;
+    border-radius: 10px !important;
+    flex: 0 0 34px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(37, 99, 235, 0.10) !important;
+    color: #2563EB !important;
+}
+
+/* Zone D: Unified Tools Grouped List & Utility Icons */
+#tab-home #home-tools-card .home-tile-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 0 !important;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: rgba(255, 255, 255, 0.72);
+}
+#tab-home #home-tools-card .home-tile-grid .home-tile {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 12px !important;
+    min-height: 58px !important;
+    border-radius: 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--vcp-text-primary, #0F172A) !important;
+}
+#tab-home #home-tools-card .home-tile-grid .home-tile:last-child { border-bottom: 0 !important; }
+#tab-home .vcp-tool-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+#tab-home #home-tools-card .home-tile[onclick] .home-tile-icon.vcp-settings-badge,
+#tab-home .vcp-settings-badge {
+    width: 34px !important;
+    height: 34px !important;
+    flex: 0 0 34px !important;
+    border-radius: 10px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.13), rgba(6, 182, 212, 0.10)) !important;
+    color: #1D4ED8 !important;
+    box-shadow: none !important;
+}
+#tab-home .vcp-refer-card .ref-link-row {
+    background: rgba(248, 250, 252, 0.85);
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-radius: 12px;
+    padding: 9px 11px;
+}
+
+/* Dark Theme Overrides for Home 4-Zone IA */
+html[data-theme="dark"] #tab-home .vcp-hero-card {
+    background-image: linear-gradient(160deg, rgba(30, 41, 59, 0.94) 0%, rgba(15, 23, 42, 0.96) 100%) !important;
+    border-color: rgba(148, 163, 184, 0.26) !important;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+html[data-theme="dark"] #tab-home .vcp-hero-card[data-tier="vip"],
+html[data-theme="dark"] #tab-home .vcp-hero-card[data-tier="admin"] {
+    background-image: linear-gradient(155deg, rgba(66, 48, 18, 0.94) 0%, rgba(28, 25, 23, 0.96) 100%) !important;
+    border-color: rgba(245, 196, 81, 0.42) !important;
+}
+html[data-theme="dark"] #tab-home #home-hero-card #home-greeting-text,
+html[data-theme="dark"] #tab-home .home-greeting-text,
+html[data-theme="dark"] #tab-home .vcp-bal-val,
+html[data-theme="dark"] #tab-home .home-tile-name,
+html[data-theme="dark"] #tab-home .welcome-strip-text,
+html[data-theme="dark"] #tab-home .vcp-empty-title {
+    color: #F8FAFC !important;
+}
+html[data-theme="dark"] #tab-home .vcp-hero-tagline,
+html[data-theme="dark"] #tab-home .vcp-bal-head,
+html[data-theme="dark"] #tab-home .vcp-bal-period,
+html[data-theme="dark"] #tab-home .home-tile-hint,
+html[data-theme="dark"] #tab-home .vcp-section-hint,
+html[data-theme="dark"] #tab-home .vcp-empty-sub,
+html[data-theme="dark"] #tab-home .vcp-error-sub {
+    color: #CBD5E1 !important;
+}
+html[data-theme="dark"] #tab-home .vcp-bal-tile .vcp-bal-period.vcp-badge-gold {
+    color: #FCD34D !important;
+}
+html[data-theme="dark"] #tab-home #home-hero-card #home-tier-badge.vcp-badge-info {
+    background: rgba(59, 130, 246, 0.22) !important;
+    color: #93C5FD !important;
+    border-color: rgba(96, 165, 250, 0.36) !important;
+}
+html[data-theme="dark"] #tab-home .vcp-hero-ready-chip {
+    background: rgba(16, 185, 129, 0.16);
+    border-color: rgba(52, 211, 153, 0.35);
+    color: #6EE7B7;
+}
+html[data-theme="dark"] #tab-home .vcp-bal-tile,
+html[data-theme="dark"] #tab-home #home-start-card .home-tile-grid .home-tile,
+html[data-theme="dark"] #tab-home #home-tools-card .home-tile-grid,
+html[data-theme="dark"] #tab-home .vcp-skel-row {
+    background: rgba(15, 23, 42, 0.72) !important;
+    border-color: rgba(148, 163, 184, 0.24) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+html[data-theme="dark"] #tab-home .vcp-studio-hero-tile {
+    background: linear-gradient(135deg, rgba(30, 58, 138, 0.56) 0%, rgba(15, 23, 42, 0.90) 100%) !important;
+    border-color: rgba(96, 165, 250, 0.36) !important;
+}
+html[data-theme="dark"] #tab-home #home-start-card .home-tile[onclick] .home-tile-icon.vcp-lg-icon-disc.quiet,
+html[data-theme="dark"] #tab-home #home-start-card .vcp-lg-icon-disc.quiet,
+html[data-theme="dark"] #tab-home #home-tools-card .home-tile[onclick] .home-tile-icon.vcp-settings-badge,
+html[data-theme="dark"] #tab-home .vcp-settings-badge,
+html[data-theme="dark"] #tab-home .home-recent-icon {
+    background: rgba(59, 130, 246, 0.18) !important;
+    color: #93C5FD !important;
+    border-color: rgba(96, 165, 250, 0.28) !important;
+}
+html[data-theme="dark"] #tab-home .welcome-strip {
+    background: linear-gradient(135deg, rgba(30, 64, 175, 0.32), rgba(14, 116, 144, 0.28)) !important;
+    border-color: rgba(96, 165, 250, 0.34) !important;
+}
+html[data-theme="dark"] #tab-home .welcome-strip-sample-btn {
+    background: rgba(15, 23, 42, 0.86) !important;
+    border-color: rgba(148, 163, 184, 0.30) !important;
+    color: #F8FAFC !important;
+}
+html[data-theme="dark"] #tab-home .vcp-empty-glass,
+html[data-theme="dark"] #tab-home .vcp-refer-card .ref-link-row {
+    background: rgba(15, 23, 42, 0.65) !important;
+    border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+/* Lite Mode Ceramic Solids for Home 4-Zone IA */
+html.lite #tab-home .vcp-hero-card { background-image: none !important; background-color: #FFFFFF !important; }
+html.lite #tab-home .vcp-hero-card[data-tier="vip"],
+html.lite #tab-home .vcp-hero-card[data-tier="admin"] { background-image: none !important; background-color: #FFF9EB !important; }
+html.lite #tab-home .vcp-bal-tile,
+html.lite #tab-home #home-start-card .home-tile-grid .home-tile,
+html.lite #tab-home #home-tools-card .home-tile-grid { background: #F8FBFF !important; box-shadow: none !important; }
+html.lite #tab-home .vcp-studio-hero-tile { background: #EFF6FF !important; box-shadow: none !important; }
+html[data-theme="dark"].lite #tab-home .vcp-hero-card { background-color: #131C31 !important; }
+html[data-theme="dark"].lite #tab-home .vcp-hero-card[data-tier="vip"],
+html[data-theme="dark"].lite #tab-home .vcp-hero-card[data-tier="admin"] { background-color: #261E10 !important; }
+html[data-theme="dark"].lite #tab-home .vcp-bal-tile,
+html[data-theme="dark"].lite #tab-home #home-start-card .home-tile-grid .home-tile,
+html[data-theme="dark"].lite #tab-home #home-tools-card .home-tile-grid,
+html[data-theme="dark"].lite #tab-home .vcp-studio-hero-tile { background: #1A243C !important; box-shadow: none !important; }
+
+@media (max-width: 360px) {
+    #tab-home .vcp-bal-tile { padding: 8px 6px; }
+    #tab-home .vcp-bal-val { font-size: 14.5px; }
+    #tab-home #home-start-card .home-tile-grid { gap: 8px !important; }
+}
+
+/* Unified Non-Overlapping Queue & Job Card System (Home Recent, History, Live Sheet, Admin Queue) */
+.vcp-job-card {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    padding: 12px !important;
+    border-radius: 16px !important;
+    background: rgba(255, 255, 255, 0.86) !important;
+    border: 1px solid rgba(148, 163, 184, 0.24) !important;
+    box-shadow: 0 3px 12px rgba(15, 23, 42, 0.04) !important;
+    min-width: 0 !important;
+}
+.vcp-job-head {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+}
+.vcp-job-progress {
+    display: block;
+    width: 100%;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.22);
+    overflow: hidden;
+}
+.vcp-job-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #2563EB, #06B6D4);
+    transition: width 0.28s ease;
+}
+#tab-home .vcp-job-card .home-recent-footer {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    padding-left: 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+}
+#tab-home .vcp-job-card .home-recent-badges,
+#tab-history .hub-row.vcp-job-card .hub-row-badges,
+#admin-queue-list .queue-item.vcp-job-card .queue-item-header {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 6px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+}
+#tab-home .home-recent-badges .vcp-badge,
+#tab-history .hub-row-badges .vcp-badge {
+    max-width: 100% !important;
+    white-space: normal !important;
+    line-height: 1.35 !important;
+    word-break: break-word !important;
+    text-align: left !important;
+}
+#tab-home .vcp-job-card .home-recent-action,
+.vcp-job-footer-row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 8px !important;
+    width: 100% !important;
+    margin-left: 0 !important;
+    margin-top: 2px !important;
+    padding: 8px 0 0 0 !important;
+    border-top: 1px solid rgba(148, 163, 184, 0.18) !important;
+    flex: none !important;
+}
+#tab-history .hub-row.vcp-job-card {
+    padding: 0 !important;
+    gap: 0 !important;
+}
+#tab-history .hub-row.vcp-job-card .hub-row-main {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    padding: 12px !important;
+}
+#tab-history .hub-row.vcp-job-card .hub-quick-footer {
+    padding: 8px 12px 10px !important;
+    margin-top: 0 !important;
+    background: rgba(248, 250, 252, 0.55);
+}
+#tab-history .hub-row.vcp-job-card .hub-quick-footer .vcp-chip,
+#tab-home .vcp-job-card .home-recent-action .vcp-chip,
+.live-job-row.vcp-job-card .live-job-row-actions .mini-chip {
+    min-height: 36px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+}
+.live-jobs-sheet-card .live-job-row.vcp-job-card {
+    padding: 10px 12px !important;
+    margin-bottom: 8px;
+}
+.live-jobs-sheet-card .live-job-row.vcp-job-card .live-job-row-actions {
+    flex: none !important;
+}
+html[data-theme="dark"] .vcp-job-card {
+    background: rgba(15, 23, 42, 0.78) !important;
+    border-color: rgba(148, 163, 184, 0.24) !important;
+}
+html[data-theme="dark"] #tab-home .vcp-job-card .home-recent-name,
+html[data-theme="dark"] .vcp-job-card .hub-row-title,
+html[data-theme="dark"] .vcp-job-card .live-job-row-title,
+html[data-theme="dark"] .vcp-job-card .queue-item-body {
+    color: #F8FAFC !important;
+}
+html[data-theme="dark"] #tab-history .hub-row.vcp-job-card .hub-quick-footer {
+    background: rgba(15, 23, 42, 0.45);
+}
+html[data-theme="dark"] .vcp-job-footer-row,
+html[data-theme="dark"] #tab-home .vcp-job-card .home-recent-action {
+    border-top-color: rgba(148, 163, 184, 0.20) !important;
+}
+html.lite .vcp-job-card { background: #F8FBFF !important; box-shadow: none !important; }
+html[data-theme="dark"].lite .vcp-job-card { background: #1A243C !important; box-shadow: none !important; }
+
 html, body {
     overflow-x: clip !important;
 }

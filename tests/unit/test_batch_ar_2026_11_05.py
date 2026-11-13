@@ -235,5 +235,5 @@ def test_ar_client_gate_markup_and_i18n():
 
 
 def test_ar_cache_token_r66():
-    assert INDEX_HTML.count("?v=20261113_r143") == 4
+    assert INDEX_HTML.count("?v=20261113_r144") == 4
     assert "20261104_r65" not in INDEX_HTML

@@ -40,7 +40,7 @@ def test_phase2_welcome_strip_plays_pregenerated_sample_without_api_generation()
 
 
 def test_phase2_quick_create_has_all_three_studios():
-    start_slice = HOME.split('id="home-start-card"', 1)[1].split('id="home-free-card"', 1)[0]
+    start_slice = HOME.split('id="home-start-card"', 1)[1].split('id="home-recent-projects-card"', 1)[0]
     assert "onclick=\"switchTab('tab-voice')\"" in start_slice
     assert "onclick=\"switchTab('tab-recap')\"" in start_slice
     assert "onclick=\"switchTab('tab-tts')\"" in start_slice
@@ -48,7 +48,7 @@ def test_phase2_quick_create_has_all_three_studios():
 
 
 def test_phase2_free_today_card_has_unit_and_reset_period_badges():
-    free_slice = HOME.split('id="home-free-card"', 1)[1].split('id="home-recent-projects-card"', 1)[0]
+    free_slice = HOME.split('id="home-free-card"', 1)[1].split('id="home-welcome-strip"', 1)[0]
     for period_key in ("home_free_tts_period", "home_free_voice_period", "home_free_recap_period"):
         assert f'data-i18n="{period_key}"' in free_slice, period_key
 
