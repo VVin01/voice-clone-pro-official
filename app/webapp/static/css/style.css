@@ -55,9 +55,9 @@
     --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.9);
     --blur-card: blur(18px) saturate(1.5);
     --blur-chrome: blur(22px) saturate(1.6);
-    --text: #16283c;
-    --text-2: #47617c;
-    --text-3: #5f758c;
+    --text: #0F172A;
+    --text-2: #2F435E;
+    --text-3: #475569;
     --gold: #0a84ff;
     --gold-2: #0a5fd7;
     --gold-deep: #0a84ff;
@@ -4915,9 +4915,9 @@ button.bal-chip {
 
 :root {
     /* 1. Audit Fix: 6 previously undefined CSS variables referenced in style.css */
-    --text-muted: var(--text-2, #47617c);
-    --text-dim: var(--text-3, #5f758c);
-    --text-1: var(--text, #16283c);
+    --text-muted: var(--text-2, #2F435E);
+    --text-dim: var(--text-3, #475569);
+    --text-1: var(--text, #0F172A);
     --glass-2: var(--glass-2-bg, rgba(255, 255, 255, 0.65));
     --blue-soft: rgba(10, 132, 255, 0.12);
     --danger: var(--red, #d92d20);
@@ -4965,9 +4965,9 @@ button.bal-chip {
     --vcp-ls-my: 0px;
 
     /* 5. High-Contrast Semantic Color Roles (§4: >=7:1 primary, >=4.5:1 secondary) */
-    --vcp-text-primary: #122234;
-    --vcp-text-secondary: #3b536b;
-    --vcp-text-muted: #526980;
+    --vcp-text-primary: #0F172A;
+    --vcp-text-secondary: #2F435E;
+    --vcp-text-muted: #475569;
 
     --vcp-primary: #0a84ff;
     --vcp-primary-deep: #0062cc;
@@ -7662,4 +7662,556 @@ html.lite .bottom-nav .nav-item.active .nav-label {
     body.dark-theme {
         color-scheme: light;
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VCP UI REBUILD V2 — PHASE 1: LIQUID GLASS DESIGN SYSTEM, FLOATING CHROME,
+   SF-STYLE VECTOR ICONS, FIRST-CLASS DARK GLASS & LITE CERAMIC THEMES
+   (Approved Phase 0 design language + outdoor contrast & Recap chip fixes.
+    GPU Performance Rule: backdrop-filter ONLY on fixed chrome/sheets/modals,
+    NEVER on scrolling content cards inside .tab-pane.)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+    --vcp-glass-specular: inset 0 1.5px 0 rgba(255, 255, 255, 0.96), inset 0 -1px 0 rgba(15, 23, 42, 0.04);
+    --vcp-chrome-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(242, 248, 255, 0.74) 100%);
+    --vcp-chrome-border: rgba(255, 255, 255, 0.90);
+    --vcp-chrome-ring: rgba(15, 23, 42, 0.08);
+    --vcp-chrome-shadow: 0 4px 12px rgba(15, 23, 42, 0.06), 0 16px 34px -14px rgba(29, 78, 216, 0.18);
+    --vcp-dock-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(244, 249, 255, 0.80) 100%);
+    --vcp-vip-champagne-bg: linear-gradient(155deg, #FFFDF7 0%, #FEF3C7 52%, #FDE68A 100%);
+    --vcp-vip-champagne-border: rgba(217, 119, 6, 0.42);
+    --vcp-ambient-opacity: 1;
+}
+
+/* ── SVG Icon Primitives (1.85px uniform optical SF-style strokes) ───────── */
+.vcp-ico {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.85;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+    display: inline-block;
+    vertical-align: middle;
+}
+.vcp-nav-svg {
+    width: 20px;
+    height: 20px;
+    transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.nav-item.active .vcp-nav-svg {
+    stroke-width: 2.1;
+    transform: translateY(-1px) scale(1.04);
+}
+.theme-ico-wrap .vcp-ico-sun { display: none; }
+html[data-theme="dark"] .theme-ico-wrap .vcp-ico-moon { display: none; }
+html[data-theme="dark"] .theme-ico-wrap .vcp-ico-sun { display: inline-block; }
+
+/* ── Ambient Multi-Stop Liquid Mesh (disabled in .lite / reduced motion) ─ */
+html:not(.lite) body::before {
+    opacity: var(--vcp-ambient-opacity);
+    background:
+        radial-gradient(460px 360px at 10% 4%, rgba(56, 189, 248, 0.24), transparent 68%),
+        radial-gradient(440px 360px at 94% 12%, rgba(167, 139, 250, 0.22), transparent 68%),
+        radial-gradient(480px 380px at 14% 88%, rgba(45, 212, 191, 0.16), transparent 68%),
+        radial-gradient(420px 360px at 88% 92%, rgba(96, 165, 250, 0.20), transparent 68%),
+        linear-gradient(168deg, #EAF3FB 0%, #DFECF8 52%, #E8EEF9 100%);
+}
+
+/* ── Floating iOS 26 Liquid Glass Header (.top-nav) ──────────────────────── */
+.top-nav {
+    position: sticky;
+    top: max(6px, env(safe-area-inset-top, 6px));
+    margin: 8px 10px 4px;
+    border-radius: 22px;
+    padding: 10px 12px 9px !important;
+    background: var(--vcp-chrome-bg) !important;
+    backdrop-filter: blur(26px) saturate(1.85);
+    -webkit-backdrop-filter: blur(26px) saturate(1.85);
+    border: 1px solid var(--vcp-chrome-border) !important;
+    outline: 1px solid var(--vcp-chrome-ring);
+    outline-offset: -1px;
+    box-shadow: var(--vcp-glass-specular), var(--vcp-chrome-shadow) !important;
+    gap: 8px;
+}
+.top-nav .brand-crest {
+    box-shadow: 0 3px 10px rgba(15, 23, 42, 0.14), 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+}
+.top-nav .brand-title-wrap h1 {
+    color: var(--vcp-text-primary) !important;
+    text-shadow: none !important;
+    font-size: 14.5px;
+    letter-spacing: -0.01em;
+}
+.top-nav .sub-brand {
+    color: var(--vcp-text-secondary) !important;
+}
+.top-nav .pro-tag {
+    background: linear-gradient(135deg, #2563EB 0%, #0EA5E9 100%) !important;
+    color: #FFFFFF !important;
+    border: 1px solid rgba(255, 255, 255, 0.50) !important;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28) !important;
+}
+.top-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.theme-pill-btn,
+.top-nav .tutorial-pill-btn,
+.top-nav .lang-pill-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: 38px;
+    min-width: 38px;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.72) !important;
+    color: var(--vcp-text-primary) !important;
+    border: 1px solid rgba(15, 23, 42, 0.10) !important;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 2px 6px rgba(15, 23, 42, 0.06) !important;
+    transition: transform 0.12s ease, background 0.16s ease;
+}
+.theme-pill-btn {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+}
+.theme-pill-btn:active,
+.top-nav .tutorial-pill-btn:active,
+.top-nav .lang-pill-btn:active {
+    transform: scale(0.95);
+    background: rgba(255, 255, 255, 0.94) !important;
+}
+.top-nav .user-pill {
+    background: rgba(255, 255, 255, 0.72) !important;
+    border: 1px solid rgba(255, 255, 255, 0.92) !important;
+    border-radius: 14px;
+    padding: 6px 9px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 8px rgba(15, 23, 42, 0.05) !important;
+    color: var(--vcp-text-primary) !important;
+    gap: 6px;
+}
+.top-nav .vip-badge.free {
+    background: rgba(226, 232, 240, 0.85) !important;
+    color: var(--vcp-text-secondary) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+}
+.top-nav .vip-badge.vip {
+    background: linear-gradient(135deg, #B45309 0%, #D97706 50%, #F59E0B 100%) !important;
+    color: #FFFFFF !important;
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    box-shadow: 0 2px 8px rgba(217, 119, 6, 0.30);
+}
+.top-nav .bal-chip {
+    background: rgba(255, 255, 255, 0.90) !important;
+    border: 1px solid rgba(15, 23, 42, 0.09) !important;
+    color: var(--vcp-text-primary) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 1px 4px rgba(15, 23, 42, 0.04) !important;
+}
+.top-nav .bal-chip.recap {
+    color: #4338CA !important;
+}
+.top-nav .bal-chip.tts {
+    color: #0F766E !important;
+}
+
+@media (max-width: 430px) {
+    .top-nav {
+        margin: 6px 8px 2px;
+        padding: 8px 10px 8px !important;
+        border-radius: 20px;
+    }
+    .theme-pill-btn,
+    .top-nav .tutorial-pill-btn,
+    .top-nav .lang-pill-btn {
+        width: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        height: 36px;
+        padding: 0;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .top-nav .brand { gap: 8px; }
+    .top-nav .brand-crest,
+    .top-nav .brand-logo-img { width: 32px; height: 32px; }
+    .top-nav .brand-title-wrap { gap: 5px; }
+    .top-nav .brand-title-wrap h1 { font-size: 13.5px; }
+    .top-nav .pro-tag { font-size: 9.5px; padding: 1px 6px; }
+    .top-nav .user-pill { padding: 5px 7px; gap: 4px; }
+    .top-nav .balance-chips { gap: 4px; }
+    .top-nav .bal-chip { padding: 4px 7px !important; font-size: 11.5px; min-height: 30px !important; }
+}
+
+/* ── Floating iOS 26 Capsule Bottom Dock (.bottom-nav) ───────────────────── */
+.bottom-nav {
+    --az-bg: rgba(255, 255, 255, 0.84);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+    width: calc(100% - 20px) !important;
+    max-width: 580px !important;
+    min-height: 66px;
+    height: auto !important;
+    padding: 5px !important;
+    border-radius: 30px !important;
+    background: var(--vcp-dock-bg) !important;
+    backdrop-filter: blur(26px) saturate(1.9) !important;
+    -webkit-backdrop-filter: blur(26px) saturate(1.9) !important;
+    border: 1px solid var(--vcp-chrome-border) !important;
+    outline: 1px solid var(--vcp-chrome-ring);
+    outline-offset: -1px;
+    box-shadow: var(--vcp-glass-specular), 0 14px 36px -10px rgba(15, 23, 42, 0.20) !important;
+    gap: 2px;
+}
+.bottom-nav .nav-item {
+    min-width: 0;
+    min-height: 54px;
+    padding: 5px 2px;
+    gap: 2px;
+    color: var(--vcp-text-secondary);
+    font-size: 10.5px;
+    font-weight: 700;
+    border-radius: 999px;
+    transition: color 0.16s ease, transform 0.12s ease;
+}
+.bottom-nav .nav-item:active { transform: scale(0.95); }
+.bottom-nav .nav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    line-height: 1;
+}
+.bottom-nav .nav-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bottom-nav:has(#nav-btn-admin:not(.hidden)) .nav-item {
+    padding: 5px 1px;
+    font-size: 9.5px;
+}
+.bottom-nav:has(#nav-btn-admin:not(.hidden)) .vcp-nav-svg {
+    width: 18px;
+    height: 18px;
+}
+.bottom-nav[data-active-tab="tab-admin"] .nav-pill,
+html.lite .bottom-nav[data-active-tab="tab-admin"] .nav-pill {
+    background: linear-gradient(135deg, #1E293B 0%, #334155 100%) !important;
+    box-shadow: 0 6px 16px -4px rgba(15, 23, 42, 0.42) !important;
+}
+
+/* ── Unified Modal / Bottom-Sheet Liquid Glass Chrome ────────────────────── */
+.vcp-sheet,
+.modal-content,
+.studio-confirm-card,
+.live-jobs-sheet-card,
+.submit-confirm-card,
+.gate-lock-card {
+    border: 1px solid var(--vcp-chrome-border);
+    box-shadow: var(--vcp-glass-specular), 0 24px 56px -14px rgba(15, 23, 42, 0.28);
+}
+
+/* ── Recap Stage Top-Left Source Chip Bar Separation (Feedback Fix #1) ───── */
+.vcp-preview-stage-bar .canvas-source-label {
+    position: static;
+    top: auto;
+    left: auto;
+    z-index: 1;
+    margin-right: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 11px;
+    min-height: 32px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    color: #F8FAFC;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.3;
+    pointer-events: none;
+    text-shadow: none;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+}
+.vcp-preview-stage-bar .canvas-source-label.hidden {
+    display: none;
+}
+#recap-steps-nav {
+    scroll-margin-top: 124px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FIRST-CLASS DARK GLASS THEME (html[data-theme="dark"])
+   Zero backdrop-filter in scrolling .tab-pane content cards; frosted chrome only.
+   ═══════════════════════════════════════════════════════════════════════════ */
+html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #070B16;
+    --bg-deep: #070B16;
+    --surface: rgba(17, 25, 44, 0.86);
+    --surface-2: rgba(26, 36, 61, 0.86);
+    --surface-3: rgba(34, 47, 78, 0.90);
+    --inset: rgba(11, 18, 34, 0.88);
+    --border: rgba(148, 163, 184, 0.22);
+    --border-strong: rgba(148, 163, 184, 0.34);
+    --divider: rgba(148, 163, 184, 0.16);
+    --glass-line: rgba(148, 163, 184, 0.26);
+    --glass-strong: rgba(15, 23, 42, 0.92);
+    --text: #F8FAFC;
+    --text-1: #F8FAFC;
+    --text-2: #CBD5E1;
+    --text-3: #94A3B8;
+    --text-muted: #CBD5E1;
+    --text-dim: #94A3B8;
+    --vcp-text-primary: #F8FAFC;
+    --vcp-text-secondary: #CBD5E1;
+    --vcp-text-muted: #94A3B8;
+    --vcp-flat-glass-bg: linear-gradient(180deg, rgba(22, 32, 56, 0.92) 0%, rgba(14, 21, 38, 0.90) 100%);
+    --vcp-flat-glass-inset: rgba(12, 18, 34, 0.88);
+    --vcp-flat-glass-border: rgba(148, 163, 184, 0.22);
+    --vcp-glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+    --vcp-chrome-bg: linear-gradient(180deg, rgba(17, 25, 45, 0.86) 0%, rgba(11, 17, 33, 0.80) 100%);
+    --vcp-chrome-border: rgba(148, 163, 184, 0.28);
+    --vcp-chrome-ring: rgba(255, 255, 255, 0.06);
+    --vcp-chrome-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 18px 40px -12px rgba(37, 99, 235, 0.22);
+    --vcp-dock-bg: linear-gradient(180deg, rgba(17, 25, 45, 0.88) 0%, rgba(10, 15, 30, 0.84) 100%);
+    --gold: #38BDF8;
+    --gold-2: #60A5FA;
+    --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 10px 28px rgba(0, 0, 0, 0.42);
+    --shadow-pop: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 20px 48px rgba(0, 0, 0, 0.60);
+}
+html[data-theme="dark"],
+html[data-theme="dark"] body {
+    background: #070B16;
+    color: #F8FAFC;
+}
+html[data-theme="dark"]:not(.lite) body::before {
+    background:
+        radial-gradient(460px 360px at 10% 4%, rgba(37, 99, 235, 0.28), transparent 68%),
+        radial-gradient(460px 360px at 94% 12%, rgba(124, 58, 237, 0.24), transparent 68%),
+        radial-gradient(500px 400px at 14% 88%, rgba(20, 184, 166, 0.16), transparent 68%),
+        radial-gradient(420px 360px at 88% 92%, rgba(217, 119, 6, 0.14), transparent 68%),
+        linear-gradient(168deg, #070B16 0%, #0C1326 55%, #090F20 100%);
+}
+html[data-theme="dark"] .theme-pill-btn,
+html[data-theme="dark"] .top-nav .tutorial-pill-btn,
+html[data-theme="dark"] .top-nav .lang-pill-btn {
+    background: rgba(30, 41, 59, 0.78) !important;
+    color: #F8FAFC !important;
+    border-color: rgba(148, 163, 184, 0.28) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+html[data-theme="dark"] .top-nav .user-pill {
+    background: rgba(15, 23, 42, 0.78) !important;
+    border-color: rgba(148, 163, 184, 0.26) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+    color: #F8FAFC !important;
+}
+html[data-theme="dark"] .top-nav .vip-badge.free {
+    background: rgba(51, 65, 85, 0.85) !important;
+    color: #E2E8F0 !important;
+}
+html[data-theme="dark"] .top-nav .bal-chip {
+    background: rgba(30, 41, 59, 0.88) !important;
+    border-color: rgba(148, 163, 184, 0.24) !important;
+    color: #F8FAFC !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+}
+html[data-theme="dark"] .top-nav .bal-chip.recap { color: #C4B5FD !important; }
+html[data-theme="dark"] .top-nav .bal-chip.tts { color: #5EEAD4 !important; }
+
+html[data-theme="dark"] .card.glass,
+html[data-theme="dark"] .vcp-card,
+html[data-theme="dark"].lite .card.glass,
+html[data-theme="dark"].lite .vcp-card {
+    background-image:
+        linear-gradient(180deg, rgba(22, 32, 56, 0.94) 0%, rgba(14, 21, 38, 0.92) 100%),
+        linear-gradient(135deg, rgba(148, 163, 184, 0.28) 0%, rgba(56, 189, 248, 0.20) 100%) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32), 0 16px 32px -12px rgba(0, 0, 0, 0.55) !important;
+    color: #F8FAFC;
+}
+html[data-theme="dark"] .card-label,
+html[data-theme="dark"] .vcp-card__title,
+html[data-theme="dark"] .step-title,
+html[data-theme="dark"] .pane-header h2,
+html[data-theme="dark"] .home-tile-title,
+html[data-theme="dark"] .home-free-title,
+html[data-theme="dark"] .home-recent-name,
+html[data-theme="dark"] .home-help-entry-title,
+html[data-theme="dark"] .sample-name {
+    color: #F8FAFC !important;
+}
+html[data-theme="dark"] .text-muted,
+html[data-theme="dark"] .home-tile-desc,
+html[data-theme="dark"] .home-free-desc,
+html[data-theme="dark"] .home-help-entry-desc,
+html[data-theme="dark"] .vcp-card__subtitle {
+    color: #CBD5E1 !important;
+}
+html[data-theme="dark"] .home-tile,
+html[data-theme="dark"] #tab-home .home-tile,
+html[data-theme="dark"].lite #tab-home .home-tile,
+html[data-theme="dark"] #tab-home .home-free-row,
+html[data-theme="dark"].lite #tab-home .home-free-row,
+html[data-theme="dark"] #tab-home .home-recent-row,
+html[data-theme="dark"].lite #tab-home .home-recent-row,
+html[data-theme="dark"] #tab-home .home-help-entry-card,
+html[data-theme="dark"] .home-help-entry,
+html[data-theme="dark"] #tab-home .sample-row,
+html[data-theme="dark"] .segmented-control,
+html[data-theme="dark"] .pill-group,
+html[data-theme="dark"] .toolbar-tabs-nav,
+html[data-theme="dark"] .voice-card,
+html[data-theme="dark"] .secondary-btn,
+html[data-theme="dark"] .mini-btn {
+    background: rgba(26, 36, 61, 0.88) !important;
+    background-image: linear-gradient(180deg, rgba(30, 41, 68, 0.92) 0%, rgba(20, 29, 51, 0.90) 100%) !important;
+    border-color: rgba(148, 163, 184, 0.24) !important;
+    color: #F8FAFC !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 6px 16px rgba(0, 0, 0, 0.28) !important;
+}
+html[data-theme="dark"] #tab-home .home-tile-title,
+html[data-theme="dark"] #tab-home .home-tile-name,
+html[data-theme="dark"] #tab-home .home-tile-tts .home-tile-name,
+html[data-theme="dark"] #tab-home .home-free-title,
+html[data-theme="dark"] #tab-home .home-recent-name,
+html[data-theme="dark"] #tab-home .home-help-entry-title,
+html[data-theme="dark"] #tab-home .sample-name,
+html[data-theme="dark"] #tab-home .home-free-value {
+    color: #F8FAFC !important;
+}
+html[data-theme="dark"] #tab-home .home-tile-desc,
+html[data-theme="dark"] #tab-home .home-tile-hint,
+html[data-theme="dark"] #tab-home .home-tile-tts .home-tile-hint,
+html[data-theme="dark"] #tab-home .home-free-desc,
+html[data-theme="dark"] #tab-home .home-help-entry-desc,
+html[data-theme="dark"] #tab-home .sample-meta,
+html[data-theme="dark"] #tab-home .home-tile-chevron,
+html[data-theme="dark"] #tab-home .home-tile-tts .home-tile-chevron,
+html[data-theme="dark"] #tab-home .home-recent-chevron,
+html[data-theme="dark"] #tab-home .home-free-chevron,
+html[data-theme="dark"] #tab-home .home-help-entry-chevron {
+    color: #CBD5E1 !important;
+}
+html[data-theme="dark"] #tab-home .home-tile-tts,
+html[data-theme="dark"].lite #tab-home .home-tile-tts {
+    background: linear-gradient(135deg, rgba(13, 148, 136, 0.24), rgba(20, 35, 58, 0.92)) !important;
+    background-image: linear-gradient(135deg, rgba(13, 148, 136, 0.24), rgba(20, 35, 58, 0.92)) !important;
+    border-color: rgba(45, 212, 191, 0.36) !important;
+}
+html:not([data-theme="dark"]) #tab-home .home-tile-hint,
+html:not([data-theme="dark"]) #tab-home .home-free-desc,
+html:not([data-theme="dark"]) #tab-home .home-help-entry-desc,
+html:not([data-theme="dark"]) #tab-home .sample-meta,
+html:not([data-theme="dark"]) .text-muted {
+    color: var(--vcp-text-secondary, #2F435E) !important;
+}
+html[data-theme="dark"] #tab-home .welcome-strip:not(.hidden) {
+    background: linear-gradient(135deg, rgba(30, 58, 138, 0.45), rgba(15, 23, 42, 0.90)) !important;
+    border-color: rgba(96, 165, 250, 0.35) !important;
+}
+html[data-theme="dark"] #tab-home .welcome-strip-text { color: #F8FAFC !important; }
+html[data-theme="dark"] #tab-home .welcome-strip-sample-btn {
+    background: rgba(30, 41, 59, 0.90) !important;
+    color: #93C5FD !important;
+    border-color: rgba(96, 165, 250, 0.38) !important;
+}
+html[data-theme="dark"] #tab-vip .vcp-card--gold {
+    background-image:
+        linear-gradient(180deg, rgba(69, 39, 10, 0.72) 0%, rgba(28, 25, 23, 0.94) 100%),
+        linear-gradient(135deg, rgba(251, 191, 36, 0.50) 0%, rgba(217, 119, 6, 0.28) 100%) !important;
+}
+html[data-theme="dark"] input,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select,
+html[data-theme="dark"] .studio-input,
+html[data-theme="dark"] .studio-select {
+    background: rgba(15, 23, 42, 0.92) !important;
+    color: #F8FAFC !important;
+    border-color: rgba(148, 163, 184, 0.30) !important;
+}
+html[data-theme="dark"] .modal-content,
+html[data-theme="dark"] .vcp-sheet,
+html[data-theme="dark"] .live-jobs-sheet-card,
+html[data-theme="dark"] .gate-lock-card,
+html[data-theme="dark"] .studio-confirm-card {
+    background: rgba(15, 23, 42, 0.92) !important;
+    color: #F8FAFC !important;
+    border-color: rgba(148, 163, 184, 0.28) !important;
+}
+html[data-theme="dark"] .bottom-nav .nav-item {
+    color: #94A3B8;
+}
+
+/* ── Lite Mode Ceramic Surface Polish (Light + Dark) ─────────────────────── */
+html.lite,
+html.lite body,
+body.lite {
+    background: #EAF3FB !important;
+}
+html.lite .top-nav,
+body.lite .top-nav,
+html.lite .bottom-nav,
+body.lite .bottom-nav {
+    background: #F8FBFF !important;
+    border-color: rgba(148, 163, 184, 0.38) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+html.lite .top-nav .theme-pill-btn,
+body.lite .top-nav .theme-pill-btn,
+html.lite .top-nav .tutorial-pill-btn,
+html.lite .top-nav .lang-pill-btn,
+body.lite .top-nav .tutorial-pill-btn,
+body.lite .top-nav .lang-pill-btn {
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+    border-color: rgba(15, 23, 42, 0.16) !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+}
+html.lite .top-nav .user-pill,
+body.lite .top-nav .user-pill {
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+    border-color: rgba(15, 23, 42, 0.14) !important;
+}
+html.lite .card.glass,
+html.lite .vcp-card {
+    background-image: linear-gradient(180deg, #FFFFFF 0%, #F8FBFF 100%), linear-gradient(135deg, #CBD5E1, #93C5FD) !important;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06) !important;
+}
+html[data-theme="dark"].lite,
+html[data-theme="dark"].lite body,
+html[data-theme="dark"] body.lite {
+    background: #0B1120 !important;
+}
+html[data-theme="dark"].lite .top-nav,
+html[data-theme="dark"].lite .bottom-nav {
+    background: #111A2E !important;
+    border-color: rgba(148, 163, 184, 0.28) !important;
+}
+html[data-theme="dark"].lite .top-nav .theme-pill-btn,
+html[data-theme="dark"].lite .top-nav .tutorial-pill-btn,
+html[data-theme="dark"].lite .top-nav .lang-pill-btn {
+    background: #1E293B !important;
+    color: #F8FAFC !important;
+    border-color: rgba(148, 163, 184, 0.30) !important;
+}
+html[data-theme="dark"].lite .card.glass,
+html[data-theme="dark"].lite .vcp-card {
+    background-image: linear-gradient(180deg, #162038 0%, #11192E 100%), linear-gradient(135deg, #334155, #1E3A8A) !important;
+}
+html, body {
+    overflow-x: clip !important;
 }

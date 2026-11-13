@@ -265,5 +265,5 @@ def test_composited_preview_subtitle_stays_sharp_over_blur(tmp_path):
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_is_r98():
-    assert INDEX_HTML.count("20261113_r142") == 4
+    assert INDEX_HTML.count("20261113_r143") == 4
     assert ("20261104_r" + "97") not in INDEX_HTML

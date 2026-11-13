@@ -480,6 +480,60 @@ function initLitePerformanceMode() {
 }
 window.initLitePerformanceMode = initLitePerformanceMode;
 
+function syncThemeUiState(mode) {
+    const resolved = mode === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", resolved);
+    if (document.body) {
+        document.body.setAttribute("data-theme", resolved);
+    }
+    const btn = document.getElementById("btn-theme-toggle");
+    if (btn) {
+        btn.setAttribute("data-theme-state", resolved);
+        btn.setAttribute("aria-pressed", resolved === "dark" ? "true" : "false");
+    }
+    try {
+        if (state.tg) {
+            const chromeColor = resolved === "dark" ? "#070b16" : "#dcebf7";
+            state.tg.setHeaderColor(chromeColor);
+            state.tg.setBackgroundColor(chromeColor);
+        }
+    } catch (e) {}
+    return resolved;
+}
+
+function setThemeMode(mode) {
+    const next = mode === "dark" ? "dark" : "light";
+    try {
+        localStorage.setItem("vcp_theme_mode", next);
+    } catch (e) {}
+    return syncThemeUiState(next);
+}
+window.setThemeMode = setThemeMode;
+
+function initThemeMode() {
+    let saved = "light";
+    try {
+        const attr = document.documentElement.getAttribute("data-theme");
+        const stored = localStorage.getItem("vcp_theme_mode");
+        if (stored === "dark" || stored === "light") saved = stored;
+        else if (attr === "dark" || attr === "light") saved = attr;
+    } catch (e) {}
+    return syncThemeUiState(saved);
+}
+window.initThemeMode = initThemeMode;
+
+function toggleThemeMode() {
+    haptic("light");
+    const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    const next = current === "dark" ? "light" : "dark";
+    const resolved = setThemeMode(next);
+    try {
+        showStudioToast(t(resolved === "dark" ? "theme_dark" : "theme_light"), "info");
+    } catch (e) {}
+    return resolved;
+}
+window.toggleThemeMode = toggleThemeMode;
+
 /**
  * setSectionState(sectionOrId, stateName, options)
  * Unified UI state machine helper for data-ui-state="loading|empty|error|ready"
@@ -726,12 +780,14 @@ window.addEventListener("beforeunload", (e) => {
 
 function initTelegram() {
     initLitePerformanceMode();
+    initThemeMode();
     if (state.tg) {
         state.tg.ready();
         state.tg.expand();
         try {
-            state.tg.setHeaderColor("#dcebf7");
-            state.tg.setBackgroundColor("#dcebf7");
+            const chromeColor = document.documentElement.getAttribute("data-theme") === "dark" ? "#070b16" : "#dcebf7";
+            state.tg.setHeaderColor(chromeColor);
+            state.tg.setBackgroundColor(chromeColor);
         } catch (e) {}
         try {
             if (state.tg.BackButton && typeof state.tg.BackButton.onClick === "function") {

@@ -1183,6 +1183,9 @@ const translations = {
         vcp_reset_default: "↺ မူလအတိုင်း",
         vcp_close: "ပိတ်မည်",
         vcp_advanced_settings: "⚙️ အသေးစိတ် ဆက်တင်များ",
+        theme_toggle_title: "အလင်း / အမှောင် ပြောင်းရန်",
+        theme_light: "အလင်း (Light Glass)",
+        theme_dark: "အမှောင် (Dark Glass)",
         // Phase 2: Home Dashboard & Unified Help Hub
         home_greeting_default: "မင်္ဂလာပါ 👋",
         home_greeting_named: "မင်္ဂလာပါ {name} 👋",
@@ -2531,6 +2534,9 @@ const translations = {
         vcp_reset_default: "↺ Reset",
         vcp_close: "Close",
         vcp_advanced_settings: "⚙️ Advanced Settings",
+        theme_toggle_title: "Switch Light / Dark theme",
+        theme_light: "Light Glass",
+        theme_dark: "Dark Glass",
         // Phase 2: Home Dashboard & Unified Help Hub
         home_greeting_default: "Welcome 👋",
         home_greeting_named: "Hi, {name} 👋",

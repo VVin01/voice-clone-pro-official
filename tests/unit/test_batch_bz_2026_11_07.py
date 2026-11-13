@@ -426,7 +426,7 @@ def test_tts_prefill_logic_pins():
 # ===========================================================================
 
 def test_cache_token_is_r97():
-    assert INDEX_HTML.count("20261113_r142") == 4
+    assert INDEX_HTML.count("20261113_r143") == 4
     # Split literal: the previous token must be absent, written so a
     # future token sweep cannot rewrite this negative assertion.
     assert ("20261104_r" + "96") not in INDEX_HTML

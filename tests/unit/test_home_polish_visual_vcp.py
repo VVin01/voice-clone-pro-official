@@ -9,11 +9,11 @@ STYLE_CSS = (STATIC_DIR / "css" / "style.css").read_text(encoding="utf-8")
 APP_JS = (STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
 
 PASS_MARKER = "HOME POLISH + VISUAL IDENTITY PASS"
-PASS_CSS = STYLE_CSS.split(PASS_MARKER, 1)[1]
+PASS_CSS = STYLE_CSS.split(PASS_MARKER, 1)[1].split("VCP UI REBUILD V2", 1)[0]
 
 
 def test_cache_token_bumped_to_r142():
-    assert INDEX_HTML.count("?v=20261113_r142") == 4
+    assert INDEX_HTML.count("?v=20261113_r143") == 4
     assert "_r141" not in INDEX_HTML
 
 
