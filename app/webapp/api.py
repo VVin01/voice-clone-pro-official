@@ -13673,6 +13673,11 @@ class AdminSettingsPayload(BaseModel):
     gemini_fallback_1: Optional[str] = None
     gemini_fallback_2: Optional[str] = None
     gemini_fallback_3: Optional[str] = None
+    gemini_tts_primary_model: Optional[str] = None
+    gemini_tts_fallback_1: Optional[str] = None
+    gemini_tts_lite_model: Optional[str] = None
+    gemini_tts_fallback_2: Optional[str] = None
+    voxcpm_timeout: Optional[int] = None
     # Batch BS: the Groq Whisper (speech-to-text) model joins the
     # payload — it was a registered dynamic setting with no admin
     # surface at all, and the transcribers read the env only, so the
@@ -13724,7 +13729,7 @@ async def get_admin_settings(
         "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
         "free_monthly_allowance_seconds": int(getattr(settings, "free_monthly_allowance_seconds", 180)),
         "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
-        "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 5)),
+        "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 0)),
         "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 30)),
         "free_gemini_taste_minutes": int(getattr(settings, "free_gemini_taste_minutes", 2)),
         "free_gemini_daily_budget_requests": int(getattr(settings, "free_gemini_daily_budget_requests", 100)),
@@ -13733,6 +13738,7 @@ async def get_admin_settings(
         "tiered_recap_pricing_enabled": bool(getattr(settings, "tiered_recap_pricing_enabled", False)),
         "recap_free_max_duration_seconds": int(getattr(settings, "recap_free_max_duration_seconds", 120)),
         "recap_max_duration_seconds": int(getattr(settings, "recap_max_duration_seconds", 600)),
+        "voxcpm_timeout": int(getattr(settings, "voxcpm_timeout", 60) or 60),
         "required_channel_id": str(getattr(settings, "required_channel_id", "") or ""),
         "required_group_id": str(getattr(settings, "required_group_id", "") or ""),
         "channel_invite_link": str(getattr(settings, "channel_invite_link", "https://t.me/voiceclonepro") or ""),
@@ -13741,6 +13747,10 @@ async def get_admin_settings(
         "gemini_fallback_1": getattr(settings, "gemini_fallback_1", "gemini-3.5-flash"),
         "gemini_fallback_2": getattr(settings, "gemini_fallback_2", "gemini-3.5-flash-lite"),
         "gemini_fallback_3": getattr(settings, "gemini_fallback_3", "gemini-flash-lite-latest"),
+        "gemini_tts_primary_model": str(getattr(settings, "gemini_tts_primary_model", "gemini-3.8-flash-tts") or "gemini-3.8-flash-tts"),
+        "gemini_tts_fallback_1": str(getattr(settings, "gemini_tts_fallback_1", "gemini-3.1-flash-tts-preview") or "gemini-3.1-flash-tts-preview"),
+        "gemini_tts_lite_model": str(getattr(settings, "gemini_tts_lite_model", "gemini-3.8-flash-lite-tts") or "gemini-3.8-flash-lite-tts"),
+        "gemini_tts_fallback_2": str(getattr(settings, "gemini_tts_fallback_2", "gemini-2.5-flash-preview-tts") or "gemini-2.5-flash-preview-tts"),
         # Batch BS: pre-filled with the CURRENT EFFECTIVE model
         # (dynamic setting > env > default, via the shared resolver
         # the transcribers use) so the field shows what transcription
@@ -13904,6 +13914,30 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = model
+        elif key in (
+            "gemini_tts_primary_model",
+            "gemini_tts_fallback_1",
+            "gemini_tts_lite_model",
+            "gemini_tts_fallback_2",
+        ):
+            model = str(value).strip()
+            if len(model) > 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"TTS Model ({key}) သည် စာလုံး 200 ထက် မရှည်ရပါ။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            if key == "gemini_tts_primary_model" and not model:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "TTS Primary Model (gemini_tts_primary_model) ကို အလွတ် ထားလို့ မရပါ။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = model
         elif key in ("group_ai_hourly_budget", "group_ai_daily_budget"):
             # Final-audit batch M: budgets gate real AI spend, so 0
             # (which would silently disable group answers) is rejected
@@ -13951,6 +13985,7 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             "free_gemini_daily_budget_requests",
             "recap_free_max_duration_seconds",
             "recap_max_duration_seconds",
+            "voxcpm_timeout",
         ):
             # Batch AJ M6: the money-adjacent settings were stored
             # verbatim — a free_monthly_allowance_seconds of -1 wrapped
@@ -13967,6 +14002,7 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                 "free_gemini_daily_budget_requests": (0, 100000),
                 "recap_free_max_duration_seconds": (0, 86400),
                 "recap_max_duration_seconds": (60, 86400),
+                "voxcpm_timeout": (10, 600),
             }
             lo, hi = _bounds[key]
             try:

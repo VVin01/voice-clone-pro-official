@@ -12692,10 +12692,13 @@ function renderAdminUserDetail(u) {
     }
     const meta = document.getElementById("adm-detail-meta");
     if (meta) {
+        const activeJobs = Number(u.jobs_active || 0);
         meta.innerHTML = `
             <span class="mini-tag">${u.account_category === "PURCHASED" ? "👑 VIP" : "FREE"}</span>
             <span class="mini-tag">${t("admin_joined")}: ${admFmtDate(u.created_at)}</span>
-            ${u.language_code ? `<span class="mini-tag">${escapeHtml(u.language_code.toUpperCase())}</span>` : ""}`;
+            ${u.language_code ? `<span class="mini-tag">${escapeHtml(u.language_code.toUpperCase())}</span>` : ""}
+            ${u.is_test_account ? `<span class="mini-tag">${t("admin_badge_test_acct")}</span>` : ""}
+            ${activeJobs > 0 ? `<span class="mini-tag">${t("admin_badge_active_jobs")}: ${activeJobs}</span>` : ""}`;
     }
     const mins = Math.floor((u.balance_seconds || 0) / 60);
     const secs = (u.balance_seconds || 0) % 60;
@@ -13850,6 +13853,12 @@ async function loadAdminSettings() {
         const elDailyJobLimit = document.getElementById("adm-set-daily-job-limit");
         const elRecapFreeMax = document.getElementById("adm-set-recap-free-max");
         const elRecapMax = document.getElementById("adm-set-recap-max");
+        const elVoiceDailyFree = document.getElementById("adm-set-voice-daily-free");
+        const elVoiceDailyPaid = document.getElementById("adm-set-voice-daily-paid");
+        const elTtsDailyFree = document.getElementById("adm-set-tts-daily-free");
+        const elTtsDailyPaid = document.getElementById("adm-set-tts-daily-paid");
+        const elVoxcpmTimeout = document.getElementById("adm-set-voxcpm-timeout");
+        const elTutVideoEn = document.getElementById("adm-set-tutorial-video-enabled");
         const elTieredPricing = document.getElementById("adm-set-tiered-pricing");
         const elReqChannelId = document.getElementById("adm-set-required-channel-id");
         const elReqGroupId = document.getElementById("adm-set-required-group-id");
@@ -13901,6 +13910,12 @@ async function loadAdminSettings() {
         if (s.free_gemini_daily_budget_requests != null) _admPaintValue(elFreeGeminiBudget, s.free_gemini_daily_budget_requests);
         if (s.recap_free_max_duration_seconds != null) _admPaintValue(elRecapFreeMax, s.recap_free_max_duration_seconds);
         if (s.recap_max_duration_seconds != null) _admPaintValue(elRecapMax, s.recap_max_duration_seconds);
+        if (s.voice_daily_limit_minutes_free != null) _admPaintValue(elVoiceDailyFree, s.voice_daily_limit_minutes_free);
+        if (s.voice_daily_limit_minutes_paid != null) _admPaintValue(elVoiceDailyPaid, s.voice_daily_limit_minutes_paid);
+        if (s.tts_daily_limit_minutes_free != null) _admPaintValue(elTtsDailyFree, s.tts_daily_limit_minutes_free);
+        if (s.tts_daily_limit_minutes_paid != null) _admPaintValue(elTtsDailyPaid, s.tts_daily_limit_minutes_paid);
+        if (s.voxcpm_timeout != null) _admPaintValue(elVoxcpmTimeout, s.voxcpm_timeout);
+        _admPaintChecked(elTutVideoEn, String(s.tutorial_video_enabled).toLowerCase() !== "false" && s.tutorial_video_enabled !== false);
         // Batch BE: the tiered-pricing arming switch (AO shipped the
         // setting + API dark; this toggle is the arming lever).
         _admPaintChecked(elTieredPricing, !!s.tiered_recap_pricing_enabled);
@@ -13927,6 +13942,10 @@ async function loadAdminSettings() {
         setSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", s.gemini_fallback_1 || "gemini-3.5-flash");
         setSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", s.gemini_fallback_2 || "gemini-3.5-flash-lite");
         setSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", s.gemini_fallback_3 || "gemini-flash-lite-latest");
+        setSelectOrCustom("adm-tts-primary", "adm-tts-primary-custom", s.gemini_tts_primary_model || "gemini-3.8-flash-tts");
+        setSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", s.gemini_tts_fallback_1 || "gemini-3.1-flash-tts-preview");
+        setSelectOrCustom("adm-tts-lite", "adm-tts-lite-custom", s.gemini_tts_lite_model || "gemini-3.8-flash-lite-tts");
+        setSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", s.gemini_tts_fallback_2 || "gemini-2.5-flash-preview-tts");
         // Batch BS: the Groq Whisper (STT) model field — the GET
         // pre-fills it with the current effective model.
         const elGroqWhisper = document.getElementById("adm-groq-whisper-model");
@@ -14063,6 +14082,18 @@ async function saveAdminSettings() {
     const recapFreeMax = recapFreeMaxRaw === "" || recapFreeMaxRaw == null ? null : parseInt(recapFreeMaxRaw, 10);
     const recapMaxRaw = document.getElementById("adm-set-recap-max")?.value?.trim();
     const recapMax = recapMaxRaw === "" || recapMaxRaw == null ? null : parseInt(recapMaxRaw, 10);
+    const voiceDailyFreeRaw = document.getElementById("adm-set-voice-daily-free")?.value?.trim();
+    const voiceDailyFree = voiceDailyFreeRaw === "" || voiceDailyFreeRaw == null ? null : parseInt(voiceDailyFreeRaw, 10);
+    const voiceDailyPaidRaw = document.getElementById("adm-set-voice-daily-paid")?.value?.trim();
+    const voiceDailyPaid = voiceDailyPaidRaw === "" || voiceDailyPaidRaw == null ? null : parseInt(voiceDailyPaidRaw, 10);
+    const ttsDailyFreeRaw = document.getElementById("adm-set-tts-daily-free")?.value?.trim();
+    const ttsDailyFree = ttsDailyFreeRaw === "" || ttsDailyFreeRaw == null ? null : parseInt(ttsDailyFreeRaw, 10);
+    const ttsDailyPaidRaw = document.getElementById("adm-set-tts-daily-paid")?.value?.trim();
+    const ttsDailyPaid = ttsDailyPaidRaw === "" || ttsDailyPaidRaw == null ? null : parseInt(ttsDailyPaidRaw, 10);
+    const voxcpmTimeoutRaw = document.getElementById("adm-set-voxcpm-timeout")?.value?.trim();
+    const voxcpmTimeout = voxcpmTimeoutRaw === "" || voxcpmTimeoutRaw == null ? null : parseInt(voxcpmTimeoutRaw, 10);
+    const tutVideoEnEl = document.getElementById("adm-set-tutorial-video-enabled");
+    const tutVideoEn = tutVideoEnEl ? !!tutVideoEnEl.checked : true;
     const tieredPricing = !!document.getElementById("adm-set-tiered-pricing")?.checked;
     const reqChannelId = document.getElementById("adm-set-required-channel-id")?.value?.trim();
     const reqGroupId = document.getElementById("adm-set-required-group-id")?.value?.trim();
@@ -14116,6 +14147,12 @@ async function saveAdminSettings() {
         ...(Number.isFinite(freeGeminiBudget) ? { free_gemini_daily_budget_requests: freeGeminiBudget } : {}),
         ...(Number.isFinite(recapFreeMax) ? { recap_free_max_duration_seconds: recapFreeMax } : {}),
         ...(Number.isFinite(recapMax) ? { recap_max_duration_seconds: recapMax } : {}),
+        ...(Number.isFinite(voiceDailyFree) ? { voice_daily_limit_minutes_free: voiceDailyFree } : {}),
+        ...(Number.isFinite(voiceDailyPaid) ? { voice_daily_limit_minutes_paid: voiceDailyPaid } : {}),
+        ...(Number.isFinite(ttsDailyFree) ? { tts_daily_limit_minutes_free: ttsDailyFree } : {}),
+        ...(Number.isFinite(ttsDailyPaid) ? { tts_daily_limit_minutes_paid: ttsDailyPaid } : {}),
+        ...(Number.isFinite(voxcpmTimeout) ? { voxcpm_timeout: voxcpmTimeout } : {}),
+        tutorial_video_enabled: tutVideoEn,
         tiered_recap_pricing_enabled: tieredPricing,
         ...(reqChannelId ? { required_channel_id: reqChannelId } : {}),
         ...(reqGroupId ? { required_group_id: reqGroupId } : {}),
@@ -14145,6 +14182,45 @@ async function saveAdminSettings() {
         showStudioToast(adminErrorText("admin_settings_save_err", e.message), 'error');
     }
 }
+
+async function saveGeminiTtsModelSettings() {
+    haptic("medium");
+    const primary = getSelectOrCustom("adm-tts-primary", "adm-tts-primary-custom", "gemini-3.8-flash-tts");
+    const fb1 = getSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", "gemini-3.1-flash-tts-preview");
+    const lite = getSelectOrCustom("adm-tts-lite", "adm-tts-lite-custom", "gemini-3.8-flash-lite-tts");
+    const fb2 = getSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", "gemini-2.5-flash-preview-tts");
+
+    const payload = {
+        gemini_tts_primary_model: primary,
+        gemini_tts_fallback_1: fb1,
+        gemini_tts_lite_model: lite,
+        gemini_tts_fallback_2: fb2,
+    };
+
+    try {
+        const res = await fetch("/api/admin/settings", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        [
+            "adm-tts-primary", "adm-tts-primary-custom",
+            "adm-tts-fb1", "adm-tts-fb1-custom",
+            "adm-tts-lite", "adm-tts-lite-custom",
+            "adm-tts-fb2", "adm-tts-fb2-custom",
+        ].forEach(id => adminSettingsDirty.delete(id));
+        showStudioToast(t("admin_tts_chain_saved"), "success");
+        loadAdminSettings();
+    } catch (e) {
+        showStudioToast(adminErrorText("admin_tts_chain_save_err", e.message), "error");
+    }
+}
+window.saveGeminiTtsModelSettings = saveGeminiTtsModelSettings;
 
 // ── Dedicated History Hub ────────────────────────────────────────────────
 // One unified, newest-first list of ALL the user's jobs (voice + recap),

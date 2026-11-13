@@ -6668,6 +6668,83 @@ body.lite #tab-downloader .vcp-skel {
     animation: none !important;
 }
 
+/* ════ PHASE 7: ADMIN CONSOLE DESIGN PASS ════ */
+#tab-admin .card.glass,
+#tab-admin .vcp-card {
+    border-radius: var(--vcp-radius-lg);
+    border-color: var(--vcp-border);
+    box-shadow: var(--vcp-shadow-sm);
+}
+#tab-admin .stat-mini-card {
+    border-radius: var(--vcp-radius-md);
+    border-color: var(--vcp-border);
+}
+#tab-admin .model-tier-box {
+    background: var(--surface-2);
+    border-color: var(--vcp-border);
+    border-radius: var(--vcp-radius-md);
+}
+#tab-admin .studio-input,
+#tab-admin .vcp-input {
+    border-radius: var(--vcp-radius-sm);
+    min-height: 44px;
+}
+#tab-admin .adm-nav {
+    border-color: var(--vcp-border);
+    box-shadow: var(--vcp-shadow-sm);
+}
+#tab-admin .adm-nav-btn,
+#tab-admin .adm-seg-btn,
+#tab-admin .filter-chip,
+#tab-admin .mini-chip,
+#tab-admin .filter-pill,
+#tab-admin .adm-back-btn {
+    min-height: 36px;
+}
+#tab-admin .btn,
+#tab-admin .vcp-btn {
+    min-height: 44px;
+    border-radius: var(--vcp-radius-md);
+}
+#tab-admin .adm-user-row {
+    min-height: 52px;
+}
+#tab-admin .adm-state {
+    border-radius: var(--vcp-radius-md);
+    background: var(--vcp-flat-glass-inset);
+}
+
+@media (max-width: 420px) {
+    #tab-admin .form-row-2 {
+        grid-template-columns: 1fr;
+    }
+    #tab-admin #adm-jobs-history .form-row-2 {
+        grid-template-columns: 1fr 1fr;
+    }
+    #tab-admin .admin-purge-grid {
+        grid-template-columns: 1fr;
+    }
+    #tab-admin .gemini-chain-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+html.lite #tab-admin .card.glass,
+html.lite #tab-admin .vcp-card,
+html.lite #tab-admin .stat-mini-card,
+html.lite #tab-admin .adm-nav,
+html.lite #tab-admin .adm-seg,
+html.lite #tab-admin .adm-back-btn,
+body.lite #tab-admin .card.glass,
+body.lite #tab-admin .vcp-card,
+body.lite #tab-admin .stat-mini-card,
+body.lite #tab-admin .adm-nav,
+body.lite #tab-admin .adm-seg,
+body.lite #tab-admin .adm-back-btn {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
 
 
 
