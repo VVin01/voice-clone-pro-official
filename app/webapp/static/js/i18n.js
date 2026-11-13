@@ -1186,6 +1186,15 @@ const translations = {
         theme_toggle_title: "အလင်း / အမှောင် ပြောင်းရန်",
         theme_light: "အလင်း (Light Glass)",
         theme_dark: "အမှောင် (Dark Glass)",
+        // Phase 2 V2: Home 4-Zone IA
+        home_hero_tagline: "မြန်မာ AI အသံ & Movie Recap စတူဒီယို",
+        home_status_ready: "အဆင်သင့်",
+        home_start_hint: "တစ်ချက်နှိပ်ပြီး စတင်ပါ",
+        home_bal_tts_short: "TTS",
+        home_bal_voice_short: "Voice",
+        home_bal_recap_short: "Recap",
+        home_recent_empty_sub: "Recap သို့မဟုတ် Voice Studio မှ တစ်ခု စတင်ဖန်တီးကြည့်ပါ",
+        home_recent_error_sub: "အင်တာနက် စစ်ဆေးပြီး ပြန်စမ်းကြည့်ပါ",
         // Phase 2: Home Dashboard & Unified Help Hub
         home_greeting_default: "မင်္ဂလာပါ 👋",
         home_greeting_named: "မင်္ဂလာပါ {name} 👋",
@@ -2537,6 +2546,15 @@ const translations = {
         theme_toggle_title: "Switch Light / Dark theme",
         theme_light: "Light Glass",
         theme_dark: "Dark Glass",
+        // Phase 2 V2: Home 4-Zone IA
+        home_hero_tagline: "Burmese AI Voice & Movie Recap Studio",
+        home_status_ready: "Ready",
+        home_start_hint: "Tap a studio to begin",
+        home_bal_tts_short: "TTS",
+        home_bal_voice_short: "Voice",
+        home_bal_recap_short: "Recap",
+        home_recent_empty_sub: "Start your first Recap or Voice Clone above",
+        home_recent_error_sub: "Check your connection and try again",
         // Phase 2: Home Dashboard & Unified Help Hub
         home_greeting_default: "Welcome 👋",
         home_greeting_named: "Hi, {name} 👋",
