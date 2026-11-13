@@ -1,0 +1,2685 @@
+<!DOCTYPE html>
+<html lang="my" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Voice Clone Pro — Phase 0 Liquid Glass Interactive Demo (v2)</title>
+<style>
+  :root {
+    /* 8-pt Grid Spacing Rhythm */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 24px;
+
+    /* Self-contained Myanmar + Apple System Typography (Zero external CDN) */
+    --font-ui: "Padauk", "Pyidaungsu", "Noto Sans Myanmar", "Myanmar Text", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+
+    /* Apple Squircle & Capsule Radii */
+    --r-xs: 12px;
+    --r-sm: 16px;
+    --r-md: 20px;
+    --r-lg: 26px;
+    --r-pill: 999px;
+
+    /* Single Cohesive Brand Accent: Liquid Sapphire & Glacier Cyan */
+    --accent: #0A84FF;
+    --accent-2: #38BDF8;
+    --accent-soft: rgba(10, 132, 255, 0.13);
+    --accent-border: rgba(10, 132, 255, 0.34);
+    --accent-grad: linear-gradient(135deg, #007AFF 0%, #249BFF 52%, #38BDF8 100%);
+    --accent-glow: 0 10px 26px rgba(10, 132, 255, 0.28);
+
+    /* Semantic Status Colors */
+    --ok: #10B981;
+    --ok-soft: rgba(16, 185, 129, 0.14);
+    --ok-text: #047857;
+    --warn: #F59E0B;
+    --warn-soft: rgba(245, 158, 11, 0.15);
+    --warn-text: #B45309;
+    --danger: #EF4444;
+    --danger-soft: rgba(239, 68, 68, 0.14);
+    --danger-text: #DC2626;
+
+    /* Champagne Pearl VIP Identity (Light) */
+    --vip-bg: linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(245, 158, 11, 0.08));
+    --vip-border: rgba(217, 119, 6, 0.36);
+    --vip-text: #B45309;
+
+    /* Light Glass Surface Tokens */
+    --canvas-bg: #DCEAF8;
+    --text-1: #0A1528;
+    --text-2: #3F5370;
+    --text-3: #687E9D;
+    --divider: rgba(12, 32, 64, 0.085);
+
+    /* Floating Chrome (Real optical backdrop-filter ONLY on fixed chrome/modals) */
+    --chrome-bg: rgba(255, 255, 255, 0.62);
+    --chrome-strong: rgba(255, 255, 255, 0.84);
+    --chrome-rim-hi: rgba(255, 255, 255, 0.96);
+    --chrome-rim-lo: rgba(255, 255, 255, 0.32);
+    --chrome-shadow: 0 16px 38px rgba(20, 56, 110, 0.14), 0 2px 8px rgba(20, 56, 110, 0.06);
+
+    /* Scrolling Panes Optical Faux-Glass (ZERO backdrop-filter for 60fps Android WebView) */
+    --card-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.86) 0%, rgba(242, 248, 255, 0.68) 100%);
+    --card-bg-hero: linear-gradient(145deg, rgba(255, 255, 255, 0.92) 0%, rgba(236, 246, 255, 0.78) 100%);
+    --card-inset: rgba(235, 244, 254, 0.72);
+    --card-border: rgba(255, 255, 255, 0.90);
+    --card-border-outer: rgba(12, 32, 64, 0.08);
+    --card-spec: inset 0 1px 0 rgba(255, 255, 255, 0.98), inset 0 -1px 0 rgba(255, 255, 255, 0.42);
+    --card-shadow: 0 10px 26px rgba(28, 68, 128, 0.08), 0 1px 3px rgba(12, 32, 64, 0.04);
+
+    /* Interactive Track / Thumb */
+    --input-bg: rgba(255, 255, 255, 0.78);
+    --pill-track: rgba(12, 32, 64, 0.065);
+    --pill-thumb: rgba(255, 255, 255, 0.96);
+    --pill-thumb-shadow: 0 3px 10px rgba(20, 52, 96, 0.13), inset 0 1px 0 rgba(255, 255, 255, 1);
+
+    /* Transform / Opacity Only Motion */
+    --ease-spring: cubic-bezier(0.28, 1.16, 0.36, 1);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* ── Dark Liquid Glass Theme (Midnight Sapphire Obsidian) ─────────── */
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --canvas-bg: #050B16;
+    --text-1: #F2F7FF;
+    --text-2: #B0C2DE;
+    --text-3: #7A92B6;
+    --divider: rgba(255, 255, 255, 0.10);
+
+    --accent: #3B9BFF;
+    --accent-2: #5AC8FA;
+    --accent-soft: rgba(59, 155, 255, 0.18);
+    --accent-border: rgba(90, 200, 250, 0.38);
+    --accent-glow: 0 10px 28px rgba(10, 132, 255, 0.36);
+
+    --ok-text: #34D399;
+    --warn-text: #FCD34D;
+    --danger-text: #FCA5A5;
+
+    --vip-bg: linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(180, 83, 9, 0.12));
+    --vip-border: rgba(251, 191, 36, 0.42);
+    --vip-text: #FDE68A;
+
+    --chrome-bg: rgba(15, 25, 45, 0.72);
+    --chrome-strong: rgba(17, 29, 52, 0.90);
+    --chrome-rim-hi: rgba(255, 255, 255, 0.24);
+    --chrome-rim-lo: rgba(255, 255, 255, 0.06);
+    --chrome-shadow: 0 18px 42px rgba(0, 0, 0, 0.52), 0 2px 10px rgba(0, 0, 0, 0.30);
+
+    --card-bg: linear-gradient(145deg, rgba(22, 36, 62, 0.86) 0%, rgba(13, 22, 40, 0.74) 100%);
+    --card-bg-hero: linear-gradient(145deg, rgba(28, 45, 78, 0.92) 0%, rgba(16, 28, 50, 0.84) 100%);
+    --card-inset: rgba(9, 17, 32, 0.70);
+    --card-border: rgba(255, 255, 255, 0.15);
+    --card-border-outer: rgba(255, 255, 255, 0.07);
+    --card-spec: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+    --card-shadow: 0 14px 32px rgba(0, 0, 0, 0.40);
+
+    --input-bg: rgba(8, 15, 28, 0.74);
+    --pill-track: rgba(255, 255, 255, 0.085);
+    --pill-thumb: rgba(42, 66, 108, 0.96);
+    --pill-thumb-shadow: 0 3px 12px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  }
+
+  /* ── Lite Mode (First-Class Ceramic Solid — Zero Blur, High Contrast, Zero Motion) */
+  html.lite-mode {
+    --canvas-bg: #F1F5F9;
+    --chrome-bg: #FFFFFF;
+    --chrome-strong: #FFFFFF;
+    --chrome-rim-hi: #CBD5E1;
+    --chrome-rim-lo: #E2E8F0;
+    --card-bg: #FFFFFF;
+    --card-bg-hero: #FFFFFF;
+    --card-inset: #F8FAFC;
+    --card-border: #CBD5E1;
+    --card-border-outer: #CBD5E1;
+    --card-spec: none;
+    --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    --chrome-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+    --pill-track: #E2E8F0;
+    --pill-thumb: #FFFFFF;
+  }
+  html.lite-mode[data-theme="dark"] {
+    --canvas-bg: #090E1A;
+    --chrome-bg: #111827;
+    --chrome-strong: #111827;
+    --chrome-rim-hi: #334155;
+    --card-bg: #131C2E;
+    --card-bg-hero: #162136;
+    --card-inset: #0C1322;
+    --card-border: #26344D;
+    --card-border-outer: #26344D;
+    --card-spec: none;
+    --card-shadow: none;
+  }
+  html.lite-mode .lg-blur {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  html.lite-mode *, html.lite-mode *::before, html.lite-mode *::after {
+    transition-duration: 0.01ms !important;
+    animation: none !important;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-ui);
+    background: #080E1B;
+    color: var(--text-1);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  svg.ico {
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.85;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* ── Desktop Review Stage & Control Toolbar ─────────────────────── */
+  .studio-shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 14px 12px 28px;
+    gap: 14px;
+    background:
+      radial-gradient(900px 460px at 14% 0%, rgba(10, 132, 255, 0.24), transparent 62%),
+      radial-gradient(720px 480px at 88% 92%, rgba(56, 189, 248, 0.14), transparent 66%),
+      #080E1B;
+  }
+  .review-bar {
+    width: 100%;
+    max-width: 1040px;
+    background: rgba(14, 22, 39, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 22px;
+    padding: 11px 14px;
+    color: #E2E8F0;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
+  }
+  .review-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .review-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 800;
+    color: #F8FAFC;
+  }
+  .review-pill {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.18);
+    color: #7DD3FC;
+    border: 1px solid rgba(56, 189, 248, 0.36);
+  }
+  .review-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: center;
+  }
+  .ctrl-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    flex-wrap: wrap;
+  }
+  .ctrl-lbl {
+    font-size: 10px;
+    color: #94A3B8;
+    padding: 0 5px 0 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .ctrl-btn {
+    border: none;
+    background: transparent;
+    color: #CBD5E1;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.65;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: background 0.14s ease, color 0.14s ease;
+  }
+  .ctrl-btn.active {
+    background: var(--accent-grad);
+    color: #FFFFFF;
+    box-shadow: 0 2px 10px rgba(10, 132, 255, 0.34);
+  }
+
+  /* Clean Frame Mode (URL ?clean=1 or real small mobile devices) */
+  body.clean-frame .studio-shell { display: block; padding: 0; background: var(--canvas-bg); min-height: 100vh; }
+  body.clean-frame .review-bar { display: none; }
+  body.clean-frame .phone-stage { display: block; width: auto; margin: 0; }
+  body.clean-frame .phone-frame {
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    height: 820px;
+    max-height: none;
+  }
+  @media (max-width: 440px) {
+    .studio-shell { padding: 0; gap: 0; }
+    .review-bar { border-radius: 0; padding: 8px 10px; border-left: none; border-right: none; }
+    .phone-frame { width: 100% !important; max-width: 100vw; border-radius: 0; border: none; height: calc(100vh - 10px); max-height: none; }
+    body.clean-frame .phone-frame { height: 100vh; }
+  }
+
+  /* ── Simulated Phone Frame ───────────────────────────────────────── */
+  .phone-stage {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+  .phone-frame {
+    position: relative;
+    width: 380px;
+    max-width: 100vw;
+    height: 800px;
+    max-height: calc(100vh - 24px);
+    border-radius: 44px;
+    border: 6px solid rgba(255, 255, 255, 0.16);
+    box-shadow:
+      0 32px 76px rgba(0, 0, 0, 0.56),
+      0 0 0 1px rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    background: var(--canvas-bg);
+    color: var(--text-1);
+    transition: width 0.25s var(--ease-out);
+  }
+  .phone-frame.w-360 { width: 360px; }
+  .phone-frame.w-380 { width: 380px; }
+
+  /* Rich Optical Atmospheric Mesh (Refracted behind floating Header & Dock) */
+  .ambient-mesh {
+    position: absolute;
+    inset: -12%;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(240px 200px at 16% 6%, rgba(10, 132, 255, 0.34), rgba(10, 132, 255, 0) 72%),
+      radial-gradient(260px 220px at 86% 12%, rgba(56, 189, 248, 0.42), rgba(56, 189, 248, 0) 70%),
+      radial-gradient(320px 260px at 18% 72%, rgba(125, 211, 252, 0.46), rgba(125, 211, 252, 0) 72%),
+      radial-gradient(280px 240px at 84% 94%, rgba(99, 102, 241, 0.28), rgba(99, 102, 241, 0) 70%),
+      linear-gradient(175deg, #E8F1FC 0%, #D5E6FA 100%);
+    animation: meshDrift 34s ease-in-out infinite alternate;
+  }
+  html[data-theme="dark"] .ambient-mesh {
+    background:
+      radial-gradient(260px 220px at 16% 8%, rgba(10, 132, 255, 0.32), rgba(10, 132, 255, 0) 72%),
+      radial-gradient(260px 220px at 88% 18%, rgba(56, 189, 248, 0.18), rgba(56, 189, 248, 0) 70%),
+      radial-gradient(320px 280px at 20% 84%, rgba(30, 64, 175, 0.30), rgba(30, 64, 175, 0) 72%),
+      linear-gradient(175deg, #050B16 0%, #0A1426 100%);
+  }
+  html.lite-mode .ambient-mesh { background: var(--canvas-bg); inset: 0; }
+  @keyframes meshDrift {
+    from { transform: translate3d(-1.4%, -1%, 0) scale(1); }
+    to { transform: translate3d(1.4%, 1.2%, 0) scale(1.04); }
+  }
+
+  /* Scrollable Pane Container (Ample 124px bottom clearance so Dock never overlaps CTAs) */
+  .app-viewport {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 76px 14px 124px;
+    scrollbar-width: none;
+  }
+  .app-viewport::-webkit-scrollbar { display: none; }
+
+  /* ── Floating Liquid Glass Top Header ───────────────────────────── */
+  .lg-top-nav {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    right: 12px;
+    z-index: 22;
+    min-height: 54px;
+    padding: 5px 7px 5px 9px;
+    border-radius: 27px;
+    background: var(--chrome-bg);
+    backdrop-filter: blur(28px) saturate(210%);
+    -webkit-backdrop-filter: blur(28px) saturate(210%);
+    border: 1px solid var(--chrome-rim-hi);
+    box-shadow:
+      inset 0 1.5px 0 var(--chrome-rim-hi),
+      inset 0 -1px 0 var(--chrome-rim-lo),
+      0 0 0 0.5px rgba(255, 255, 255, 0.34),
+      var(--chrome-shadow);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .lg-brand-cluster {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+  .lg-crest {
+    width: 34px;
+    height: 34px;
+    border-radius: 11px;
+    background: var(--accent-grad);
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(10, 132, 255, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.60);
+  }
+  .lg-brand-meta { min-width: 0; flex: 1 1 auto; overflow: hidden; display: flex; flex-direction: column; gap: 1px; }
+  .lg-brand-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .lg-brand-name {
+    font-size: 12.5px;
+    font-weight: 800;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+  .lg-tier-pill {
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    white-space: nowrap;
+    flex: 0 0 auto;
+    cursor: pointer;
+  }
+  .lg-tier-pill.is-vip {
+    background: var(--vip-bg);
+    color: var(--vip-text);
+    border-color: var(--vip-border);
+  }
+  .lg-tier-pill.is-admin {
+    background: rgba(16, 185, 129, 0.16);
+    color: var(--ok-text);
+    border-color: rgba(16, 185, 129, 0.36);
+  }
+  .lg-brand-sub {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-3);
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lg-brand-sub.is-admin-sub { color: var(--ok-text); }
+
+  .lg-top-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .lg-hdr-pill {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid var(--card-border-outer);
+    background: var(--pill-thumb);
+    color: var(--text-1);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.55;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+    box-shadow: var(--pill-thumb-shadow);
+    transition: transform 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
+  }
+  .lg-hdr-pill:active { transform: scale(0.95); }
+  .lg-hdr-icon-btn { width: 44px; padding: 0; }
+  .lg-hdr-admin-pill {
+    background: rgba(16, 185, 129, 0.14);
+    color: var(--ok-text);
+    border-color: rgba(16, 185, 129, 0.34);
+    padding: 0 9px;
+  }
+
+  /* ── Shared Optical Faux-Glass Surface ──────────────────────────── */
+  .lg-card {
+    position: relative;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    outline: 1px solid var(--card-border-outer);
+    outline-offset: -1px;
+    border-radius: var(--r-lg);
+    padding: 13px 14px;
+    box-shadow: var(--card-spec), var(--card-shadow);
+    margin-bottom: 10px;
+  }
+  .lg-card-hero { background: var(--card-bg-hero); padding: 15px; }
+  html.is-vip-tier:not(.lite-mode) .lg-card-hero {
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.94) 0%, rgba(254, 243, 199, 0.44) 100%);
+    border-color: rgba(245, 158, 11, 0.42);
+    outline-color: rgba(217, 119, 6, 0.22);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.98), 0 14px 32px rgba(217, 119, 6, 0.14);
+  }
+  html.is-vip-tier[data-theme="dark"]:not(.lite-mode) .lg-card-hero {
+    background: linear-gradient(145deg, rgba(36, 44, 68, 0.94) 0%, rgba(74, 48, 16, 0.46) 100%);
+    border-color: rgba(251, 191, 36, 0.42);
+    outline-color: rgba(251, 191, 36, 0.18);
+    box-shadow: inset 0 1px 0 rgba(253, 230, 138, 0.24), 0 16px 36px rgba(0, 0, 0, 0.48);
+  }
+  html.is-vip-tier .hero-status-chip {
+    background: var(--vip-bg);
+    color: var(--vip-text);
+    border-color: var(--vip-border);
+  }
+  html.is-vip-tier .pulse-dot {
+    background: #F59E0B;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.26);
+  }
+  .lg-card-danger {
+    border-color: rgba(239, 68, 68, 0.36);
+    background: linear-gradient(155deg, rgba(239, 68, 68, 0.08), var(--card-inset));
+  }
+
+  /* Typography Guards */
+  .t-h1 { font-size: 18.5px; font-weight: 800; line-height: 1.55; letter-spacing: -0.01em; }
+  .t-h2 { font-size: 14.5px; font-weight: 800; line-height: 1.55; }
+  .t-body { font-size: 12.5px; font-weight: 600; line-height: 1.72; color: var(--text-2); }
+  .t-micro { font-size: 11px; font-weight: 600; line-height: 1.55; color: var(--text-3); }
+  .t-num { font-variant-numeric: tabular-nums; }
+
+  .tab-section { display: none; animation: tabEnter 0.24s var(--ease-out); }
+  .tab-section.active { display: block; }
+  @keyframes tabEnter {
+    from { opacity: 0; transform: translate3d(0, 7px, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+
+  /* Sub-tab Context Wallet Strip */
+  .subtab-wallet-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 6px 12px;
+    border-radius: var(--r-pill);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-spec);
+  }
+
+  /* ── HOME: Unified Hero + Balance + Welcome ─────────────────────── */
+  .hero-header-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .hero-status-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--ok-soft);
+    color: var(--ok-text);
+    font-size: 11px;
+    font-weight: 800;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+  }
+  .pulse-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.22);
+  }
+
+  .balance-trio {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .bal-tile {
+    background: var(--card-inset);
+    border: 1px solid var(--card-border-outer);
+    border-radius: var(--r-md);
+    padding: 9px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.50);
+  }
+  html[data-theme="dark"] .bal-tile { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  .bal-head {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 700; color: var(--text-2); line-height: 1.4;
+  }
+  .bal-val { font-size: 15.5px; font-weight: 800; color: var(--text-1); line-height: 1.45; }
+  .bal-period { font-size: 10px; font-weight: 600; color: var(--text-3); line-height: 1.45; }
+
+  .welcome-callout {
+    background: linear-gradient(135deg, rgba(10, 132, 255, 0.14) 0%, rgba(56, 189, 248, 0.07) 100%);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--r-md);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .welcome-msg { font-size: 12.5px; font-weight: 700; line-height: 1.68; color: var(--text-1); }
+  .welcome-actions { display: flex; gap: 8px; flex-wrap: nowrap; }
+
+  /* Luminous Liquid Glass Buttons */
+  .lg-btn-primary {
+    min-height: 46px;
+    padding: 0 14px;
+    border-radius: var(--r-pill);
+    border: 1px solid rgba(255, 255, 255, 0.44);
+    background: var(--accent-grad);
+    color: #FFFFFF;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.56),
+      inset 0 -8px 16px rgba(255, 255, 255, 0.10),
+      var(--accent-glow);
+    transition: transform 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lg-btn-primary:active { transform: scale(0.97); }
+  .lg-btn-primary.full { width: 100%; }
+
+  .lg-btn-secondary {
+    min-height: 44px;
+    padding: 0 13px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--card-border-outer);
+    background: var(--pill-thumb);
+    color: var(--text-1);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: var(--pill-thumb-shadow);
+    transition: transform 0.12s ease;
+  }
+  .lg-btn-secondary:active { transform: scale(0.96); }
+  .lg-btn-secondary.playing {
+    border-color: var(--accent-border);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .lg-btn-ok {
+    min-height: 44px; padding: 0 13px; border-radius: var(--r-pill);
+    border: 1px solid rgba(16, 185, 129, 0.38);
+    background: linear-gradient(135deg, #059669, #10B981);
+    color: #fff; font-family: var(--font-ui); font-size: 12px; font-weight: 800;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 6px 16px rgba(16,185,129,0.26);
+  }
+  .lg-btn-danger-soft {
+    min-height: 44px; padding: 0 13px; border-radius: var(--r-pill);
+    border: 1px solid rgba(239, 68, 68, 0.34);
+    background: var(--danger-soft); color: var(--danger-text);
+    font-family: var(--font-ui); font-size: 12px; font-weight: 800;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  }
+
+  /* Studio Bento (Uniform SVG Icons) */
+  .section-head-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-bottom: 10px;
+  }
+  .studio-hero-tile {
+    width: 100%; text-align: left;
+    border: 1px solid var(--accent-border);
+    background: linear-gradient(135deg, rgba(10, 132, 255, 0.14) 0%, rgba(56, 189, 248, 0.05) 65%), var(--card-inset);
+    border-radius: var(--r-md); padding: 13px;
+    display: flex; align-items: center; gap: 12px; cursor: pointer;
+    color: var(--text-1); font-family: var(--font-ui);
+    margin-bottom: 8px; min-height: 72px; transition: transform 0.12s ease;
+  }
+  .studio-hero-tile:active { transform: scale(0.985); }
+  .studio-twin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .studio-sub-tile {
+    text-align: left; border: 1px solid var(--card-border-outer);
+    background: var(--card-inset); border-radius: var(--r-md); padding: 12px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+    cursor: pointer; color: var(--text-1); font-family: var(--font-ui); min-height: 112px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.50); transition: transform 0.12s ease;
+  }
+  html[data-theme="dark"] .studio-sub-tile { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  .studio-sub-tile:active { transform: scale(0.98); }
+
+  .lg-icon-disc {
+    width: 44px; height: 44px; border-radius: 14px;
+    background: var(--accent-grad); color: #FFFFFF;
+    display: grid; place-items: center; flex: 0 0 auto;
+    box-shadow: 0 6px 16px rgba(10, 132, 255, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.56);
+  }
+  .lg-icon-disc.quiet {
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--accent-border); box-shadow: none;
+  }
+  .tile-title {
+    font-size: 13.5px; font-weight: 800; line-height: 1.5;
+    display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 4px;
+  }
+  .tile-desc { font-size: 11.5px; line-height: 1.62; color: var(--text-2); }
+  .chev { color: var(--text-3); display: inline-flex; }
+
+  /* Recent / Lists / Skeletons / Errors */
+  .empty-glass {
+    border: 1.5px dashed var(--card-border-outer); border-radius: var(--r-md);
+    padding: 18px 14px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    background: var(--card-inset); color: var(--text-2);
+  }
+  .recent-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 12px; border-radius: var(--r-md);
+    background: var(--card-inset); border: 1px solid var(--card-border-outer);
+    margin-bottom: 8px;
+  }
+  .recent-row:last-child { margin-bottom: 0; }
+  .recent-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .recent-badge {
+    width: 38px; height: 38px; border-radius: 12px;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center; flex: 0 0 auto;
+  }
+  .recent-title {
+    font-size: 12.5px; font-weight: 800; line-height: 1.45;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .recent-sub { font-size: 11px; color: var(--text-3); line-height: 1.5; }
+  .recent-action {
+    min-height: 44px; padding: 0 11px; border-radius: 999px;
+    border: 1px solid var(--accent-border); background: var(--accent-soft);
+    color: var(--accent); font-family: var(--font-ui); font-size: 11.5px; font-weight: 800;
+    cursor: pointer; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .status-mini {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 10px; font-weight: 800; margin-right: 4px;
+  }
+  .status-mini.ok { background: var(--ok-soft); color: var(--ok-text); }
+  .status-mini.run { background: var(--accent-soft); color: var(--accent); }
+  .status-mini.warn { background: var(--warn-soft); color: var(--warn-text); }
+  .status-mini.err { background: var(--danger-soft); color: var(--danger-text); }
+
+  .skel-row {
+    height: 60px; border-radius: var(--r-md); background: var(--card-inset);
+    margin-bottom: 8px; border: 1px solid var(--card-border-outer);
+    animation: skelPulse 1.3s ease-in-out infinite alternate;
+  }
+  @keyframes skelPulse { from { opacity: 0.45; } to { opacity: 0.92; } }
+  .error-banner {
+    background: var(--danger-soft); border: 1px solid rgba(239, 68, 68, 0.34);
+    border-radius: var(--r-md); padding: 11px 12px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    color: var(--danger-text); font-size: 12px; font-weight: 700; line-height: 1.55;
+  }
+
+  /* iOS Grouped Settings List */
+  .settings-list {
+    display: flex; flex-direction: column; border-radius: var(--r-md); overflow: hidden;
+    background: var(--card-inset); border: 1px solid var(--card-border-outer);
+  }
+  .settings-item {
+    min-height: 48px; padding: 10px 12px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    border: none; border-bottom: 1px solid var(--divider);
+    background: transparent; color: var(--text-1);
+    font-family: var(--font-ui); text-align: left; cursor: pointer; width: 100%;
+  }
+  .settings-item:last-child { border-bottom: none; }
+  .settings-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .settings-badge {
+    width: 32px; height: 32px; border-radius: 10px;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center; flex: 0 0 auto;
+  }
+  .settings-txt-title { font-size: 13px; font-weight: 700; line-height: 1.45; }
+  .settings-txt-sub { font-size: 11px; color: var(--text-3); line-height: 1.45; }
+  .count-pill {
+    font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+    background: var(--pill-track); color: var(--text-2); white-space: nowrap;
+    border: none; font-family: var(--font-ui);
+  }
+  .accordion-drawer { display: none; padding-top: 10px; flex-direction: column; gap: 8px; }
+  .accordion-drawer.open { display: flex; }
+
+  .ia-banner-tag {
+    display: flex; align-items: center; gap: 6px; padding: 6px 12px; margin-bottom: 10px;
+    border-radius: var(--r-pill); background: var(--accent-soft);
+    border: 1px solid var(--accent-border); font-size: 10.5px; font-weight: 700;
+    color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ── Segmented Pills (Spring Sliding Lens) ──────────────────────── */
+  .seg-capsule {
+    position: relative; display: grid; padding: 4px;
+    border-radius: var(--r-pill); background: var(--pill-track);
+    border: 1px solid var(--card-border-outer); margin-bottom: 9px;
+  }
+  .seg-capsule.cols-2 { grid-template-columns: 1fr 1fr; }
+  .seg-capsule.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .seg-capsule.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  .seg-thumb {
+    position: absolute; top: 4px; bottom: 4px; left: 4px;
+    border-radius: var(--r-pill); background: var(--pill-thumb);
+    box-shadow: var(--pill-thumb-shadow);
+    transition: transform 0.30s var(--ease-spring), width 0.28s var(--ease-spring); z-index: 0;
+  }
+  .seg-btn {
+    position: relative; z-index: 1; min-height: 44px; border: none; background: transparent;
+    color: var(--text-2); font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+    line-height: 1.35; padding: 4px 6px; border-radius: var(--r-pill); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    white-space: nowrap;
+  }
+  .seg-btn.active { color: var(--text-1); font-weight: 800; }
+
+  /* ── VOICE STUDIO ──────────────────────────────────────────────── */
+  .voice-selected-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 12px; border-radius: var(--r-md);
+    background: var(--card-inset); border: 1px solid var(--card-border-outer);
+  }
+  .voice-avatar-lg {
+    width: 44px; height: 44px; border-radius: 14px; background: var(--accent-grad); color: #fff;
+    display: grid; place-items: center; flex: 0 0 auto;
+    box-shadow: 0 4px 12px rgba(10, 132, 255, 0.25);
+  }
+  .lg-textarea, .lg-input {
+    width: 100%; padding: 11px 13px; border-radius: var(--r-md);
+    border: 1px solid var(--card-border-outer); background: var(--input-bg);
+    color: var(--text-1); font-family: var(--font-ui); font-size: 13.5px; line-height: 1.72;
+    outline: none;
+  }
+  .lg-textarea { min-height: 84px; resize: vertical; }
+  .lg-textarea:focus, .lg-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .glass-chip {
+    min-height: 40px; padding: 6px 11px; border-radius: var(--r-pill);
+    border: 1px solid var(--card-border-outer); background: var(--card-inset);
+    color: var(--text-2); font-family: var(--font-ui); font-size: 11.5px; font-weight: 700;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .glass-chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
+  .excess-warn {
+    margin-top: 8px; padding: 9px 12px; border-radius: var(--r-sm);
+    background: var(--warn-soft); border: 1px solid rgba(245, 158, 11, 0.35);
+    font-size: 11.5px; font-weight: 700; color: var(--warn-text); display: none;
+  }
+  .excess-warn.show { display: block; }
+  .clone-step-pills { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+  .clone-step-chip {
+    min-height: 40px; padding: 6px 11px; border-radius: var(--r-pill);
+    border: 1px solid var(--card-border-outer); background: var(--card-inset);
+    color: var(--text-2); font-family: var(--font-ui); font-size: 11.5px; font-weight: 700;
+    white-space: nowrap; cursor: pointer;
+  }
+  .clone-step-chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
+
+  /* ── RECAP STEP 2 VISUAL EDITOR ───────────────────────────────── */
+  .sticky-stage-wrap { position: sticky; top: 4px; z-index: 6; margin-bottom: 8px; }
+  .cinema-card {
+    background: var(--card-bg-hero); border: 1px solid var(--card-border);
+    outline: 1px solid var(--card-border-outer); outline-offset: -1px;
+    border-radius: var(--r-lg); padding: 9px 11px; box-shadow: var(--card-spec), var(--card-shadow);
+  }
+  .cinema-screen-outer {
+    background: #070C16; border-radius: var(--r-md); padding: 7px;
+    display: flex; justify-content: center; align-items: center; min-height: 184px;
+    box-shadow: inset 0 2px 14px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+    position: relative;
+  }
+  .mockup-stage {
+    position: relative; width: 100px; height: 176px; border-radius: 13px; overflow: hidden;
+    background: radial-gradient(circle at 68% 30%, rgba(56, 189, 248, 0.36), transparent 55%),
+                linear-gradient(160deg, #1E293B 0%, #0F172A 55%, #1E1B4B 100%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.16);
+    transition: width 0.25s var(--ease-out), height 0.25s var(--ease-out);
+    user-select: none; touch-action: none;
+  }
+  .mockup-stage.ratio-16_9 { width: 252px; height: 142px; }
+  .mockup-stage.ratio-1_1 { width: 184px; height: 184px; }
+  .mockup-stage.ratio-orig { width: 220px; height: 156px; }
+  .stage-movie-frame {
+    position: absolute; left: 0; right: 0; top: 18%; height: 46%;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.10), rgba(15, 23, 42, 0.55)),
+                radial-gradient(circle at 35% 42%, rgba(251, 191, 36, 0.36), transparent 45%),
+                linear-gradient(135deg, #283C5F 0%, #17233B 100%);
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255, 255, 255, 0.62); font-size: 10.5px; font-weight: 700;
+  }
+  .mockup-stage.ratio-16_9 .stage-movie-frame,
+  .mockup-stage.ratio-orig .stage-movie-frame { top: 0; height: 100%; }
+  .mockup-stage.mirror-on .stage-movie-frame span { transform: scaleX(-1); display: inline-block; }
+
+  .preview-blur-overlay {
+    position: absolute; left: 8%; width: 84%; top: 52%; height: 11%; border-radius: 6px;
+    background: rgba(255, 255, 255, 0.18); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1.5px dashed rgba(96, 165, 250, 0.92);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 800; color: #E0F2FE; cursor: grab; touch-action: none;
+  }
+  .preview-blur-overlay.off { display: none; }
+  .preview-sub-overlay {
+    position: absolute; left: 5%; width: 90%; bottom: 6%; padding: 3px 5px; border-radius: 6px;
+    text-align: center; font-size: 8.5px; font-weight: 700; line-height: 1.38;
+    cursor: grab; touch-action: none; border: 1px dashed rgba(255, 255, 255, 0.42);
+  }
+  .preview-sub-overlay.off { display: none; }
+  .sub-gold { color: #FDE047; text-shadow: 0 1px 3px rgba(0,0,0,0.95); }
+  .sub-darkbox { color: #FFFFFF; background: rgba(0,0,0,0.76); }
+  .sub-white { color: #FFFFFF; text-shadow: 0 2px 4px rgba(0,0,0,0.96); }
+  .sub-rose { color: #FBCFE8; background: rgba(131,24,67,0.70); }
+
+  .preview-logo-chip {
+    position: absolute; font-size: 8.5px; font-weight: 800; padding: 2px 6px; border-radius: 999px;
+    background: rgba(15, 23, 42, 0.78); color: #FDE68A; border: 1px solid rgba(253, 224, 71, 0.45);
+  }
+  .preview-logo-chip.tr { top: 6px; right: 6px; }
+  .preview-logo-chip.tl { top: 6px; left: 6px; }
+  .preview-logo-chip.br { bottom: 6px; right: 6px; }
+  .preview-logo-chip.bl { bottom: 6px; left: 6px; }
+  .preview-logo-chip.off { display: none; }
+
+  .stage-reset-pill {
+    position: absolute; top: 8px; left: 8px; z-index: 4;
+    min-height: 32px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.24); background: rgba(15, 23, 42, 0.86);
+    color: #F1F5F9; font-family: var(--font-ui); font-size: 11.5px; font-weight: 600;
+    line-height: 1.55; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+    white-space: nowrap;
+  }
+  .seek-bar-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .seek-btn {
+    min-height: 36px; min-width: 40px; border-radius: 999px;
+    border: 1px solid var(--card-border-outer); background: var(--card-inset);
+    color: var(--text-1); font-family: var(--font-ui); font-size: 11px; font-weight: 800; cursor: pointer;
+  }
+  .seek-range { flex: 1; accent-color: var(--accent); height: 4px; }
+  .cat-rail { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 6px; scrollbar-width: none; }
+  .cat-rail::-webkit-scrollbar { display: none; }
+  .cat-pill {
+    flex: 0 0 auto; min-height: 44px; padding: 0 13px; border-radius: var(--r-pill);
+    border: 1px solid var(--card-border-outer); background: var(--card-bg); color: var(--text-2);
+    font-family: var(--font-ui); font-size: 12px; font-weight: 700; cursor: pointer;
+    box-shadow: var(--card-spec); white-space: nowrap; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .cat-pill.active {
+    background: var(--accent-grad); color: #FFFFFF;
+    border-color: rgba(255, 255, 255, 0.42); box-shadow: var(--accent-glow);
+  }
+  .preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .preset-card {
+    text-align: left; padding: 8px 10px; border-radius: var(--r-md);
+    border: 1px solid var(--card-border-outer); background: var(--card-inset);
+    color: var(--text-1); font-family: var(--font-ui); cursor: pointer; min-height: 52px;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .preset-card.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+  .slider-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .slider-label-row { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--text-2); }
+  .lg-range { width: 100%; accent-color: var(--accent); }
+
+  /* ── ADMIN CONSOLE REDESIGN (2-Group Zero-Cutoff Subnav + Accordions) */
+  .adm-nav-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+    padding: 5px;
+    border-radius: var(--r-md);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-spec), var(--card-shadow);
+    margin-bottom: 10px;
+  }
+  .adm-nav-tile {
+    position: relative;
+    min-height: 48px;
+    padding: 6px 4px;
+    border-radius: 13px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-2);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    cursor: pointer;
+    text-align: center;
+  }
+  .adm-nav-tile.active {
+    background: var(--pill-thumb);
+    color: var(--accent);
+    border-color: var(--accent-border);
+    box-shadow: var(--pill-thumb-shadow);
+    font-weight: 800;
+  }
+  .adm-badge-dot {
+    position: absolute;
+    top: 3px;
+    right: 6px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 9.5px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .adm-triage-banner {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(239, 68, 68, 0.08));
+    border: 1px solid rgba(245, 158, 11, 0.36);
+    border-radius: var(--r-md);
+    padding: 11px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .adm-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .adm-kpi-card {
+    background: var(--card-inset); border: 1px solid var(--card-border-outer);
+    border-radius: var(--r-md); padding: 11px; text-align: left; cursor: pointer;
+    color: var(--text-1); font-family: var(--font-ui);
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .adm-kpi-num { font-size: 19px; font-weight: 800; line-height: 1.3; }
+  .adm-accordion {
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    outline: 1px solid var(--card-border-outer); outline-offset: -1px;
+    border-radius: var(--r-md); margin-bottom: 7px; overflow: hidden;
+    box-shadow: var(--card-spec);
+  }
+  .adm-acc-head {
+    width: 100%; min-height: 46px; padding: 9px 13px; border: none; background: transparent;
+    color: var(--text-1); font-family: var(--font-ui); font-size: 12.5px; font-weight: 800;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; text-align: left;
+  }
+  .adm-acc-body { display: none; padding: 0 13px 11px; border-top: 1px solid var(--divider); }
+  .adm-accordion.open .adm-acc-body { display: block; padding-top: 9px; }
+  .adm-form-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+  .adm-switch {
+    position: relative; width: 44px; height: 26px; border-radius: 999px; border: none;
+    background: var(--pill-track); cursor: pointer; transition: background 0.16s ease; flex-shrink: 0;
+  }
+  .adm-switch::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+    border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.22);
+    transition: transform 0.2s var(--ease-spring);
+  }
+  .adm-switch.on { background: var(--ok); }
+  .adm-switch.on::after { transform: translateX(18px); }
+
+  /* ── Floating iOS 26 Liquid Glass Bottom Dock ───────────────────── */
+  .lg-bottom-dock {
+    position: absolute; bottom: 10px; left: 12px; right: 12px; z-index: 25;
+    padding: 5px; border-radius: 30px; background: var(--chrome-bg);
+    backdrop-filter: blur(28px) saturate(210%); -webkit-backdrop-filter: blur(28px) saturate(210%);
+    border: 1px solid var(--chrome-rim-hi);
+    box-shadow: inset 0 1.5px 0 var(--chrome-rim-hi), inset 0 -1px 0 var(--chrome-rim-lo), 0 0 0 0.5px rgba(255, 255, 255, 0.34), var(--chrome-shadow);
+  }
+  .dock-grid { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; }
+  .dock-lens {
+    position: absolute; top: 0; bottom: 0; left: 0; border-radius: 24px;
+    background: var(--pill-thumb);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.90), 0 4px 14px rgba(10, 132, 255, 0.14);
+    transition: transform 0.34s var(--ease-spring), width 0.30s var(--ease-spring);
+    pointer-events: none; z-index: 0;
+  }
+  html[data-theme="dark"] .dock-lens {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 14px rgba(0, 0, 0, 0.38);
+  }
+  .dock-btn {
+    position: relative; z-index: 1; min-height: 48px; border: none; background: transparent;
+    color: var(--text-3); font-family: var(--font-ui);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; cursor: pointer; padding: 4px 2px; transition: color 0.16s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dock-btn.active { color: var(--accent); font-weight: 800; }
+  .dock-lbl { font-size: 10px; line-height: 1.35; font-weight: 700; white-space: nowrap; }
+
+  /* ── Liquid Glass Bottom Sheet / Modal ──────────────────────────── */
+  .sheet-backdrop {
+    position: absolute; inset: 0; z-index: 40;
+    background: rgba(5, 11, 22, 0.44); backdrop-filter: blur(4px);
+    display: none; align-items: flex-end;
+  }
+  .sheet-backdrop.open { display: flex; }
+  .lg-sheet {
+    width: 100%; max-height: 76%; background: var(--chrome-strong);
+    backdrop-filter: blur(28px) saturate(185%); -webkit-backdrop-filter: blur(28px) saturate(185%);
+    border-top: 1px solid var(--chrome-rim-hi); border-radius: 30px 30px 0 0;
+    padding: 12px 16px 22px; box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.28);
+    overflow-y: auto; animation: sheetRise 0.25s var(--ease-spring);
+  }
+  @keyframes sheetRise { from { transform: translateY(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .sheet-handle { width: 38px; height: 4px; border-radius: 999px; background: var(--text-3); opacity: 0.4; margin: 0 auto 10px; }
+  .persona-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .persona-card {
+    padding: 10px; border-radius: var(--r-md); border: 1px solid var(--card-border-outer);
+    background: var(--card-inset); text-align: left; color: var(--text-1); font-family: var(--font-ui);
+    cursor: pointer; display: flex; flex-direction: column; gap: 3px;
+  }
+  .persona-card.active { border-color: var(--accent); background: var(--accent-soft); }
+
+  /* Toast */
+  .lg-toast {
+    position: absolute; top: 72px; left: 16px; right: 16px; z-index: 50;
+    padding: 10px 14px; border-radius: var(--r-pill); background: var(--chrome-strong);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--accent-border); box-shadow: var(--chrome-shadow);
+    font-size: 12px; font-weight: 700; color: var(--text-1); text-align: center;
+    opacity: 0; transform: translateY(-10px); pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s var(--ease-out);
+  }
+  .lg-toast.show { opacity: 1; transform: translateY(0); }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="studio-shell">
+  <!-- Desktop / Reviewer Control Toolbar -->
+  <div class="review-bar" id="review-bar">
+    <div class="review-top">
+      <div class="review-title">
+        <span class="review-pill">Phase 0 · Demo v2</span>
+        <span>Voice Clone Pro — User + Admin iOS Liquid Glass Interactive Proposal</span>
+      </div>
+      <div style="font-size:11px; color:#94A3B8;">Standalone HTML (All CSS/JS inlined · Zero Production Changes)</div>
+    </div>
+    <div class="review-controls">
+      <div class="ctrl-group" id="ctrl-screen">
+        <span class="ctrl-lbl">Screen</span>
+        <button class="ctrl-btn active" data-val="home">Home</button>
+        <button class="ctrl-btn" data-val="voice">Voice Studio</button>
+        <button class="ctrl-btn" data-val="recap">Recap Step 2</button>
+        <button class="ctrl-btn" data-val="admin">Admin Console</button>
+      </div>
+      <div class="ctrl-group" id="ctrl-mode">
+        <span class="ctrl-lbl">Theme</span>
+        <button class="ctrl-btn active" data-val="light">Light Glass</button>
+        <button class="ctrl-btn" data-val="dark">Dark Glass</button>
+        <button class="ctrl-btn" data-val="lite">Lite</button>
+      </div>
+      <div class="ctrl-group" id="ctrl-fixture">
+        <span class="ctrl-lbl">User</span>
+        <button class="ctrl-btn active" data-val="first">1st-run FREE</button>
+        <button class="ctrl-btn" data-val="active">Active FREE</button>
+        <button class="ctrl-btn" data-val="vip">VIP Pro</button>
+        <button class="ctrl-btn" data-val="admin">Admin</button>
+      </div>
+      <div class="ctrl-group" id="ctrl-state">
+        <span class="ctrl-lbl">State</span>
+        <button class="ctrl-btn active" data-val="ready">Ready</button>
+        <button class="ctrl-btn" data-val="loading">Skeleton</button>
+        <button class="ctrl-btn" data-val="error">Error</button>
+      </div>
+      <div class="ctrl-group" id="ctrl-lang">
+        <span class="ctrl-lbl">Lang</span>
+        <button class="ctrl-btn active" data-val="my">မြန်မာ</button>
+        <button class="ctrl-btn" data-val="en">EN</button>
+      </div>
+      <div class="ctrl-group" id="ctrl-width">
+        <span class="ctrl-lbl">Width</span>
+        <button class="ctrl-btn" data-val="360">360px</button>
+        <button class="ctrl-btn active" data-val="380">380px</button>
+      </div>
+      <div class="ctrl-group" id="ctrl-ia">
+        <span class="ctrl-lbl">Home IA</span>
+        <button class="ctrl-btn active" data-val="proposed">Proposed</button>
+        <button class="ctrl-btn" data-val="classic">Legacy Order</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simulated Device Viewport -->
+  <div class="phone-stage">
+    <div class="phone-frame w-380" id="phone-frame">
+      <div class="ambient-mesh"></div>
+
+      <!-- Floating Liquid Glass Header (Inline Vector Brand Crest + Clean Controls) -->
+      <header class="lg-top-nav lg-blur">
+        <div class="lg-brand-cluster">
+          <div class="lg-crest" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" class="ico" style="stroke:#fff; stroke-width:2.1;">
+              <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <path d="M12 19v3"/>
+            </svg>
+          </div>
+          <div class="lg-brand-meta">
+            <div class="lg-brand-row">
+              <span class="lg-brand-name">VOICE CLONE</span>
+              <span class="lg-tier-pill" id="hdr-tier-pill" title="Tier">FREE</span>
+            </div>
+            <span class="lg-brand-sub" id="hdr-sub-line">STUDIO PRO</span>
+          </div>
+        </div>
+        <div class="lg-top-actions">
+          <button class="lg-hdr-pill lg-hdr-admin-pill hidden" id="hdr-admin-btn" title="Admin Console">
+            <svg width="14" height="14" viewBox="0 0 24 24" class="ico"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+            <span id="hdr-admin-lbl">Admin</span>
+          </button>
+          <button class="lg-hdr-pill lg-hdr-icon-btn" id="hdr-guide-btn" aria-label="Guide">
+            <svg width="17" height="17" viewBox="0 0 24 24" class="ico"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.8-2.5 2-2.5 4"/><path d="M12 17h.01"/></svg>
+          </button>
+          <button class="lg-hdr-pill" id="hdr-lang-btn">EN</button>
+        </div>
+      </header>
+
+      <!-- Scrollable Viewport -->
+      <main class="app-viewport" id="app-viewport">
+
+        <!-- ══ SCREEN 1: HOME ═════════════════════════════════════════ -->
+        <section class="tab-section active" id="screen-home">
+          <div class="ia-banner-tag" id="ia-proposal-note">
+            <svg width="13" height="13" viewBox="0 0 24 24" class="ico"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+            <span data-i18n="ia_note" style="overflow:hidden; text-overflow:ellipsis;">IA Proposal: 9 cards → 4 focused zones</span>
+          </div>
+
+          <div class="lg-card hidden" id="legacy-dup-strip" style="padding:10px 14px; margin-bottom:10px;">
+            <div class="t-micro" data-i18n="legacy_dup_hint">Legacy production repeats greeting + 3 balances here before Welcome &amp; Free Card</div>
+          </div>
+
+          <!-- Zone A: Hero + Unified Balance Trio + First-run Callout -->
+          <div class="lg-card lg-card-hero">
+            <div class="hero-header-row">
+              <div>
+                <div class="t-h1" id="hero-greeting-txt">မင်္ဂလာပါ</div>
+                <div class="t-body" data-i18n="hero_value_prop">မြန်မာ AI အသံ &amp; Movie Recap စတူဒီယို</div>
+              </div>
+              <div class="hero-status-chip">
+                <span class="pulse-dot"></span>
+                <span data-i18n="ready_status">အဆင်သင့်</span>
+              </div>
+            </div>
+
+            <div class="balance-trio">
+              <div class="bal-tile">
+                <div class="bal-head">
+                  <svg width="13" height="13" viewBox="0 0 24 24" class="ico"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                  <span data-i18n="bal_tts">TTS</span>
+                </div>
+                <div class="bal-val t-num" id="bal-tts-val">15m</div>
+                <div class="bal-period" data-i18n="bal_tts_p">နေ့စဉ် အခမဲ့</div>
+              </div>
+              <div class="bal-tile">
+                <div class="bal-head">
+                  <svg width="13" height="13" viewBox="0 0 24 24" class="ico"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                  <span data-i18n="bal_voice">Voice</span>
+                </div>
+                <div class="bal-val t-num" id="bal-voice-val">3m</div>
+                <div class="bal-period" data-i18n="bal_voice_p">လစဉ် / မကုန်</div>
+              </div>
+              <div class="bal-tile">
+                <div class="bal-head">
+                  <svg width="13" height="13" viewBox="0 0 24 24" class="ico"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>
+                  <span data-i18n="bal_recap">Recap</span>
+                </div>
+                <div class="bal-val t-num" id="bal-recap-val">3 Cr</div>
+                <div class="bal-period" data-i18n="bal_recap_p">သက်တမ်းမကုန်</div>
+              </div>
+            </div>
+
+            <div class="welcome-callout" id="first-run-callout">
+              <div class="welcome-msg" data-i18n="welcome_first_msg">အခမဲ့ လက်ဆောင် ရထားပါတယ် — Recap 3 ကြိမ် + အသံ 18 မိနစ် နဲ့ ချက်ချင်း စမ်းကြည့်ပါ</div>
+              <div class="welcome-actions">
+                <button class="lg-btn-primary" style="flex:1 1 auto;" id="btn-hero-recap">
+                  <svg width="16" height="16" viewBox="0 0 24 24" class="ico"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>
+                  <span data-i18n="welcome_cta">Recap စလုပ်မည်</span>
+                </button>
+                <button class="lg-btn-secondary" style="flex:0 0 auto;" id="btn-hero-sample">
+                  <svg width="14" height="14" viewBox="0 0 24 24" class="ico"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+                  <span data-i18n="sample_listen">နမူနာ</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Zone B: Studio Launcher Bento -->
+          <div class="lg-card">
+            <div class="section-head-row">
+              <div class="t-h2" data-i18n="start_title">စတင် ဖန်တီးရန်</div>
+              <span class="t-micro" data-i18n="start_hint">တစ်ချက်နှိပ်ပြီး စတင်ပါ</span>
+            </div>
+
+            <button class="studio-hero-tile" id="home-launch-recap">
+              <div class="lg-icon-disc">
+                <svg width="21" height="21" viewBox="0 0 24 24" class="ico"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>
+              </div>
+              <div style="flex:1; min-width:0;">
+                <div class="tile-title">
+                  <span data-i18n="recap_maker">Recap Maker</span>
+                  <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="m9 18 6-6-6-6"/></svg></span>
+                </div>
+                <div class="tile-desc" data-i18n="recap_maker_desc">ဗီဒီယိုမှ မြန်မာဇာတ်လမ်း Recap အလိုအလျောက် ဖန်တီးရန်</div>
+              </div>
+            </button>
+
+            <div class="studio-twin-grid">
+              <button class="studio-sub-tile" id="home-launch-voice">
+                <div class="lg-icon-disc quiet">
+                  <svg width="20" height="20" viewBox="0 0 24 24" class="ico"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                </div>
+                <div class="tile-title">
+                  <span data-i18n="voice_studio">Voice Clone</span>
+                  <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="m9 18 6-6-6-6"/></svg></span>
+                </div>
+                <div class="tile-desc" data-i18n="voice_studio_desc">Persona ၁၂ သံ / ကိုယ်ပိုင်အသံ Clone</div>
+              </button>
+              <button class="studio-sub-tile" id="home-launch-tts">
+                <div class="lg-icon-disc quiet">
+                  <svg width="20" height="20" viewBox="0 0 24 24" class="ico"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                </div>
+                <div class="tile-title">
+                  <span data-i18n="tts_studio">TTS Studio</span>
+                  <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="m9 18 6-6-6-6"/></svg></span>
+                </div>
+                <div class="tile-desc" data-i18n="tts_studio_desc">နေ့စဉ် ၁၅ မိနစ် အခမဲ့ စာဖတ်အသံ</div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Zone C: Recent Projects -->
+          <div class="lg-card">
+            <div class="section-head-row">
+              <div class="t-h2" data-i18n="recent_title">လတ်တလော ပရောဂျက်များ</div>
+              <button class="count-pill" style="cursor:pointer;" id="btn-see-all" data-i18n="see_all">အားလုံး ›</button>
+            </div>
+            <div id="recent-projects-slot"></div>
+          </div>
+
+          <!-- Zone D: Unified Utilities & Guides -->
+          <div class="lg-card">
+            <div class="section-head-row">
+              <div class="t-h2" data-i18n="more_hub_title">ကိရိယာ နှင့် လမ်းညွှန်</div>
+            </div>
+            <div class="settings-list">
+              <button class="settings-item" data-toast-key="toast_dl">
+                <span class="settings-left">
+                  <span class="settings-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                  <span>
+                    <div class="settings-txt-title" data-i18n="dl_name">ဗီဒီယို ဒေါင်းလုဒ်</div>
+                    <div class="settings-txt-sub" data-i18n="dl_desc">TikTok · YouTube · FB · MP4/MP3/SRT</div>
+                  </span>
+                </span>
+                <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="m9 18 6-6-6-6"/></svg></span>
+              </button>
+
+              <button class="settings-item" id="btn-toggle-help-drawer">
+                <span class="settings-left">
+                  <span class="settings-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg></span>
+                  <span>
+                    <div class="settings-txt-title" data-i18n="help_hub_name">နမူနာ &amp; Tutorial လမ်းညွှန်</div>
+                    <div class="settings-txt-sub" data-i18n="help_hub_desc">ကိုမင်း · မနှင်း နမူနာအသံ + ဗီဒီယို ၁၀ ခု</div>
+                  </span>
+                </span>
+                <span class="count-pill" data-i18n="tut_count">၁၀ ခု</span>
+              </button>
+
+              <button class="settings-item" data-toast-key="toast_refer">
+                <span class="settings-left">
+                  <span class="settings-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/></svg></span>
+                  <span>
+                    <div class="settings-txt-title" data-i18n="refer_name">မိတ်ဆက်ဆု (Refer &amp; Earn)</div>
+                    <div class="settings-txt-sub" data-i18n="refer_desc">သူငယ်ချင်း ၁ ဦး = +၂ မိနစ် TTS (အများဆုံး ၄၀ မိနစ်)</div>
+                  </span>
+                </span>
+                <span class="count-pill" data-i18n="refer_btn">↗ မျှဝေ</span>
+              </button>
+
+              <button class="settings-item" data-toast-key="toast_support">
+                <span class="settings-left">
+                  <span class="settings-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+                  <span>
+                    <div class="settings-txt-title" data-i18n="support_name">Support — @VoiceCloneProAdmin</div>
+                    <div class="settings-txt-sub" data-i18n="support_desc">အကူအညီ လိုအပ်ပါက တိုက်ရိုက် ဆက်သွယ်ရန်</div>
+                  </span>
+                </span>
+                <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="m9 18 6-6-6-6"/></svg></span>
+              </button>
+            </div>
+
+            <div class="accordion-drawer" id="help-drawer-body">
+              <div class="recent-row">
+                <div class="recent-main">
+                  <div class="recent-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg></div>
+                  <div>
+                    <div class="recent-title" data-i18n="sample_komin">ကိုမင်း (Ko Min) — Voice Clone</div>
+                    <div class="recent-sub" data-i18n="sample_desc_k">မြန်မာ AI သဘာဝအသံ နမူနာ</div>
+                  </div>
+                </div>
+                <button class="recent-action" id="drawer-sample-btn" data-i18n="play_btn">▶ နားထောင်</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ SCREEN 2: VOICE STUDIO ═════════════════════════════════ -->
+        <section class="tab-section" id="screen-voice">
+          <div class="subtab-wallet-row">
+            <span class="t-micro" data-i18n="v_studio_badge">AI Voice Clone Studio</span>
+            <span class="count-pill t-num" id="voice-wallet-chip">Voice 180s</span>
+          </div>
+
+          <div class="seg-capsule cols-2" id="voice-submode-seg">
+            <div class="seg-thumb" id="voice-submode-thumb"></div>
+            <button class="seg-btn active" data-submode="curated" data-i18n="v_mode_curated">Persona ၁၂ သံ</button>
+            <button class="seg-btn" data-submode="custom" data-i18n="v_mode_custom">Custom Clone</button>
+          </div>
+
+          <div class="lg-card" id="voice-curated-box">
+            <div class="section-head-row" style="margin-bottom:8px;">
+              <div class="t-h2" data-i18n="v_pick_title">အသံ ရွေးချယ်မှု</div>
+              <span class="t-micro" data-i18n="v_curated_tag">အသင့်သုံး ၁၂ သံ</span>
+            </div>
+            <div class="voice-selected-bar">
+              <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                <div class="voice-avatar-lg">
+                  <svg width="20" height="20" viewBox="0 0 24 24" class="ico"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                </div>
+                <div style="min-width:0;">
+                  <div style="font-size:13.5px; font-weight:800;" id="selected-persona-name">မနှင်း (Ma Hnin)</div>
+                  <div class="t-micro" id="selected-persona-desc">Storyteller · နူးညံ့သဘာဝအသံ</div>
+                </div>
+              </div>
+              <button class="lg-btn-secondary" style="min-height:44px;" id="btn-open-persona-sheet" data-i18n="v_change_btn">ပြောင်းမည် ▾</button>
+            </div>
+          </div>
+
+          <div class="lg-card hidden" id="voice-custom-box">
+            <div class="section-head-row" style="margin-bottom:8px;">
+              <div class="t-h2" data-i18n="v_clone_title">ကိုယ်ပိုင် အသံ Clone (၅ ဆင့်)</div>
+              <span class="count-pill" id="clone-step-badge">Step 1/5</span>
+            </div>
+            <div class="clone-step-pills" id="clone-step-pills">
+              <button class="clone-step-chip active" data-cstep="1" data-i18n="cs_1">၁။ ဖိုင်တင်</button>
+              <button class="clone-step-chip" data-cstep="2" data-i18n="cs_2">၂။ သန့်စင်</button>
+              <button class="clone-step-chip" data-cstep="3" data-i18n="cs_3">၃။ စာသားစစ်</button>
+              <button class="clone-step-chip" data-cstep="4" data-i18n="cs_4">၄။ Ref တွဲ</button>
+              <button class="clone-step-chip" data-cstep="5" data-i18n="cs_5">၅။ သိမ်း</button>
+            </div>
+            <div class="voice-selected-bar" style="flex-direction:column; align-items:flex-start; gap:8px; margin-top:8px;">
+              <div class="t-body" id="clone-step-msg">ကြည်လင်သော အသံနမူနာ (၁၀–၃၀ စက္ကန့်) တင်ပါ</div>
+              <button class="lg-btn-secondary" style="width:100%;" data-toast-key="toast_upload_ref" data-i18n="cs_upload_btn">အသံဖိုင် ရွေးချယ်မည် (.wav / .mp3)</button>
+            </div>
+          </div>
+
+          <div class="lg-card">
+            <div class="section-head-row">
+              <div class="t-h2" data-i18n="v_script_step">① စာသား ရေးထည့်ပါ</div>
+              <span class="count-pill t-num" id="voice-char-pill">0 / 5,000</span>
+            </div>
+            <textarea class="lg-textarea" id="voice-textarea" placeholder="ဒီနေရာမှာ မြန်မာစာသား ရိုက်ထည့်ပါ (သို့) အောက်မှ နမူနာ တစ်ခုကို နှိပ်စမ်းပါ…"></textarea>
+            <div class="excess-warn" id="voice-excess-warn" data-i18n="v_excess_warn">စာသား 5,000 ကျော်နေပါပြီ — ကျေးဇူးပြု၍ လျှော့ပေးပါ</div>
+
+            <div class="chip-row">
+              <button class="glass-chip sample-fill" data-sample="story" data-i18n="chip_story">+ ဇာတ်လမ်း</button>
+              <button class="glass-chip sample-fill" data-sample="promo" data-i18n="chip_promo">+ ကြော်ငြာ</button>
+              <button class="glass-chip sample-fill" data-sample="excess" data-i18n="chip_excess">+ 5000+ စမ်း</button>
+            </div>
+
+            <div style="margin-top:14px;">
+              <div class="t-micro" style="margin-bottom:6px;" data-i18n="v_speed_lbl">အသံ အမြန်နှုန်း</div>
+              <div class="seg-capsule cols-3" id="voice-speed-seg" style="margin-bottom:0;">
+                <div class="seg-thumb" id="voice-speed-thumb"></div>
+                <button class="seg-btn" data-speed="-20" data-i18n="spd_slow">-20% နှေး</button>
+                <button class="seg-btn active" data-speed="0" data-i18n="spd_norm">+0% ပုံမှန်</button>
+                <button class="seg-btn" data-speed="20" data-i18n="spd_fast">+20% မြန်</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="lg-card">
+            <div class="section-head-row" style="margin-bottom:10px;">
+              <span class="t-body" id="voice-est-line">ခန့်မှန်း ကြာချိန်: ~12 စက္ကန့်</span>
+              <span class="count-pill t-num" id="voice-cost-badge">FREE 180s</span>
+            </div>
+            <button class="lg-btn-primary full" id="btn-voice-generate">
+              <svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
+              <span data-i18n="v_gen_cta">အသံ ထုတ်မည်</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- ══ SCREEN 3: RECAP STEP 2 ═════════════════════════════════ -->
+        <section class="tab-section" id="screen-recap">
+          <div class="subtab-wallet-row">
+            <span class="t-micro" data-i18n="r_studio_badge">Recap Maker · Step 2</span>
+            <span class="count-pill t-num" id="recap-wallet-chip">3 Cr</span>
+          </div>
+
+          <div class="seg-capsule cols-4" id="recap-step-pillbar">
+            <div class="seg-thumb" id="recap-step-thumb"></div>
+            <button class="seg-btn" data-rstep="1">1 Source</button>
+            <button class="seg-btn active" data-rstep="2">2 Visual</button>
+            <button class="seg-btn" data-rstep="3">3 Voice</button>
+            <button class="seg-btn" data-rstep="4">4 Render</button>
+          </div>
+
+          <div class="sticky-stage-wrap">
+            <div class="cinema-card">
+              <div class="cinema-screen-outer">
+                <button class="stage-reset-pill" id="btn-stage-reset">
+                  <svg width="11" height="11" viewBox="0 0 24 24" class="ico"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                  <span data-i18n="r_reset_pos">နေရာပြန်ညှိ</span>
+                </button>
+                <div class="mockup-stage" id="mockup-stage">
+                  <div class="stage-movie-frame" id="stage-movie-frame"><span id="stage-time-preview">Scene 00:42</span></div>
+                  <div class="preview-logo-chip tr" id="preview-logo-chip">LOGO</div>
+                  <div class="preview-blur-overlay" id="preview-blur-overlay">::: BLUR BOX</div>
+                  <div class="preview-sub-overlay sub-gold" id="preview-sub-overlay" data-i18n="sub_sample">ဒီတစ်ခါမှာတော့ မထင်မှတ်ထားတဲ့ အဖြစ်အပျက်...</div>
+                </div>
+              </div>
+              <div class="seek-bar-row">
+                <button class="seek-btn" id="seek-back">-5s</button>
+                <input type="range" class="seek-range" id="seek-slider" min="0" max="195" value="42" />
+                <button class="seek-btn" id="seek-fwd">+5s</button>
+                <span class="t-micro t-num" id="seek-time-lbl" style="min-width:38px; text-align:right;">00:42</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="cat-rail" id="recap-cat-rail">
+            <button class="cat-pill active" data-cat="preset" data-i18n="rc_preset">Preset</button>
+            <button class="cat-pill" data-cat="frame" data-i18n="rc_frame">Frame/Crop</button>
+            <button class="cat-pill" data-cat="subtitle" data-i18n="rc_sub">စာတန်း</button>
+            <button class="cat-pill" data-cat="blur" data-i18n="rc_blur">Blur</button>
+            <button class="cat-pill" data-cat="protection" data-i18n="rc_prot">Logo &amp; ကာကွယ်မှု</button>
+          </div>
+
+          <div class="lg-card" id="recap-cat-body">
+            <div class="cat-panel" id="panel-preset">
+              <div class="section-head-row">
+                <div class="t-h2" data-i18n="rp_title">Master Presets</div>
+                <span class="t-micro" data-i18n="rp_tap_hint">၁ ချက်နှိပ်ရုံဖြင့် ညှိပြီးသား</span>
+              </div>
+              <div class="preset-grid">
+                <button class="preset-card active" data-preset="tiktok"><strong style="font-size:12.5px;">TikTok / Reels 9:16</strong><span class="t-micro">9:16 Blur · Classic Gold</span></button>
+                <button class="preset-card" data-preset="fb"><strong style="font-size:12.5px;">Facebook Story</strong><span class="t-micro">9:16 Blur · Dark Box</span></button>
+                <button class="preset-card" data-preset="yt"><strong style="font-size:12.5px;">YouTube 16:9</strong><span class="t-micro">16:9 Wide · Clean White</span></button>
+                <button class="preset-card" data-preset="strict"><strong style="font-size:12.5px;">Strict Safe</strong><span class="t-micro">9:16 · Rose · Strong Prot</span></button>
+              </div>
+            </div>
+
+            <div class="cat-panel hidden" id="panel-frame">
+              <div class="t-h2" style="margin-bottom:8px;" data-i18n="rf_title">ဗီဒီယို အချိုးအစား</div>
+              <div class="preset-grid" id="ratio-picker-grid">
+                <button class="preset-card active" data-ratio="9_16"><strong>9:16</strong><span class="t-micro">TikTok / Reels</span></button>
+                <button class="preset-card" data-ratio="16_9"><strong>16:9</strong><span class="t-micro">YouTube Landscape</span></button>
+                <button class="preset-card" data-ratio="1_1"><strong>1:1</strong><span class="t-micro">Square Feed</span></button>
+                <button class="preset-card" data-ratio="orig"><strong>Original</strong><span class="t-micro" data-i18n="rf_orig">မူရင်းအတိုင်း</span></button>
+              </div>
+            </div>
+
+            <div class="cat-panel hidden" id="panel-subtitle">
+              <div class="section-head-row">
+                <div class="t-h2" data-i18n="rs_title">မြန်မာစာတန်း စတိုင်လ်</div>
+                <button class="count-pill" id="btn-toggle-subs" style="cursor:pointer;" data-i18n="state_on">ဖွင့်ထား</button>
+              </div>
+              <div class="chip-row" style="margin-top:0; margin-bottom:12px;" id="sub-style-chips">
+                <button class="glass-chip" data-substyle="sub-gold">Classic Gold</button>
+                <button class="glass-chip" data-substyle="sub-darkbox">Dark Box</button>
+                <button class="glass-chip" data-substyle="sub-white">Clean White</button>
+                <button class="glass-chip" data-substyle="sub-rose">Rose Pill</button>
+              </div>
+              <div class="slider-group">
+                <div class="slider-label-row"><span data-i18n="rs_ypos">အောက်ခြေမှ အကွာအဝေး</span><span id="sub-y-val">6%</span></div>
+                <input type="range" class="lg-range" id="sub-y-slider" min="4" max="55" value="6" />
+              </div>
+              <div class="slider-group" style="margin-bottom:0;">
+                <div class="slider-label-row"><span data-i18n="rs_size">စာလုံး အရွယ်အစား</span><span id="sub-size-val">8.5px</span></div>
+                <input type="range" class="lg-range" id="sub-size-slider" min="8" max="13" step="0.5" value="8.5" />
+              </div>
+            </div>
+
+            <div class="cat-panel hidden" id="panel-blur">
+              <div class="section-head-row">
+                <div class="t-h2" data-i18n="rb_title">မူရင်းစာတန်းဖျက် Blur Box</div>
+                <button class="count-pill" id="btn-toggle-blur" style="cursor:pointer;" data-i18n="state_on">ဖွင့်ထား</button>
+              </div>
+              <div class="slider-group">
+                <div class="slider-label-row"><span>Blur Top (Y%)</span><span id="blur-y-val">52%</span></div>
+                <input type="range" class="lg-range" id="blur-y-slider" min="15" max="78" value="52" />
+              </div>
+              <div class="slider-group" style="margin-bottom:0;">
+                <div class="slider-label-row"><span>Blur Height (H%)</span><span id="blur-h-val">12%</span></div>
+                <input type="range" class="lg-range" id="blur-h-slider" min="8" max="24" value="12" />
+              </div>
+            </div>
+
+            <div class="cat-panel hidden" id="panel-protection">
+              <div class="t-h2" style="margin-bottom:8px;" data-i18n="rp_prot_title">ကာကွယ်မှု နှင့် ကိုယ်ပိုင် Logo</div>
+              <div class="chip-row" style="margin-top:0; margin-bottom:10px;">
+                <button class="glass-chip" id="btn-mirror-toggle" data-i18n="mirror_chip">Mirror: ပိတ်</button>
+                <button class="glass-chip" data-logopos="tr">Logo: Top Right</button>
+                <button class="glass-chip" data-logopos="tl">Logo: Top Left</button>
+                <button class="glass-chip" data-logopos="off">Logo: Off</button>
+              </div>
+              <div class="voice-selected-bar">
+                <span class="t-micro" id="logo-lock-hint" data-i18n="logo_vip_lock">ကိုယ်ပိုင် Logo ထည့်ခြင်းသည် VIP အတွက်သာ ဖြစ်ပါသည်</span>
+                <button class="count-pill" style="cursor:pointer;" data-toast-key="toast_vip">VIP</button>
+              </div>
+            </div>
+          </div>
+
+          <button class="lg-btn-primary full" id="btn-recap-next" data-toast-key="toast_step3">
+            <span data-i18n="r_next_cta">နောက်တစ်ဆင့် · ③ အသံနှင့် Script</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </button>
+        </section>
+
+        <!-- ══ SCREEN 4: ADMIN CONSOLE (PROPOSED REDESIGN) ═══════════ -->
+        <section class="tab-section" id="screen-admin">
+          <div class="ia-banner-tag">
+            <svg width="13" height="13" viewBox="0 0 24 24" class="ico"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+            <span data-i18n="adm_ia_note">Admin Proposal: Zero-cutoff 2-row nav + Collapsible Settings</span>
+          </div>
+
+          <!-- 2-Row 8-Item Grid Nav (Replaces horizontally masked scrolling bar) -->
+          <div class="adm-nav-grid" id="adm-nav-grid">
+            <button class="adm-nav-tile active" data-adm="overview">
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+              <span data-i18n="adm_n_ov">ခြုံငုံ</span>
+            </button>
+            <button class="adm-nav-tile" data-adm="payments">
+              <span class="adm-badge-dot" id="adm-slips-badge">2</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+              <span data-i18n="adm_n_pay">ပြေစာ</span>
+            </button>
+            <button class="adm-nav-tile" data-adm="jobs">
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span data-i18n="adm_n_jobs">အလုပ်များ</span>
+            </button>
+            <button class="adm-nav-tile" data-adm="users">
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <span data-i18n="adm_n_users">အသုံးပြုသူ</span>
+            </button>
+            <button class="adm-nav-tile" data-adm="broadcast">
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+              <span>Broadcast</span>
+            </button>
+            <button class="adm-nav-tile" data-adm="activity">
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span data-i18n="adm_n_act">မှတ်တမ်း</span>
+            </button>
+            <button class="adm-nav-tile" data-adm="keys">
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+              <span>Keys</span>
+            </button>
+            <button class="adm-nav-tile" data-adm="settings">
+              <svg width="15" height="15" viewBox="0 0 24 24" class="ico"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span data-i18n="adm_n_set">ဆက်တင်</span>
+            </button>
+          </div>
+
+          <!-- Admin Sub-Screen 1: Overview -->
+          <div class="adm-pane" id="adm-pane-overview">
+            <div class="adm-triage-banner" id="adm-triage-card">
+              <div>
+                <div style="font-size:12.5px; font-weight:800; color:var(--warn-text);" id="adm-triage-title">စစ်ဆေးရန် ပြေစာ 2 စောင် ရှိပါတယ်</div>
+                <div class="t-micro" data-i18n="adm_triage_sub">၂၄ နာရီအတွင်း Failed 1 · Queue Running 2</div>
+              </div>
+              <button class="lg-btn-primary" style="min-height:40px; padding:0 12px; font-size:11.5px;" id="btn-jump-slips" data-i18n="adm_review_now">စစ်မည်</button>
+            </div>
+
+            <div class="lg-card">
+              <div class="section-head-row">
+                <div class="t-h2" data-i18n="adm_income_h">ဝင်ငွေ အကျဉ်းချုပ်</div>
+                <button class="count-pill" id="btn-open-income" style="cursor:pointer;" data-i18n="adm_details">အသေးစိတ် ›</button>
+              </div>
+              <div class="adm-kpi-grid" id="adm-income-grid">
+                <button class="adm-kpi-card" id="kpi-today">
+                  <span class="t-micro" data-i18n="adm_today">ယနေ့</span>
+                  <span class="adm-kpi-num t-num">45,000 Ks</span>
+                  <span class="t-micro">3 Orders</span>
+                </button>
+                <button class="adm-kpi-card" id="kpi-7d">
+                  <span class="t-micro" data-i18n="adm_7d">၇ ရက်</span>
+                  <span class="adm-kpi-num t-num">315,000 Ks</span>
+                  <span class="t-micro">19 Orders</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="lg-card">
+              <div class="section-head-row">
+                <div class="t-h2" data-i18n="adm_pulse_h">စနစ် နှင့် အသုံးပြုသူ</div>
+                <span class="status-mini ok">Worker OK</span>
+              </div>
+              <div class="adm-kpi-grid">
+                <div class="adm-kpi-card"><span class="t-micro" data-i18n="adm_u_real">Real Users</span><span class="adm-kpi-num t-num">1,284</span><span class="t-micro">+18 (24h)</span></div>
+                <div class="adm-kpi-card"><span class="t-micro" data-i18n="adm_u_vip">VIP Paid</span><span class="adm-kpi-num t-num" style="color:var(--vip-text);">142</span><span class="t-micro">DB 48 MB</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Admin Sub-Screen 2: Payments / Slips -->
+          <div class="adm-pane hidden" id="adm-pane-payments">
+            <div class="lg-card">
+              <div class="section-head-row">
+                <div class="t-h2" data-i18n="adm_slips_title">စစ်ဆေးရန် ပြေစာများ</div>
+                <span class="count-pill t-num" id="slips-count-lbl">2 Pending</span>
+              </div>
+              <div id="adm-slips-container"></div>
+            </div>
+          </div>
+
+          <!-- Admin Sub-Screen 3: Jobs & Purge -->
+          <div class="adm-pane hidden" id="adm-pane-jobs">
+            <div class="seg-capsule cols-2" id="adm-jobs-seg">
+              <div class="seg-thumb" id="adm-jobs-thumb"></div>
+              <button class="seg-btn active" data-jtab="live" data-i18n="adm_j_live">Live Queue</button>
+              <button class="seg-btn" data-jtab="hist" data-i18n="adm_j_hist">မှတ်တမ်း &amp; Purge</button>
+            </div>
+            <div class="lg-card" id="adm-jobs-live-box">
+              <div class="recent-row">
+                <div class="recent-main">
+                  <div class="recent-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+                  <div style="min-width:0;">
+                    <div class="recent-title">#rc_92a1 · Recap (Ko Thiha)</div>
+                    <div class="recent-sub"><span class="status-mini run">RUNNING</span> Step 3 Voice · 48%</div>
+                  </div>
+                </div>
+                <button class="lg-btn-danger-soft" style="min-height:40px; padding:0 10px;" data-toast-key="toast_cancel_job">Cancel</button>
+              </div>
+              <div class="recent-row">
+                <div class="recent-main">
+                  <div class="recent-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg></div>
+                  <div style="min-width:0;">
+                    <div class="recent-title">#vc_710b · Voice (Su Myat)</div>
+                    <div class="recent-sub"><span class="status-mini warn">QUEUED</span> VoxCPM · #2</div>
+                  </div>
+                </div>
+                <button class="recent-action" data-toast-key="toast_inspect">Inspect</button>
+              </div>
+            </div>
+            <div class="lg-card lg-card-danger hidden" id="adm-jobs-hist-box">
+              <div class="t-h2" style="color:var(--danger-text); margin-bottom:6px;" data-i18n="adm_purge_h">Danger Zone — မှတ်တမ်း ရှင်းလင်းရန်</div>
+              <div class="t-micro" style="margin-bottom:10px;" data-i18n="adm_purge_sub">ဖျက်ပြီးသော ဖိုင်များ ပြန်မရနိုင်ပါ (Confirm မေးပါမည်)</div>
+              <div class="chip-row" style="margin-top:0;">
+                <button class="lg-btn-danger-soft" data-toast-key="toast_purge">FAILED ရှင်းမည်</button>
+                <button class="lg-btn-danger-soft" data-toast-key="toast_purge">&gt;24h ရှင်းမည်</button>
+                <button class="lg-btn-secondary" data-toast-key="toast_purge">Matching ရှင်းမည်</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Admin Sub-Screen 4: Users CRM + Inner Detail Tabs -->
+          <div class="adm-pane hidden" id="adm-pane-users">
+            <div id="adm-users-list-view">
+              <div class="lg-card">
+                <div class="t-h2" style="margin-bottom:8px;" data-i18n="adm_u_search_h">အသုံးပြုသူ ရှာဖွေရန်</div>
+                <input class="lg-input" id="adm-user-search-input" placeholder="Telegram ID သို့မဟုတ် @username…" />
+                <div style="margin-top:10px;">
+                  <div class="recent-row adm-user-tap" style="cursor:pointer;">
+                    <div class="recent-main">
+                      <div class="recent-badge">KM</div>
+                      <div><div class="recent-title">Ko Min (@komin_mm)</div><div class="recent-sub"><span class="status-mini ok">VIP</span> 48m · 24 Cr</div></div>
+                    </div>
+                    <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="m9 18 6-6-6-6"/></svg></span>
+                  </div>
+                  <div class="recent-row adm-user-tap" style="cursor:pointer;">
+                    <div class="recent-main">
+                      <div class="recent-badge">SM</div>
+                      <div><div class="recent-title">Su Myat (@sumyat99)</div><div class="recent-sub"><span class="status-mini run">FREE</span> 3.0m · 3 Cr</div></div>
+                    </div>
+                    <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="m9 18 6-6-6-6"/></svg></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Compact 3-Tab User Detail Profile -->
+            <div id="adm-user-crm-view" class="hidden">
+              <button class="lg-btn-secondary" id="btn-adm-user-back" style="margin-bottom:10px;" data-i18n="adm_back">← နောက်သို့</button>
+              <div class="lg-card">
+                <div class="section-head-row">
+                  <div>
+                    <div class="t-h2">Ko Min (@komin_mm)</div>
+                    <div class="t-micro">TG ID: 589201442 · Active</div>
+                  </div>
+                  <span class="lg-tier-pill is-vip">VIP</span>
+                </div>
+                <div class="seg-capsule cols-3" id="adm-crm-seg" style="margin-top:10px;">
+                  <div class="seg-thumb" id="adm-crm-thumb"></div>
+                  <button class="seg-btn active" data-crm="adj" data-i18n="crm_adj">ပြင်ဆင်/စာပို့</button>
+                  <button class="seg-btn" data-crm="log" data-i18n="crm_log">Ledger</button>
+                  <button class="seg-btn" data-crm="ban" data-i18n="crm_ban">Danger</button>
+                </div>
+                <div id="crm-panel-adj">
+                  <div class="adm-form-pair">
+                    <div><label class="t-micro">+/- Voice Min</label><input class="lg-input" type="number" value="0" /></div>
+                    <div><label class="t-micro">+/- Recap Cr</label><input class="lg-input" type="number" value="0" /></div>
+                  </div>
+                  <button class="lg-btn-primary full" data-toast-key="toast_adm_saved" data-i18n="adm_apply_adj">လက်ကျန် ပြင်ဆင်မည်</button>
+                </div>
+                <div id="crm-panel-log" class="hidden">
+                  <div class="t-body">+10 Recap Cr · Approved Slip #KPay882 · Yesterday</div>
+                </div>
+                <div id="crm-panel-ban" class="hidden">
+                  <input class="lg-input" style="margin-bottom:8px;" placeholder="Ban အကြောင်းပြချက်…" />
+                  <button class="lg-btn-danger-soft" style="width:100%;" data-toast-key="toast_ban">Ban User</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Admin Sub-Screen 5/6/7: Broadcast, Activity, Key Health -->
+          <div class="adm-pane hidden" id="adm-pane-broadcast">
+            <div class="lg-card">
+              <div class="t-h2" style="margin-bottom:6px;">Broadcast Message</div>
+              <textarea class="lg-textarea" placeholder="အသုံးပြုသူ အားလုံးထံ ပို့မည့် စာသား…"></textarea>
+              <button class="lg-btn-primary full" style="margin-top:10px;" data-toast-key="toast_broadcast">Broadcast ပို့မည်</button>
+            </div>
+          </div>
+
+          <div class="adm-pane hidden" id="adm-pane-activity">
+            <div class="lg-card">
+              <div class="t-h2" style="margin-bottom:8px;" data-i18n="adm_audit_h">Admin Audit Log</div>
+              <div class="recent-row"><div><div class="recent-title">Approved Slip #882 · Pro 15,000 Ks</div><div class="recent-sub">Admin @ulfa · 14m ago</div></div></div>
+              <div class="recent-row"><div><div class="recent-title">Saved Gemini TTS Chain</div><div class="recent-sub">Admin @ulfa · 2h ago</div></div></div>
+            </div>
+          </div>
+
+          <div class="adm-pane hidden" id="adm-pane-keys">
+            <div class="lg-card">
+              <div class="section-head-row">
+                <div class="t-h2">Gemini &amp; Groq Key Health</div>
+                <span class="status-mini ok">12 / 12 Healthy</span>
+              </div>
+              <div class="recent-row"><div><div class="recent-title">Gemini Pool (10 keys)</div><div class="recent-sub">0 Cooldown · Avg 320ms</div></div><span class="status-mini ok">OK</span></div>
+              <div class="recent-row"><div><div class="recent-title">Groq Whisper Pool (2 keys)</div><div class="recent-sub">whisper-large-v3-turbo</div></div><span class="status-mini ok">OK</span></div>
+            </div>
+          </div>
+
+          <!-- Admin Sub-Screen 8: Collapsible Grouped Settings (Preserves all sections cleanly) -->
+          <div class="adm-pane hidden" id="adm-pane-settings">
+            <div class="adm-accordion open">
+              <button class="adm-acc-head">
+                <span data-i18n="as_pay">💳 ငွေလက်ခံ &amp; Channel Gates</span>
+                <span class="count-pill">KBZ · Wave</span>
+              </button>
+              <div class="adm-acc-body">
+                <div class="adm-form-pair">
+                  <div><label class="t-micro">KBZPay Number</label><input class="lg-input" value="09xxxxxxxxx" /></div>
+                  <div><label class="t-micro">WavePay Number</label><input class="lg-input" value="09xxxxxxxxx" /></div>
+                </div>
+                <label class="t-micro">Required Channel ID</label>
+                <input class="lg-input" value="-100xxxxxxxxxx" />
+              </div>
+            </div>
+
+            <div class="adm-accordion">
+              <button class="adm-acc-head">
+                <span data-i18n="as_ai">🤖 AI Admin Bots &amp; Quotas</span>
+                <span class="status-mini ok">Group + Private ON</span>
+              </button>
+              <div class="adm-acc-body">
+                <div class="section-head-row">
+                  <span class="t-body">Group AI Auto-Reply</span>
+                  <button class="adm-switch on" onclick="this.classList.toggle('on')"></button>
+                </div>
+                <div class="section-head-row" style="margin-bottom:0;">
+                  <span class="t-body">Private Chat AI Auto-Reply</span>
+                  <button class="adm-switch on" onclick="this.classList.toggle('on')"></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="adm-accordion">
+              <button class="adm-acc-head">
+                <span data-i18n="as_maint">🛠️ Maintenance Mode &amp; Limits</span>
+                <span class="count-pill" id="maint-badge">OFF</span>
+              </button>
+              <div class="adm-acc-body">
+                <div class="section-head-row">
+                  <span class="t-body">Maintenance Mode</span>
+                  <button class="adm-switch" id="adm-maint-toggle"></button>
+                </div>
+                <input class="lg-input" placeholder="Maintenance မှတ်စု (ဥပမာ: ည ၉:၃၀ ပြန်ဖွင့်ပါမယ်)" />
+              </div>
+            </div>
+
+            <div class="adm-accordion">
+              <button class="adm-acc-head">
+                <span data-i18n="as_chains">🧠 Gemini LLM / TTS &amp; Whisper Chains</span>
+                <span class="count-pill">4 Tiers</span>
+              </button>
+              <div class="adm-acc-body">
+                <label class="t-micro">TTS Primary Model</label>
+                <input class="lg-input" style="margin-bottom:8px;" value="gemini-3.8-flash-tts" />
+                <label class="t-micro">Groq Whisper STT Model</label>
+                <input class="lg-input" value="whisper-large-v3-turbo" />
+              </div>
+            </div>
+
+            <div class="adm-accordion">
+              <button class="adm-acc-head">
+                <span data-i18n="as_tut">📚 Tutorials &amp; Pricing Table</span>
+                <span class="count-pill">10 Videos</span>
+              </button>
+              <div class="adm-acc-body">
+                <div class="t-micro">All 10 tutorial slots, tiered pricing switch, and Option B plan prices live inside this collapsible drawer with zero clutter.</div>
+              </div>
+            </div>
+
+            <button class="lg-btn-primary full" data-toast-key="toast_adm_saved" style="margin-top:4px;" data-i18n="adm_save_all">Platform ဆက်တင်များ သိမ်းမည်</button>
+          </div>
+        </section>
+      </main>
+
+      <!-- Floating iOS 26 Liquid Glass Bottom Pill Dock (Crisp Vector SVG Icons) -->
+      <nav class="lg-bottom-dock lg-blur" aria-label="Main Navigation">
+        <div class="dock-grid" id="dock-grid">
+          <div class="dock-lens" id="dock-lens"></div>
+          <button class="dock-btn active" data-tab="home">
+            <svg width="18" height="18" viewBox="0 0 24 24" class="ico"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            <span class="dock-lbl" data-i18n="nav_home">ပင်မ</span>
+          </button>
+          <button class="dock-btn" data-tab="voice">
+            <svg width="18" height="18" viewBox="0 0 24 24" class="ico"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+            <span class="dock-lbl" data-i18n="nav_voice">အသံ</span>
+          </button>
+          <button class="dock-btn" data-tab="tts">
+            <svg width="18" height="18" viewBox="0 0 24 24" class="ico"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+            <span class="dock-lbl">TTS</span>
+          </button>
+          <button class="dock-btn" data-tab="recap">
+            <svg width="18" height="18" viewBox="0 0 24 24" class="ico"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>
+            <span class="dock-lbl">Recap</span>
+          </button>
+          <button class="dock-btn" data-tab="vip">
+            <svg width="18" height="18" viewBox="0 0 24 24" class="ico"><path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg>
+            <span class="dock-lbl" id="dock-vip-lbl">VIP</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- Sheet 1: Curated Personas Picker -->
+      <div class="sheet-backdrop" id="persona-sheet">
+        <div class="lg-sheet lg-blur">
+          <div class="sheet-handle"></div>
+          <div class="section-head-row" style="margin-bottom:6px;">
+            <div class="t-h2" data-i18n="sheet_persona_title">Persona အသံ ရွေးပါ</div>
+            <button class="count-pill" id="btn-close-sheet" style="cursor:pointer;" data-i18n="close_lbl">ပိတ်မည်</button>
+          </div>
+          <div class="chip-row" style="margin-top:0;" id="persona-filter-chips">
+            <button class="glass-chip active" data-filter="all" data-i18n="f_all">အားလုံး</button>
+            <button class="glass-chip" data-filter="female" data-i18n="f_f">မိန်းကလေး</button>
+            <button class="glass-chip" data-filter="male" data-i18n="f_m">ယောက်ျားလေး</button>
+          </div>
+          <div class="persona-grid" id="sheet-persona-grid"></div>
+        </div>
+      </div>
+
+      <!-- Sheet 2: Admin Income Breakdown -->
+      <div class="sheet-backdrop" id="income-sheet">
+        <div class="lg-sheet lg-blur">
+          <div class="sheet-handle"></div>
+          <div class="section-head-row">
+            <div class="t-h2" data-i18n="income_sheet_t">ဝင်ငွေ အသေးစိတ်</div>
+            <button class="count-pill" id="btn-close-income" style="cursor:pointer;" data-i18n="close_lbl">ပိတ်မည်</button>
+          </div>
+          <div class="recent-row"><div><div class="recent-title">@komin_mm · Pro Bundle</div><div class="recent-sub">KBZPay · Approved today</div></div><strong>15,000 Ks</strong></div>
+          <div class="recent-row"><div><div class="recent-title">@ayechan · Starter Pack</div><div class="recent-sub">WavePay · Approved today</div></div><strong>7,500 Ks</strong></div>
+          <div class="recent-row"><div><div class="recent-title">@thantzin · Master Pro</div><div class="recent-sub">KBZPay · Approved today</div></div><strong>22,500 Ks</strong></div>
+        </div>
+      </div>
+
+      <!-- Toast -->
+      <div class="lg-toast lg-blur" id="lg-toast"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const state = {
+    screen: "home", // home | voice | recap | admin
+    admSub: "overview",
+    mode: "light", // light | dark | lite
+    fixture: "first", // first | active | vip | admin
+    listState: "ready", // ready | loading | error
+    lang: "my", // my | en
+    width: 380,
+    ia: "proposed", // proposed | classic
+    samplePlaying: false,
+    personaId: "mahnin",
+    personaFilter: "all",
+    voiceSubmode: "curated",
+    cloneStep: 1,
+    recapCat: "preset",
+    ratio: "9_16",
+    subStyle: "sub-gold",
+    subEnabled: true,
+    blurEnabled: true,
+    mirror: false,
+    logoPos: "tr",
+    seekSec: 42,
+    slips: [
+      { id: "slp_1", user: "@nyanlin", plan: "VIP Pro (Option B)", amount: "15,000 Ks", via: "KBZPay · 4m ago" },
+      { id: "slp_2", user: "@hninwai", plan: "Recap 10 Credits", amount: "10,000 Ks", via: "WavePay · 19m ago" }
+    ]
+  };
+
+  const I18N = {
+    my: {
+      ia_note: "IA Proposal: Card 9 ခု → 4 ဇုန်သာ ကျစ်လျစ်စွာ",
+      legacy_dup_hint: "လက်ရှိ Production တွင် နှုတ်ဆက်စကား + Balance ၃ မျိုးကို ဒီနေရာနှင့် အောက်တွင် ထပ်နေသည်",
+      hero_value_prop: "မြန်မာ AI အသံ & Movie Recap စတူဒီယို",
+      ready_status: "အဆင်သင့်",
+      bal_tts: "TTS", bal_tts_p: "နေ့စဉ် အခမဲ့",
+      bal_voice: "Voice", bal_voice_p: "လစဉ် / မကုန်",
+      bal_recap: "Recap", bal_recap_p: "သက်တမ်းမကုန်",
+      welcome_first_msg: "အခမဲ့ လက်ဆောင် ရထားပါတယ် — Recap 3 ကြိမ် + အသံ 18 မိနစ် နဲ့ ချက်ချင်း စမ်းကြည့်ပါ",
+      welcome_cta: "Recap စလုပ်မည်", sample_listen: "နမူနာ",
+      start_title: "စတင် ဖန်တီးရန်", start_hint: "တစ်ချက်နှိပ်ပြီး စတင်ပါ",
+      recap_maker: "Recap Maker", recap_maker_desc: "ဗီဒီယိုမှ မြန်မာဇာတ်လမ်း Recap အလိုအလျောက် ဖန်တီးရန်",
+      voice_studio: "Voice Clone", voice_studio_desc: "Persona ၁၂ သံ / ကိုယ်ပိုင်အသံ Clone",
+      tts_studio: "TTS Studio", tts_studio_desc: "နေ့စဉ် ၁၅ မိနစ် အခမဲ့ စာဖတ်အသံ",
+      recent_title: "လတ်တလော ပရောဂျက်များ", see_all: "အားလုံး ›",
+      more_hub_title: "ကိရိယာ နှင့် လမ်းညွှန်",
+      dl_name: "ဗီဒီယို ဒေါင်းလုဒ်", dl_desc: "TikTok · YouTube · FB · MP4/MP3/SRT",
+      help_hub_name: "နမူနာ & Tutorial လမ်းညွှန်", help_hub_desc: "ကိုမင်း · မနှင်း နမူနာအသံ + ဗီဒီယို ၁၀ ခု", tut_count: "၁၀ ခု",
+      refer_name: "မိတ်ဆက်ဆု (Refer & Earn)", refer_desc: "သူငယ်ချင်း ၁ ဦး = +၂ မိနစ် TTS (အများဆုံး ၄၀ မိနစ်)", refer_btn: "↗ မျှဝေ",
+      support_name: "Support — @VoiceCloneProAdmin", support_desc: "အကူအညီ လိုအပ်ပါက တိုက်ရိုက် ဆက်သွယ်ရန်",
+      sample_komin: "ကိုမင်း (Ko Min) — Voice Clone", sample_desc_k: "မြန်မာ AI သဘာဝအသံ နမူနာ", play_btn: "▶ နားထောင်",
+      v_studio_badge: "AI Voice Clone Studio", r_studio_badge: "Recap Maker · Step 2",
+      v_mode_curated: "Persona ၁၂ သံ", v_mode_custom: "Custom Clone",
+      v_pick_title: "အသံ ရွေးချယ်မှု", v_curated_tag: "အသင့်သုံး ၁၂ သံ", v_change_btn: "ပြောင်းမည် ▾",
+      v_clone_title: "ကိုယ်ပိုင် အသံ Clone (၅ ဆင့်)", cs_1: "၁။ ဖိုင်တင်", cs_2: "၂။ သန့်စင်", cs_3: "၃။ စာသားစစ်", cs_4: "၄။ Ref တွဲ", cs_5: "၅။ သိမ်း",
+      cs_upload_btn: "အသံဖိုင် ရွေးချယ်မည် (.wav / .mp3)",
+      v_script_step: "① စာသား ရေးထည့်ပါ", v_excess_warn: "စာသား 5,000 ကျော်နေပါပြီ — ကျေးဇူးပြု၍ လျှော့ပေးပါ",
+      chip_story: "+ ဇာတ်လမ်း", chip_promo: "+ ကြော်ငြာ", chip_excess: "+ 5000+ စမ်း",
+      v_speed_lbl: "အသံ အမြန်နှုန်း", spd_slow: "-20% နှေး", spd_norm: "+0% ပုံမှန်", spd_fast: "+20% မြန်",
+      v_gen_cta: "အသံ ထုတ်မည်",
+      r_reset_pos: "နေရာပြန်ညှိ", sub_sample: "ဒီတစ်ခါမှာတော့ မထင်မှတ်ထားတဲ့ အဖြစ်အပျက်...",
+      rc_preset: "Preset", rc_frame: "ဘောင်/ဖြတ်", rc_sub: "စာတန်း", rc_blur: "Blur", rc_prot: "Logo & ကာကွယ်မှု",
+      rp_title: "Master Presets", rp_tap_hint: "၁ ချက်နှိပ်ရုံဖြင့် ညှိပြီးသား", rf_title: "ဗီဒီယို အချိုးအစား", rf_orig: "မူရင်းအတိုင်း",
+      rs_title: "မြန်မာစာတန်း စတိုင်လ်", rs_ypos: "အောက်ခြေမှ အကွာအဝေး", rs_size: "စာလုံး အရွယ်အစား", rb_title: "မူရင်းစာတန်းဖျက် Blur Box",
+      rp_prot_title: "ကာကွယ်မှု နှင့် ကိုယ်ပိုင် Logo", state_on: "ဖွင့်ထား", state_off: "ပိတ်ထား", mirror_chip: "Mirror",
+      logo_vip_lock: "ကိုယ်ပိုင် Logo ထည့်ခြင်းသည် VIP အတွက်သာ ဖြစ်ပါသည်",
+      logo_vip_ok: "VIP Unlocked — ကိုယ်ပိုင် Logo အသင့်သုံးနိုင်ပါပြီ",
+      r_next_cta: "နောက်တစ်ဆင့် · ③ အသံနှင့် Script",
+      nav_home: "ပင်မ", nav_voice: "အသံ", sheet_persona_title: "Persona အသံ ရွေးပါ", close_lbl: "ပိတ်မည်",
+      f_all: "အားလုံး", f_f: "မိန်းကလေး", f_m: "ယောက်ျားလေး",
+      adm_ia_note: "Admin Proposal: Tab ၈ ခုလုံး ပြတ်မထွက် + Accordion Settings",
+      adm_n_ov: "ခြုံငုံ", adm_n_pay: "ပြေစာ", adm_n_jobs: "အလုပ်များ", adm_n_users: "အသုံးပြုသူ", adm_n_act: "မှတ်တမ်း", adm_n_set: "ဆက်တင်",
+      adm_triage_sub: "၂၄ နာရီအတွင်း Failed 1 · Queue Running 2", adm_review_now: "စစ်မည်",
+      adm_income_h: "ဝင်ငွေ အကျဉ်းချုပ်", adm_details: "အသေးစိတ် ›", adm_today: "ယနေ့", adm_7d: "၇ ရက်",
+      adm_pulse_h: "စနစ် နှင့် အသုံးပြုသူ", adm_u_real: "Real Users", adm_u_vip: "VIP Paid",
+      adm_slips_title: "စစ်ဆေးရန် ပြေစာများ", adm_j_live: "Live Queue", adm_j_hist: "မှတ်တမ်း & Purge",
+      adm_purge_h: "Danger Zone — မှတ်တမ်း ရှင်းလင်းရန်", adm_purge_sub: "ဖျက်ပြီးသော ဖိုင်များ ပြန်မရနိုင်ပါ (Confirm မေးပါမည်)",
+      adm_u_search_h: "အသုံးပြုသူ ရှာဖွေရန်", adm_back: "← နောက်သို့", crm_adj: "ပြင်/စာပို့", crm_log: "Ledger", crm_ban: "Danger",
+      adm_apply_adj: "လက်ကျန် ပြင်ဆင်မည်", adm_audit_h: "Admin Audit Log",
+      as_pay: "ငွေလက်ခံ & Channel Gates", as_ai: "AI Admin Bots & Quotas", as_maint: "Maintenance Mode & Limits",
+      as_chains: "Gemini LLM / TTS & Whisper Chains", as_tut: "Tutorials & Pricing Table",
+      adm_save_all: "Platform ဆက်တင်များ သိမ်းမည်", income_sheet_t: "ဝင်ငွေ အသေးစိတ်",
+      empty_title: "ဖန်တီးထားသော ပရောဂျက် မရှိသေးပါ", empty_sub: "Recap Maker သို့မဟုတ် Voice Studio ဖြင့် စတင်လိုက်ပါ",
+      err_msg: "အချက်အလက် ရယူ၍ မရပါ — ကွန်ရက် စစ်ပါ", retry_lbl: "ပြန်စမ်း",
+      toast_dl: "Phase 0 Preview: Production တွင် Downloader Tab ပွင့်ပါမည်",
+      toast_refer: "Referral Link ကူးယူပြီးပါပြီ (+2m TTS / Friend)",
+      toast_support: "Telegram Support @VoiceCloneProAdmin ဖွင့်ပါမည်",
+      toast_upload_ref: "Audio file selector — Production handler ထိန်းသိမ်းမည်",
+      toast_vip: "VIP Plans Drawer — Option B ဈေးနှုန်း & သက်တမ်းမကုန် မူဝါဒ",
+      toast_step3: "Step 3 (Voice & Script) သို့ ဆက်သွားပါမည်",
+      toast_cancel_job: "Job cancellation confirmation drawer",
+      toast_inspect: "Job Media & Pipeline Inspector Modal",
+      toast_purge: "Purge Danger Confirmation (Confirm guard)",
+      toast_adm_saved: "Admin ဆက်တင်/ပြင်ဆင်မှု သိမ်းဆည်းပြီးပါပြီ",
+      toast_ban: "Ban Confirmation with required reason",
+      toast_broadcast: "Broadcast Preview & Confirm Dialog"
+    },
+    en: {
+      ia_note: "IA Proposal: 9 cards → 4 focused zones",
+      legacy_dup_hint: "Legacy production repeats greeting + 3 balances here before Welcome & Free Card",
+      hero_value_prop: "Burmese AI Voice Clone & Movie Recap Studio",
+      ready_status: "Ready",
+      bal_tts: "TTS", bal_tts_p: "Daily Free",
+      bal_voice: "Voice", bal_voice_p: "Monthly / Keep",
+      bal_recap: "Recap", bal_recap_p: "Never Expires",
+      welcome_first_msg: "Free welcome gift ready — Start with 3 Recap Credits + 18 min audio",
+      welcome_cta: "Start Recap", sample_listen: "Sample",
+      start_title: "Start Creating", start_hint: "One tap to open studio",
+      recap_maker: "Recap Maker", recap_maker_desc: "Turn any clip into a Burmese AI narrated recap",
+      voice_studio: "Voice Clone", voice_studio_desc: "12 curated personas or custom clone",
+      tts_studio: "TTS Studio", tts_studio_desc: "Fast Burmese speech (15m/day free)",
+      recent_title: "Recent Projects", see_all: "See all ›",
+      more_hub_title: "Tools & Guides",
+      dl_name: "Video Downloader", dl_desc: "TikTok · YouTube · FB · MP4/MP3/SRT",
+      help_hub_name: "Samples & 10 Tutorials", help_hub_desc: "Ko Min & Ma Hnin audio samples + 10 video guides", tut_count: "10 guides",
+      refer_name: "Refer & Earn", refer_desc: "Invite friends = +2 min TTS each (up to 40m)", refer_btn: "↗ Share",
+      support_name: "Support — @VoiceCloneProAdmin", support_desc: "Direct support for billing or renders",
+      sample_komin: "Ko Min — Voice Clone", sample_desc_k: "Natural Burmese AI narrator sample", play_btn: "▶ Play",
+      v_studio_badge: "AI Voice Clone Studio", r_studio_badge: "Recap Maker · Step 2",
+      v_mode_curated: "12 Personas", v_mode_custom: "Custom Clone",
+      v_pick_title: "Narrator Voice", v_curated_tag: "12 Curated", v_change_btn: "Change ▾",
+      v_clone_title: "Custom Voice Clone (5 Steps)", cs_1: "1. Upload", cs_2: "2. Clean", cs_3: "3. Script", cs_4: "4. Ref", cs_5: "5. Save",
+      cs_upload_btn: "Choose clean audio clip (.wav / .mp3)",
+      v_script_step: "① Enter Script", v_excess_warn: "Over 5,000 characters — please trim before generating",
+      chip_story: "+ Story", chip_promo: "+ Promo", chip_excess: "+ Test 5000+",
+      v_speed_lbl: "Speech Speed", spd_slow: "-20% Slow", spd_norm: "+0% Normal", spd_fast: "+20% Fast",
+      v_gen_cta: "Generate Voice",
+      r_reset_pos: "Reset Boxes", sub_sample: "And what happened next surprised everyone...",
+      rc_preset: "Preset", rc_frame: "Frame", rc_sub: "Subtitle", rc_blur: "Blur", rc_prot: "Logo & Prot",
+      rp_title: "Master Presets", rp_tap_hint: "Updates preview live", rf_title: "Aspect Ratio", rf_orig: "Original",
+      rs_title: "Subtitle Appearance", rs_ypos: "Bottom Offset", rs_size: "Font Size", rb_title: "Original Subtitle Blur",
+      rp_prot_title: "Protection & Custom Logo", state_on: "ON", state_off: "OFF", mirror_chip: "Mirror",
+      logo_vip_lock: "Custom watermark logo unlocked on VIP plans",
+      logo_vip_ok: "VIP Unlocked — Custom logo ready",
+      r_next_cta: "Next · ③ Voice & Script",
+      nav_home: "Home", nav_voice: "Voice", sheet_persona_title: "Choose Persona", close_lbl: "Close",
+      f_all: "All", f_f: "Female", f_m: "Male",
+      adm_ia_note: "Admin Proposal: Zero-cutoff 2-row nav + Collapsible Settings",
+      adm_n_ov: "Overview", adm_n_pay: "Slips", adm_n_jobs: "Jobs", adm_n_users: "Users", adm_n_act: "Audit", adm_n_set: "Settings",
+      adm_triage_sub: "1 Failed (24h) · 2 Running in Queue", adm_review_now: "Review",
+      adm_income_h: "Revenue Overview", adm_details: "Details ›", adm_today: "Today", adm_7d: "7 Days",
+      adm_pulse_h: "System & Users", adm_u_real: "Real Users", adm_u_vip: "VIP Paid",
+      adm_slips_title: "Pending Payment Slips", adm_j_live: "Live Queue", adm_j_hist: "History & Purge",
+      adm_purge_h: "Danger Zone — Purge History", adm_purge_sub: "Deleted files cannot be recovered (Confirm required)",
+      adm_u_search_h: "Find User", adm_back: "← Back", crm_adj: "Adjust/Msg", crm_log: "Ledger", crm_ban: "Danger",
+      adm_apply_adj: "Apply Adjustment", adm_audit_h: "Admin Audit Log",
+      as_pay: "Payment & Channel Gates", as_ai: "AI Admin Bots & Quotas", as_maint: "Maintenance Mode & Limits",
+      as_chains: "Gemini LLM / TTS & Whisper Chains", as_tut: "Tutorials & Pricing Table",
+      adm_save_all: "Save Platform Settings", income_sheet_t: "Income Breakdown",
+      empty_title: "No projects created yet", empty_sub: "Start with Recap Maker or Voice Studio above",
+      err_msg: "Unable to load data — check network", retry_lbl: "Retry",
+      toast_dl: "Phase 0 Preview: Opens Downloader Tab in production",
+      toast_refer: "Referral invite link copied (+2m TTS / friend)",
+      toast_support: "Opens @VoiceCloneProAdmin in Telegram",
+      toast_upload_ref: "Audio selector — keeps exact production handler",
+      toast_vip: "VIP Plans — Option B pricing & non-expiring balances",
+      toast_step3: "Proceeding to Step 3 (Voice & Script)",
+      toast_cancel_job: "Job cancellation confirmation dialog",
+      toast_inspect: "Job Media & Pipeline Inspector Modal",
+      toast_purge: "Purge confirmation dialog",
+      toast_adm_saved: "Admin changes saved",
+      toast_ban: "Ban confirmation with required reason",
+      toast_broadcast: "Broadcast confirmation dialog"
+    }
+  };
+
+  const PERSONAS = [
+    { id: "mahnin", gender: "female", name: "မနှင်း (Ma Hnin)", desc_my: "နူးညံ့သဘာဝ · Story", desc_en: "Storyteller · Smooth natural female" },
+    { id: "komin", gender: "male", name: "ကိုမင်း (Ko Min)", desc_my: "Deep Trailer · ဇာတ်ကားမိတ်ဆက်", desc_en: "Deep Trailer · Dramatic narrator" },
+    { id: "mayoon", gender: "female", name: "မယွန်း (Ma Yoon)", desc_my: "Soft Drama · စိတ်ခံစားမှု", desc_en: "Soft Drama · Expressive warmth" },
+    { id: "koaung", gender: "male", name: "ကိုအောင် (Ko Aung)", desc_my: "News Anchor · ကြည်လင်တိကျ", desc_en: "News · Crisp & articulate" },
+    { id: "machaw", gender: "female", name: "မချော (Ma Chaw)", desc_my: "Upbeat Promo · ကြော်ငြာ", desc_en: "Upbeat Promo · Bright commercial" },
+    { id: "kothura", gender: "male", name: "ကိုသူရ (Ko Thura)", desc_my: "Action Recap · သွက်လက်ပြတ်သား", desc_en: "Action Recap · Energetic pace" }
+  ];
+
+  const CLONE_STEPS_MY = [
+    "ကြည်လင်သော အသံနမူနာ (၁၀–၃၀ စက္ကန့်) တင်ပါ",
+    "နောက်ခံဆူညံသံများကို Noise Cleaner ဖြင့် သန့်စင်ပါ",
+    "အသံထဲမှ စာသားများကို တိကျစွာ စစ်ဆေး/ပြင်ဆင်ပါ",
+    "Reference Clip တွဲပြီး အသံတူ စမ်းသပ်နားထောင်ပါ",
+    "နောက်အမြဲသုံးနိုင်ရန် Custom Voice အဖြစ် သိမ်းဆည်းပါ"
+  ];
+  const CLONE_STEPS_EN = [
+    "Upload a clean 10–30s voice clip without music",
+    "Remove room noise and isolate vocal frequencies",
+    "Verify transcript matches your sample audio",
+    "Bind as active Reference Clip and audition",
+    "Save custom voice profile for one-tap reuse"
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  function showToast(msg) {
+    const t = $("lg-toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(showToast._tid);
+    showToast._tid = setTimeout(() => t.classList.remove("show"), 2200);
+  }
+
+  function syncHeaderSubline() {
+    const sub = $("hdr-sub-line");
+    const isAdmin = state.fixture === "admin";
+    const isLite = state.mode === "lite";
+    sub.classList.toggle("is-admin-sub", isAdmin);
+    if (isAdmin && isLite) sub.textContent = "ADMIN · LITE";
+    else if (isAdmin) sub.textContent = "ADMIN CONSOLE";
+    else if (isLite) sub.textContent = "STUDIO PRO · LITE";
+    else sub.textContent = "STUDIO PRO";
+  }
+
+  function applyThemeAndMode() {
+    document.documentElement.setAttribute("data-theme", state.mode === "dark" ? "dark" : "light");
+    document.documentElement.classList.toggle("lite-mode", state.mode === "lite");
+    syncHeaderSubline();
+  }
+
+  function moveDockLens() {
+    const grid = $("dock-grid"), lens = $("dock-lens");
+    const active = grid.querySelector(".dock-btn.active");
+    if (!grid || !lens || !active) { if (lens) lens.style.opacity = "0"; return; }
+    lens.style.opacity = "1";
+    const gRect = grid.getBoundingClientRect(), bRect = active.getBoundingClientRect();
+    lens.style.width = bRect.width + "px";
+    lens.style.transform = `translate3d(${bRect.left - gRect.left}px, 0, 0)`;
+  }
+
+  function moveSegThumb(segId, thumbId) {
+    const seg = $(segId), thumb = $(thumbId);
+    if (!seg || !thumb) return;
+    const active = seg.querySelector(".seg-btn.active");
+    if (!active) return;
+    const sRect = seg.getBoundingClientRect(), bRect = active.getBoundingClientRect();
+    if (!bRect.width) return;
+    thumb.style.width = bRect.width + "px";
+    thumb.style.transform = `translate3d(${bRect.left - sRect.left - 4}px, 0, 0)`;
+  }
+
+  function setScreen(screen) {
+    state.screen = screen;
+    document.querySelectorAll(".tab-section").forEach((s) => s.classList.remove("active"));
+    $(`screen-${screen}`).classList.add("active");
+    $("app-viewport").scrollTop = 0;
+
+    document.querySelectorAll("#dock-grid .dock-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === screen);
+    });
+    if (screen === "admin" && state.fixture !== "admin") state.fixture = "admin";
+    updateFixture();
+    syncReviewButtons();
+    requestAnimationFrame(() => {
+      moveDockLens();
+      moveSegThumb("voice-submode-seg", "voice-submode-thumb");
+      moveSegThumb("voice-speed-seg", "voice-speed-thumb");
+      moveSegThumb("recap-step-pillbar", "recap-step-thumb");
+      moveSegThumb("adm-jobs-seg", "adm-jobs-thumb");
+      moveSegThumb("adm-crm-seg", "adm-crm-thumb");
+    });
+  }
+
+  function applyTexts() {
+    const dict = I18N[state.lang];
+    document.querySelectorAll("[data-i18n]").forEach((el) => {
+      const k = el.getAttribute("data-i18n");
+      if (dict[k]) el.textContent = dict[k];
+    });
+    $("hdr-lang-btn").textContent = state.lang === "my" ? "EN" : "မြန်မာ";
+    document.documentElement.lang = state.lang;
+    updateFixture();
+    updateVoiceDisplay();
+    updateRecapUI();
+    renderAdminSlips();
+  }
+
+  function updateFixture() {
+    const tier = $("hdr-tier-pill");
+    const callout = $("first-run-callout");
+    const greet = $("hero-greeting-txt");
+    const admHdr = $("hdr-admin-btn");
+    const name = state.lang === "my" ? "ကိုမင်း" : "Ko Min";
+
+    tier.classList.remove("is-vip", "is-admin", "hidden");
+    document.documentElement.classList.toggle("is-vip-tier", state.fixture === "vip");
+    admHdr.classList.toggle("hidden", state.fixture !== "admin");
+    $("hdr-admin-lbl").textContent = state.screen === "admin" ? "User" : "Admin";
+    syncHeaderSubline();
+
+    if (state.fixture === "first") {
+      tier.textContent = "FREE";
+      $("bal-tts-val").textContent = "15m"; $("bal-voice-val").textContent = "3m"; $("bal-recap-val").textContent = "3 Cr";
+      $("voice-cost-badge").textContent = "FREE 180s";
+      $("voice-wallet-chip").textContent = "Voice 180s";
+      $("recap-wallet-chip").textContent = "3 Cr";
+      callout.classList.remove("hidden");
+      greet.textContent = state.lang === "my" ? "မင်္ဂလာပါ" : "Welcome";
+    } else if (state.fixture === "active") {
+      tier.textContent = "FREE";
+      $("bal-tts-val").textContent = "9m"; $("bal-voice-val").textContent = "1m 40s"; $("bal-recap-val").textContent = "1 Cr";
+      $("voice-cost-badge").textContent = "FREE 100s";
+      $("voice-wallet-chip").textContent = "Voice 100s";
+      $("recap-wallet-chip").textContent = "1 Cr";
+      callout.classList.add("hidden");
+      greet.textContent = state.lang === "my" ? `မင်္ဂလာပါ ${name}` : `Hi ${name}`;
+    } else if (state.fixture === "vip") {
+      tier.textContent = "VIP PRO"; tier.classList.add("is-vip");
+      $("bal-tts-val").textContent = "∞"; $("bal-voice-val").textContent = "48m"; $("bal-recap-val").textContent = "24 Cr";
+      $("voice-cost-badge").textContent = "VIP 48m";
+      $("voice-wallet-chip").textContent = "VIP 48m";
+      $("recap-wallet-chip").textContent = "24 Cr";
+      callout.classList.add("hidden");
+      greet.textContent = state.lang === "my" ? `မင်္ဂလာပါ VIP ${name}` : `Hi VIP ${name}`;
+    } else {
+      tier.classList.add("hidden");
+      $("bal-tts-val").textContent = "∞"; $("bal-voice-val").textContent = "∞"; $("bal-recap-val").textContent = "∞";
+      $("voice-cost-badge").textContent = "ADMIN ∞";
+      $("voice-wallet-chip").textContent = "ADMIN ∞";
+      $("recap-wallet-chip").textContent = "ADMIN ∞";
+      callout.classList.add("hidden");
+      greet.textContent = state.lang === "my" ? "မင်္ဂလာပါ Admin" : "Hi Admin";
+    }
+
+    $("legacy-dup-strip").classList.toggle("hidden", state.ia !== "classic");
+    $("ia-proposal-note").classList.toggle("hidden", state.ia === "classic");
+    renderRecentList();
+  }
+
+  function renderRecentList() {
+    const slot = $("recent-projects-slot");
+    const d = I18N[state.lang];
+    if (state.listState === "loading") {
+      slot.innerHTML = `<div class="skel-row"></div><div class="skel-row"></div>`;
+      return;
+    }
+    if (state.listState === "error") {
+      slot.innerHTML = `<div class="error-banner"><span>${d.err_msg}</span><button class="recent-action" id="err-retry-btn">${d.retry_lbl}</button></div>`;
+      $("err-retry-btn").onclick = () => { state.listState = "ready"; syncReviewButtons(); renderRecentList(); };
+      return;
+    }
+    if (state.fixture === "first") {
+      slot.innerHTML = `<div class="empty-glass">
+        <svg width="26" height="26" viewBox="0 0 24 24" class="ico" style="color:var(--accent);"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>
+        <div style="font-size:13px; font-weight:800;">${d.empty_title}</div>
+        <div class="t-micro" style="max-width:250px;">${d.empty_sub}</div>
+      </div>`;
+      return;
+    }
+    slot.innerHTML = `
+      <div class="recent-row">
+        <div class="recent-main">
+          <div class="recent-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg></div>
+          <div style="min-width:0;"><div class="recent-title">The Silent Sea Ep.1 Recap</div>
+          <div class="recent-sub"><span class="status-mini ok">${state.lang==="my"?"ပြီးစီး":"Done"}</span> 9:16 Blur · 18h left</div></div>
+        </div>
+        <button class="recent-action">${state.lang==="my"?"ကြည့်":"Watch"}</button>
+      </div>
+      <div class="recent-row">
+        <div class="recent-main">
+          <div class="recent-badge"><svg width="16" height="16" viewBox="0 0 24 24" class="ico"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/></svg></div>
+          <div style="min-width:0;"><div class="recent-title">${state.lang==="my"?"TTS — ဇာတ်ညွှန်း နိဒါန်း":"TTS — Intro Script"}</div>
+          <div class="recent-sub"><span class="status-mini run">${state.lang==="my"?"အဆင်သင့်":"Ready"}</span> 1m 24s MP3</div></div>
+        </div>
+        <button class="recent-action">${state.lang==="my"?"ဒေါင်း":"Save"}</button>
+      </div>`;
+  }
+
+  function renderAdminSlips() {
+    const box = $("adm-slips-container");
+    const badge = $("adm-slips-badge");
+    const lbl = $("slips-count-lbl");
+    const title = $("adm-triage-title");
+    const n = state.slips.length;
+    badge.textContent = n;
+    badge.classList.toggle("hidden", n === 0);
+    lbl.textContent = `${n} Pending`;
+    title.textContent = state.lang === "my"
+      ? (n > 0 ? `စစ်ဆေးရန် ပြေစာ ${n} စောင် ရှိပါတယ်` : "စစ်ဆေးရန် ပြေစာ မရှိတော့ပါ")
+      : (n > 0 ? `${n} Slips Waiting Review` : "All Pending Slips Cleared");
+
+    if (n === 0) {
+      box.innerHTML = `<div class="empty-glass"><div style="font-size:12.5px; font-weight:700;">${state.lang==="my"?"စစ်ဆေးရန် ပြေစာ အားလုံး ပြီးစီးပါပြီ":"No pending payment slips"}</div></div>`;
+      return;
+    }
+    box.innerHTML = state.slips.map((s) => `
+      <div class="recent-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div><div class="recent-title">${s.user} · ${s.plan}</div><div class="recent-sub">${s.via}</div></div>
+          <strong class="t-num">${s.amount}</strong>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="lg-btn-ok" style="flex:1;" data-act="approve" data-id="${s.id}">${state.lang==="my"?"အတည်ပြု":"Approve"}</button>
+          <button class="lg-btn-danger-soft" style="flex:1;" data-act="reject" data-id="${s.id}">${state.lang==="my"?"ပယ်ချ":"Reject"}</button>
+        </div>
+      </div>`).join("");
+    box.querySelectorAll("button[data-act]").forEach((btn) => {
+      btn.onclick = () => {
+        state.slips = state.slips.filter((x) => x.id !== btn.dataset.id);
+        renderAdminSlips();
+        showToast(btn.dataset.act === "approve"
+          ? (state.lang==="my"?"ပြေစာ အတည်ပြုပြီး — Credits ထည့်ပြီးပါပြီ":"Approved slip & credited account")
+          : (state.lang==="my"?"ပြေစာ ပယ်ချပြီးပါပြီ":"Rejected slip"));
+      };
+    });
+  }
+
+  function updateVoiceDisplay() {
+    const p = PERSONAS.find((x) => x.id === state.personaId) || PERSONAS[0];
+    $("selected-persona-name").textContent = p.name;
+    $("selected-persona-desc").textContent = state.lang === "my" ? p.desc_my : p.desc_en;
+
+    const grid = $("sheet-persona-grid");
+    grid.innerHTML = PERSONAS.filter((x) => state.personaFilter === "all" || x.gender === state.personaFilter)
+      .map((x) => `<button class="persona-card ${x.id===state.personaId?"active":""}" data-pid="${x.id}">
+        <strong style="font-size:12.5px;">${x.name}</strong>
+        <div class="t-micro">${state.lang==="my"?x.desc_my:x.desc_en}</div>
+      </button>`).join("");
+    grid.querySelectorAll(".persona-card").forEach((c) => {
+      c.onclick = () => { state.personaId = c.dataset.pid; updateVoiceDisplay(); $("persona-sheet").classList.remove("open"); };
+    });
+
+    const list = state.lang === "my" ? CLONE_STEPS_MY : CLONE_STEPS_EN;
+    $("clone-step-badge").textContent = `Step ${state.cloneStep}/5`;
+    $("clone-step-msg").textContent = list[state.cloneStep - 1];
+  }
+
+  function updateCharCounter() {
+    const len = $("voice-textarea").value.length;
+    $("voice-char-pill").textContent = `${len.toLocaleString()} / 5,000`;
+    $("voice-excess-warn").classList.toggle("show", len > 5000);
+    const est = Math.max(4, Math.round(len / 14));
+    $("voice-est-line").textContent = state.lang === "my" ? `ခန့်မှန်း ကြာချိန်: ~${est} စက္ကန့်` : `Est. duration: ~${est}s`;
+  }
+
+  function updateRecapUI() {
+    const stage = $("mockup-stage");
+    stage.classList.remove("ratio-16_9", "ratio-1_1", "ratio-orig");
+    if (state.ratio === "16_9") stage.classList.add("ratio-16_9");
+    if (state.ratio === "1_1") stage.classList.add("ratio-1_1");
+    if (state.ratio === "orig") stage.classList.add("ratio-orig");
+    stage.classList.toggle("mirror-on", state.mirror);
+
+    const sub = $("preview-sub-overlay");
+    sub.classList.remove("sub-gold", "sub-darkbox", "sub-white", "sub-rose", "off");
+    sub.classList.add(state.subStyle);
+    if (!state.subEnabled) sub.classList.add("off");
+
+    $("preview-blur-overlay").classList.toggle("off", !state.blurEnabled);
+    $("preview-logo-chip").className = `preview-logo-chip ${state.logoPos}`;
+    const unlocked = state.fixture === "vip" || state.fixture === "admin";
+    $("logo-lock-hint").textContent = unlocked ? I18N[state.lang].logo_vip_ok : I18N[state.lang].logo_vip_lock;
+  }
+
+  function setAdminSub(sub) {
+    state.admSub = sub;
+    document.querySelectorAll("#adm-nav-grid .adm-nav-tile").forEach((b) => b.classList.toggle("active", b.dataset.adm === sub));
+    document.querySelectorAll(".adm-pane").forEach((p) => p.classList.add("hidden"));
+    $(`adm-pane-${sub}`).classList.remove("hidden");
+    requestAnimationFrame(() => {
+      moveSegThumb("adm-jobs-seg", "adm-jobs-thumb");
+      moveSegThumb("adm-crm-seg", "adm-crm-thumb");
+    });
+  }
+
+  function syncReviewButtons() {
+    const sync = (gid, val) => {
+      document.querySelectorAll(`#${gid} .ctrl-btn`).forEach((b) => b.classList.toggle("active", b.dataset.val === String(val)));
+    };
+    sync("ctrl-screen", state.screen); sync("ctrl-mode", state.mode);
+    sync("ctrl-fixture", state.fixture); sync("ctrl-state", state.listState);
+    sync("ctrl-lang", state.lang); sync("ctrl-width", state.width); sync("ctrl-ia", state.ia);
+  }
+
+  /* Bind Top Review Bar */
+  document.querySelectorAll("#ctrl-screen .ctrl-btn").forEach((b) => b.onclick = () => setScreen(b.dataset.val));
+  document.querySelectorAll("#ctrl-mode .ctrl-btn").forEach((b) => b.onclick = () => { state.mode = b.dataset.val; applyThemeAndMode(); syncReviewButtons(); });
+  document.querySelectorAll("#ctrl-fixture .ctrl-btn").forEach((b) => b.onclick = () => { state.fixture = b.dataset.val; updateFixture(); updateRecapUI(); syncReviewButtons(); });
+  document.querySelectorAll("#ctrl-state .ctrl-btn").forEach((b) => b.onclick = () => { state.listState = b.dataset.val; renderRecentList(); syncReviewButtons(); });
+  document.querySelectorAll("#ctrl-lang .ctrl-btn").forEach((b) => b.onclick = () => { state.lang = b.dataset.val; applyTexts(); syncReviewButtons(); });
+  document.querySelectorAll("#ctrl-width .ctrl-btn").forEach((b) => b.onclick = () => {
+    state.width = Number(b.dataset.val);
+    $("phone-frame").classList.toggle("w-360", state.width === 360);
+    $("phone-frame").classList.toggle("w-380", state.width === 380);
+    syncReviewButtons();
+    setTimeout(() => { moveDockLens(); moveSegThumb("voice-submode-seg","voice-submode-thumb"); moveSegThumb("voice-speed-seg","voice-speed-thumb"); moveSegThumb("recap-step-pillbar","recap-step-thumb"); }, 260);
+  });
+  document.querySelectorAll("#ctrl-ia .ctrl-btn").forEach((b) => b.onclick = () => { state.ia = b.dataset.val; updateFixture(); syncReviewButtons(); });
+
+  /* App Navigation */
+  $("hdr-lang-btn").onclick = () => { state.lang = state.lang === "my" ? "en" : "my"; applyTexts(); syncReviewButtons(); };
+  $("hdr-guide-btn").onclick = () => { setScreen("home"); $("help-drawer-body").classList.add("open"); };
+  $("hdr-admin-btn").onclick = () => setScreen(state.screen === "admin" ? "home" : "admin");
+  document.querySelectorAll("#dock-grid .dock-btn").forEach((b) => b.onclick = () => {
+    if (["home","voice","recap"].includes(b.dataset.tab)) setScreen(b.dataset.tab);
+    else showToast(state.lang === "my" ? `Phase 0 Demo: ${b.dataset.tab.toUpperCase()} tab (Next Phase)` : `Phase 0 Demo: ${b.dataset.tab.toUpperCase()} in next phase`);
+  });
+
+  /* Home */
+  $("home-launch-recap").onclick = () => setScreen("recap");
+  $("btn-hero-recap").onclick = () => setScreen("recap");
+  $("home-launch-voice").onclick = () => setScreen("voice");
+  $("home-launch-tts").onclick = () => showToast(state.lang==="my"?"TTS Studio — Next Phase":"TTS Studio — Next Phase");
+  $("btn-toggle-help-drawer").onclick = () => $("help-drawer-body").classList.toggle("open");
+  const toggleSample = (btn) => {
+    state.samplePlaying = !state.samplePlaying; btn.classList.toggle("playing", state.samplePlaying);
+    showToast(state.samplePlaying ? (state.lang==="my"?"မနှင်း & ကိုမင်း နမူနာအသံ ဖွင့်နေပါသည်…":"Playing sample audio…") : (state.lang==="my"?"နမူနာ ရပ်နားပြီး":"Sample paused"));
+  };
+  $("btn-hero-sample").onclick = () => toggleSample($("btn-hero-sample"));
+  $("drawer-sample-btn").onclick = () => toggleSample($("drawer-sample-btn"));
+
+  /* Voice Studio */
+  document.querySelectorAll("#voice-submode-seg .seg-btn").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("#voice-submode-seg .seg-btn").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    state.voiceSubmode = b.dataset.submode;
+    $("voice-curated-box").classList.toggle("hidden", state.voiceSubmode !== "curated");
+    $("voice-custom-box").classList.toggle("hidden", state.voiceSubmode !== "custom");
+    moveSegThumb("voice-submode-seg", "voice-submode-thumb");
+  });
+  document.querySelectorAll("#voice-speed-seg .seg-btn").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("#voice-speed-seg .seg-btn").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active"); moveSegThumb("voice-speed-seg", "voice-speed-thumb");
+  });
+  document.querySelectorAll("#clone-step-pills .clone-step-chip").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("#clone-step-pills .clone-step-chip").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active"); state.cloneStep = Number(b.dataset.cstep); updateVoiceDisplay();
+  });
+  $("btn-open-persona-sheet").onclick = () => $("persona-sheet").classList.add("open");
+  $("btn-close-sheet").onclick = () => $("persona-sheet").classList.remove("open");
+  $("persona-sheet").onclick = (e) => { if (e.target.id === "persona-sheet") $("persona-sheet").classList.remove("open"); };
+  document.querySelectorAll("#persona-filter-chips .glass-chip").forEach((c) => c.onclick = () => {
+    document.querySelectorAll("#persona-filter-chips .glass-chip").forEach((x) => x.classList.remove("active"));
+    c.classList.add("active"); state.personaFilter = c.dataset.filter; updateVoiceDisplay();
+  });
+  document.querySelectorAll(".sample-fill").forEach((c) => c.onclick = () => {
+    if (c.dataset.sample === "story") $("voice-textarea").value = "ဒီဇာတ်ကားလေးကတော့ ထူးဆန်းတဲ့ သိပ္ပံစမ်းသပ်ခန်းတစ်ခုထဲကနေ စတင်ခဲ့တာပါ။";
+    else if (c.dataset.sample === "promo") $("voice-textarea").value = "မင်္ဂလာပါ! Voice Clone Pro နဲ့ မြန်မာအသံဖိုင်တွေ မိနစ်ပိုင်းအတွင်း ဖန်တီးလိုက်ပါ။";
+    else $("voice-textarea").value = "စာသားအရှည် စမ်းသပ်ချက် ".repeat(265);
+    updateCharCounter();
+  });
+  $("voice-textarea").oninput = updateCharCounter;
+  $("btn-voice-generate").onclick = () => showToast(state.lang==="my"?"အသံ ထုတ်လုပ်မှု Queue ထဲ ထည့်ပြီးပါပြီ":"Queued voice generation");
+
+  /* Recap Step 2 */
+  document.querySelectorAll("#recap-cat-rail .cat-pill").forEach((p) => p.onclick = () => {
+    document.querySelectorAll("#recap-cat-rail .cat-pill").forEach((x) => x.classList.remove("active"));
+    p.classList.add("active"); state.recapCat = p.dataset.cat;
+    document.querySelectorAll("#recap-cat-body .cat-panel").forEach((pn) => pn.classList.add("hidden"));
+    $(`panel-${state.recapCat}`).classList.remove("hidden");
+  });
+  document.querySelectorAll("[data-preset]").forEach((card) => card.onclick = () => {
+    document.querySelectorAll("[data-preset]").forEach((x) => x.classList.remove("active"));
+    card.classList.add("active");
+    const pr = card.dataset.preset;
+    if (pr === "tiktok") { state.ratio = "9_16"; state.subStyle = "sub-gold"; state.blurEnabled = true; }
+    if (pr === "fb") { state.ratio = "9_16"; state.subStyle = "sub-darkbox"; state.blurEnabled = true; }
+    if (pr === "yt") { state.ratio = "16_9"; state.subStyle = "sub-white"; state.blurEnabled = false; }
+    if (pr === "strict") { state.ratio = "9_16"; state.subStyle = "sub-rose"; state.mirror = true; state.blurEnabled = true; }
+    updateRecapUI(); showToast(`Preset: ${pr.toUpperCase()}`);
+  });
+  document.querySelectorAll("#ratio-picker-grid .preset-card").forEach((c) => c.onclick = () => {
+    document.querySelectorAll("#ratio-picker-grid .preset-card").forEach((x) => x.classList.remove("active"));
+    c.classList.add("active"); state.ratio = c.dataset.ratio; updateRecapUI();
+  });
+  document.querySelectorAll("#sub-style-chips .glass-chip").forEach((c) => c.onclick = () => { state.subStyle = c.dataset.substyle; updateRecapUI(); });
+  $("sub-y-slider").oninput = (e) => { $("sub-y-val").textContent = e.target.value + "%"; $("preview-sub-overlay").style.bottom = e.target.value + "%"; };
+  $("sub-size-slider").oninput = (e) => { $("sub-size-val").textContent = e.target.value + "px"; $("preview-sub-overlay").style.fontSize = e.target.value + "px"; };
+  $("blur-y-slider").oninput = (e) => { $("blur-y-val").textContent = e.target.value + "%"; $("preview-blur-overlay").style.top = e.target.value + "%"; };
+  $("blur-h-slider").oninput = (e) => { $("blur-h-val").textContent = e.target.value + "%"; $("preview-blur-overlay").style.height = e.target.value + "%"; };
+  $("btn-toggle-subs").onclick = (e) => { state.subEnabled = !state.subEnabled; e.target.textContent = I18N[state.lang][state.subEnabled ? "state_on" : "state_off"]; updateRecapUI(); };
+  $("btn-toggle-blur").onclick = (e) => { state.blurEnabled = !state.blurEnabled; e.target.textContent = I18N[state.lang][state.blurEnabled ? "state_on" : "state_off"]; updateRecapUI(); };
+  $("btn-mirror-toggle").onclick = (e) => { state.mirror = !state.mirror; e.target.textContent = `Mirror: ${I18N[state.lang][state.mirror ? "state_on" : "state_off"]}`; updateRecapUI(); };
+  document.querySelectorAll("[data-logopos]").forEach((b) => b.onclick = () => { state.logoPos = b.dataset.logopos; updateRecapUI(); });
+  $("btn-stage-reset").onclick = () => {
+    $("preview-sub-overlay").style.bottom = "6%"; $("sub-y-slider").value = 6; $("sub-y-val").textContent = "6%";
+    $("preview-sub-overlay").style.fontSize = "8.5px"; $("sub-size-slider").value = 8.5; $("sub-size-val").textContent = "8.5px";
+    $("preview-blur-overlay").style.top = "52%"; $("blur-y-slider").value = 52; $("blur-y-val").textContent = "52%";
+    $("preview-blur-overlay").style.height = "11%"; $("blur-h-slider").value = 11; $("blur-h-val").textContent = "11%";
+    showToast(state.lang==="my"?"Blur & စာတန်း မူလအတိုင်း ပြန်ထားပြီး":"Reset Blur & Subtitle positions");
+  };
+
+  function attachDrag(el, mode) {
+    let sy = 0, sp = 0, drag = false;
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); el.setPointerCapture(e.pointerId); drag = true; sy = e.clientY;
+      sp = parseFloat(mode === "top" ? (el.style.top || "52") : (el.style.bottom || "6"));
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const dy = ((e.clientY - sy) / $("mockup-stage").getBoundingClientRect().height) * 100;
+      if (mode === "top") { const nx = Math.max(10, Math.min(82, Math.round(sp + dy))); el.style.top = nx + "%"; $("blur-y-slider").value = nx; $("blur-y-val").textContent = nx + "%"; }
+      else { const nx = Math.max(3, Math.min(60, Math.round(sp - dy))); el.style.bottom = nx + "%"; $("sub-y-slider").value = nx; $("sub-y-val").textContent = nx + "%"; }
+    });
+    const end = () => { drag = false; }; el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+  }
+  attachDrag($("preview-blur-overlay"), "top"); attachDrag($("preview-sub-overlay"), "bottom");
+
+  const renderSeek = () => {
+    const m = String(Math.floor(state.seekSec / 60)).padStart(2, "0"), s = String(state.seekSec % 60).padStart(2, "0");
+    $("seek-time-lbl").textContent = `${m}:${s}`; $("stage-time-preview").textContent = `Scene ${m}:${s}`; $("seek-slider").value = state.seekSec;
+  };
+  $("seek-slider").oninput = (e) => { state.seekSec = Number(e.target.value); renderSeek(); };
+  $("seek-back").onclick = () => { state.seekSec = Math.max(0, state.seekSec - 5); renderSeek(); };
+  $("seek-fwd").onclick = () => { state.seekSec = Math.min(195, state.seekSec + 5); renderSeek(); };
+
+  /* Admin Console Interactions */
+  document.querySelectorAll("#adm-nav-grid .adm-nav-tile").forEach((b) => b.onclick = () => setAdminSub(b.dataset.adm));
+  $("btn-jump-slips").onclick = () => setAdminSub("payments");
+  $("btn-open-income").onclick = () => $("income-sheet").classList.add("open");
+  $("kpi-today").onclick = () => $("income-sheet").classList.add("open");
+  $("kpi-7d").onclick = () => $("income-sheet").classList.add("open");
+  $("btn-close-income").onclick = () => $("income-sheet").classList.remove("open");
+  $("income-sheet").onclick = (e) => { if (e.target.id === "income-sheet") $("income-sheet").classList.remove("open"); };
+  document.querySelectorAll("#adm-jobs-seg .seg-btn").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("#adm-jobs-seg .seg-btn").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active"); moveSegThumb("adm-jobs-seg", "adm-jobs-thumb");
+    $("adm-jobs-live-box").classList.toggle("hidden", b.dataset.jtab !== "live");
+    $("adm-jobs-hist-box").classList.toggle("hidden", b.dataset.jtab !== "hist");
+  });
+  document.querySelectorAll(".adm-user-tap").forEach((r) => r.onclick = () => {
+    $("adm-users-list-view").classList.add("hidden");
+    $("adm-user-crm-view").classList.remove("hidden");
+    requestAnimationFrame(() => moveSegThumb("adm-crm-seg", "adm-crm-thumb"));
+  });
+  $("btn-adm-user-back").onclick = () => { $("adm-user-crm-view").classList.add("hidden"); $("adm-users-list-view").classList.remove("hidden"); };
+  document.querySelectorAll("#adm-crm-seg .seg-btn").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("#adm-crm-seg .seg-btn").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active"); moveSegThumb("adm-crm-seg", "adm-crm-thumb");
+    ["adj", "log", "ban"].forEach((k) => $(`crm-panel-${k}`).classList.toggle("hidden", b.dataset.crm !== k));
+  });
+  document.querySelectorAll(".adm-acc-head").forEach((h) => h.onclick = () => h.parentElement.classList.toggle("open"));
+  $("adm-maint-toggle").onclick = (e) => {
+    e.target.classList.toggle("on");
+    const on = e.target.classList.contains("on");
+    $("maint-badge").textContent = on ? "ON" : "OFF";
+    $("maint-badge").style.background = on ? "var(--warn-soft)" : "";
+    $("maint-badge").style.color = on ? "var(--warn-text)" : "";
+  };
+  document.querySelectorAll("[data-toast-key]").forEach((el) => el.onclick = () => showToast(I18N[state.lang][el.dataset.toastKey]));
+
+  /* URL Params (?clean=1&screen=home|voice|recap|admin&admsub=...&mode=light|dark|lite&fixture=first|active|vip|admin&lang=my|en&w=360|380) */
+  const params = new URLSearchParams(location.search);
+  if (params.get("clean") === "1") document.body.classList.add("clean-frame");
+  if (params.get("screen")) state.screen = params.get("screen");
+  if (params.get("admsub")) state.admSub = params.get("admsub");
+  if (params.get("mode")) state.mode = params.get("mode");
+  if (params.get("fixture")) state.fixture = params.get("fixture");
+  if (params.get("state")) state.listState = params.get("state");
+  if (params.get("lang")) state.lang = params.get("lang");
+  if (params.get("w") === "360") { state.width = 360; $("phone-frame").classList.replace("w-380", "w-360"); }
+
+  applyThemeAndMode();
+  applyTexts();
+  setScreen(state.screen);
+  setAdminSub(state.admSub);
+  updateCharCounter();
+  renderSeek();
+  window.addEventListener("resize", () => {
+    moveDockLens();
+    moveSegThumb("voice-submode-seg", "voice-submode-thumb");
+    moveSegThumb("voice-speed-seg", "voice-speed-thumb");
+    moveSegThumb("recap-step-pillbar", "recap-step-thumb");
+    moveSegThumb("adm-jobs-seg", "adm-jobs-thumb");
+    moveSegThumb("adm-crm-seg", "adm-crm-thumb");
+  });
+})();
+</script>
+</body>
+</html>
