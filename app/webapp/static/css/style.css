@@ -6413,6 +6413,261 @@ body.lite .vcp-step2-sticky-preview {
     background: rgba(10, 132, 255, 0.16);
 }
 
+/* ════ PHASE 6: DOWNLOADER, HISTORY HUB & VIP DESIGN PASS ════════════ */
+
+/* Downloader surface & state cards */
+.dl-search-card {
+    gap: var(--vcp-sp-3);
+}
+.dl-empty-state-card {
+    text-align: center;
+    border-style: dashed;
+    border-color: var(--border-strong);
+}
+.dl-empty-icon {
+    font-size: 28px;
+    line-height: 1.2;
+}
+.dl-loading-state-card {
+    align-items: stretch !important;
+    text-align: center;
+}
+.dl-skel-header {
+    display: flex;
+    align-items: center;
+    gap: var(--vcp-sp-3);
+}
+.dl-skel-thumb {
+    width: 100px;
+    height: 56px;
+    border-radius: var(--vcp-radius-sm);
+    flex-shrink: 0;
+}
+.dl-skel-meta {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.dl-skel-line-lg {
+    height: 16px;
+    width: 82%;
+    border-radius: 6px;
+}
+.dl-skel-line-sm {
+    height: 12px;
+    width: 54%;
+    border-radius: 6px;
+}
+.dl-skel-grid {
+    width: 100%;
+}
+.dl-skel-fmt {
+    height: 76px;
+    border-radius: var(--vcp-radius-md);
+}
+.dl-error-state-slot {
+    padding: 0 !important;
+}
+.dl-retry-btn {
+    align-self: flex-start;
+}
+.vcp-dl-format-card {
+    min-height: 82px;
+    border-radius: var(--vcp-radius-md);
+    border: 1px solid var(--border-strong);
+    background: rgba(255, 255, 255, 0.72);
+    transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.vcp-dl-format-card:active {
+    transform: scale(0.98);
+}
+#tab-downloader .dl-delivery-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--vcp-sp-2);
+    padding: 10px 12px;
+    border-radius: var(--vcp-radius-md);
+    background: var(--vcp-flat-glass-inset);
+    border: 1px solid var(--border-strong);
+    margin-top: var(--vcp-sp-2);
+}
+
+/* History Hub design system + status + real duration + 22h expires-soon */
+#tab-history .hub-filter-row {
+    gap: var(--vcp-sp-2);
+    padding: 4px 2px;
+}
+#tab-history .hub-refresh-chip {
+    min-height: var(--vcp-touch-min);
+    min-width: var(--vcp-touch-min);
+    border-radius: var(--vcp-radius-pill);
+}
+.vcp-history-retention-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: var(--vcp-radius-md);
+    background: var(--vcp-flat-glass-inset);
+    border: 1px solid var(--border-strong);
+    color: var(--vcp-text-secondary);
+    font-size: var(--vcp-fs-helper);
+    line-height: 1.55;
+}
+.hub-state-skeletons {
+    align-items: stretch !important;
+    padding: 0 !important;
+    gap: var(--vcp-sp-3) !important;
+}
+.hub-skel-card {
+    width: 100%;
+    height: 76px;
+    border-radius: var(--vcp-card-radius);
+}
+.hub-empty-ctas {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--vcp-sp-2);
+    margin-top: var(--vcp-sp-1);
+}
+#tab-history .hub-row {
+    padding: 0;
+    gap: 0;
+    border-left-width: 4px;
+}
+#tab-history .hub-row.is-expires-soon {
+    border-left-color: var(--vcp-warning);
+    box-shadow: 0 4px 14px rgba(217, 119, 6, 0.14);
+}
+#tab-history .hub-row-badges {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+    max-width: 44%;
+}
+#tab-history .hub-row-badges .vcp-badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#tab-history .hub-duration-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 8px;
+    border-radius: var(--vcp-radius-pill);
+    background: var(--vcp-primary-soft);
+    color: var(--vcp-primary-deep);
+    font-size: 11.5px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.hub-expires-soon-badge {
+    background: var(--vcp-warning-soft) !important;
+    color: var(--vcp-warning) !important;
+    border: 1px solid var(--vcp-warning-border) !important;
+    white-space: nowrap;
+}
+.hub-expires-soon-banner {
+    padding: 8px 10px;
+    border-radius: var(--vcp-radius-sm);
+    background: var(--vcp-warning-soft);
+    border: 1px solid var(--vcp-warning-border);
+    color: var(--vcp-warning);
+    font-size: 12.5px;
+    font-weight: 700;
+    line-height: 1.55;
+}
+#tab-history .hub-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+#tab-history .hub-detail-actions .history-dl-link {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* VIP / Payment Design Pass (pricing logic & safeguards untouched) */
+#tab-vip .stats-card {
+    gap: var(--vcp-sp-2);
+}
+#tab-vip .plan-how-card {
+    gap: var(--vcp-sp-2);
+}
+.vcp-vip-trust-note {
+    display: flex;
+    justify-content: flex-start;
+    margin-top: var(--vcp-sp-2);
+    margin-bottom: var(--vcp-sp-3);
+}
+.vcp-vip-trust-note .vcp-badge {
+    white-space: normal;
+    line-height: 1.5;
+    padding: 6px 12px;
+}
+#tab-vip .plan-tabs {
+    border-radius: var(--vcp-radius-lg);
+    padding: 4px;
+    border: 1px solid var(--border-strong);
+    background: rgba(255, 255, 255, 0.65);
+}
+#tab-vip .plan-tabs .seg-btn {
+    border-radius: var(--vcp-radius-md);
+}
+#tab-vip .pricing-card .plan-price .price-val {
+    color: var(--vcp-text-primary);
+}
+#tab-vip .pay-method.kpay .pay-title {
+    color: var(--vcp-warning);
+}
+#tab-vip .pay-method.wavepay .pay-title {
+    color: var(--vcp-info);
+}
+#tab-vip .pay-account {
+    flex-wrap: wrap;
+    justify-content: space-between;
+}
+#tab-vip .vcp-pay-method {
+    background: var(--vcp-flat-glass-inset);
+    border-color: var(--border-strong);
+}
+#tab-vip .slip-uploader-box {
+    padding: var(--vcp-sp-3);
+    border-radius: var(--vcp-radius-md);
+    border: 1px dashed var(--border-strong);
+    background: var(--vcp-flat-glass-inset);
+}
+#tab-vip .vcp-pay-step-hint {
+    margin-top: 0;
+}
+
+@media (max-width: 390px) {
+    #tab-history .hub-row-main {
+        padding: var(--vcp-sp-2) var(--vcp-sp-3);
+    }
+    #tab-history .hub-row-badges {
+        max-width: 48%;
+    }
+    #tab-vip .stats-row {
+        gap: var(--vcp-sp-2);
+    }
+}
+
+html.lite #tab-history .hub-skel-card,
+body.lite #tab-history .hub-skel-card,
+html.lite #tab-downloader .vcp-skel,
+body.lite #tab-downloader .vcp-skel {
+    animation: none !important;
+}
+
 
 
 

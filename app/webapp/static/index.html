@@ -1971,52 +1971,80 @@
                     <p data-i18n="dl_subtitle">YouTube, TikTok, Facebook နှင့် Douyin (抖音) မှ Video (MP4) / Audio (MP3) ဒေါင်းလုဒ် ရယူပါ</p>
                 </div>
 
-                <div class="card glass">
+                <div class="card glass vcp-card dl-search-card">
                     <div class="card-label" data-i18n="dl_url_label">Video သို့မဟုတ် Music Link ကူးထည့်ပါ</div>
-                    <input type="url" id="dl-url-input" data-i18n-ph="dl_url_placeholder" placeholder="YouTube, TikTok, Douyin (抖音) URL…" class="studio-input">
-                    <button class="btn primary-btn mt-3" id="btn-extract-dl">
+                    <input type="url" id="dl-url-input" data-i18n-ph="dl_url_placeholder" placeholder="YouTube, TikTok, Douyin (抖音) URL…" class="studio-input vcp-input">
+                    <button class="btn primary-btn vcp-btn vcp-btn--primary vcp-btn--full mt-3" id="btn-extract-dl">
                         <span data-i18n="btn_search_dl">🔍 ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာမည်</span>
                     </button>
                     <p class="link-source-help" data-i18n="link_help_dl">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်ပါတယ် — Link မရရင် မူရင်း App ထဲက Link ကို တိုက်ရိုက် ကူးထည့်ပြီး ပြန်စမ်းကြည့်ပါ။</p>
                     <div class="dl-error-box hidden" id="dl-error-box" role="alert">
                         <div class="dl-error-title" data-i18n="dl_extract_failed_title">ဗီဒီယို အချက်အလက် ထုတ်ယူ၍ မရပါ</div>
                         <p class="dl-error-hint" data-i18n="dl_extract_failed_hint">လင့်ခ် မှန်မမှန် စစ်ပြီး ထပ်ကြိုးစားပါ၊ သို့မဟုတ် တခြား လင့်ခ် တစ်ခု သုံးကြည့်ပါ။</p>
+                        <button type="button" class="vcp-btn vcp-btn--glass vcp-btn--sm mt-2 dl-retry-btn" onclick="document.getElementById('btn-extract-dl')?.click()">
+                            <span data-i18n="dl_retry_btn">🔄 ထပ်ကြိုးစားမည်</span>
+                        </button>
                     </div>
                 </div>
 
-                <div class="card glass hidden" id="dl-result-card">
-                    <div class="dl-info-header">
-                        <img id="dl-result-thumb" class="dl-thumb" alt="">
-                        <div class="dl-meta">
-                            <div id="dl-result-title" class="dl-meta-title"></div>
-                            <div class="dl-meta-row">
-                                <span id="dl-result-platform" class="dl-platform"></span>
-                                <span id="dl-result-uploader"></span>
-                                <span id="dl-result-duration"></span>
+                <div id="dl-extract-stage" class="dl-extract-stage mt-3" data-ui-state="empty">
+                    <div class="vcp-ui-state-slot vcp-state-empty vcp-card vcp-card--compact dl-empty-state-card" data-state-view="empty">
+                        <div class="dl-empty-icon" aria-hidden="true">📥</div>
+                        <div class="vcp-card__title" data-i18n="dl_empty_title">လင့်ခ် ထည့်ပြီး ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာဖွေပါ</div>
+                        <p class="vcp-card__subtitle" data-i18n="dl_empty_sub">YouTube · TikTok · Facebook · Douyin မှ MP4 / MP3 / SRT ရယူနိုင်ပါတယ်</p>
+                    </div>
+                    <div class="vcp-ui-state-slot vcp-state-loading vcp-card dl-loading-state-card" data-state-view="loading" aria-busy="true">
+                        <div class="dl-skel-header">
+                            <div class="vcp-skel dl-skel-thumb"></div>
+                            <div class="dl-skel-meta">
+                                <div class="vcp-skel dl-skel-line-lg"></div>
+                                <div class="vcp-skel dl-skel-line-sm"></div>
                             </div>
                         </div>
+                        <div class="dl-formats-grid dl-skel-grid">
+                            <div class="vcp-skel dl-skel-fmt"></div>
+                            <div class="vcp-skel dl-skel-fmt"></div>
+                            <div class="vcp-skel dl-skel-fmt"></div>
+                        </div>
+                        <p class="vcp-card__subtitle" data-i18n="dl_loading_title">ဗီဒီယို အချက်အလက် စစ်ဆေးနေပါတယ်…</p>
                     </div>
-                    <div class="dl-formats-grid">
-                        <button class="format-card" id="btn-dl-fmt-video" type="button">
-                            <span class="fmt-icon">🎬</span>
-                            <span class="fmt-name" data-i18n="fmt_video_title">ဗီဒီယို အပြည့်</span>
-                            <span class="fmt-desc" data-i18n="fmt_video_desc">MP4 (H.264 / AAC)</span>
-                        </button>
-                        <button class="format-card" id="btn-dl-fmt-mp3" type="button">
-                            <span class="fmt-icon">🎵</span>
-                            <span class="fmt-name" data-i18n="fmt_audio_title">အရည်အသွေးမြင့် အသံ</span>
-                            <span class="fmt-desc" data-i18n="fmt_audio_desc">MP3 (192kbps)</span>
-                        </button>
-                        <button class="format-card" id="btn-dl-fmt-srt" type="button">
-                            <span class="fmt-icon">📝</span>
-                            <span class="fmt-name" data-i18n="fmt_sub_title">စာတန်းထိုး ဖိုင်</span>
-                            <span class="fmt-desc" id="dl-fmt-srt-desc" data-i18n="fmt_sub_desc">SRT (Auto-captions)</span>
-                        </button>
+                    <div class="vcp-ui-state-slot vcp-state-error dl-error-state-slot" data-state-view="error"></div>
+                    <div data-state-content>
+                        <div class="card glass vcp-card hidden" id="dl-result-card">
+                            <div class="dl-info-header">
+                                <img id="dl-result-thumb" class="dl-thumb" alt="">
+                                <div class="dl-meta">
+                                    <div id="dl-result-title" class="dl-meta-title"></div>
+                                    <div class="dl-meta-row">
+                                        <span id="dl-result-platform" class="dl-platform"></span>
+                                        <span id="dl-result-uploader"></span>
+                                        <span id="dl-result-duration"></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="dl-formats-grid">
+                                <button class="format-card vcp-dl-format-card" id="btn-dl-fmt-video" type="button">
+                                    <span class="fmt-icon">🎬</span>
+                                    <span class="fmt-name" data-i18n="fmt_video_title">ဗီဒီယို အပြည့်</span>
+                                    <span class="fmt-desc" data-i18n="fmt_video_desc">MP4 (H.264 / AAC)</span>
+                                </button>
+                                <button class="format-card vcp-dl-format-card" id="btn-dl-fmt-mp3" type="button">
+                                    <span class="fmt-icon">🎵</span>
+                                    <span class="fmt-name" data-i18n="fmt_audio_title">အရည်အသွေးမြင့် အသံ</span>
+                                    <span class="fmt-desc" data-i18n="fmt_audio_desc">MP3 (192kbps)</span>
+                                </button>
+                                <button class="format-card vcp-dl-format-card" id="btn-dl-fmt-srt" type="button">
+                                    <span class="fmt-icon">📝</span>
+                                    <span class="fmt-name" data-i18n="fmt_sub_title">စာတန်းထိုး ဖိုင်</span>
+                                    <span class="fmt-desc" id="dl-fmt-srt-desc" data-i18n="fmt_sub_desc">SRT (Auto-captions)</span>
+                                </button>
+                            </div>
+                            <div id="dl-delivery-actions"></div>
+                            <button class="btn primary-btn vcp-btn vcp-btn--primary vcp-btn--full mt-3" id="btn-dl-use-in-recap">
+                                <span data-i18n="btn_use_in_recap">🎬 Movie Recap Studio တွင် အသုံးပြုမည်</span>
+                            </button>
+                        </div>
                     </div>
-                    <div id="dl-delivery-actions"></div>
-                    <button class="btn primary-btn mt-3" id="btn-dl-use-in-recap">
-                        <span data-i18n="btn_use_in_recap">🎬 Movie Recap Studio တွင် အသုံးပြုမည်</span>
-                    </button>
                 </div>
             </section>
 
@@ -2031,7 +2059,7 @@
                 </div>
 
                 <!-- User Stats Card: Separate Minutes and Recap Credits -->
-                <div class="card glass stats-card">
+                <div class="card glass vcp-card stats-card">
                     <div class="stats-row">
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_current_tier">လက်ရှိ အဆင့်</span>
@@ -2049,7 +2077,7 @@
                 </div>
 
 
-                <details class="card glass plan-how-card">
+                <details class="card glass vcp-card plan-how-card">
                     <summary class="card-label plan-how-summary"><span data-i18n="plan_how_title">💎 Plan ဘယ်လို အလုပ်လုပ်သလဲ</span><span class="plan-how-chevron" aria-hidden="true">▾</span></summary>
                     <p class="plan-how-text" data-i18n="plan_how_text1">၁) Plan ရွေးပါ → ၂) KBZPay / WavePay ဖြင့် ငွေလွှဲ၍ ပြေစာ တင်ပါ → ၃) Admin အတည်ပြုပြီးနောက် မိနစ် / Recap Credit ဝင်ပါမည်။ ဝယ်ယူပြီးပါက Free မှ VIP သို့ တက်ပါမည် — တစ်ကြိမ် စာလုံးရေ 1,000 မှ 5,000 အထိ၊ Recap ၂ မိနစ်မှ ၁၀ မိနစ်အထိ တိုးပြီး Watermark ပျောက်ပါမည်။</p>
                 </details>
@@ -2067,12 +2095,15 @@
                     </button>
                 </div>
                 <p class="plan-free-note" data-i18n="plan_free_note">💡 Free အဆင့် — အခမဲ့ စမ်းသုံးနိုင်ပါတယ် (Recap အများဆုံး ၂ မိနစ် • Watermark ပါမည်)</p>
+                <div class="vcp-vip-trust-note">
+                    <span class="vcp-badge vcp-badge--info" data-i18n="vip_never_expires_badge">♾️ ဝယ်ယူထားသော မိနစ်နှင့် Credit များ သက်တမ်းမကုန်ပါ</span>
+                </div>
 
                 <div class="plan-panel" id="plan-panel-voice">
                 <div class="pricing-grid">
 
                     <!-- Voice minute packs (also sold in the bot buy menu) -->
-                    <div class="card glass pricing-card" id="card-plan-voice-packs">
+                    <div class="card glass vcp-card pricing-card" id="card-plan-voice-packs">
                         <div class="plan-name" data-i18n="plan_packs_name">🎙️ Voice Packs</div>
                         <div class="plan-allocation" data-i18n="plan_packs_alloc">မိနစ် ၁၀ / ၃၀ / ၆၀ — လိုသလောက်ဝယ်၊ သက်တမ်းမကုန်</div>
                         <div class="plan-price">
@@ -2080,20 +2111,20 @@
                             <span class="currency">MMK</span>
                             <span data-i18n="plan_packs_from">မှစ၍</span>
                         </div>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('MIN_10', 8000, '🎙️ Voice Pack 10 Minutes')" data-i18n="plan_packs_btn10">💎 ၁၀ မိနစ် — ၈,၀၀၀</button>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('MIN_30', 20000, '🎙️ Voice Pack 30 Minutes')" data-i18n="plan_packs_btn30">⭐ ၃၀ မိနစ် — ၂၀,၀၀၀</button>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('MIN_60', 38000, '🎙️ Voice Pack 60 Minutes')" data-i18n="plan_packs_btn60">🔥 ၆၀ မိနစ် — ၃၈,၀၀၀</button>
+                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('MIN_10', 8000, '🎙️ Voice Pack 10 Minutes')" data-i18n="plan_packs_btn10">💎 ၁၀ မိနစ် — ၈,၀၀၀</button>
+                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('MIN_30', 20000, '🎙️ Voice Pack 30 Minutes')" data-i18n="plan_packs_btn30">⭐ ၃၀ မိနစ် — ၂၀,၀၀၀</button>
+                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('MIN_60', 38000, '🎙️ Voice Pack 60 Minutes')" data-i18n="plan_packs_btn60">🔥 ၆၀ မိနစ် — ၃၈,၀၀၀</button>
                     </div>
                     
                     <!-- PLAN 1: Voice Clone Studio Pro -->
-                    <div class="card glass pricing-card" id="card-plan-voice">
+                    <div class="card glass vcp-card pricing-card" id="card-plan-voice">
                         <div class="plan-name" data-i18n="plan_voice_name">🎙️ Voice Pro</div>
                         <div class="plan-allocation" data-i18n="plan_voice_alloc">မိနစ် ၂၅၀ (၄ နာရီကျော်) အသံထုတ်ခွင့်</div>
                         <div class="plan-price">
                             <span class="price-val" data-i18n="plan_voice_price" data-price-for="voice_studio_pro">75,000</span>
                             <span class="currency">MMK</span>
                         </div>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')" data-i18n="btn_buy_voice">💎 Voice Plan ဝယ်မည်</button>
+                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')" data-i18n="btn_buy_voice">💎 Voice Plan ဝယ်မည်</button>
                     </div>
 
                 </div>
@@ -2103,25 +2134,25 @@
                 <div class="pricing-grid">
 
                     <!-- PLAN 2a: Movie Recap Starter (new entry pack) -->
-                    <div class="card glass pricing-card" id="card-plan-recap-starter">
+                    <div class="card glass vcp-card pricing-card" id="card-plan-recap-starter">
                         <div class="plan-name" data-i18n="plan_recap_starter_name">🎬 Recap Starter</div>
                         <div class="plan-allocation" data-i18n="plan_recap_starter_alloc">Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)</div>
                         <div class="plan-price">
                             <span class="price-val" data-i18n="plan_recap_starter_price" data-price-for="recap_starter">20,000</span>
                             <span class="currency">MMK</span>
                         </div>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_starter', 20000, '🎬 Recap Starter')" data-i18n="btn_buy_recap_starter">🎬 Recap Starter ဝယ်မည်</button>
+                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('recap_starter', 20000, '🎬 Recap Starter')" data-i18n="btn_buy_recap_starter">🎬 Recap Starter ဝယ်မည်</button>
                     </div>
 
                     <!-- PLAN 2: Movie Recap Studio Pro -->
-                    <div class="card glass pricing-card" id="card-plan-recap">
+                    <div class="card glass vcp-card pricing-card" id="card-plan-recap">
                         <div class="plan-name" data-i18n="plan_recap_name">🎬 Recap Pro</div>
                         <div class="plan-allocation" data-i18n="plan_recap_alloc">Recap Credit ၂၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)</div>
                         <div class="plan-price">
                             <span class="price-val" data-i18n="plan_recap_price" data-price-for="recap_studio_pro">90,000</span>
                             <span class="currency">MMK</span>
                         </div>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 90000, '🎬 Recap Pro')" data-i18n="btn_buy_recap">🎬 Recap Plan ဝယ်မည်</button>
+                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 90000, '🎬 Recap Pro')" data-i18n="btn_buy_recap">🎬 Recap Plan ဝယ်မည်</button>
                     </div>
 
                 </div>
@@ -2131,32 +2162,32 @@
                 <div class="pricing-grid">
 
                     <!-- PLAN 3a: Voice + Recap Starter (new entry bundle) -->
-                    <div class="card glass pricing-card" id="card-plan-combined-starter">
+                    <div class="card glass vcp-card pricing-card" id="card-plan-combined-starter">
                         <div class="plan-name" data-i18n="plan_combined_starter_name">🎙️🎬 Combined Starter</div>
                         <div class="plan-allocation" data-i18n="plan_combined_starter_alloc">မိနစ် ၃၀ + Recap Credit ၅ ခု</div>
                         <div class="plan-price">
                             <span class="price-val" data-i18n="plan_combined_starter_price" data-price-for="combined_starter">30,000</span>
                             <span class="currency">MMK</span>
                         </div>
-                        <button class="btn secondary-gold-btn mt-3" onclick="openPaymentDrawer('combined_starter', 30000, '🎙️🎬 Combined Starter')" data-i18n="btn_buy_combined_starter">✨ Combined Starter ဝယ်မည်</button>
+                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('combined_starter', 30000, '🎙️🎬 Combined Starter')" data-i18n="btn_buy_combined_starter">✨ Combined Starter ဝယ်မည်</button>
                     </div>
 
                     <!-- PLAN 3: All-in-One Master Suite (Featured Gold Halo) -->
-                    <div class="card glass pricing-card featured-master" id="card-plan-master">
+                    <div class="card glass vcp-card vcp-card--gold pricing-card featured-master" id="card-plan-master">
                         <div class="plan-name master-title" data-i18n="plan_master_name">👑 Master</div>
                         <div class="plan-allocation text-gold" data-i18n="plan_master_alloc">မိနစ် ၅၀၀ + Recap Credit ၆၀ ခု</div>
                         <div class="plan-price master-price">
                             <span class="price-val" data-i18n="plan_master_price" data-price-for="all_in_one_master">180,000</span>
                             <span class="currency">MMK</span>
                         </div>
-                        <button class="btn gold-gradient-btn mt-3" onclick="openPaymentDrawer('all_in_one_master', 180000, '👑 Master')" data-i18n="btn_buy_master">👑 Master Suite ဝယ်မည်</button>
+                        <button class="btn gold-gradient-btn vcp-btn vcp-btn--gold mt-3" onclick="openPaymentDrawer('all_in_one_master', 180000, '👑 Master')" data-i18n="btn_buy_master">👑 Master Suite ဝယ်မည်</button>
                     </div>
 
                 </div>
                 </div>
 
                 <!-- Payment Info Drawer -->
-                <div class="card glass payment-drawer hidden" id="payment-box">
+                <div class="card glass vcp-card payment-drawer hidden" id="payment-box">
                     <div class="card-header-row">
                         <div class="drawer-header-info">
                             <span class="card-label" data-i18n="payment_info_title">💳 ငွေပေးချေမှု အချက်အလက်</span>
@@ -2164,9 +2195,10 @@
                         </div>
                         <button class="close-btn" onclick="closePaymentDrawer()">✕</button>
                     </div>
+                    <p class="vcp-card__subtitle vcp-pay-step-hint" data-i18n="vip_pay_step_hint">ငွေလွှဲပြီး ပြေစာပုံ တင်ပေးပါ — Admin စစ်ဆေးပြီးသည်နှင့် ချက်ချင်း ထည့်ပေးပါမည်</p>
 
                     <div class="payment-methods">
-                        <div class="pay-method kpay">
+                        <div class="pay-method kpay vcp-pay-method">
                             <div class="pay-title">KBZPay (KPay)</div>
                             <div class="pay-account">
                                 <span class="acc-num" id="kpay-num">09790760003</span>
@@ -2174,7 +2206,7 @@
                             </div>
                             <span class="acc-name" id="kpay-name">Account Name: Win Kyaw Oo</span>
                         </div>
-                        <div class="pay-method wavepay">
+                        <div class="pay-method wavepay vcp-pay-method">
                             <div class="pay-title">WavePay</div>
                             <div class="pay-account">
                                 <span class="acc-num" id="wave-num">09790760003</span>
@@ -2195,7 +2227,7 @@
                         </label>
                         <span class="slip-file-name" id="slip-file-name" data-i18n="slip_file_none">ပုံ မရွေးရသေးပါ</span>
                         <input type="file" id="slip-file-input" accept="image/*" class="hidden-file-input">
-                        <button class="btn gold-gradient-btn mt-2" id="btn-submit-slip-action" onclick="submitPaymentSlip()">
+                        <button class="btn gold-gradient-btn vcp-btn vcp-btn--gold vcp-btn--full mt-2" id="btn-submit-slip-action" onclick="submitPaymentSlip()">
                             <span data-i18n="btn_submit_slip">📤 ပြေစာ တင်မည်</span>
                         </button>
                     </div>
@@ -2213,16 +2245,36 @@
                 </div>
 
                 <div class="hub-filter-row" role="tablist" aria-label="History filter">
-                    <button type="button" class="filter-chip hub-filter-chip active" data-hub-filter="all" onclick="setHubHistoryFilter('all')"><span data-i18n="history_filter_all">အားလုံး</span></button>
-                    <button type="button" class="filter-chip hub-filter-chip" data-hub-filter="VOICE_CLONE" onclick="setHubHistoryFilter('VOICE_CLONE')"><span data-i18n="history_filter_voice">🎙️ အသံ</span></button>
-                    <button type="button" class="filter-chip hub-filter-chip" data-hub-filter="RECAP" onclick="setHubHistoryFilter('RECAP')"><span data-i18n="history_filter_recap">🎬 Recap</span></button>
+                    <button type="button" class="filter-chip hub-filter-chip vcp-chip active" data-hub-filter="all" onclick="setHubHistoryFilter('all')"><span data-i18n="history_filter_all">အားလုံး</span></button>
+                    <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="VOICE_CLONE" onclick="setHubHistoryFilter('VOICE_CLONE')"><span data-i18n="history_filter_voice">🎙️ အသံ</span></button>
+                    <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="RECAP" onclick="setHubHistoryFilter('RECAP')"><span data-i18n="history_filter_recap">🎬 Recap</span></button>
                     <button type="button" class="mini-chip hub-refresh-chip" onclick="loadUserHistory()" title="Refresh" aria-label="Refresh">🔄</button>
                 </div>
 
-                <p class="history-expiry-note mt-2" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
+                <p class="history-expiry-note vcp-history-retention-bar mt-2" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
 
-                <div id="hub-history-list" class="hub-history-list mt-3">
-                    <p class="text-muted" data-i18n="history_loading">မှတ်တမ်း ရယူနေပါတယ်…</p>
+                <div id="hub-history-stage" class="hub-history-stage mt-3" data-ui-state="loading">
+                    <div class="vcp-ui-state-slot vcp-state-loading hub-state-skeletons" data-state-view="loading" aria-busy="true">
+                        <div class="vcp-skel hub-skel-card"></div>
+                        <div class="vcp-skel hub-skel-card"></div>
+                        <div class="vcp-skel hub-skel-card"></div>
+                        <p class="text-muted" data-i18n="history_loading">မှတ်တမ်း ရယူနေပါတယ်…</p>
+                    </div>
+                    <div class="vcp-ui-state-slot vcp-state-empty vcp-card hub-empty-state-card" data-state-view="empty">
+                        <div class="hub-state-emoji" aria-hidden="true">📜</div>
+                        <p class="hub-state-text vcp-card__title" data-i18n="history_empty">လွန်ခဲ့သော ၂၄ နာရီအတွင်း ဖန်တီးမှု မရှိသေးပါ</p>
+                        <p class="vcp-card__subtitle hub-state-sub" data-i18n="history_empty_hint">Voice Studio သို့မဟုတ် Recap Maker တွင် ပထမဆုံး ဖန်တီးမှု စတင်လိုက်ပါ</p>
+                        <div class="hub-empty-ctas">
+                            <button type="button" class="vcp-btn vcp-btn--glass vcp-btn--sm" onclick="switchTab('tab-voice')" data-i18n="hist_empty_cta_voice">🎙️ Voice စတူဒီယို</button>
+                            <button type="button" class="vcp-btn vcp-btn--primary vcp-btn--sm" onclick="switchTab('tab-recap')" data-i18n="hist_empty_cta_recap">🎬 Recap ဖန်တီးမည်</button>
+                        </div>
+                    </div>
+                    <div class="vcp-ui-state-slot vcp-state-error vcp-card hub-error-state-card" data-state-view="error">
+                        <div class="hub-state-emoji" aria-hidden="true">⚠️</div>
+                        <p class="hub-state-text vcp-state-msg" data-i18n="history_error">မှတ်တမ်း ရယူ၍ မရပါ။ ခဏနေ၍ ပြန်စမ်းကြည့်ပါ။</p>
+                        <button type="button" class="vcp-btn vcp-btn--glass vcp-btn--sm vcp-state-retry-btn" onclick="loadUserHistory()" data-i18n="history_retry">🔄 ပြန်စမ်းမည်</button>
+                    </div>
+                    <div id="hub-history-list" class="hub-history-list" data-state-content></div>
                 </div>
             </section>
 

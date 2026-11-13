@@ -1421,6 +1421,8 @@ function showStudioInlineStatus(kind, text) {
 }
 window.showStudioInlineStatus = showStudioInlineStatus;
 function openVoiceDetail(jobId) {
+    const voiceTab = document.getElementById("tab-voice");
+    if (voiceTab && !voiceTab.classList.contains("active")) switchTab("tab-voice");
     state.voiceDetailOpen = true;
     const box = document.getElementById("voice-progress-box");
     if (box) {
@@ -1432,6 +1434,9 @@ function openVoiceDetail(jobId) {
 }
 window.openVoiceDetail = openVoiceDetail;
 function openRecapDetail(jobId) {
+    const recapTab = document.getElementById("tab-recap");
+    if (recapTab && !recapTab.classList.contains("active")) switchTab("tab-recap");
+    if (typeof showRecapStep === "function") showRecapStep(4);
     state.recapDetailOpen = true;
     const box = document.getElementById("recap-progress-box");
     if (box) {
@@ -10349,13 +10354,14 @@ async function retryRecapJobById(jobId) {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || t("err_generic"));
+            switchTab("tab-recap");
+            if (typeof showRecapStep === "function") showRecapStep(4);
             const failedBox = document.getElementById("recap-failed-box");
             if (failedBox) failedBox.classList.add("hidden");
             state.recapJobId = data.recap_id;
             try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
             showStudioToast(t("recap_retry_started_toast"), 'success');
             loadUserProfile();
-            switchTab("tab-recap");
             startRecapJobPolling(data.recap_id);
         } catch (err) {
             showStudioToast((err && err.message) ? err.message : t("err_recap_failed"), 'error');
@@ -10398,6 +10404,11 @@ window.watchRecapDemo = async function() {
 
 // ── Recap Script Review / Edit (two-phase flow) ─────────────────────────
 async function openRecapScriptEditor(jobId) {
+    if (typeof switchTab === "function") {
+        const recapTab = document.getElementById("tab-recap");
+        if (!recapTab || !recapTab.classList.contains("active")) switchTab("tab-recap");
+    }
+    if (typeof showRecapStep === "function") showRecapStep(4);
     const box = document.getElementById("recap-script-box");
     const list = document.getElementById("recap-script-list");
     if (!box || !list) return;
@@ -10500,11 +10511,16 @@ let dlCurrent = null; // { url, has_subtitles } from the last extract
 function dlShowExtractError() {
     const box = document.getElementById("dl-error-box");
     if (box) box.classList.remove("hidden");
+    if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "error");
 }
 
 function dlHideExtractError() {
     const box = document.getElementById("dl-error-box");
     if (box) box.classList.add("hidden");
+    const stage = document.getElementById("dl-extract-stage");
+    if (stage && stage.getAttribute("data-ui-state") === "error" && typeof setSectionState === "function") {
+        setSectionState(stage, "empty");
+    }
 }
 
 // Journey audit 2026-11-02: the result card outlived its link —
@@ -10517,6 +10533,7 @@ function dlClearResult() {
     const actions = document.getElementById("dl-delivery-actions");
     if (actions) actions.innerHTML = "";
     dlCurrent = null;
+    if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "empty");
 }
 
 function dlSetSrtCardState(hasSubtitles) {
@@ -10681,6 +10698,7 @@ function setupDownloader() {
             btnDl.disabled = true;
             dlHideExtractError();
             dlClearResult();
+            if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "loading");
             const dlBtnSpan = btnDl.querySelector("span");
             const dlBtnOriginal = dlBtnSpan ? dlBtnSpan.innerText : "";
             if (dlBtnSpan) dlBtnSpan.innerText = t("recap_preview_loading");
@@ -10691,7 +10709,7 @@ function setupDownloader() {
                     body: JSON.stringify({ url: url }),
                 }, 60000);
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || "Extraction failed");
+                if (!res.ok) throw new Error(data.detail || t("dl_extract_failed_title"));
 
                 // Honesty gate (journey audit 2026-11-02): an
                 // unverified payload — or one with NO real formats —
@@ -10713,9 +10731,9 @@ function setupDownloader() {
                 const dlUploader = document.getElementById("dl-result-uploader");
                 const dlDuration = document.getElementById("dl-result-duration");
 
-                if (dlTitle) dlTitle.innerText = data.title || "Video Content";
+                if (dlTitle) dlTitle.innerText = data.title || t("dl_fallback_title");
                 if (dlPlatform) dlPlatform.innerText = data.platform || "";
-                if (dlUploader) dlUploader.innerText = data.uploader || "Creator";
+                if (dlUploader) dlUploader.innerText = data.uploader || t("dl_fallback_uploader");
                 if (dlDuration) {
                     if (data.metadata_verified === false) {
                         // Same honesty treatment as the Recap card
@@ -10735,12 +10753,14 @@ function setupDownloader() {
                 const dlActions = document.getElementById("dl-delivery-actions");
                 if (dlActions) dlActions.innerHTML = "";
 
+                if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "ready");
                 resultCard.classList.remove("hidden");
                 dlHideExtractError();
             } catch (err) {
                 // Includes the client-side timeout (fetchWithTimeout
                 // abort): the extract did not complete — say so, and
                 // keep saying it after the toast fades (P1).
+                dlClearResult();
                 dlShowExtractError();
                 showErrorToast(err, 'download');
             } finally {
@@ -10896,12 +10916,12 @@ async function openPaymentDrawer(packageCode, amount, title) {
                     const elNum = document.getElementById("kpay-num");
                     const elName = document.getElementById("kpay-name");
                     if (elNum) elNum.innerText = acc.number;
-                    if (elName) elName.innerText = `Account Name: ${acc.name}`;
+                    if (elName) elName.innerText = `${t("pay_account_name_prefix")} ${acc.name}`;
                 } else if (prov.includes("wave")) {
                     const elNum = document.getElementById("wave-num");
                     const elName = document.getElementById("wave-name");
                     if (elNum) elNum.innerText = acc.number;
-                    if (elName) elName.innerText = `Account Name: ${acc.name}`;
+                    if (elName) elName.innerText = `${t("pay_account_name_prefix")} ${acc.name}`;
                 }
             });
         }
@@ -14188,12 +14208,65 @@ function hubStatusBorder(status) {
     }
 }
 
+function formatJobDuration(j) {
+    if (!j || typeof j !== "object") return "";
+    const realSec = Number(j.seconds_consumed || 0);
+    const dispSec = Number(j.duration_seconds || 0);
+    const estSec = Number(j.seconds_estimated || 0);
+    const sec = realSec > 0 ? realSec : (dispSec > 0 ? dispSec : estSec);
+    if (!Number.isFinite(sec) || sec <= 0) return "";
+    const whole = Math.round(sec);
+    if (whole < 60) return tf("hist_duration_sec", { sec: whole });
+    const min = Math.floor(whole / 60);
+    const rem = whole % 60;
+    return rem > 0 ? tf("hist_duration_min_sec", { min, sec: rem }) : tf("hist_duration_min", { min });
+}
+window.formatJobDuration = formatJobDuration;
+
+// Display-only 22h expiry reminder helper (media retention remains 24h).
+function computeHistoryExpiryState(j) {
+    if (!j || j.is_expired) {
+        return { expired: true, expiresSoon: false, hoursLeft: 0, minsLeft: 0, timeText: "" };
+    }
+    if (!j.created_at) {
+        return { expired: false, expiresSoon: false, hoursLeft: null, minsLeft: null, timeText: "" };
+    }
+    const createdMs = Date.parse(j.created_at);
+    if (Number.isNaN(createdMs)) {
+        return { expired: false, expiresSoon: false, hoursLeft: null, minsLeft: null, timeText: "" };
+    }
+    const ageMs = Date.now() - createdMs;
+    const remainingMs = Math.max(0, 24 * 3600000 - ageMs);
+    if (remainingMs <= 0) {
+        return { expired: true, expiresSoon: false, hoursLeft: 0, minsLeft: 0, timeText: "" };
+    }
+    const hoursLeft = Math.max(0, Math.ceil(remainingMs / 3600000));
+    const minsLeft = Math.max(1, Math.ceil(remainingMs / 60000));
+    const expiresSoon = ageMs >= 22 * 3600000;
+    let timeText = "";
+    if (expiresSoon) {
+        if (minsLeft < 60) {
+            timeText = tf("hist_time_m", { m: minsLeft });
+        } else {
+            const h = Math.floor(minsLeft / 60);
+            const m = minsLeft % 60;
+            timeText = m > 0 ? tf("hist_time_hm", { h, m }) : tf("hist_time_h", { h });
+        }
+    }
+    return { expired: false, expiresSoon, hoursLeft, minsLeft, timeText };
+}
+window.computeHistoryExpiryState = computeHistoryExpiryState;
+
 // Detail block shown when a hub row is tapped. It reuses the exact same
 // actions/handlers the old per-studio history cards offered (download,
 // send-to-Telegram, in-player view, live tracking) — nothing new invented.
 function hubHistoryDetailHtml(j) {
     const isRecap = j.job_type === "RECAP";
+    const exp = computeHistoryExpiryState(j);
     let inner = "";
+    if (exp.expiresSoon && !exp.expired && j.status === "SUCCESS") {
+        inner += `<div class="history-item-body hub-expires-soon-banner">${escapeHtml(tf("hist_expires_soon_banner", { time: exp.timeText }))}</div>`;
+    }
     if (j.fallback_used) {
         // Round-6 P3: the API has carried fallback_used all along
         // (round-4 F-G) but History never rendered it — a degraded
@@ -14228,7 +14301,7 @@ function hubHistoryDetailHtml(j) {
         // font) so the user — and support — can see what a render used.
         const s = j.recap_settings;
         const parts = [];
-        if (s.engine) parts.push(s.engine === "gemini" ? "Gemini" : "Smart Sync");
+        if (s.engine) parts.push(s.engine === "gemini" ? "Gemini" : s.engine === "edge" ? "Edge" : "Smart Sync");
         if (s.gemini_voice || s.voice) parts.push(s.gemini_voice || s.voice);
         if (s.story_style) parts.push(s.story_style);
         if (s.sub_style) parts.push(s.sub_style);
@@ -14241,9 +14314,9 @@ function hubHistoryDetailHtml(j) {
         const pctOf = (v) => Math.round(v <= 1 ? v * 100 : v);
         // Batch AK: AK jobs carry the bottom margin — label it as
         // what it is; pre-AK jobs keep the centre-% line.
-        if (typeof s.sub_bottom_margin === "number") parts.push(`Sub margin ${pctOf(s.sub_bottom_margin)}%`);
-        else if (typeof s.sub_y === "number") parts.push(`Sub ${pctOf(s.sub_y)}%`);
-        if (typeof s.blur_y === "number") parts.push(`Blur ${pctOf(s.blur_y)}%`);
+        if (typeof s.sub_bottom_margin === "number") parts.push(tf("hist_sub_margin_lbl", { pct: pctOf(s.sub_bottom_margin) }));
+        else if (typeof s.sub_y === "number") parts.push(tf("hist_sub_pos_lbl", { pct: pctOf(s.sub_y) }));
+        if (typeof s.blur_y === "number") parts.push(tf("hist_blur_pos_lbl", { pct: pctOf(s.blur_y) }));
         if (parts.length) {
             inner += `<div class="history-item-body hub-settings-summary">⚙️ ${escapeHtml(parts.join(" · "))}</div>`;
         }
@@ -14265,7 +14338,7 @@ function hubHistoryDetailHtml(j) {
                 parkedNote += " · " + tf("hist_script_ready_expires", { hours: hoursLeft });
             }
         }
-        actions = `<span class="badge-expired text-xs" style="color:#fbbf24;">📝 ${escapeHtml(parkedNote)}</span>`;
+        actions = `<span class="vcp-badge vcp-badge-warning">📝 ${escapeHtml(parkedNote)}</span>`;
         actions += ` <button type="button" onclick="openRecapScriptEditor('${j.id}')" class="history-dl-link">${t("btn_review_script")}</button>`;
         actions += ` <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`;
         if (j.recap_config) {
@@ -14273,7 +14346,7 @@ function hubHistoryDetailHtml(j) {
         }
         actions += ` <button type="button" onclick="deleteHistoryItem('${j.id}')" class="history-dl-link">${t("btn_delete_history")}</button>`;
     } else if (j.status === "FAILED") {
-        actions = `<span class="badge-expired text-xs" style="color:#f87171;">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
+        actions = `<span class="vcp-badge vcp-badge-danger">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
         // Batch L: one-tap retry (hidden when the server says the
         // source is gone — the note explains instead), re-run prefill
         // and delete for recap items; delete for every terminal item.
@@ -14293,21 +14366,21 @@ function hubHistoryDetailHtml(j) {
             ? `<button type="button" onclick="openRecapDetail('${j.id}')" class="history-dl-link">${t("hist_track_recap")}</button> <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`
             : `<button type="button" onclick="openVoiceDetail('${j.id}')" class="history-dl-link">${t("hist_track_voice")}</button>`;
     } else if (j.is_expired) {
-        actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
+        actions = `<span class="badge-expired vcp-badge vcp-badge-danger" title="">${t("hist_expired")}</span>`;
     } else if (isRecap) {
         if (j.deliverables?.video) {
-            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="history-dl-link">🎬 Video</a>`;
+            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_video"))}</a>`;
             // Over-50MB rule: no Telegram action at all for outputs the
             // bot cannot send — Download is the only delivery action.
             if (j.telegram_sendable !== false) {
                 actions += ` <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
             }
         }
-        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", j.input_snippet, j.id)}" class="history-dl-link">🎙️ Audio</a>`;
-        if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">📝 SRT</a>`;
-        if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">📜 TXT</a>`;
+        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_audio"))}</a>`;
+        if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_srt"))}</a>`;
+        if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_txt"))}</a>`;
     } else if (j.download_url) {
-        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">📥 Download</a>`;
+        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_voice"))}</a>`;
         if (j.telegram_sendable !== false) {
             actions += ` <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
         }
@@ -14370,6 +14443,17 @@ window.deleteHistoryItem = function(jobId) {
     });
 };
 
+function hubStatusBadgeHtml(j) {
+    const st = String(j.status || "").toUpperCase();
+    const stCls = `status-${(j.status || "").toLowerCase()}`;
+    if (st === "SUCCESS") return `<span class="vcp-badge vcp-badge-success ${stCls}">✅ ${escapeHtml(t("status_badge_success"))}</span>`;
+    if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info ${stCls}">⏳ ${escapeHtml(t("status_badge_running"))}</span>`;
+    if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning ${stCls}">🕒 ${escapeHtml(t("status_badge_queued"))}</span>`;
+    if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger ${stCls}">❌ ${escapeHtml(t("status_badge_failed"))}</span>`;
+    if (st === "CANCELLED") return `<span class="vcp-badge vcp-badge-warning ${stCls}">🚫 ${escapeHtml(t("hist_status_cancelled"))}</span>`;
+    return `<span class="vcp-badge vcp-badge-info ${stCls}">${escapeHtml(j.status || t("status_badge_other"))}</span>`;
+}
+
 function hubHistoryRowHtml(j) {
     const isRecap = j.job_type === "RECAP";
     // Batch BB-3: TTS jobs get their own label — they used to render
@@ -14377,19 +14461,27 @@ function hubHistoryRowHtml(j) {
     // recognisable by voice name.
     const isTts = j.job_type === "TTS";
     const open = hubOpenDetailId === j.id;
-    const snippet = j.input_snippet || (isRecap ? "Movie Recap" : isTts ? "TTS" : "Voice Synthesis");
+    const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
     const title = isRecap ? escapeHtml(snippet) : `&quot;${escapeHtml(snippet)}&quot;`;
+    const durText = formatJobDuration(j);
+    const exp = computeHistoryExpiryState(j);
+    const expiryPillHtml = exp.expiresSoon && !exp.expired && j.status === "SUCCESS"
+        ? `<span class="vcp-badge vcp-badge-warning hub-expires-soon-badge">${escapeHtml(tf("hist_expires_soon_badge", { time: exp.timeText }))}</span>`
+        : "";
     return `
-    <div class="hub-row ${hubStatusBorder(j.status)} ${open ? "open" : ""}" data-job-id="${j.id}">
+    <div class="hub-row vcp-card vcp-card--compact ${hubStatusBorder(j.status)} ${exp.expiresSoon ? "is-expires-soon" : ""} ${open ? "open" : ""}" data-job-id="${j.id}">
         <button type="button" class="hub-row-main" onclick="toggleHistoryDetail('${j.id}')" aria-expanded="${open}">
             <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
             <span class="hub-row-text">
                 <span class="hub-row-title">${title}</span>
-                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} · <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
             </span>
-            ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
-            ${!isRecap && j.reference_trimmed ? `<span class="history-item-badge hub-fallback-badge">${t("hist_ref_trim_badge")}</span>` : ""}
-            <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
+            <span class="hub-row-badges">
+                ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
+                ${!isRecap && j.reference_trimmed ? `<span class="history-item-badge hub-fallback-badge">${t("hist_ref_trim_badge")}</span>` : ""}
+                ${expiryPillHtml}
+                ${hubStatusBadgeHtml(j)}
+            </span>
             <span class="hub-chevron">${open ? "⌃" : "›"}</span>
         </button>
         <div class="hub-detail ${open ? "" : "hidden"}">${hubHistoryDetailHtml(j)}</div>
@@ -14399,40 +14491,60 @@ function hubHistoryRowHtml(j) {
 function renderHistoryHub() {
     renderHomeRecentProjects();
     const container = document.getElementById("hub-history-list");
+    const stage = document.getElementById("hub-history-stage");
     if (!container) return;
 
     if (hubHistoryCache === null && !hubHistoryError) {
-        container.innerHTML = `<div class="hub-state"><p class="text-muted">${t("history_loading")}</p></div>`;
+        if (stage && typeof setSectionState === "function") {
+            setSectionState(stage, "loading");
+            container.innerHTML = "";
+        } else {
+            container.innerHTML = `<div class="hub-state"><p class="text-muted">${t("history_loading")}</p></div>`;
+        }
         return;
     }
     if (hubHistoryError) {
-        container.innerHTML = `
-            <div class="hub-state">
-                <div class="hub-state-emoji">⚠️</div>
-                <p class="hub-state-text">${t("history_error")}</p>
-                <button type="button" class="mini-chip" onclick="loadUserHistory()">${t("history_retry")}</button>
-            </div>`;
+        if (stage && typeof setSectionState === "function") {
+            setSectionState(stage, "error", { onRetry: loadUserHistory });
+            container.innerHTML = "";
+        } else {
+            container.innerHTML = `
+                <div class="hub-state">
+                    <div class="hub-state-emoji">⚠️</div>
+                    <p class="hub-state-text">${t("history_error")}</p>
+                    <button type="button" class="mini-chip" onclick="loadUserHistory()">${t("history_retry")}</button>
+                </div>`;
+        }
         return;
     }
 
     const all = hubHistoryCache || [];
     if (all.length === 0) {
-        container.innerHTML = `
-            <div class="hub-state">
-                <div class="hub-state-emoji">📜</div>
-                <p class="hub-state-text" data-i18n="history_empty">${t("history_empty")}</p>
-                <p class="text-muted hub-state-sub">${t("history_empty_hint")}</p>
-            </div>`;
+        if (stage && typeof setSectionState === "function") {
+            setSectionState(stage, "empty");
+            container.innerHTML = "";
+        } else {
+            container.innerHTML = `
+                <div class="hub-state">
+                    <div class="hub-state-emoji">📜</div>
+                    <p class="hub-state-text" data-i18n="history_empty">${t("history_empty")}</p>
+                    <p class="text-muted hub-state-sub">${t("history_empty_hint")}</p>
+                </div>`;
+        }
         return;
+    }
+
+    if (stage && typeof setSectionState === "function") {
+        setSectionState(stage, "ready");
     }
 
     const jobs = hubHistoryFilter === "all" ? all : all.filter(h => h.job_type === hubHistoryFilter);
     if (jobs.length === 0) {
         container.innerHTML = `
-            <div class="hub-state">
+            <div class="hub-state vcp-card vcp-card--compact">
                 <div class="hub-state-emoji">🔍</div>
                 <p class="hub-state-text">${t("history_filter_empty")}</p>
-                <button type="button" class="mini-chip" onclick="setHubHistoryFilter('all')">${t("history_show_all")}</button>
+                <button type="button" class="vcp-btn vcp-btn--glass vcp-btn--sm" onclick="setHubHistoryFilter('all')">${t("history_show_all")}</button>
             </div>`;
         return;
     }
@@ -14475,6 +14587,7 @@ async function openRecapInPlayer(recapJobId) {
     if (!recapJobId) return;
     haptic("light");
     switchTab("tab-recap");
+    if (typeof showRecapStep === "function") showRecapStep(4);
     try {
         const res = await fetch(`/api/recap/${recapJobId}/status`, { headers: getAuthHeaders() });
         if (!res.ok) return;
@@ -14921,18 +15034,16 @@ function playWelcomeTrySample() {
 window.playWelcomeTrySample = playWelcomeTrySample;
 
 function computeRetentionBadgeHtml(j) {
-    if (j.is_expired) {
+    const exp = computeHistoryExpiryState(j);
+    if (exp.expired) {
         return `<span class="vcp-badge vcp-badge-danger">${escapeHtml(t("hist_expired"))}</span>`;
     }
-    if (!j.created_at) return "";
-    const createdMs = Date.parse(j.created_at);
-    if (Number.isNaN(createdMs)) return "";
-    const hoursLeft = Math.max(0, Math.ceil(24 - (Date.now() - createdMs) / 3600000));
-    if (hoursLeft <= 0) {
-        return `<span class="vcp-badge vcp-badge-danger">${escapeHtml(t("hist_expired"))}</span>`;
+    if (exp.hoursLeft == null) return "";
+    if (exp.expiresSoon) {
+        return `<span class="vcp-badge vcp-badge-warning hub-expires-soon-badge">${escapeHtml(tf("hist_expires_soon_badge", { time: exp.timeText }))}</span>`;
     }
-    const cls = hoursLeft <= 4 ? "vcp-badge-warning" : "vcp-badge-info";
-    return `<span class="vcp-badge ${cls}">${escapeHtml(tf("home_recent_time_left_hours", { hours: hoursLeft }))}</span>`;
+    const cls = exp.hoursLeft <= 4 ? "vcp-badge-warning" : "vcp-badge-info";
+    return `<span class="vcp-badge ${cls}">${escapeHtml(tf("home_recent_time_left_hours", { hours: exp.hoursLeft }))}</span>`;
 }
 
 function computeHomeRecentStatusBadgeHtml(j) {
@@ -14941,6 +15052,7 @@ function computeHomeRecentStatusBadgeHtml(j) {
     if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info">⏳ ${escapeHtml(t("status_badge_running"))}</span>`;
     if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning">🕒 ${escapeHtml(t("status_badge_queued"))}</span>`;
     if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger">❌ ${escapeHtml(t("status_badge_failed"))}</span>`;
+    if (st === "CANCELLED") return `<span class="vcp-badge vcp-badge-warning">🚫 ${escapeHtml(t("hist_status_cancelled"))}</span>`;
     return `<span class="vcp-badge vcp-badge-info">ℹ️ ${escapeHtml(t("status_badge_other"))}</span>`;
 }
 
@@ -15707,6 +15819,9 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (typeof renderMyRecapPresets === "function") {
             renderMyRecapPresets();
+        }
+        if (typeof renderHistoryHub === "function" && Array.isArray(hubHistoryCache)) {
+            renderHistoryHub();
         }
     } catch (e) {}
 }

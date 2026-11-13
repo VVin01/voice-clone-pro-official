@@ -11382,9 +11382,31 @@ async def get_user_history(
                 and _hist_cfg is not None
                 and _hist_source_available
             )
+        _real_dur = int(getattr(j, "seconds_consumed", 0) or 0)
+        _est_dur = int(getattr(j, "seconds_estimated", 0) or 0)
+        if _est_dur <= 0 and is_recap:
+            try:
+                _est_dur = int(
+                    round(
+                        float(
+                            (_hist_entry or {}).get("probed_duration_seconds")
+                            or (_hist_state or {}).get("probed_duration_seconds")
+                            or (_hist_entry or {}).get("source_duration_seconds")
+                            or (_hist_state or {}).get("source_duration_seconds")
+                            or 0
+                        )
+                    )
+                )
+            except Exception:
+                _est_dur = 0
+        _disp_dur = _real_dur if _real_dur > 0 else _est_dur
+
         out.append({
             "id": j.id,
             "job_type": "RECAP" if is_recap else ("TTS" if is_tts else "VOICE_CLONE"),
+            "seconds_consumed": _real_dur,
+            "seconds_estimated": _est_dur,
+            "duration_seconds": _disp_dur,
             "parts_count": (len(_hist_parts) or None) if is_recap else None,
             "credits_charged": (
                 (_hist_entry or {}).get("credits_charged")
