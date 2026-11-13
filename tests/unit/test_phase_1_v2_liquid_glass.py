@@ -43,8 +43,8 @@ def test_v2_phase1_asset_weight_under_15_percent_cap():
 
 
 def test_v2_phase1_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261113_r146") == 4
-    assert "20261113_r145" not in INDEX_HTML
+    assert INDEX_HTML.count("?v=20261113_r147") == 4
+    assert "20261113_r146" not in INDEX_HTML
 
 
 def test_v2_phase1_outdoor_readable_light_secondary_grey_tokens():

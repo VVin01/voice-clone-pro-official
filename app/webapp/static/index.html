@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261113_r146">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261113_r147">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261113_r146" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261113_r147" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -2302,6 +2302,13 @@
 
                 <!-- ── SCREEN: Overview ─────────────────────────────── -->
                 <div class="adm-screen" id="adm-screen-overview">
+                    <div class="adm-triage-banner" id="adm-triage-card">
+                        <div class="adm-triage-copy">
+                            <div class="adm-triage-title" id="adm-triage-title" data-i18n="adm_triage_checking">ပြေစာနှင့် စနစ် အခြေအနေ စစ်ဆေးနေသည်…</div>
+                            <div class="adm-triage-sub text-xs text-muted" id="adm-triage-sub">—</div>
+                        </div>
+                        <button type="button" class="mini-chip adm-triage-cta" id="btn-adm-triage-review" onclick="showAdminSection('payments')" data-i18n="adm_triage_btn">ပြေစာ စစ်မည် ›</button>
+                    </div>
                     <div class="admin-stats-grid">
                         <div class="card glass stat-mini-card">
                             <span class="stat-lbl" data-i18n="admin_stat_users">တကယ် အသုံးပြုသူများ</span>
@@ -2719,9 +2726,13 @@
 
                 <!-- ── SCREEN: Settings ─────────────────────────────── -->
                 <div class="adm-screen hidden" id="adm-screen-settings">
-                    <div class="card glass">
-                        <div class="card-label" data-i18n="admin_settings_header">⚙️ Platform ဆက်တင်များ</div>
-                        <div class="admin-settings-form mt-2">
+                    <div class="card-label adm-settings-master-title mb-2" data-i18n="admin_settings_header">⚙️ Platform ဆက်တင်များ</div>
+                    <details class="card glass vcp-card adm-accordion" id="adm-acc-pay-maint" open>
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="adm_set_grp_pay_maint">💳 ငွေလက်ခံ &amp; Maintenance</span>
+                            <span class="adm-acc-meta"><span class="adm-acc-pill" data-i18n="adm_set_pill_pay_maint">KBZ · Wave</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body admin-settings-form">
                             <div class="form-row-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_kpay_num">KBZPay ဖုန်းနံပါတ်</label>
@@ -2763,7 +2774,15 @@
                                 </div>
                                 <div></div>
                             </div>
-                            <div class="form-row-2 mt-2">
+                        </div>
+                    </details>
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-acc-ai-bots">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="adm_set_grp_ai_bots">🤖 AI Admin Bots (Group &amp; Private)</span>
+                            <span class="adm-acc-meta"><span class="adm-acc-pill" data-i18n="adm_set_pill_ai_bots">Cooldown · Budget</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body admin-settings-form">
+                            <div class="form-row-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_char_limit_free">အခမဲ့ စာလုံးရေ ကန့်သတ်ချက် (Free Character Limit)</label>
                                     <input type="number" id="adm-set-char-limit-free" class="studio-input" min="100" max="10000" step="50" inputmode="numeric">
@@ -2825,7 +2844,15 @@
                                     <p class="text-xs text-muted" data-i18n="settings_private_ai_daily_budget_hint">တစ်နေ့အတွင်း AI ဖြေဆိုနိုင်သော အများဆုံး အကြိမ်ရေ</p>
                                 </div>
                             </div>
-                            <div class="form-row-2 mt-2">
+                        </div>
+                    </details>
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-acc-quotas-gates">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="adm_set_grp_quotas_gates">🎚️ ကန့်သတ်ချက်များ &amp; Channel Gates</span>
+                            <span class="adm-acc-meta"><span class="adm-acc-pill" data-i18n="adm_set_pill_quotas">Quotas · Gates</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body admin-settings-form">
+                            <div class="form-row-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_char_limit_purchased">ဝယ်ယူ စာလုံးရေ ကန့်သတ်ချက် (Purchased Character Limit)</label>
                                     <input type="number" id="adm-set-char-limit-purchased" class="studio-input" min="100" max="10000" step="50" inputmode="numeric">
@@ -2942,11 +2969,15 @@
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="card glass mt-3">
-                        <div class="card-label"><span data-i18n="adm_tutorials_title">📚 Tutorial ဗီဒီယိုများ</span> <span class="badge-mini-gold">All 10</span></div>
-                        <div class="admin-tut-box glass-inset mt-2">
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-acc-tutorials">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="adm_tutorials_title">📚 Tutorial ဗီဒီယိုများ</span>
+                            <span class="adm-acc-meta"><span class="badge-mini-gold">All 10</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body">
+                        <div class="admin-tut-box glass-inset">
                             <div class="tut-box-header">
                                 <span class="tut-box-title">🎙️ Voice Clone Tutorial</span>
                                 <label class="switch-luxury">
@@ -3038,24 +3069,37 @@
                                 </div>
                             </div>
                         </div>
-                        <button class="btn gold-gradient-btn mt-3" onclick="saveAdminSettings()">
+                        </div>
+                    </details>
+                    <div class="adm-settings-save-bar mt-3">
+                        <button class="btn gold-gradient-btn w-100" id="btn-save-admin-settings" onclick="saveAdminSettings()">
                             <span class="btn-icon">💾</span>
                             <span data-i18n="btn_save_settings">ဆက်တင်များ သိမ်းမည်</span>
                         </button>
                     </div>
 
-                    <div class="card glass mt-3">
-                        <div class="card-header-row">
-                            <div class="card-label" data-i18n="admin_pricing_title">💰 Plan ဈေးနှုန်းများ</div>
-                            <button class="mini-chip" onclick="loadAdminPricing()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-acc-pricing">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="admin_pricing_title">💰 Plan ဈေးနှုန်းများ</span>
+                            <span class="adm-acc-meta"><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body">
+                            <div class="card-header-row">
+                                <span class="text-xs text-muted">Plan Rates</span>
+                                <button class="mini-chip" onclick="loadAdminPricing()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                            </div>
+                            <div id="admin-pricing-list" class="mt-2">
+                                <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                            </div>
                         </div>
-                        <div id="admin-pricing-list" class="mt-2">
-                            <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
-                        </div>
-                    </div>
+                    </details>
 
-                    <div class="card glass mt-3">
-                        <div class="card-label"><span data-i18n="adm_gemini_title">🤖 Gemini Model Chain</span> <span class="badge-studio gold">AI</span></div>
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-acc-gemini">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="adm_gemini_title">🤖 Gemini Model Chain</span>
+                            <span class="adm-acc-meta"><span class="badge-studio gold">AI</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body">
                         <p class="text-muted text-xs mt-1" data-i18n="adm_gemini_note">Primary က စပြီး အဆင့်ဆင့် သုံးပါတယ်။ Error တက်ရင် နောက် model ကို အလိုအလျောက် ပြောင်းပါတယ်။</p>
                         <div class="gemini-chain-grid mt-2">
                             <div class="model-tier-box">
@@ -3120,10 +3164,15 @@
                             <span class="btn-icon">⚡</span>
                             <span data-i18n="adm_gemini_save">Model Chain သိမ်းမည်</span>
                         </button>
-                    </div>
+                        </div>
+                    </details>
 
-                    <div class="card glass vcp-card mt-3" id="adm-tts-chain-card">
-                        <div class="card-label"><span data-i18n="adm_gemini_tts_title">🎙️ Gemini TTS Model Chain</span> <span class="badge-studio gold">TTS</span></div>
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-tts-chain-card">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="adm_gemini_tts_title">🎙️ Gemini TTS Model Chain</span>
+                            <span class="adm-acc-meta"><span class="badge-studio gold">TTS</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body">
                         <p class="text-muted text-xs mt-1" data-i18n="adm_gemini_tts_note">Recap အသံထွက်ရာမှာ Primary → Fallback 1 → Lite → Fallback 2 အစီအစဉ်အတိုင်း သုံးပါတယ် (မူလ — 3.8-flash-tts → 3.1-flash-tts-preview → 3.8-flash-lite-tts → 2.5-flash-preview-tts)။</p>
                         <div class="gemini-chain-grid mt-2">
                             <div class="model-tier-box">
@@ -3183,7 +3232,8 @@
                             <span class="btn-icon">🎙️</span>
                             <span data-i18n="adm_gemini_tts_save">TTS Model Chain သိမ်းမည်</span>
                         </button>
-                    </div>
+                        </div>
+                    </details>
                 </div>
             </section>
 
@@ -3406,7 +3456,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261113_r146"></script>
-    <script src="/static/js/app.js?v=20261113_r146"></script>
+    <script src="/static/js/i18n.js?v=20261113_r147"></script>
+    <script src="/static/js/app.js?v=20261113_r147"></script>
 </body>
 </html>
