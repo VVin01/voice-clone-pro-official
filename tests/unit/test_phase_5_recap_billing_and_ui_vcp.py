@@ -653,7 +653,7 @@ async def test_p5_tier_matrix_free_persona_vs_own_clone_and_gemini_edge_credit_o
 
 def test_p5_frontend_steps_3_4_and_option_b_controls_present():
     # Cache token pinned
-    assert INDEX_HTML.count("20261113_r144") == 4
+    assert INDEX_HTML.count("20261113_r145") == 4
 
     # Step 3 controls & badges
     for eid in (

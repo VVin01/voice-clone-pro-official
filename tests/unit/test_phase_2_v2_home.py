@@ -16,9 +16,9 @@ HOME = INDEX_HTML.split('id="tab-home"', 1)[1].split('id="tab-voice"', 1)[0]
 PHASE2_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 2") :]
 
 
-def test_v2_phase2_cache_token_r144():
-    assert INDEX_HTML.count("?v=20261113_r144") == 4
-    assert "20261113_r143" not in INDEX_HTML
+def test_v2_phase2_cache_token_current():
+    assert INDEX_HTML.count("?v=20261113_r145") == 4
+    assert "20261113_r144" not in INDEX_HTML
 
 
 def test_v2_phase2_four_zone_home_ia_order():
