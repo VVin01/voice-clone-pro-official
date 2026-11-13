@@ -385,8 +385,12 @@ def test_studio_survives_submit_pins():
     recap_submit = APP_JS[APP_JS.index("async function handleStartRecap()"):APP_JS.index("function startRecapJobPolling")]
     # (a) No scroll-away / teardown on submit in either studio, and the
     # submit handlers never rewrite the workspace inputs.
-    for body in (voice_submit, recap_submit):
-        assert "scrollIntoView" not in body
+    assert "scrollIntoView" not in voice_submit
+    # Error-path only: no job exists yet; reveals the Switch/Top-Up box (Option B).
+    insuf_branch = 'if (insufEl) insufEl.scrollIntoView({ behavior: "smooth", block: "nearest" });'
+    assert insuf_branch in recap_submit
+    assert "INSUFFICIENT_VOICE_MINUTES" in recap_submit
+    assert "scrollIntoView" not in recap_submit.replace(insuf_branch, "")
     assert "textInput.value =" not in voice_submit
     assert "urlInput.value =" not in recap_submit
     # Slim inline status lines carry the job in the studio.
@@ -521,7 +525,7 @@ def test_new_i18n_keys_in_both_languages():
 
 
 def test_cache_bump_r62():
-    assert INDEX_HTML.count("?v=20261104_r140") == 4
+    assert INDEX_HTML.count("?v=20261113_r141") == 4
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────

@@ -736,6 +736,297 @@ async def refund_job_seconds(
     return balance
 
 
+_CLONE_LEDGER_SOURCES = (
+    LedgerSource.MONTHLY_FREE.value,
+    LedgerSource.WELCOME.value,
+    LedgerSource.PURCHASE.value,
+)
+_RECAP_VOICE_SETTLE_OVERRUN_PREFIX = "Recap clone settle overrun"
+
+
+async def net_job_seconds_held(
+    session: AsyncSession,
+    user_id: int,
+    job_id: str,
+) -> int:
+    """Net clone-spendable seconds currently held by ``job_id``:
+    clone-bucket DEBITs minus REFUND:<job_id> CREDITs.
+    """
+    debits = (await session.execute(
+        select(MinuteLedgerEvent).where(
+            MinuteLedgerEvent.user_id == user_id,
+            MinuteLedgerEvent.reference_id == job_id,
+            MinuteLedgerEvent.source.in_(_CLONE_LEDGER_SOURCES),
+            MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
+        )
+    )).scalars().all()
+    if not debits:
+        return 0
+    credits = (await session.execute(
+        select(MinuteLedgerEvent).where(
+            MinuteLedgerEvent.user_id == user_id,
+            MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
+            MinuteLedgerEvent.source.in_(_CLONE_LEDGER_SOURCES),
+            MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
+        )
+    )).scalars().all()
+    net = sum(int(r.seconds or 0) for r in debits) - sum(
+        int(r.seconds or 0) for r in credits
+    )
+    return max(0, net)
+
+
+async def settle_recap_voice_seconds(
+    session: AsyncSession,
+    user_id: int,
+    job_id: str,
+    actual_seconds: int,
+    *,
+    note: str | None = None,
+) -> dict:
+    """Settle a recap clone-voice hold against actual synthesized narration duration.
+
+    Option B billing semantics:
+    - Submit holds ``estimated_voice_seconds`` via ``consume_seconds``.
+    - On completion, we keep ``actual_seconds``:
+      * If ``actual_seconds < net_held``, refund the unused delta back
+        into the original buckets (reverse cascade: PURCHASE -> WELCOME ->
+        MONTHLY_FREE, respecting MONTHLY_FREE current-period safety) and
+        record ``REFUND:<job_id>`` CREDIT rows.
+      * If ``actual_seconds > net_held``, charge ONLY up to
+        ``balance.clone_spendable_seconds`` as a final safety net — a
+        rendered job NEVER fails over a small overrun.
+    - Idempotent under row lock: repeat calls return the already-settled
+      summary without double-refunding or double-charging overrun.
+    """
+    target_actual = max(0, int(actual_seconds))
+    if settings.is_admin(user_id):
+        return {
+            "held_seconds": 0,
+            "actual_seconds": target_actual,
+            "settled_seconds": 0,
+            "refunded_seconds": 0,
+            "overrun_charged_seconds": 0,
+            "overrun_uncovered_seconds": 0,
+        }
+
+    user_stmt = select(User).where(User.id == user_id).with_for_update()
+    user = (await session.execute(user_stmt)).scalar_one_or_none()
+    if not user:
+        return {
+            "held_seconds": 0,
+            "actual_seconds": target_actual,
+            "settled_seconds": 0,
+            "refunded_seconds": 0,
+            "overrun_charged_seconds": 0,
+            "overrun_uncovered_seconds": 0,
+        }
+
+    debits = list((await session.execute(
+        select(MinuteLedgerEvent).where(
+            MinuteLedgerEvent.user_id == user_id,
+            MinuteLedgerEvent.reference_id == job_id,
+            MinuteLedgerEvent.source.in_(_CLONE_LEDGER_SOURCES),
+            MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
+        )
+    )).scalars().all())
+    if not debits:
+        return {
+            "held_seconds": 0,
+            "actual_seconds": target_actual,
+            "settled_seconds": 0,
+            "refunded_seconds": 0,
+            "overrun_charged_seconds": 0,
+            "overrun_uncovered_seconds": 0,
+        }
+
+    refund_ref = f"REFUND:{job_id}"
+    prior_refunds = list((await session.execute(
+        select(MinuteLedgerEvent).where(
+            MinuteLedgerEvent.user_id == user_id,
+            MinuteLedgerEvent.reference_id == refund_ref,
+            MinuteLedgerEvent.source.in_(_CLONE_LEDGER_SOURCES),
+            MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
+        )
+    )).scalars().all())
+
+    overrun_prefix = f"{_RECAP_VOICE_SETTLE_OVERRUN_PREFIX} ({job_id})"
+    prior_overrun_charged = sum(
+        int(r.seconds or 0)
+        for r in debits
+        if (r.note or "").startswith(overrun_prefix)
+    )
+    initial_held = sum(
+        int(r.seconds or 0)
+        for r in debits
+        if not (r.note or "").startswith(overrun_prefix)
+    )
+    already_refunded = sum(int(r.seconds or 0) for r in prior_refunds)
+
+    debit_all_by_source: dict[str, int] = {}
+    debit_refundable_by_source: dict[str, int] = {}
+    _now = utc_now()
+    current_period = (_now.year, _now.month)
+    for debit in debits:
+        sec = int(debit.seconds or 0)
+        debit_all_by_source[debit.source] = debit_all_by_source.get(debit.source, 0) + sec
+        if debit.source == LedgerSource.MONTHLY_FREE.value and debit.created_at is not None:
+            if (debit.created_at.year, debit.created_at.month) != current_period:
+                continue
+        debit_refundable_by_source[debit.source] = debit_refundable_by_source.get(debit.source, 0) + sec
+
+    refunded_by_source: dict[str, int] = {}
+    for ref in prior_refunds:
+        refunded_by_source[ref.source] = refunded_by_source.get(ref.source, 0) + int(ref.seconds or 0)
+
+    net_held = max(0, sum(debit_all_by_source.values()) - already_refunded)
+
+    # Idempotency when overrun settlement already ran once
+    if prior_overrun_charged > 0 and target_actual >= net_held:
+        return {
+            "held_seconds": initial_held,
+            "actual_seconds": target_actual,
+            "settled_seconds": net_held,
+            "refunded_seconds": already_refunded,
+            "overrun_charged_seconds": prior_overrun_charged,
+            "overrun_uncovered_seconds": max(0, target_actual - net_held),
+        }
+
+    balance = await get_minute_balance(session, user_id)
+
+    if target_actual <= net_held:
+        give_back = net_held - target_actual
+        if give_back <= 0:
+            return {
+                "held_seconds": initial_held,
+                "actual_seconds": target_actual,
+                "settled_seconds": net_held,
+                "refunded_seconds": already_refunded,
+                "overrun_charged_seconds": prior_overrun_charged,
+                "overrun_uncovered_seconds": 0,
+            }
+        refunded_now = 0
+        for src in (
+            LedgerSource.PURCHASE.value,
+            LedgerSource.WELCOME.value,
+            LedgerSource.MONTHLY_FREE.value,
+        ):
+            if give_back <= 0:
+                break
+            avail_bucket = max(
+                0,
+                debit_refundable_by_source.get(src, 0) - refunded_by_source.get(src, 0),
+            )
+            if avail_bucket <= 0:
+                continue
+            give = min(give_back, avail_bucket)
+            if give <= 0:
+                continue
+            if src == LedgerSource.PURCHASE.value:
+                balance.purchased_seconds += give
+                user.account_category = AccountCategory.PURCHASED.value
+            elif src == LedgerSource.WELCOME.value:
+                balance.welcome_seconds += give
+            elif src == LedgerSource.MONTHLY_FREE.value:
+                balance.monthly_free_seconds += give
+            balance.consumed_seconds = max(0, int(balance.consumed_seconds or 0) - give)
+            session.add(
+                MinuteLedgerEvent(
+                    user_id=user_id,
+                    source=src,
+                    direction=LedgerDirection.CREDIT.value,
+                    seconds=give,
+                    reference_id=refund_ref,
+                    note=note or f"Recap clone settle refund ({job_id})",
+                )
+            )
+            give_back -= give
+            refunded_now += give
+
+        if refunded_now > 0:
+            balance.updated_at = utc_now()
+            user.updated_at = utc_now()
+            await session.flush()
+
+        total_refunded = already_refunded + refunded_now
+        settled = max(0, net_held - refunded_now)
+        return {
+            "held_seconds": initial_held,
+            "actual_seconds": target_actual,
+            "settled_seconds": settled,
+            "refunded_seconds": total_refunded,
+            "overrun_charged_seconds": prior_overrun_charged,
+            "overrun_uncovered_seconds": 0,
+        }
+
+    # target_actual > net_held -> charge overrun capped at available clone balance (safety net)
+    overrun_needed = target_actual - net_held
+    charge = min(overrun_needed, int(balance.clone_spendable_seconds))
+    charged_now = 0
+    if charge > 0:
+        rem = charge
+        if rem > 0 and balance.monthly_free_seconds > 0:
+            d = min(balance.monthly_free_seconds, rem)
+            balance.monthly_free_seconds -= d
+            rem -= d
+            charged_now += d
+            session.add(
+                MinuteLedgerEvent(
+                    user_id=user_id,
+                    source=LedgerSource.MONTHLY_FREE.value,
+                    direction=LedgerDirection.DEBIT.value,
+                    seconds=d,
+                    reference_id=job_id,
+                    note=note or f"{overrun_prefix} (Monthly Free)",
+                )
+            )
+        if rem > 0 and balance.welcome_seconds > 0:
+            d = min(balance.welcome_seconds, rem)
+            balance.welcome_seconds -= d
+            rem -= d
+            charged_now += d
+            session.add(
+                MinuteLedgerEvent(
+                    user_id=user_id,
+                    source=LedgerSource.WELCOME.value,
+                    direction=LedgerDirection.DEBIT.value,
+                    seconds=d,
+                    reference_id=job_id,
+                    note=note or f"{overrun_prefix} (Welcome)",
+                )
+            )
+        if rem > 0 and balance.purchased_seconds > 0:
+            d = min(balance.purchased_seconds, rem)
+            balance.purchased_seconds -= d
+            rem -= d
+            charged_now += d
+            session.add(
+                MinuteLedgerEvent(
+                    user_id=user_id,
+                    source=LedgerSource.PURCHASE.value,
+                    direction=LedgerDirection.DEBIT.value,
+                    seconds=d,
+                    reference_id=job_id,
+                    note=note or f"{overrun_prefix} (Purchased)",
+                )
+            )
+        balance.consumed_seconds = int(balance.consumed_seconds or 0) + charged_now
+        balance.updated_at = utc_now()
+        user.updated_at = utc_now()
+        await session.flush()
+
+    settled_total = net_held + charged_now
+    uncovered = max(0, overrun_needed - charged_now)
+    return {
+        "held_seconds": initial_held,
+        "actual_seconds": target_actual,
+        "settled_seconds": settled_total,
+        "refunded_seconds": already_refunded,
+        "overrun_charged_seconds": prior_overrun_charged + charged_now,
+        "overrun_uncovered_seconds": uncovered,
+    }
+
+
 async def draw_tts_referral_seconds(
     session: AsyncSession,
     user_id: int,

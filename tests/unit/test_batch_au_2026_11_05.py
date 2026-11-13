@@ -29,7 +29,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.models.enums import AccountCategory
 from app.models.schema import Job
-from app.services.ledger import get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user
 from app.webapp import api as api_mod
 
 
@@ -55,10 +55,14 @@ def recap_runner(monkeypatch):
     api_mod.RECAP_JOBS_REGISTRY.clear()
 
 
-async def _make_user(db_session, telegram_id, **fields):
+async def _make_user(db_session, telegram_id, *, purchased_seconds: int = 0, **fields):
     user, _ = await get_or_create_user(db_session, telegram_id=telegram_id)
     for key, value in fields.items():
         setattr(user, key, value)
+    if purchased_seconds > 0:
+        # Option B: default tts_engine="voxcpm" pre-checks Voice Clone Minutes.
+        bal = await get_minute_balance(db_session, user.id)
+        bal.purchased_seconds = purchased_seconds
     await db_session.commit()
     return user
 
@@ -106,6 +110,7 @@ async def test_au_free_submit_clamps_to_standard(
         890101,
         account_category=AccountCategory.FREE.value,
         recap_credits=2,
+        purchased_seconds=3600,
     )
     with caplog.at_level(logging.INFO, logger="app.webapp.api"):
         resp, req = await _submit(db_session, recap_runner, user, quality)
@@ -134,6 +139,7 @@ async def test_au_free_submit_standard_is_untouched(
         890102,
         account_category=AccountCategory.FREE.value,
         recap_credits=2,
+        purchased_seconds=3600,
     )
     with caplog.at_level(logging.INFO, logger="app.webapp.api"):
         resp, req = await _submit(db_session, recap_runner, user, "standard")
@@ -155,6 +161,7 @@ async def test_au_purchased_submit_passes_quality_through(
         890103,
         account_category=AccountCategory.PURCHASED.value,
         recap_credits=2,
+        purchased_seconds=3600,
     )
     with caplog.at_level(logging.INFO, logger="app.webapp.api"):
         resp, req = await _submit(db_session, recap_runner, user, quality)
@@ -313,5 +320,5 @@ def test_au_no_new_i18n_key_for_quality_lock():
 
 
 def test_au_static_cache_token_is_r79():
-    assert INDEX_HTML.count("20261104_r140") == 4
+    assert INDEX_HTML.count("20261113_r141") == 4
     assert "20261104_r67" not in INDEX_HTML

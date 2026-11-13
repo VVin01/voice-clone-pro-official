@@ -458,14 +458,285 @@ const state = {
     alertDismissTimer: null,
 };
 
-// ── Telegram WebApp Initialization ─────────────────────────────────────────
+// ── Telegram WebApp Initialization & Native Integrations (Phase 1) ─────────
+function initLitePerformanceMode() {
+    try {
+        const forced = localStorage.getItem("vcp_lite_mode");
+        if (forced === "0") {
+            document.documentElement.classList.remove("lite");
+            document.body?.classList.remove("lite");
+            return false;
+        }
+        const cores = Number(navigator.hardwareConcurrency || 8);
+        const mem = Number(navigator.deviceMemory || 8);
+        const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const isLite = forced === "1" || reducedMotion || cores <= 4 || mem <= 3;
+        document.documentElement.classList.toggle("lite", isLite);
+        if (document.body) document.body.classList.toggle("lite", isLite);
+        return isLite;
+    } catch (e) {
+        return false;
+    }
+}
+window.initLitePerformanceMode = initLitePerformanceMode;
+
+/**
+ * setSectionState(sectionOrId, stateName, options)
+ * Unified UI state machine helper for data-ui-state="loading|empty|error|ready"
+ */
+function setSectionState(sectionOrId, stateName = "ready", options = {}) {
+    const el = typeof sectionOrId === "string" ? document.getElementById(sectionOrId) : sectionOrId;
+    if (!el) return;
+    const valid = ["loading", "empty", "error", "ready"];
+    const nextState = valid.includes(stateName) ? stateName : "ready";
+    el.setAttribute("data-ui-state", nextState);
+    if (options.message) {
+        const msgEl = el.querySelector(`.vcp-state-${nextState} .vcp-state-msg`);
+        if (msgEl) msgEl.textContent = options.message;
+    }
+    if (typeof options.onRetry === "function") {
+        const retryBtn = el.querySelector(`.vcp-state-error .vcp-state-retry-btn`);
+        if (retryBtn) retryBtn.onclick = options.onRetry;
+    }
+}
+window.setSectionState = setSectionState;
+
+/**
+ * Standard vcp-* Component Helpers (Bottom Sheet, Accordion, Slider Reset, Button Loading)
+ */
+function openVcpSheet(sheetId) {
+    const el = typeof sheetId === "string" ? document.getElementById(sheetId) : sheetId;
+    if (!el) return;
+    haptic("light");
+    el.classList.remove("hidden");
+    requestAnimationFrame(() => {
+        el.classList.add("is-open");
+        syncTelegramBackButton();
+    });
+}
+window.openVcpSheet = openVcpSheet;
+
+function closeVcpSheet(sheetId) {
+    const el = typeof sheetId === "string" ? document.getElementById(sheetId) : sheetId;
+    if (!el) return;
+    el.classList.remove("is-open");
+    setTimeout(() => {
+        if (!el.classList.contains("is-open")) el.classList.add("hidden");
+        syncTelegramBackButton();
+    }, 240);
+}
+window.closeVcpSheet = closeVcpSheet;
+
+function toggleVcpAccordion(btnOrId, force) {
+    const el = typeof btnOrId === "string" ? document.getElementById(btnOrId) : btnOrId;
+    if (!el) return;
+    const acc = el.classList.contains("vcp-accordion") ? el : el.closest(".vcp-accordion");
+    if (!acc) return;
+    haptic("selection");
+    const open = typeof force === "boolean" ? force : !(acc.classList.contains("is-open") || acc.classList.contains("open"));
+    acc.classList.toggle("is-open", open);
+    acc.classList.toggle("open", open);
+    const head = acc.querySelector(".vcp-accordion-head, .vcp-accordion__trigger");
+    if (head) head.setAttribute("aria-expanded", open ? "true" : "false");
+    const body = acc.querySelector(".vcp-accordion-body, .vcp-accordion__body");
+    if (body) body.classList.toggle("hidden", !open);
+}
+window.toggleVcpAccordion = toggleVcpAccordion;
+
+function resetVcpSlider(sliderId, defaultVal) {
+    const slider = typeof sliderId === "string" ? document.getElementById(sliderId) : sliderId;
+    if (!slider) return;
+    haptic("light");
+    const val = defaultVal !== undefined ? defaultVal : slider.getAttribute("data-default");
+    if (val === null || val === undefined) return;
+    slider.value = val;
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+}
+window.resetVcpSlider = resetVcpSlider;
+
+function setVcpButtonLoading(btnOrId, loading) {
+    const btn = typeof btnOrId === "string" ? document.getElementById(btnOrId) : btnOrId;
+    if (!btn) return;
+    btn.classList.toggle("is-loading", !!loading);
+    btn.disabled = !!loading;
+}
+window.setVcpButtonLoading = setVcpButtonLoading;
+
+function closeTopmostOverlay() {
+    const confirmModal = document.getElementById("studio-confirm-modal");
+    if (confirmModal) { confirmModal.remove(); return true; }
+    const inputModal = document.getElementById("studio-input-modal");
+    if (inputModal) { inputModal.remove(); return true; }
+    const openSheets = document.querySelectorAll(".vcp-sheet-backdrop.is-open");
+    if (openSheets.length > 0) {
+        closeVcpSheet(openSheets[openSheets.length - 1]);
+        return true;
+    }
+    const overlayIds = [
+        ["live-jobs-sheet", closeLiveJobsSheet],
+        ["income-detail-sheet", closeIncomeDetail],
+        ["slip-modal", () => { if (typeof closeSlipModal === "function") closeSlipModal(); else document.getElementById("slip-modal")?.classList.add("hidden"); }],
+        ["tts-key-prompt-modal", () => document.getElementById("tts-key-prompt-modal")?.classList.add("hidden")],
+        ["admin-media-modal", () => { if (typeof closeAdminMediaModal === "function") closeAdminMediaModal(); else document.getElementById("admin-media-modal")?.classList.add("hidden"); }],
+        ["adm-user-detail", () => { if (typeof closeAdminUserDetail === "function") closeAdminUserDetail(); else document.getElementById("adm-user-detail")?.classList.add("hidden"); }],
+        ["payment-box", closePaymentDrawer],
+    ];
+    for (const [id, closer] of overlayIds) {
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains("hidden")) {
+            closer();
+            syncTelegramBackButton();
+            return true;
+        }
+    }
+    return false;
+}
+window.closeTopmostOverlay = closeTopmostOverlay;
+
+function hasOpenOverlay() {
+    if (document.getElementById("studio-confirm-modal") || document.getElementById("studio-input-modal")) return true;
+    if (document.querySelector(".vcp-sheet-backdrop.is-open")) return true;
+    const ids = ["live-jobs-sheet", "income-detail-sheet", "slip-modal", "tts-key-prompt-modal", "admin-media-modal", "adm-user-detail", "payment-box"];
+    return ids.some(id => {
+        const el = document.getElementById(id);
+        return !!(el && !el.classList.contains("hidden"));
+    });
+}
+
+function syncTelegramBackButton() {
+    try {
+        const bb = state.tg?.BackButton;
+        if (!bb) return;
+        const activePane = document.querySelector(".tab-pane.active");
+        const activeTabId = activePane ? activePane.id : "tab-home";
+        const shouldShow = hasOpenOverlay()
+            || (activeTabId === "tab-recap" && (state.recapDetailOpen || (typeof recapCurrentStep === "number" && recapCurrentStep > 1)))
+            || (activeTabId === "tab-voice" && state.voiceDetailOpen)
+            || (activeTabId !== "tab-home");
+        if (shouldShow) {
+            if (typeof bb.show === "function") bb.show();
+        } else {
+            if (typeof bb.hide === "function") bb.hide();
+        }
+    } catch (e) {}
+}
+window.syncTelegramBackButton = syncTelegramBackButton;
+
+function handleTelegramBackButton() {
+    haptic("light");
+    if (closeTopmostOverlay()) {
+        syncTelegramBackButton();
+        return;
+    }
+    const activePane = document.querySelector(".tab-pane.active");
+    const activeTabId = activePane ? activePane.id : "tab-home";
+    if (activeTabId === "tab-recap") {
+        if (state.recapDetailOpen && typeof window.backToStudio === "function") {
+            window.backToStudio("recap");
+            syncTelegramBackButton();
+            return;
+        }
+        if (typeof recapCurrentStep === "number" && recapCurrentStep > 1 && typeof window.showRecapStep === "function") {
+            window.showRecapStep(recapCurrentStep - 1);
+            syncTelegramBackButton();
+            return;
+        }
+    }
+    if (activeTabId === "tab-voice" && state.voiceDetailOpen && typeof window.backToStudio === "function") {
+        window.backToStudio("voice");
+        syncTelegramBackButton();
+        return;
+    }
+    if (activeTabId !== "tab-home") {
+        switchTab("tab-home");
+        syncTelegramBackButton();
+    }
+}
+window.handleTelegramBackButton = handleTelegramBackButton;
+
+function setupViewportAndKeyboardSync() {
+    const applyViewportVars = () => {
+        try {
+            const vh = (state.tg && state.tg.viewportHeight) ? state.tg.viewportHeight : window.innerHeight;
+            const sh = (state.tg && state.tg.viewportStableHeight) ? state.tg.viewportStableHeight : window.innerHeight;
+            if (vh > 0) document.documentElement.style.setProperty("--tg-viewport-height", `${vh}px`);
+            if (sh > 0) document.documentElement.style.setProperty("--tg-viewport-stable-height", `${sh}px`);
+        } catch (e) {}
+    };
+    applyViewportVars();
+    window.addEventListener("resize", applyViewportVars);
+    if (state.tg && typeof state.tg.onEvent === "function") {
+        try { state.tg.onEvent("viewportChanged", applyViewportVars); } catch (e) {}
+    }
+    document.addEventListener("focusin", (e) => {
+        const tEl = e.target;
+        if (!tEl || !tEl.matches || !tEl.matches("input:not([type='range']):not([type='file']):not([type='checkbox']), textarea, select")) return;
+        document.body.classList.add("vcp-kb-open");
+        setTimeout(() => {
+            try { tEl.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (err) {}
+        }, 260);
+    });
+    document.addEventListener("focusout", () => {
+        setTimeout(() => {
+            const active = document.activeElement;
+            if (!active || !active.matches || !active.matches("input, textarea, select")) {
+                document.body.classList.remove("vcp-kb-open");
+            }
+        }, 150);
+    });
+}
+window.setupViewportAndKeyboardSync = setupViewportAndKeyboardSync;
+
+function hasUnsavedWork() {
+    if (state.recapUploadPending) return true;
+    const slipInput = document.getElementById("slip-file-input");
+    if (slipInput && slipInput.files && slipInput.files.length > 0) return true;
+    const scriptBox = document.getElementById("recap-script-box");
+    if (scriptBox && !scriptBox.classList.contains("hidden")) {
+        const segs = scriptBox.querySelectorAll(".script-seg-text");
+        for (const ta of segs) {
+            if (ta.value !== ta.dataset.original) return true;
+        }
+    }
+    return false;
+}
+window.hasUnsavedWork = hasUnsavedWork;
+
+function syncUnsavedWorkGuard() {
+    const dirty = hasUnsavedWork();
+    try {
+        if (state.tg) {
+            if (dirty && typeof state.tg.enableClosingConfirmation === "function") {
+                state.tg.enableClosingConfirmation();
+            } else if (!dirty && typeof state.tg.disableClosingConfirmation === "function") {
+                state.tg.disableClosingConfirmation();
+            }
+        }
+    } catch (e) {}
+}
+window.syncUnsavedWorkGuard = syncUnsavedWorkGuard;
+
+window.addEventListener("beforeunload", (e) => {
+    if (hasUnsavedWork()) {
+        e.preventDefault();
+        e.returnValue = "";
+    }
+});
+
 function initTelegram() {
+    initLitePerformanceMode();
     if (state.tg) {
         state.tg.ready();
         state.tg.expand();
         try {
             state.tg.setHeaderColor("#dcebf7");
             state.tg.setBackgroundColor("#dcebf7");
+        } catch (e) {}
+        try {
+            if (state.tg.BackButton && typeof state.tg.BackButton.onClick === "function") {
+                state.tg.BackButton.onClick(handleTelegramBackButton);
+            }
         } catch (e) {}
     }
 }
@@ -562,7 +833,7 @@ function renderStageStepper(el, labels, activeIndex, completeAll) {
     }).join("");
 }
 function voiceStageLabels() { return [t("stage_script"), t("stage_voice"), t("stage_ready")]; }
-function recapStageLabels() { return [t("stage_script"), t("stage_voice"), t("stage_video"), t("stage_ready")]; }
+function recapStageLabels() { return [t("recap_stage_download_lbl"), t("recap_stage_script_lbl"), t("recap_stage_voice_lbl"), t("recap_stage_render_lbl")]; }
 function setVoiceStage(mode) {
     const el = document.getElementById("voice-stage-stepper");
     if (!el) return;
@@ -576,8 +847,9 @@ function setRecapStage(stepStr, status) {
     if (status === "SUCCESS") { renderStageStepper(el, recapStageLabels(), 3, true); return; }
     if (status === "SCRIPT_READY") { renderStageStepper(el, recapStageLabels(), 1, false); return; }
     const n = parseInt(String(stepStr || "0").split("/")[0], 10) || 0;
-    if (n >= 4) renderStageStepper(el, recapStageLabels(), 3, true);
+    if (n >= 4) renderStageStepper(el, recapStageLabels(), 3, false);
     else if (n === 3) renderStageStepper(el, recapStageLabels(), 2, false);
+    else if (n === 2) renderStageStepper(el, recapStageLabels(), 1, false);
     else renderStageStepper(el, recapStageLabels(), 0, false);
 }
 window.setVoiceStage = setVoiceStage;
@@ -1009,11 +1281,13 @@ function openLiveJobsSheet() {
     if (sheet) sheet.classList.remove("hidden");
     renderLiveJobsSheet();
     LiveJobs.fetchNow();
+    syncTelegramBackButton();
 }
 window.openLiveJobsSheet = openLiveJobsSheet;
 function closeLiveJobsSheet() {
     const sheet = document.getElementById("live-jobs-sheet");
     if (sheet) sheet.classList.add("hidden");
+    syncTelegramBackButton();
 }
 window.closeLiveJobsSheet = closeLiveJobsSheet;
 
@@ -1029,11 +1303,13 @@ function openIncomeDetail(period) {
     const sheet = document.getElementById("income-detail-sheet");
     if (sheet) sheet.classList.remove("hidden");
     loadIncomeDetail();
+    syncTelegramBackButton();
 }
 window.openIncomeDetail = openIncomeDetail;
 function closeIncomeDetail() {
     const sheet = document.getElementById("income-detail-sheet");
     if (sheet) sheet.classList.add("hidden");
+    syncTelegramBackButton();
 }
 window.closeIncomeDetail = closeIncomeDetail;
 function setIncomeDetailPeriod(period) {
@@ -1145,6 +1421,8 @@ function showStudioInlineStatus(kind, text) {
 }
 window.showStudioInlineStatus = showStudioInlineStatus;
 function openVoiceDetail(jobId) {
+    const voiceTab = document.getElementById("tab-voice");
+    if (voiceTab && !voiceTab.classList.contains("active")) switchTab("tab-voice");
     state.voiceDetailOpen = true;
     const box = document.getElementById("voice-progress-box");
     if (box) {
@@ -1152,9 +1430,13 @@ function openVoiceDetail(jobId) {
         box.scrollIntoView({ behavior: "smooth" });
     }
     if (jobId && !state.pollTimer) startJobPolling(jobId);
+    syncTelegramBackButton();
 }
 window.openVoiceDetail = openVoiceDetail;
 function openRecapDetail(jobId) {
+    const recapTab = document.getElementById("tab-recap");
+    if (recapTab && !recapTab.classList.contains("active")) switchTab("tab-recap");
+    if (typeof showRecapStep === "function") showRecapStep(4);
     state.recapDetailOpen = true;
     const box = document.getElementById("recap-progress-box");
     if (box) {
@@ -1162,6 +1444,7 @@ function openRecapDetail(jobId) {
         box.scrollIntoView({ behavior: "smooth" });
     }
     if (jobId && !state.recapPollTimer) startRecapJobPolling(jobId);
+    syncTelegramBackButton();
 }
 window.openRecapDetail = openRecapDetail;
 window.openCurrentVoiceDetail = function() { openVoiceDetail(state.activeJobId); };
@@ -1180,6 +1463,7 @@ window.backToStudio = function(kind) {
         const tab = document.getElementById("tab-voice");
         if (tab) tab.scrollIntoView({ behavior: "smooth" });
     }
+    if (typeof syncTelegramBackButton === "function") syncTelegramBackButton();
 };
 function showLiveSubmitLimit(kind) {
     // The server concurrency rule (1 active job per user) explained IN
@@ -1519,6 +1803,8 @@ function collectAccountPrefs() {
         recapZoom: state.recapZoom,
         recapVoice: state.recapVoice,
         recapGeminiVoice: state.recapGeminiVoice || "",
+        // Phase 4: up to 3 named Step-2 presets ("My Presets"), JSON.
+        recap_presets: serializeMyRecapPresets(),
     };
 }
 function cacheAccountPrefs(prefs) {
@@ -1583,6 +1869,11 @@ function applyAccountPrefs(prefs) {
     }
     if (state.recapOutlineWidth === -1) state.recapOutlineWidth = null;
     if (typeof prefs.recapBgOpacity !== "number") state.recapBgOpacity = null;
+    // Phase 4: My Presets ride the account prefs as a JSON string.
+    if (typeof prefs.recap_presets === "string") {
+        state.recapCustomPresets = parseMyRecapPresets(prefs.recap_presets);
+        if (typeof renderMyRecapPresets === "function") { try { renderMyRecapPresets(); } catch (e) {} }
+    }
     cacheAccountPrefs(prefs);
     // Batch AM (M8ii): the recap controls were synced at boot from
     // the LOCAL snapshot; the server prefs above may differ (another
@@ -2604,6 +2895,7 @@ function switchTab(tabId) {
     if (tabId === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
         window.maybePrefillTtsSample();
     }
+    syncTelegramBackButton();
 }
 window.switchTab = switchTab;
 
@@ -2704,6 +2996,7 @@ function setupTabs() {
                     window.adminQueueInterval = null;
                 }
             }
+            syncTelegramBackButton();
         });
     });
 }
@@ -2744,6 +3037,7 @@ async function loadUserProfile() {
         try { writeCachedUserProfile(data); } catch (e) {}
         // Admins are never entry-gate locked (see entry-gate section).
         if (data.is_admin) unlockEntryGate();
+        state.recapInsufMinutesServer = null;
         updateRecapSplitCostHint();
 
         if (data) {
@@ -3271,6 +3565,7 @@ function setupVoiceStudio() {
                 if (refLabel) refLabel.innerText = `🎵 ${file.name} (${Math.round(file.size / 1024)} KB)`;
                 if (btnClearRef) btnClearRef.classList.remove("hidden");
                 if (fileUploadBtn) fileUploadBtn.classList.add("has-file");
+                setCustomCloneStep(2, file);
                 haptic("selection");
             }
         });
@@ -3285,6 +3580,7 @@ function setupVoiceStudio() {
             pill.classList.add("active");
             state.speed = pill.getAttribute("data-speed");
             moveSpeedPill(document.getElementById("speed-selector"));
+            updateVoicePreflight();
         });
     });
 
@@ -3305,6 +3601,7 @@ function clearRefAudio() {
     if (refLabel) refLabel.innerText = t("ref_file_btn");
     if (btnClearRef) btnClearRef.classList.add("hidden");
     if (fileUploadBtn) fileUploadBtn.classList.remove("has-file");
+    setCustomCloneStep(1, null);
     haptic("light");
 }
 
@@ -3761,6 +4058,7 @@ function paintCachedUserHeader(data) {
     refreshLogoUi();
     refreshRecapQualityLock();
     refreshRecapEngineLock();
+    if (typeof renderMyRecapPresets === "function") renderMyRecapPresets();
     paintVoiceTtsBalanceLine(data);
     paintTtsTodaySurfaces(data);
 }
@@ -3866,28 +4164,44 @@ window.refreshRecapQualityLock = refreshRecapQualityLock;
 // Batch AW-3: free-tier recap narration is Gemini TTS or Edge TTS
 // only — the Persona/Clone engine (voxcpm) is purchased + admin.
 // Mirrors the Batch AU quality lock exactly: same tier source
-// (state.user), the voxcpm pill is disabled with the lock affordance
-// while a FREE profile is known, and a saved "voxcpm" preference
-// resolves to "gemini" on load for a free profile (the server clamp
-// enforces the same rule at submit + execution regardless).
+// Phase 5: FREE users CAN pick the VoxCPM Persona Engine (using the 12 Persona
+// voices when they hold enough Recap Credits AND Voice Clone Minutes).
+// Only "My Own Clone Voice" remains paid/VIP-only — checked via canUseRecapCloneEngine().
 function canUseRecapCloneEngine() {
     const u = state.user || {};
     return !!(u.is_admin || u.account_category === "PURCHASED");
 }
 function syncRecapEngineAreas() {
+    const eng = state.recapTtsEngine || "voxcpm";
     const gv = document.getElementById("recap-gemini-voice-wrap");
-    if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
+    if (gv) gv.classList.toggle("hidden", eng !== "gemini");
     const pa = document.getElementById("recap-persona-area");
-    if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
+    if (pa) pa.classList.toggle("hidden", eng === "gemini");
     // Batch BV: the own-voice card exists only on the clone engine —
     // on Gemini/Edge an uploaded sample could never narrate, so the
     // card (and its selection) does not apply there.
     const ow = document.getElementById("recap-own-voice-wrap");
-    if (ow) ow.classList.toggle("hidden", state.recapTtsEngine !== "voxcpm");
+    if (ow) ow.classList.toggle("hidden", eng !== "voxcpm");
     // Batch BX: on the Edge engine the persona grid is a base-voice
     // picker, not a clone — say so honestly above the grid.
     const note = document.getElementById("recap-persona-engine-note");
-    if (note) note.classList.toggle("hidden", state.recapTtsEngine !== "edge");
+    if (note) note.classList.toggle("hidden", eng !== "edge");
+    const billingHint = document.getElementById("recap-engine-billing-hint");
+    if (billingHint) {
+        const hintKey = eng === "edge"
+            ? "recap_engine_hint_edge"
+            : (eng === "gemini" ? "recap_engine_hint_gemini" : "recap_engine_hint_voxcpm");
+        billingHint.setAttribute("data-i18n", hintKey);
+        billingHint.textContent = t(hintKey);
+    }
+    const vBadge = document.getElementById("recap-voice-billing-badge");
+    if (vBadge) {
+        const isCreditOnly = eng !== "voxcpm";
+        const badgeKey = isCreditOnly ? "recap_badge_credit_only" : "recap_badge_credit_plus_min";
+        vBadge.setAttribute("data-i18n", badgeKey);
+        vBadge.textContent = t(badgeKey);
+        vBadge.classList.toggle("is-credit-only", isCreditOnly);
+    }
 }
 function refreshRecapEngineLock() {
     const u = state.user;
@@ -3895,25 +4209,20 @@ function refreshRecapEngineLock() {
         u && (u.is_admin !== undefined || typeof u.account_category === "string")
     );
     const canUse = canUseRecapCloneEngine();
-    if (tierKnown && !canUse && state.recapTtsEngine === "voxcpm") {
-        state.recapTtsEngine = "gemini";
-    }
+    // Phase 5: VoxCPM Persona engine is unlocked for ALL tiers (FREE + VIP + Admin).
     document.querySelectorAll("#recap-engine-picker .pill-btn").forEach(btn => {
         const engine = btn.getAttribute("data-engine");
         if (engine === "voxcpm") {
-            const locked = tierKnown && !canUse;
-            btn.disabled = locked;
-            btn.classList.toggle("engine-locked", locked);
-            btn.setAttribute("aria-disabled", locked ? "true" : "false");
+            btn.disabled = false;
+            btn.classList.remove("engine-locked");
+            btn.setAttribute("aria-disabled", "false");
         }
         btn.classList.toggle("active", engine === state.recapTtsEngine);
     });
     moveSegPill(document.getElementById("recap-engine-picker"));
     syncRecapEngineAreas();
-    // Batch BV: the own-voice card inherits the same lock — clone
-    // narration is purchased + admin, so a FREE profile sees the
-    // card locked (badge + hint, clicks inert), exactly like the
-    // voxcpm pill above. The server clamp enforces the same rule.
+    // Batch BV / Phase 5: Own Clone Voice remains VIP + Admin only, so
+    // a FREE profile still sees #recap-own-voice-card locked with upsell.
     const owCard = document.getElementById("recap-own-voice-card");
     if (owCard) {
         const owLocked = tierKnown && !canUse;
@@ -3923,6 +4232,11 @@ function refreshRecapEngineLock() {
         if (badge) badge.classList.toggle("hidden", !owLocked);
         const hint = document.getElementById("recap-own-voice-locked-hint");
         if (hint) hint.classList.toggle("hidden", !owLocked);
+        const vipBtn = document.getElementById("btn-recap-own-voice-vip");
+        if (vipBtn) vipBtn.classList.toggle("hidden", !owLocked);
+        if (owLocked && state.recapOwnVoiceSelected && typeof deselectRecapOwnVoice === "function") {
+            deselectRecapOwnVoice();
+        }
     }
 }
 window.refreshRecapEngineLock = refreshRecapEngineLock;
@@ -4182,6 +4496,7 @@ function updateVoicePreflight() {
     else if (!u.is_admin && (u.balance_minutes ?? 0) <= 0) line += t("preflight_balance_empty");
     box.innerText = line;
     box.classList.toggle("preflight-warn", len > max || (!u.is_admin && (u.balance_minutes ?? 0) <= 0));
+    syncVoiceExcessAndCost(len, max);
 }
 
 // ── Submit Voice Job & Live Polling ─────────────────────────────────────────
@@ -4243,6 +4558,7 @@ async function handleVoiceGenerate() {
         const targetModelSlug = "voxcpm-cloud-ai";
 
         if (state.selectedReferenceFile) {
+            setCustomCloneStep(3);
             const formData = new FormData();
             formData.append("text", text);
             formData.append("model_slug", targetModelSlug);
@@ -4402,6 +4718,11 @@ function startJobPolling(jobId) {
                     // it by choice and the studio stays where it was.
                 }
                 if (btnGen) btnGen.disabled = false;
+                if (state.selectedReferenceFile) {
+                    setCustomCloneStep(4);
+                    const saveBtn = document.getElementById("btn-save-custom-voice-from-result");
+                    if (saveBtn) saveBtn.classList.remove("hidden");
+                }
 
                 const btnTg = document.getElementById("btn-voice-send-telegram");
                 if (btnTg) {
@@ -4438,6 +4759,7 @@ function startJobPolling(jobId) {
                 showStudioToast(mapErrorToToast(data.error_message, 'voice'), 'error');
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
+                if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
             } else if (data.status === "CANCELLED") {
                 // Final-audit batch M: cancelled on another surface
                 // (admin console) — stop instead of polling to the
@@ -4445,6 +4767,7 @@ function startJobPolling(jobId) {
                 clearInterval(state.pollTimer);
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
+                if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
                 showStudioToast(t("voice_cancelled_toast"), 'info', 5000);
                 loadUserProfile();
                 loadUserHistory();
@@ -4738,6 +5061,9 @@ function setRecapPreviewState(mode) {
     if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
     if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
     if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
+    if ((ready || recapHasSource()) && typeof applyActiveRecapStep2Category === "function") {
+        applyActiveRecapStep2Category();
+    }
     // Batch BB-2: the speed capsule lives inside speedGroup — when it
     // unhides, the sliding pill measures against real layout.
     if (ready) requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
@@ -4857,11 +5183,13 @@ function showRecapStep(n) {
     // The refresh is cache-keyed + sequence-guarded, so this extra
     // call is a no-op when the shape has not changed.
     if (n === 4) { refreshRecapStep4Output(); refreshRecapStep4Eta(); }
+    if (n === 4) { updateRecapSplitCostHint(); }
     // Batch BB-2: the incoming step card may hold the speed capsule —
     // re-measure its pill now that the card has layout.
     requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     const nav = document.getElementById("recap-steps-nav");
     if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
+    syncTelegramBackButton();
 }
 window.showRecapStep = showRecapStep;
 
@@ -4924,9 +5252,134 @@ function refreshRecapStep4Choices() {
 }
 window.refreshRecapStep4Choices = refreshRecapStep4Choices;
 
+function getRecapAvailVoiceSeconds() {
+    const u = state.user;
+    if (!u) return 0;
+    if (u.is_admin) return Infinity;
+    if (typeof u.balance_seconds === "number") return Math.max(0, u.balance_seconds);
+    return Math.max(0, Math.round((Number(u.balance_minutes) || 0) * 60));
+}
+
+function getRecapEstVoiceSeconds() {
+    const u = state.user;
+    if (u && u.is_admin) return 0;
+    const eng = state.recapTtsEngine || "voxcpm";
+    if (eng !== "voxcpm") return 0;
+    const dur = Number(state.recapSourceDuration || 0);
+    if (!(dur > 0)) return 60;
+    const toggle = document.getElementById("recap-split-toggle");
+    const segmented = !!(toggle && toggle.checked && u && u.is_vip);
+    const maxAllowed = recapNormalMaxSeconds();
+    const eff = segmented ? dur : Math.min(dur, maxAllowed || dur);
+    return Math.max(1, Math.ceil(eff * 1.0));
+}
+
+function paintRecapDualQuote(creditsCost) {
+    const u = state.user;
+    const isAdmin = !!(u && u.is_admin);
+    const eng = state.recapTtsEngine || "voxcpm";
+    const cost = Math.max(1, parseInt(creditsCost, 10) || 1);
+
+    const creditMathEl = document.getElementById("recap-step4-credit-math");
+    const surchargeTag = document.getElementById("recap-quality-max-surcharge-tag");
+    if (surchargeTag) surchargeTag.classList.toggle("hidden", isAdmin);
+    if (creditMathEl) {
+        if (isAdmin) {
+            creditMathEl.textContent = t("recap_step4_credit_admin");
+            creditMathEl.classList.remove("hidden");
+        } else if (u && typeof u.recap_credits === "number") {
+            const before = u.recap_credits;
+            const after = Math.max(0, before - cost);
+            creditMathEl.textContent = tf("recap_step4_credit_math", { before, cost, after });
+            creditMathEl.style.color = before < cost ? "#f87171" : "";
+            creditMathEl.classList.remove("hidden");
+        } else {
+            creditMathEl.classList.add("hidden");
+        }
+    }
+
+    const voicePanel = document.getElementById("recap-step4-voice-panel");
+    const creditOnlyEl = document.getElementById("recap-step4-voice-credit-only");
+    const voiceEstEl = document.getElementById("recap-step4-voice-est");
+    const voiceMathEl = document.getElementById("recap-step4-voice-math");
+    const insufBox = document.getElementById("recap-insufficient-minutes-box");
+    const insufDesc = document.getElementById("recap-insuf-min-desc");
+
+    if (isAdmin) {
+        if (voicePanel) voicePanel.classList.add("hidden");
+        if (creditOnlyEl) creditOnlyEl.classList.add("hidden");
+        if (insufBox) insufBox.classList.add("hidden");
+        return;
+    }
+
+    const availSec = getRecapAvailVoiceSeconds();
+    const estSec = getRecapEstVoiceSeconds();
+    const hasBalKnown = !!(u && (typeof u.balance_seconds === "number" || typeof u.balance_minutes === "number"));
+
+    if (eng === "voxcpm") {
+        if (creditOnlyEl) creditOnlyEl.classList.add("hidden");
+        if (voicePanel) voicePanel.classList.remove("hidden");
+        const estMin = Math.max(0.1, Math.round((estSec / 60) * 10) / 10);
+        if (voiceEstEl) voiceEstEl.textContent = tf("recap_step4_voice_value", { min: estMin });
+        if (voiceMathEl) {
+            if (hasBalKnown) {
+                const beforeMin = Math.round((availSec / 60) * 10) / 10;
+                const afterMin = Math.max(0, Math.round(((availSec - estSec) / 60) * 10) / 10);
+                voiceMathEl.textContent = tf("recap_step4_voice_math", {
+                    before: beforeMin,
+                    est: estMin,
+                    after: afterMin,
+                });
+                voiceMathEl.style.color = availSec < estSec ? "#f87171" : "";
+                voiceMathEl.classList.remove("hidden");
+            } else {
+                voiceMathEl.classList.add("hidden");
+            }
+        }
+        const srv = state.recapInsufMinutesServer;
+        const showInsuf = !!(srv || (hasBalKnown && availSec < estSec));
+        if (insufBox) {
+            insufBox.classList.toggle("hidden", !showInsuf);
+            if (showInsuf && insufDesc) {
+                const reqSec = srv ? srv.required_seconds : estSec;
+                const avSec = srv ? srv.available_seconds : availSec;
+                insufDesc.textContent = tf("recap_insuf_min_desc", {
+                    req: Math.max(0.1, Math.round((reqSec / 60) * 10) / 10),
+                    avail: Math.max(0, Math.round((avSec / 60) * 10) / 10),
+                });
+            }
+        }
+    } else {
+        if (voicePanel) voicePanel.classList.add("hidden");
+        if (insufBox) insufBox.classList.add("hidden");
+        if (creditOnlyEl) {
+            const engLabel = eng === "edge" ? "Edge TTS" : "Gemini AI";
+            creditOnlyEl.textContent = tf("recap_step4_voice_credit_only_badge", { engine: engLabel });
+            creditOnlyEl.classList.remove("hidden");
+        }
+    }
+}
+
+window.switchRecapTtsEngine = function(engine) {
+    const next = engine || "voxcpm";
+    state.recapTtsEngine = next;
+    state.recapInsufMinutesServer = null;
+    document.querySelectorAll("#recap-engine-picker .pill-btn").forEach(b => {
+        b.classList.toggle("active", b.getAttribute("data-engine") === next);
+    });
+    moveSegPills();
+    syncRecapEngineAreas();
+    refreshRecapStep4Choices();
+    updateRecapSplitCostHint();
+    const engLabel = next === "edge" ? "Edge TTS" : (next === "gemini" ? "Gemini AI" : "Persona Voice");
+    showStudioToast(tf("recap_fallback_switched_toast", { engine: engLabel }), "success");
+};
+
 function setRecapStep4Quote(credits, breakdownText) {
+    const cost = Math.max(1, parseInt(credits, 10) || 1);
+    state._lastStep4QuoteCredits = cost;
     const el = document.getElementById("recap-step4-quote-credits");
-    if (el) el.textContent = String(Math.max(1, parseInt(credits, 10) || 1));
+    if (el) el.textContent = String(cost);
     // Batch BE: the optional breakdown line under the Step-4 total
     // (band + Max surcharge) — shown only when a breakdown applies.
     const bd = document.getElementById("recap-step4-quote-breakdown");
@@ -4934,6 +5387,8 @@ function setRecapStep4Quote(credits, breakdownText) {
         bd.textContent = breakdownText || "";
         bd.classList.toggle("hidden", !breakdownText);
     }
+    paintRecapDualQuote(cost);
+    syncRecapEngineAreas();
     refreshRecapStep4Choices();
 }
 window.setRecapStep4Quote = setRecapStep4Quote;
@@ -7447,10 +7902,47 @@ function setupRecapVisualEditor() {
     // setRecapSourceLanguage; the sync paints the one control, so a
     // saved value (any of the 18) displays correctly on load.
     const langSel = document.getElementById("recap-lang-more");
+    function renderRecapLangSheetGrid() {
+        const grid = document.getElementById("recap-lang-sheet-grid");
+        if (!grid || !langSel) return;
+        const activeCode = state.recapSourceLanguage || "auto";
+        grid.innerHTML = "";
+        Array.from(langSel.options).forEach(opt => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "vcp-lang-chip" + (opt.value === activeCode ? " active" : "");
+            btn.textContent = opt.textContent || opt.value;
+            btn.addEventListener("click", () => {
+                haptic("selection");
+                setRecapSourceLanguage(opt.value);
+                closeRecapLangSheet();
+            });
+            grid.appendChild(btn);
+        });
+    }
+    window.openRecapLangSheet = function() {
+        renderRecapLangSheetGrid();
+        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+        if (backdrop) backdrop.classList.remove("hidden");
+    };
+    window.closeRecapLangSheet = function() {
+        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+        if (backdrop) backdrop.classList.add("hidden");
+    };
+    document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape") {
+            const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+            if (backdrop && !backdrop.classList.contains("hidden")) window.closeRecapLangSheet();
+        }
+    });
     function syncRecapLangViews() {
         if (langSel) {
             const has = Array.from(langSel.options).some(o => o.value === state.recapSourceLanguage);
             langSel.value = has ? state.recapSourceLanguage : "auto";
+        }
+        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
+        if (backdrop && !backdrop.classList.contains("hidden")) {
+            renderRecapLangSheetGrid();
         }
     }
     window.syncRecapLangViews = syncRecapLangViews;
@@ -7499,10 +7991,9 @@ function setupRecapVisualEditor() {
             btn.classList.add("active");
             moveSegPill(document.getElementById("recap-engine-picker"));
             state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
+            state.recapInsufMinutesServer = null;
             syncRecapEngineAreas();
-            // Batch CB: the engine is an ETA shape input — refresh
-            // the Step-4 range for the new engine.
-            refreshRecapStep4Eta();
+            updateRecapSplitCostHint();
         });
     });
     refreshRecapEngineLock();
@@ -7640,6 +8131,9 @@ function setupRecapVisualEditor() {
             // Batch DD: a preset SEEDS the free controls (the user
             // can still tweak them afterwards).
             if (typeof ddSeedStyleControls === "function") ddSeedStyleControls(state.recapSubStyle);
+            // Phase 4: keep the 10 visual sample cards in step with
+            // the dropdown (both write the SAME state.recapSubStyle).
+            if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
             // Batch AK: the style renders in the composited frame —
             // refresh it; the drag handle keeps a neutral outline
             // (no per-style CSS classes to keep in sync any more).
@@ -8255,13 +8749,25 @@ function setupRecapVisualEditor() {
             clearRecapInfoCard();
 
             try {
-                const res = await fetchWithTimeout("/api/downloader/extract", {
-                    method: "POST",
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ url: url }),
-                }, 60000);
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || "Analysis failed");
+                // Phase 4: a Downloader "Use in Recap" hand-off carries
+                // the SAME /api/downloader/extract payload the Downloader
+                // already verified for this exact URL — reuse it instead
+                // of re-probing (no re-upload, no second extract). Every
+                // paint / gate / composite step below runs unchanged.
+                let data = null;
+                const handoff = state.recapExtractHandoff;
+                state.recapExtractHandoff = null;
+                if (handoff && handoff.data && (handoff.url === url || handoff.data.url === url)) {
+                    data = handoff.data;
+                } else {
+                    const res = await fetchWithTimeout("/api/downloader/extract", {
+                        method: "POST",
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({ url: url }),
+                    }, 60000);
+                    data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || "Analysis failed");
+                }
 
                 if (recapInfoBox) recapInfoBox.classList.remove("hidden");
                 const thumbImg = document.getElementById("recap-info-thumb");
@@ -8585,6 +9091,10 @@ function setupRecapVisualEditor() {
     function saveRecapSettings() {
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snapshotRecapSettings())); } catch (e) {}
     }
+    // Phase 4: My Presets read the live settings slice through the
+    // SAME snapshot the persistence path writes (no forked key list).
+    window.__snapshotRecapSettings = snapshotRecapSettings;
+    window.__saveRecapSettingsNow = saveRecapSettings;
     let recapSaveTimer = null;
     function saveRecapSettingsSoon() {
         if (recapSaveTimer) clearTimeout(recapSaveTimer);
@@ -8741,6 +9251,7 @@ function setupRecapVisualEditor() {
         // its value directly (same state field as before).
         const subStyleSel = document.getElementById("sub-style-picker");
         if (subStyleSel) subStyleSel.value = state.recapSubStyle;
+        if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
         // Batch AK: the handle's classes are fixed (the style lives
         // in the composited frame, not in CSS classes).
         if (previewSub) previewSub.className = "preview-sub-box draggable-box";
@@ -8782,6 +9293,7 @@ function setupRecapVisualEditor() {
         syncBlurBoxVisual();
         syncSubBoxVisual();
         if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
+        if (typeof syncRecapMasterPresetActive === "function") syncRecapMasterPresetActive();
     }
 
     const recapTabEl = document.getElementById("tab-recap");
@@ -9168,8 +9680,26 @@ async function handleStartRecap() {
         });
 
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Recap creation failed");
+        if (!res.ok) {
+            if (res.status === 403 && data && data.code === "INSUFFICIENT_VOICE_MINUTES") {
+                state.recapInsufMinutesServer = {
+                    required_seconds: Number(data.required_seconds) || 60,
+                    available_seconds: Number(data.available_seconds) || 0,
+                };
+                paintRecapDualQuote(state._lastStep4QuoteCredits || 1);
+                studioSubmitFailure("recap");
+                if (progressBox) progressBox.classList.add("hidden");
+                if (btn) btn.disabled = false;
+                updateRecapDurationGate();
+                showStudioToast(data.detail || t("recap_insuf_min_title"), "error", 6500);
+                const insufEl = document.getElementById("recap-insufficient-minutes-box");
+                if (insufEl) insufEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                return;
+            }
+            throw new Error(data.detail || "Recap creation failed");
+        }
 
+        state.recapInsufMinutesServer = null;
         state.recapJobId = data.recap_id;
         try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
         loadUserProfile();
@@ -9185,13 +9715,17 @@ async function handleStartRecap() {
         // credits_total (the band total the job will be charged) is
         // the quoted cost. The key is absent in the legacy world,
         // where the chain below is exactly the historical one.
-        const confirmCostText = data.credits_total
+        let confirmCostText = data.credits_total
             ? tf("confirm_cost_recap", { credits: data.credits_total })
             : ((data.estimated_parts && data.estimated_parts > 1)
                 ? tf("confirm_cost_recap_segmented", { parts: data.estimated_parts })
                 : (data.credits_charged
                     ? tf("confirm_cost_recap", { credits: data.credits_charged })
                     : t("confirm_cost_none")));
+        if (data.billing_mode === "credit_plus_voice_minutes" && Number(data.voice_seconds_held || 0) > 0) {
+            const heldMin = Math.max(0.1, Math.round((Number(data.voice_seconds_held) / 60) * 10) / 10);
+            confirmCostText = tf("recap_confirm_voice_hold", { credit_text: confirmCostText, min: heldMin });
+        }
         // Batch CI: an accepted submit retires any stored duration
         // rejection note from an earlier attempt on this source.
         recapSubmitRejectText = "";
@@ -9613,6 +10147,28 @@ function startRecapJobPolling(jobId) {
                             costEl.classList.add("hidden");
                         }
                     }
+                    const vsEl = document.getElementById("recap-voice-settlement-line");
+                    if (vsEl) {
+                        const held = Number(data.voice_seconds_held || 0);
+                        const settled = data.voice_seconds_settled;
+                        const refSec = Number(data.voice_seconds_refunded || 0);
+                        if (data.billing_mode === "credit_plus_voice_minutes" && typeof settled === "number") {
+                            const sMin = (settled / 60).toFixed(1);
+                            if (held > 0 && refSec > 0) {
+                                vsEl.textContent = tf("recap_voice_settlement_used_line", {
+                                    settled: sMin,
+                                    held: (held / 60).toFixed(1),
+                                    refunded: (refSec / 60).toFixed(1),
+                                });
+                            } else {
+                                vsEl.textContent = tf("recap_voice_settlement_exact_line", { settled: sMin });
+                            }
+                            vsEl.classList.remove("hidden");
+                        } else {
+                            vsEl.textContent = "";
+                            vsEl.classList.add("hidden");
+                        }
+                    }
                 }
 
                 haptic("success");
@@ -9643,6 +10199,13 @@ function startRecapJobPolling(jobId) {
                 if (data.credit_refunded) {
                     failToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
                 }
+                const failVoiceRefSec = Number(data.voice_seconds_refunded || 0);
+                if (data.voice_refunded && failVoiceRefSec > 0) {
+                    failToast += " " + tf("recap_failed_voice_refund_badge", {
+                        min: (failVoiceRefSec / 60).toFixed(1),
+                        sec: failVoiceRefSec,
+                    });
+                }
                 showStudioToast(failToast, 'error', 6000);
                 // Batch L: the failed card is the retry surface —
                 // the same curated error text as the toast (mapped,
@@ -9665,6 +10228,18 @@ function startRecapJobPolling(jobId) {
                             frefEl.classList.remove("hidden");
                         } else {
                             frefEl.classList.add("hidden");
+                        }
+                    }
+                    const fvRefEl = document.getElementById("recap-failed-voice-refund");
+                    if (fvRefEl) {
+                        if (data.voice_refunded && failVoiceRefSec > 0) {
+                            fvRefEl.innerText = tf("recap_failed_voice_refund_badge", {
+                                min: (failVoiceRefSec / 60).toFixed(1),
+                                sec: failVoiceRefSec,
+                            });
+                            fvRefEl.classList.remove("hidden");
+                        } else {
+                            fvRefEl.classList.add("hidden");
                         }
                     }
                     const retryBtn = document.getElementById("btn-recap-retry");
@@ -9703,6 +10278,10 @@ function startRecapJobPolling(jobId) {
                 let cancelToast = t("recap_cancelled_toast");
                 if (data.credit_refunded) {
                     cancelToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
+                }
+                if (data.voice_refunded && Number(data.voice_seconds_refunded || 0) > 0) {
+                    const vSec = Number(data.voice_seconds_refunded);
+                    cancelToast += " " + tf("recap_failed_voice_refund_badge", { min: (vSec / 60).toFixed(1), sec: vSec });
                 }
                 showStudioToast(cancelToast, 'info', 5000);
                 loadUserProfile();
@@ -9748,6 +10327,10 @@ async function cancelRecapJobById(jobId) {
             if (data.credit_refunded) {
                 msg += " " + tf("recap_refunded_line", { credits: data.credits_refunded || 1 });
             }
+            if (data.voice_refunded && Number(data.voice_seconds_refunded || 0) > 0) {
+                const vSec = Number(data.voice_seconds_refunded);
+                msg += " " + tf("recap_failed_voice_refund_badge", { min: (vSec / 60).toFixed(1), sec: vSec });
+            }
             showStudioToast(msg, 'info', 5000);
             loadUserProfile();
             loadUserHistory();
@@ -9771,13 +10354,14 @@ async function retryRecapJobById(jobId) {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || t("err_generic"));
+            switchTab("tab-recap");
+            if (typeof showRecapStep === "function") showRecapStep(4);
             const failedBox = document.getElementById("recap-failed-box");
             if (failedBox) failedBox.classList.add("hidden");
             state.recapJobId = data.recap_id;
             try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
             showStudioToast(t("recap_retry_started_toast"), 'success');
             loadUserProfile();
-            switchTab("tab-recap");
             startRecapJobPolling(data.recap_id);
         } catch (err) {
             showStudioToast((err && err.message) ? err.message : t("err_recap_failed"), 'error');
@@ -9820,6 +10404,11 @@ window.watchRecapDemo = async function() {
 
 // ── Recap Script Review / Edit (two-phase flow) ─────────────────────────
 async function openRecapScriptEditor(jobId) {
+    if (typeof switchTab === "function") {
+        const recapTab = document.getElementById("tab-recap");
+        if (!recapTab || !recapTab.classList.contains("active")) switchTab("tab-recap");
+    }
+    if (typeof showRecapStep === "function") showRecapStep(4);
     const box = document.getElementById("recap-script-box");
     const list = document.getElementById("recap-script-list");
     if (!box || !list) return;
@@ -9922,11 +10511,16 @@ let dlCurrent = null; // { url, has_subtitles } from the last extract
 function dlShowExtractError() {
     const box = document.getElementById("dl-error-box");
     if (box) box.classList.remove("hidden");
+    if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "error");
 }
 
 function dlHideExtractError() {
     const box = document.getElementById("dl-error-box");
     if (box) box.classList.add("hidden");
+    const stage = document.getElementById("dl-extract-stage");
+    if (stage && stage.getAttribute("data-ui-state") === "error" && typeof setSectionState === "function") {
+        setSectionState(stage, "empty");
+    }
 }
 
 // Journey audit 2026-11-02: the result card outlived its link —
@@ -9939,6 +10533,7 @@ function dlClearResult() {
     const actions = document.getElementById("dl-delivery-actions");
     if (actions) actions.innerHTML = "";
     dlCurrent = null;
+    if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "empty");
 }
 
 function dlSetSrtCardState(hasSubtitles) {
@@ -10103,6 +10698,7 @@ function setupDownloader() {
             btnDl.disabled = true;
             dlHideExtractError();
             dlClearResult();
+            if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "loading");
             const dlBtnSpan = btnDl.querySelector("span");
             const dlBtnOriginal = dlBtnSpan ? dlBtnSpan.innerText : "";
             if (dlBtnSpan) dlBtnSpan.innerText = t("recap_preview_loading");
@@ -10113,7 +10709,7 @@ function setupDownloader() {
                     body: JSON.stringify({ url: url }),
                 }, 60000);
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || "Extraction failed");
+                if (!res.ok) throw new Error(data.detail || t("dl_extract_failed_title"));
 
                 // Honesty gate (journey audit 2026-11-02): an
                 // unverified payload — or one with NO real formats —
@@ -10135,9 +10731,9 @@ function setupDownloader() {
                 const dlUploader = document.getElementById("dl-result-uploader");
                 const dlDuration = document.getElementById("dl-result-duration");
 
-                if (dlTitle) dlTitle.innerText = data.title || "Video Content";
+                if (dlTitle) dlTitle.innerText = data.title || t("dl_fallback_title");
                 if (dlPlatform) dlPlatform.innerText = data.platform || "";
-                if (dlUploader) dlUploader.innerText = data.uploader || "Creator";
+                if (dlUploader) dlUploader.innerText = data.uploader || t("dl_fallback_uploader");
                 if (dlDuration) {
                     if (data.metadata_verified === false) {
                         // Same honesty treatment as the Recap card
@@ -10152,17 +10748,19 @@ function setupDownloader() {
                 }
                 setCardThumb(dlThumb, data.thumbnail || null);
 
-                dlCurrent = { url: data.url || url, has_subtitles: data.has_subtitles };
+                dlCurrent = { url: data.url || url, has_subtitles: data.has_subtitles, extractData: data };
                 dlSetSrtCardState(data.has_subtitles);
                 const dlActions = document.getElementById("dl-delivery-actions");
                 if (dlActions) dlActions.innerHTML = "";
 
+                if (typeof setSectionState === "function") setSectionState("dl-extract-stage", "ready");
                 resultCard.classList.remove("hidden");
                 dlHideExtractError();
             } catch (err) {
                 // Includes the client-side timeout (fetchWithTimeout
                 // abort): the extract did not complete — say so, and
                 // keep saying it after the toast fades (P1).
+                dlClearResult();
                 dlShowExtractError();
                 showErrorToast(err, 'download');
             } finally {
@@ -10193,21 +10791,34 @@ function setupDownloader() {
                 if (!url) return;
 
                 haptic("success");
+                const handoffUrl = (dlCurrent && dlCurrent.url) || url;
+                if (dlCurrent && dlCurrent.extractData) {
+                    state.recapExtractHandoff = { url: handoffUrl, data: dlCurrent.extractData };
+                    if (typeof showStudioToast === "function" && typeof t === "function") {
+                        showStudioToast(t("dl_use_in_recap_ready_toast"), "success");
+                    }
+                } else {
+                    state.recapExtractHandoff = null;
+                }
+
                 // 1. Switch to tab-recap
                 const tabRecapBtn = document.querySelector('[data-tab="tab-recap"]');
                 if (tabRecapBtn) tabRecapBtn.click();
 
-                // 2. Set recap URL and trigger inspection
+                // 2. Set recap URL and apply hand-off immediately without re-upload/re-probe
                 const recapInput = document.getElementById("recap-url-input");
                 if (recapInput) {
-                    recapInput.value = url;
-                    // Trigger mode URL if currently on File mode
+                    recapInput.value = handoffUrl;
                     const btnModeUrl = document.getElementById("btn-source-mode-url");
                     if (btnModeUrl) btnModeUrl.click();
 
                     const btnExtract = document.getElementById("btn-fetch-recap-info");
                     if (btnExtract) {
-                        setTimeout(() => btnExtract.click(), 300);
+                        if (state.recapExtractHandoff) {
+                            btnExtract.click();
+                        } else {
+                            setTimeout(() => btnExtract.click(), 300);
+                        }
                     }
                 }
             });
@@ -10280,6 +10891,7 @@ async function openPaymentDrawer(packageCode, amount, title) {
         drawer.classList.remove("hidden");
         drawer.scrollIntoView({ behavior: "smooth" });
     }
+    syncTelegramBackButton();
 
     // Dynamic sync of payment account numbers from API
     try {
@@ -10304,12 +10916,12 @@ async function openPaymentDrawer(packageCode, amount, title) {
                     const elNum = document.getElementById("kpay-num");
                     const elName = document.getElementById("kpay-name");
                     if (elNum) elNum.innerText = acc.number;
-                    if (elName) elName.innerText = `Account Name: ${acc.name}`;
+                    if (elName) elName.innerText = `${t("pay_account_name_prefix")} ${acc.name}`;
                 } else if (prov.includes("wave")) {
                     const elNum = document.getElementById("wave-num");
                     const elName = document.getElementById("wave-name");
                     if (elNum) elNum.innerText = acc.number;
-                    if (elName) elName.innerText = `Account Name: ${acc.name}`;
+                    if (elName) elName.innerText = `${t("pay_account_name_prefix")} ${acc.name}`;
                 }
             });
         }
@@ -10321,6 +10933,7 @@ async function openPaymentDrawer(packageCode, amount, title) {
 function closePaymentDrawer() {
     const drawer = document.getElementById("payment-box");
     if (drawer) drawer.classList.add("hidden");
+    syncTelegramBackButton();
 }
 
 function copyAccount(accNum) {
@@ -10446,6 +11059,7 @@ function paintTtsTodaySurfaces(data) {
     if (voiceVal) voiceVal.innerText = data.is_admin ? "∞" : tf("home_free_value_min", { min: data.balance_minutes });
     const recapVal = document.getElementById("home-free-recap-value");
     if (recapVal) recapVal.innerText = data.is_admin ? "∞" : tf("home_free_value_credits", { count: data.recap_credits || 0 });
+    paintHomeStatusStrip(data);
 }
 
 // The same two surfaces refreshed from a /api/tts/quota response —
@@ -10472,6 +11086,7 @@ function paintTtsChipFromQuota(q) {
             note.classList.add("hidden");
         }
     }
+    paintHomeStatusStripFromQuota(q);
 }
 
 function paintVoiceTtsBalanceLine(profile) {
@@ -10673,6 +11288,7 @@ function updateTtsCharCount() {
         const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
         counter.textContent = `${len} / ${max} ${t("char_counter_unit")}`;
         counter.style.color = len > max ? "#ef4444" : "var(--text-muted)";
+        syncTtsExcessAndCost(len, max);
     }
 }
 function insertTtsSampleText(txt) {
@@ -10697,6 +11313,10 @@ let _cgQuotaCache = null;
 function paintTtsGeminiKeyState(q) {
     const stateEl = document.getElementById("tts-key-state");
     const delBtn = document.getElementById("btn-tts-key-delete");
+    const activeBadge = document.getElementById("tts-key-active-badge");
+    if (activeBadge) {
+        activeBadge.classList.toggle("hidden", !(q && q.has_own_key && q.own_key_state !== "invalid"));
+    }
     if (!stateEl) return;
     if (q && q.has_own_key) {
         stateEl.removeAttribute("data-i18n");
@@ -10796,6 +11416,7 @@ async function _cgTasteBlocked() {
 function _cgPromptAddKey() {
     const modal = document.getElementById("tts-key-prompt-modal");
     if (modal) modal.classList.add("hidden");
+    toggleTtsByokAdvanced(true);
     const card = document.getElementById("tts-gemini-key-card");
     if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
     const input = document.getElementById("tts-key-input");
@@ -10869,6 +11490,11 @@ function initTtsTab() {
                 b => b.classList.toggle("active", b === btn)
             );
             moveSpeedPill(document.getElementById("tts-speed-picker"));
+            const inp = document.getElementById("tts-text-input");
+            if (inp) {
+                const maxC = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+                syncTtsExcessAndCost((inp.value || "").length, maxC);
+            }
         });
     });
     const input = document.getElementById("tts-text-input");
@@ -12066,10 +12692,13 @@ function renderAdminUserDetail(u) {
     }
     const meta = document.getElementById("adm-detail-meta");
     if (meta) {
+        const activeJobs = Number(u.jobs_active || 0);
         meta.innerHTML = `
             <span class="mini-tag">${u.account_category === "PURCHASED" ? "👑 VIP" : "FREE"}</span>
             <span class="mini-tag">${t("admin_joined")}: ${admFmtDate(u.created_at)}</span>
-            ${u.language_code ? `<span class="mini-tag">${escapeHtml(u.language_code.toUpperCase())}</span>` : ""}`;
+            ${u.language_code ? `<span class="mini-tag">${escapeHtml(u.language_code.toUpperCase())}</span>` : ""}
+            ${u.is_test_account ? `<span class="mini-tag">${t("admin_badge_test_acct")}</span>` : ""}
+            ${activeJobs > 0 ? `<span class="mini-tag">${t("admin_badge_active_jobs")}: ${activeJobs}</span>` : ""}`;
     }
     const mins = Math.floor((u.balance_seconds || 0) / 60);
     const secs = (u.balance_seconds || 0) % 60;
@@ -13224,6 +13853,12 @@ async function loadAdminSettings() {
         const elDailyJobLimit = document.getElementById("adm-set-daily-job-limit");
         const elRecapFreeMax = document.getElementById("adm-set-recap-free-max");
         const elRecapMax = document.getElementById("adm-set-recap-max");
+        const elVoiceDailyFree = document.getElementById("adm-set-voice-daily-free");
+        const elVoiceDailyPaid = document.getElementById("adm-set-voice-daily-paid");
+        const elTtsDailyFree = document.getElementById("adm-set-tts-daily-free");
+        const elTtsDailyPaid = document.getElementById("adm-set-tts-daily-paid");
+        const elVoxcpmTimeout = document.getElementById("adm-set-voxcpm-timeout");
+        const elTutVideoEn = document.getElementById("adm-set-tutorial-video-enabled");
         const elTieredPricing = document.getElementById("adm-set-tiered-pricing");
         const elReqChannelId = document.getElementById("adm-set-required-channel-id");
         const elReqGroupId = document.getElementById("adm-set-required-group-id");
@@ -13275,6 +13910,12 @@ async function loadAdminSettings() {
         if (s.free_gemini_daily_budget_requests != null) _admPaintValue(elFreeGeminiBudget, s.free_gemini_daily_budget_requests);
         if (s.recap_free_max_duration_seconds != null) _admPaintValue(elRecapFreeMax, s.recap_free_max_duration_seconds);
         if (s.recap_max_duration_seconds != null) _admPaintValue(elRecapMax, s.recap_max_duration_seconds);
+        if (s.voice_daily_limit_minutes_free != null) _admPaintValue(elVoiceDailyFree, s.voice_daily_limit_minutes_free);
+        if (s.voice_daily_limit_minutes_paid != null) _admPaintValue(elVoiceDailyPaid, s.voice_daily_limit_minutes_paid);
+        if (s.tts_daily_limit_minutes_free != null) _admPaintValue(elTtsDailyFree, s.tts_daily_limit_minutes_free);
+        if (s.tts_daily_limit_minutes_paid != null) _admPaintValue(elTtsDailyPaid, s.tts_daily_limit_minutes_paid);
+        if (s.voxcpm_timeout != null) _admPaintValue(elVoxcpmTimeout, s.voxcpm_timeout);
+        _admPaintChecked(elTutVideoEn, String(s.tutorial_video_enabled).toLowerCase() !== "false" && s.tutorial_video_enabled !== false);
         // Batch BE: the tiered-pricing arming switch (AO shipped the
         // setting + API dark; this toggle is the arming lever).
         _admPaintChecked(elTieredPricing, !!s.tiered_recap_pricing_enabled);
@@ -13301,6 +13942,10 @@ async function loadAdminSettings() {
         setSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", s.gemini_fallback_1 || "gemini-3.5-flash");
         setSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", s.gemini_fallback_2 || "gemini-3.5-flash-lite");
         setSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", s.gemini_fallback_3 || "gemini-flash-lite-latest");
+        setSelectOrCustom("adm-tts-primary", "adm-tts-primary-custom", s.gemini_tts_primary_model || "gemini-3.8-flash-tts");
+        setSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", s.gemini_tts_fallback_1 || "gemini-3.1-flash-tts-preview");
+        setSelectOrCustom("adm-tts-lite", "adm-tts-lite-custom", s.gemini_tts_lite_model || "gemini-3.8-flash-lite-tts");
+        setSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", s.gemini_tts_fallback_2 || "gemini-2.5-flash-preview-tts");
         // Batch BS: the Groq Whisper (STT) model field — the GET
         // pre-fills it with the current effective model.
         const elGroqWhisper = document.getElementById("adm-groq-whisper-model");
@@ -13437,6 +14082,18 @@ async function saveAdminSettings() {
     const recapFreeMax = recapFreeMaxRaw === "" || recapFreeMaxRaw == null ? null : parseInt(recapFreeMaxRaw, 10);
     const recapMaxRaw = document.getElementById("adm-set-recap-max")?.value?.trim();
     const recapMax = recapMaxRaw === "" || recapMaxRaw == null ? null : parseInt(recapMaxRaw, 10);
+    const voiceDailyFreeRaw = document.getElementById("adm-set-voice-daily-free")?.value?.trim();
+    const voiceDailyFree = voiceDailyFreeRaw === "" || voiceDailyFreeRaw == null ? null : parseInt(voiceDailyFreeRaw, 10);
+    const voiceDailyPaidRaw = document.getElementById("adm-set-voice-daily-paid")?.value?.trim();
+    const voiceDailyPaid = voiceDailyPaidRaw === "" || voiceDailyPaidRaw == null ? null : parseInt(voiceDailyPaidRaw, 10);
+    const ttsDailyFreeRaw = document.getElementById("adm-set-tts-daily-free")?.value?.trim();
+    const ttsDailyFree = ttsDailyFreeRaw === "" || ttsDailyFreeRaw == null ? null : parseInt(ttsDailyFreeRaw, 10);
+    const ttsDailyPaidRaw = document.getElementById("adm-set-tts-daily-paid")?.value?.trim();
+    const ttsDailyPaid = ttsDailyPaidRaw === "" || ttsDailyPaidRaw == null ? null : parseInt(ttsDailyPaidRaw, 10);
+    const voxcpmTimeoutRaw = document.getElementById("adm-set-voxcpm-timeout")?.value?.trim();
+    const voxcpmTimeout = voxcpmTimeoutRaw === "" || voxcpmTimeoutRaw == null ? null : parseInt(voxcpmTimeoutRaw, 10);
+    const tutVideoEnEl = document.getElementById("adm-set-tutorial-video-enabled");
+    const tutVideoEn = tutVideoEnEl ? !!tutVideoEnEl.checked : true;
     const tieredPricing = !!document.getElementById("adm-set-tiered-pricing")?.checked;
     const reqChannelId = document.getElementById("adm-set-required-channel-id")?.value?.trim();
     const reqGroupId = document.getElementById("adm-set-required-group-id")?.value?.trim();
@@ -13490,6 +14147,12 @@ async function saveAdminSettings() {
         ...(Number.isFinite(freeGeminiBudget) ? { free_gemini_daily_budget_requests: freeGeminiBudget } : {}),
         ...(Number.isFinite(recapFreeMax) ? { recap_free_max_duration_seconds: recapFreeMax } : {}),
         ...(Number.isFinite(recapMax) ? { recap_max_duration_seconds: recapMax } : {}),
+        ...(Number.isFinite(voiceDailyFree) ? { voice_daily_limit_minutes_free: voiceDailyFree } : {}),
+        ...(Number.isFinite(voiceDailyPaid) ? { voice_daily_limit_minutes_paid: voiceDailyPaid } : {}),
+        ...(Number.isFinite(ttsDailyFree) ? { tts_daily_limit_minutes_free: ttsDailyFree } : {}),
+        ...(Number.isFinite(ttsDailyPaid) ? { tts_daily_limit_minutes_paid: ttsDailyPaid } : {}),
+        ...(Number.isFinite(voxcpmTimeout) ? { voxcpm_timeout: voxcpmTimeout } : {}),
+        tutorial_video_enabled: tutVideoEn,
         tiered_recap_pricing_enabled: tieredPricing,
         ...(reqChannelId ? { required_channel_id: reqChannelId } : {}),
         ...(reqGroupId ? { required_group_id: reqGroupId } : {}),
@@ -13519,6 +14182,45 @@ async function saveAdminSettings() {
         showStudioToast(adminErrorText("admin_settings_save_err", e.message), 'error');
     }
 }
+
+async function saveGeminiTtsModelSettings() {
+    haptic("medium");
+    const primary = getSelectOrCustom("adm-tts-primary", "adm-tts-primary-custom", "gemini-3.8-flash-tts");
+    const fb1 = getSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", "gemini-3.1-flash-tts-preview");
+    const lite = getSelectOrCustom("adm-tts-lite", "adm-tts-lite-custom", "gemini-3.8-flash-lite-tts");
+    const fb2 = getSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", "gemini-2.5-flash-preview-tts");
+
+    const payload = {
+        gemini_tts_primary_model: primary,
+        gemini_tts_fallback_1: fb1,
+        gemini_tts_lite_model: lite,
+        gemini_tts_fallback_2: fb2,
+    };
+
+    try {
+        const res = await fetch("/api/admin/settings", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        [
+            "adm-tts-primary", "adm-tts-primary-custom",
+            "adm-tts-fb1", "adm-tts-fb1-custom",
+            "adm-tts-lite", "adm-tts-lite-custom",
+            "adm-tts-fb2", "adm-tts-fb2-custom",
+        ].forEach(id => adminSettingsDirty.delete(id));
+        showStudioToast(t("admin_tts_chain_saved"), "success");
+        loadAdminSettings();
+    } catch (e) {
+        showStudioToast(adminErrorText("admin_tts_chain_save_err", e.message), "error");
+    }
+}
+window.saveGeminiTtsModelSettings = saveGeminiTtsModelSettings;
 
 // ── Dedicated History Hub ────────────────────────────────────────────────
 // One unified, newest-first list of ALL the user's jobs (voice + recap),
@@ -13582,12 +14284,65 @@ function hubStatusBorder(status) {
     }
 }
 
+function formatJobDuration(j) {
+    if (!j || typeof j !== "object") return "";
+    const realSec = Number(j.seconds_consumed || 0);
+    const dispSec = Number(j.duration_seconds || 0);
+    const estSec = Number(j.seconds_estimated || 0);
+    const sec = realSec > 0 ? realSec : (dispSec > 0 ? dispSec : estSec);
+    if (!Number.isFinite(sec) || sec <= 0) return "";
+    const whole = Math.round(sec);
+    if (whole < 60) return tf("hist_duration_sec", { sec: whole });
+    const min = Math.floor(whole / 60);
+    const rem = whole % 60;
+    return rem > 0 ? tf("hist_duration_min_sec", { min, sec: rem }) : tf("hist_duration_min", { min });
+}
+window.formatJobDuration = formatJobDuration;
+
+// Display-only 22h expiry reminder helper (media retention remains 24h).
+function computeHistoryExpiryState(j) {
+    if (!j || j.is_expired) {
+        return { expired: true, expiresSoon: false, hoursLeft: 0, minsLeft: 0, timeText: "" };
+    }
+    if (!j.created_at) {
+        return { expired: false, expiresSoon: false, hoursLeft: null, minsLeft: null, timeText: "" };
+    }
+    const createdMs = Date.parse(j.created_at);
+    if (Number.isNaN(createdMs)) {
+        return { expired: false, expiresSoon: false, hoursLeft: null, minsLeft: null, timeText: "" };
+    }
+    const ageMs = Date.now() - createdMs;
+    const remainingMs = Math.max(0, 24 * 3600000 - ageMs);
+    if (remainingMs <= 0) {
+        return { expired: true, expiresSoon: false, hoursLeft: 0, minsLeft: 0, timeText: "" };
+    }
+    const hoursLeft = Math.max(0, Math.ceil(remainingMs / 3600000));
+    const minsLeft = Math.max(1, Math.ceil(remainingMs / 60000));
+    const expiresSoon = ageMs >= 22 * 3600000;
+    let timeText = "";
+    if (expiresSoon) {
+        if (minsLeft < 60) {
+            timeText = tf("hist_time_m", { m: minsLeft });
+        } else {
+            const h = Math.floor(minsLeft / 60);
+            const m = minsLeft % 60;
+            timeText = m > 0 ? tf("hist_time_hm", { h, m }) : tf("hist_time_h", { h });
+        }
+    }
+    return { expired: false, expiresSoon, hoursLeft, minsLeft, timeText };
+}
+window.computeHistoryExpiryState = computeHistoryExpiryState;
+
 // Detail block shown when a hub row is tapped. It reuses the exact same
 // actions/handlers the old per-studio history cards offered (download,
 // send-to-Telegram, in-player view, live tracking) — nothing new invented.
 function hubHistoryDetailHtml(j) {
     const isRecap = j.job_type === "RECAP";
+    const exp = computeHistoryExpiryState(j);
     let inner = "";
+    if (exp.expiresSoon && !exp.expired && j.status === "SUCCESS") {
+        inner += `<div class="history-item-body hub-expires-soon-banner">${escapeHtml(tf("hist_expires_soon_banner", { time: exp.timeText }))}</div>`;
+    }
     if (j.fallback_used) {
         // Round-6 P3: the API has carried fallback_used all along
         // (round-4 F-G) but History never rendered it — a degraded
@@ -13622,7 +14377,7 @@ function hubHistoryDetailHtml(j) {
         // font) so the user — and support — can see what a render used.
         const s = j.recap_settings;
         const parts = [];
-        if (s.engine) parts.push(s.engine === "gemini" ? "Gemini" : "Smart Sync");
+        if (s.engine) parts.push(s.engine === "gemini" ? "Gemini" : s.engine === "edge" ? "Edge" : "Smart Sync");
         if (s.gemini_voice || s.voice) parts.push(s.gemini_voice || s.voice);
         if (s.story_style) parts.push(s.story_style);
         if (s.sub_style) parts.push(s.sub_style);
@@ -13635,9 +14390,9 @@ function hubHistoryDetailHtml(j) {
         const pctOf = (v) => Math.round(v <= 1 ? v * 100 : v);
         // Batch AK: AK jobs carry the bottom margin — label it as
         // what it is; pre-AK jobs keep the centre-% line.
-        if (typeof s.sub_bottom_margin === "number") parts.push(`Sub margin ${pctOf(s.sub_bottom_margin)}%`);
-        else if (typeof s.sub_y === "number") parts.push(`Sub ${pctOf(s.sub_y)}%`);
-        if (typeof s.blur_y === "number") parts.push(`Blur ${pctOf(s.blur_y)}%`);
+        if (typeof s.sub_bottom_margin === "number") parts.push(tf("hist_sub_margin_lbl", { pct: pctOf(s.sub_bottom_margin) }));
+        else if (typeof s.sub_y === "number") parts.push(tf("hist_sub_pos_lbl", { pct: pctOf(s.sub_y) }));
+        if (typeof s.blur_y === "number") parts.push(tf("hist_blur_pos_lbl", { pct: pctOf(s.blur_y) }));
         if (parts.length) {
             inner += `<div class="history-item-body hub-settings-summary">⚙️ ${escapeHtml(parts.join(" · "))}</div>`;
         }
@@ -13659,7 +14414,7 @@ function hubHistoryDetailHtml(j) {
                 parkedNote += " · " + tf("hist_script_ready_expires", { hours: hoursLeft });
             }
         }
-        actions = `<span class="badge-expired text-xs" style="color:#fbbf24;">📝 ${escapeHtml(parkedNote)}</span>`;
+        actions = `<span class="vcp-badge vcp-badge-warning">📝 ${escapeHtml(parkedNote)}</span>`;
         actions += ` <button type="button" onclick="openRecapScriptEditor('${j.id}')" class="history-dl-link">${t("btn_review_script")}</button>`;
         actions += ` <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`;
         if (j.recap_config) {
@@ -13667,7 +14422,7 @@ function hubHistoryDetailHtml(j) {
         }
         actions += ` <button type="button" onclick="deleteHistoryItem('${j.id}')" class="history-dl-link">${t("btn_delete_history")}</button>`;
     } else if (j.status === "FAILED") {
-        actions = `<span class="badge-expired text-xs" style="color:#f87171;">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
+        actions = `<span class="vcp-badge vcp-badge-danger">${isRecap ? t("hist_failed_recap") : t("hist_failed")}</span>`;
         // Batch L: one-tap retry (hidden when the server says the
         // source is gone — the note explains instead), re-run prefill
         // and delete for recap items; delete for every terminal item.
@@ -13687,21 +14442,21 @@ function hubHistoryDetailHtml(j) {
             ? `<button type="button" onclick="openRecapDetail('${j.id}')" class="history-dl-link">${t("hist_track_recap")}</button> <button type="button" onclick="cancelRecapJob('${j.id}')" class="history-dl-link">${t("btn_cancel_job")}</button>`
             : `<button type="button" onclick="openVoiceDetail('${j.id}')" class="history-dl-link">${t("hist_track_voice")}</button>`;
     } else if (j.is_expired) {
-        actions = `<span class="badge-expired text-xs" title="">${t("hist_expired")}</span>`;
+        actions = `<span class="badge-expired vcp-badge vcp-badge-danger" title="">${t("hist_expired")}</span>`;
     } else if (isRecap) {
         if (j.deliverables?.video) {
-            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="history-dl-link">🎬 Video</a>`;
+            actions += `<button type="button" onclick="openRecapInPlayer('${j.id}')" class="history-dl-link">${t("hist_watch")}</button> <a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_video"))}</a>`;
             // Over-50MB rule: no Telegram action at all for outputs the
             // bot cannot send — Download is the only delivery action.
             if (j.telegram_sendable !== false) {
                 actions += ` <button type="button" onclick="sendRecapToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
             }
         }
-        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", j.input_snippet, j.id)}" class="history-dl-link">🎙️ Audio</a>`;
-        if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">📝 SRT</a>`;
-        if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">📜 TXT</a>`;
+        if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_audio"))}</a>`;
+        if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_srt"))}</a>`;
+        if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_txt"))}</a>`;
     } else if (j.download_url) {
-        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">📥 Download</a>`;
+        actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_voice"))}</a>`;
         if (j.telegram_sendable !== false) {
             actions += ` <button type="button" onclick="sendVoiceToTelegram('${j.id}')" class="history-dl-link tg-btn">${t("hist_send_telegram")}</button>`;
         }
@@ -13764,6 +14519,17 @@ window.deleteHistoryItem = function(jobId) {
     });
 };
 
+function hubStatusBadgeHtml(j) {
+    const st = String(j.status || "").toUpperCase();
+    const stCls = `status-${(j.status || "").toLowerCase()}`;
+    if (st === "SUCCESS") return `<span class="vcp-badge vcp-badge-success ${stCls}">✅ ${escapeHtml(t("status_badge_success"))}</span>`;
+    if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info ${stCls}">⏳ ${escapeHtml(t("status_badge_running"))}</span>`;
+    if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning ${stCls}">🕒 ${escapeHtml(t("status_badge_queued"))}</span>`;
+    if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger ${stCls}">❌ ${escapeHtml(t("status_badge_failed"))}</span>`;
+    if (st === "CANCELLED") return `<span class="vcp-badge vcp-badge-warning ${stCls}">🚫 ${escapeHtml(t("hist_status_cancelled"))}</span>`;
+    return `<span class="vcp-badge vcp-badge-info ${stCls}">${escapeHtml(j.status || t("status_badge_other"))}</span>`;
+}
+
 function hubHistoryRowHtml(j) {
     const isRecap = j.job_type === "RECAP";
     // Batch BB-3: TTS jobs get their own label — they used to render
@@ -13771,19 +14537,27 @@ function hubHistoryRowHtml(j) {
     // recognisable by voice name.
     const isTts = j.job_type === "TTS";
     const open = hubOpenDetailId === j.id;
-    const snippet = j.input_snippet || (isRecap ? "Movie Recap" : isTts ? "TTS" : "Voice Synthesis");
+    const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
     const title = isRecap ? escapeHtml(snippet) : `&quot;${escapeHtml(snippet)}&quot;`;
+    const durText = formatJobDuration(j);
+    const exp = computeHistoryExpiryState(j);
+    const expiryPillHtml = exp.expiresSoon && !exp.expired && j.status === "SUCCESS"
+        ? `<span class="vcp-badge vcp-badge-warning hub-expires-soon-badge">${escapeHtml(tf("hist_expires_soon_badge", { time: exp.timeText }))}</span>`
+        : "";
     return `
-    <div class="hub-row ${hubStatusBorder(j.status)} ${open ? "open" : ""}" data-job-id="${j.id}">
+    <div class="hub-row vcp-card vcp-card--compact ${hubStatusBorder(j.status)} ${exp.expiresSoon ? "is-expires-soon" : ""} ${open ? "open" : ""}" data-job-id="${j.id}">
         <button type="button" class="hub-row-main" onclick="toggleHistoryDetail('${j.id}')" aria-expanded="${open}">
             <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
             <span class="hub-row-text">
                 <span class="hub-row-title">${title}</span>
-                <span class="hub-row-meta">${isRecap ? "🎬 RECAP • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")} · <span class="hub-time-ago">⏱️ ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} · <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
             </span>
-            ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
-            ${!isRecap && j.reference_trimmed ? `<span class="history-item-badge hub-fallback-badge">${t("hist_ref_trim_badge")}</span>` : ""}
-            <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
+            <span class="hub-row-badges">
+                ${j.fallback_used ? `<span class="history-item-badge hub-fallback-badge">${t("hist_fallback_badge")}</span>` : ""}
+                ${!isRecap && j.reference_trimmed ? `<span class="history-item-badge hub-fallback-badge">${t("hist_ref_trim_badge")}</span>` : ""}
+                ${expiryPillHtml}
+                ${hubStatusBadgeHtml(j)}
+            </span>
             <span class="hub-chevron">${open ? "⌃" : "›"}</span>
         </button>
         <div class="hub-detail ${open ? "" : "hidden"}">${hubHistoryDetailHtml(j)}</div>
@@ -13791,41 +14565,62 @@ function hubHistoryRowHtml(j) {
 }
 
 function renderHistoryHub() {
+    renderHomeRecentProjects();
     const container = document.getElementById("hub-history-list");
+    const stage = document.getElementById("hub-history-stage");
     if (!container) return;
 
     if (hubHistoryCache === null && !hubHistoryError) {
-        container.innerHTML = `<div class="hub-state"><p class="text-muted">${t("history_loading")}</p></div>`;
+        if (stage && typeof setSectionState === "function") {
+            setSectionState(stage, "loading");
+            container.innerHTML = "";
+        } else {
+            container.innerHTML = `<div class="hub-state"><p class="text-muted">${t("history_loading")}</p></div>`;
+        }
         return;
     }
     if (hubHistoryError) {
-        container.innerHTML = `
-            <div class="hub-state">
-                <div class="hub-state-emoji">⚠️</div>
-                <p class="hub-state-text">${t("history_error")}</p>
-                <button type="button" class="mini-chip" onclick="loadUserHistory()">${t("history_retry")}</button>
-            </div>`;
+        if (stage && typeof setSectionState === "function") {
+            setSectionState(stage, "error", { onRetry: loadUserHistory });
+            container.innerHTML = "";
+        } else {
+            container.innerHTML = `
+                <div class="hub-state">
+                    <div class="hub-state-emoji">⚠️</div>
+                    <p class="hub-state-text">${t("history_error")}</p>
+                    <button type="button" class="mini-chip" onclick="loadUserHistory()">${t("history_retry")}</button>
+                </div>`;
+        }
         return;
     }
 
     const all = hubHistoryCache || [];
     if (all.length === 0) {
-        container.innerHTML = `
-            <div class="hub-state">
-                <div class="hub-state-emoji">📜</div>
-                <p class="hub-state-text" data-i18n="history_empty">${t("history_empty")}</p>
-                <p class="text-muted hub-state-sub">${t("history_empty_hint")}</p>
-            </div>`;
+        if (stage && typeof setSectionState === "function") {
+            setSectionState(stage, "empty");
+            container.innerHTML = "";
+        } else {
+            container.innerHTML = `
+                <div class="hub-state">
+                    <div class="hub-state-emoji">📜</div>
+                    <p class="hub-state-text" data-i18n="history_empty">${t("history_empty")}</p>
+                    <p class="text-muted hub-state-sub">${t("history_empty_hint")}</p>
+                </div>`;
+        }
         return;
+    }
+
+    if (stage && typeof setSectionState === "function") {
+        setSectionState(stage, "ready");
     }
 
     const jobs = hubHistoryFilter === "all" ? all : all.filter(h => h.job_type === hubHistoryFilter);
     if (jobs.length === 0) {
         container.innerHTML = `
-            <div class="hub-state">
+            <div class="hub-state vcp-card vcp-card--compact">
                 <div class="hub-state-emoji">🔍</div>
                 <p class="hub-state-text">${t("history_filter_empty")}</p>
-                <button type="button" class="mini-chip" onclick="setHubHistoryFilter('all')">${t("history_show_all")}</button>
+                <button type="button" class="vcp-btn vcp-btn--glass vcp-btn--sm" onclick="setHubHistoryFilter('all')">${t("history_show_all")}</button>
             </div>`;
         return;
     }
@@ -13868,6 +14663,7 @@ async function openRecapInPlayer(recapJobId) {
     if (!recapJobId) return;
     haptic("light");
     switchTab("tab-recap");
+    if (typeof showRecapStep === "function") showRecapStep(4);
     try {
         const res = await fetch(`/api/recap/${recapJobId}/status`, { headers: getAuthHeaders() });
         if (!res.ok) return;
@@ -14228,8 +15024,406 @@ function applyDesktopDropHint() {
     } catch (e) { /* hint stays hidden */ }
 }
 
+// ── Phase 2: Home Dashboard, Status Strip, Recent Projects & Help Hub ──────
+function paintHomeStatusStrip(data) {
+    if (!data) return;
+    const greetEl = document.getElementById("home-greeting-text");
+    if (greetEl) {
+        const tgFirst = state.tg && state.tg.initDataUnsafe && state.tg.initDataUnsafe.user && state.tg.initDataUnsafe.user.first_name;
+        const displayName = data.first_name || data.username || tgFirst || "";
+        greetEl.textContent = displayName
+            ? tf("home_greeting_named", { name: displayName })
+            : t("home_greeting_default");
+    }
+    const tierEl = document.getElementById("home-tier-badge");
+    if (tierEl) {
+        if (data.is_admin) {
+            tierEl.className = "vcp-badge vcp-badge-gold";
+            tierEl.textContent = t("tier_badge_admin");
+        } else if (data.is_vip) {
+            tierEl.className = "vcp-badge vcp-badge-gold";
+            tierEl.textContent = t("badge_vip");
+        } else {
+            tierEl.className = "vcp-badge vcp-badge-info";
+            tierEl.textContent = t("vip_free");
+        }
+    }
+    const sumEl = document.getElementById("home-bal-summary");
+    if (sumEl) {
+        const mUnit = t("unit_min_short");
+        const cUnit = t("unit_credit_short");
+        const vPart = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes ?? 0}${mUnit}`;
+        const rPart = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits ?? 0}${cUnit}`;
+        let tPart = "🎧 —";
+        const rem = data.tts_today_remaining_seconds;
+        if (data.is_admin || data.tts_daily_limit_seconds === 0) tPart = "🎧 ∞";
+        else if (typeof rem === "number") tPart = `🎧 ${(rem / 60).toFixed(1)}${mUnit}`;
+        else if (typeof data.tts_balance_seconds === "number") tPart = `🎧 ${(data.tts_balance_seconds / 60).toFixed(1)}${mUnit}`;
+        sumEl.textContent = `${vPart} · ${rPart} · ${tPart}`;
+    }
+}
+window.paintHomeStatusStrip = paintHomeStatusStrip;
+
+function paintHomeStatusStripFromQuota(q) {
+    if (!q || !state.user) return;
+    const sumEl = document.getElementById("home-bal-summary");
+    if (!sumEl) return;
+    const u = state.user;
+    const mUnit = t("unit_min_short");
+    const cUnit = t("unit_credit_short");
+    const vPart = u.is_admin ? "🎙️ ∞" : `🎙️ ${u.balance_minutes ?? 0}${mUnit}`;
+    const rPart = u.is_admin ? "🎬 ∞" : `🎬 ${u.recap_credits ?? 0}${cUnit}`;
+    let tPart = "🎧 —";
+    if (q.is_admin || q.unlimited) tPart = "🎧 ∞";
+    else {
+        const total = (q.referral_seconds || 0) + (q.remaining_seconds || 0);
+        tPart = `🎧 ${(total / 60).toFixed(1)}${mUnit}`;
+    }
+    sumEl.textContent = `${vPart} · ${rPart} · ${tPart}`;
+}
+
+// Plays the pre-generated static sample audio (/api/voices/sample/komin)
+// via the existing #sample-btn-voice / #sample-audio-voice element.
+// Never calls any generation API or consumes user quota.
+function playWelcomeTrySample() {
+    haptic("light");
+    const sampleBtn = document.getElementById("sample-btn-voice");
+    const audio = document.getElementById("sample-audio-voice");
+    const tryBtn = document.getElementById("welcome-try-sample-btn");
+    if (sampleBtn) {
+        sampleBtn.click();
+    } else if (audio) {
+        if (audio.paused) audio.play().catch(() => {});
+        else audio.pause();
+    }
+    if (audio && tryBtn && !audio.dataset.welcomeTryWired) {
+        audio.dataset.welcomeTryWired = "1";
+        const syncTryLabel = () => {
+            const playing = !audio.paused && !audio.ended;
+            tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
+        };
+        audio.addEventListener("play", syncTryLabel);
+        audio.addEventListener("pause", syncTryLabel);
+        audio.addEventListener("ended", syncTryLabel);
+    }
+}
+window.playWelcomeTrySample = playWelcomeTrySample;
+
+function computeRetentionBadgeHtml(j) {
+    const exp = computeHistoryExpiryState(j);
+    if (exp.expired) {
+        return `<span class="vcp-badge vcp-badge-danger">${escapeHtml(t("hist_expired"))}</span>`;
+    }
+    if (exp.hoursLeft == null) return "";
+    if (exp.expiresSoon) {
+        return `<span class="vcp-badge vcp-badge-warning hub-expires-soon-badge">${escapeHtml(tf("hist_expires_soon_badge", { time: exp.timeText }))}</span>`;
+    }
+    const cls = exp.hoursLeft <= 4 ? "vcp-badge-warning" : "vcp-badge-info";
+    return `<span class="vcp-badge ${cls}">${escapeHtml(tf("home_recent_time_left_hours", { hours: exp.hoursLeft }))}</span>`;
+}
+
+function computeHomeRecentStatusBadgeHtml(j) {
+    const st = String(j.status || "").toUpperCase();
+    if (st === "SUCCESS") return `<span class="vcp-badge vcp-badge-success">✅ ${escapeHtml(t("status_badge_success"))}</span>`;
+    if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info">⏳ ${escapeHtml(t("status_badge_running"))}</span>`;
+    if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning">🕒 ${escapeHtml(t("status_badge_queued"))}</span>`;
+    if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger">❌ ${escapeHtml(t("status_badge_failed"))}</span>`;
+    if (st === "CANCELLED") return `<span class="vcp-badge vcp-badge-warning">🚫 ${escapeHtml(t("hist_status_cancelled"))}</span>`;
+    return `<span class="vcp-badge vcp-badge-info">ℹ️ ${escapeHtml(t("status_badge_other"))}</span>`;
+}
+
+function openRecentProjectAction(jobId, mode) {
+    haptic("light");
+    if (mode === "review") {
+        switchTab("tab-recap");
+        if (typeof showRecapStep === "function") showRecapStep(4);
+        if (typeof openRecapScriptEditor === "function") openRecapScriptEditor(jobId);
+        return;
+    }
+    if (mode === "recap") {
+        switchTab("tab-recap");
+        if (typeof showRecapStep === "function") showRecapStep(4);
+        if (typeof openRecapDetail === "function") openRecapDetail(jobId);
+        return;
+    }
+    if (mode === "tts") {
+        switchTab("tab-tts");
+        return;
+    }
+    if (mode === "voice") {
+        switchTab("tab-voice");
+        if (typeof openVoiceDetail === "function") openVoiceDetail(jobId);
+        return;
+    }
+    if (mode === "retry") {
+        switchTab("tab-recap");
+        if (typeof retryRecapJob === "function") retryRecapJob(jobId);
+    }
+}
+window.openRecentProjectAction = openRecentProjectAction;
+
+function computeHomeRecentActionHtml(j) {
+    const isRecap = j.job_type === "RECAP";
+    const isTts = j.job_type === "TTS";
+    const safeId = escapeHtml(j.id);
+    if (isRecap && j.script_ready) {
+        return `<button type="button" class="vcp-chip active" onclick="openRecentProjectAction('${safeId}','review')">${escapeHtml(t("home_recent_action_review"))}</button>`;
+    }
+    if (j.status === "RUNNING" || j.status === "QUEUED") {
+        const mode = isRecap ? "recap" : (isTts ? "tts" : "voice");
+        return `<button type="button" class="vcp-chip active" onclick="openRecentProjectAction('${safeId}','${mode}')">${escapeHtml(t("home_recent_action_continue"))}</button>`;
+    }
+    if (j.status === "SUCCESS" && !j.is_expired) {
+        if (isRecap && j.deliverables && j.deliverables.video) {
+            return `<a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
+        }
+        if (!isRecap && j.download_url) {
+            return `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
+        }
+    }
+    if (j.status === "FAILED" && isRecap && j.can_retry !== false) {
+        return `<button type="button" class="vcp-chip" onclick="openRecentProjectAction('${safeId}','retry')">${escapeHtml(t("home_recent_action_retry"))}</button>`;
+    }
+    return `<button type="button" class="vcp-chip" onclick="openHistoryHub()" aria-label="${escapeHtml(t("home_recent_action_open_history"))}">›</button>`;
+}
+
+function renderHomeRecentProjects() {
+    const card = document.getElementById("home-recent-projects-card");
+    const list = document.getElementById("home-recent-projects-list");
+    if (!card || !list) return;
+
+    if (hubHistoryCache === null && !hubHistoryError) {
+        setSectionState(card, "loading");
+        return;
+    }
+    if (hubHistoryError) {
+        setSectionState(card, "error");
+        return;
+    }
+    const all = hubHistoryCache || [];
+    if (all.length === 0) {
+        setSectionState(card, "empty");
+        return;
+    }
+    setSectionState(card, "ready");
+    const recent = all.slice(0, 5);
+    list.innerHTML = recent.map(j => {
+        const isRecap = j.job_type === "RECAP";
+        const isTts = j.job_type === "TTS";
+        const icon = isRecap ? "🎬" : isTts ? "🎧" : "🎙️";
+        const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
+        return `
+        <div class="home-recent-row" data-recent-job-id="${j.id}">
+            <div class="home-recent-main">
+                <span class="home-recent-icon">${icon}</span>
+                <div class="home-recent-meta">
+                    <span class="home-recent-name">${escapeHtml(snippet)}</span>
+                    <div class="home-recent-badges">
+                        ${computeHomeRecentStatusBadgeHtml(j)}
+                        ${computeRetentionBadgeHtml(j)}
+                    </div>
+                </div>
+            </div>
+            <div class="home-recent-action">
+                ${computeHomeRecentActionHtml(j)}
+            </div>
+        </div>`;
+    }).join("");
+}
+window.renderHomeRecentProjects = renderHomeRecentProjects;
+
+function toggleVcpHelpHub(forceOpen) {
+    haptic("light");
+    const homeTab = document.getElementById("tab-home");
+    const btn = document.getElementById("btn-home-help-hub");
+    if (!homeTab) return;
+    const isOpen = typeof forceOpen === "boolean"
+        ? forceOpen
+        : !homeTab.classList.contains("vcp-help-hub-open");
+    homeTab.classList.toggle("vcp-help-hub-open", isOpen);
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (isOpen) {
+        const tutMore = document.getElementById("home-tut-more");
+        const tutHead = document.getElementById("home-tut-expand");
+        if (tutMore && tutMore.classList.contains("hidden")) {
+            tutMore.classList.remove("hidden");
+            if (tutHead) tutHead.setAttribute("aria-expanded", "true");
+        }
+    }
+}
+window.toggleVcpHelpHub = toggleVcpHelpHub;
+
+// ── Phase 3: Voice & TTS Helpers (Excess Banner, Cost Estimate, Custom Clone Steps & BYOK) ──
+function estimateSpeechMinutesFromText(charCount, speedModeOrRate) {
+    if (!charCount || charCount <= 0) return null;
+    // Standard Burmese speech rate ~550 chars/min at 1.0x
+    let mult = 1.0;
+    if (speedModeOrRate === "slow") mult = 1.25;
+    else if (speedModeOrRate === "fast") mult = 0.85;
+    else if (typeof speedModeOrRate === "string" && speedModeOrRate.includes("%")) {
+        const pct = parseFloat(speedModeOrRate.replace("%", "")) || 0;
+        mult = 1.0 / Math.max(0.5, 1 + pct / 100);
+    }
+    const mins = Math.max(0.1, (charCount / 550) * mult);
+    return mins.toFixed(1);
+}
+window.estimateSpeechMinutesFromText = estimateSpeechMinutesFromText;
+
+function syncVoiceExcessAndCost(len, max) {
+    const banner = document.getElementById("voice-char-excess-banner");
+    const txt = document.getElementById("voice-char-excess-text");
+    const vipBtn = document.getElementById("btn-voice-excess-vip");
+    if (banner && txt) {
+        if (len > max) {
+            txt.textContent = tf("char_excess_warning", { excess: len - max });
+            banner.classList.remove("hidden");
+            if (vipBtn) vipBtn.classList.toggle("hidden", !!(state.user && (state.user.is_vip || state.user.is_admin)));
+        } else {
+            banner.classList.add("hidden");
+        }
+    }
+    const costBadge = document.getElementById("voice-btn-est-cost");
+    if (costBadge) {
+        const estMin = estimateSpeechMinutesFromText(len, state.speed || "normal");
+        costBadge.textContent = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+    }
+}
+window.syncVoiceExcessAndCost = syncVoiceExcessAndCost;
+
+function trimVoiceTextToLimit() {
+    haptic("light");
+    const input = document.getElementById("voice-text-input");
+    if (!input) return;
+    const u = state.user || {};
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+    if (input.value.length > max) {
+        input.value = input.value.slice(0, max);
+        input.dispatchEvent(new Event("input"));
+    }
+}
+window.trimVoiceTextToLimit = trimVoiceTextToLimit;
+
+function setCustomCloneStep(stepNum, file) {
+    state.customCloneStep = stepNum;
+    const stepper = document.getElementById("custom-clone-stepper");
+    if (stepper) {
+        stepper.querySelectorAll("[data-clone-step]").forEach(el => {
+            const n = parseInt(el.getAttribute("data-clone-step") || "1", 10);
+            el.classList.toggle("is-active", n === stepNum);
+            el.classList.toggle("is-done", n < stepNum);
+        });
+    }
+    const checkEl = document.getElementById("custom-clone-check-status");
+    if (checkEl) {
+        const refFile = file || state.selectedReferenceFile;
+        if (refFile && stepNum >= 2) {
+            checkEl.textContent = tf("clone_check_ok", { kb: Math.max(1, Math.round(refFile.size / 1024)) });
+            checkEl.classList.remove("hidden");
+        } else if (!file) {
+            checkEl.textContent = "";
+            checkEl.classList.add("hidden");
+        }
+    }
+}
+window.setCustomCloneStep = setCustomCloneStep;
+
+async function saveCurrentRefAsCustomVoice() {
+    haptic("light");
+    const file = state.selectedReferenceFile;
+    if (!file) return;
+    const allowed = typeof canUseRecapCloneEngine === "function"
+        ? canUseRecapCloneEngine()
+        : Boolean(state.user && (state.user.is_vip || state.user.is_admin));
+    if (!allowed) {
+        showStudioToast(t("recap_own_voice_locked_hint"), "warning");
+        switchTab("tab-vip");
+        return;
+    }
+    const saveBtn = document.getElementById("btn-save-custom-voice-from-result");
+    if (typeof setVcpButtonLoading === "function") setVcpButtonLoading(saveBtn, true);
+    try {
+        const fd = new FormData();
+        fd.append("reference_audio", file);
+        const headers = {};
+        if (state.tg && state.tg.initData) {
+            headers["X-Telegram-Init-Data"] = state.tg.initData;
+        }
+        const res = await fetchWithTimeout("/api/recap/upload_voice_ref", {
+            method: "POST",
+            headers,
+            body: fd,
+        }, 120000);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ref_id) throw new Error(data.detail || t("err_generic"));
+        state.recapOwnVoiceRefId = data.ref_id;
+        state.recapOwnVoiceFile = file;
+        state.recapOwnVoiceFileName = data.filename || file.name || "";
+        state.recapOwnVoiceStatus = "ready";
+        state.recapOwnVoiceSelected = true;
+        if (typeof syncRecapOwnVoiceCard === "function") syncRecapOwnVoiceCard();
+        setCustomCloneStep(5, file);
+        showStudioToast(t("recap_own_voice_saved_toast"), "success");
+    } catch (err) {
+        showStudioToast((err && err.message) || t("err_generic"), "error");
+    } finally {
+        if (typeof setVcpButtonLoading === "function") setVcpButtonLoading(saveBtn, false);
+    }
+}
+window.saveCurrentRefAsCustomVoice = saveCurrentRefAsCustomVoice;
+
+function syncTtsExcessAndCost(len, max) {
+    const banner = document.getElementById("tts-char-excess-banner");
+    const txt = document.getElementById("tts-char-excess-text");
+    const vipBtn = document.getElementById("btn-tts-excess-vip");
+    if (banner && txt) {
+        if (len > max) {
+            txt.textContent = tf("char_excess_warning", { excess: len - max });
+            banner.classList.remove("hidden");
+            if (vipBtn) vipBtn.classList.toggle("hidden", !!(state.user && (state.user.is_vip || state.user.is_admin)));
+        } else {
+            banner.classList.add("hidden");
+        }
+    }
+    const costBadge = document.getElementById("tts-btn-est-cost");
+    if (costBadge) {
+        const estMin = estimateSpeechMinutesFromText(len, (typeof ttsState !== "undefined" && ttsState.speed) || "+12%");
+        costBadge.textContent = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+    }
+}
+window.syncTtsExcessAndCost = syncTtsExcessAndCost;
+
+function trimTtsTextToLimit() {
+    haptic("light");
+    const input = document.getElementById("tts-text-input");
+    if (!input) return;
+    const u = state.user || {};
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+    if (input.value.length > max) {
+        input.value = input.value.slice(0, max);
+        input.dispatchEvent(new Event("input"));
+    }
+}
+window.trimTtsTextToLimit = trimTtsTextToLimit;
+
+function toggleTtsByokAdvanced(forceOpen) {
+    haptic("light");
+    const body = document.getElementById("tts-byok-advanced-body");
+    const head = document.getElementById("tts-byok-advanced-toggle");
+    if (!body) return;
+    const isOpen = typeof forceOpen === "boolean"
+        ? forceOpen
+        : body.classList.contains("hidden");
+    body.classList.toggle("hidden", !isOpen);
+    if (head) {
+        head.classList.toggle("open", isOpen);
+        head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    }
+}
+window.toggleTtsByokAdvanced = toggleTtsByokAdvanced;
+
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
+    setupViewportAndKeyboardSync();
     applyDesktopDropHint();
     initEntryGate();
     setLanguage(currentLang);
@@ -14240,11 +15434,25 @@ document.addEventListener("DOMContentLoaded", () => {
     setupVoiceStudio();
     setupRecapVisualEditor();
     initRecapSteps();
+    switchRecapStep2Category(state.recapStep2Cat || "preset", true);
+    syncRecapMasterPresetActive();
+    syncRecapSubStyleCards();
+    renderMyRecapPresets();
+    const recapStep2El = document.getElementById("recap-step-2");
+    if (recapStep2El) {
+        recapStep2El.addEventListener("click", () => {
+            setTimeout(() => {
+                if (typeof syncRecapMasterPresetActive === "function") syncRecapMasterPresetActive();
+                if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
+            }, 0);
+        });
+    }
     setupAlertCarousel();
     setupDownloader();
     setupSlipPreview();
     setupStickyCtas();
     setupSamplePlayers();
+    syncTelegramBackButton();
 
     loadUserProfile();
     loadCuratedVoices();
@@ -14257,3 +15465,440 @@ document.addEventListener("DOMContentLoaded", () => {
     setupSubmitGuards();
     loadAccountPrefs();
 });
+
+// ==================== PHASE 4: RECAP STEP 2 SPLIT-SCREEN 5-TAB EDITOR ====================
+
+const RECAP_MASTER_PRESETS = {
+    tiktok: {
+        recapRatio: "9:16",
+        recapRatioFill: "blur",
+        recapSubStyle: "yellow",
+        recapLines: 1,
+        recapProtection: "standard",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapMirror: true,
+        recapZoom: 1.0,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+    fb_story: {
+        recapRatio: "9:16",
+        recapRatioFill: "crop",
+        recapSubStyle: "boxed",
+        recapLines: 2,
+        recapProtection: "standard",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapMirror: true,
+        recapZoom: 1.0,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+    yt_16_9: {
+        recapRatio: "16:9",
+        recapRatioFill: "blur",
+        recapSubStyle: "white",
+        recapLines: 1,
+        recapProtection: "standard",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapMirror: true,
+        recapZoom: 1.0,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+    strict_safe: {
+        recapRatio: "9:16",
+        recapRatioFill: "blur",
+        recapSubStyle: "band",
+        recapLines: 1,
+        recapProtection: "strong",
+        recapBurnSubs: true,
+        recapBlurSubs: true,
+        recapBlurAutoDetect: true,
+        recapMirror: true,
+        recapZoom: 1.06,
+        recapTextColor: "",
+        recapOutlineColor: "",
+        recapBgColor: "",
+    },
+};
+
+const PORTABLE_RECAP_PRESET_KEYS = [
+    "recapRatio", "recapRatioFill",
+    "recapCropTop", "recapCropBottom", "recapCropLeft", "recapCropRight", "recapSyncCrop",
+    "recapMirror", "recapZoom", "recapProtection",
+    "recapBurnSubs", "recapSubStyle", "recapSubFont", "recapFontSize", "recapLines",
+    "recapSubMargin", "recapSubX", "recapSubW",
+    "recapTextColor", "recapOutlineColor", "recapBgColor",
+    "recapOutlineWidth", "recapBgOpacity", "recapSubShadow", "recapSubBold", "recapSubPosBand",
+    "recapBlurSubs", "recapBlurAutoDetect",
+];
+
+function applyActiveRecapStep2Category() {
+    const valid = ["preset", "frame", "subtitle", "blur", "protection"];
+    const cat = valid.includes(state.recapStep2Cat) ? state.recapStep2Cat : "preset";
+    state.recapStep2Cat = cat;
+
+    document.querySelectorAll("#recap-step2-cat-tabs [data-step2-cat]").forEach(btn => {
+        const match = btn.getAttribute("data-step2-cat") === cat;
+        btn.classList.toggle("active", match);
+        btn.setAttribute("aria-selected", match ? "true" : "false");
+    });
+
+    const setAccOpen = (id, open) => {
+        const grp = document.getElementById(id);
+        if (!grp) return;
+        grp.classList.toggle("open", open);
+        const body = grp.querySelector(":scope > .dd-acc-body");
+        if (body) body.classList.toggle("hidden", !open);
+        const hd = grp.querySelector(":scope > .dd-acc-hd");
+        if (hd) hd.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+
+    const presetPanel = document.getElementById("recap-cat-preset");
+    if (presetPanel) presetPanel.classList.toggle("hidden", cat !== "preset");
+
+    const ratioGroup = document.getElementById("recap-preview-ratio-group");
+    if (ratioGroup) {
+        ratioGroup.classList.toggle("hidden", cat !== "frame");
+        if (cat === "frame") setAccOpen("recap-preview-ratio-group", true);
+    }
+
+    const inFine = cat === "subtitle" || cat === "blur" || cat === "protection";
+    const fineWrap = document.querySelector("#recap-step-2 .recap-fine");
+    const fineHeader = document.querySelector("#recap-step-2 .recap-fine-header");
+    if (fineWrap) fineWrap.classList.toggle("hidden", !inFine);
+    if (fineHeader) fineHeader.classList.toggle("vcp-tab-mode-hidden", inFine);
+
+    if (typeof toggleRecapFineSettings === "function") {
+        toggleRecapFineSettings(inFine);
+    }
+
+    const groupCatMap = {
+        "recap-subtitle-group": "subtitle",
+        "recap-blur-group": "blur",
+        "recap-logo-group": "protection",
+        "recap-preview-transform-group": "protection",
+    };
+    Object.keys(groupCatMap).forEach(id => {
+        const grp = document.getElementById(id);
+        if (!grp) return;
+        const show = groupCatMap[id] === cat;
+        grp.classList.toggle("hidden", !show);
+        if (show) setAccOpen(id, true);
+    });
+
+    const blurBox = document.getElementById("preview-blur-box");
+    if (blurBox) blurBox.classList.toggle("label-on", cat === "blur");
+
+    if (typeof moveSegPills === "function" || typeof window.__ddFitPreviewFrame === "function") {
+        requestAnimationFrame(() => {
+            try { moveSpeedPills(); } catch (e) {}
+            try { moveSegPills(); } catch (e) {}
+            try { if (window.__ddFitPreviewFrame) window.__ddFitPreviewFrame(); } catch (e) {}
+        });
+    }
+}
+window.applyActiveRecapStep2Category = applyActiveRecapStep2Category;
+
+function switchRecapStep2Category(cat, silent) {
+    if (!silent && typeof haptic === "function") haptic("light");
+    const valid = ["preset", "frame", "subtitle", "blur", "protection"];
+    state.recapStep2Cat = valid.includes(cat) ? cat : "preset";
+    applyActiveRecapStep2Category();
+}
+window.switchRecapStep2Category = switchRecapStep2Category;
+
+function applyRecapPresetObject(patch) {
+    if (!patch || typeof patch !== "object") return;
+    const base = typeof window.__snapshotRecapSettings === "function"
+        ? window.__snapshotRecapSettings()
+        : {};
+    const next = Object.assign({}, base, patch);
+    try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(next)); } catch (e) {}
+    if (typeof restoreRecapSettings === "function") restoreRecapSettings();
+    if (typeof window.__saveRecapSettingsNow === "function") window.__saveRecapSettingsNow();
+    if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
+    syncRecapSubStyleCards();
+    syncRecapMasterPresetActive();
+}
+
+function applyRecapMasterPreset(presetKey) {
+    const patch = RECAP_MASTER_PRESETS[presetKey];
+    if (!patch) return;
+    if (typeof haptic === "function") haptic("medium");
+    applyRecapPresetObject(patch);
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        const presetLabel = t(`preset_${presetKey}_name`);
+        const msg = typeof tf === "function"
+            ? tf("recap_master_preset_applied_toast", { name: presetLabel })
+            : t("recap_master_preset_applied_toast");
+        showStudioToast(msg, "success");
+    }
+}
+window.applyRecapMasterPreset = applyRecapMasterPreset;
+
+function syncRecapMasterPresetActive() {
+    const cards = document.querySelectorAll("#recap-master-presets-grid [data-master-preset]");
+    if (!cards.length) return;
+    const curRatio = state.recapRatio || "9:16";
+    const curFill = state.recapRatioFill || "blur";
+    const curStyle = state.recapSubStyle || "yellow";
+    const curLines = Number(state.recapLines || 1);
+    const curProt = state.recapProtection || "standard";
+    cards.forEach(btn => {
+        const key = btn.getAttribute("data-master-preset");
+        const p = RECAP_MASTER_PRESETS[key];
+        const match = Boolean(p)
+            && p.recapRatio === curRatio
+            && p.recapRatioFill === curFill
+            && p.recapSubStyle === curStyle
+            && Number(p.recapLines) === curLines
+            && p.recapProtection === curProt;
+        btn.classList.toggle("active", match);
+        btn.setAttribute("aria-pressed", match ? "true" : "false");
+    });
+}
+window.syncRecapMasterPresetActive = syncRecapMasterPresetActive;
+
+function extractPortablePresetSettings() {
+    const snap = typeof window.__snapshotRecapSettings === "function"
+        ? window.__snapshotRecapSettings()
+        : state;
+    const out = {};
+    PORTABLE_RECAP_PRESET_KEYS.forEach(k => {
+        if (snap && Object.prototype.hasOwnProperty.call(snap, k) && snap[k] !== undefined) {
+            out[k] = snap[k];
+        }
+    });
+    return out;
+}
+
+function parseMyRecapPresets(raw) {
+    let arr = [];
+    if (Array.isArray(raw)) {
+        arr = raw;
+    } else if (typeof raw === "string" && raw.trim()) {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) arr = parsed;
+        } catch (e) {
+            return [];
+        }
+    }
+    const clean = [];
+    arr.slice(0, 3).forEach(item => {
+        if (!item || typeof item !== "object") return;
+        const name = String(item.name || "").trim().slice(0, 32);
+        const settings = item.settings && typeof item.settings === "object" && !Array.isArray(item.settings)
+            ? item.settings
+            : null;
+        if (name && settings) clean.push({ name, settings });
+    });
+    return clean;
+}
+window.parseMyRecapPresets = parseMyRecapPresets;
+
+function serializeMyRecapPresets() {
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
+    try {
+        return JSON.stringify(list.slice(0, 3));
+    } catch (e) {
+        return "[]";
+    }
+}
+window.serializeMyRecapPresets = serializeMyRecapPresets;
+
+function renderMyRecapPresets() {
+    const isVip = Boolean(state.user && state.user.is_vip);
+    const badge = document.getElementById("recap-my-presets-vip-badge");
+    if (badge) badge.classList.toggle("hidden", isVip);
+
+    const listEl = document.getElementById("recap-my-presets-list");
+    if (!listEl) return;
+
+    const presets = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
+    if (!presets.length) {
+        const emptyText = typeof t === "function" ? t("recap_my_preset_empty") : "";
+        listEl.innerHTML = `<div class="vcp-my-preset-empty" data-i18n="recap_my_preset_empty">${escapeHtml(emptyText)}</div>`;
+        return;
+    }
+
+    listEl.innerHTML = presets.map((p, idx) => {
+        const metaParts = [
+            p.settings && p.settings.recapRatio ? p.settings.recapRatio : "9:16",
+            p.settings && p.settings.recapSubStyle ? p.settings.recapSubStyle : "yellow",
+        ];
+        const applyLabel = typeof t === "function" ? t("recap_my_preset_apply") : "Apply";
+        const delLabel = typeof t === "function" ? t("recap_my_preset_delete") : "Delete";
+        return `
+            <div class="vcp-my-preset-item">
+                <button type="button" class="vcp-my-preset-apply" onclick="applyMyRecapPreset(${idx})" title="${escapeHtml(applyLabel)}">
+                    <span class="vcp-my-preset-name">${escapeHtml(p.name)}</span>
+                    <span class="vcp-my-preset-meta">${escapeHtml(metaParts.join(" · "))}</span>
+                </button>
+                <button type="button" class="vcp-my-preset-del" onclick="deleteMyRecapPreset(${idx})" aria-label="${escapeHtml(delLabel)} ${escapeHtml(p.name)}" title="${escapeHtml(delLabel)}">✕</button>
+            </div>
+        `;
+    }).join("");
+}
+window.renderMyRecapPresets = renderMyRecapPresets;
+
+function saveCurrentAsMyRecapPreset() {
+    if (typeof haptic === "function") haptic("light");
+    const isVip = Boolean(state.user && state.user.is_vip);
+    if (!isVip) {
+        if (typeof showStudioToast === "function" && typeof t === "function") {
+            showStudioToast(t("recap_my_preset_vip_only"), "warning");
+        }
+        return;
+    }
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.slice() : [];
+    if (list.length >= 3) {
+        if (typeof showStudioToast === "function" && typeof t === "function") {
+            showStudioToast(t("recap_my_preset_max_toast"), "warning");
+        }
+        return;
+    }
+    const input = document.getElementById("input-my-preset-name");
+    const rawName = input ? input.value.trim() : "";
+    const defTpl = (typeof t === "function" && t("recap_my_preset_default_name")) || "My Preset {n}";
+    const name = (rawName || defTpl.replace("{n}", String(list.length + 1))).slice(0, 32);
+    list.push({ name, settings: extractPortablePresetSettings() });
+    if (JSON.stringify(list).length > 3900) {
+        if (typeof showStudioToast === "function" && typeof t === "function") {
+            showStudioToast(t("recap_my_preset_too_large"), "warning");
+        }
+        return;
+    }
+    state.recapCustomPresets = list;
+    if (input) input.value = "";
+    renderMyRecapPresets();
+    if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        showStudioToast(t("recap_my_preset_saved_toast"), "success");
+    }
+}
+window.saveCurrentAsMyRecapPreset = saveCurrentAsMyRecapPreset;
+
+function applyMyRecapPreset(idx) {
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
+    const item = list[idx];
+    if (!item || !item.settings) return;
+    if (typeof haptic === "function") haptic("medium");
+    applyRecapPresetObject(item.settings);
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        showStudioToast(t("recap_my_preset_applied_toast"), "success");
+    }
+}
+window.applyMyRecapPreset = applyMyRecapPreset;
+
+function deleteMyRecapPreset(idx) {
+    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.slice() : [];
+    if (idx < 0 || idx >= list.length) return;
+    if (typeof haptic === "function") haptic("light");
+    list.splice(idx, 1);
+    state.recapCustomPresets = list;
+    renderMyRecapPresets();
+    if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
+    if (typeof showStudioToast === "function" && typeof t === "function") {
+        showStudioToast(t("recap_my_preset_deleted_toast"), "info");
+    }
+}
+window.deleteMyRecapPreset = deleteMyRecapPreset;
+
+function syncRecapSubStyleCards() {
+    const sel = document.getElementById("sub-style-picker");
+    const cur = state.recapSubStyle || (sel ? sel.value : "yellow") || "yellow";
+    document.querySelectorAll("#sub-style-cards-grid [data-style-card]").forEach(btn => {
+        const match = btn.getAttribute("data-style-card") === cur;
+        btn.classList.toggle("active", match);
+        btn.setAttribute("aria-pressed", match ? "true" : "false");
+    });
+}
+window.syncRecapSubStyleCards = syncRecapSubStyleCards;
+
+function selectRecapSubStyleCard(styleKey) {
+    if (typeof haptic === "function") haptic("light");
+    const sel = document.getElementById("sub-style-picker");
+    if (sel) {
+        sel.value = styleKey;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+        state.recapSubStyle = styleKey;
+        syncRecapSubStyleCards();
+    }
+    syncRecapMasterPresetActive();
+}
+window.selectRecapSubStyleCard = selectRecapSubStyleCard;
+
+function toggleRecapSubL2Detail(forceOpen) {
+    if (typeof haptic === "function") haptic("light");
+    const body = document.getElementById("recap-sub-l2-body");
+    const btn = document.getElementById("btn-toggle-sub-l2-detail");
+    const chev = document.getElementById("sub-l2-chevron");
+    if (!body) return;
+    const isOpen = typeof forceOpen === "boolean" ? forceOpen : body.classList.contains("hidden");
+    body.classList.toggle("hidden", !isOpen);
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (chev) chev.textContent = "▼";
+    if (isOpen && typeof moveSegPills === "function") {
+        requestAnimationFrame(() => { try { moveSegPills(); } catch (e) {} });
+    }
+}
+window.toggleRecapSubL2Detail = toggleRecapSubL2Detail;
+
+function toggleRecapBlurL2Detail(forceOpen) {
+    if (typeof haptic === "function") haptic("light");
+    const body = document.getElementById("recap-blur-l2-body");
+    const btn = document.getElementById("btn-toggle-blur-l2-detail");
+    const chev = document.getElementById("blur-l2-chevron");
+    if (!body) return;
+    const isOpen = typeof forceOpen === "boolean" ? forceOpen : body.classList.contains("hidden");
+    body.classList.toggle("hidden", !isOpen);
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (chev) chev.textContent = "▼";
+}
+window.toggleRecapBlurL2Detail = toggleRecapBlurL2Detail;
+
+function refreshPhase1to4LanguageSurfaces() {
+    try {
+        if (state && state.user && typeof paintHomeStatusStrip === "function") {
+            paintHomeStatusStrip(state.user);
+        }
+        if (typeof renderHomeRecentProjects === "function") {
+            renderHomeRecentProjects();
+        }
+        const sampleAudio = document.getElementById("sample-audio-voice");
+        const tryBtn = document.getElementById("welcome-try-sample-btn");
+        if (sampleAudio && tryBtn && typeof t === "function") {
+            const playing = !sampleAudio.paused && !sampleAudio.ended;
+            tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
+        }
+        const u = (state && state.user) || {};
+        const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+        const vInp = document.getElementById("voice-text-input");
+        if (vInp && typeof syncVoiceExcessAndCost === "function") {
+            syncVoiceExcessAndCost((vInp.value || "").length, max);
+        }
+        const tInp = document.getElementById("tts-text-input");
+        if (tInp && typeof syncTtsExcessAndCost === "function") {
+            syncTtsExcessAndCost((tInp.value || "").length, max);
+        }
+        if (state && state.selectedReferenceFile && typeof setCustomCloneStep === "function") {
+            setCustomCloneStep(state.customCloneStep || 2, state.selectedReferenceFile);
+        }
+        if (typeof renderMyRecapPresets === "function") {
+            renderMyRecapPresets();
+        }
+        if (typeof renderHistoryHub === "function" && Array.isArray(hubHistoryCache)) {
+            renderHistoryHub();
+        }
+    } catch (e) {}
+}
+window.refreshPhase1to4LanguageSurfaces = refreshPhase1to4LanguageSurfaces;

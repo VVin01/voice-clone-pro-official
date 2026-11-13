@@ -50,7 +50,7 @@ from app.services.group_ai_admin import (
     create_escalation,
     release_escalation_edit,
 )
-from app.services.ledger import get_or_create_user
+from app.services.ledger import get_minute_balance, get_or_create_user
 from app.services.payment_review import (
     PAYMENT_REVIEW_CLAIM_TTL,
     claim_payment_review,
@@ -357,6 +357,9 @@ async def test_double_submit_second_is_rejected_before_charging(db_session, reca
     user, _ = await get_or_create_user(db_session, telegram_id=880701)
     user.account_category = "PURCHASED"
     user.recap_credits = 5
+    # Option B: default tts_engine="voxcpm" pre-checks Voice Clone Minutes.
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 3600
     await db_session.commit()
 
     resp = await api_mod.create_recap_job(

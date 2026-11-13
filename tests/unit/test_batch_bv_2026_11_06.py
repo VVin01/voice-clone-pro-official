@@ -206,7 +206,7 @@ def test_bv_frontend_card_markup_and_flow():
 
 
 def test_bv_cache_token_is_r93():
-    assert INDEX_HTML.count("20261104_r140") == 4
+    assert INDEX_HTML.count("20261113_r141") == 4
     assert "20261104_r92" not in INDEX_HTML
 
 
@@ -441,7 +441,7 @@ def _submit(ledger, monkeypatch, *, uid, credits=5, category="PURCHASED",
             **req_over):
     """Drive create_recap_job with a fake runner; returns
     (outcome, captured) where captured lists (job_id, req)."""
-    from app.models.schema import User
+    from app.models.schema import MinuteBalance, User
 
     captured = []
 
@@ -460,6 +460,8 @@ def _submit(ledger, monkeypatch, *, uid, credits=5, category="PURCHASED",
             if user is None:
                 s.add(User(id=uid, recap_credits=credits,
                            account_category=category))
+                # Phase 5 Option B: VoxCPM clone-voice jobs pre-check & hold Voice Clone Minutes.
+                s.add(MinuteBalance(user_id=uid, purchased_seconds=1800))
                 await s.commit()
                 user = await s.get(User, uid)
             req = api_mod.RecapConfigRequest(**base)

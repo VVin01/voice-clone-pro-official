@@ -152,14 +152,17 @@ def _engine_clamp_logs(caplog):
     return [r for r in caplog.records if "Recap TTS engine clamped" in r.getMessage()]
 
 
-def test_aw_clamp_free_voxcpm_becomes_gemini_with_one_info_log(caplog):
+def test_aw_clamp_free_voxcpm_allowed_for_persona_no_clamp(caplog):
+    # Phase 5 owner ruling: FREE users may use the 12 Persona voices on
+    # VoxCPM when holding enough Recap Credits + Voice Clone Minutes;
+    # Own Clone Voice (voice_ref_id) stays paid-only via _clamp_recap_voice_ref.
     req = _req("voxcpm")
     free = SimpleNamespace(id=558101, account_category=AccountCategory.FREE.value)
     with caplog.at_level(logging.INFO, logger="app.webapp.api"):
         applied = api_mod._clamp_recap_tts_engine(req, user=free, user_id=free.id)
-    assert applied == "gemini"
-    assert req.tts_engine == "gemini"
-    assert len(_engine_clamp_logs(caplog)) == 1
+    assert applied == "voxcpm"
+    assert req.tts_engine == "voxcpm"
+    assert _engine_clamp_logs(caplog) == []
 
 
 @pytest.mark.parametrize("engine", ["gemini", "edge"])
@@ -190,8 +193,8 @@ def test_aw_clamp_execution_tier_flag(caplog):
     req = _req("voxcpm")
     with caplog.at_level(logging.INFO, logger="app.webapp.api"):
         applied = api_mod._clamp_recap_tts_engine(req, user_id=558105, is_vip=False)
-    assert applied == "gemini"
-    assert len(_engine_clamp_logs(caplog)) == 1
+    assert applied == "voxcpm"
+    assert _engine_clamp_logs(caplog) == []
     req = _req("voxcpm")
     with caplog.at_level(logging.INFO, logger="app.webapp.api"):
         assert api_mod._clamp_recap_tts_engine(req, user_id=558105, is_vip=True) == "voxcpm"
@@ -720,9 +723,10 @@ def test_aw_recap_step3_edge_pill_and_engine_lock():
     assert "function refreshRecapEngineLock()" in APP_JS
     assert "function canUseRecapCloneEngine()" in APP_JS
     block = APP_JS[APP_JS.index("function refreshRecapEngineLock()"):APP_JS.index("window.refreshRecapEngineLock")]
-    assert 'state.recapTtsEngine === "voxcpm"' in block
-    assert 'state.recapTtsEngine = "gemini"' in block
+    # Phase 5: VoxCPM Persona engine is unlocked for FREE users; only Own Clone Voice stays locked.
+    assert "btn.disabled = false;" in block
     assert '"engine-locked"' in block
+    assert "recap-own-voice-card" in block
     assert "#recap-engine-picker .pill-btn.engine-locked" in CSS
     # The engine click handler refuses disabled (locked) pills.
     handler = APP_JS[APP_JS.index("const engineBtns = document.querySelectorAll"):APP_JS.index("refreshRecapEngineLock();", APP_JS.index("const engineBtns"))]

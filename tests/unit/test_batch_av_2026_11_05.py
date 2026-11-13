@@ -238,49 +238,48 @@ def test_av_step_structure_and_nav():
     assert 'id="recap-steps-nav"' in TAB
     positions = [TAB.index(f'id="recap-step-{n}"') for n in (1, 2, 3, 4)]
     assert positions == sorted(positions), "steps must render in order 1→2→3→4"
-    # Step 1 carries the owner-mandated name.
-    assert 'data-i18n="recap_step1_title">Source ထည့်သွင်းပါ<' in TAB
+    # Step 1 carries the owner-polished name.
+    assert 'data-i18n="recap_step1_title">ဗီဒီယို ထည့်သွင်းပါ<' in TAB
 
 
 def test_av_step2_visible_vs_detail_split():
     step2 = _step_slice(2)
     fine_at = step2.index('id="recap-fine-body"')
     visible, detail = step2[:fine_at], step2[fine_at:]
-    # Visible: stage, aspect/fill dock, ONE consolidated seek cluster,
-    # the frequent blur gate.
-    for marker in ('id="recap-mockup-wrap"', 'id="recap-preview-ratio-group"',
-                   'id="tb-panel-seek"', 'id="slider-canvas-seek"',
-                   'id="btn-seek-prev-5"', 'id="btn-seek-next-5"',
-                   'class="seek-presets-pills"', 'id="btn-toggle-blur"'):
+    # Phase 4 Split-Screen 5-Tab Editor:
+    # Visible before fine-body: sticky preview stage + seek bar + corner reset,
+    # 5-category segmented tabs, Master Presets, and Category 2 Frame/Crop group.
+    for marker in ('id="recap-step2-sticky-preview"', 'id="recap-mockup-wrap"',
+                   'id="btn-preview-corner-reset"', 'id="tb-panel-seek"',
+                   'id="slider-canvas-seek"', 'id="btn-seek-prev-5"',
+                   'id="btn-seek-next-5"', 'class="seek-presets-pills"',
+                   'id="recap-step2-cat-tabs"', 'id="recap-cat-preset"',
+                   'id="recap-preview-ratio-group"', 'id="recap-crop-presets-toolbar"',
+                   'id="btn-sync-crop"', 'id="slider-crop-top"'):
         assert marker in visible, marker
-    # Detail: the unified subtitle group (toggle, style, lines, size,
-    # font, position sliders together — never split across groups).
+    # Detail (#recap-fine-body): Subtitle group (all subtitle controls together).
     sub = detail[detail.index('id="recap-subtitle-group"'):detail.index('id="recap-blur-group"')]
-    for marker in ('id="btn-toggle-subs"', 'id="sub-style-picker"',
-                   'id="sub-lines-picker-toolbar"', 'id="slider-font-size"',
-                   'id="recap-sub-font-picker"', 'id="slider-sub-y"',
-                   'id="slider-sub-x"', 'id="slider-sub-w"'):
+    for marker in ('id="btn-toggle-subs"', 'id="sub-style-cards-grid"',
+                   'id="sub-style-picker"', 'id="sub-lines-picker-toolbar"',
+                   'id="slider-font-size"', 'id="recap-sub-font-picker"',
+                   'id="slider-sub-y"', 'id="slider-sub-x"', 'id="slider-sub-w"'):
         assert marker in sub, marker
-    # Blur-box group separate from the subtitle group.
-    blur = detail[detail.index('id="recap-blur-group"'):]
-    for marker in ('id="slider-blur-y"', 'id="slider-blur-h"', 'id="slider-blur-x"',
-                   'id="slider-blur-w"', 'id="slider-blur-strength"'):
+    # Blur-box group separate from subtitle group (now holds Category 4 toggle + sliders).
+    blur = detail[detail.index('id="recap-blur-group"'):detail.index('id="recap-logo-group"')]
+    for marker in ('id="btn-toggle-blur"', 'id="slider-blur-y"', 'id="slider-blur-h"',
+                   'id="slider-blur-x"', 'id="slider-blur-w"', 'id="slider-blur-strength"'):
         assert marker in blur, marker
     assert 'id="slider-sub-y"' not in blur
     # Batch DD: there is no title group in the detail area at all.
     for marker in ('id="recap-title-toggle"', 'id="recap-title-text"',
                    'id="slider-title-x"', 'id="slider-title-y"'):
         assert marker not in detail, marker
-    # Picture/transform group: mirror, zoom, framing presets, custom crop.
-    for marker in ('id="btn-toggle-mirror"', 'id="recap-zoom-picker"',
-                   'id="recap-crop-presets-toolbar"', 'id="btn-sync-crop"',
-                   'id="slider-crop-top"'):
-        assert marker in detail, marker
-    # Logo group.
+    # Category 5 Protection & Logo groups.
     for marker in ('id="btn-toggle-logo"', 'id="recap-logo-pos-picker"',
-                   'id="recap-logo-manager"'):
+                   'id="recap-logo-manager"', 'id="btn-toggle-mirror"',
+                   'id="recap-zoom-picker"'):
         assert marker in detail, marker
-    # Reset Layout closes the detail panel.
+    # Reset Layout remains available.
     assert 'id="btn-reset-canvas-layout"' in detail
 
 
@@ -349,7 +348,7 @@ def test_av_new_i18n_keys_in_both_locales():
     en = I18N_JS.index('"en"') if '"en"' in I18N_JS else I18N_JS.index("en: {")
     for key in NEW_I18N_KEYS:
         assert I18N_JS.count(f"{key}:") >= 2, f"{key} missing in one locale"
-    assert 'recap_step1_title: "Source ထည့်သွင်းပါ"' in I18N_JS
+    assert 'recap_step1_title: "ဗီဒီယို ထည့်သွင်းပါ"' in I18N_JS
     assert 'recap_step1_title: "Add Source"' in I18N_JS
     assert my < en  # sanity: my block precedes en block
 
@@ -379,5 +378,5 @@ def test_av_touch_targets_and_text_fit_guards():
 
 def test_av_cache_token_bumped():
     # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ) → r73 (AW) → r74 (BA) → r75 (BB) → r76 (BF) → r77 (BC) → r78 (BG) → r79 (BE) → r80 (BD) → r81 (BH) → r82 (BI) → r83 (BJ) → r84 (BK) → r85 (BM) → r86 (BN) → r87 (BO) → r88 (BP) → r89 (BR) → r90 (BS) → r91 (BT) → r92 (BU) → r93 (BV) → r94 (BW) → r95 (BX) → r96 (BY) → r97 (BZ) → r98 (CA) → r99 (CB) → r100 (CF) → r101 (CC) → r102 (CD) → r103 (CE) → r104 (CG) → r105 (CH) → r106 (CI) → r107 (CJ) → r108 (CK) → r109 (CL) → r110 (CN) → r111 (CO).
-    assert INDEX_HTML.count("r140") == 4
+    assert INDEX_HTML.count("r141") == 4
     assert "r70" not in INDEX_HTML

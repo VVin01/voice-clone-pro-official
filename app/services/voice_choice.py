@@ -362,7 +362,13 @@ async def _expire_parked_job(session, job: Job, state: dict, bot) -> None:
         entry["status"] = "FAILED"
         entry["error_message"] = reason
         _api.RECAP_JOBS_REGISTRY[job.id] = entry
-        if entry.get("credit_deducted") and not entry.get("credit_refunded"):
+        if (
+            (entry.get("credit_deducted") and not entry.get("credit_refunded"))
+            or (
+                entry.get("billing_mode") == _api._RECAP_BILLING_CREDIT_PLUS_VOICE
+                and not entry.get("voice_refunded")
+            )
+        ):
             await _api._refund_recap_job_charge(job.user_id, entry)
         try:
             await _api._send_recap_failure_dm(

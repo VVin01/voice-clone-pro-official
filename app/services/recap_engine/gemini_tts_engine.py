@@ -121,16 +121,44 @@ _TTS_MODEL_LOCK = threading.Lock()
 _TTS_MODEL_CURSOR = 0
 
 
+def _effective_tts_models() -> tuple[str, ...]:
+    """Resolve active TTS model chain from dynamic settings.
+
+    Effective read order mirrors today's production chain verbatim on day one:
+    (primary -> fallback_1 -> lite -> fallback_2) =
+    (gemini-3.8-flash-tts, gemini-3.1-flash-tts-preview,
+     gemini-3.8-flash-lite-tts, gemini-2.5-flash-preview-tts).
+    """
+    try:
+        from app.config import settings as _settings
+
+        raw = (
+            getattr(_settings, "gemini_tts_primary_model", TTS_MODELS[0]),
+            getattr(_settings, "gemini_tts_fallback_1", TTS_MODELS[1]),
+            getattr(_settings, "gemini_tts_lite_model", TTS_MODELS[2]),
+            getattr(_settings, "gemini_tts_fallback_2", TTS_MODELS[3]),
+        )
+    except Exception:
+        return TTS_MODELS
+    seen: list[str] = []
+    for item in raw:
+        name = str(item or "").strip()
+        if name and name not in seen:
+            seen.append(name)
+    return tuple(seen) if seen else TTS_MODELS
+
+
 def _rotated_tts_models() -> tuple[str, ...]:
-    """TTS_MODELS rotated so consecutive calls start on different
+    """Configured TTS models rotated so consecutive calls start on different
     models; failover inside the call walks the remaining model(s)."""
     global _TTS_MODEL_CURSOR
-    if len(TTS_MODELS) < 2:
-        return TTS_MODELS
+    models = _effective_tts_models()
+    if len(models) < 2:
+        return models
     with _TTS_MODEL_LOCK:
-        start = _TTS_MODEL_CURSOR % len(TTS_MODELS)
+        start = _TTS_MODEL_CURSOR % len(models)
         _TTS_MODEL_CURSOR += 1
-    return TTS_MODELS[start:] + TTS_MODELS[:start]
+    return models[start:] + models[:start]
 PROFILE_VERSION = "single_narrator_v3"
 DEFAULT_DIRECTION = ("An energetic, ALIVE Burmese storyteller PERFORMING the story for listeners — warm, vivid and "
                      "gripping, never flat or robotic: the pace breathes with the scene (quicker and tighter at "

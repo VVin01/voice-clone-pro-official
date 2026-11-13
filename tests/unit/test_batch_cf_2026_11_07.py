@@ -57,9 +57,14 @@ def test_show_recap_step4_branch_refreshes_eta():
 
 
 def test_step4_eta_refresh_still_wired_in_cost_hint_and_picker():
-    # CB's original two call sites stay — CF adds the third (entry),
-    # it does not move the others.
-    assert APP_JS.count("refreshRecapStep4Eta();") >= 3
+    # Hub wiring: the engine picker routes through updateRecapSplitCostHint(),
+    # which invokes refreshRecapStep4Eta() alongside Step-4 entry.
+    hub_start = APP_JS.index("function updateRecapSplitCostHint()")
+    hub_end = APP_JS.index("window.repaintRecapCtaPrice", hub_start)
+    assert "refreshRecapStep4Eta();" in APP_JS[hub_start:hub_end]
+    picker_start = APP_JS.index('const engineBtns = document.querySelectorAll("#recap-engine-picker .pill-btn")')
+    picker_end = APP_JS.index("refreshRecapEngineLock();", picker_start)
+    assert "updateRecapSplitCostHint();" in APP_JS[picker_start:picker_end]
 
 
 # ── Item 2: the static minute-claim slide is gone ────────────────
@@ -149,7 +154,7 @@ def test_recap_step_text_placeholder_matches_neutral_value():
 # ── Release pin: cache token (split-literal, sweep-proof) ────────
 
 def test_cache_token_is_r100():
-    token = "20261104_" + "r140"
+    token = "20261113_" + "r141"
     stale = "20261104_r" + "99"
     assert INDEX_HTML.count(token) == 4
     assert stale not in INDEX_HTML

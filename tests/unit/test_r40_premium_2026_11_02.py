@@ -306,9 +306,13 @@ def test_buy_menu_has_voice_pro_button():
 
 
 def test_recap_job_records_real_seconds():
-    # Creation stores the checked source duration, not the old 120s
-    # placeholder; completion stores the probed real duration.
-    assert "seconds_estimated=int(checked_duration) if checked_duration else 0" in API_PY
+    # Creation stores the checked source duration (or Option B hold fallback,
+    # never the old 120s placeholder); completion stores the probed real duration.
+    assert re.search(
+        r"seconds_estimated=\(\s*int\(checked_duration\)\s*if\s*checked_duration\s*else\s*"
+        r"\(int\(estimated_voice_seconds\)\s*if\s*estimated_voice_seconds\s*else\s*0\)\s*\)",
+        API_PY,
+    )
     assert '"seconds_consumed": _real_seconds' in API_PY
 
 
