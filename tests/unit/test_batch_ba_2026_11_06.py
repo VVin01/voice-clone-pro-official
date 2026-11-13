@@ -133,5 +133,5 @@ def test_ba_no_header_element_removed():
 
 
 def test_ba_cache_token_is_r79():
-    assert INDEX_HTML.count("20261113_r142") == 4
+    assert INDEX_HTML.count("20261113_r143") == 4
     assert "20261104_r73" not in INDEX_HTML

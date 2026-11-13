@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261113_r142">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261113_r143">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261113_r142" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261113_r143" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -27,8 +27,14 @@
             </div>
 
             <div class="top-actions">
+                <button type="button" class="theme-pill-btn" id="btn-theme-toggle" onclick="toggleThemeMode()" title="အလင်း / အမှောင် ပြောင်းရန်" data-i18n-title="theme_toggle_title" aria-label="Toggle Light / Dark theme" aria-pressed="false" data-theme-state="light">
+                    <span class="btn-icon theme-ico-wrap" aria-hidden="true">
+                        <svg class="vcp-ico vcp-ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                        <svg class="vcp-ico vcp-ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                    </span>
+                </button>
                 <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်" data-i18n-title="tut_guide_title">
-                    <span class="btn-icon">📚</span>
+                    <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
                     <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
                 </button>
                 <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()" title="ဘာသာစကား ပြောင်းရန်" data-i18n-title="lang_toggle_title"><span class="lang-flag" aria-hidden="true">🇲🇲</span><span class="lang-btn-text" id="lang-btn-text">မြန်မာ</span></button>
@@ -918,9 +924,10 @@
     <div class="recap-step-body" id="recap-step-2-body">
         <div class="vcp-step2-sticky-preview" id="recap-step2-sticky-preview">
             <div class="vcp-preview-stage-bar">
+                <div class="canvas-source-label hidden" id="canvas-source-label" data-i18n="recap_canvas_source_label">မူရင်း ဗီဒီယို</div>
                 <span class="hint-tag hidden" id="preview-hint-tag" data-i18n="preview_hint">Slider များကို ရွှေ့၍ နေရာညှိပါ</span>
                 <button type="button" class="vcp-preview-corner-reset" id="btn-preview-corner-reset" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title">
-                    <span>🔄</span>
+                    <span class="btn-ico-wrap" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></span>
                     <span data-i18n="btn_reset_layout_short">Reset</span>
                 </button>
             </div>
@@ -957,7 +964,6 @@
                         <div class="canvas-preview-loading hidden" id="canvas-preview-loading">
                             <span class="canvas-preview-loading-text" data-i18n="recap_preview_preparing">⏳ နမူနာ ပြင်ဆင်နေသည်…</span>
                         </div>
-                        <div class="canvas-source-label hidden" id="canvas-source-label" data-i18n="recap_canvas_source_label">မူရင်း ဗီဒီယို</div>
                         <div class="movie-center-badge" id="mockup-fill-badge">
                             <span class="badge-play">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.14v13.72c0 .8.87 1.3 1.56.88l10.5-6.86a1.03 1.03 0 0 0 0-1.76L9.56 4.26A1.03 1.03 0 0 0 8 5.14z"/></svg>
@@ -3294,27 +3300,27 @@
                  automatically. -->
             <span class="nav-pill" id="nav-active-pill" aria-hidden="true"></span>
             <button class="nav-item active" data-tab="tab-home">
-                <span class="nav-icon">🏠</span>
+                <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg></span>
                 <span class="nav-label" data-i18n="tab_home">ပင်မ</span>
             </button>
             <button class="nav-item" data-tab="tab-voice">
-                <span class="nav-icon">🎙️</span>
+                <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5 10.5a7 7 0 0 0 14 0"/><path d="M12 17.5V21"/><path d="M8.5 21h7"/></svg></span>
                 <span class="nav-label" data-i18n="tab_voice">အသံဖန်တီး</span>
             </button>
             <button class="nav-item" data-tab="tab-tts">
-                <span class="nav-icon">🎧</span>
+                <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15.5a2 2 0 0 1-2 2h-1.5a1.5 1.5 0 0 1-1.5-1.5v-3a1.5 1.5 0 0 1 1.5-1.5H19a2 2 0 0 1 2 2z"/><path d="M3 15.5a2 2 0 0 0 2 2h1.5A1.5 1.5 0 0 0 8 16v-3a1.5 1.5 0 0 0-1.5-1.5H5a2 2 0 0 0-2 2z"/></svg></span>
                 <span class="nav-label" data-i18n="tab_tts">TTS အသံ</span>
             </button>
             <button class="nav-item" data-tab="tab-recap">
-                <span class="nav-icon">🎬</span>
+                <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="15" rx="3"/><path d="M7 4.5v15"/><path d="M17 4.5v15"/><path d="M2.5 9.5H7"/><path d="M2.5 14.5H7"/><path d="M17 9.5h4.5"/><path d="M17 14.5h4.5"/><path d="m10.5 9.5 4.2 2.5-4.2 2.5z" fill="currentColor" stroke="none"/></svg></span>
                 <span class="nav-label" data-i18n="tab_recap">Recap</span>
             </button>
             <button class="nav-item" data-tab="tab-vip">
-                <span class="nav-icon">💎</span>
+                <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><path d="M6 3.5h12l4 5.5-10 12L2 9z"/><path d="M2 9h20"/><path d="m12 21 3.2-12L12 3.5 8.8 9z"/></svg></span>
                 <span class="nav-label" data-i18n="tab_vip">VIP</span>
             </button>
             <button class="nav-item hidden" id="nav-btn-admin" data-tab="tab-admin">
-                <span class="nav-icon">⚡</span>
+                <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><path d="M12 3l7.5 3.2v5.6c0 4.6-3.2 8.7-7.5 9.7-4.3-1-7.5-5.1-7.5-9.7V6.2z"/><path d="m9.5 12.2 1.8 1.8 3.6-3.8"/></svg></span>
                 <span class="nav-label" data-i18n="tab_admin">Admin</span>
             </button>
         </nav>
@@ -3409,7 +3415,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261113_r142"></script>
-    <script src="/static/js/app.js?v=20261113_r142"></script>
+    <script src="/static/js/i18n.js?v=20261113_r143"></script>
+    <script src="/static/js/app.js?v=20261113_r143"></script>
 </body>
 </html>
