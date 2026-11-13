@@ -97,3 +97,33 @@ def test_phase2_i18n_keys_present_in_both_locales():
     ]
     for key in keys:
         assert I18N_JS.count(f"{key}:") == 2, f"Missing or duplicate i18n key: {key}"
+
+
+def test_phase2_paint_home_status_strip_uses_state_tg_without_reference_error():
+    """Regression (Phase 8 QA): paintHomeStatusStrip must read state.tg, not
+    an undeclared bare `tg` identifier (which threw ReferenceError inside
+    loadUserProfile() at runtime).
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        return
+    fn_src = "function paintHomeStatusStrip(data)" + APP_JS.split(
+        "function paintHomeStatusStrip(data)", 1
+    )[1].split("window.paintHomeStatusStrip", 1)[0]
+    script = (
+        f"const state = {{ tg: {{ initDataUnsafe: {{ user: {{ first_name: 'Su' }} }} }} }};\n"
+        f"const els = {{ 'home-greeting-text': {{}}, 'home-tier-badge': {{}}, 'home-bal-summary': {{}} }};\n"
+        f"const document = {{ getElementById: (id) => els[id] || null }};\n"
+        f"const t = (k) => k;\n"
+        f"const tf = (k, p) => k + ':' + (p && p.name || '');\n"
+        f"{fn_src}\n"
+        f"paintHomeStatusStrip({{ balance_minutes: 3, recap_credits: 3, is_vip: false, is_admin: false }});\n"
+        f"if (els['home-greeting-text'].textContent !== 'home_greeting_named:Su') throw new Error('greet fail');\n"
+        f"console.log('OK');\n"
+    )
+    res = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True)
+    assert res.stdout.strip() == "OK"
+

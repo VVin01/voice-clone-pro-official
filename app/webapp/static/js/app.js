@@ -15029,7 +15029,7 @@ function paintHomeStatusStrip(data) {
     if (!data) return;
     const greetEl = document.getElementById("home-greeting-text");
     if (greetEl) {
-        const tgFirst = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name;
+        const tgFirst = state.tg && state.tg.initDataUnsafe && state.tg.initDataUnsafe.user && state.tg.initDataUnsafe.user.first_name;
         const displayName = data.first_name || data.username || tgFirst || "";
         greetEl.textContent = displayName
             ? tf("home_greeting_named", { name: displayName })
