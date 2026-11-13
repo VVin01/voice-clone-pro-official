@@ -101,7 +101,7 @@ def _card_span(card_id: str) -> str:
 
 def test_cn_cache_token_is_r110():
     # Superseded by Batch CO (r111); CN's own bump landed as r110.
-    assert HTML.count("20261113_r145") == 4
+    assert HTML.count("20261113_r146") == 4
     assert "20261104_r109" not in HTML
 
 
