@@ -171,7 +171,7 @@ async def test_dc_legacy_job_without_debit_rows(tmp_path, monkeypatch):
 
 def test_dc_refund_guard_is_outstanding_based():
     start = API_SRC.index("async def _refund_recap_credits")
-    end = API_SRC.index("async def _refund_recap_credit(", start)
+    end = API_SRC.index("async def _charge_recap_credits(", start)
     block = API_SRC[start:end]
     assert "recap_refund_family" in block
     assert "outstanding" in block

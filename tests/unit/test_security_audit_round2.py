@@ -161,7 +161,7 @@ async def test_refund_recap_credit_adds_one(monkeypatch, tmp_path):
         await s.commit()
 
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", make_session)
-    assert await api_mod._refund_recap_credit(123) is True
+    assert await api_mod._refund_recap_credits(123, 1) is True
 
     async with make_session() as s:
         stored = await s.get(User, 123)

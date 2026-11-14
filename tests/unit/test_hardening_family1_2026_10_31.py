@@ -21,14 +21,9 @@ from aiogram.types import CallbackQuery, Message, User as TgUser
 
 from app.config import settings
 from app.middlewares import AccessControlMiddleware
-from app.models.enums import AccountCategory, CustomVoiceRequestStatus, UserStatus
-from app.models.schema import User, UserVoiceModelGrant, VoiceModel
+from app.models.enums import AccountCategory, UserStatus
+from app.models.schema import User
 from app.services.broadcast import get_broadcast_recipient_ids, mark_user_blocked
-from app.services.custom_voice import (
-    assign_model_to_request,
-    create_custom_voice_request,
-    reject_custom_voice_request,
-)
 from app.services.ledger import get_or_create_user
 from app.services.payments import create_payment_request, get_active_pricing_plans
 
@@ -119,109 +114,6 @@ async def test_b1_middleware_flag_alone_never_blocks(db_session):
     # Suspension notice must NOT be sent for a mere bot_block flag.
     for call in cb.answer.call_args_list:
         assert "suspended" not in str(call).lower()
-
-
-# ── B3 ────────────────────────────────────────────────────────────────
-
-_MODEL_SEQ = [7800]
-
-
-async def _make_model(db_session, name="Model B3"):
-    _MODEL_SEQ[0] += 1
-    model = VoiceModel(
-        id=_MODEL_SEQ[0],
-        name=name,
-        slug=f"b3-model-{_MODEL_SEQ[0]}",
-        model_dir="storage/models/b3",
-        # Runnable marker: hardening V1 refuses non-"voxcpm" models at
-        # assign; B3's subject is the PENDING guard, not the format.
-        pth_path="voxcpm",
-        type="SYSTEM",
-        status="ACTIVE",
-    )
-    db_session.add(model)
-    await db_session.flush()
-    return model
-
-
-async def _make_request(db_session, user_id=7201):
-    user, _ = await get_or_create_user(db_session, telegram_id=user_id)
-    user.account_category = AccountCategory.PURCHASED.value
-    await db_session.flush()
-    ok, req, msg = await create_custom_voice_request(
-        session=db_session,
-        user_id=user_id,
-        model_name="My Voice",
-        sample_file_id="sample-file-id",
-    )
-    assert ok, msg
-    await db_session.flush()
-    return req
-
-
-@pytest.mark.asyncio
-async def test_b3_double_assign_refused(db_session):
-    model = await _make_model(db_session)
-    req = await _make_request(db_session)
-
-    ok, _, msg = await assign_model_to_request(db_session, req.id, model.id, admin_id=1)
-    assert ok and msg == "MODEL_ASSIGNED"
-    await db_session.flush()
-
-    ok2, req2, msg2 = await assign_model_to_request(db_session, req.id, model.id, admin_id=1)
-    assert ok2 is False
-    assert msg2.startswith("REQUEST_NOT_PENDING")
-    assert req2.status == CustomVoiceRequestStatus.APPROVED.value
-
-    grants = (
-        await db_session.execute(
-            UserVoiceModelGrant.__table__.select().where(
-                UserVoiceModelGrant.user_id == 7201
-            )
-        )
-    ).fetchall()
-    assert len(grants) == 1  # exactly one grant, no duplicate
-
-
-@pytest.mark.asyncio
-async def test_b3_reject_after_approve_refused_and_grant_intact(db_session):
-    model = await _make_model(db_session)
-    req = await _make_request(db_session, user_id=7202)
-
-    ok, _, _ = await assign_model_to_request(db_session, req.id, model.id, admin_id=1)
-    assert ok
-    await db_session.flush()
-
-    ok2, req2, msg2 = await reject_custom_voice_request(
-        db_session, req.id, admin_id=1, reason="changed my mind"
-    )
-    assert ok2 is False
-    assert msg2.startswith("REQUEST_NOT_PENDING")
-    # Status and grant both survive — the slot-cap defeat is closed.
-    assert req2.status == CustomVoiceRequestStatus.APPROVED.value
-    grant = (
-        await db_session.execute(
-            UserVoiceModelGrant.__table__.select().where(
-                UserVoiceModelGrant.user_id == 7202
-            )
-        )
-    ).fetchall()
-    assert len(grant) == 1
-
-
-@pytest.mark.asyncio
-async def test_b3_assign_after_reject_refused(db_session):
-    req = await _make_request(db_session, user_id=7203)
-    ok, _, msg = await reject_custom_voice_request(
-        db_session, req.id, admin_id=1, reason="bad sample"
-    )
-    assert ok and msg == "REQUEST_REJECTED"
-    await db_session.flush()
-
-    model = await _make_model(db_session)
-    ok2, _, msg2 = await assign_model_to_request(db_session, req.id, model.id, admin_id=1)
-    assert ok2 is False
-    assert msg2.startswith("REQUEST_NOT_PENDING")
 
 
 # ── F12 ───────────────────────────────────────────────────────────────

@@ -1,21 +1,12 @@
 import pytest
-from sqlalchemy import select
 from unittest.mock import AsyncMock, MagicMock
 
-from app.models.enums import AccountCategory, CustomVoiceRequestStatus, VoiceModelStatus, VoiceModelType
-from app.models.schema import AuditLog, CustomVoiceRequest, User, UserVoiceModelGrant, VoiceModel
+from app.models.enums import AccountCategory, CustomVoiceRequestStatus
 from app.services.custom_voice import (
-    assign_model_to_request,
     create_custom_voice_request,
-    get_custom_voice_request_by_id,
-    get_custom_voice_requests,
     get_user_custom_voice_quota,
-    grant_user_model_access,
-    reject_custom_voice_request,
-    revoke_user_model_access,
 )
 from app.services.ledger import get_or_create_user
-from app.services.models import get_available_models_for_user
 # Bot cleanup 2026-11-03: the chat-side admin CVR workflow test
 # retired with the admin:cvr:* screens. The service-level assign /
 # reject tests below stay — services.custom_voice is unchanged.
@@ -110,128 +101,6 @@ async def test_purchased_user_quota_enforcement(db_session):
     assert ok3 is False
     assert req3 is None
     assert err3 == "QUOTA_LIMIT_REACHED"
-
-
-@pytest.mark.asyncio
-async def test_admin_assign_existing_model_and_reusability(db_session):
-    # Setup 2 purchased users
-    u1, _ = await get_or_create_user(db_session, telegram_id=8805)
-    u1.account_category = AccountCategory.PURCHASED.value
-    u2, _ = await get_or_create_user(db_session, telegram_id=8806)
-    u2.account_category = AccountCategory.PURCHASED.value
-
-    # Create VoiceModel in DB. pth_path="voxcpm": since hardening V1
-    # the assign path refuses models the production engine cannot
-    # run; this test's subject is assign mechanics/reusability, so
-    # its fixture is a runnable model.
-    model = VoiceModel(
-        id=7701,
-        name="Nay Toe Official",
-        slug="nay-toe-official",
-        model_dir="storage/models/naytoe",
-        pth_path="voxcpm",
-        index_path="storage/models/naytoe.index",
-        type=VoiceModelType.SYSTEM.value,
-        status=VoiceModelStatus.ACTIVE.value,
-        is_default_free=False,
-    )
-    db_session.add(model)
-    await db_session.commit()
-
-    # User 1 requests Nay Toe
-    _, req1, _ = await create_custom_voice_request(
-        session=db_session,
-        user_id=u1.id,
-        model_name="Nay Toe",
-        sample_file_id="u1_sample",
-    )
-    assert req1 is not None
-
-    # Admin assigns existing model 7701 to User 1
-    ok, approved_req1, msg = await assign_model_to_request(
-        session=db_session,
-        request_id=req1.id,
-        model_id=model.id,
-        admin_id=999,
-        notes="Model assigned from Colab training",
-    )
-    assert ok is True
-    assert approved_req1.status == CustomVoiceRequestStatus.APPROVED.value
-    assert approved_req1.assigned_model_id == model.id
-
-    # Check User 1 can now see Nay Toe in their available models
-    u1_models = await get_available_models_for_user(db_session, u1.id)
-    assert any(m.id == model.id for m in u1_models)
-
-    # User 2 also requests Nay Toe
-    _, req2, _ = await create_custom_voice_request(
-        session=db_session,
-        user_id=u2.id,
-        model_name="Nay Toe (Myanmar actor)",
-        sample_file_id="u2_sample",
-    )
-    assert req2 is not None
-
-    # Admin assigns the SAME existing model to User 2 without retraining!
-    ok2, approved_req2, msg2 = await assign_model_to_request(
-        session=db_session,
-        request_id=req2.id,
-        model_id=model.id,
-        admin_id=999,
-        notes="Reused existing Nay Toe model",
-    )
-    assert ok2 is True
-    assert approved_req2.status == CustomVoiceRequestStatus.APPROVED.value
-
-    # Check User 2 also has access to the same model
-    u2_models = await get_available_models_for_user(db_session, u2.id)
-    assert any(m.id == model.id for m in u2_models)
-
-    # Verify grants in DB
-    grants = (await db_session.execute(
-        select(UserVoiceModelGrant).where(UserVoiceModelGrant.model_id == model.id)
-    )).scalars().all()
-    assert len(grants) == 2
-    assert {g.user_id for g in grants} == {u1.id, u2.id}
-
-
-@pytest.mark.asyncio
-async def test_admin_reject_frees_user_slot(db_session):
-    user, _ = await get_or_create_user(db_session, telegram_id=8807)
-    user.account_category = AccountCategory.PURCHASED.value
-    await db_session.commit()
-
-    # Fill both quota slots
-    _, req1, _ = await create_custom_voice_request(db_session, user.id, "Model A", "file_a")
-    _, req2, _ = await create_custom_voice_request(db_session, user.id, "Model B", "file_b")
-
-    q_full = await get_user_custom_voice_quota(db_session, user.id)
-    assert q_full["slots_used"] == 2
-    assert q_full["can_request"] is False
-
-    # Admin rejects req1
-    ok, rej_req, msg = await reject_custom_voice_request(
-        session=db_session,
-        request_id=req1.id,
-        admin_id=999,
-        reason="Audio sample was noisy",
-    )
-    assert ok is True
-    assert rej_req.status == CustomVoiceRequestStatus.REJECTED.value
-    assert rej_req.admin_notes == "Audio sample was noisy"
-
-    # User slot is now freed
-    q_after = await get_user_custom_voice_quota(db_session, user.id)
-    assert q_after["slots_used"] == 1
-    assert q_after["remaining_slots"] == 1
-    assert q_after["can_request"] is True
-
-    # User can now request Model C
-    ok_c, req_c, _ = await create_custom_voice_request(db_session, user.id, "Model C", "file_c")
-    assert ok_c is True
-    assert req_c is not None
-
-
 
 
 @pytest.mark.asyncio

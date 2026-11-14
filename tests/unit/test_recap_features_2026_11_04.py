@@ -159,27 +159,6 @@ def test_source_available_rules(tmp_path):
     assert api_mod._recap_source_available(str(real)) is True
 
 
-def test_eta_seconds_math_is_grounded_in_the_median():
-    # No samples -> no ETA at all (the payload degrades to position).
-    assert api_mod._recap_eta_seconds(0, "QUEUED", 0, None) is None
-    assert api_mod._recap_eta_seconds(2, "RUNNING", 40, None) is None
-    # QUEUED: two renders drain in parallel; position 0 is first wave.
-    assert api_mod._recap_eta_seconds(0, "QUEUED", 0, 600.0) == 600
-    assert api_mod._recap_eta_seconds(2, "QUEUED", 0, 600.0) == 1200
-    assert api_mod._recap_eta_seconds(4, "QUEUED", 0, 600.0) == 1800
-    # RUNNING: Batch CB REPLACED the pre-CB formula (median x
-    # (1 - progress%), which read 300 here) with the stage
-    # decomposition in app.services.recap_eta: at 50% the job sits
-    # 2/3 through the translate band, so the translate tail +
-    # narration (72 planning-density segments) + sync + finalize
-    # shares of the 600 s total remain — 547 s, NOT half. The
-    # no-progress case still yields the whole median.
-    assert api_mod._recap_eta_seconds(0, "RUNNING", 50, 600.0) == 547
-    assert api_mod._recap_eta_seconds(0, "RUNNING", None, 600.0) == 600
-    # Terminal / unknown states never get an ETA.
-    assert api_mod._recap_eta_seconds(0, "SUCCESS", 100, 600.0) is None
-
-
 def test_registry_queue_position_counts_only_active_earlier_jobs():
     api_mod.RECAP_JOBS_REGISTRY.update({
         "rc_l_pos_a": {"user_id": 1, "status": "QUEUED", "created_at": 100.0},

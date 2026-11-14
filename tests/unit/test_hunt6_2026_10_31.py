@@ -41,7 +41,6 @@ from app.webapp.telegram_webhook import (
     MAX_UPDATE_BODY_BYTES,
     SECRET_HEADER,
     attach_bot,
-    detach_bot,
     recent_update_ids,
     resolve_bot_mode,
     webhook_config_problems,
@@ -53,14 +52,14 @@ from app.webapp.telegram_webhook import (
 
 @pytest.fixture(autouse=True)
 def clean_webhook_state():
-    detach_bot()
+    attach_bot(None, None)
     recent_update_ids.clear()
     orig_mode = settings.bot_mode
     orig_secret = getattr(settings, "telegram_webhook_secret")
     orig_path = settings.bot_webhook_path
     orig_base = settings.public_base_url
     yield
-    detach_bot()
+    attach_bot(None, None)
     recent_update_ids.clear()
     settings.bot_mode = orig_mode
     setattr(settings, "telegram_webhook_secret", orig_secret)

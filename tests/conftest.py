@@ -84,8 +84,8 @@ def restore_settings():
     settings.bot_webhook_path = orig_webhook_path
     settings.public_base_url = orig_public_base_url
     try:
-        from app.webapp.telegram_webhook import detach_bot, recent_update_ids
-        detach_bot()
+        from app.webapp.telegram_webhook import attach_bot, recent_update_ids
+        attach_bot(None, None)
         recent_update_ids.clear()
     except Exception:
         pass

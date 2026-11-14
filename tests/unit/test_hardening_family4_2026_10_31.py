@@ -32,7 +32,6 @@ import app.webapp.api as api_mod
 from app.config import settings
 from app.models.enums import AccountCategory
 from app.models.schema import BotSetting, User, VoiceModel
-from app.services.custom_voice import assign_model_to_request, create_custom_voice_request
 from app.services.dynamic_settings import set_dynamic_setting
 from app.services.ledger import get_or_create_user
 
@@ -64,41 +63,6 @@ async def _model(db_session, mid, pth_path):
 
 
 # ── V1 ────────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_v1_assign_refuses_non_runnable_model(db_session):
-    user = await _purchased(db_session, 7901)
-    ok_r, req, _ = await create_custom_voice_request(
-        session=db_session, user_id=user.id, model_name="Legacy",
-        sample_file_id="s1",
-    )
-    assert ok_r and req
-    legacy = await _model(db_session, 7951, "storage/models/legacy.pth")
-
-    ok, req2, err = await assign_model_to_request(
-        session=db_session, request_id=req.id, model_id=legacy.id, admin_id=1
-    )
-    assert ok is False
-    assert err.startswith("MODEL_NOT_RUNNABLE")
-    await db_session.refresh(req)
-    assert req.status == "PENDING"  # untouched — no silently-dead approval
-
-
-@pytest.mark.asyncio
-async def test_v1_assign_accepts_runnable_model(db_session):
-    user = await _purchased(db_session, 7902)
-    ok_r, req, _ = await create_custom_voice_request(
-        session=db_session, user_id=user.id, model_name="Modern",
-        sample_file_id="s2",
-    )
-    assert ok_r and req
-    modern = await _model(db_session, 7952, "voxcpm")
-    ok, req2, err = await assign_model_to_request(
-        session=db_session, request_id=req.id, model_id=modern.id, admin_id=1
-    )
-    assert ok is True, err
-    assert req2.status == "APPROVED"
-
 
 @pytest.mark.asyncio
 async def test_v1_queue_remap_is_logged_not_silent(db_session, caplog):

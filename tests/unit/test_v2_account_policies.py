@@ -22,11 +22,7 @@ from app.services.ledger import (
     grant_monthly_free_allowance,
     credit_purchased_minutes,
 )
-from app.services.models import (
-    get_available_models_for_user,
-    set_model_free_permission,
-    set_model_purchased_permission,
-)
+from app.services.models import get_available_models_for_user
 from app.services.queue import create_voice_clone_job
 
 

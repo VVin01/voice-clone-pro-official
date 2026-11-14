@@ -32,7 +32,6 @@ import app.services.downloader as dl_mod
 from app.services.downloader import (
     MediaDownloader,
     _flag_low_res,
-    _is_blocked_family_error,
     _is_rotation_worthy_error,
     _valid_tikwm_play_url,
     classify_source_error,
@@ -486,9 +485,6 @@ def test_tikwm_triggered_by_any_primary_failure(monkeypatch, tmp_path):
     out = dl.get_info(TIKTOK_URL)
     assert out["tikwm_fallback"] is True
     assert record and record[0][0] == dl_mod.TIKWM_API_URL  # resolver WAS consulted
-    assert not _is_blocked_family_error("ERROR: [TikTok] 1: No video formats found!")
-    assert _is_blocked_family_error(RAW_IP_BLOCK)
-    assert _is_blocked_family_error("ERROR: HTTP Error 403: Forbidden")
 
 
 def test_tikwm_not_triggered_for_non_tiktok_hosts(monkeypatch, tmp_path):

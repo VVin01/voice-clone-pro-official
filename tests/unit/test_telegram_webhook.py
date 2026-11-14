@@ -25,7 +25,6 @@ from app.webapp.telegram_webhook import (
     SECRET_HEADER,
     RecentUpdateIds,
     attach_bot,
-    detach_bot,
     get_webhook_path,
     recent_update_ids,
     register_webhook,
@@ -35,14 +34,14 @@ from app.webapp.telegram_webhook import (
 @pytest.fixture(autouse=True)
 def clean_webhook_state():
     """Ensure every test starts and ends with a clean webhook environment."""
-    detach_bot()
+    attach_bot(None, None)
     recent_update_ids.clear()
     orig_mode = settings.bot_mode
     orig_secret = settings.telegram_webhook_secret
     orig_path = settings.bot_webhook_path
     orig_base = settings.public_base_url
     yield
-    detach_bot()
+    attach_bot(None, None)
     recent_update_ids.clear()
     settings.bot_mode = orig_mode
     settings.telegram_webhook_secret = orig_secret
@@ -458,7 +457,7 @@ async def test_health_check_independent_of_webhook_state():
     transport = ASGITransport(app=webapp_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Before attaching any bot
-        detach_bot()
+        attach_bot(None, None)
         r1 = await client.get("/health")
         assert r1.status_code == 200
         assert r1.json().get("status") == "ok"

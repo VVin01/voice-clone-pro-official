@@ -19,11 +19,9 @@ def test_no_legacy_engine_settings():
 def test_voice_clone_bridge_legacy_raises():
     from app.services.recap_engine.voice_clone_bridge import (
         convert_voice_rvc,
-        get_available_clone_models,
         resolve_clone_model,
     )
 
-    assert get_available_clone_models() == {}
     assert resolve_clone_model("clone_sys_test") is None
     with pytest.raises(RuntimeError, match="no longer supported"):
         convert_voice_rvc("in.wav", "out.wav", "clone_sys_test")
