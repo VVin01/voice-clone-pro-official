@@ -88,7 +88,7 @@ def test_v2_phase2_unified_queue_job_card_system_no_badge_button_overlap():
     # Non-overlapping flex-column footer separation on both Home Recent & History & Live Sheet & Admin Queue
     live_fn = APP_JS.split("function liveJobsSheetRowHtml(job)", 1)[1].split("function renderLiveJobsSheet()", 1)[0]
     hist_fn = APP_JS.split("function hubHistoryRowHtml(j)", 1)[1].split("function renderHistoryHub()", 1)[0]
-    queue_fn = APP_JS.split("async function loadAdminQueue(", 1)[1].split("window.loadAdminQueue", 1)[0]
+    queue_fn = APP_JS.split("function renderAdminQueueData(", 1)[1].split("window.loadAdminQueue", 1)[0]
     for name, body in (("liveJobsSheetRowHtml", live_fn), ("hubHistoryRowHtml", hist_fn), ("loadAdminQueue", queue_fn)):
         assert "vcp-job-card" in body, f"{name} must use unified .vcp-job-card"
         assert "vcp-job-footer-row" in body, f"{name} must use fixed .vcp-job-footer-row"

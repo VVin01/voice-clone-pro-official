@@ -183,7 +183,7 @@ def test_d3_ui_labels_bot_blocked_distinctly():
         "</span>",
     )
     assert "bot_blocked" in list_body
-    assert "BOT BLOCKED" in list_body
+    assert 't("admin_status_bot_blocked")' in list_body
     detail_body = _js_slice(
         "function renderAdminUserDetail(u)",
         "function renderAdminBanZone(u)",

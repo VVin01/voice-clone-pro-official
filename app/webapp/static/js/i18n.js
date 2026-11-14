@@ -531,7 +531,7 @@ const translations = {
         // Tab 5: Admin Console
         admin_title: "🛡️ Admin Console",
         admin_subtitle: "စနစ် အခြေအနေ၊ ပြေစာ စစ်ဆေးမှုနှင့် အသုံးပြုသူ စီမံခန့်ခွဲမှု — အားလုံး တစ်နေရာတည်းမှာ",
-        admin_stat_users: "တကယ် အသုံးပြုသူများ",
+        admin_stat_users: "စုစုပေါင်း အသုံးပြုသူများ",
         admin_stat_vip: "VIP အဖွဲ့ဝင်များ",
         admin_stat_slips: "စစ်ဆေးရန် ပြေစာများ",
         admin_stat_queue: "Queue ရှိ အလုပ်များ",
@@ -548,7 +548,7 @@ const translations = {
         admin_stat_failed24: "၂၄ နာရီအတွင်း ပျက်သော အလုပ်",
         admin_stat_banned: "ပိတ်ထားသူများ",
         admin_stat_banned_split: "Admin ပိတ်ထား {admin} · Bot block {bot}",
-        admin_stat_users_split: "မှတ်ပုံတင် စုစုပေါင်း {total} · တစ်ခါမှ မသုံးသူ {never}",
+        admin_stat_users_split: "တကယ်သုံးသူ {real} · တစ်ခါမှ မသုံးသူ {never}",
         admin_stat_income: "ဝင်ငွေ",
         admin_income_today: "ယနေ့",
         admin_income_7d: "၇ ရက်အတွင်း",
@@ -975,7 +975,7 @@ const translations = {
         adm_keys_est: "ခန့်မှန်း",
         adm_keys_full: "ပြည့်",
         adm_keys_unit_s: "စက္ကန့်",
-        btn_refresh: "Refresh",
+        btn_refresh: "ပြန်စစ်မည်",
         admin_loading: "ရယူနေသည်…",
         admin_empty: "ပြစရာ မရှိပါ",
         admin_load_error: "ရယူလို့ မရပါ — ကွန်ရက် စစ်ပြီး ပြန် စမ်းကြည့်ပါ",
@@ -1004,8 +1004,8 @@ const translations = {
         admin_balance_recap: "🎬 Recap Credit",
         admin_jobs_stat: "အလုပ် (အောင်/ပျက်)",
         admin_last_job: "နောက်ဆုံး အလုပ်",
-        admin_status_active: "ACTIVE",
-        admin_status_banned: "🚫 BANNED",
+        admin_status_active: "အသုံးပြုနေ",
+        admin_status_banned: "🚫 ပိတ်ထား",
         admin_status_bot_blocked: "Bot ကို Block ထားသည်",
         admin_adjust_title: "✏️ လက်ကျန် ပြင်ဆင်ရန်",
         admin_adjust_minutes: "မိနစ် (+ / −)",
@@ -1081,8 +1081,8 @@ const translations = {
         admin_bc_testids: "🧪 Test ID အဟောင်းများ",
         admin_bc_preblocked: "🛡️ ယခင်ကတည်းက Blocked ဖြစ်နေသူ",
         admin_bc_other: "❓ အခြား အမှားများ",
-        badge_cancelled: "⏹ CANCELLED",
-        admin_cancel_job: "Cancel",
+        badge_cancelled: "⏹ ပယ်ဖျက်ပြီး",
+        admin_cancel_job: "ပယ်ဖျက်",
         admin_confirm_cancel_job: "ဒီအလုပ်ကို ပယ်ဖျက်မှာ သေချာပါသလား? ကောက်ခံထားတဲ့ ပမာဏကို အလိုအလျောက် ပြန်ထည့်ပေးပါမယ်။",
         admin_cancel_refunded: "✅ အလုပ် ရပ်ပြီး — ပမာဏ ပြန်အမ်းပြီးပါပြီ",
         admin_cancel_done: "✅ အလုပ် ရပ်တန့်ပြီးပါပြီ",
@@ -1421,6 +1421,163 @@ const translations = {
         admin_tts_chain_save_err: "TTS Model Chain သိမ်းမရပါ",
         admin_badge_test_acct: "🧪 Test အကောင့်",
         admin_badge_active_jobs: "⚡ လုပ်ဆောင်နေဆဲ",
+        live_badge_title: "တိုက်ရိုက် ချိတ်ဆက်ထားသည်",
+        btn_theme_aria: "အလင်း / အမှောင် ပြောင်းရန်",
+        btn_dismiss: "ပိတ်မည်",
+        personas_count_fmt: "အသံ {n} မျိုး",
+        recap_default_video_title: "ဗီဒီယို ခေါင်းစဉ်",
+        recap_canvas_play_title: "ဖရိမ် ဖွင့်/ရပ်",
+        carousel_prev_aria: "ယခင် စလိုက်",
+        carousel_next_aria: "နောက် စလိုက်",
+        btn_close_aria: "ပိတ်မည်",
+        vip_member_free: "FREE အဖွဲ့ဝင်",
+        vip_member_pro: "VIP PRO အဖွဲ့ဝင်",
+        vip_drawer_default_title: "👑 VIP Plan",
+        history_filter_aria: "မှတ်တမ်း စစ်ထုတ်ရန်",
+        adm_queue_engine_aria: "Engine ရွေးချယ်ရန်",
+        adm_opt_all_engines: "Engine အားလုံး",
+        adm_opt_engine_voxcpm: "☁️ VoxCPM AI",
+        adm_opt_engine_recap: "🎬 Movie Recap",
+        adm_opt_all_statuses: "အခြေအနေ အားလုံး",
+        adm_opt_status_success: "✅ ပြီးစီး",
+        adm_opt_status_failed: "❌ မအောင်မြင်",
+        adm_opt_status_running: "⚡ လုပ်ဆောင်နေ",
+        adm_opt_status_queued: "⏳ တန်းစီနေ",
+        adm_opt_status_cancelled: "⏹ ပယ်ဖျက်ပြီး",
+        adm_opt_recap_voice: "Recap နှင့် Voice",
+        adm_opt_voice_clone: "🎙️ Voice Clone",
+        adm_hist_chip_recap: "Recap:",
+        adm_hist_chip_voice: "Voice:",
+        adm_opt_cat_purchased: "👑 VIP ဝယ်ယူထားသူ",
+        adm_opt_cat_free: "FREE အသုံးပြုသူ",
+        adm_account_name_ph: "အကောင့်အမည်",
+        adm_tut_all_10: "၁၀ ခုလုံး",
+        adm_tut_grp_voice: "🎙️ Voice Clone လမ်းညွှန်",
+        adm_tut_grp_recap: "🎬 Movie Recap လမ်းညွှန်",
+        adm_tut_grp_demo: "🎬 Recap နမူနာ ဗီဒီယို",
+        adm_tut_grp_other: "🔗 အခြား လမ်းညွှန်လင့်ခ်များ",
+        adm_tut_field_label: "ခေါင်းစဉ်",
+        adm_tut_field_url: "ဗီဒီယို လင့်ခ် (URL)",
+        tutorial_default_voice_title: "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
+        tutorial_default_recap_title: "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်",
+        adm_tut_lbl_index: "📚 မာတိကာ ပို့စ်",
+        adm_tut_lbl_plans: "💎 Plan များ",
+        adm_tut_lbl_customvoice: "🎙️ ကိုယ်ပိုင်အသံ Clone",
+        adm_tut_lbl_downloader: "📥 ဗီဒီယို ဒေါင်းလုဒ်",
+        adm_tut_lbl_scriptedit: "📝 Script ပြင်ဆင်ခြင်း",
+        adm_tut_lbl_recapadv: "⚙️ Recap အဆင့်မြင့်",
+        adm_tut_lbl_refer: "🎁 ဖိတ်ခေါ်ဆုရယူ",
+        adm_tut_lbl_support: "🛟 အကူအညီ",
+        adm_plan_rates_pill: "Plan ဈေးနှုန်းများ",
+        adm_custom_opt: "✏️ ကိုယ်တိုင်ရိုက်ထည့်ရန်…",
+        adm_opt_gem_36_rec: "gemini-3.6-flash (အကြံပြု)",
+        adm_opt_tts_38_rec: "gemini-3.8-flash-tts (အကြံပြု)",
+        adm_opt_tts_31_rec: "gemini-3.1-flash-tts-preview (အကြံပြု)",
+        adm_opt_tts_38lite_rec: "gemini-3.8-flash-lite-tts (အကြံပြု)",
+        adm_opt_tts_25_rec: "gemini-2.5-flash-preview-tts (အကြံပြု)",
+        adm_media_default_title: "အလုပ် နမူနာ ကြည့်ရန်",
+        adm_keys_running: "ဖွင့်ထား",
+        adm_worker_online: "Render Cloud (အွန်လိုင်း)",
+        status_badge_cancelled: "ပယ်ဖျက်ပြီး",
+        status_badge_waiting_choice: "ရွေးချယ်မှု စောင့်ဆိုင်းနေ",
+        recap_source_direct_mp4: "တိုက်ရိုက် Upload (MP4)",
+        recap_upload_ready_badge: "အသင့်",
+        adm_slip_img_title: "ပုံအပြည့် ကြည့်ရန် နှိပ်ပါ",
+        adm_media_no_video: "Browser က HTML5 ဗီဒီယို ဖွင့်ခြင်းကို မပံ့ပိုးပါ။",
+        adm_media_no_audio: "Browser က HTML5 အသံ ဖွင့်ခြင်းကို မပံ့ပိုးပါ။",
+        adm_media_dl_video: "🎬 ဗီဒီယို ဒေါင်းလုဒ်",
+        adm_media_dl_audio: "🎙️ အသံ ဒေါင်းလုဒ်",
+        adm_media_dl_srt: "📝 စာတန်းဖိုင် (SRT)",
+        adm_media_dl_script: "📄 ဇာတ်လမ်းစာသား (TXT)",
+        adm_media_dl_voice: "📥 WAV / MP3 ဒေါင်းလုဒ်",
+        adm_btn_play: "▶️ ဖွင့်ကြည့်မည်",
+        adm_btn_preview: "▶️ နမူနာ",
+        adm_open_stream_title: "Stream ဖွင့်မည်",
+        adm_task_content_fallback: "အလုပ် အကြောင်းအရာ",
+        adm_task_fallback: "အလုပ်",
+        adm_error_prefix: "အမှား:",
+        adm_exec_failed: "လုပ်ဆောင်မှု မအောင်မြင်ပါ",
+        adm_job_id_prefix: "အလုပ် #",
+        adm_btn_retry: "🔄 ထပ်စမ်းမည်",
+        upload_failed_code: "Upload မအောင်မြင်ပါ ({code})",
+        recap_fallback_title: "Movie Recap ဗီဒီယို",
+        job_fallback_recap: "Movie Recap",
+        job_fallback_voice: "အသံထုတ်လုပ်မှု",
+        adm_badge_recap: "🎬 RECAP",
+        adm_badge_voice: "🎙️ VOICE",
+        srv_recap_seg_shortfall_bal: "💳 Recap Credit မလုံလောက်ပါ — ဒီဗီဒီယိုရှည်ကို အပိုင်း {parts} ပိုင်း ခွဲထုတ်ရမှာဖြစ်ပြီး စုစုပေါင်း {credits} Credits လိုအပ်ပါတယ်။ လက်ကျန် Credit ({balance}c) မလုံလောက်ပါ — Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။",
+        srv_recap_seg_shortfall: "💳 Recap Credit မလုံလောက်ပါ — ဒီဗီဒီယိုရှည်ကို အပိုင်း {parts} ပိုင်း ခွဲထုတ်ရမှာဖြစ်ပြီး စုစုပေါင်း {credits} Credits လိုအပ်ပါတယ်။ Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။",
+        srv_recap_dur_shortfall_bal: "💳 Recap Credit မလုံလောက်ပါ — ဗီဒီယို ကြာချိန်အလိုက် စုစုပေါင်း {credits} Credits လိုအပ်ပါတယ်။ လက်ကျန် Credit ({balance}c) မလုံလောက်ပါ — Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။",
+        srv_recap_dur_shortfall: "💳 Recap Credit မလုံလောက်ပါ — ဗီဒီယို ကြာချိန်အလိုက် စုစုပေါင်း {credits} Credits လိုအပ်ပါတယ်။ Credit ထပ်ဖြည့်ပြီးမှ ပြန်စမ်းပါခင်ဗျာ။",
+        srv_recap_credit_exhausted: "Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
+        srv_recap_over_limit: "ဗီဒီယို ကြာချိန် ({dur}) သည် {tier} အသုံးပြုသူ ကန့်သတ်ချက် (အများဆုံး {max} မိနစ်) ထက် ကျော်လွန်နေပါသည်။",
+        srv_recap_voice_minutes_shortfall: "Persona / Clone အသံဖြင့် Recap ဖန်တီးရန် Voice Clone မိနစ် မလုံလောက်ပါ (လိုအပ်ချက် ~{req} မိနစ် • လက်ကျန် {avail} မိနစ်)။",
+        srv_script_review_cap: "📝 Script ကို အရင်စစ်မယ် ရွေးထားရင် ၁၀ မိနစ်အထိပဲ ရပါတယ် — အပိုင်းခွဲပြီး လုပ်ချင်ရင် Script review ကို ပိတ်ပြီး ပြန်စမ်းပါခင်ဗျာ။",
+        srv_voice_insufficient: "လက်ကျန်မိနစ် မလုံလောက်ပါ။",
+        srv_voice_daily_limit: "ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ။",
+        srv_voice_daily_minutes: "ယနေ့အတွက် အသံ အသုံးချနိုင်သော မိနစ် ({limit} မိနစ်) ပြည့်သွားပါပြီ။ မနက်ဖြန် ပြန်ကြိုးစားပါ။",
+        srv_tts_daily_limit: "🎧 ဒီနေ့အတွက် TTS အသံ ဖန်တီးခွင့် {limit} မိနစ် ပြည့်သွားပါပြီ။ မနက်ဖြန် ထပ်မံ ကြိုးစားကြည့်ပါခင်ဗျာ။",
+        srv_concurrent_limit: "တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။",
+        srv_text_too_long: "စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်။",
+        srv_text_empty: "စာသား ရိုက်ထည့်ပေးပါ။",
+        srv_voice_not_found: "အသံမော်ဒယ် ရှာမတွေ့ပါ။",
+        srv_legacy_voice: "ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ။ VoxCPM2 နဲ့ ကိုးကားအသံ (၃–၃၀ စက္ကန့်) အသစ် ပို့ပေးပါ။",
+        srv_job_started_voice: "အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ",
+        srv_job_started_recap: "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
+        srv_sent_telegram: "Telegram ဆီ ပို့ပြီးပါပြီ!",
+        srv_telegram_send_err: "Telegram ဆီ ပေးပို့၍ မရပါ — ခဏနေ ပြန်စမ်းကြည့်ပါ။",
+        srv_file_too_large: "ဖိုင် အရွယ်အစား ကန့်သတ်ချက် ကျော်လွန်နေပါသည်။",
+        srv_file_save_err: "ဖိုင် သိမ်းဆည်းရာတွင် အဆင်မပြေ ဖြစ်သွားပါသည်။",
+        srv_disk_full: "ဆာဗာ သိုလှောင်နေရာ ပြည့်လုနီးပါး ဖြစ်နေပါတယ် — ခဏနေ ပြန်စမ်းကြည့်ပါ။",
+        srv_vip_logo_only: "ကိုယ်ပိုင် Logo ထည့်ခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်။",
+        srv_vip_clone_only: "ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်။",
+        srv_invalid_sample: "ရွေးထားတဲ့ အသံနမူနာ မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ နမူနာ ပြန်တင်ပေးပါ။",
+        srv_invalid_font: "Font ဖိုင် မမှန်ကန်ပါ — ဖတ်ယူ၍ မရပါ။",
+        srv_invalid_image: "တင်လိုက်တဲ့ ဖိုင်ဟာ မှန်ကန်တဲ့ ပုံဖိုင် မဟုတ်ပါ — PNG, JPG သို့မဟုတ် WEBP ရွေးပေးပါ။",
+        srv_invalid_url: "မှန်ကန်တဲ့ Video URL ထည့်သွင်းပေးပါ။",
+        srv_url_blocked: "ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါခင်ဗျာ။",
+        srv_dl_failed: "ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါ။",
+        srv_file_not_ready: "ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါ။",
+        srv_only_running_cancel: "လုပ်ဆောင်နေဆဲ အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
+        srv_only_failed_retry: "မအောင်မြင်တဲ့ Recap အလုပ်ကိုသာ ပြန်စမ်းနိုင်ပါတယ်။",
+        srv_slip_locked: "အခြား Admin တစ်ဦးက ဒီပြေစာကို စစ်ဆေးနေပါတယ်။ ခဏစောင့်ပေးပါ။",
+        srv_slip_approved: "အသုံးပြုသူ {userId} အတွက် ငွေပေးချေမှု အတည်ပြုပြီးပါပြီ (+{minutes} မိနစ်, +{credits} Recap Credits)",
+        srv_slip_rejected: "ငွေပေးချေမှု တောင်းဆိုချက် {reqId} ကို ငြင်းပယ်ပြီးပါပြီ",
+        srv_slip_submitted: "ငွေလွှဲပြေစာကို တင်သွင်းပြီးပါပြီ။ တောင်းဆိုမှု နံပါတ်: #{reqId} — Admin မှ စစ်ဆေးပြီးပါက Bot မှ အသိပေးပါမည်။",
+        srv_slip_duplicate: "ဒီပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ Admin စစ်ဆေးနေဆဲမို့ ခဏစောင့်ပေးပါ။",
+        srv_user_adjusted: "အသုံးပြုသူ {userId} ကို ပြင်ဆင်ပြီးပါပြီ",
+        srv_user_banned: "အသုံးပြုသူ {userId} ကို Ban လိုက်ပါပြီ",
+        srv_user_unbanned: "အသုံးပြုသူ {userId} ၏ Ban ကို ဖယ်ရှားပြီးပါပြီ",
+        srv_job_requeued: "အလုပ် {jobId} ကို တန်းစီထဲ ပြန်ထည့်ပြီးပါပြီ",
+        srv_job_cancelled: "အလုပ် {jobId} ကို ပယ်ဖျက်ပြီးပါပြီ",
+        srv_price_updated: "ဈေးနှုန်း ပြင်ပြီးပါပြီ: {detail}",
+        srv_maintenance_mode: "ဆာဗာ ပြုပြင်ထိန်းသိမ်းမှု ဆောင်ရွက်နေပါသည် — မကြာမီ ပြန်လည် အသုံးပြုနိုင်ပါမည်။",
+        srv_preview_failed: "ဒီလင့်ခ်ကနေ နမူနာပုံ မရယူနိုင်ပါ — Video Upload မှ တိုက်ရိုက်တင်ပြီး ပြုလုပ်နိုင်ပါတယ်။",
+        srv_generic_tech_err: "နည်းပညာဆိုင်ရာ အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့ပါသည်။ ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ။",
+        srv_invalid_setting: "ဆက်တင် တန်ဖိုး မမှန်ကန်ပါ — မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။",
+        srv_broadcast_too_long: "Broadcast စာသား ရှည်လွန်းပါတယ် — Telegram ကန့်သတ်ချက် (4096 လုံး) ထက် ကျော်နေပါတယ်။",
+        srv_no_bot_token: "Bot token မရှိသေးသောကြောင့် Broadcast ပို့၍ မရပါ။",
+        srv_delete_running: "လုပ်ဆောင်နေဆဲ အလုပ်ကို ဖျက်လို့ မရပါ — အရင် ရပ်တန့်ပြီးမှ ဖျက်ပါ။",
+        srv_admin_retry_insufficient_credits: "အသုံးပြုသူရဲ့ Recap Credit မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
+        srv_admin_retry_insufficient_mins: "အသုံးပြုသူရဲ့ Voice Clone မိနစ် မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
+        srv_logo_not_uploaded: "Logo မတင်ရသေးပါ",
+        srv_logo_format: "Logo ပုံသည် PNG, JPG သို့မဟုတ် WEBP ဖြစ်ရပါမည်",
+        srv_ref_audio_too_large: "အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါတယ်",
+        srv_ref_audio_empty: "အသံနမူနာဖိုင် မမှန်ကန်ပါ — ဖိုင် အလွတ် ဖြစ်နေပါသည်။",
+        srv_font_format: "TTF သို့မဟုတ် OTF font ဖိုင်သာ တင်နိုင်ပါတယ်",
+        srv_font_too_large: "Font ဖိုင် အရွယ်အစား 5 MB ထက် ကျော်လွန်နေပါတယ်",
+        srv_video_format: "MP4, MKV, MOV သို့မဟုတ် WEBM ဗီဒီယိုဖိုင်သာ လက်ခံပါသည်",
+        srv_script_prepare_err: "Script ပြင်ဆင်မှု မအောင်မြင်ပါ — အကြောင်းအရာကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါ။",
+        srv_retry_settings_missing: "ဒီ အလုပ်ရဲ့ ဆက်တင်များကို ပြန်ရှာမရပါ — Recap အသစ် ပြန်ဖန်တီးပေးပါ။",
+        srv_retry_video_missing: "မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
+        srv_demo_not_set: "နမူနာ ဗီဒီယို မသတ်မှတ်ရသေးပါ။",
+        srv_demo_no_bot: "နမူနာ ပို့ရန် Bot မရရှိနိုင်ပါ။",
+        srv_demo_send_err: "နမူနာ ပို့တာ မအောင်မြင်ပါ — ခဏနေ ပြန်စမ်းပါ။",
+        srv_invalid_voice: "ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ — အသံ ပြန်ရွေးပေးပါ။",
+        srv_settings_saved: "ဆက်တင်များ အောင်မြင်စွာ သိမ်းပြီးပါပြီ",
+        srv_purged_count: "မှတ်တမ်းနှင့် ဖိုင်တွဲ {count} ခုကို အောင်မြင်စွာ ရှင်းလင်းဖျက်သိမ်းပြီးပါပြီ။",
+        srv_text_over_limit_n: "စာသား ရှည်လွန်းနေပါတယ်။ စာလုံးရေ {limit} လုံးအောက် ထားပေးပါ။",
+        srv_voice_text_over_limit: "စာသား စာလုံးရေ ({len}) ဟာ ကန့်သတ်ချက် ({limit} လုံး) ထက် ကျော်လွန်နေပါတယ်။",
     },
     en: {
         // App Top Bar & Brand
@@ -1947,7 +2104,7 @@ const translations = {
         // Tab 5: Admin Console
         admin_title: "🛡️ Admin Console",
         admin_subtitle: "System health, payment review and user management — all in one place",
-        admin_stat_users: "Real Users",
+        admin_stat_users: "Total Users",
         admin_stat_vip: "VIP Members",
         admin_stat_slips: "Slips to Review",
         admin_stat_queue: "Jobs in Queue",
@@ -1964,7 +2121,7 @@ const translations = {
         admin_stat_failed24: "Failed jobs (24h)",
         admin_stat_banned: "Banned accounts",
         admin_stat_banned_split: "Banned by admin {admin} · Blocked the bot {bot}",
-        admin_stat_users_split: "Registered {total} · never used {never}",
+        admin_stat_users_split: "Real {real} · never used {never}",
         admin_stat_income: "Income",
         admin_income_today: "Today",
         admin_income_7d: "Last 7 days",
@@ -2837,6 +2994,163 @@ const translations = {
         admin_tts_chain_save_err: "Could not save TTS Model Chain",
         admin_badge_test_acct: "🧪 Test account",
         admin_badge_active_jobs: "⚡ Active jobs",
+        live_badge_title: "Live",
+        btn_theme_aria: "Toggle Light / Dark theme",
+        btn_dismiss: "Dismiss",
+        personas_count_fmt: "{n} Personas",
+        recap_default_video_title: "Video Title",
+        recap_canvas_play_title: "Play/Pause Frame",
+        carousel_prev_aria: "Previous Slide",
+        carousel_next_aria: "Next Slide",
+        btn_close_aria: "Close",
+        vip_member_free: "FREE MEMBER",
+        vip_member_pro: "VIP PRO MEMBER",
+        vip_drawer_default_title: "👑 VIP Plan",
+        history_filter_aria: "History filter",
+        adm_queue_engine_aria: "Engine filter",
+        adm_opt_all_engines: "All Engines",
+        adm_opt_engine_voxcpm: "☁️ VoxCPM AI",
+        adm_opt_engine_recap: "🎬 Movie Recap",
+        adm_opt_all_statuses: "All Statuses",
+        adm_opt_status_success: "✅ SUCCESS",
+        adm_opt_status_failed: "❌ FAILED",
+        adm_opt_status_running: "⚡ RUNNING",
+        adm_opt_status_queued: "⏳ QUEUED",
+        adm_opt_status_cancelled: "⏹ CANCELLED",
+        adm_opt_recap_voice: "Recap & Voice",
+        adm_opt_voice_clone: "🎙️ Voice Clone",
+        adm_hist_chip_recap: "Recap:",
+        adm_hist_chip_voice: "Voice:",
+        adm_opt_cat_purchased: "👑 PURCHASED (VIP)",
+        adm_opt_cat_free: "FREE",
+        adm_account_name_ph: "Account Name",
+        adm_tut_all_10: "All 10",
+        adm_tut_grp_voice: "🎙️ Voice Clone Tutorial",
+        adm_tut_grp_recap: "🎬 Movie Recap Tutorial",
+        adm_tut_grp_demo: "🎬 Recap Demo Sample",
+        adm_tut_grp_other: "🔗 Other Tutorial Links",
+        adm_tut_field_label: "Label",
+        adm_tut_field_url: "Video Link (URL)",
+        tutorial_default_voice_title: "Voice Clone Tutorial Guide",
+        tutorial_default_recap_title: "Movie Recap Tutorial Guide",
+        adm_tut_lbl_index: "📚 Index Post",
+        adm_tut_lbl_plans: "💎 Plans",
+        adm_tut_lbl_customvoice: "🎙️ Custom Voice",
+        adm_tut_lbl_downloader: "📥 Downloader",
+        adm_tut_lbl_scriptedit: "📝 Script Edit",
+        adm_tut_lbl_recapadv: "⚙️ Recap Advanced",
+        adm_tut_lbl_refer: "🎁 Refer & Earn",
+        adm_tut_lbl_support: "🛟 Support",
+        adm_plan_rates_pill: "Plan Rates",
+        adm_custom_opt: "✏️ Custom…",
+        adm_opt_gem_36_rec: "gemini-3.6-flash (Recommended)",
+        adm_opt_tts_38_rec: "gemini-3.8-flash-tts (Recommended)",
+        adm_opt_tts_31_rec: "gemini-3.1-flash-tts-preview (Recommended)",
+        adm_opt_tts_38lite_rec: "gemini-3.8-flash-lite-tts (Recommended)",
+        adm_opt_tts_25_rec: "gemini-2.5-flash-preview-tts (Recommended)",
+        adm_media_default_title: "Job Preview",
+        adm_keys_running: "RUNNING",
+        adm_worker_online: "ONLINE (Render Cloud)",
+        status_badge_cancelled: "CANCELLED",
+        status_badge_waiting_choice: "WAITING CHOICE",
+        recap_source_direct_mp4: "Direct Upload (MP4)",
+        recap_upload_ready_badge: "Ready",
+        adm_slip_img_title: "Click to view full image",
+        adm_media_no_video: "Browser does not support HTML5 video.",
+        adm_media_no_audio: "Browser does not support HTML5 audio.",
+        adm_media_dl_video: "🎬 Download Video",
+        adm_media_dl_audio: "🎙️ Download Audio",
+        adm_media_dl_srt: "📝 Subtitles (SRT)",
+        adm_media_dl_script: "📄 Script (TXT)",
+        adm_media_dl_voice: "📥 Download WAV / MP3",
+        adm_btn_play: "▶️ Play",
+        adm_btn_preview: "▶️ Preview",
+        adm_open_stream_title: "Open Stream",
+        adm_task_content_fallback: "Task Content",
+        adm_task_fallback: "Task",
+        adm_error_prefix: "Error:",
+        adm_exec_failed: "Execution failed",
+        adm_job_id_prefix: "Job #",
+        adm_btn_retry: "🔄 Retry",
+        upload_failed_code: "Upload failed ({code})",
+        recap_fallback_title: "Movie Recap Video",
+        job_fallback_recap: "Movie Recap",
+        job_fallback_voice: "Voice Synthesis",
+        adm_badge_recap: "🎬 RECAP",
+        adm_badge_voice: "🎙️ VOICE",
+        srv_recap_seg_shortfall_bal: "💳 Insufficient Recap Credits — this long video splits into {parts} parts (1 Credit per part), requiring {credits} Credits total. Your balance ({balance}c) is too low — please top up Credits and try again.",
+        srv_recap_seg_shortfall: "💳 Insufficient Recap Credits — this long video splits into {parts} parts (1 Credit per part), requiring {credits} Credits total. Please top up Credits and try again.",
+        srv_recap_dur_shortfall_bal: "💳 Insufficient Recap Credits — based on video duration (1 Credit per 3 mins), {credits} Credits total are required. Your balance ({balance}c) is too low — please top up Credits and try again.",
+        srv_recap_dur_shortfall: "💳 Insufficient Recap Credits — based on video duration (1 Credit per 3 mins), {credits} Credits total are required. Please top up Credits and try again.",
+        srv_recap_credit_exhausted: "Insufficient Recap Credits to create a Recap Video. You can purchase a Recap Plan in the VIP tab.",
+        srv_recap_over_limit: "Video duration ({dur}) exceeds the {tier} user limit (max {max} mins).",
+        srv_recap_voice_minutes_shortfall: "Insufficient Voice Clone minutes for Persona / Clone Recap (required ~{req} min • balance {avail} min). You can switch to Gemini AI / Edge TTS (Recap Credits only) or top up Voice minutes in the VIP tab.",
+        srv_script_review_cap: "📝 Script review supports videos up to 10 minutes — turn off Script review to split longer videos into parts.",
+        srv_voice_insufficient: "Insufficient Voice minute balance.",
+        srv_voice_daily_limit: "Today's free limit has been reached.",
+        srv_voice_daily_minutes: "Your daily Voice usage allowance ({limit} mins) has been reached. Please try again tomorrow.",
+        srv_tts_daily_limit: "🎧 Your daily TTS allowance ({limit} mins) has been reached. Please try again tomorrow.",
+        srv_concurrent_limit: "Too many concurrent jobs are running. Please wait a moment and try again.",
+        srv_text_too_long: "Text exceeds the allowed character limit.",
+        srv_text_empty: "Please enter text first.",
+        srv_voice_not_found: "Voice model not found.",
+        srv_legacy_voice: "This legacy voice model is retired. Please upload a fresh 3–30s VoxCPM2 reference sample.",
+        srv_job_started_voice: "Voice synthesis has started.",
+        srv_job_started_recap: "AI Movie Recap generation has started!",
+        srv_sent_telegram: "Sent to Telegram!",
+        srv_telegram_send_err: "Could not send to Telegram — please try again shortly.",
+        srv_file_too_large: "File exceeds the maximum allowed size.",
+        srv_file_save_err: "Could not save the uploaded file.",
+        srv_disk_full: "Server storage is nearly full — please try again shortly.",
+        srv_vip_logo_only: "Custom logos are available for VIP users only. Upgrade in the VIP tab.",
+        srv_vip_clone_only: "Custom voice cloning is available for VIP users only. Upgrade in the VIP tab.",
+        srv_invalid_sample: "Invalid voice sample. Please re-upload a valid sample.",
+        srv_invalid_font: "Invalid font file — could not read font. Please try another TTF or OTF file.",
+        srv_invalid_image: "The uploaded file is not a valid image — please select PNG, JPG, or WEBP.",
+        srv_invalid_url: "Please enter a valid Video URL.",
+        srv_url_blocked: "This link cannot be used.",
+        srv_dl_failed: "Download failed. Please check the link and try again.",
+        srv_file_not_ready: "File is not ready yet or was not found.",
+        srv_only_running_cancel: "Only active jobs can be cancelled.",
+        srv_only_failed_retry: "Only failed Recap jobs can be retried.",
+        srv_slip_locked: "Another admin is reviewing this slip. Please wait a moment.",
+        srv_slip_approved: "Approved payment for user {userId} (+{minutes} mins, +{credits} Recap Credits)",
+        srv_slip_rejected: "Rejected payment request {reqId}",
+        srv_slip_submitted: "Payment slip submitted (Request #{reqId}) — our bot will notify you after admin review.",
+        srv_slip_duplicate: "This payment slip has already been submitted. Please wait for admin review.",
+        srv_user_adjusted: "Updated user {userId}",
+        srv_user_banned: "Banned user {userId}",
+        srv_user_unbanned: "Unbanned user {userId}",
+        srv_job_requeued: "Re-queued job {jobId}",
+        srv_job_cancelled: "Cancelled job {jobId}",
+        srv_price_updated: "Price updated: {detail}",
+        srv_maintenance_mode: "Server maintenance is in progress — we will be back shortly.",
+        srv_preview_failed: "Could not fetch preview frame from this link. Please upload the video directly via 'Video Upload'.",
+        srv_generic_tech_err: "A technical error occurred. Please wait a moment and try again.",
+        srv_invalid_setting: "Invalid setting value — no settings were changed.",
+        srv_broadcast_too_long: "Broadcast text is too long — exceeds Telegram's 4,096-character limit.",
+        srv_no_bot_token: "Bot token is not configured — cannot send broadcast.",
+        srv_delete_running: "Cannot delete a running job — cancel it first.",
+        srv_admin_retry_insufficient_credits: "Cannot retry job — user lacks Recap Credits.",
+        srv_admin_retry_insufficient_mins: "Cannot retry job — user lacks Voice Clone minutes.",
+        srv_logo_not_uploaded: "No logo uploaded yet.",
+        srv_logo_format: "Logo image must be PNG, JPG, or WEBP.",
+        srv_ref_audio_too_large: "Reference audio file exceeds the 50 MB limit.",
+        srv_ref_audio_empty: "Reference audio file is invalid or empty.",
+        srv_font_format: "Only TTF or OTF font files are supported.",
+        srv_font_too_large: "Font file exceeds the 5 MB limit.",
+        srv_video_format: "Only MP4, MKV, MOV, or WEBM video files are supported.",
+        srv_script_prepare_err: "Could not prepare script — please check your content and try again.",
+        srv_retry_settings_missing: "Job settings could not be found — please create a new Recap.",
+        srv_retry_video_missing: "Source video file is no longer available — please re-upload and try again.",
+        srv_demo_not_set: "Demo sample video is not configured.",
+        srv_demo_no_bot: "Bot is unavailable to send the demo video.",
+        srv_demo_send_err: "Could not send demo sample — please try again shortly.",
+        srv_invalid_voice: "Selected voice is invalid — please choose a voice again.",
+        srv_settings_saved: "Settings saved successfully.",
+        srv_purged_count: "Cleaned up {count} history records and folders.",
+        srv_text_over_limit_n: "Text is too long. Please keep it under {limit} characters.",
+        srv_voice_text_over_limit: "Text length ({len}) exceeds your {limit}-character limit.",
     }
 };
 
@@ -2954,3 +3268,107 @@ function setLanguage(lang) {
         }).catch(() => {});
     }
 }
+
+function localizeServerText(raw) {
+    if (raw == null) return "";
+    const s = String(raw);
+    if (typeof currentLang === "undefined" || currentLang === "my") return s;
+    if (!/[\u1000-\u109F]/.test(s)) return s;
+    let m;
+    if ((m = s.match(/အပိုင်း\s*(\d+)\s*ပိုင်း[^\n]*စုစုပေါင်း\s*(\d+)\s*Credits[^\n]*လက်ကျန်\s*Credit\s*\((\d+)c\)/i))) {
+        return tf("srv_recap_seg_shortfall_bal", { parts: m[1], credits: m[2], balance: m[3] });
+    }
+    if ((m = s.match(/အပိုင်း\s*(\d+)\s*ပိုင်း[^\n]*စုစုပေါင်း\s*(\d+)\s*Credits/i))) {
+        return tf("srv_recap_seg_shortfall", { parts: m[1], credits: m[2] });
+    }
+    if ((m = s.match(/စုစုပေါင်း\s*(\d+)\s*Credits[^\n]*လက်ကျန်\s*Credit\s*\((\d+)c\)/i))) {
+        return tf("srv_recap_dur_shortfall_bal", { credits: m[1], balance: m[2] });
+    }
+    if ((m = s.match(/စုစုပေါင်း\s*(\d+)\s*Credits/i))) {
+        return tf("srv_recap_dur_shortfall", { credits: m[1] });
+    }
+    if (/credit\s*မလုံလောက်တော့ပါ/i.test(s)) return t("srv_recap_credit_exhausted");
+    if ((m = s.match(/ဗီဒီယို ကြာချိန် \(([^)]+)\) သည် (.+?) အသုံးပြုသူ ကန့်သတ်ချက် \(အများဆုံး (\d+) မိနစ်\)/))) {
+        const tierEn = /အခမဲ့|free/i.test(m[2]) ? t("tier_free_label") : "VIP";
+        return tf("srv_recap_over_limit", { dur: m[1], tier: tierEn, max: m[3] });
+    }
+    if ((m = s.match(/Voice Clone မိနစ် မလုံလောက်ပါ\s*\(လိုအပ်ချက်\s*~?([^\s•]+)\s*မိနစ်\s*•\s*လက်ကျန်\s*([^)\s]+)\s*မိနစ်\)/))) {
+        return tf("srv_recap_voice_minutes_shortfall", { req: m[1], avail: m[2] });
+    }
+    if (/Script ကို အရင်စစ်မယ်/.test(s)) return t("srv_script_review_cap");
+    if (/Recap Credit မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ/.test(s)) return t("srv_admin_retry_insufficient_credits");
+    if (/Voice Clone မိနစ် မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ/.test(s)) return t("srv_admin_retry_insufficient_mins");
+    if (/လက်ကျန်မိနစ် မလုံလောက်ပါ/.test(s)) return t("srv_voice_insufficient");
+    if (/ယနေ့ အခမဲ့ ကန့်သတ်ချက် ပြည့်သွားပါပြီ/.test(s)) return t("srv_voice_daily_limit");
+    if ((m = s.match(/မိနစ် \((\d+)\s*မိနစ်\) ပြည့်သွားပါပြီ/))) return tf("srv_voice_daily_minutes", { limit: m[1] });
+    if ((m = s.match(/TTS အသံ ဖန်တီးခွင့် (\d+) မိနစ် ပြည့်သွားပါပြီ/))) return tf("srv_tts_daily_limit", { limit: m[1] });
+    if (/တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်/.test(s)) return t("srv_concurrent_limit");
+    if ((m = s.match(/စာသား စာလုံးရေ \(([^)]+)\)[^\n]*ကန့်သတ်ချက် \(([^)\s]+)[^)]*\) ထက် ကျော်လွန်နေပါတယ်/))) {
+        return tf("srv_voice_text_over_limit", { len: m[1], limit: m[2] });
+    }
+    if ((m = s.match(/စာသား ရှည်လွန်းနေပါတယ်[^\n]*စာလုံးရေ\s*([\d,]+)/))) {
+        return tf("srv_text_over_limit_n", { limit: m[1] });
+    }
+    if (/စာသား စာလုံးရေ ကန့်သတ်ချက်ထက် ကျော်လွန်နေပါသည်/.test(s)) return t("srv_text_too_long");
+    if (/စာသား ရိုက်ထည့်ပေးပါ/.test(s)) return t("srv_text_empty");
+    if (/အသံမော်ဒယ် ရှာမတွေ့ပါ/.test(s)) return t("srv_voice_not_found");
+    if (/ဒီအသံ မော်ဒယ် အဟောင်းကို မသုံးနိုင်တော့ပါ/.test(s)) return t("srv_legacy_voice");
+    if (/အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီ/.test(s)) return t("srv_job_started_voice");
+    if (/AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီ/.test(s)) return t("srv_job_started_recap");
+    if (/Telegram.*ပို့ပြီးပါပြီ/.test(s)) return t("srv_sent_telegram");
+    if (/Telegram.*ပေးပို့၍ မရပါ/.test(s)) return t("srv_telegram_send_err");
+    if (/Logo မတင်ရသေးပါ/.test(s)) return t("srv_logo_not_uploaded");
+    if (/Logo ပုံသည် PNG/.test(s)) return t("srv_logo_format");
+    if (/အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက်/.test(s)) return t("srv_ref_audio_too_large");
+    if (/အသံနမူနာဖိုင် မမှန်ကန်ပါ/.test(s)) return t("srv_ref_audio_empty");
+    if (/TTF သို့မဟုတ် OTF/.test(s)) return t("srv_font_format");
+    if (/Font ဖိုင် အရွယ်အစား 5 MB ထက်/.test(s)) return t("srv_font_too_large");
+    if (/MP4, MKV, MOV သို့မဟုတ် WEBM/.test(s)) return t("srv_video_format");
+    if (/ဖိုင် အရွယ်အစား ကန့်သတ်ချက် ကျော်လွန်နေပါသည်/.test(s)) return t("srv_file_too_large");
+    if (/ဖိုင် သိမ်းဆည်းရာတွင် အဆင်မပြေ/.test(s)) return t("srv_file_save_err");
+    if (/ဆာဗာ သိုလှောင်နေရာ/.test(s)) return t("srv_disk_full");
+    if (/ကိုယ်ပိုင် Logo ထည့်ခြင်းသည်/.test(s)) return t("srv_vip_logo_only");
+    if (/ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည်/.test(s)) return t("srv_vip_clone_only");
+    if (/ရွေးထားတဲ့ အသံနမူနာ မမှန်ကန်ပါ|အသံနမူနာဖိုင် ရွေးချယ်ပေးပါ/.test(s)) return t("srv_invalid_sample");
+    if (/ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ/.test(s)) return t("srv_invalid_voice");
+    if (/Font ဖိုင် မမှန်ကန်ပါ|Font ဖိုင် ရွေးချယ်ပေးပါ|ရွေးထားတဲ့ Font မမှန်ကန်ပါ/.test(s)) return t("srv_invalid_font");
+    if (/မှန်ကန်တဲ့ ပုံဖိုင် မဟုတ်ပါ|ပြေစာပုံသည်/.test(s)) return t("srv_invalid_image");
+    if (/မှန်ကန်တဲ့ Video URL|ဗီဒီယိုဖိုင် ရွေးချယ်ပေးပါ/.test(s)) return t("srv_invalid_url");
+    if (/ဒီလင့်ခ်ကို အသုံးပြု၍ မရပါ/.test(s)) return t("srv_url_blocked");
+    if (/ဒေါင်းလုဒ် မအောင်မြင်ပါ/.test(s)) return t("srv_dl_failed");
+    if (/အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါ/.test(s)) return t("srv_file_not_ready");
+    if (/Script ပြင်ဆင်မှု မအောင်မြင်ပါ/.test(s)) return t("srv_script_prepare_err");
+    if (/ဒီ အလုပ်ရဲ့ ဆက်တင်များကို ပြန်ရှာမရပါ/.test(s)) return t("srv_retry_settings_missing");
+    if (/မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ/.test(s)) return t("srv_retry_video_missing");
+    if (/နမူနာ ဗီဒီယို မသတ်မှတ်ရသေးပါ/.test(s)) return t("srv_demo_not_set");
+    if (/နမူနာ ပို့ရန် Bot မရရှိနိုင်ပါ/.test(s)) return t("srv_demo_no_bot");
+    if (/နမူနာ ပို့တာ မအောင်မြင်ပါ/.test(s)) return t("srv_demo_send_err");
+    if (/အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်/.test(s)) return t("srv_only_running_cancel");
+    if (/မအောင်မြင်တဲ့ Recap အလုပ်ကိုသာ ပြန်စမ်းနိုင်ပါတယ်/.test(s)) return t("srv_only_failed_retry");
+    if (/အခြား Admin တစ်ဦးက ဒီပြေစာကို/.test(s)) return t("srv_slip_locked");
+    if ((m = s.match(/အသုံးပြုသူ\s*(\S+)\s*အတွက် ငွေပေးချေမှု အတည်ပြုပြီးပါပြီ\s*\(\+?(\d+)\s*မိနစ်,\s*\+?(\d+)\s*Recap Credits\)/))) {
+        return tf("srv_slip_approved", { userId: m[1], minutes: m[2], credits: m[3] });
+    }
+    if ((m = s.match(/ငွေပေးချေမှု တောင်းဆိုချက်\s*(\S+)\s*ကို ငြင်းပယ်ပြီးပါပြီ/))) {
+        return tf("srv_slip_rejected", { reqId: m[1] });
+    }
+    if ((m = s.match(/တောင်းဆိုမှု နံပါတ်:\s*#?(\S+)/))) return tf("srv_slip_submitted", { reqId: m[1] });
+    if (/ဒီပြေစာ.*ပို့ထားပြီးသား/.test(s)) return t("srv_slip_duplicate");
+    if ((m = s.match(/အသုံးပြုသူ\s*(\S+)\s*ကို ပြင်ဆင်ပြီးပါပြီ/))) return tf("srv_user_adjusted", { userId: m[1] });
+    if ((m = s.match(/အသုံးပြုသူ\s*(\S+)\s*ကို Ban လိုက်ပါပြီ/))) return tf("srv_user_banned", { userId: m[1] });
+    if ((m = s.match(/အသုံးပြုသူ\s*(\S+)\s*၏ Ban ကို/))) return tf("srv_user_unbanned", { userId: m[1] });
+    if ((m = s.match(/အလုပ်\s*(\S+)\s*ကို တန်းစီထဲ ပြန်ထည့်ပြီးပါပြီ/))) return tf("srv_job_requeued", { jobId: m[1] });
+    if ((m = s.match(/အလုပ်\s*(\S+)\s*ကို ပယ်ဖျက်ပြီးပါပြီ/))) return tf("srv_job_cancelled", { jobId: m[1] });
+    if ((m = s.match(/ဈေးနှုန်း ပြင်ပြီးပါပြီ:\s*(.+)$/))) return tf("srv_price_updated", { detail: m[1] });
+    if ((m = s.match(/မှတ်တမ်းနှင့် ဖိုင်တွဲ\s*(\d+)\s*ခုကို/))) return tf("srv_purged_count", { count: m[1] });
+    if (/ဆက်တင်များ အောင်မြင်စွာ သိမ်းပြီးပါပြီ/.test(s)) return t("srv_settings_saved");
+    if (/ဆာဗာ ပြုပြင်ထိန်းသိမ်းမှု/.test(s)) return t("srv_maintenance_mode");
+    if (/နမူနာပုံ မရယူနိုင်ပါ/.test(s)) return t("srv_preview_failed");
+    if (/နည်းပညာဆိုင်ရာ အမှား/.test(s)) return t("srv_generic_tech_err");
+    if (/ဆက်တင် တန်ဖိုး မမှန်ကန်ပါ/.test(s)) return t("srv_invalid_setting");
+    if (/Broadcast စာသား ရှည်လွန်းပါတယ်/.test(s)) return t("srv_broadcast_too_long");
+    if (/Bot token မရှိသေးသောကြောင့်/.test(s)) return t("srv_no_bot_token");
+    if (/လုပ်ဆောင်နေဆဲ အလုပ်ကို ဖျက်လို့ မရပါ/.test(s)) return t("srv_delete_running");
+    return s;
+}
+if (typeof window !== "undefined") window.localizeServerText = localizeServerText;

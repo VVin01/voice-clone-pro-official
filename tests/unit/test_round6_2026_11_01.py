@@ -361,7 +361,7 @@ def test_e10_burmese_table_translated():
 def test_e11_cancel_label_formal():
     tr = _translations()
     assert tr["my"]["confirm_cancel"] == "ပယ်ဖျက်မည်"
-    assert 't("confirm_cancel") : "ပယ်ဖျက်မည်"' in APP_JS
+    assert 't("confirm_cancel") : "Cancel"' in APP_JS
 
 
 def test_e16_laptop_worker_copy_removed():

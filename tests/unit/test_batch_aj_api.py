@@ -43,11 +43,17 @@ from app.models.schema import (
     BroadcastCampaign,
     BroadcastDelivery,
     Job,
+    MinuteBalance,
     PaymentRequest,
     RecapCreditLedgerEvent,
     User,
 )
-from app.services.ledger import get_or_create_user, record_recap_credit_event
+from app.services.ledger import (
+    consume_seconds,
+    get_minute_balance,
+    get_or_create_user,
+    record_recap_credit_event,
+)
 from app.webapp import api as api_mod
 
 
@@ -467,6 +473,143 @@ async def test_batch_aj_h6_admin_retry_refunded_recap_without_balance_refused(tm
             assert job.status == JobStatus.FAILED.value  # not re-queued
     finally:
         api_mod.RECAP_JOBS_REGISTRY.pop("rc_aj_retry", None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_part_c_concurrent_admin_retry_charges_and_dispatches_once(tmp_path, monkeypatch):
+    """Part C fix pin: two simultaneous admin retries on a refunded FAILED recap job
+    must let exactly ONE win FAILED->QUEUED, debit recap_credits once, and
+    launch only one background task."""
+    engine, maker = await _open_store(tmp_path, monkeypatch)
+    user_id = await _seed_refunded_recap_job(maker, credits_left=5)
+    admin = User(id=999, first_name="Admin", language_code="my")
+    launched = []
+
+    async def _track_bg(job_id, *args, **kwargs):
+        launched.append(job_id)
+
+    try:
+        with patch.object(api_mod, "_run_recap_background_job", side_effect=_track_bg):
+            async def _attempt():
+                async with maker() as s:
+                    return await api_mod.retry_queued_job("rc_aj_retry", admin, s)
+
+            results = await asyncio.gather(_attempt(), _attempt(), return_exceptions=True)
+            await asyncio.sleep(0)
+
+        ok = [r for r in results if isinstance(r, dict)]
+        errs = [r for r in results if isinstance(r, HTTPException)]
+        assert len(ok) == 1
+        assert len(errs) == 1 and errs[0].status_code == 400
+        assert launched == ["rc_aj_retry"]
+        async with maker() as s:
+            u = await s.get(User, user_id)
+            assert int(u.recap_credits) == 4
+            debits = (
+                await s.execute(
+                    select(RecapCreditLedgerEvent).where(
+                        RecapCreditLedgerEvent.reference_id == "rc_aj_retry",
+                        RecapCreditLedgerEvent.direction == "DEBIT",
+                    )
+                )
+            ).scalars().all()
+            assert len(debits) == 2  # original submit + single retry
+    finally:
+        api_mod.RECAP_JOBS_REGISTRY.pop("rc_aj_retry", None)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_part_c_concurrent_cancels_and_cancel_after_success_race(tmp_path, monkeypatch):
+    """Part C fix pin: double cancel (user + admin) cannot double-refund, and a
+    late cancel holding a stale RUNNING object cannot overwrite a committed
+    SUCCESS row back to CANCELLED."""
+    engine, maker = await _open_store(tmp_path, monkeypatch)
+    admin = User(id=999, first_name="Admin", language_code="my")
+    try:
+        async with maker() as s:
+            user = User(id=777101, first_name="Race", language_code="my", recap_credits=1)
+            s.add(user)
+            s.add(MinuteBalance(user_id=user.id, purchased_seconds=200))
+            req = api_mod.RecapConfigRequest(url="https://example.com/r", title="R", voice_slug="komin")
+            s.add(Job(
+                id="rc_partc_double_cancel",
+                user_id=user.id,
+                chat_id=user.id,
+                status=JobStatus.RUNNING.value,
+                job_type=JobType.RECAP.value,
+                engine="recap",
+                recap_config=api_mod._persisted_recap_state(
+                    req, credit_deducted=True, credits_charged=1, is_vip=False, phase="full",
+                ),
+            ))
+            await record_recap_credit_event(s, user_id=user.id, direction="DEBIT", credits=1, reference_id="rc_partc_double_cancel")
+            s.add(Job(
+                id="vc_partc_stale_success",
+                user_id=user.id,
+                chat_id=user.id,
+                status=JobStatus.RUNNING.value,
+                job_type=JobType.VOICE_CLONE.value,
+                engine="voxcpm",
+            ))
+            await consume_seconds(s, user.id, 60, job_id="vc_partc_stale_success")
+            await s.commit()
+
+        api_mod.RECAP_JOBS_REGISTRY["rc_partc_double_cancel"] = {
+            "id": "rc_partc_double_cancel",
+            "user_id": 777101,
+            "status": "RUNNING",
+            "credit_deducted": True,
+            "credits_charged": 1,
+            "credit_refunded": False,
+            "credits_refunded": 0,
+            "billing_mode": api_mod._RECAP_BILLING_CREDIT_ONLY,
+            "voice_seconds_held": 0,
+            "error_message": None,
+            "created_at": 1.0,
+        }
+
+        # 1) User cancel + Admin cancel simultaneously on the same recap job
+        async def _u_cancel():
+            async with maker() as s:
+                u = await s.get(User, 777101)
+                return await api_mod.cancel_recap_job("rc_partc_double_cancel", user=u, db=s)
+
+        async def _a_cancel():
+            async with maker() as s:
+                return await api_mod.cancel_queued_job("rc_partc_double_cancel", admin, db=s)
+
+        c_res = await asyncio.gather(_u_cancel(), _a_cancel(), return_exceptions=True)
+        c_ok = [r for r in c_res if isinstance(r, dict)]
+        c_err = [r for r in c_res if isinstance(r, HTTPException)]
+        assert len(c_ok) == 1
+        assert len(c_err) == 1 and c_err[0].status_code in (400, 409)
+
+        async with maker() as s:
+            u = await s.get(User, 777101)
+            assert int(u.recap_credits) == 2
+
+        # 2) Stale RUNNING job loaded by cancel, then committed SUCCESS elsewhere
+        async with maker() as s_cancel, maker() as s_win:
+            stale_job = await s_cancel.get(Job, "vc_partc_stale_success")
+            assert stale_job.status == JobStatus.RUNNING.value
+
+            win_job = await s_win.get(Job, "vc_partc_stale_success")
+            win_job.status = JobStatus.SUCCESS.value
+            await s_win.commit()
+
+            with pytest.raises(HTTPException) as exc:
+                await api_mod.cancel_voice_job("vc_partc_stale_success", user=User(id=777101), db=s_cancel)
+            assert exc.value.status_code == 409
+
+        async with maker() as s:
+            final_v = await s.get(Job, "vc_partc_stale_success")
+            bal = await get_minute_balance(s, 777101)
+            assert final_v.status == JobStatus.SUCCESS.value
+            assert bal.purchased_seconds == 140  # NOT refunded!
+    finally:
+        api_mod.RECAP_JOBS_REGISTRY.pop("rc_partc_double_cancel", None)
         await engine.dispose()
 
 

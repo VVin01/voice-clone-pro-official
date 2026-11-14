@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import inspect
 import json
+import os
 import re
 import time
 import wave
@@ -291,6 +292,64 @@ async def test_p5_overrun_when_balance_spent_mid_render_caps_safely_never_fails(
         assert summary["settled_seconds"] == 70
         bal = await get_minute_balance(s, uid)
         assert bal.clone_spendable_seconds == 0  # never negative!
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_p5_overrun_with_caller_note_remains_idempotent_on_replay(tmp_path, monkeypatch):
+    """Part C fix pin: api._execute_recap_background_job passes
+    note=f'Recap clone settle ({job_id})'. Overrun debits MUST retain the
+    overrun prefix so replaying settle_recap_voice_seconds never inflates
+    held_seconds or double-charges after a subsequent top-up."""
+    engine, maker = await _open_store(tmp_path, monkeypatch, "p5_overrun_replay.db")
+    api_mod.RECAP_JOBS_REGISTRY.clear()
+    _patch_submit_env(monkeypatch)
+    uid = await _seed_user(
+        maker, 881015, category=AccountCategory.PURCHASED.value, recap_credits=3, purchased=70
+    )
+
+    async with maker() as db:
+        u = (await db.execute(select(User).where(User.id == uid))).scalar_one()
+        res = await api_mod.create_recap_job(_req(duration_seconds=60), user=u, db=db, _gate=u)
+    job_id = res["recap_id"]  # holds 60s, leaves 10s
+
+    caller_note = f"Recap clone settle ({job_id})"
+    async with maker() as s:
+        s1 = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=90, note=caller_note)
+        await s.commit()
+        assert s1["held_seconds"] == 60
+        assert s1["overrun_charged_seconds"] == 10
+        assert s1["overrun_uncovered_seconds"] == 20
+        assert s1["settled_seconds"] == 70
+
+        # Simulate user buying more minutes before an unexpected settle replay
+        bal = await get_minute_balance(s, uid)
+        bal.purchased_seconds += 100
+        await s.commit()
+
+        s2 = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=90, note=caller_note)
+        await s.commit()
+        assert s2 == s1
+        assert s2["held_seconds"] == 60
+        assert s2["overrun_charged_seconds"] == 10
+        assert s2["overrun_uncovered_seconds"] == 20
+        assert s2["settled_seconds"] == 70
+        bal_after = await get_minute_balance(s, uid)
+        assert bal_after.clone_spendable_seconds == 100  # replay must NOT debit topped-up minutes
+        ev_notes = (
+            await s.execute(
+                select(MinuteLedgerEvent.note).where(
+                    MinuteLedgerEvent.user_id == uid,
+                    MinuteLedgerEvent.reference_id == job_id,
+                    MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
+                )
+            )
+        ).scalars().all()
+        assert any(
+            (n or "").startswith(f"Recap clone settle overrun ({job_id})") and caller_note in (n or "")
+            for n in ev_notes
+        )
 
     await engine.dispose()
 
@@ -644,6 +703,379 @@ async def test_p5_tier_matrix_free_persona_vs_own_clone_and_gemini_edge_credit_o
         bal = await get_minute_balance(s, zero_min_uid)
         assert zu.recap_credits == 0
         assert bal.clone_spendable_seconds == 0
+
+    await engine.dispose()
+
+
+async def _derive_and_assert_recap_and_voice_ledgers(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    initial_recap_credits: int,
+    initial_purchased_seconds: int,
+    initial_welcome_seconds: int = 0,
+) -> tuple[int, int]:
+    """Derive User.recap_credits and MinuteBalance.clone_spendable_seconds purely from
+    RecapCreditLedgerEvent and MinuteLedgerEvent rows and assert exact equality."""
+    user = await session.get(User, user_id)
+    bal = await get_minute_balance(session, user_id)
+    r_events = (
+        await session.execute(
+            select(RecapCreditLedgerEvent).where(RecapCreditLedgerEvent.user_id == user_id)
+        )
+    ).scalars().all()
+    m_events = (
+        await session.execute(
+            select(MinuteLedgerEvent).where(MinuteLedgerEvent.user_id == user_id)
+        )
+    ).scalars().all()
+
+    r_delta = sum(
+        int(e.credits or 0) if e.direction == "CREDIT" else -int(e.credits or 0)
+        for e in r_events
+    )
+    m_delta = sum(
+        int(e.seconds or 0) if e.direction == "CREDIT" else -int(e.seconds or 0)
+        for e in m_events
+        if e.source in ("MONTHLY_FREE", "WELCOME", "PURCHASE")
+    )
+    assert int(user.recap_credits) == initial_recap_credits + r_delta
+    assert int(bal.clone_spendable_seconds) == (
+        initial_purchased_seconds + initial_welcome_seconds + m_delta
+    )
+    return int(user.recap_credits), int(bal.clone_spendable_seconds)
+
+
+@pytest.mark.asyncio
+async def test_part_c_recap_topup_deploy_restart_and_stranded_refund_ledger_symmetry(tmp_path, monkeypatch):
+    """Part C Area 1 & 4: recap submit (credit + Option B hold) -> segment top-up ->
+    deploy restart recovery (reset_stale_running_recap_jobs + _recap_redispatch_plan,
+    NO double charge) -> hitting RECAP_STRANDED_RESET_LIMIT fails & refunds ALL
+    debited credits + voice minutes, with exact ledger balance derivation at each stage."""
+    import app.webapp.server as server_mod
+
+    engine, maker = await _open_store(tmp_path, monkeypatch, "p5_partc_restart.db")
+    api_mod.RECAP_JOBS_REGISTRY.clear()
+    _patch_submit_env(monkeypatch)
+    uid = await _seed_user(
+        maker, 882001, category=AccountCategory.PURCHASED.value, recap_credits=6, purchased=240
+    )
+
+    # 1) Submit Option B recap holding 1 credit + 100s voice
+    async with maker() as db:
+        u = (await db.execute(select(User).where(User.id == uid))).scalar_one()
+        res = await api_mod.create_recap_job(
+            _req(duration_seconds=100, tts_engine="voxcpm", url=""), user=u, db=db, _gate=u
+        )
+    jid = res["recap_id"]
+    entry = api_mod.RECAP_JOBS_REGISTRY[jid]
+
+    # 2) Segmented top-up from 1 credit to 3 parts (+2 DEBIT on RecapCreditLedgerEvent, total 3)
+    charged_total = await api_mod._top_up_recap_segment_charge(uid, entry, total_parts=3)
+    assert charged_total == 3
+    async with maker() as s:
+        job = await s.get(Job, jid)
+        st = api_mod._load_persisted_recap_state(job)
+        st["credits_charged"] = 3
+        job.recap_config = json.dumps(st, ensure_ascii=False)
+        job.status = JobStatus.RUNNING.value
+        job.started_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+        await s.commit()
+        cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=6, initial_purchased_seconds=240
+        )
+        assert (cr, sec) == (3, 140)  # 6-3=3 credits left, 240-100=140s left
+
+    # 3) Deploy restart wipes RAM & resets RUNNING -> QUEUED without charging again
+    api_mod.RECAP_JOBS_REGISTRY.clear()
+    async with maker() as s:
+        reset_n = await server_mod.reset_stale_running_recap_jobs(session=s, cutoff_minutes=10)
+        assert reset_n == 1
+        job = await s.get(Job, jid)
+        u = await s.get(User, uid)
+        assert job.status == JobStatus.QUEUED.value
+        plan = api_mod._recap_redispatch_plan(job, u, restore_credit_state=True)
+        assert plan["credit_deducted"] is True
+        assert plan["entry"]["credits_charged"] == 3
+        assert plan["entry"]["voice_seconds_held"] == 100
+        # Calling top-up again after restart re-dispatch keeps total at 3 with 0 extra debit
+        charged_total2 = await api_mod._top_up_recap_segment_charge(uid, plan["entry"], total_parts=3)
+        assert charged_total2 == 3
+        await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=6, initial_purchased_seconds=240
+        )
+
+    # 4) Once stranded_reset_count reaches RECAP_STRANDED_RESET_LIMIT -> fails & refunds all 3 credits + 100s
+    async with maker() as s:
+        job = await s.get(Job, jid)
+        st = api_mod._load_persisted_recap_state(job)
+        st["stranded_reset_count"] = server_mod.RECAP_STRANDED_RESET_LIMIT
+        job.recap_config = json.dumps(st, ensure_ascii=False)
+        job.status = JobStatus.RUNNING.value
+        job.started_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+        await s.commit()
+
+    async with maker() as s:
+        await server_mod.reset_stale_running_recap_jobs(session=s, cutoff_minutes=10)
+        job_after = await s.get(Job, jid)
+        assert job_after.status == JobStatus.FAILED.value
+        cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=6, initial_purchased_seconds=240
+        )
+        assert (cr, sec) == (6, 240)
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_part_c_waiting_choice_park_resume_orphan_sweep_and_races(tmp_path, monkeypatch):
+    """Part C Area 2, 3, 4: WAITING_CHOICE keeps charges, survives _sweep_storage_orphans
+    (dp_refs, temp/voxcpm_refs, recap_output), does not double-charge on callback/sweep
+    resume or duplicate webhook delivery, never expires/refunds after resume, and serializes
+    cancel vs expiry / edge-choice races."""
+    import app.handlers.clone as clone_handlers
+    from app.services.i18n import t
+    from app.webapp.telegram_webhook import RecentUpdateIds
+
+    engine, maker = await _open_store(tmp_path, monkeypatch, "p5_partc_dp.db")
+    api_mod.RECAP_JOBS_REGISTRY.clear()
+    _patch_submit_env(monkeypatch)
+    monkeypatch.setattr(settings, "storage_root", tmp_path)
+    monkeypatch.setattr(settings, "max_concurrent_jobs_per_user", 5)
+    monkeypatch.setattr(clone_handlers, "AsyncSessionLocal", maker)
+
+    uid = await _seed_user(
+        maker, 882002, category=AccountCategory.PURCHASED.value, recap_credits=5, purchased=300
+    )
+
+    # Own-voice ref + dp_refs + recap_output files with stale (>48h) mtimes
+    old_ts = time.time() - 72 * 3600
+    ref_dir = tmp_path / "temp" / "voxcpm_refs"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    own_ref = ref_dir / "own_dp_ref.wav"
+    _write_wav(own_ref, 1.0)
+    os.utime(own_ref, (old_ts, old_ts))
+
+    dp_dir = tmp_path / "dp_refs"
+    dp_dir.mkdir(parents=True, exist_ok=True)
+    clone_dp_ref = dp_dir / "vc_partc_dp.wav"
+    _write_wav(clone_dp_ref, 1.0)
+    os.utime(clone_dp_ref, (old_ts, old_ts))
+
+    # 1) Create recap Option B job & park it in WAITING_CHOICE
+    async with maker() as db:
+        u = (await db.execute(select(User).where(User.id == uid))).scalar_one()
+        sub = await api_mod.create_recap_job(_req(duration_seconds=90, tts_engine="voxcpm"), user=u, db=db, _gate=u)
+    jid = sub["recap_id"]
+
+    recap_dir = tmp_path / "recap_output" / jid
+    recap_dir.mkdir(parents=True, exist_ok=True)
+    ckpt = recap_dir / "checkpoint.json"
+    ckpt.write_text("{}", encoding="utf-8")
+    os.utime(ckpt, (old_ts, old_ts))
+    os.utime(recap_dir, (old_ts, old_ts))
+
+    async with maker() as s:
+        j = await s.get(Job, jid)
+        j.status = JobStatus.WAITING_CHOICE.value
+        j.recap_ref_audio_path = str(own_ref)
+        j.voice_choice_state = vc.dump_choice_state(
+            {**vc.new_choice_state("recap"), "parked_at": time.time() - 49 * 3600}
+        )
+        # Also create a parked voice-clone job referencing dp_refs
+        s.add(
+            Job(
+                id="vc_partc_dp",
+                user_id=uid,
+                chat_id=uid,
+                status=JobStatus.WAITING_CHOICE.value,
+                job_type=JobType.VOICE_CLONE.value,
+                engine="voxcpm",
+                source_audio_path=str(clone_dp_ref),
+                voice_choice_state=vc.dump_choice_state(vc.new_choice_state("clone")),
+            )
+        )
+        await s.commit()
+        cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=5, initial_purchased_seconds=300
+        )
+        assert (cr, sec) == (4, 210)  # charges kept while parked!
+
+    # 2) Orphan sweep with cutoff 24h ago must NEVER touch dp_refs, referenced voxcpm_refs, or parked recap_output
+    await api_mod._sweep_storage_orphans(retention_cutoff_ts=time.time() - 24 * 3600)
+    assert own_ref.is_file()
+    assert clone_dp_ref.is_file()
+    assert ckpt.is_file()
+
+    # 3) Duplicate webhook dedup + repeated callback tap for dp:edgeall:<jid>
+    dedup = RecentUpdateIds(maxlen=64)
+    seen_callbacks = []
+
+    async def _deliver_webhook_update(update_id: int, action: str):
+        if dedup.seen_or_add(update_id):
+            return "deduped"
+        cb = SimpleNamespace(
+            data=f"dp:{action}:{jid}",
+            from_user=SimpleNamespace(id=uid),
+            message=SimpleNamespace(chat=SimpleNamespace(id=uid), message_id=77),
+            bot=SimpleNamespace(edit_message_reply_markup=AsyncMock()),
+            answer=AsyncMock(side_effect=lambda text=None, **kw: seen_callbacks.append(text)),
+        )
+        await clone_handlers.handle_voice_choice_callback(cb)
+        return "processed"
+
+    assert await _deliver_webhook_update(5001, "edgeall") == "processed"
+    assert await _deliver_webhook_update(5001, "edgeall") == "deduped"
+    # Second tap with DIFFERENT update_id (Telegram callback retry) also cannot resume twice
+    assert await _deliver_webhook_update(5002, "edgeall") == "processed"
+    assert len(seen_callbacks) == 2 and seen_callbacks[1] == t("dp_choice_not_parked", "my")
+
+    # Resumed recap job stays QUEUED with NO second debit; aged >48h parked_at does NOT trigger expiry after resume
+    monkeypatch.setattr(vc, "voxcpm_capacity_available", lambda: False)
+    sweep_after_resume = await vc.sweep_parked_jobs()
+    assert sweep_after_resume["expired"] == 0
+    async with maker() as s:
+        j = await s.get(Job, jid)
+        assert j.status == JobStatus.QUEUED.value
+        cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=5, initial_purchased_seconds=300
+        )
+        assert (cr, sec) == (4, 210)  # zero second charge, zero spurious refund!
+
+    # 4) Cancel vs 48h expiry race on a SECOND parked Option B recap job -> exact single refund
+    async with maker() as db:
+        u = (await db.execute(select(User).where(User.id == uid))).scalar_one()
+        sub2 = await api_mod.create_recap_job(_req(duration_seconds=60, tts_engine="voxcpm"), user=u, db=db, _gate=u)
+    jid2 = sub2["recap_id"]
+    async with maker() as s:
+        j2 = await s.get(Job, jid2)
+        j2.status = JobStatus.WAITING_CHOICE.value
+        j2.voice_choice_state = vc.dump_choice_state(
+            {**vc.new_choice_state("recap"), "parked_at": time.time() - 49 * 3600}
+        )
+        await s.commit()
+
+    async def _race_cancel():
+        async with maker() as s:
+            u = await s.get(User, uid)
+            return await api_mod.cancel_recap_job(jid2, user=u, db=s)
+
+    async def _race_expire():
+        return await vc.sweep_parked_jobs()
+
+    monkeypatch.setattr(api_mod, "_send_recap_failure_dm", AsyncMock())
+    await asyncio.gather(_race_cancel(), _race_expire(), return_exceptions=True)
+
+    async with maker() as s:
+        j2_after = await s.get(Job, jid2)
+        assert j2_after.status in (JobStatus.CANCELLED.value, JobStatus.FAILED.value)
+        cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=5, initial_purchased_seconds=300
+        )
+        assert (cr, sec) == (4, 210)  # jid2 refunded ONCE, jid still held!
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_part_c_cross_type_concurrent_submit_and_script_ready_cancel_vs_expire(tmp_path, monkeypatch):
+    """Part C Area 3 & 4: simultaneous voice + Option-B recap submit on shared
+    MinuteBalance respects max_concurrent_jobs_per_user=1 without double charge;
+    SCRIPT_READY cancel racing expire_abandoned_script_ready_jobs refunds ONCE."""
+    from app.models.schema import VoiceModel
+    from app.models.enums import VoiceModelStatus, VoiceModelType
+    from app.services.queue import create_voice_clone_job
+
+    engine, maker = await _open_store(tmp_path, monkeypatch, "p5_partc_cross.db")
+    api_mod.RECAP_JOBS_REGISTRY.clear()
+    _patch_submit_env(monkeypatch)
+    monkeypatch.setattr(settings, "max_concurrent_jobs_per_user", 1)
+
+    uid = await _seed_user(
+        maker, 882003, category=AccountCategory.PURCHASED.value, recap_credits=4, purchased=300
+    )
+    async with maker() as s:
+        s.add(
+            VoiceModel(
+                id=1,
+                name="VoxCPM",
+                slug="voxcpm-cloud-ai",
+                type=VoiceModelType.SYSTEM.value,
+                status=VoiceModelStatus.ACTIVE.value,
+                allowed_for_free=True,
+                allowed_for_purchased=True,
+                pth_path="voxcpm",
+                model_dir="cloud",
+            )
+        )
+        await s.commit()
+
+    row_mutex = asyncio.Lock()
+
+    async def _submit_recap():
+        async with maker() as s:
+            async with row_mutex:
+                u = await s.get(User, uid)
+                return await api_mod.create_recap_job(_req(duration_seconds=90), user=u, db=s, _gate=u)
+
+    async def _submit_voice():
+        async with maker() as s:
+            async with row_mutex:
+                return await create_voice_clone_job(
+                    session=s, user_id=uid, text="Hello concurrent test", chat_id=uid
+                )
+
+    r_recap, r_voice = await asyncio.gather(_submit_recap(), _submit_voice(), return_exceptions=True)
+    recap_ok = isinstance(r_recap, dict) and r_recap.get("success") is True
+    voice_ok = isinstance(r_voice, tuple) and r_voice[0] is not None
+    # At most one holds the active concurrent slot; neither corrupts balances
+    assert recap_ok != voice_ok
+    async with maker() as s:
+        cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=4, initial_purchased_seconds=300
+        )
+        if recap_ok:
+            assert (cr, sec) == (3, 210)
+            jid_sr = r_recap["recap_id"]
+        else:
+            assert (cr, sec) == (4, 300)  # voice bills on worker completion
+            j_v = await s.get(Job, r_voice[0].id)
+            j_v.status = JobStatus.CANCELLED.value
+            await s.commit()
+            u = await s.get(User, uid)
+            sub = await api_mod.create_recap_job(_req(duration_seconds=90), user=u, db=s, _gate=u)
+            jid_sr = sub["recap_id"]
+
+    # Park at SCRIPT_READY past 24h TTL and race cancel vs expire_abandoned_script_ready_jobs
+    async with maker() as s:
+        j = await s.get(Job, jid_sr)
+        st = api_mod._load_persisted_recap_state(j)
+        st["script_ready"] = True
+        st["phase"] = "render"
+        j.recap_config = json.dumps(st, ensure_ascii=False)
+        j.status = JobStatus.RUNNING.value
+        j.created_at = datetime.now(timezone.utc) - timedelta(hours=30)
+        await s.commit()
+    api_mod.RECAP_JOBS_REGISTRY[jid_sr]["status"] = "SCRIPT_READY"
+
+    async def _u_cancel_sr():
+        async with maker() as s:
+            u = await s.get(User, uid)
+            return await api_mod.cancel_recap_job(jid_sr, user=u, db=s)
+
+    await asyncio.gather(
+        _u_cancel_sr(),
+        api_mod.expire_abandoned_script_ready_jobs(),
+        return_exceptions=True,
+    )
+
+    async with maker() as s:
+        j_final = await s.get(Job, jid_sr)
+        assert j_final.status in (JobStatus.CANCELLED.value, JobStatus.FAILED.value)
+        cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
+            s, uid, initial_recap_credits=4, initial_purchased_seconds=300
+        )
+        assert (cr, sec) == (4, 300)
 
     await engine.dispose()
 

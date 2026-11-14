@@ -27,7 +27,7 @@
             </div>
 
             <div class="top-actions">
-                <button type="button" class="theme-pill-btn" id="btn-theme-toggle" onclick="toggleThemeMode()" title="အလင်း / အမှောင် ပြောင်းရန်" data-i18n-title="theme_toggle_title" aria-label="Toggle Light / Dark theme" aria-pressed="false" data-theme-state="light">
+                <button type="button" class="theme-pill-btn" id="btn-theme-toggle" onclick="toggleThemeMode()" title="အလင်း / အမှောင် ပြောင်းရန်" data-i18n-title="theme_toggle_title" data-i18n-aria="btn_theme_aria" aria-label="Toggle Light / Dark theme" aria-pressed="false" data-theme-state="light">
                     <span class="btn-icon theme-ico-wrap" aria-hidden="true">
                         <svg class="vcp-ico vcp-ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                         <svg class="vcp-ico vcp-ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
@@ -42,7 +42,7 @@
 
             <div class="user-pill" id="user-pill">
                 <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="switchTab('tab-vip')" role="button" tabindex="0">FREE</span>
-                <span class="live-dot" title="Live"><span class="live-dot-pulse"></span>LIVE</span>
+                <span class="live-dot" title="Live" data-i18n-title="live_badge_title"><span class="live-dot-pulse"></span>LIVE</span>
                 <div class="balance-chips">
                     <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title" onclick="switchTab('tab-vip')" role="button" tabindex="0">🎙️ —</span>
                     <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title" onclick="switchTab('tab-vip')" role="button" tabindex="0">🎬 —</span>
@@ -136,7 +136,7 @@
                             <button type="button" class="welcome-strip-btn" data-i18n="welcome_strip_btn" onclick="switchTab('tab-recap')">🎬 Recap စလုပ်မည်</button>
                             <button type="button" class="welcome-strip-sample-btn" id="welcome-try-sample-btn" data-i18n="welcome_try_sample_btn" onclick="playWelcomeTrySample()">▶️ နမူနာ အသံ နားထောင်မည်</button>
                         </div>
-                        <button type="button" class="welcome-strip-x" aria-label="Dismiss" onclick="dismissWelcomeStrip()">✕</button>
+                        <button type="button" class="welcome-strip-x" data-i18n-aria="btn_dismiss" aria-label="Dismiss" onclick="dismissWelcomeStrip()">✕</button>
                     </div>
                 </div>
 
@@ -266,7 +266,7 @@
                     <div class="card-label" data-i18n="samples_title">🎧 နမူနာ နားထောင်ကြည့်ပါ</div>
                     <div class="sample-row">
                         <div class="sample-main">
-                            <button type="button" class="sample-play-btn" id="sample-btn-voice" data-sample-toggle="sample-audio-voice" aria-label="နမူနာ ဖွင့်မည်" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
+                            <button type="button" class="sample-play-btn" id="sample-btn-voice" data-sample-toggle="sample-audio-voice" aria-label="နမူနာ ဖွင့်မည်" data-i18n-aria="sample_play" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
                             <div class="sample-meta">
                                 <span class="sample-name" data-i18n="sample_voice_name">🎙️ ကိုမင်း (Ko Min)</span>
                                 <span class="sample-desc" data-i18n="sample_voice_desc">Voice Clone နမူနာ အသံ</span>
@@ -277,7 +277,7 @@
                     </div>
                     <div class="sample-row">
                         <div class="sample-main">
-                            <button type="button" class="sample-play-btn" id="sample-btn-recap" data-sample-toggle="sample-audio-recap" aria-label="နမူနာ ဖွင့်မည်" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
+                            <button type="button" class="sample-play-btn" id="sample-btn-recap" data-sample-toggle="sample-audio-recap" aria-label="နမူနာ ဖွင့်မည်" data-i18n-aria="sample_play" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
                             <div class="sample-meta">
                                 <span class="sample-name" data-i18n="sample_recap_name">🎬 မနှင်း (Ma Hnin)</span>
                                 <span class="sample-desc" data-i18n="sample_recap_desc">Recap ဇာတ်လမ်းပြော နမူနာ အသံ</span>
@@ -884,7 +884,7 @@
         <div class="video-info-card hidden mt-2" id="recap-video-info-box">
             <img id="recap-info-thumb" alt="" class="recap-info-thumb" style="display:none">
             <div class="recap-info-meta">
-                <span class="recap-info-title" id="recap-info-title">Video Title</span>
+                <span class="recap-info-title" id="recap-info-title" data-i18n="recap_default_video_title">Video Title</span>
                 <div class="recap-info-tags">
                     <span class="mini-tag" id="recap-info-dur">⏱️ 00:00</span>
                     <span class="mini-tag" id="recap-info-platform">YouTube</span>
@@ -991,7 +991,7 @@
                     </div>
                     <div class="seek-actions-row mt-2">
                         <button type="button" class="mini-btn-seek" id="btn-seek-prev-5" title="5 စက္ကန့် နောက်ဆုတ်မည်" data-i18n-title="btn_seek_back_5">⏪ -5s</button>
-                        <button type="button" class="mini-btn-seek active" id="btn-canvas-play-toggle" title="Play/Pause Frame" data-i18n="btn_canvas_preview">⏯️ နမူနာကြည့်</button>
+                        <button type="button" class="mini-btn-seek active" id="btn-canvas-play-toggle" title="Play/Pause Frame" data-i18n-title="recap_canvas_play_title" data-i18n="btn_canvas_preview">⏯️ နမူနာကြည့်</button>
                         <button type="button" class="mini-btn-seek" id="btn-seek-next-5" title="5 စက္ကန့် ရှေ့တိုးမည်" data-i18n-title="btn_seek_fwd_5">⏩ +5s</button>
                         <div class="seek-presets-pills">
                             <button type="button" class="seek-pill-btn" data-sec="0">0s</button>
@@ -1938,12 +1938,12 @@
                         </div>
                     </div>
                     <div class="carousel-nav-bar">
-                        <button type="button" class="carousel-arrow prev" id="btn-carousel-prev" aria-label="Previous Slide">‹</button>
+                        <button type="button" class="carousel-arrow prev" id="btn-carousel-prev" data-i18n-aria="carousel_prev_aria" aria-label="Previous Slide">‹</button>
                         <div class="carousel-dots" id="carousel-dots">
                             <span class="carousel-dot active" data-slide-idx="0"></span>
                             <span class="carousel-dot" data-slide-idx="1"></span>
                         </div>
-                        <button type="button" class="carousel-arrow next" id="btn-carousel-next" aria-label="Next Slide">›</button>
+                        <button type="button" class="carousel-arrow next" id="btn-carousel-next" data-i18n-aria="carousel_next_aria" aria-label="Next Slide">›</button>
                     </div>
                 </div>
 
@@ -1956,7 +1956,7 @@
                     <div class="vcp-lang-sheet">
                         <div class="vcp-lang-head-row">
                             <span class="card-label" id="recap-lang-sheet-title" data-i18n="recap_lang_sheet_title">🌐 မူရင်းဗီဒီယို ဘာသာစကား ရွေးပါ</span>
-                            <button type="button" class="vcp-lang-sheet-btn" id="btn-close-recap-lang-sheet" onclick="closeRecapLangSheet()" aria-label="Close">✕</button>
+                            <button type="button" class="vcp-lang-sheet-btn" id="btn-close-recap-lang-sheet" onclick="closeRecapLangSheet()" data-i18n-aria="btn_close_aria" aria-label="Close">✕</button>
                         </div>
                         <div class="vcp-lang-sheet-grid" id="recap-lang-sheet-grid"></div>
                     </div>
@@ -2062,7 +2062,7 @@
                     <div class="stats-row">
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_current_tier">လက်ရှိ အဆင့်</span>
-                            <span class="stat-val text-gold" id="profile-category-tag">FREE MEMBER</span>
+                            <span class="stat-val text-gold" id="profile-category-tag" data-i18n="vip_member_free">FREE MEMBER</span>
                         </div>
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_balance_min">အသံမိနစ် လက်ကျန်</span>
@@ -2190,7 +2190,7 @@
                     <div class="card-header-row">
                         <div class="drawer-header-info">
                             <span class="card-label" data-i18n="payment_info_title">💳 ငွေပေးချေမှု အချက်အလက်</span>
-                            <span class="target-plan-title" id="drawer-package-title">👑 VIP Plan</span>
+                            <span class="target-plan-title" id="drawer-package-title" data-i18n="vip_drawer_default_title">👑 VIP Plan</span>
                         </div>
                         <button class="close-btn" onclick="closePaymentDrawer()">✕</button>
                     </div>
@@ -2243,11 +2243,11 @@
                     <p data-i18n="history_subtitle">သင် ဖန်တီးထားသော Voice နှင့် Recap အလုပ်များ အားလုံး တစ်နေရာတည်းတွင်</p>
                 </div>
 
-                <div class="hub-filter-row" role="tablist" aria-label="History filter">
+                <div class="hub-filter-row" role="tablist" data-i18n-aria="history_filter_aria" aria-label="History filter">
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip active" data-hub-filter="all" onclick="setHubHistoryFilter('all')"><span data-i18n="history_filter_all">အားလုံး</span></button>
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="VOICE_CLONE" onclick="setHubHistoryFilter('VOICE_CLONE')"><span data-i18n="history_filter_voice">🎙️ အသံ</span></button>
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="RECAP" onclick="setHubHistoryFilter('RECAP')"><span data-i18n="history_filter_recap">🎬 Recap</span></button>
-                    <button type="button" class="mini-chip hub-refresh-chip" onclick="loadUserHistory()" title="Refresh" aria-label="Refresh">🔄</button>
+                    <button type="button" class="mini-chip hub-refresh-chip" onclick="loadUserHistory()" title="Refresh" data-i18n-title="btn_refresh" data-i18n-aria="btn_refresh" aria-label="Refresh">🔄</button>
                 </div>
 
                 <p class="history-expiry-note vcp-history-retention-bar mt-2" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
@@ -2311,7 +2311,7 @@
                     </div>
                     <div class="admin-stats-grid">
                         <div class="card glass stat-mini-card adm-tap adm-kpi-card adm-kpi-users" onclick="showAdminSection('users')" role="button" tabindex="0">
-                            <span class="stat-lbl" data-i18n="admin_stat_users">တကယ် အသုံးပြုသူများ</span>
+                            <span class="stat-lbl" data-i18n="admin_stat_users">စုစုပေါင်း အသုံးပြုသူများ</span>
                             <span class="stat-num" id="adm-total-users">—</span>
                             <span class="stat-sub" id="adm-total-users-split"></span>
                             <span class="adm-stat-cue"><span data-i18n="adm_ov_tap_users">အသုံးပြုသူ ကြည့်မည်</span><span aria-hidden="true">›</span></span>
@@ -2454,10 +2454,10 @@
                                         <span data-i18n="filter_failed">❌ မအောင်မြင်</span> <span class="pill-badge text-danger" id="cnt-failed">0</span>
                                     </button>
                                 </div>
-                                <select class="queue-engine-select" id="queue-engine-select" onchange="setQueueEngineFilter(this.value)" aria-label="Engine filter">
-                                    <option value="all">All Engines</option>
-                                    <option value="voxcpm">☁️ VoxCPM AI</option>
-                                    <option value="recap">🎬 Movie Recap</option>
+                                <select class="queue-engine-select" id="queue-engine-select" onchange="setQueueEngineFilter(this.value)" data-i18n-aria="adm_queue_engine_aria" aria-label="Engine filter">
+                                    <option value="all" data-i18n="adm_opt_all_engines">All Engines</option>
+                                    <option value="voxcpm" data-i18n="adm_opt_engine_voxcpm">☁️ VoxCPM AI</option>
+                                    <option value="recap" data-i18n="adm_opt_engine_recap">🎬 Movie Recap</option>
                                 </select>
                             </div>
                             <div id="admin-queue-status-banner" class="mt-2"></div>
@@ -2484,20 +2484,20 @@
                                 <div>
                                     <label class="input-label text-xs" data-i18n="adm_filter_status">အခြေအနေ</label>
                                     <select id="adm-hist-status-sel" class="studio-input text-xs" onchange="setAdminHistFilter('status', this.value)">
-                                        <option value="all">All Statuses</option>
-                                        <option value="SUCCESS">✅ SUCCESS</option>
-                                        <option value="FAILED">❌ FAILED</option>
-                                        <option value="RUNNING">⚡ RUNNING</option>
-                                        <option value="QUEUED">⏳ QUEUED</option>
-                                        <option value="CANCELLED">⏹ CANCELLED</option>
+                                        <option value="all" data-i18n="adm_opt_all_statuses">All Statuses</option>
+                                        <option value="SUCCESS" data-i18n="adm_opt_status_success">✅ SUCCESS</option>
+                                        <option value="FAILED" data-i18n="adm_opt_status_failed">❌ FAILED</option>
+                                        <option value="RUNNING" data-i18n="adm_opt_status_running">⚡ RUNNING</option>
+                                        <option value="QUEUED" data-i18n="adm_opt_status_queued">⏳ QUEUED</option>
+                                        <option value="CANCELLED" data-i18n="adm_opt_status_cancelled">⏹ CANCELLED</option>
                                     </select>
                                 </div>
                                 <div>
                                     <label class="input-label text-xs" data-i18n="adm_filter_type">အမျိုးအစား</label>
                                     <select id="adm-hist-type-sel" class="studio-input text-xs" onchange="setAdminHistFilter('job_type', this.value)">
-                                        <option value="all">Recap &amp; Voice</option>
-                                        <option value="RECAP">🎬 Movie Recap</option>
-                                        <option value="VOICE_CLONE">🎙️ Voice Clone</option>
+                                        <option value="all" data-i18n="adm_opt_recap_voice">Recap &amp; Voice</option>
+                                        <option value="RECAP" data-i18n="adm_opt_engine_recap">🎬 Movie Recap</option>
+                                        <option value="VOICE_CLONE" data-i18n="adm_opt_voice_clone">🎙️ Voice Clone</option>
                                     </select>
                                 </div>
                             </div>
@@ -2509,8 +2509,8 @@
                                 <span class="mini-tag"><span data-i18n="adm_hist_shown">ပြသထားမှု</span>: <strong id="adm-hist-total">0</strong></span>
                                 <span class="mini-tag"><span data-i18n="filter_failed">❌ မအောင်မြင်</span>: <strong id="adm-hist-failed" class="text-danger">0</strong></span>
                                 <span class="mini-tag"><span data-i18n="filter_success">✅ အောင်မြင်</span>: <strong id="adm-hist-success" class="text-success">0</strong></span>
-                                <span class="mini-tag">Recap: <strong id="adm-hist-recap" class="text-gold">0</strong></span>
-                                <span class="mini-tag">Voice: <strong id="adm-hist-voice" class="text-cyan">0</strong></span>
+                                <span class="mini-tag"><span data-i18n="adm_hist_chip_recap">Recap:</span> <strong id="adm-hist-recap" class="text-gold">0</strong></span>
+                                <span class="mini-tag"><span data-i18n="adm_hist_chip_voice">Voice:</span> <strong id="adm-hist-voice" class="text-cyan">0</strong></span>
                             </div>
                             <div id="admin-global-history-list" class="admin-history-container mt-2">
                                 <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
@@ -2624,8 +2624,8 @@
                                     <label class="input-label text-xs" data-i18n="admin_adjust_tier">အဆင့် (Tier)</label>
                                     <select id="adm-adj-tier" class="studio-input">
                                         <option value="" data-i18n="admin_tier_keep">မပြောင်းပါ</option>
-                                        <option value="PURCHASED">👑 PURCHASED (VIP)</option>
-                                        <option value="FREE">FREE</option>
+                                        <option value="PURCHASED" data-i18n="adm_opt_cat_purchased">👑 PURCHASED (VIP)</option>
+                                        <option value="FREE" data-i18n="adm_opt_cat_free">FREE</option>
                                     </select>
                                 </div>
                             </div>
@@ -2750,7 +2750,7 @@
                                 </div>
                                 <div>
                                     <label class="input-label" data-i18n="settings_kpay_name">KBZPay အကောင့် နာမည်</label>
-                                    <input type="text" id="adm-set-kpay-name" class="studio-input" placeholder="Account Name">
+                                    <input type="text" id="adm-set-kpay-name" class="studio-input" data-i18n-ph="adm_account_name_ph" placeholder="Account Name">
                                 </div>
                             </div>
                             <div class="form-row-2 mt-2">
@@ -2760,7 +2760,7 @@
                                 </div>
                                 <div>
                                     <label class="input-label" data-i18n="settings_wave_name">WavePay အကောင့် နာမည်</label>
-                                    <input type="text" id="adm-set-wave-name" class="studio-input" placeholder="Account Name">
+                                    <input type="text" id="adm-set-wave-name" class="studio-input" data-i18n-ph="adm_account_name_ph" placeholder="Account Name">
                                 </div>
                             </div>
                             <div class="form-row-2 mt-2">
@@ -2984,12 +2984,12 @@
                     <details class="card glass vcp-card adm-accordion mt-3" id="adm-acc-tutorials">
                         <summary class="adm-acc-head">
                             <span class="adm-acc-title" data-i18n="adm_tutorials_title">📚 Tutorial ဗီဒီယိုများ</span>
-                            <span class="adm-acc-meta"><span class="badge-mini-gold">All 10</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                            <span class="adm-acc-meta"><span class="badge-mini-gold" data-i18n="adm_tut_all_10">All 10</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
                         </summary>
                         <div class="adm-acc-body">
                         <div class="admin-tut-box glass-inset">
                             <div class="tut-box-header">
-                                <span class="tut-box-title">🎙️ Voice Clone Tutorial</span>
+                                <span class="tut-box-title" data-i18n="adm_tut_grp_voice">🎙️ Voice Clone Tutorial</span>
                                 <label class="switch-luxury">
                                     <input type="checkbox" id="adm-tut-voice-enabled" checked>
                                     <span class="slider round"></span>
@@ -2997,18 +2997,18 @@
                             </div>
                             <div class="form-row-2 mt-1">
                                 <div>
-                                    <label class="input-label text-xs">Label</label>
-                                    <input type="text" id="adm-tut-voice-title" class="studio-input" placeholder="Voice Clone ပြုလုပ်နည်း လမ်းညွှန်">
+                                    <label class="input-label text-xs" data-i18n="adm_tut_field_label">Label</label>
+                                    <input type="text" id="adm-tut-voice-title" class="studio-input" data-i18n-ph="tutorial_default_voice_title" placeholder="Voice Clone ပြုလုပ်နည်း လမ်းညွှန်">
                                 </div>
                                 <div>
-                                    <label class="input-label text-xs">Video Link (URL)</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_field_url">Video Link (URL)</label>
                                     <input type="text" id="adm-tut-voice-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/29">
                                 </div>
                             </div>
                         </div>
                         <div class="admin-tut-box glass-inset mt-2">
                             <div class="tut-box-header">
-                                <span class="tut-box-title">🎬 Movie Recap Tutorial</span>
+                                <span class="tut-box-title" data-i18n="adm_tut_grp_recap">🎬 Movie Recap Tutorial</span>
                                 <label class="switch-luxury">
                                     <input type="checkbox" id="adm-tut-recap-enabled" checked>
                                     <span class="slider round"></span>
@@ -3016,18 +3016,18 @@
                             </div>
                             <div class="form-row-2 mt-1">
                                 <div>
-                                    <label class="input-label text-xs">Label</label>
-                                    <input type="text" id="adm-tut-recap-title" class="studio-input" placeholder="Movie Recap ပြုလုပ်နည်း လမ်းညွှန်">
+                                    <label class="input-label text-xs" data-i18n="adm_tut_field_label">Label</label>
+                                    <input type="text" id="adm-tut-recap-title" class="studio-input" data-i18n-ph="tutorial_default_recap_title" placeholder="Movie Recap ပြုလုပ်နည်း လမ်းညွှန်">
                                 </div>
                                 <div>
-                                    <label class="input-label text-xs">Video Link (URL)</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_field_url">Video Link (URL)</label>
                                     <input type="text" id="adm-tut-recap-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/30">
                                 </div>
                             </div>
                         </div>
                         <div class="admin-tut-box glass-inset mt-2">
                             <div class="tut-box-header">
-                                <span class="tut-box-title">🎬 Recap Demo Sample (Batch L)</span>
+                                <span class="tut-box-title" data-i18n="adm_tut_grp_demo">🎬 Recap Demo Sample</span>
                             </div>
                             <div class="mt-1">
                                 <label class="input-label text-xs" data-i18n="adm_recap_demo_asset_label">Recap နမူနာ Asset — Telegram file_id သို့မဟုတ် ဗီဒီယို URL (အလွတ် = နမူနာ နေရာ ဖျောက်ထားမည်)</label>
@@ -3036,45 +3036,45 @@
                         </div>
                         <div class="admin-tut-box glass-inset mt-2" id="adm-tut-links-box">
                             <div class="tut-box-header">
-                                <span class="tut-box-title">🔗 Other Tutorial Links</span>
+                                <span class="tut-box-title" data-i18n="adm_tut_grp_other">🔗 Other Tutorial Links</span>
                             </div>
                             <div class="form-row-2 mt-1">
                                 <div>
-                                    <label class="input-label text-xs">📚 Index Post</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_index">📚 Index Post</label>
                                     <input type="text" id="adm-tut-index-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/38">
                                 </div>
                                 <div>
-                                    <label class="input-label text-xs">💎 Plans</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_plans">💎 Plans</label>
                                     <input type="text" id="adm-tut-plans-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/31">
                                 </div>
                             </div>
                             <div class="form-row-2 mt-2">
                                 <div>
-                                    <label class="input-label text-xs">🎙️ Custom Voice</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_customvoice">🎙️ Custom Voice</label>
                                     <input type="text" id="adm-tut-customvoice-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/32">
                                 </div>
                                 <div>
-                                    <label class="input-label text-xs">📥 Downloader</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_downloader">📥 Downloader</label>
                                     <input type="text" id="adm-tut-downloader-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/33">
                                 </div>
                             </div>
                             <div class="form-row-2 mt-2">
                                 <div>
-                                    <label class="input-label text-xs">📝 Script Edit</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_scriptedit">📝 Script Edit</label>
                                     <input type="text" id="adm-tut-scriptedit-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/34">
                                 </div>
                                 <div>
-                                    <label class="input-label text-xs">⚙️ Recap Advanced</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_recapadv">⚙️ Recap Advanced</label>
                                     <input type="text" id="adm-tut-recapadvanced-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/35">
                                 </div>
                             </div>
                             <div class="form-row-2 mt-2">
                                 <div>
-                                    <label class="input-label text-xs">🎁 Refer &amp; Earn</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_refer">🎁 Refer &amp; Earn</label>
                                     <input type="text" id="adm-tut-refer-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/36">
                                 </div>
                                 <div>
-                                    <label class="input-label text-xs">🛟 Support</label>
+                                    <label class="input-label text-xs" data-i18n="adm_tut_lbl_support">🛟 Support</label>
                                     <input type="text" id="adm-tut-support-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/37">
                                 </div>
                             </div>
@@ -3089,7 +3089,7 @@
                         </summary>
                         <div class="adm-acc-body">
                             <div class="card-header-row">
-                                <span class="text-xs text-muted">Plan Rates</span>
+                                <span class="text-xs text-muted" data-i18n="adm_plan_rates_pill">Plan Rates</span>
                                 <button class="mini-chip" onclick="loadAdminPricing()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
                             </div>
                             <div id="admin-pricing-list" class="mt-2">
@@ -3110,11 +3110,11 @@
                                 <div class="tier-badge tier-primary" data-i18n="adm_gemini_primary">၁။ Primary</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-gemini-primary" class="studio-input" onchange="checkCustomModel('adm-gemini-primary')">
-                                        <option value="gemini-3.6-flash">gemini-3.6-flash (Recommended)</option>
+                                        <option value="gemini-3.6-flash" data-i18n="adm_opt_gem_36_rec">gemini-3.6-flash (Recommended)</option>
                                         <option value="gemini-3.5-flash">gemini-3.5-flash</option>
                                         <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
                                         <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-gemini-primary-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.6-flash">
                                 </div>
@@ -3127,7 +3127,7 @@
                                         <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                         <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
                                         <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-gemini-fb1-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash">
                                 </div>
@@ -3140,7 +3140,7 @@
                                         <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
                                         <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                         <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-gemini-fb2-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-3.5-flash-lite">
                                 </div>
@@ -3153,7 +3153,7 @@
                                         <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
                                         <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                         <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-gemini-fb3-custom" class="studio-input mt-1 hidden" placeholder="e.g. gemini-flash-lite-latest">
                                 </div>
@@ -3183,11 +3183,11 @@
                                 <div class="tier-badge tier-primary" data-i18n="adm_gemini_tts_primary">၁။ TTS Primary</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-tts-primary" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-primary')">
-                                        <option value="gemini-3.8-flash-tts">gemini-3.8-flash-tts (Recommended)</option>
+                                        <option value="gemini-3.8-flash-tts" data-i18n="adm_opt_tts_38_rec">gemini-3.8-flash-tts (Recommended)</option>
                                         <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
                                         <option value="gemini-3.8-flash-lite-tts">gemini-3.8-flash-lite-tts</option>
                                         <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-tts-primary-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash-tts">
                                 </div>
@@ -3196,11 +3196,11 @@
                                 <div class="tier-badge tier-fb1" data-i18n="adm_gemini_tts_fb1">၂။ TTS Fallback 1</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-tts-fb1" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-fb1')">
-                                        <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview (Recommended)</option>
+                                        <option value="gemini-3.1-flash-tts-preview" data-i18n="adm_opt_tts_31_rec">gemini-3.1-flash-tts-preview (Recommended)</option>
                                         <option value="gemini-3.8-flash-tts">gemini-3.8-flash-tts</option>
                                         <option value="gemini-3.8-flash-lite-tts">gemini-3.8-flash-lite-tts</option>
                                         <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-tts-fb1-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.1-flash-tts-preview">
                                 </div>
@@ -3209,11 +3209,11 @@
                                 <div class="tier-badge tier-fb2" data-i18n="adm_gemini_tts_lite">၃။ TTS Lite</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-tts-lite" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-lite')">
-                                        <option value="gemini-3.8-flash-lite-tts">gemini-3.8-flash-lite-tts (Recommended)</option>
+                                        <option value="gemini-3.8-flash-lite-tts" data-i18n="adm_opt_tts_38lite_rec">gemini-3.8-flash-lite-tts (Recommended)</option>
                                         <option value="gemini-3.8-flash-tts">gemini-3.8-flash-tts</option>
                                         <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
                                         <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-tts-lite-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash-lite-tts">
                                 </div>
@@ -3222,11 +3222,11 @@
                                 <div class="tier-badge tier-fb3" data-i18n="adm_gemini_tts_fb2">၄။ TTS Fallback 2</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-tts-fb2" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-fb2')">
-                                        <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts (Recommended)</option>
+                                        <option value="gemini-2.5-flash-preview-tts" data-i18n="adm_opt_tts_25_rec">gemini-2.5-flash-preview-tts (Recommended)</option>
                                         <option value="gemini-3.8-flash-tts">gemini-3.8-flash-tts</option>
                                         <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
                                         <option value="gemini-3.8-flash-lite-tts">gemini-3.8-flash-lite-tts</option>
-                                        <option value="custom">✏️ Custom…</option>
+                                        <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-tts-fb2-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-2.5-flash-preview-tts">
                                 </div>
@@ -3415,7 +3415,7 @@
             <div class="modal-header">
                 <div class="modal-title-group">
                     <span id="admin-media-badge" class="history-item-badge badge-voice">🎙️ VOICE</span>
-                    <h3 id="admin-media-title" class="modal-title">Job Preview</h3>
+                    <h3 id="admin-media-title" class="modal-title" data-i18n="adm_media_default_title">Job Preview</h3>
                 </div>
                 <button class="modal-close" onclick="closeAdminMediaModal()">✕</button>
             </div>
