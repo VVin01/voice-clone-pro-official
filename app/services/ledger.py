@@ -654,6 +654,14 @@ async def refund_job_seconds(
     note: str | None = None,
 ) -> MinuteBalance:
     """Idempotently refund seconds previously deducted for a job."""
+    # Lock the user row before reading debits, prior refunds, or MinuteBalance
+    # so concurrent refund paths serialize instead of double-crediting.
+    user = (
+        await session.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+
     # Find all debits for this job
     debits = list((
         await session.execute(
@@ -706,7 +714,6 @@ async def refund_job_seconds(
         return await get_minute_balance(session, user_id)
 
     balance = await get_minute_balance(session, user_id)
-    user = await session.get(User, user_id)
 
     for source, seconds in refundable.items():
         if source == LedgerSource.MONTHLY_FREE.value:
@@ -1116,6 +1123,11 @@ async def refund_tts_referral_seconds(
     repeat calls (a settle racing a failure refund) can never credit
     the same seconds twice. Returns the amount credited back.
     """
+    # Lock the user row before reconciling net draw against referral balance so
+    # concurrent settle/cancel/failure calls cannot double-credit referral_seconds.
+    await session.execute(
+        select(User).where(User.id == user_id).with_for_update()
+    )
     net = await tts_referral_net_draw(session, user_id, job_id)
     give_back = net - max(0, int(keep_seconds))
     if give_back <= 0:
