@@ -12184,6 +12184,20 @@ async function loadAdminData() {
             // the sub-line shows the split so both numbers stay visible.
             set("adm-banned-split", tf("admin_stat_banned_split", { admin: stats.banned_by_admin ?? 0, bot: stats.bot_blocked_users ?? 0 }));
             set("adm-new-24h", stats.new_users_24h ?? 0);
+            const triageCard = document.getElementById("adm-triage-card");
+            if (triageCard) {
+                const pend = Number(stats.pending_slips || 0);
+                const fail = Number(stats.failed_jobs_24h || 0);
+                const isClear = pend === 0 && fail === 0;
+                triageCard.classList.toggle("is-clear", isClear);
+                set(
+                    "adm-triage-title",
+                    isClear
+                        ? t("adm_triage_clear")
+                        : tf("adm_triage_action_needed", { slips: pend, failed: fail })
+                );
+                set("adm-triage-sub", tf("adm_triage_sub", { queued: stats.queued_jobs ?? 0, new24: stats.new_users_24h ?? 0 }));
+            }
             // Batch R: income card (approved payment requests only).
             const inc = stats.income || {};
             const setIncome = (id, mmk, count) => {

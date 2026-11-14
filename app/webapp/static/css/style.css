@@ -9864,3 +9864,506 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     background: #141D33 !important;
     box-shadow: none !important;
 }
+
+/* ============================================================
+   VCP UI REBUILD V2 — PHASE 5: DOWNLOADER, VIP, HISTORY, MODALS & ADMIN CONSOLE
+   Zero scroll blur rules; crisp Ceramic Light + Midnight Dark + Lite parity.
+   ============================================================ */
+
+/* 1) Media Downloader (#tab-downloader — Indigo Studio accent) */
+#tab-downloader .pane-header h2 {
+    color: #0F172A;
+    font-weight: 800;
+}
+#tab-downloader .dl-search-card {
+    background: rgba(255, 255, 255, 0.90);
+    border: 1px solid rgba(99, 102, 241, 0.16);
+    border-radius: 22px;
+    box-shadow: 0 10px 26px -14px rgba(79, 70, 229, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+#tab-downloader #btn-extract-dl.primary-btn {
+    min-height: 48px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #4F46E5 0%, #2563EB 100%);
+    color: #FFFFFF;
+    font-weight: 800;
+    border: none;
+    box-shadow: 0 10px 22px -10px rgba(79, 70, 229, 0.55);
+}
+#tab-downloader .dl-empty-state-card,
+#tab-downloader .dl-loading-state-card,
+#tab-downloader #dl-result-card {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 22px;
+    box-shadow: 0 10px 24px -14px rgba(15, 23, 42, 0.14);
+}
+#tab-downloader .dl-thumb {
+    min-width: 112px;
+    min-height: 64px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.16) 0%, rgba(14, 165, 233, 0.12) 100%);
+    border: 1px solid rgba(79, 70, 229, 0.18);
+}
+#tab-downloader .dl-platform {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(79, 70, 229, 0.10);
+    color: #4338CA;
+    font-weight: 700;
+}
+#tab-downloader .dl-formats-grid .vcp-dl-format-card {
+    min-height: 54px;
+    border-radius: 16px;
+    background: rgba(248, 250, 255, 0.94);
+    border: 1px solid rgba(15, 23, 42, 0.09);
+    color: #0F172A;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+#tab-downloader .dl-formats-grid .vcp-dl-format-card.active {
+    background: linear-gradient(180deg, rgba(238, 242, 255, 0.98) 0%, rgba(224, 231, 255, 0.92) 100%);
+    border-color: rgba(79, 70, 229, 0.55);
+    box-shadow: 0 0 0 1.5px rgba(79, 70, 229, 0.40), 0 8px 18px -10px rgba(79, 70, 229, 0.25);
+}
+
+/* 2) VIP Plans & Wallet (#tab-vip — Champagne Gold accent) */
+#tab-vip .stats-card {
+    background: linear-gradient(180deg, rgba(255, 252, 245, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%);
+    border: 1px solid rgba(217, 119, 6, 0.24);
+    border-radius: 22px;
+    box-shadow: 0 12px 26px -16px rgba(180, 83, 9, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.98);
+}
+#tab-vip .plan-how-card {
+    background: rgba(255, 255, 255, 0.90);
+    border: 1px solid rgba(217, 119, 6, 0.18);
+    border-radius: 18px;
+}
+#tab-vip .pricing-card {
+    background: rgba(255, 255, 255, 0.93);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 22px;
+    box-shadow: 0 10px 24px -16px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+#tab-vip #card-plan-master,
+#tab-vip #card-plan-recap-studio {
+    border-color: rgba(217, 119, 6, 0.38);
+    box-shadow: 0 12px 28px -16px rgba(217, 119, 6, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.98);
+}
+#tab-vip #payment-box {
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(217, 119, 6, 0.26);
+    border-radius: 24px;
+    box-shadow: 0 14px 32px -16px rgba(15, 23, 42, 0.20);
+}
+#tab-vip .account-box {
+    background: rgba(248, 250, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 16px;
+}
+#tab-vip .mini-copy-btn {
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-weight: 700;
+}
+#tab-vip .slip-upload-box {
+    border-radius: 18px;
+    border: 1.5px dashed rgba(217, 119, 6, 0.38);
+    background: rgba(255, 251, 235, 0.55);
+}
+
+/* 3) History (#tab-history) & Live Jobs Floating Pill */
+#tab-history .vcp-history-retention-bar {
+    background: rgba(248, 250, 255, 0.92);
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    border-radius: 14px;
+    color: #334155;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+#tab-history .hub-filter-bar .hub-filter-chip {
+    min-height: 42px;
+    white-space: nowrap;
+}
+.live-jobs-pill {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.94) 0%, rgba(28, 39, 68, 0.94) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 12px 28px -8px rgba(2, 6, 23, 0.45);
+}
+
+/* 4) Modals, Bottom Sheets & Entry Gate Lock */
+.submit-confirm-card,
+.live-jobs-sheet-card,
+.modal-content,
+.studio-confirm-card,
+.gate-lock-card {
+    border-radius: 26px;
+    background: #FFFFFF;
+    border: 1px solid rgba(15, 23, 42, 0.10);
+    box-shadow: 0 24px 48px -16px rgba(15, 23, 42, 0.28);
+    color: #0F172A;
+}
+.live-jobs-sheet-card {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.submit-confirm-btn-primary,
+.submit-confirm-btn-secondary,
+#gate-lock-btn-verify {
+    min-height: 46px;
+    border-radius: 14px;
+    font-weight: 700;
+}
+.gate-lock-actions .mini-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 5) Admin Console (#tab-admin): 4x2 Nav Grid, Action Triage, KPI Cards & Collapsible Accordions */
+#tab-admin #adm-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 8px 20px -12px rgba(15, 23, 42, 0.14);
+}
+#tab-admin #adm-nav .adm-nav-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    min-height: 44px;
+    padding: 6px 4px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: rgba(248, 250, 255, 0.72);
+    color: #334155;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    white-space: normal;
+    word-break: break-word;
+}
+#tab-admin #adm-nav .adm-nav-btn.active {
+    background: #0F172A;
+    color: #FFFFFF;
+    border-color: rgba(15, 23, 42, 0.18);
+    box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.42);
+}
+#tab-admin #adm-nav .adm-nav-badge {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 800;
+}
+#tab-admin .adm-triage-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(255, 247, 237, 0.96) 0%, rgba(254, 243, 199, 0.92) 100%);
+    border: 1px solid rgba(217, 119, 6, 0.34);
+    box-shadow: 0 8px 18px -12px rgba(217, 119, 6, 0.32);
+}
+#tab-admin .adm-triage-banner.is-clear {
+    background: linear-gradient(135deg, rgba(236, 253, 245, 0.96) 0%, rgba(209, 250, 229, 0.88) 100%);
+    border-color: rgba(16, 185, 129, 0.32);
+    box-shadow: 0 8px 18px -12px rgba(16, 185, 129, 0.24);
+}
+#tab-admin .adm-triage-copy {
+    min-width: 0;
+    flex: 1;
+}
+#tab-admin .adm-triage-title {
+    font-size: 12.5px;
+    font-weight: 800;
+    color: #9A3412;
+    line-height: 1.35;
+}
+#tab-admin .adm-triage-banner.is-clear .adm-triage-title {
+    color: #065F46;
+}
+#tab-admin .adm-triage-cta {
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: #FFFFFF;
+    border: 1px solid rgba(217, 119, 6, 0.35);
+    color: #9A3412;
+    font-weight: 800;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+#tab-admin .adm-triage-banner.is-clear .adm-triage-cta {
+    border-color: rgba(16, 185, 129, 0.35);
+    color: #065F46;
+}
+#tab-admin .stat-mini-card {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 18px;
+    box-shadow: 0 6px 16px -12px rgba(15, 23, 42, 0.14);
+}
+#tab-admin .stat-mini-card .stat-num {
+    font-variant-numeric: tabular-nums;
+}
+#tab-admin .adm-seg {
+    border-radius: 14px;
+    background: rgba(241, 245, 249, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    padding: 4px;
+}
+#tab-admin .adm-seg-btn {
+    min-height: 42px;
+    border-radius: 10px;
+    font-weight: 700;
+}
+#tab-admin .adm-seg-btn.active {
+    background: #FFFFFF;
+    color: #0F172A;
+    box-shadow: 0 3px 10px -4px rgba(15, 23, 42, 0.18);
+}
+#tab-admin #adm-screen-jobs .filter-scroll-strip,
+#tab-admin #adm-screen-users .filter-pills-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+#tab-admin .filter-pill,
+#tab-admin .filter-chip {
+    min-height: 40px;
+    white-space: nowrap;
+}
+#tab-admin .adm-settings-master-title {
+    font-size: 14px;
+    font-weight: 800;
+    color: #0F172A;
+}
+#tab-admin details.adm-accordion {
+    background: rgba(255, 255, 255, 0.93);
+    border: 1px solid rgba(15, 23, 42, 0.09);
+    border-radius: 20px;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 8px 20px -14px rgba(15, 23, 42, 0.14);
+}
+#tab-admin details.adm-accordion > summary.adm-acc-head {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 52px;
+    padding: 12px 16px;
+    cursor: pointer;
+    font-weight: 800;
+    font-size: 13.5px;
+    color: #0F172A;
+    user-select: none;
+}
+#tab-admin details.adm-accordion > summary.adm-acc-head::-webkit-details-marker {
+    display: none;
+}
+#tab-admin details.adm-accordion[open] > summary.adm-acc-head {
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    background: rgba(248, 250, 255, 0.72);
+}
+#tab-admin .adm-acc-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+#tab-admin .adm-acc-pill {
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(37, 99, 235, 0.10);
+    color: #1D4ED8;
+}
+#tab-admin .adm-acc-chev {
+    display: inline-block;
+    font-size: 13px;
+    color: #475569;
+    transition: transform 0.16s ease;
+    transform: rotate(-90deg);
+}
+#tab-admin details.adm-accordion[open] > summary .adm-acc-chev {
+    transform: rotate(0deg);
+}
+#tab-admin .adm-acc-body {
+    padding: 14px 16px 16px;
+}
+#tab-admin .adm-settings-save-bar #btn-save-admin-settings {
+    min-height: 48px;
+    border-radius: 14px;
+    font-weight: 800;
+}
+
+/* 6) Phase 5 Dark Glass Overrides (High Contrast Obsidian) */
+html[data-theme="dark"] #tab-downloader .pane-header h2,
+html[data-theme="dark"] #tab-vip .pane-header h2,
+html[data-theme="dark"] #tab-history .pane-header h2,
+html[data-theme="dark"] #tab-admin .pane-header h2,
+html[data-theme="dark"] #tab-admin .adm-settings-master-title {
+    color: #F8FAFC;
+}
+html[data-theme="dark"] #tab-downloader .dl-search-card,
+html[data-theme="dark"] #tab-downloader .dl-empty-state-card,
+html[data-theme="dark"] #tab-downloader .dl-loading-state-card,
+html[data-theme="dark"] #tab-downloader #dl-result-card,
+html[data-theme="dark"] #tab-vip .stats-card,
+html[data-theme="dark"] #tab-vip .plan-how-card,
+html[data-theme="dark"] #tab-vip .pricing-card,
+html[data-theme="dark"] #tab-vip #payment-box,
+html[data-theme="dark"] #tab-admin .stat-mini-card,
+html[data-theme="dark"] #tab-admin details.adm-accordion {
+    background: rgba(19, 29, 50, 0.94);
+    border-color: rgba(148, 163, 184, 0.22);
+    color: #F8FAFC;
+    box-shadow: 0 12px 26px -14px rgba(0, 0, 0, 0.55);
+}
+html[data-theme="dark"] #tab-downloader .dl-formats-grid .vcp-dl-format-card {
+    background: rgba(30, 41, 59, 0.92);
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #F8FAFC;
+}
+html[data-theme="dark"] #tab-downloader .dl-formats-grid .vcp-dl-format-card.active {
+    background: linear-gradient(180deg, rgba(49, 46, 129, 0.62) 0%, rgba(30, 27, 75, 0.92) 100%);
+    border-color: rgba(129, 140, 248, 0.68);
+}
+html[data-theme="dark"] #tab-downloader .dl-platform {
+    background: rgba(99, 102, 241, 0.22);
+    color: #A5B4FC;
+}
+html[data-theme="dark"] #tab-vip .account-box {
+    background: rgba(15, 23, 42, 0.88);
+    border-color: rgba(148, 163, 184, 0.22);
+}
+html[data-theme="dark"] #tab-vip .slip-upload-box {
+    background: rgba(120, 53, 15, 0.16);
+    border-color: rgba(245, 158, 11, 0.42);
+}
+html[data-theme="dark"] #tab-history .vcp-history-retention-bar {
+    background: rgba(30, 41, 59, 0.88);
+    border-color: rgba(96, 165, 250, 0.28);
+    color: #CBD5E1;
+}
+html[data-theme="dark"] .submit-confirm-card,
+html[data-theme="dark"] .live-jobs-sheet-card,
+html[data-theme="dark"] .modal-content,
+html[data-theme="dark"] .studio-confirm-card,
+html[data-theme="dark"] .gate-lock-card {
+    background: #0F172A;
+    border-color: rgba(148, 163, 184, 0.26);
+    color: #F8FAFC;
+    box-shadow: 0 24px 52px rgba(0, 0, 0, 0.65);
+}
+html[data-theme="dark"] .submit-confirm-btn-secondary {
+    background: rgba(30, 41, 59, 0.92);
+    border-color: rgba(148, 163, 184, 0.28);
+    color: #F8FAFC;
+}
+html[data-theme="dark"] #tab-admin #adm-nav {
+    background: rgba(15, 23, 42, 0.90);
+    border-color: rgba(148, 163, 184, 0.22);
+}
+html[data-theme="dark"] #tab-admin #adm-nav .adm-nav-btn {
+    background: rgba(30, 41, 59, 0.80);
+    color: #CBD5E1;
+}
+html[data-theme="dark"] #tab-admin #adm-nav .adm-nav-btn.active {
+    background: linear-gradient(135deg, #2563EB 0%, #3B82F6 100%);
+    color: #FFFFFF;
+}
+html[data-theme="dark"] #tab-admin .adm-triage-banner {
+    background: linear-gradient(135deg, rgba(120, 53, 15, 0.42) 0%, rgba(146, 64, 14, 0.34) 100%);
+    border-color: rgba(245, 158, 11, 0.42);
+}
+html[data-theme="dark"] #tab-admin .adm-triage-title {
+    color: #FDE68A;
+}
+html[data-theme="dark"] #tab-admin .adm-triage-cta {
+    background: rgba(15, 23, 42, 0.92);
+    border-color: rgba(245, 158, 11, 0.45);
+    color: #FCD34D;
+}
+html[data-theme="dark"] #tab-admin .adm-triage-banner.is-clear {
+    background: linear-gradient(135deg, rgba(6, 78, 59, 0.46) 0%, rgba(6, 95, 70, 0.36) 100%);
+    border-color: rgba(52, 211, 153, 0.40);
+}
+html[data-theme="dark"] #tab-admin .adm-triage-banner.is-clear .adm-triage-title,
+html[data-theme="dark"] #tab-admin .adm-triage-banner.is-clear .adm-triage-cta {
+    color: #6EE7B7;
+}
+html[data-theme="dark"] #tab-admin .adm-seg {
+    background: rgba(15, 23, 42, 0.90);
+    border-color: rgba(148, 163, 184, 0.22);
+}
+html[data-theme="dark"] #tab-admin .adm-seg-btn.active {
+    background: rgba(51, 65, 85, 0.95);
+    color: #FFFFFF;
+}
+html[data-theme="dark"] #tab-admin details.adm-accordion > summary.adm-acc-head {
+    color: #F8FAFC;
+}
+html[data-theme="dark"] #tab-admin details.adm-accordion[open] > summary.adm-acc-head {
+    background: rgba(30, 41, 59, 0.72);
+    border-bottom-color: rgba(148, 163, 184, 0.18);
+}
+html[data-theme="dark"] #tab-admin .adm-acc-pill {
+    background: rgba(37, 99, 235, 0.24);
+    color: #93C5FD;
+}
+html[data-theme="dark"] #tab-admin .adm-acc-chev {
+    color: #94A3B8;
+}
+
+/* 7) Phase 5 Lite Ceramic Mode (Flat Opaque High Contrast) */
+html.lite #tab-downloader .dl-search-card,
+html.lite #tab-downloader #dl-result-card,
+html.lite #tab-vip .stats-card,
+html.lite #tab-vip .pricing-card,
+html.lite #tab-vip #payment-box,
+html.lite #tab-admin #adm-nav,
+html.lite #tab-admin .stat-mini-card,
+html.lite #tab-admin details.adm-accordion,
+html.lite .submit-confirm-card,
+html.lite .live-jobs-sheet-card,
+html.lite .modal-content {
+    background: #FFFFFF !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06) !important;
+}
+html[data-theme="dark"].lite #tab-downloader .dl-search-card,
+html[data-theme="dark"].lite #tab-downloader #dl-result-card,
+html[data-theme="dark"].lite #tab-vip .stats-card,
+html[data-theme="dark"].lite #tab-vip .pricing-card,
+html[data-theme="dark"].lite #tab-vip #payment-box,
+html[data-theme="dark"].lite #tab-admin #adm-nav,
+html[data-theme="dark"].lite #tab-admin .stat-mini-card,
+html[data-theme="dark"].lite #tab-admin details.adm-accordion,
+html[data-theme="dark"].lite .submit-confirm-card,
+html[data-theme="dark"].lite .live-jobs-sheet-card,
+html[data-theme="dark"].lite .modal-content {
+    background: #141D33 !important;
+    box-shadow: none !important;
+}
