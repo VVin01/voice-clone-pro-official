@@ -30,6 +30,7 @@ function showStudioToast(message, type = 'info', duration = 3500) {
     // textContent so no caller- or server-supplied string can inject
     // HTML into the toast. Caller audit: all ~86 call sites pass plain
     // i18n copy — none relied on markup in the message.
+    message = (typeof localizeServerText === "function") ? localizeServerText(message) : message;
     toast.querySelector('.toast-msg').textContent = message;
 
     document.body.appendChild(toast);
@@ -64,8 +65,8 @@ function showStudioConfirm(message, onConfirm, onCancel) {
             <div class="studio-confirm-icon">⚠️</div>
             <div class="studio-confirm-msg"></div>
             <div class="studio-confirm-actions">
-                <button id="studio-confirm-cancel" class="btn secondary-btn">${typeof t === "function" ? t("confirm_cancel") : "ပယ်ဖျက်မည်"}</button>
-                <button id="studio-confirm-ok" class="btn gold-gradient-btn">${typeof t === "function" ? t("confirm_ok") : "သဘောတူ"}</button>
+                <button id="studio-confirm-cancel" class="btn secondary-btn">${typeof t === "function" ? t("confirm_cancel") : "Cancel"}</button>
+                <button id="studio-confirm-ok" class="btn gold-gradient-btn">${typeof t === "function" ? t("confirm_ok") : "OK"}</button>
             </div>
         </div>
     `;
@@ -79,6 +80,18 @@ function showStudioConfirm(message, onConfirm, onCancel) {
     document.getElementById('studio-confirm-cancel').onclick = () => { remove(); if (onCancel) onCancel(); };
     modal.addEventListener('click', (e) => { if (e.target === modal) { remove(); if (onCancel) onCancel(); } });
 }
+
+function jobStatusText(status) {
+    const st = String(status || "").toUpperCase();
+    if (st === "SUCCESS") return t("status_badge_success");
+    if (st === "RUNNING") return t("status_badge_running");
+    if (st === "QUEUED" || st === "PENDING") return t("status_badge_queued");
+    if (st === "FAILED") return t("status_badge_failed");
+    if (st === "CANCELLED") return t("status_badge_cancelled");
+    if (st === "WAITING_CHOICE") return t("status_badge_waiting_choice");
+    return st || t("status_badge_other");
+}
+window.jobStatusText = jobStatusText;
 
 /**
  * mapErrorToToast(raw, flow) — the ONLY way an error becomes a toast
@@ -115,7 +128,7 @@ function mapErrorToToast(raw, flow = 'generic') {
     // (worker _RecapInsufficientCreditsError and the submit-time
     // segmented pre-check share the markers). The exact total matters.
     if (flow === 'recap' && has('စုစုပေါင်း') && has('credits လိုအပ်ပါတယ်')) {
-        return rawStr;
+        return typeof localizeServerText === "function" ? localizeServerText(rawStr) : rawStr;
     }
     // (c) Recap SUBMIT-time rejections that happen BEFORE any charge
     // (R40 item 11): the no-credit gate, the duration-cap message and
@@ -128,7 +141,7 @@ function mapErrorToToast(raw, flow = 'generic') {
         'ကန့်သတ်ချက် (အများဆုံး',
         'already running for your account',
     )) {
-        return rawStr;
+        return typeof localizeServerText === "function" ? localizeServerText(rawStr) : rawStr;
     }
     // (b) Voice submit rejections that happen BEFORE any charge
     // (_voice_job_error_detail's closed Burmese set: balance, daily
@@ -145,7 +158,7 @@ function mapErrorToToast(raw, flow = 'generic') {
     if (flow === 'voice'
         && /[\u1000-\u109F]/.test(rawStr)
         && !has('http', 'traceback', '.py', 'yt-dlp', 'exception', 'recap', 'အပိုင်း', 'စုစုပေါင်း')) {
-        return rawStr;
+        return typeof localizeServerText === "function" ? localizeServerText(rawStr) : rawStr;
     }
     // Suspended account (api.py require gate raises USER_BANNED: …).
     if (has('user_banned')) return t('err_banned');
@@ -262,13 +275,13 @@ window.blockedLinkInfo = blockedLinkInfo;
 function displayJobError(raw) {
     const s = (raw == null ? '' : String(raw)).trim();
     if (!s) return '';
-    if (s.startsWith('⚠️')) return s.replace(/^⚠️\s*/, '');
+    if (s.startsWith('⚠️')) return localizeServerText(s.replace(/^⚠️\s*/, ''));
     const info = blockedLinkInfo(s);
     if (info.blocked) {
         const head = info.source ? tf('err_link_blocked_named', { source: info.source }) : t('err_link_blocked');
         return head + ' ' + t('err_link_advice_upload');
     }
-    return s;
+    return localizeServerText(s);
 }
 window.displayJobError = displayJobError;
 
@@ -3190,14 +3203,16 @@ async function loadUserProfile() {
         }
 
         if (catTag) {
-            catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
+            catTag.removeAttribute("data-i18n");
+            catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_member_pro") : t("vip_member_free"));
             catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
         }
         paintVipPlanBalances(data);
 
         if (charCount) {
             const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
-            charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
+            const curLen = (document.getElementById("voice-text-input")?.value || "").length;
+            charCount.innerText = `${curLen} / ${limit} ${t("char_counter_unit")}`;
         }
 
         const recapLimitText = document.getElementById("recap-tier-limit-text");
@@ -3298,7 +3313,7 @@ function renderCuratedVoices() {
             <div class="persona-footer-row">
                 <button type="button" class="voice-preview-btn" onclick="event.stopPropagation(); playVoicePreview('${v.id}', this)">
                     <span class="preview-btn-icon">▶️</span>
-                    <span class="preview-btn-label">${t("preview_voice")}</span>
+                    <span class="preview-btn-label" data-i18n="preview_voice">${t("preview_voice")}</span>
                 </button>
             </div>
         `;
@@ -3318,7 +3333,7 @@ function renderCuratedVoices() {
 
     const countBadge = document.getElementById("personas-count");
     if (countBadge) {
-        countBadge.innerText = `${filtered.length} Personas`;
+        countBadge.innerText = tf("personas_count_fmt", { n: filtered.length });
     }
     updateSelectedVoiceSummary();
 }
@@ -3387,7 +3402,7 @@ async function loadCuratedVoices() {
         console.warn("Could not load curated voices:", e);
         const grid = document.getElementById("personas-grid");
         if (grid && !(state.curatedVoices || []).length) {
-            grid.innerHTML = `<div class="adm-state-error">${escapeHtml(t("home_load_error"))} <button type="button" class="mini-chip" onclick="loadCuratedVoices()">${escapeHtml(t("admin_retry"))}</button></div>`;
+            grid.innerHTML = `<div class="adm-state-error"><span data-i18n="home_load_error">${escapeHtml(t("home_load_error"))}</span> <button type="button" class="mini-chip" onclick="loadCuratedVoices()" data-i18n="admin_retry">${escapeHtml(t("admin_retry"))}</button></div>`;
         }
     }
 }
@@ -5018,7 +5033,8 @@ function updateRecapDurationGate() {
     } else {
         if (step4Note) {
             if (recapSubmitRejectText) {
-                step4Note.innerText = recapSubmitRejectText;
+                const _locFn = (typeof localizeServerText === "function") ? localizeServerText : (x => x);
+                step4Note.innerText = _locFn(recapSubmitRejectText);
                 step4Note.classList.remove("hidden");
             } else {
                 step4Note.classList.add("hidden");
@@ -5840,8 +5856,14 @@ function setupRecapVisualEditor() {
         // pick (round-4 F-D): hide the card image until THIS file's
         // own frame arrives with the upload success.
         setCardThumb(document.getElementById("recap-info-thumb"), null);
-        if (titleSpan) titleSpan.innerText = file.name;
-        if (platformSpan) platformSpan.innerText = "Direct Upload (MP4)";
+        if (titleSpan) {
+            titleSpan.removeAttribute("data-i18n");
+            titleSpan.innerText = file.name;
+        }
+        if (platformSpan) {
+            platformSpan.dataset.sourceType = "direct_upload";
+            platformSpan.innerText = t("recap_source_direct_mp4");
+        }
         // A new pick replaces any earlier source: the previous file's
         // confirmed server path and thumbnail must not leak onto this
         // pick — a failed upload of the NEW file must never be able to
@@ -6112,7 +6134,7 @@ function setupRecapVisualEditor() {
             if (xhr.status >= 200 && xhr.status < 300) {
                 onRecapUploadSuccess(data, file);
             } else {
-                onRecapUploadError(mapErrorToToast(data.detail || `Upload failed (${xhr.status})`, "upload"));
+                onRecapUploadError(mapErrorToToast(data.detail || tf("upload_failed_code", { code: xhr.status }), "upload"));
             }
         };
         xhr.onerror = () => { stopRecapUploadChrome(); onRecapUploadError(t("err_upload_failed")); };
@@ -6247,7 +6269,7 @@ function setupRecapVisualEditor() {
                 showStudioToast(t("toast_duration_over"), 'warning');
             } else {
                 durSpan.className = "mini-tag";
-                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#10b981; font-weight:700; margin-left:4px;">(Ready)</span>`;
+                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span class="recap-ready-badge" style="color:#10b981; font-weight:700; margin-left:4px;">(${escapeHtml(t("recap_upload_ready_badge"))})</span>`;
                 if (btnStartRecap && !recapJobIsActive()) {
                     btnStartRecap.disabled = false;
                     btnStartRecap.style.opacity = "";
@@ -8405,6 +8427,7 @@ function setupRecapVisualEditor() {
             head.setAttribute("aria-expanded", "false");
             const titleSpan = document.createElement("span");
             titleSpan.className = "dd-acc-title";
+            if (titleKey) titleSpan.setAttribute("data-i18n", titleKey);
             titleSpan.textContent = titleKey ? t(titleKey) : "";
             const valSpan = document.createElement("span");
             valSpan.className = "dd-acc-val";
@@ -11051,6 +11074,42 @@ async function refreshPlanPrices() {
     }
 }
 
+function paintPaymentAccountNames(accounts) {
+    const list = Array.isArray(accounts) ? accounts : [];
+    const prefix = t("pay_account_name_prefix");
+    if (list.length) {
+        list.forEach(acc => {
+            const prov = (acc.provider || "").toLowerCase();
+            if (prov.includes("kbz") || prov.includes("kpay")) {
+                const elNum = document.getElementById("kpay-num");
+                const elName = document.getElementById("kpay-name");
+                if (elNum) elNum.innerText = acc.number;
+                if (elName) {
+                    elName.dataset.accountOwner = acc.name || "";
+                    elName.innerText = `${prefix} ${acc.name}`;
+                }
+            } else if (prov.includes("wave")) {
+                const elNum = document.getElementById("wave-num");
+                const elName = document.getElementById("wave-name");
+                if (elNum) elNum.innerText = acc.number;
+                if (elName) {
+                    elName.dataset.accountOwner = acc.name || "";
+                    elName.innerText = `${prefix} ${acc.name}`;
+                }
+            }
+        });
+        return;
+    }
+    ["kpay-name", "wave-name"].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const owner = el.dataset.accountOwner || "Win Kyaw Oo";
+        el.dataset.accountOwner = owner;
+        el.innerText = `${prefix} ${owner}`;
+    });
+}
+window.paintPaymentAccountNames = paintPaymentAccountNames;
+
 async function openPaymentDrawer(packageCode, amount, title) {
     haptic("light");
     // A previously synced API price wins over the inline literal.
@@ -11062,6 +11121,7 @@ async function openPaymentDrawer(packageCode, amount, title) {
 
     const titleEl = document.getElementById("drawer-package-title");
     if (titleEl && title) {
+        titleEl.removeAttribute("data-i18n");
         titleEl.innerText = `${title} — ${amount.toLocaleString()} MMK`;
     }
 
@@ -11085,24 +11145,13 @@ async function openPaymentDrawer(packageCode, amount, title) {
                 activeAmount = fresh;
                 const titleEl2 = document.getElementById("drawer-package-title");
                 if (titleEl2 && title) {
+                    titleEl2.removeAttribute("data-i18n");
                     titleEl2.innerText = `${title} — ${fresh.toLocaleString()} MMK`;
                 }
             }
             const accounts = data.payment_accounts || [];
-            accounts.forEach(acc => {
-                const prov = (acc.provider || "").toLowerCase();
-                if (prov.includes("kbz") || prov.includes("kpay")) {
-                    const elNum = document.getElementById("kpay-num");
-                    const elName = document.getElementById("kpay-name");
-                    if (elNum) elNum.innerText = acc.number;
-                    if (elName) elName.innerText = `${t("pay_account_name_prefix")} ${acc.name}`;
-                } else if (prov.includes("wave")) {
-                    const elNum = document.getElementById("wave-num");
-                    const elName = document.getElementById("wave-name");
-                    if (elNum) elNum.innerText = acc.number;
-                    if (elName) elName.innerText = `${t("pay_account_name_prefix")} ${acc.name}`;
-                }
-            });
+            window._lastPaymentAccounts = accounts;
+            paintPaymentAccountNames(accounts);
         }
     } catch (err) {
         console.warn("Could not sync payment accounts from API:", err);
@@ -11566,6 +11615,7 @@ function updateTtsCharCount() {
         syncTtsExcessAndCost(len, max);
     }
 }
+window.updateTtsCharCount = updateTtsCharCount;
 function insertTtsSampleText(txt) {
     const input = document.getElementById("tts-text-input");
     ttsSampleSettled = true;
@@ -12136,15 +12186,16 @@ function admFmtDate(iso) {
 }
 
 function admStateLoading(el) {
-    if (el) el.innerHTML = `<div class="adm-state"><span class="spinner"></span><span>${t("admin_loading")}</span></div>`;
+    if (el) el.innerHTML = `<div class="adm-state"><span class="spinner"></span><span data-i18n="admin_loading">${t("admin_loading")}</span></div>`;
 }
 
 function admStateEmpty(el, msgKey) {
-    if (el) el.innerHTML = `<div class="adm-state adm-state-empty"><span class="adm-state-icon">📭</span><span>${t(msgKey || "admin_empty")}</span></div>`;
+    const k = msgKey || "admin_empty";
+    if (el) el.innerHTML = `<div class="adm-state adm-state-empty"><span class="adm-state-icon">📭</span><span data-i18n="${escapeHtml(k)}">${t(k)}</span></div>`;
 }
 
 function admStateError(el, retryJs) {
-    if (el) el.innerHTML = `<div class="adm-state adm-state-error"><span class="adm-state-icon">⚠️</span><span>${t("admin_load_error")}</span>${retryJs ? `<button class="mini-chip" onclick="${retryJs}">${t("admin_retry")}</button>` : ""}</div>`;
+    if (el) el.innerHTML = `<div class="adm-state adm-state-error"><span class="adm-state-icon">⚠️</span><span data-i18n="admin_load_error">${t("admin_load_error")}</span>${retryJs ? `<button class="mini-chip" onclick="${retryJs}" data-i18n="admin_retry">${t("admin_retry")}</button>` : ""}</div>`;
 }
 
 function showAdminSection(name) {
@@ -12235,12 +12286,14 @@ window.loadAdminKeyHealth = loadAdminKeyHealth;
 
 function admKeyPill(status, text) {
     const cls = status === "ok" ? "success" : (status === "limit" ? "running" : "failed");
-    return `<span class="mini-tag adm-status-tag ${cls}">${escapeHtml(text)}</span>`;
+    return `<span class="mini-tag adm-status-tag ${cls}"><span class="adm-key-dot" aria-hidden="true"></span>${escapeHtml(text)}</span>`;
 }
 
 function admKeyProviderRow(nameKey, pills, subText) {
-    return `<div class="adm-action-row-line"><span><b>${escapeHtml(t(nameKey))}</b></span><span>${pills}</span></div>` +
-        (subText ? `<p class="text-muted text-xs">${escapeHtml(subText)}</p>` : "");
+    return `<div class="adm-key-provider-row">` +
+        `<div class="adm-key-provider-head"><span class="adm-key-provider-name" title="${escapeHtml(t(nameKey))}">${escapeHtml(t(nameKey))}</span><span class="adm-key-provider-pills">${pills}</span></div>` +
+        (subText ? `<p class="text-muted text-xs adm-key-provider-sub">${escapeHtml(subText)}</p>` : "") +
+        `</div>`;
 }
 
 function renderAdminKeyHealth() {
@@ -12270,7 +12323,7 @@ function renderAdminKeyHealth() {
     keyRow(p.gemini, "adm_keys_gemini");
     keyRow(p.groq, "adm_keys_groq");
     if (p.spaces) {
-        const pills = admKeyPill(p.spaces.running === p.spaces.total ? "ok" : "dead", `${p.spaces.running}/${p.spaces.total} RUNNING`);
+        const pills = admKeyPill(p.spaces.running === p.spaces.total ? "ok" : "dead", `${p.spaces.running}/${p.spaces.total} ${t("adm_keys_running")}`);
         rows.push(admKeyProviderRow("adm_keys_spaces", pills, ""));
     }
     const summary = document.getElementById("adm-keys-summary");
@@ -12300,7 +12353,13 @@ function renderAdminKeyHealthAccounts() {
         const remain = row.remaining_s == null ? "—"
             : `${Math.round(row.remaining_s).toLocaleString()} / ${Math.round(row.base_s || 0).toLocaleString()} ${t("adm_keys_unit_s")}`;
         const pill = admKeyPill(row.status === "ok" ? "ok" : "dead", row.status === "ok" ? t("adm_keys_working") : (row.status === "dead" ? t("adm_keys_dead") : t("adm_keys_error")));
-        return `<div class="adm-action-row-line"><span>${escapeHtml(name)} ${pill}</span><span class="text-muted adm-line-time">${escapeHtml(remain)} · ${escapeHtml(admKeyRefillText(row))}</span></div>`;
+        return `<div class="adm-key-row">` +
+            `<div class="adm-key-main">` +
+            `<span class="adm-key-name" title="${escapeHtml(name)}" onclick="this.classList.toggle('is-expanded')">${escapeHtml(name)}</span>` +
+            `<div class="adm-key-meta"><span class="adm-key-quota">${escapeHtml(remain)}</span><span class="text-muted adm-key-refill">· ${escapeHtml(admKeyRefillText(row))}</span></div>` +
+            `</div>` +
+            `<div class="adm-key-status">${pill}</div>` +
+            `</div>`;
     }).join("");
 }
 
@@ -12318,6 +12377,82 @@ function toggleAdminKeyHealthAccounts() {
 window.toggleAdminKeyHealthAccounts = toggleAdminKeyHealthAccounts;
 
 // ── Overview + Payments ──────────────────────────────────────────────
+
+function renderAdminOverview(stats) {
+    if (!stats) return;
+    window._lastAdminOverview = stats;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+    set("adm-total-users", stats.total_users ?? 0);
+    set("adm-total-users-split", tf("admin_stat_users_split", { real: stats.real_users ?? 0, never: stats.never_used_users ?? 0 }));
+    set("adm-vip-users", stats.vip_users ?? 0);
+    set("adm-pending-slips", stats.pending_slips ?? 0);
+    set("adm-queued-jobs", stats.queued_jobs ?? 0);
+    set("adm-failed-24h", stats.failed_jobs_24h ?? 0);
+    set("adm-banned-users", stats.banned_users ?? 0);
+    set("adm-banned-split", tf("admin_stat_banned_split", { admin: stats.banned_by_admin ?? 0, bot: stats.bot_blocked_users ?? 0 }));
+    set("adm-new-24h", stats.new_users_24h ?? 0);
+    const triageCard = document.getElementById("adm-triage-card");
+    if (triageCard) {
+        const pend = Number(stats.pending_slips || 0);
+        const fail = Number(stats.failed_jobs_24h || 0);
+        const isClear = pend === 0 && fail === 0;
+        triageCard.classList.toggle("is-clear", isClear);
+        const triageTitleEl = document.getElementById("adm-triage-title");
+        if (triageTitleEl) {
+            triageTitleEl.removeAttribute("data-i18n");
+            triageTitleEl.innerText = isClear
+                ? t("adm_triage_clear")
+                : tf("adm_triage_action_needed", { slips: pend, failed: fail });
+        }
+        set("adm-triage-sub", tf("adm_triage_sub", { queued: stats.queued_jobs ?? 0, new24: stats.new_users_24h ?? 0 }));
+    }
+    const inc = stats.income || {};
+    const setIncome = (id, mmk, count) => {
+        set(id, (mmk || 0).toLocaleString() + " MMK");
+        set(id + "-count", tf("admin_income_count", { count: count || 0 }));
+    };
+    setIncome("adm-income-today", inc.today_mmk, inc.today_count);
+    setIncome("adm-income-7d", inc.last_7d_mmk, inc.last_7d_count);
+    setIncome("adm-income-30d", inc.last_30d_mmk, inc.last_30d_count);
+    setIncome("adm-income-all", inc.all_time_mmk, inc.all_time_count);
+    const elSize = document.getElementById("adm-storage-size");
+    if (elSize) elSize.innerText = admFmtBytes(stats.db_size_bytes) + " / " + admFmtBytes(stats.storage_bytes);
+    const badge = document.getElementById("adm-nav-slips-badge");
+    if (badge) {
+        badge.innerText = stats.pending_slips ?? 0;
+        badge.classList.toggle("hidden", !(stats.pending_slips > 0));
+    }
+    const chips = document.getElementById("adm-jobs-by-status");
+    if (chips && stats.jobs_by_status) {
+        const order = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"];
+        chips.innerHTML = order
+            .filter(k => stats.jobs_by_status[k] !== undefined)
+            .map(k => `<span class="mini-tag adm-status-tag ${k.toLowerCase()}">${escapeHtml(jobStatusText(k))}: <strong>${stats.jobs_by_status[k]}</strong></span>`)
+            .join("");
+    }
+    const worker = document.getElementById("adm-worker-line");
+    if (worker) {
+        const rawWorker = stats.cloud_worker_status || "";
+        const workerText = (!rawWorker || /online.*render cloud/i.test(rawWorker))
+            ? t("adm_worker_online")
+            : localizeServerText(rawWorker);
+        worker.innerText = "☁️ " + workerText;
+    }
+    const actionsBox = document.getElementById("admin-recent-actions");
+    if (actionsBox) {
+        const acts = stats.recent_admin_actions || [];
+        if (!acts.length) {
+            actionsBox.innerHTML = `<p class="text-muted">—</p>`;
+        } else {
+            actionsBox.innerHTML = acts.map(a => `
+                <div class="adm-action-row-line">
+                    <span>• <b>${escapeHtml(a.action)}</b> → ${escapeHtml(a.target_type || "")} ${escapeHtml(String(a.target_id || ""))}</span>
+                    <span class="text-muted adm-line-time">${admFmtDate(a.created_at)}</span>
+                </div>`).join("");
+        }
+    }
+}
+window.renderAdminOverview = renderAdminOverview;
 
 async function loadAdminData() {
     if (!state.user?.is_admin) return;
@@ -12338,78 +12473,7 @@ async function loadAdminData() {
         const resStats = await fetchWithTimeout("/api/admin/overview", { headers: getAuthHeaders() });
         if (resStats.ok) {
             admOverviewClear();
-            const stats = await resStats.json();
-            const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
-            // Batch X: headline is REAL users (accounts that have run
-            // a job / bought / been granted credit); the sub-line shows
-            // the registered total and the never-used remainder.
-            set("adm-total-users", stats.real_users ?? stats.total_users ?? 0);
-            set("adm-total-users-split", tf("admin_stat_users_split", { total: stats.total_users ?? 0, never: stats.never_used_users ?? 0 }));
-            set("adm-vip-users", stats.vip_users ?? 0);
-            set("adm-pending-slips", stats.pending_slips ?? 0);
-            set("adm-queued-jobs", stats.queued_jobs ?? 0);
-            set("adm-failed-24h", stats.failed_jobs_24h ?? 0);
-            set("adm-banned-users", stats.banned_users ?? 0);
-            // Batch R: headline is admin-bans + bot-blockers combined;
-            // the sub-line shows the split so both numbers stay visible.
-            set("adm-banned-split", tf("admin_stat_banned_split", { admin: stats.banned_by_admin ?? 0, bot: stats.bot_blocked_users ?? 0 }));
-            set("adm-new-24h", stats.new_users_24h ?? 0);
-            const triageCard = document.getElementById("adm-triage-card");
-            if (triageCard) {
-                const pend = Number(stats.pending_slips || 0);
-                const fail = Number(stats.failed_jobs_24h || 0);
-                const isClear = pend === 0 && fail === 0;
-                triageCard.classList.toggle("is-clear", isClear);
-                set(
-                    "adm-triage-title",
-                    isClear
-                        ? t("adm_triage_clear")
-                        : tf("adm_triage_action_needed", { slips: pend, failed: fail })
-                );
-                set("adm-triage-sub", tf("adm_triage_sub", { queued: stats.queued_jobs ?? 0, new24: stats.new_users_24h ?? 0 }));
-            }
-            // Batch R: income card (approved payment requests only).
-            const inc = stats.income || {};
-            const setIncome = (id, mmk, count) => {
-                set(id, (mmk || 0).toLocaleString() + " MMK");
-                set(id + "-count", tf("admin_income_count", { count: count || 0 }));
-            };
-            setIncome("adm-income-today", inc.today_mmk, inc.today_count);
-            setIncome("adm-income-7d", inc.last_7d_mmk, inc.last_7d_count);
-            setIncome("adm-income-30d", inc.last_30d_mmk, inc.last_30d_count);
-            setIncome("adm-income-all", inc.all_time_mmk, inc.all_time_count);
-            const elSize = document.getElementById("adm-storage-size");
-            if (elSize) elSize.innerText = admFmtBytes(stats.db_size_bytes) + " / " + admFmtBytes(stats.storage_bytes);
-            const badge = document.getElementById("adm-nav-slips-badge");
-            if (badge) {
-                badge.innerText = stats.pending_slips ?? 0;
-                badge.classList.toggle("hidden", !(stats.pending_slips > 0));
-            }
-            const chips = document.getElementById("adm-jobs-by-status");
-            if (chips && stats.jobs_by_status) {
-                const order = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"];
-                chips.innerHTML = order
-                    .filter(k => stats.jobs_by_status[k] !== undefined)
-                    .map(k => `<span class="mini-tag adm-status-tag ${k.toLowerCase()}">${k}: <strong>${stats.jobs_by_status[k]}</strong></span>`)
-                    .join("");
-            }
-            const worker = document.getElementById("adm-worker-line");
-            if (worker) {
-                worker.innerText = "☁️ " + (stats.cloud_worker_status || "Render Cloud");
-            }
-            const actionsBox = document.getElementById("admin-recent-actions");
-            if (actionsBox) {
-                const acts = stats.recent_admin_actions || [];
-                if (!acts.length) {
-                    actionsBox.innerHTML = `<p class="text-muted">—</p>`;
-                } else {
-                    actionsBox.innerHTML = acts.map(a => `
-                        <div class="adm-action-row-line">
-                            <span>• <b>${escapeHtml(a.action)}</b> → ${escapeHtml(a.target_type || "")} ${escapeHtml(String(a.target_id || ""))}</span>
-                            <span class="text-muted adm-line-time">${admFmtDate(a.created_at)}</span>
-                        </div>`).join("");
-                }
-            }
+            renderAdminOverview(await resStats.json());
         } else {
             admOverviewError();
         }
@@ -12436,19 +12500,20 @@ async function loadAdminData() {
 }
 
 function renderAdminSlips(slips) {
+    window._lastAdminSlips = Array.isArray(slips) ? slips : [];
     const slipsContainer = document.getElementById("admin-slips-list");
     if (!slipsContainer) return;
-    if (!slips.length) {
+    if (!window._lastAdminSlips.length) {
         admStateEmpty(slipsContainer, "admin_no_slips");
         return;
     }
     slipsContainer.innerHTML = "";
-    slips.forEach(s => {
+    window._lastAdminSlips.forEach(s => {
         const item = document.createElement("div");
         item.className = "slip-item-card";
         item.innerHTML = `
             <div class="slip-item-row">
-                <img src="${s.slip_url}" class="slip-thumb" onclick="openSlipModal('${s.slip_url}')" title="Click to view full image">
+                <img src="${s.slip_url}" class="slip-thumb" onclick="openSlipModal('${s.slip_url}')" title="${escapeHtml(t("adm_slip_img_title"))}">
                 <div class="slip-info">
                     <div class="slip-user adm-tap" onclick="openAdminUserDetail(${s.user_id})">${escapeHtml(s.user_name)}${s.username ? ` (@${escapeHtml(s.username)})` : ` (ID: ${s.user_id})`}</div>
                     <div class="slip-amount">${(s.amount_mmk || 0).toLocaleString()} MMK • ${escapeHtml(s.package_code)}</div>
@@ -12501,10 +12566,11 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
 
     if (badge) {
         badge.className = `history-item-badge ${jobType === 'RECAP' ? 'badge-recap' : jobType === 'TTS' ? 'badge-tts' : 'badge-voice'}`;
-        badge.innerText = jobType === 'RECAP' ? '🎬 RECAP' : jobType === 'TTS' ? t("job_badge_tts") : '🎙️ VOICE';
+        badge.innerText = jobType === 'RECAP' ? t("adm_badge_recap") : jobType === 'TTS' ? t("job_badge_tts") : t("adm_badge_voice");
     }
     if (titleEl) {
-        titleEl.innerText = title || `Job #${jobId.slice(0, 10)}`;
+        titleEl.removeAttribute("data-i18n");
+        titleEl.innerText = title || `${t("adm_job_id_prefix")}${jobId.slice(0, 10)}`;
     }
 
     // ONE availability decision for the whole card: the API only hands out
@@ -12532,7 +12598,7 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
                     <video id="admin-modal-video" data-auth-src="${videoUrl}" controls autoplay playsinline class="admin-modal-player-video"
                            onerror="handleAdminMediaError(this, '${jobId}', '${jobType}')"
                            onloadedmetadata="handleAdminMediaLoaded(this)">
-                        Browser does not support HTML5 video.
+                        ${escapeHtml(t("adm_media_no_video"))}
                     </video>
                 </div>
             `;
@@ -12544,7 +12610,7 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
                     <audio id="admin-modal-audio" data-auth-src="${audioUrl}" controls autoplay class="admin-modal-player-audio"
                            onerror="handleAdminMediaError(this, '${jobId}', '${jobType}')"
                            onloadedmetadata="handleAdminMediaLoaded(this)">
-                        Browser does not support HTML5 audio.
+                        ${escapeHtml(t("adm_media_no_audio"))}
                     </audio>
                 </div>
             `;
@@ -12564,33 +12630,33 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
         if (!mediaAvailable) {
             // Media gone: ALL download controls disabled together, so the
             // card can never show one live button next to a dead one.
-            const dis = (label) => `<span class="mini-chip" style="opacity: 0.45; pointer-events: none;" aria-disabled="true">${label}</span>`;
+            const dis = (label) => `<span class="mini-chip" style="opacity: 0.45; pointer-events: none;" aria-disabled="true">${escapeHtml(label)}</span>`;
             if (jobType === "RECAP") {
-                buttons += dis("🎬 Download Video");
-                buttons += dis("🎙️ Download Audio");
-                buttons += dis("📝 Subtitles (SRT)");
-                buttons += dis("📄 Script (TXT)");
+                buttons += dis(t("adm_media_dl_video"));
+                buttons += dis(t("adm_media_dl_audio"));
+                buttons += dis(t("adm_media_dl_srt"));
+                buttons += dis(t("adm_media_dl_script"));
             } else {
-                buttons += dis("📥 Download WAV / MP3");
+                buttons += dis(t("adm_media_dl_voice"));
             }
             buttons += dis(t("dl_open_in_browser_tab"));
         } else if (jobType === "RECAP") {
             if (deliverables.video) {
-                buttons += `<a href="#" data-dl-url="${deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", title, jobId)}" class="mini-chip gold">🎬 Download Video</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", title, jobId)}" class="mini-chip gold">${escapeHtml(t("adm_media_dl_video"))}</a>`;
             }
             if (deliverables.audio) {
-                buttons += `<a href="#" data-dl-url="${deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", title, jobId)}" class="mini-chip">🎙️ Download Audio</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_audio"))}</a>`;
             }
             if (deliverables.srt) {
-                buttons += `<a href="#" data-dl-url="${deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", title, jobId)}" class="mini-chip">📝 Subtitles (SRT)</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_srt"))}</a>`;
             }
             if (deliverables.script) {
-                buttons += `<a href="#" data-dl-url="${deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", title, jobId)}" class="mini-chip">📄 Script (TXT)</a>`;
+                buttons += `<a href="#" data-dl-url="${deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_script"))}</a>`;
             }
         } else {
             const dlUrl = deliverables.download || downloadUrl;
             if (dlUrl) {
-                buttons += `<a href="#" data-dl-url="${dlUrl}" data-dl-name="${brandedDlName("Voice", "wav", null, jobId)}" class="mini-chip gold">📥 Download WAV / MP3</a>`;
+                buttons += `<a href="#" data-dl-url="${dlUrl}" data-dl-name="${brandedDlName("Voice", "wav", null, jobId)}" class="mini-chip gold">${escapeHtml(t("adm_media_dl_voice"))}</a>`;
             }
         }
         if (mediaAvailable && downloadUrl) {
@@ -12719,7 +12785,7 @@ function handleAdminMediaLoaded(mediaEl) {
 // and dropped.
 function adminErrorText(prefixKey, raw) {
     const prefix = t(prefixKey);
-    const detail = (raw == null ? "" : String(raw)).trim();
+    const detail = (typeof localizeServerText === "function" ? localizeServerText(raw == null ? "" : String(raw)) : (raw == null ? "" : String(raw))).trim();
     if (!detail || detail === "Failed" || detail === "Error" || detail === prefix) return prefix;
     return `${prefix} — ${detail}`;
 }
@@ -12842,7 +12908,7 @@ function admUserRowHtml(u) {
             <div class="adm-user-line1">
                 <span class="adm-user-name">${escapeHtml(u.first_name || "-")}</span>
                 ${u.account_category === "PURCHASED" ? `<span class="badge-vip">👑 VIP</span>` : ""}
-                <span class="badge-status ${u.is_banned ? "blocked" : (u.bot_blocked ? "botblocked" : "active")}">${u.is_banned ? "BLOCKED" : (u.bot_blocked ? "BOT BLOCKED" : "ACTIVE")}</span>
+                <span class="badge-status ${u.is_banned ? "blocked" : (u.bot_blocked ? "botblocked" : "active")}">${escapeHtml(u.is_banned ? t("admin_status_banned") : (u.bot_blocked ? t("admin_status_bot_blocked") : t("admin_status_active")))}</span>
             </div>
             <div class="adm-user-sub">${subHtml}</div>
         </div>
@@ -12905,7 +12971,12 @@ async function adminSearchUsers() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Search failed");
         if (!box) return;
-        if (!data.users.length) { admStateEmpty(box, "admin_search_none"); return; }
+        if (!data.users.length) {
+            window._lastAdminUsersSearch = [];
+            admStateEmpty(box, "admin_search_none");
+            return;
+        }
+        window._lastAdminUsersSearch = data.users;
         box.innerHTML = data.users.map(admUserRowHtml).join("");
     } catch (e) {
         admStateError(box, "adminSearchUsers()");
@@ -12928,9 +12999,13 @@ async function loadAdminUsersRecent(append = false) {
         if (!res.ok) throw new Error(data.detail || "Failed");
         if (!data.users.length) {
             if (append) { if (moreBtn) moreBtn.classList.add("hidden"); return; }
+            window._lastAdminUsersList = [];
             admStateEmpty(box, "admin_empty");
             return;
         }
+        window._lastAdminUsersList = append && Array.isArray(window._lastAdminUsersList)
+            ? window._lastAdminUsersList.concat(data.users)
+            : data.users;
         const rowsHtml = data.users.map(admUserRowHtml).join("");
         if (append) box.insertAdjacentHTML("beforeend", rowsHtml);
         else box.innerHTML = rowsHtml;
@@ -12970,6 +13045,8 @@ async function openAdminUserDetail(uid) {
 window.openAdminUserDetail = openAdminUserDetail;
 
 function renderAdminUserDetail(u) {
+    if (!u) return;
+    window._lastAdminUserDetail = u;
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
     set("adm-detail-avatar", (u.first_name || "U").slice(0, 1).toUpperCase());
     set("adm-detail-name", u.first_name || "User");
@@ -13317,6 +13394,20 @@ window.adminBanUser = adminBanUser;
 async function adminUnbanUser(uid) { await _adminBanCall(uid, false); }
 window.adminUnbanUser = adminUnbanUser;
 
+function renderAdminUserJobsList(jobs) {
+    const box = document.getElementById("adm-user-jobs");
+    if (!box) return;
+    window._lastAdminUserJobs = Array.isArray(jobs) ? jobs : [];
+    if (!window._lastAdminUserJobs.length) { admStateEmpty(box, "admin_user_jobs_empty"); return; }
+    box.innerHTML = window._lastAdminUserJobs.map(j => `
+        <div class="adm-job-mini">
+            <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : j.job_type === 'TTS' ? 'badge-tts' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬' : j.job_type === 'TTS' ? '🎧' : '🎙️'}</span>
+            <span class="adm-job-mini-main">${escapeHtml(j.input_snippet || j.preset_voice || "—")}</span>
+            <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(jobStatusText(j.status))}</span>
+            <span class="text-muted text-xs">${escapeHtml(j.time_ago || "")}</span>
+        </div>`).join("");
+}
+
 async function loadAdminUserJobs(uid) {
     const box = document.getElementById("adm-user-jobs");
     if (!box) return;
@@ -13326,15 +13417,7 @@ async function loadAdminUserJobs(uid) {
         const res = await fetchWithTimeout(`/api/admin/history?${params.toString()}`, { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
-        const jobs = data.history || [];
-        if (!jobs.length) { admStateEmpty(box, "admin_user_jobs_empty"); return; }
-        box.innerHTML = jobs.map(j => `
-            <div class="adm-job-mini">
-                <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : j.job_type === 'TTS' ? 'badge-tts' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬' : j.job_type === 'TTS' ? '🎧' : '🎙️'}</span>
-                <span class="adm-job-mini-main">${escapeHtml(j.input_snippet || j.preset_voice || "—")}</span>
-                <span class="history-item-badge status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "")}</span>
-                <span class="text-muted text-xs">${escapeHtml(j.time_ago || "")}</span>
-            </div>`).join("");
+        renderAdminUserJobsList(data.history || []);
     } catch (e) {
         admStateError(box, `loadAdminUserJobs(${uid})`);
     }
@@ -13426,10 +13509,149 @@ function setQueueEngineFilter(engine) {
 }
 window.setQueueEngineFilter = setQueueEngineFilter;
 
+function renderAdminQueueData(data) {
+    if (!data) return;
+    window._lastAdminQueue = data;
+    const container = document.getElementById("admin-queue-list");
+    const bannerEl = document.getElementById("admin-queue-status-banner");
+    if (!container) return;
+
+    const c = data.counts || { total_listed: 0, queued: 0, running: 0, success: 0, failed: 0 };
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+    set("cnt-total", c.total_listed);
+    set("cnt-queued", c.queued);
+    set("cnt-running", c.running);
+    set("cnt-success", c.success);
+    set("cnt-failed", c.failed);
+    set("adm-queued-jobs", c.queued);
+
+    if (bannerEl) {
+        if (c.queued === 0 && c.running === 0) {
+            bannerEl.innerHTML = `
+                <div class="active-queue-status-banner idle">
+                    <div class="status-banner-icon">🟢</div>
+                    <div class="status-banner-info">
+                        <div class="status-banner-title">${t("admin_queue_idle_title")}</div>
+                        <div class="status-banner-desc">${t("admin_queue_idle_desc")}</div>
+                    </div>
+                </div>`;
+        } else if (c.running > 0) {
+            bannerEl.innerHTML = `
+                <div class="active-queue-status-banner running">
+                    <div class="status-banner-icon pulsing">⚡</div>
+                    <div class="status-banner-info">
+                        <div class="status-banner-title">${t("admin_queue_running_title")}</div>
+                        <div class="status-banner-desc">${tf("admin_queue_running_desc", { running: c.running, queued: c.queued })}</div>
+                    </div>
+                </div>`;
+        } else {
+            bannerEl.innerHTML = `
+                <div class="active-queue-status-banner queued">
+                    <div class="status-banner-icon">⏳</div>
+                    <div class="status-banner-info">
+                        <div class="status-banner-title">${t("admin_queue_queued_title")}</div>
+                        <div class="status-banner-desc">${tf("admin_queue_queued_desc", { queued: c.queued })}</div>
+                    </div>
+                </div>`;
+        }
+    }
+
+    const jobs = data.jobs || [];
+    if (jobs.length === 0) {
+        admStateEmpty(container, "admin_queue_empty");
+        return;
+    }
+
+    const renderJobCard = (j) => {
+        const statusLower = (j.status || "queued").toLowerCase();
+        const engineLower = (j.engine || "voxcpm").toLowerCase();
+        const engineLabel = engineLower === "recap" ? t("adm_badge_recap") : t("adm_opt_engine_voxcpm");
+
+        let statusBadgeText = jobStatusText(j.status);
+        let durationTxt = `⏳ ${j.created_ago}`;
+        if (statusLower === "success") {
+            statusBadgeText = t("badge_completed");
+            durationTxt = `⏱️ ${j.duration_seconds || '15'}s • ${j.created_ago}`;
+        } else if (statusLower === "queued") {
+            statusBadgeText = t("badge_queued");
+            durationTxt = `⏳ ${j.created_ago}`;
+        } else if (statusLower === "running") {
+            statusBadgeText = t("badge_running");
+            durationTxt = `⚡ ${j.created_ago}`;
+        } else if (statusLower === "failed") {
+            statusBadgeText = t("badge_failed");
+        } else if (statusLower === "cancelled") {
+            statusBadgeText = t("badge_cancelled");
+        }
+
+        let actionsHtml = "";
+        if (statusLower === "failed" || statusLower === "cancelled") {
+            actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>`;
+        } else if (statusLower === "queued" || statusLower === "running") {
+            actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ ${t("admin_cancel_job")}</button>`;
+        }
+        if (j.is_expired) {
+            actionsHtml += `<span class="badge-expired text-xs">⌛ ${t("admin_expired")}</span>`;
+            actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>`;
+        } else if (j.download_url) {
+            const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
+            actionsHtml += `<button class="queue-act-btn uid adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(qTitle)}">${escapeHtml(t("adm_btn_play"))}</button>`;
+            actionsHtml += `<a href="#" data-open-url="${j.download_url}" class="queue-act-btn uid" title="${escapeHtml(t("adm_open_stream_title"))}">↗️</a>`;
+        }
+
+        const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (statusLower === "running" ? 58 : 22)));
+        const progressHtml = (statusLower === "running" || statusLower === "queued")
+            ? `<div class="vcp-job-progress"><span class="vcp-job-progress-fill" style="width:${pct}%"></span></div>`
+            : "";
+
+        return `
+            <div class="queue-item vcp-job-card" id="queue-item-${j.id}">
+                <div class="queue-item-header vcp-job-badges">
+                    <div class="queue-badges-left">
+                        <span class="badge-status ${statusLower}">${statusBadgeText}</span>
+                        <span class="badge-engine ${engineLower}">${engineLabel}</span>
+                        <span class="mini-tag">${escapeHtml(j.voice_display || j.preset_voice)}</span>
+                        ${j.job_type === 'TTS' ? `<span class="mini-tag">${escapeHtml(t("job_badge_tts"))}</span>` : ""}
+                    </div>
+                    <span class="queue-timing">${durationTxt}</span>
+                </div>
+                <div class="queue-item-meta">
+                    <span class="queue-user-pill" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.user_name)}${j.username ? ` (@${escapeHtml(j.username)})` : ""} • ID: ${j.user_id}</span>
+                    <span>#${j.id.slice(0, 8)}</span>
+                </div>
+                <div class="queue-item-body">${escapeHtml(j.input_snippet || t("adm_task_content_fallback"))}</div>
+                ${progressHtml}
+                ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(displayJobError(j.error_message))}</div>` : ""}
+                <div class="queue-item-footer vcp-job-footer-row">
+                    <span class="queue-timing">${escapeHtml(j.created_ago)}</span>
+                    <div class="queue-actions-row">${actionsHtml}</div>
+                </div>
+            </div>`;
+    };
+
+    if (adminQueueStatusFilter === "all") {
+        const activeJobs = jobs.filter(j => j.status === "QUEUED" || j.status === "RUNNING");
+        const finishedJobs = jobs.filter(j => j.status !== "QUEUED" && j.status !== "RUNNING");
+        let fullHtml = "";
+        if (activeJobs.length > 0) {
+            fullHtml += `<div class="queue-section-header active">${t("admin_active_section_title")} (${activeJobs.length})</div>`;
+            fullHtml += activeJobs.map(renderJobCard).join("");
+        }
+        if (finishedJobs.length > 0) {
+            fullHtml += `<div class="queue-section-header history">${t("admin_history_section_title")} (${finishedJobs.length})</div>`;
+            fullHtml += finishedJobs.map(renderJobCard).join("");
+        }
+        container.innerHTML = fullHtml || "";
+        if (!fullHtml) admStateEmpty(container, "admin_queue_empty");
+    } else {
+        container.innerHTML = jobs.map(renderJobCard).join("");
+    }
+    wireAdminMediaButtons(container);
+}
+
 async function loadAdminQueue(isSilent = false) {
     if (!state.user?.is_admin) return;
     const container = document.getElementById("admin-queue-list");
-    const bannerEl = document.getElementById("admin-queue-status-banner");
     if (!container) return;
 
     if (!isSilent && container.children.length === 0) admStateLoading(container);
@@ -13441,139 +13663,7 @@ async function loadAdminQueue(isSilent = false) {
             if (!isSilent) admStateError(container, "loadAdminQueue()");
             return;
         }
-        const data = await res.json();
-
-        const c = data.counts || { total_listed: 0, queued: 0, running: 0, success: 0, failed: 0 };
-        const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
-        set("cnt-total", c.total_listed);
-        set("cnt-queued", c.queued);
-        set("cnt-running", c.running);
-        set("cnt-success", c.success);
-        set("cnt-failed", c.failed);
-        set("adm-queued-jobs", c.queued);
-
-        if (bannerEl) {
-            if (c.queued === 0 && c.running === 0) {
-                bannerEl.innerHTML = `
-                    <div class="active-queue-status-banner idle">
-                        <div class="status-banner-icon">🟢</div>
-                        <div class="status-banner-info">
-                            <div class="status-banner-title">${t("admin_queue_idle_title")}</div>
-                            <div class="status-banner-desc">${t("admin_queue_idle_desc")}</div>
-                        </div>
-                    </div>`;
-            } else if (c.running > 0) {
-                bannerEl.innerHTML = `
-                    <div class="active-queue-status-banner running">
-                        <div class="status-banner-icon pulsing">⚡</div>
-                        <div class="status-banner-info">
-                            <div class="status-banner-title">${t("admin_queue_running_title")}</div>
-                            <div class="status-banner-desc">${tf("admin_queue_running_desc", { running: c.running, queued: c.queued })}</div>
-                        </div>
-                    </div>`;
-            } else {
-                bannerEl.innerHTML = `
-                    <div class="active-queue-status-banner queued">
-                        <div class="status-banner-icon">⏳</div>
-                        <div class="status-banner-info">
-                            <div class="status-banner-title">${t("admin_queue_queued_title")}</div>
-                            <div class="status-banner-desc">${tf("admin_queue_queued_desc", { queued: c.queued })}</div>
-                        </div>
-                    </div>`;
-            }
-        }
-
-        const jobs = data.jobs || [];
-        if (jobs.length === 0) {
-            admStateEmpty(container, "admin_queue_empty");
-            return;
-        }
-
-        const renderJobCard = (j) => {
-            const statusLower = (j.status || "queued").toLowerCase();
-            const engineLower = (j.engine || "voxcpm").toLowerCase();
-            const engineLabel = engineLower === "recap" ? "🎬 RECAP" : "☁️ VOXCPM AI";
-
-            let statusBadgeText = j.status;
-            let durationTxt = `⏳ ${j.created_ago}`;
-            if (statusLower === "success") {
-                statusBadgeText = t("badge_completed") || "✅ COMPLETED";
-                durationTxt = `⏱️ ${j.duration_seconds || '15'}s • ${j.created_ago}`;
-            } else if (statusLower === "queued") {
-                statusBadgeText = t("badge_queued") || "⏳ WAITING";
-                durationTxt = `⏳ ${j.created_ago}`;
-            } else if (statusLower === "running") {
-                statusBadgeText = t("badge_running") || "⚡ PROCESSING";
-                durationTxt = `⚡ ${j.created_ago}`;
-            } else if (statusLower === "failed") {
-                statusBadgeText = t("badge_failed") || "❌ FAILED";
-            } else if (statusLower === "cancelled") {
-                statusBadgeText = t("badge_cancelled") || "⏹ CANCELLED";
-            }
-
-            let actionsHtml = "";
-            if (statusLower === "failed" || statusLower === "cancelled") {
-                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>`;
-            } else if (statusLower === "queued" || statusLower === "running") {
-                actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ ${t("admin_cancel_job")}</button>`;
-            }
-            if (j.is_expired) {
-                actionsHtml += `<span class="badge-expired text-xs">⌛ ${t("admin_expired")}</span>`;
-                actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>`;
-            } else if (j.download_url) {
-                const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
-                actionsHtml += `<button class="queue-act-btn uid adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(qTitle)}">▶️ Play</button>`;
-                actionsHtml += `<a href="#" data-open-url="${j.download_url}" class="queue-act-btn uid" title="Open Stream">↗️</a>`;
-            }
-
-            const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (statusLower === "running" ? 58 : 22)));
-            const progressHtml = (statusLower === "running" || statusLower === "queued")
-                ? `<div class="vcp-job-progress"><span class="vcp-job-progress-fill" style="width:${pct}%"></span></div>`
-                : "";
-
-            return `
-                <div class="queue-item vcp-job-card" id="queue-item-${j.id}">
-                    <div class="queue-item-header vcp-job-badges">
-                        <div class="queue-badges-left">
-                            <span class="badge-status ${statusLower}">${statusBadgeText}</span>
-                            <span class="badge-engine ${engineLower}">${engineLabel}</span>
-                            <span class="mini-tag">${escapeHtml(j.voice_display || j.preset_voice)}</span>
-                            ${j.job_type === 'TTS' ? `<span class="mini-tag">${escapeHtml(t("job_badge_tts"))}</span>` : ""}
-                        </div>
-                        <span class="queue-timing">${durationTxt}</span>
-                    </div>
-                    <div class="queue-item-meta">
-                        <span class="queue-user-pill" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.user_name)}${j.username ? ` (@${escapeHtml(j.username)})` : ""} • ID: ${j.user_id}</span>
-                        <span>#${j.id.slice(0, 8)}</span>
-                    </div>
-                    <div class="queue-item-body">${escapeHtml(j.input_snippet || "Task Content")}</div>
-                    ${progressHtml}
-                    ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(displayJobError(j.error_message))}</div>` : ""}
-                    <div class="queue-item-footer vcp-job-footer-row">
-                        <span class="queue-timing">${escapeHtml(j.created_ago)}</span>
-                        <div class="queue-actions-row">${actionsHtml}</div>
-                    </div>
-                </div>`;
-        };
-
-        if (adminQueueStatusFilter === "all") {
-            const activeJobs = jobs.filter(j => j.status === "QUEUED" || j.status === "RUNNING");
-            const finishedJobs = jobs.filter(j => j.status !== "QUEUED" && j.status !== "RUNNING");
-            let fullHtml = "";
-            if (activeJobs.length > 0) {
-                fullHtml += `<div class="queue-section-header active">${t("admin_active_section_title")} (${activeJobs.length})</div>`;
-                fullHtml += activeJobs.map(renderJobCard).join("");
-            }
-            if (finishedJobs.length > 0) {
-                fullHtml += `<div class="queue-section-header history">${t("admin_history_section_title")} (${finishedJobs.length})</div>`;
-                fullHtml += finishedJobs.map(renderJobCard).join("");
-            }
-            container.innerHTML = fullHtml || "";
-            if (!fullHtml) admStateEmpty(container, "admin_queue_empty");
-        } else {
-            container.innerHTML = jobs.map(renderJobCard).join("");
-        }
-        wireAdminMediaButtons(container);
+        renderAdminQueueData(await res.json());
     } catch (e) {
         console.warn("Could not load admin queue:", e);
         if (!isSilent) admStateError(container, "loadAdminQueue()");
@@ -13643,6 +13733,70 @@ function adminSearchJobId() {
 }
 window.adminSearchJobId = adminSearchJobId;
 
+function renderAdminHistoryData(data) {
+    if (!data) return;
+    window._lastAdminHistory = data;
+    const container = document.getElementById("admin-global-history-list");
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+    set("adm-hist-total", data.total_count ?? (data.history?.length || 0));
+    set("adm-hist-failed", data.total_failed || 0);
+    set("adm-hist-success", data.total_success || 0);
+    set("adm-hist-recap", data.total_recap || 0);
+    set("adm-hist-voice", data.total_voice || 0);
+
+    const history = data.history || [];
+    if (!container) return;
+    if (history.length === 0) {
+        admStateEmpty(container, "admin_history_empty");
+        return;
+    }
+    container.innerHTML = history.map(j => {
+        const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
+        const errText = displayJobError(j.error_message);
+        const isFailed = (j.status === "FAILED");
+        const isSuccess = (j.status === "SUCCESS");
+        const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
+        const borderCls = isFailed ? 'border-danger-dim' : (isSuccess ? (j.is_expired ? 'border-warning-dim' : 'border-success-dim') : (isRunning ? 'border-running-dim' : ''));
+        return `
+        <div class="history-item ${borderCls}" id="adm-job-item-${j.id}">
+            <div class="history-item-header">
+                <div>
+                    <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : j.job_type === 'TTS' ? 'badge-tts' : 'badge-voice'}">${j.job_type === 'RECAP' ? escapeHtml(t("adm_badge_recap")) : j.job_type === 'TTS' ? escapeHtml(t("job_badge_tts")) : escapeHtml(t("adm_badge_voice"))}</span>
+                    <span class="mini-tag adm-tap" style="margin-left: 4px;" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.username ? '@' + j.username : 'ID: ' + j.user_id)}</span>
+                </div>
+                <div>
+                    <span class="history-item-badge status-${j.status.toLowerCase()}">${escapeHtml(jobStatusText(j.status))}</span>
+                    ${j.is_expired ? `<span class="badge-expired" style="margin-left: 4px;">⌛ ${t("admin_expired")}</span>` : ''}
+                </div>
+            </div>
+            <div class="history-item-body">
+                <strong>${escapeHtml(j.voice_display || j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || t("adm_task_fallback"))}
+                ${errText ? `
+                    <div class="history-error-snippet text-xs text-danger mt-1 p-2 glass-inset">
+                        ⚠️ <strong>${escapeHtml(t("adm_error_prefix"))}</strong> ${escapeHtml(errText.slice(0, 180))}${errText.length > 180 ? '...' : ''}
+                    </div>` : ''}
+                <div id="retry-status-box-${j.id}"></div>
+            </div>
+            <div class="history-item-footer">
+                <span>⏱️ ${j.time_ago} <code class="adm-job-code">(${j.id.slice(0, 8)})</code></span>
+                <div class="history-btn-row" id="adm-actions-row-${j.id}">
+                    ${j.is_expired ? `
+                        <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>
+                    ` : (j.download_url ? `
+                        <button class="btn-play-preview adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(titleStr)}">${escapeHtml(t("adm_btn_preview"))}</button>
+                        <a href="#" data-open-url="${j.download_url}" class="history-dl-link" title="${escapeHtml(t("adm_open_stream_title"))}">↗️</a>
+                    ` : '')}
+                    ${isFailed ? `
+                        <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>
+                    ` : ''}
+                    <button class="btn mini-btn danger-btn" onclick="adminDeleteSingleJob('${j.id}')">🗑️ ${t("admin_delete")}</button>
+                </div>
+            </div>
+        </div>`;
+    }).join("");
+    wireAdminMediaButtons(container);
+}
+
 async function loadAdminHistory() {
     const container = document.getElementById("admin-global-history-list");
     try {
@@ -13658,65 +13812,7 @@ async function loadAdminHistory() {
             if (container) admStateError(container, "loadAdminHistory()");
             return;
         }
-        const data = await res.json();
-        const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
-        set("adm-hist-total", data.total_count ?? (data.history?.length || 0));
-        set("adm-hist-failed", data.total_failed || 0);
-        set("adm-hist-success", data.total_success || 0);
-        set("adm-hist-recap", data.total_recap || 0);
-        set("adm-hist-voice", data.total_voice || 0);
-
-        const history = data.history || [];
-        if (!container) return;
-        if (history.length === 0) {
-            admStateEmpty(container, "admin_history_empty");
-            return;
-        }
-        container.innerHTML = history.map(j => {
-            const titleStr = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
-            const errText = displayJobError(j.error_message);
-            const isFailed = (j.status === "FAILED");
-            const isSuccess = (j.status === "SUCCESS");
-            const isRunning = (j.status === "RUNNING" || j.status === "QUEUED");
-            const borderCls = isFailed ? 'border-danger-dim' : (isSuccess ? (j.is_expired ? 'border-warning-dim' : 'border-success-dim') : (isRunning ? 'border-running-dim' : ''));
-            return `
-            <div class="history-item ${borderCls}" id="adm-job-item-${j.id}">
-                <div class="history-item-header">
-                    <div>
-                        <span class="history-item-badge ${j.job_type === 'RECAP' ? 'badge-recap' : j.job_type === 'TTS' ? 'badge-tts' : 'badge-voice'}">${j.job_type === 'RECAP' ? '🎬 RECAP' : j.job_type === 'TTS' ? escapeHtml(t("job_badge_tts")) : '🎙️ VOICE'}</span>
-                        <span class="mini-tag adm-tap" style="margin-left: 4px;" onclick="admFillUser(${j.user_id})">👤 ${escapeHtml(j.username ? '@' + j.username : 'ID: ' + j.user_id)}</span>
-                    </div>
-                    <div>
-                        <span class="history-item-badge status-${j.status.toLowerCase()}">${j.status}</span>
-                        ${j.is_expired ? `<span class="badge-expired" style="margin-left: 4px;">⌛ ${t("admin_expired")}</span>` : ''}
-                    </div>
-                </div>
-                <div class="history-item-body">
-                    <strong>${escapeHtml(j.voice_display || j.preset_voice || j.engine)}:</strong> ${escapeHtml(j.input_snippet || "Task")}
-                    ${errText ? `
-                        <div class="history-error-snippet text-xs text-danger mt-1 p-2 glass-inset">
-                            ⚠️ <strong>Error:</strong> ${escapeHtml(errText.slice(0, 180))}${errText.length > 180 ? '...' : ''}
-                        </div>` : ''}
-                    <div id="retry-status-box-${j.id}"></div>
-                </div>
-                <div class="history-item-footer">
-                    <span>⏱️ ${j.time_ago} <code class="adm-job-code">(${j.id.slice(0, 8)})</code></span>
-                    <div class="history-btn-row" id="adm-actions-row-${j.id}">
-                        ${j.is_expired ? `
-                            <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>
-                        ` : (j.download_url ? `
-                            <button class="btn-play-preview adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(titleStr)}">▶️ Preview</button>
-                            <a href="#" data-open-url="${j.download_url}" class="history-dl-link" title="Open Stream">↗️</a>
-                        ` : '')}
-                        ${isFailed ? `
-                            <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>
-                        ` : ''}
-                        <button class="btn mini-btn danger-btn" onclick="adminDeleteSingleJob('${j.id}')">🗑️ ${t("admin_delete")}</button>
-                    </div>
-                </div>
-            </div>`;
-        }).join("");
-        wireAdminMediaButtons(container);
+        renderAdminHistoryData(await res.json());
     } catch (e) {
         console.warn("Could not load admin history:", e);
         if (container) admStateError(container, "loadAdminHistory()");
@@ -13763,14 +13859,14 @@ async function adminRetryJob(jobId) {
             showStudioToast(adminErrorText("admin_retry_err", data.detail || data.message), 'error');
             if (retryBtn) {
                 retryBtn.disabled = false;
-                retryBtn.innerText = "🔄 Retry";
+                retryBtn.innerText = `🔄 ${t("admin_retry")}`;
             }
         }
     } catch (e) {
         showStudioToast(adminErrorText("admin_retry_err", e.message), 'error');
         if (retryBtn) {
             retryBtn.disabled = false;
-            retryBtn.innerText = "🔄 Retry";
+            retryBtn.innerText = `🔄 ${t("admin_retry")}`;
         }
     }
 }
@@ -13885,13 +13981,13 @@ function pollAdminJobProgress(jobId) {
                         : (data.output_audio_url || `/api/audio/stream/${jobId}`);
                     const previewBtn = document.createElement('button');
                     previewBtn.className = 'btn-play-preview';
-                    previewBtn.innerText = '▶️ Preview';
+                    previewBtn.innerText = t("adm_btn_preview");
                     previewBtn.onclick = () => openAdminMediaModal(
                         jobId,
                         isRecap ? 'RECAP' : 'VOICE_CLONE',
                         mediaUrl,
                         JSON.stringify(data.download_urls || {}),
-                        `Job #${jobId.slice(0, 8)}`
+                        `${t("adm_job_id_prefix")}${jobId.slice(0, 8)}`
                     );
                     actionsRow.prepend(previewBtn);
                 }
@@ -13904,18 +14000,18 @@ function pollAdminJobProgress(jobId) {
                 if (itemEl) itemEl.className = "history-item border-danger-dim";
                 if (badge) {
                     badge.className = "history-item-badge status-failed";
-                    badge.innerText = "FAILED";
+                    badge.innerText = jobStatusText("FAILED");
                 }
                 if (statusBox) {
                     statusBox.innerHTML = `
                         <div class="text-xs mt-1 p-2" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
-                            ⚠️ <strong>Error:</strong> ${escapeHtml(displayJobError(data.error_message) || "Execution failed")}
+                            ⚠️ <strong>${escapeHtml(t("adm_error_prefix"))}</strong> ${escapeHtml(displayJobError(data.error_message) || t("adm_exec_failed"))}
                         </div>
                     `;
                 }
                 if (retryBtn) {
                     retryBtn.disabled = false;
-                    retryBtn.innerText = "🔄 Retry";
+                    retryBtn.innerText = `🔄 ${t("admin_retry")}`;
                 }
             }
         } catch (pollErr) {
@@ -14246,11 +14342,11 @@ async function loadAdminSettings() {
         _admPaintValue(elGroupInvite, s.group_invite_link || "");
 
         _admPaintChecked(elTutVoiceEn, String(s.tutorial_voice_enabled).toLowerCase() !== "false" && s.tutorial_voice_enabled !== false);
-        _admPaintValue(elTutVoiceTitle, s.tutorial_voice_title || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်");
+        _admPaintValue(elTutVoiceTitle, tutorialDisplayTitle(s.tutorial_voice_title, "tutorial_default_voice_title"));
         _admPaintValue(elTutVoiceLink, s.tutorial_voice_link || s.tutorial_video_link || "");
 
         _admPaintChecked(elTutRecapEn, String(s.tutorial_recap_enabled).toLowerCase() !== "false" && s.tutorial_recap_enabled !== false);
-        _admPaintValue(elTutRecapTitle, s.tutorial_recap_title || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်");
+        _admPaintValue(elTutRecapTitle, tutorialDisplayTitle(s.tutorial_recap_title, "tutorial_default_recap_title"));
         _admPaintValue(elTutRecapLink, s.tutorial_recap_link || s.tutorial_video_link || "");
         _admPaintValue(elRecapDemoAsset, s.recap_demo_asset || "");
 
@@ -14422,11 +14518,11 @@ async function saveAdminSettings() {
     const groupInvite = document.getElementById("adm-set-group-invite-link")?.value?.trim();
 
     const tutVoiceEn = !!document.getElementById("adm-tut-voice-enabled")?.checked;
-    const tutVoiceTitle = document.getElementById("adm-tut-voice-title")?.value?.trim() || "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်";
+    const tutVoiceTitle = document.getElementById("adm-tut-voice-title")?.value?.trim() || t("tutorial_default_voice_title");
     const tutVoiceLink = document.getElementById("adm-tut-voice-link")?.value?.trim() || "";
 
     const tutRecapEn = !!document.getElementById("adm-tut-recap-enabled")?.checked;
-    const tutRecapTitle = document.getElementById("adm-tut-recap-title")?.value?.trim() || "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်";
+    const tutRecapTitle = document.getElementById("adm-tut-recap-title")?.value?.trim() || t("tutorial_default_recap_title");
     const tutRecapLink = document.getElementById("adm-tut-recap-link")?.value?.trim() || "";
     const recapDemoAsset = document.getElementById("adm-recap-demo-asset")?.value?.trim() || "";
 
@@ -14935,8 +15031,8 @@ function renderHistoryHub() {
             container.innerHTML = `
                 <div class="hub-state">
                     <div class="hub-state-emoji">⚠️</div>
-                    <p class="hub-state-text">${t("history_error")}</p>
-                    <button type="button" class="mini-chip" onclick="loadUserHistory()">${t("history_retry")}</button>
+                    <p class="hub-state-text" data-i18n="history_error">${t("history_error")}</p>
+                    <button type="button" class="mini-chip" onclick="loadUserHistory()" data-i18n="history_retry">${t("history_retry")}</button>
                 </div>`;
         }
         return;
@@ -16248,10 +16344,62 @@ function toggleRecapBlurL2Detail(forceOpen) {
 }
 window.toggleRecapBlurL2Detail = toggleRecapBlurL2Detail;
 
+function refreshAdminLanguageSurfaces() {
+    if (window._lastAdminOverview && typeof renderAdminOverview === "function") {
+        renderAdminOverview(window._lastAdminOverview);
+    }
+    if (Array.isArray(window._lastAdminSlips) && typeof renderAdminSlips === "function") {
+        renderAdminSlips(window._lastAdminSlips);
+    }
+    if (typeof admKeyHealthData !== "undefined" && admKeyHealthData && typeof renderAdminKeyHealth === "function") {
+        renderAdminKeyHealth();
+        const accBtnSpan = document.querySelector("#adm-keys-accounts-btn span");
+        if (accBtnSpan) {
+            const key = admKeyHealthAccountsOpen ? "adm_keys_accounts_hide" : "adm_keys_accounts_show";
+            accBtnSpan.setAttribute("data-i18n", key);
+            accBtnSpan.innerText = t(key);
+        }
+    }
+    if (window._lastAdminQueue && typeof renderAdminQueueData === "function") {
+        renderAdminQueueData(window._lastAdminQueue);
+    }
+    if (window._lastAdminHistory && typeof renderAdminHistoryData === "function") {
+        renderAdminHistoryData(window._lastAdminHistory);
+    }
+    const recentUsersBox = document.getElementById("admin-users-recent");
+    if (recentUsersBox && Array.isArray(window._lastAdminUsersList)) {
+        if (!window._lastAdminUsersList.length) admStateEmpty(recentUsersBox, "admin_empty");
+        else recentUsersBox.innerHTML = window._lastAdminUsersList.map(admUserRowHtml).join("");
+    }
+    const searchUsersBox = document.getElementById("admin-user-search-results");
+    if (searchUsersBox && Array.isArray(window._lastAdminUsersSearch)) {
+        if (!window._lastAdminUsersSearch.length) admStateEmpty(searchUsersBox, "admin_search_none");
+        else searchUsersBox.innerHTML = window._lastAdminUsersSearch.map(admUserRowHtml).join("");
+    }
+    if (window._lastAdminUserDetail && typeof renderAdminUserDetail === "function") {
+        renderAdminUserDetail(window._lastAdminUserDetail);
+    }
+    if (Array.isArray(window._lastAdminUserJobs) && typeof renderAdminUserJobsList === "function") {
+        renderAdminUserJobsList(window._lastAdminUserJobs);
+    }
+}
+window.refreshAdminLanguageSurfaces = refreshAdminLanguageSurfaces;
+
 function refreshPhase1to4LanguageSurfaces() {
     try {
         if (state && state.user && typeof paintCachedUserHeader === "function") {
             paintCachedUserHeader(state.user);
+        }
+        if (state && state.user) {
+            const catTag = document.getElementById("profile-category-tag");
+            if (catTag) {
+                catTag.removeAttribute("data-i18n");
+                catTag.innerText = state.user.is_admin ? "ADMIN ⭐" : (state.user.is_vip ? t("vip_member_pro") : t("vip_member_free"));
+            }
+            const recapLimitText = document.getElementById("recap-tier-limit-text");
+            if (recapLimitText) {
+                recapLimitText.innerText = t(state.user.is_vip ? "recap_tier_vip_text" : "recap_tier_free_text");
+            }
         }
         if (state && state.user && typeof paintHomeStatusStrip === "function") {
             paintHomeStatusStrip(state.user);
@@ -16274,6 +16422,27 @@ function refreshPhase1to4LanguageSurfaces() {
         if (Array.isArray(window._lastAdminPricingPlans) && typeof renderAdminPricingList === "function") {
             renderAdminPricingList(window._lastAdminPricingPlans);
         }
+        const personaBadge = document.getElementById("personas-count");
+        if (personaBadge && typeof CURATED_VOICES !== "undefined") {
+            const activeChip = document.querySelector("#curated-personas-card .filter-chip.active");
+            const gf = activeChip ? (activeChip.getAttribute("data-filter") || "all") : "all";
+            const n = gf === "all" ? CURATED_VOICES.length : CURATED_VOICES.filter(v => v.gender === gf).length;
+            personaBadge.innerText = tf("personas_count_fmt", { n });
+        }
+        if (typeof paintPaymentAccountNames === "function") {
+            paintPaymentAccountNames(window._lastPaymentAccounts || []);
+        }
+        const platformEl = document.getElementById("recap-info-platform");
+        if (platformEl && platformEl.dataset.sourceType === "direct_upload") {
+            platformEl.innerText = t("recap_source_direct_mp4");
+        }
+        document.querySelectorAll("#recap-info-dur .recap-ready-badge").forEach(el => {
+            el.innerText = `(${t("recap_upload_ready_badge")})`;
+        });
+        if (typeof updateRecapDurationGate === "function") {
+            updateRecapDurationGate();
+        }
+        refreshAdminLanguageSurfaces();
         if (typeof renderHomeRecentProjects === "function") {
             renderHomeRecentProjects();
         }
@@ -16286,8 +16455,16 @@ function refreshPhase1to4LanguageSurfaces() {
         const u = (state && state.user) || {};
         const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
         const vInp = document.getElementById("voice-text-input");
+        const vCount = document.getElementById("char-count");
+        if (vCount) {
+            vCount.innerText = `${(vInp?.value || "").length} / ${max} ${t("char_counter_unit")}`;
+        }
         if (vInp && typeof syncVoiceExcessAndCost === "function") {
             syncVoiceExcessAndCost((vInp.value || "").length, max);
+        }
+        if (typeof window.updateTtsCharCount === "function") {
+            const _repaintTtsCount = window.updateTtsCharCount;
+            _repaintTtsCount();
         }
         const tInp = document.getElementById("tts-text-input");
         if (tInp && typeof syncTtsExcessAndCost === "function") {
@@ -16298,6 +16475,12 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (typeof renderMyRecapPresets === "function") {
             renderMyRecapPresets();
+        }
+        if (typeof window.refreshRecapStep2Summary === "function") {
+            window.refreshRecapStep2Summary();
+        }
+        if (typeof renderCuratedVoices === "function" && Array.isArray(state?.curatedVoices) && state.curatedVoices.length) {
+            renderCuratedVoices();
         }
         if (typeof renderHistoryHub === "function" && Array.isArray(hubHistoryCache)) {
             renderHistoryHub();

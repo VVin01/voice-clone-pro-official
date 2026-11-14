@@ -106,8 +106,6 @@ SERVER_KEYS = [
 ]
 
 APP_JS_LITERAL_ALLOWLIST = {
-    # confirm-modal emergency fallbacks (i18n.js failed to load)
-    "ပယ်ဖျက်မည်", "သဘောတူ",
     # server-error match needles (error classification)
     "စုစုပေါင်း", "credits လိုအပ်ပါတယ်", "credit မလုံလောက်တော့ပါ",
     "ကန့်သတ်ချက် (အများဆုံး", "အပိုင်း",
@@ -444,5 +442,5 @@ def test_server_progress_labels_use_locales():
 # ── (g) cache-bust version ───────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261114_r149") == 4
+    assert INDEX_HTML.count("?v=20261114_r150") == 4
     assert "20261103_r41" not in INDEX_HTML

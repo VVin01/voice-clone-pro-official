@@ -361,7 +361,7 @@ def test_e10_burmese_table_translated():
 def test_e11_cancel_label_formal():
     tr = _translations()
     assert tr["my"]["confirm_cancel"] == "ပယ်ဖျက်မည်"
-    assert 't("confirm_cancel") : "ပယ်ဖျက်မည်"' in APP_JS
+    assert 't("confirm_cancel") : "Cancel"' in APP_JS
 
 
 def test_e16_laptop_worker_copy_removed():
@@ -397,7 +397,7 @@ def test_cache_buster_bumped():
     # voice preview feature) -> rt1 (Recap tab tidy, all three statics)
     # -> rt3 (tidy return pass 2) -> rt4 (full-app polish batch)
     # -> fp1 (admin-demote + voice-picker batch).
-    assert INDEX_HTML.count("?v=20261114_r149") == 4
+    assert INDEX_HTML.count("?v=20261114_r150") == 4
     assert "?v=20261101_rt4" not in INDEX_HTML
     assert "?v=20261101_rt3" not in INDEX_HTML
     assert "?v=20261101_rt1" not in INDEX_HTML

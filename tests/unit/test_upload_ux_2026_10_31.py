@@ -207,7 +207,7 @@ def test_upload_success_restores_ready():
 
 def test_new_pick_clears_stale_source_and_cta_is_guarded():
     pick = APP_JS.index("async function handleVideoFileSelect")
-    seg = APP_JS[pick:pick + 3200]
+    seg = APP_JS[pick:pick + 3600]
     # A new pick drops the previous file's confirmed server path and
     # marks the pick unconfirmed BEFORE the upload starts.
     assert "state.uploadedVideoPath = null" in seg

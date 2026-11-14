@@ -149,35 +149,50 @@ console.log(JSON.stringify(out));
     return _run_node(script, "_minifix_mapper_tmp.js")
 
 
+def _assert_no_myanmar(text: str):
+    assert not any(0x1000 <= ord(ch) <= 0x109F for ch in text), f"Unexpected Myanmar chars in: {text!r}"
+
+
 def test_e2_shortfall_message_survives_with_its_number():
     out = _run_mapper_e2()
-    for lang in ("my", "en"):
-        r = out[lang]
-        # The localized shortfall copy passes through VERBATIM — the
-        # exact part count the user must top up is preserved.
-        assert r["shortfall_worker"] == SHORTFALL_WORKER
-        assert "7 Credits" in r["shortfall_worker"]
-        assert r["shortfall_submit"] == SHORTFALL_SUBMIT
-        assert "4 Credits" in r["shortfall_submit"]
-        # … and only in the recap flow.
-        assert r["shortfall_wrong_flow"] != SHORTFALL_WORKER
-        assert r["shortfall_wrong_flow"] == r["voice_failed_generic"]
+    r_my = out["my"]
+    # The Myanmar shortfall copy passes through VERBATIM — the
+    # exact part count the user must top up is preserved.
+    assert r_my["shortfall_worker"] == SHORTFALL_WORKER
+    assert "7 Credits" in r_my["shortfall_worker"]
+    assert r_my["shortfall_submit"] == SHORTFALL_SUBMIT
+    assert "4 Credits" in r_my["shortfall_submit"]
+    assert r_my["shortfall_wrong_flow"] != SHORTFALL_WORKER
+    assert r_my["shortfall_wrong_flow"] == r_my["voice_failed_generic"]
+
+    # In EN mode, localizeServerText translates server Myanmar copy to English
+    # while keeping exact credit/part counts intact.
+    r_en = out["en"]
+    _assert_no_myanmar(r_en["shortfall_worker"])
+    _assert_no_myanmar(r_en["shortfall_submit"])
+    assert "7" in r_en["shortfall_worker"] and "7 Credits" in r_en["shortfall_worker"]
+    assert "4" in r_en["shortfall_submit"] and "4 Credits" in r_en["shortfall_submit"]
+    assert r_en["shortfall_wrong_flow"] != SHORTFALL_WORKER
+    assert r_en["shortfall_wrong_flow"] == r_en["voice_failed_generic"]
 
 
 def test_e2_precharge_voice_rejections_make_no_refund_claim():
     out = _run_mapper_e2()
-    for lang in ("my", "en"):
-        r = out[lang]
-        assert r["voice_insufficient"] == VOICE_INSUFFICIENT
-        assert r["voice_daily"] == VOICE_DAILY
-        assert r["voice_concurrent"] == VOICE_CONCURRENT
-        # The generic voice-failure copy claims a refund; the
-        # pass-through texts must be different objects entirely.
-        assert r["voice_insufficient"] != r["voice_failed_generic"]
+    r_my = out["my"]
+    assert r_my["voice_insufficient"] == VOICE_INSUFFICIENT
+    assert r_my["voice_daily"] == VOICE_DAILY
+    assert r_my["voice_concurrent"] == VOICE_CONCURRENT
+    assert r_my["voice_insufficient"] != r_my["voice_failed_generic"]
     # In Burmese the false claim wording is "ပြန်အမ်း" (refunded):
     # none of the pre-charge texts may contain it.
     for key in ("voice_insufficient", "voice_daily", "voice_concurrent"):
-        assert "ပြန်အမ်း" not in out["my"][key]
+        assert "ပြန်အမ်း" not in r_my[key]
+
+    r_en = out["en"]
+    for key in ("voice_insufficient", "voice_daily", "voice_concurrent"):
+        _assert_no_myanmar(r_en[key])
+        assert "refund" not in r_en[key].lower()
+        assert r_en[key] != r_en["voice_failed_generic"]
 
 
 def test_e2_raw_strings_still_never_pass():
