@@ -2585,18 +2585,20 @@ def render_brand_pattern_png(
 # "max" trade render time for lower CRF/CQ and slower presets. Quality
 # changes ENCODER SETTINGS ONLY — output resolution is governed by the
 # ratio canvas and the tier source cap (720p free / 1080p VIP download).
+# quality = encoder settings ONLY (standard ~6–8 Mbps, high ~10–12 Mbps,
+# max stays premium — VBV maxrate/bufsize bounds grain spikes).
 RENDER_QUALITIES: dict[str, dict[str, list[str]]] = {
     "standard": {
-        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "20", "-b:v", "0"],
-        "libx264": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-threads", "0"],
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0", "-maxrate", "7200k", "-bufsize", "14400k"],
+        "libx264": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "7200k", "-bufsize", "14400k", "-threads", "0"],
     },
     "high": {
-        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p6", "-rc", "vbr", "-cq", "16", "-b:v", "0"],
-        "libx264": ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-threads", "0"],
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p6", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-maxrate", "11000k", "-bufsize", "22000k"],
+        "libx264": ["-c:v", "libx264", "-preset", "medium", "-crf", "19", "-maxrate", "11000k", "-bufsize", "22000k", "-threads", "0"],
     },
     "max": {
-        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p7", "-rc", "vbr", "-cq", "12", "-b:v", "0", "-tune", "hq"],
-        "libx264": ["-c:v", "libx264", "-preset", "slow", "-crf", "15", "-threads", "0"],
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p7", "-rc", "vbr", "-cq", "14", "-b:v", "0", "-maxrate", "18000k", "-bufsize", "36000k", "-tune", "hq"],
+        "libx264": ["-c:v", "libx264", "-preset", "slow", "-crf", "15", "-maxrate", "18000k", "-bufsize", "36000k", "-threads", "0"],
     },
 }
 
@@ -3062,6 +3064,7 @@ def apply_protection_strong(
     ffmpeg: str,
     video_path: Path,
     log: LogFn = _noop,
+    render_quality: Any = "standard",
 ) -> Path:
     """Strong anti-copyright post-process, applied ONCE to the
     finished output:
@@ -3075,6 +3078,10 @@ def apply_protection_strong(
     audibly dulled the narration and is removed entirely; the
     audio is re-encoded untouched (no asetrate, no resample trick).
 
+    Uses ``encoder_args_for_quality("libx264", render_quality)`` so
+    the added film grain stays within the selected tier's VBV bitrate
+    cap instead of spiking to 20+ Mbps at unconstrained CRF 20.
+
     Any failure returns the ORIGINAL file untouched — a cosmetic
     protection step must never fail a paid job.
     """
@@ -3086,7 +3093,7 @@ def apply_protection_strong(
             "-i", str(video_path),
             "-vf", vf,
             "-map_metadata", "-1",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            *encoder_args_for_quality("libx264", render_quality),
             "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart",
             str(out),

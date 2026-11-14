@@ -11363,6 +11363,9 @@ function paintTtsCostHintTiered(q, profile) {
         if (isAdmin) shortEl.textContent = t("tts_cost_hint_admin");
         else if (isVip) shortEl.textContent = t(hasRef ? "tts_cost_hint_vip_ref" : "tts_cost_hint_vip");
         else shortEl.textContent = t(hasRef ? "tts_cost_hint" : "tts_cost_hint_free_noref");
+        if (shortEl.classList && typeof shortEl.classList.toggle === "function") {
+            shortEl.classList.toggle("hidden", Boolean(isAdmin));
+        }
     }
 
     const moreEl = document.querySelector('#tts-cost-hint-more [data-i18n="tts_cost_hint_more"]');
@@ -12387,7 +12390,7 @@ async function loadAdminData() {
             }
             const chips = document.getElementById("adm-jobs-by-status");
             if (chips && stats.jobs_by_status) {
-                const order = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"];
+                const order = ["QUEUED", "RUNNING", "WAITING_CHOICE", "SUCCESS", "FAILED", "CANCELLED"];
                 chips.innerHTML = order
                     .filter(k => stats.jobs_by_status[k] !== undefined)
                     .map(k => `<span class="mini-tag adm-status-tag ${k.toLowerCase()}">${k}: <strong>${stats.jobs_by_status[k]}</strong></span>`)
@@ -13443,26 +13446,18 @@ async function loadAdminQueue(isSilent = false) {
         }
         const data = await res.json();
 
-        const c = data.counts || { total_listed: 0, queued: 0, running: 0, success: 0, failed: 0 };
+        const c = data.counts || { total_listed: 0, queued: 0, running: 0, waiting_choice: 0, success: 0, failed: 0 };
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
         set("cnt-total", c.total_listed);
         set("cnt-queued", c.queued);
         set("cnt-running", c.running);
+        set("cnt-waiting-choice", c.waiting_choice ?? 0);
         set("cnt-success", c.success);
         set("cnt-failed", c.failed);
         set("adm-queued-jobs", c.queued);
 
         if (bannerEl) {
-            if (c.queued === 0 && c.running === 0) {
-                bannerEl.innerHTML = `
-                    <div class="active-queue-status-banner idle">
-                        <div class="status-banner-icon">🟢</div>
-                        <div class="status-banner-info">
-                            <div class="status-banner-title">${t("admin_queue_idle_title")}</div>
-                            <div class="status-banner-desc">${t("admin_queue_idle_desc")}</div>
-                        </div>
-                    </div>`;
-            } else if (c.running > 0) {
+            if (c.running > 0) {
                 bannerEl.innerHTML = `
                     <div class="active-queue-status-banner running">
                         <div class="status-banner-icon pulsing">⚡</div>
@@ -13471,13 +13466,31 @@ async function loadAdminQueue(isSilent = false) {
                             <div class="status-banner-desc">${tf("admin_queue_running_desc", { running: c.running, queued: c.queued })}</div>
                         </div>
                     </div>`;
-            } else {
+            } else if (c.queued > 0) {
                 bannerEl.innerHTML = `
                     <div class="active-queue-status-banner queued">
                         <div class="status-banner-icon">⏳</div>
                         <div class="status-banner-info">
                             <div class="status-banner-title">${t("admin_queue_queued_title")}</div>
                             <div class="status-banner-desc">${tf("admin_queue_queued_desc", { queued: c.queued })}</div>
+                        </div>
+                    </div>`;
+            } else if ((c.waiting_choice || 0) > 0) {
+                bannerEl.innerHTML = `
+                    <div class="active-queue-status-banner waiting_choice">
+                        <div class="status-banner-icon">⏸️</div>
+                        <div class="status-banner-info">
+                            <div class="status-banner-title">${t("admin_queue_parked_title")}</div>
+                            <div class="status-banner-desc">${tf("admin_queue_parked_desc", { parked: c.waiting_choice })}</div>
+                        </div>
+                    </div>`;
+            } else {
+                bannerEl.innerHTML = `
+                    <div class="active-queue-status-banner idle">
+                        <div class="status-banner-icon">🟢</div>
+                        <div class="status-banner-info">
+                            <div class="status-banner-title">${t("admin_queue_idle_title")}</div>
+                            <div class="status-banner-desc">${t("admin_queue_idle_desc")}</div>
                         </div>
                     </div>`;
             }
@@ -13505,6 +13518,9 @@ async function loadAdminQueue(isSilent = false) {
             } else if (statusLower === "running") {
                 statusBadgeText = t("badge_running") || "⚡ PROCESSING";
                 durationTxt = `⚡ ${j.created_ago}`;
+            } else if (statusLower === "waiting_choice") {
+                statusBadgeText = t("badge_waiting_choice") || "⏸️ WAITING CHOICE";
+                durationTxt = `⏸️ ${j.created_ago}`;
             } else if (statusLower === "failed") {
                 statusBadgeText = t("badge_failed") || "❌ FAILED";
             } else if (statusLower === "cancelled") {
@@ -13514,7 +13530,7 @@ async function loadAdminQueue(isSilent = false) {
             let actionsHtml = "";
             if (statusLower === "failed" || statusLower === "cancelled") {
                 actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>`;
-            } else if (statusLower === "queued" || statusLower === "running") {
+            } else if (statusLower === "queued" || statusLower === "running" || statusLower === "waiting_choice") {
                 actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ ${t("admin_cancel_job")}</button>`;
             }
             if (j.is_expired) {
