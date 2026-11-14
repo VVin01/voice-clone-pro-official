@@ -1335,6 +1335,7 @@ select.studio-input { min-height: 50px; }
     background: var(--surface-2); color: var(--text-2);
 }
 .active-queue-status-banner.running { border-color: rgba(62, 198, 224, 0.4); background: var(--sky-soft); color: var(--sky); }
+.active-queue-status-banner.waiting_choice { border-color: var(--gold-border); background: var(--gold-soft); color: var(--gold-2); }
 .active-queue-status-banner.idle { border-color: rgba(46, 194, 126, 0.35); background: var(--green-soft); color: var(--green); }
 .admin-queue-container, .admin-history-container { display: flex; flex-direction: column; gap: var(--s2); }
 .queue-item, .admin-history-item {
@@ -2417,6 +2418,7 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-status-tag.success { color: var(--green); }
 .adm-status-tag.failed { color: var(--red); }
 .adm-status-tag.running { color: var(--sky); }
+.adm-status-tag.waiting_choice { color: var(--gold-2); }
 .adm-action-row-line {
     display: flex; align-items: baseline; gap: var(--s2);
     padding: 5px 0; border-bottom: 1px solid var(--divider); font-size: 13px;
@@ -10815,6 +10817,129 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
     box-shadow: none;
 }
 
+/* ── Admin Key Health / Quota Pool Lists (consistent fixed-rhythm rows) ───── */
+#adm-keys-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+.adm-key-provider-row {
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+.adm-key-provider-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.adm-key-provider-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 24px;
+}
+.adm-key-provider-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: normal;
+    word-break: normal;
+}
+.adm-key-provider-pills {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+    max-width: 70%;
+}
+.adm-key-provider-sub {
+    margin: 2px 0 0;
+    font-size: 11px;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+}
+#adm-keys-accounts {
+    display: flex;
+    flex-direction: column;
+    margin-top: 8px;
+}
+.adm-key-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 0;
+    min-height: 46px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+.adm-key-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.adm-key-main {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.adm-key-name {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: normal;
+    word-break: normal;
+    cursor: pointer;
+}
+.adm-key-name.is-expanded {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: break-word;
+}
+.adm-key-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 6px;
+    font-size: 11px;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+}
+.adm-key-quota {
+    white-space: nowrap;
+}
+.adm-key-refill {
+    min-width: 0;
+}
+.adm-key-status {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    white-space: nowrap;
+}
+.adm-key-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    margin-right: 4px;
+    vertical-align: middle;
+}
 /* ── Part B0: Admin stage timings card ───────────────────────── */
 .adm-stage-total-row {
     display: flex;

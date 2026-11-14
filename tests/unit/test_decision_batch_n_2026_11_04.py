@@ -492,9 +492,9 @@ def test_cancel_core_owns_script_ready_clearing():
     core_start = API_SRC.index("async def _cancel_recap_job_core")
     core = API_SRC[core_start:API_SRC.index("def _voice_job_error_status", core_start)]
     assert '_persisted_state["script_ready"] = False' in core
-    # …in the same commit as the status flip (clearing precedes it).
+    # …in the same conditional UPDATE commit as the status flip (clearing precedes it).
     assert core.index('_persisted_state["script_ready"] = False') < core.index(
-        "job.status = JobStatus.CANCELLED.value"
+        "await _claim_job_cancelled("
     )
     # The owner endpoint's old second-session post-step is gone.
     cancel_start = API_SRC.index("async def cancel_recap_job")

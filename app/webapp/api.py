@@ -3172,37 +3172,78 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     return _voice_refunded_now > 0
 
 
+_CANCELLABLE_JOB_STATUSES = (
+    JobStatus.QUEUED.value,
+    JobStatus.RUNNING.value,
+    JobStatus.WAITING_CHOICE.value,
+)
+
+
+async def _claim_job_cancelled(
+    db: AsyncSession,
+    job: Job,
+    *,
+    db_error_message: str,
+    recap_config_json: Optional[str] = None,
+    conflict_status_code: int = 409,
+    conflict_detail: str = "Job is no longer active and cannot be cancelled.",
+) -> None:
+    """Atomically flip an active job to CANCELLED before refunding.
+
+    Guarding on ``Job.status IN (QUEUED, RUNNING, WAITING_CHOICE)`` prevents a
+    late or racing cancel from overwriting a just-committed SUCCESS/FAILED/CANCELLED
+    row and prevents concurrent cancels from refunding twice.
+    """
+    _now = utc_now()
+    _values: dict[str, Any] = {
+        "status": JobStatus.CANCELLED.value,
+        "finished_at": _now,
+        "error_message": db_error_message,
+    }
+    if recap_config_json is not None:
+        _values["recap_config"] = recap_config_json
+    _upd = await db.execute(
+        update(Job)
+        .where(Job.id == job.id, Job.status.in_(_CANCELLABLE_JOB_STATUSES))
+        .values(**_values)
+        .execution_options(synchronize_session=False)
+    )
+    if not _upd.rowcount:
+        await db.rollback()
+        raise HTTPException(status_code=conflict_status_code, detail=conflict_detail)
+    await db.commit()
+    await db.refresh(job)
+
+
 async def _cancel_recap_job_core(
     db: AsyncSession,
     job: Job,
     *,
     db_error_message: str,
     registry_error_message: str,
+    conflict_status_code: int = 409,
+    conflict_detail: str = "လုပ်ဆောင်နေဆဲ Recap အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
 ) -> dict:
     """Cancel a recap job and refund its charge — the ONE machinery.
 
     Shared by the admin console endpoint and the Mini App user cancel
     (batch L) so both surfaces have identical semantics (2026-10-31
-    admin-cancel rules): the Job row flips to CANCELLED first (the
-    runner's cancel re-checks read it), the registry entry gets the
-    FAILED + "Cancelled…" marker those same re-checks recognise, and
-    the refund goes through _refund_recap_job_charge when a registry
-    entry exists, or the persisted-state fallback when a restart lost
-    the entry (proven charge only; an already-refunded blob is never
-    refunded twice). Admin-owned jobs were never charged, so their
-    refunds are no-ops. Returns the refund_info dict the admin
+    admin-cancel rules): the Job row atomically flips to CANCELLED first
+    (guarded against overwriting SUCCESS/FAILED/CANCELLED), the registry
+    entry gets the FAILED + "Cancelled…" marker those same re-checks
+    recognise, and the refund goes through _refund_recap_job_charge when
+    a registry entry exists, or the persisted-state fallback when a
+    restart lost the entry (proven charge only; an already-refunded blob
+    is never refunded twice). Admin-owned jobs were never charged, so
+    their refunds are no-ops. Returns the refund_info dict the admin
     endpoint has always reported.
     """
     refund_info: dict = {"refunded": False}
 
     # Batch N: a parked (SCRIPT_READY) job's persisted script_ready
     # flag is cleared in the SAME commit as the status flip below.
-    # The owner-cancel endpoint used to do this as a post-step in a
-    # second session — a crash between the two writes left a
-    # CANCELLED row still claiming script_ready — and the admin
-    # cancel never did it at all; hoisting it here gives both
-    # surfaces the expiry-sweep hygiene atomically.
     _persisted_state = _load_persisted_recap_state(job)
+    _next_recap_config: Optional[str] = None
     if _persisted_state is not None and (
         _persisted_state.get("script_ready")
         or _persisted_state.get("stranded_reset_count")
@@ -3211,12 +3252,16 @@ async def _cancel_recap_job_core(
         # Batch AB: cancel is terminal — clear the stranded count in
         # the same blob write.
         _persisted_state["stranded_reset_count"] = 0
-        job.recap_config = json.dumps(_persisted_state, ensure_ascii=False)
+        _next_recap_config = json.dumps(_persisted_state, ensure_ascii=False)
 
-    job.status = JobStatus.CANCELLED.value
-    job.finished_at = utc_now()
-    job.error_message = db_error_message
-    await db.commit()
+    await _claim_job_cancelled(
+        db,
+        job,
+        db_error_message=db_error_message,
+        recap_config_json=_next_recap_config,
+        conflict_status_code=conflict_status_code,
+        conflict_detail=conflict_detail,
+    )
 
     try:
         entry = RECAP_JOBS_REGISTRY.get(job.id)
@@ -4883,19 +4928,18 @@ async def cancel_voice_job(
         or job.engine == "recap"
     ):
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.status not in (
-        JobStatus.QUEUED.value,
-        JobStatus.RUNNING.value,
-        JobStatus.WAITING_CHOICE.value,
-    ):
+    if job.status not in _CANCELLABLE_JOB_STATUSES:
         raise HTTPException(
             status_code=409,
             detail="လုပ်ဆောင်နေဆဲ အသံ အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
         )
-    job.status = JobStatus.CANCELLED.value
-    job.finished_at = utc_now()
-    job.error_message = "Cancelled by user via Mini App"
-    await db.commit()
+    await _claim_job_cancelled(
+        db,
+        job,
+        db_error_message="Cancelled by user via Mini App",
+        conflict_status_code=409,
+        conflict_detail="လုပ်ဆောင်နေဆဲ အသံ အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
+    )
 
     refund_info: Dict[str, Any] = {"refunded": False}
     try:
@@ -12601,6 +12645,7 @@ async def get_admin_overview(
         "pending_slips": pending_slips,
         "queued_jobs": queued_jobs,
         "running_jobs": running_jobs,
+        "waiting_choice_jobs": jobs_by_status.get(JobStatus.WAITING_CHOICE.value, 0),
         "cloud_worker_status": "ONLINE (Render Cloud)",
         "failed_jobs_24h": failed_24h,
         "jobs_by_status": jobs_by_status,
@@ -13451,6 +13496,7 @@ async def get_admin_queue(
 
     queued_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value))).scalar() or 0
     running_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.RUNNING.value))).scalar() or 0
+    waiting_choice_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.WAITING_CHOICE.value))).scalar() or 0
     success_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.SUCCESS.value, Job.created_at >= cutoff_24h))).scalar() or 0
     failed_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.FAILED.value, Job.created_at >= cutoff_24h))).scalar() or 0
 
@@ -13550,6 +13596,7 @@ async def get_admin_queue(
         "counts": {
             "queued": queued_cnt,
             "running": running_cnt,
+            "waiting_choice": waiting_choice_cnt,
             "success": success_cnt,
             "failed": failed_cnt,
             "total_listed": len(jobs_out),
@@ -13590,6 +13637,7 @@ async def retry_queued_job(
             detail=f"Only FAILED or CANCELLED jobs can be retried (this job is {job.status})",
         )
 
+    _next_recap_config: Optional[str] = None
     _is_recap_retry = (
         job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap"
     )
@@ -13600,18 +13648,36 @@ async def retry_queued_job(
             record_recap_credit_event,
         )
 
+        # Lock the owner row before inspecting/re-charging credits or voice
+        # minutes so concurrent retries or submits serialize cleanly.
+        _owner = (
+            await db.execute(
+                select(User).where(User.id == job.user_id).with_for_update()
+            )
+        ).scalar_one_or_none()
         _debit_total = await recap_debit_total_for_job(db, job_id)
         _refund_total = await recap_refund_total_for_job(db, job_id)
         if _debit_total > 0 and _debit_total - _refund_total <= 0:
             # Fully refunded: re-charge the original amount in THIS
             # transaction (same commit as the status flip below).
-            _owner = await db.get(User, job.user_id)
             if _owner is None or int(_owner.recap_credits or 0) < _debit_total:
+                await db.rollback()
                 raise HTTPException(
                     status_code=402,
                     detail="အသုံးပြုသူရဲ့ Recap Credit မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
                 )
-            _owner.recap_credits = int(_owner.recap_credits or 0) - _debit_total
+            _charge_upd = await db.execute(
+                update(User)
+                .where(User.id == job.user_id, User.recap_credits >= _debit_total)
+                .values(recap_credits=User.recap_credits - _debit_total)
+            )
+            if not _charge_upd.rowcount:
+                await db.rollback()
+                raise HTTPException(
+                    status_code=402,
+                    detail="အသုံးပြုသူရဲ့ Recap Credit မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
+                )
+            await db.refresh(_owner)
             await record_recap_credit_event(
                 db,
                 user_id=job.user_id,
@@ -13643,6 +13709,7 @@ async def retry_queued_job(
                                 note=f"Admin queue retry voice hold ({job_id})",
                             )
                         except ValueError:
+                            await db.rollback()
                             raise HTTPException(
                                 status_code=402,
                                 detail="အသုံးပြုသူရဲ့ Voice Clone မိနစ် မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
@@ -13651,7 +13718,8 @@ async def retry_queued_job(
                     _state["voice_seconds_refunded"] = 0
                     _state["voice_settled"] = False
                     _state["voice_seconds_settled"] = None
-                job.recap_config = json.dumps(_state, ensure_ascii=False)
+                _state["stranded_reset_count"] = 0
+                _next_recap_config = json.dumps(_state, ensure_ascii=False)
         elif _debit_total > 0:
             # Charged and NOT (fully) refunded: make the persisted
             # credit state match the ledger truth so the re-dispatched
@@ -13662,20 +13730,40 @@ async def retry_queued_job(
                 _state["credits_charged"] = _debit_total
                 _state["credit_refunded"] = _refund_total >= _debit_total
                 _state["credits_refunded"] = _refund_total
-                job.recap_config = json.dumps(_state, ensure_ascii=False)
+                if _state.get("stranded_reset_count"):
+                    _state["stranded_reset_count"] = 0
+                _next_recap_config = json.dumps(_state, ensure_ascii=False)
+        else:
+            _retry_state = _load_persisted_recap_state(job)
+            if _retry_state is not None and _retry_state.get("stranded_reset_count"):
+                _retry_state["stranded_reset_count"] = 0
+                _next_recap_config = json.dumps(_retry_state, ensure_ascii=False)
 
-    job.status = JobStatus.QUEUED.value
-    job.started_at = None
-    job.finished_at = None
-    job.error_message = None
-    # Batch AB: a reactivated job starts its stranded-reset count
-    # from zero again — folded into this same write.
-    if job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap":
-        _retry_state = _load_persisted_recap_state(job)
-        if _retry_state is not None and _retry_state.get("stranded_reset_count"):
-            _retry_state["stranded_reset_count"] = 0
-            job.recap_config = json.dumps(_retry_state, ensure_ascii=False)
+    _retry_values: dict[str, Any] = {
+        "status": JobStatus.QUEUED.value,
+        "started_at": None,
+        "finished_at": None,
+        "error_message": None,
+    }
+    if _next_recap_config is not None:
+        _retry_values["recap_config"] = _next_recap_config
+    _retry_upd = await db.execute(
+        update(Job)
+        .where(
+            Job.id == job_id,
+            Job.status.in_((JobStatus.FAILED.value, JobStatus.CANCELLED.value)),
+        )
+        .values(**_retry_values)
+        .execution_options(synchronize_session=False)
+    )
+    if not _retry_upd.rowcount:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Only FAILED or CANCELLED jobs can be retried (job state changed concurrently)",
+        )
     await db.commit()
+    await db.refresh(job)
 
     if job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap":
         try:
@@ -13738,12 +13826,17 @@ async def cancel_queued_job(
             job,
             db_error_message="Cancelled by Administrator via Admin Console",
             registry_error_message="Cancelled by Administrator",
+            conflict_status_code=400,
+            conflict_detail="Only QUEUED, RUNNING, or WAITING_CHOICE jobs can be cancelled (job state changed concurrently)",
         )
     else:
-        job.status = JobStatus.CANCELLED.value
-        job.finished_at = utc_now()
-        job.error_message = "Cancelled by Administrator via Admin Console"
-        await db.commit()
+        await _claim_job_cancelled(
+            db,
+            job,
+            db_error_message="Cancelled by Administrator via Admin Console",
+            conflict_status_code=400,
+            conflict_detail="Only QUEUED, RUNNING, or WAITING_CHOICE jobs can be cancelled (job state changed concurrently)",
+        )
 
         try:
             from app.services.ledger import refund_job_seconds

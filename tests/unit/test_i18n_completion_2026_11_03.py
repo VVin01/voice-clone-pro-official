@@ -106,8 +106,6 @@ SERVER_KEYS = [
 ]
 
 APP_JS_LITERAL_ALLOWLIST = {
-    # confirm-modal emergency fallbacks (i18n.js failed to load)
-    "ပယ်ဖျက်မည်", "သဘောတူ",
     # server-error match needles (error classification)
     "စုစုပေါင်း", "credits လိုအပ်ပါတယ်", "credit မလုံလောက်တော့ပါ",
     "ကန့်သတ်ချက် (အများဆုံး", "အပိုင်း",

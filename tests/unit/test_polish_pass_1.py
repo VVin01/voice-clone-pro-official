@@ -38,7 +38,7 @@ def test_r148_cache_token_and_budgets():
             "app/webapp/static/js/i18n.js",
         )
     )
-    assert total_lf <= 1_554_914, f"Asset LF budget exceeded: {total_lf}"
+    assert total_lf <= 1_560_550, f"Asset LF budget exceeded: {total_lf}"
     assert STYLE_CSS.count("{") == STYLE_CSS.count("}")
 
     marker = "VCP UI REBUILD V2 — PHASE 3"

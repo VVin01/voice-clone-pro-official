@@ -767,7 +767,8 @@ def run_recap_pipeline(
         _final_path = Path(str(result["final"]))
         if _final_path.is_file():
             result["final"] = str(apply_protection_strong(
-                ffmpeg_bin, _final_path, log=_log
+                ffmpeg_bin, _final_path, log=_log,
+                render_quality=overlays.get("render_quality", render_quality),
             ))
     _progress(4, 4, "✅ Final Recap Video Ready!")
     _log(f"🎉 Final Video: {result.get('final')}")

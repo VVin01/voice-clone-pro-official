@@ -617,6 +617,12 @@ async def lifespan(app: FastAPI):
     recap_worker_task.cancel()
     voice_choice_task.cancel()
 
+    try:
+        from app.services.key_rotation import flush_all_persistence
+        flush_all_persistence()
+    except Exception:
+        pass
+
 
 webapp_app = FastAPI(
     title="Voice Clone Pro & Recap Studio Mini App",
