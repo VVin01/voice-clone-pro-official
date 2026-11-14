@@ -902,6 +902,7 @@ function setRecapStage(stepStr, status) {
     if (!el) return;
     if (status === "SUCCESS") { renderStageStepper(el, recapStageLabels(), 3, true); return; }
     if (status === "SCRIPT_READY") { renderStageStepper(el, recapStageLabels(), 1, false); return; }
+    if (status === "WAITING_CHOICE") { renderStageStepper(el, recapStageLabels(), 2, false); return; }
     const n = parseInt(String(stepStr || "0").split("/")[0], 10) || 0;
     if (n >= 4) renderStageStepper(el, recapStageLabels(), 3, false);
     else if (n === 3) renderStageStepper(el, recapStageLabels(), 2, false);
@@ -926,7 +927,10 @@ const stickyCtaInView = {};
 // hidden — the job-status bar is the progress surface (and the
 // backend already allows only one active recap job per user).
 function recapJobActive() {
-    try { return LiveJobs.activeJobs().some(j => j.kind === "recap"); } catch (e) { return false; }
+    try {
+        if (LiveJobs.activeJobs().some(j => j.kind === "recap")) return true;
+        return typeof recapJobIsActive === "function" && recapJobIsActive();
+    } catch (e) { return false; }
 }
 window.recapJobActive = recapJobActive;
 function refreshStickyCtas() {
@@ -1150,6 +1154,7 @@ const LiveJobs = {
                 LiveJobs.notify(j, { removed: true });
             }
         }
+        syncRecapStateFromLiveJobs();
         renderLiveJobsPill();
         renderLiveJobsSheet();
     },
@@ -1253,6 +1258,44 @@ function dismissLiveJobsPill() {
     if (pill) pill.classList.add("hidden");
 }
 window.dismissLiveJobsPill = dismissLiveJobsPill;
+function paintProgressBarFill(el, job) {
+    if (!el || !job) return;
+    const waiting = job.status === "WAITING_CHOICE";
+    const pct = Math.min(100, Math.max(0, Number(job.progress_percent) || 0));
+    const terminal = liveJobsIsTerminal(job.status);
+    const indeterminate = !terminal && (waiting || job.status === "QUEUED" || pct <= 0);
+    el.classList.toggle("indeterminate", indeterminate);
+    el.classList.toggle("is-waiting", waiting);
+    if (terminal) {
+        el.style.width = job.status === "SUCCESS" ? "100%" : "0%";
+    } else if (indeterminate) {
+        el.style.width = "100%";
+    } else {
+        el.style.width = `${pct}%`;
+    }
+}
+function syncRecapStateFromLiveJobs() {
+    try {
+        const active = LiveJobs.activeJobs().find(j => j.kind === "recap");
+        if (active) {
+            if (typeof state !== "undefined" && !state.recapJobId) state.recapJobId = active.id;
+            if (typeof state !== "undefined") {
+                if (active.status === "SCRIPT_READY") state.recapScriptReadyJobId = active.id;
+                else if (state.recapScriptReadyJobId === active.id) state.recapScriptReadyJobId = null;
+            }
+            if (!recapFormJobId) {
+                recapFormJobId = active.id;
+                if (typeof ensureRecapFormStoreSubscription === "function") ensureRecapFormStoreSubscription();
+            }
+            if (recapFormJobId === active.id && typeof renderRecapFormProgress === "function") {
+                renderRecapFormProgress(active);
+            }
+        } else if (typeof state !== "undefined") {
+            state.recapScriptReadyJobId = null;
+        }
+        if (typeof setSubmitButtonState === "function") setSubmitButtonState("recap");
+    } catch (e) {}
+}
 function renderLiveJobsPill() {
     const pill = document.getElementById("live-jobs-pill");
     if (!pill) return;
@@ -1279,12 +1322,17 @@ function renderLiveJobsPill() {
     if (stageEl) stageEl.innerText = LiveJobs.reconnecting
         ? t("poll_reconnecting")
         : (lead.eta_overrun && !liveJobsIsTerminal(lead.status) ? liveJobOverrunText(lead) : liveJobStageText(lead));
-    if (fillEl) fillEl.style.width = `${Math.min(100, Math.max(4, lead.progress_percent || 0))}%`;
+    paintProgressBarFill(fillEl, lead);
 }
 function liveJobsSheetRowHtml(job) {
     const isRecap = job.kind === "recap";
     const title = escapeHtml(job.title || (isRecap ? "Movie Recap" : "Voice Synthesis"));
     const pct = Math.min(100, Math.max(0, job.progress_percent || 0));
+    const isWaiting = job.status === "WAITING_CHOICE";
+    const isTerminal = liveJobsIsTerminal(job.status);
+    const isIndet = !isTerminal && (isWaiting || job.status === "QUEUED" || pct <= 0);
+    const barW = isTerminal ? (job.status === "SUCCESS" ? 100 : 0) : (isIndet ? 100 : pct);
+    const fillCls = `live-job-row-fill vcp-job-progress-fill${isIndet ? " indeterminate" : ""}${isWaiting ? " is-waiting" : ""}`;
     const elapsed = (typeof job.elapsed_seconds === "number")
         ? tf("live_job_elapsed", { sec: job.elapsed_seconds }) : "";
     let action = "";
@@ -1302,18 +1350,20 @@ function liveJobsSheetRowHtml(job) {
     const overrun = !!job.eta_overrun && !liveJobsIsTerminal(job.status);
     const metaText = liveJobsIsTerminal(job.status)
         ? escapeHtml(liveJobStageText(job))
-        : (overrun
-            ? escapeHtml(liveJobOverrunText(job))
-            : `${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}`);
+        : (isWaiting
+            ? escapeHtml(liveJobStageText(job))
+            : (overrun
+                ? escapeHtml(liveJobOverrunText(job))
+                : `${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}`));
     return `<div class="live-job-row vcp-job-card" data-live-job-id="${job.id}">
         <div class="vcp-job-head">
             <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
             <div class="live-job-row-main">
                 <div class="live-job-row-title">${title}</div>
-                <div class="live-job-row-meta">${metaText}${elapsed && !overrun ? " · " + escapeHtml(elapsed) : ""}</div>
+                <div class="live-job-row-meta">${metaText}${elapsed && !overrun && !isWaiting ? " · " + escapeHtml(elapsed) : ""}</div>
             </div>
         </div>
-        <div class="live-job-row-bar vcp-job-progress"><span class="live-job-row-fill vcp-job-progress-fill" style="width:${pct}%"></span></div>
+        <div class="live-job-row-bar vcp-job-progress"><span class="${fillCls}" style="width:${barW}%"></span></div>
         ${action ? `<div class="live-job-row-actions vcp-job-footer-row">${action}</div>` : ""}
     </div>`;
 }
@@ -1602,12 +1652,17 @@ function setSubmitButtonState(kind) {
     if (!btn) return;
     const span = btn.querySelector(".btn-text");
     if (span && !span.dataset.acOriginal) span.dataset.acOriginal = span.innerText;
-    btn.disabled = !!(guard.inFlight || guard.submittedFingerprint);
+    const activeBlocked = kind === "recap"
+        ? (recapJobActive() || (typeof recapJobIsActive === "function" && recapJobIsActive()))
+        : false;
+    const gateBlocked = kind === "recap" && btn.getAttribute("data-ci-gate-disabled") === "1";
+    btn.disabled = !!(guard.inFlight || guard.submittedFingerprint || activeBlocked || gateBlocked);
     if (span) {
-        span.innerText = guard.submittedFingerprint
+        span.innerText = (guard.submittedFingerprint || activeBlocked)
             ? t("submit_already_creating")
             : (span.dataset.acOriginal || span.innerText);
     }
+    if (kind === "recap" && typeof refreshStickyCtas === "function") refreshStickyCtas();
 }
 function studioSubmitBegin(kind) {
     const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
@@ -1662,8 +1717,8 @@ function renderSubmitConfirmSnippet(job) {
     // Batch AK: terminal → the outcome label alone (no stale step).
     if (stageEl) stageEl.innerText = liveJobsIsTerminal(job.status)
         ? liveJobStageText(job)
-        : `${job.status || ""} · ${liveJobStageText(job)}`;
-    if (fillEl) fillEl.style.width = `${Math.min(100, Math.max(4, job.progress_percent || 0))}%`;
+        : (job.status === "WAITING_CHOICE" ? liveJobStageText(job) : `${job.status || ""} · ${liveJobStageText(job)}`);
+    paintProgressBarFill(fillEl, job);
 }
 function showSubmitConfirmation(kind, jobId, costText) {
     state.submitConfirmJob = { kind, id: jobId };
@@ -1672,7 +1727,7 @@ function showSubmitConfirmation(kind, jobId, costText) {
     if (costEl) costEl.innerText = costText || "";
     const tracked = LiveJobs.jobs.get(jobId);
     renderSubmitConfirmSnippet(tracked || {
-        status: "QUEUED", kind, progress_percent: kind === "voice" ? 45 : 5,
+        status: "QUEUED", kind, progress_percent: 0,
     });
     if (card) card.classList.remove("hidden");
 }
@@ -4672,7 +4727,7 @@ async function handleVoiceGenerate() {
         state.activeJobId = data.job_id;
         setVoiceStage("working");
         if (statusMsg) statusMsg.innerText = t("preparing_msg");
-        if (progressFill) progressFill.style.width = "30%";
+        if (progressFill) paintProgressBarFill(progressFill, { status: "QUEUED", progress_percent: 0 });
         if (etaText) etaText.innerText = t("calculating_eta");
 
         startJobPolling(data.job_id);
@@ -4683,7 +4738,7 @@ async function handleVoiceGenerate() {
         // the confirmation offers Watch / Back to studio.
         studioSubmitSuccess("voice");
         showStudioInlineStatus("voice", t("preparing_msg"));
-        LiveJobs.track({ id: data.job_id, kind: "voice", status: "QUEUED", progress_percent: 45, stage_index: 0, stage_total: 1, title: text.slice(0, 70) });
+        LiveJobs.track({ id: data.job_id, kind: "voice", status: "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 1, title: text.slice(0, 70) });
         showSubmitConfirmation("voice", data.job_id, t("confirm_cost_voice"));
 
     } catch (err) {
@@ -4767,12 +4822,17 @@ function startJobPolling(jobId) {
 
             if (data.status === "QUEUED") {
                 setVoiceStage("working");
-                if (progressFill) progressFill.style.width = "45%";
+                if (progressFill) paintProgressBarFill(progressFill, { status: "QUEUED", progress_percent: 0 });
                 if (statusMsg) statusMsg.innerText = t("cloud_queue_waiting");
                 if (etaText) etaText.innerText = tf("voice_elapsed", { sec: Math.max(0, Math.round((Date.now() - pollStartedAt) / 1000)) });
+            } else if (data.status === "WAITING_CHOICE") {
+                setVoiceStage("working");
+                if (progressFill) paintProgressBarFill(progressFill, { status: "WAITING_CHOICE", progress_percent: 0 });
+                if (statusMsg) statusMsg.innerText = t("live_job_status_waiting_choice");
+                if (etaText) etaText.innerText = t("recap_waiting_choice_bot_hint");
             } else if (data.status === "RUNNING") {
                 setVoiceStage("working");
-                if (progressFill) progressFill.style.width = "80%";
+                if (progressFill) paintProgressBarFill(progressFill, { status: "RUNNING", progress_percent: Number(data.progress_percent) || 0 });
                 if (statusMsg) statusMsg.innerText = t("voice_synthesizing");
                 if (etaText) etaText.innerText = tf("voice_elapsed", { sec: Math.max(0, Math.round((Date.now() - pollStartedAt) / 1000)) });
             } else if (data.status === "SUCCESS") {
@@ -9678,7 +9738,7 @@ async function handleStartRecap() {
     // the studio plus the global pill carry the job from here. The
     // canvas, preview and every control value are left untouched.
     showStudioInlineStatus("recap", t("recap_stage1_status"));
-    if (progressFill) progressFill.style.width = "10%";
+    if (progressFill) paintProgressBarFill(progressFill, { status: "QUEUED", progress_percent: 0 });
     setRecapStage("1/4", null);
     // R40 deck F-1/F-2: the first status/ETA lines named the vendor
     // engine ("Groq Cloud Whisper Turbo", "Groq Turbo Engine + 1080p
@@ -9815,7 +9875,7 @@ async function handleStartRecap() {
         // The button stays in its disabled "already creating" state
         // for THIS configuration (guard) — it is NOT re-enabled here.
         studioSubmitSuccess("recap");
-        LiveJobs.track({ id: data.recap_id, kind: "recap", status: "QUEUED", progress_percent: 5, stage_index: 0, stage_total: 4, title: state.recapVideoTitle || "" });
+        LiveJobs.track({ id: data.recap_id, kind: "recap", status: "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 4, title: state.recapVideoTitle || "" });
         // Batch AO: while tiered pricing is armed, the response's
         // credits_total (the band total the job will be charged) is
         // the quoted cost. The key is absent in the legacy world,
@@ -9909,12 +9969,14 @@ function renderRecapFormProgress(job) {
     const inlineText = document.getElementById("recap-inline-status-text");
     if (inlineText) inlineText.innerText = formStatusText;
     if (inlineLine) inlineLine.classList.remove("hidden");
-    if (progressFill && job.progress_percent) {
-        progressFill.style.width = `${Math.min(100, Math.max(10, job.progress_percent))}%`;
+    if (progressFill) {
+        paintProgressBarFill(progressFill, job);
     }
     if (stepText) {
         if (liveJobsIsTerminal(job.status)) {
             stepText.innerText = "";
+        } else if (job.status === "WAITING_CHOICE") {
+            stepText.innerText = `${t("recap_waiting_choice_detail")} · ${t("recap_waiting_choice_bot_hint")}`;
         } else {
             const stepBits = [`${t("recap_step_label")} ${job.stage_index || 0}/${job.stage_total || 4}`];
             if (typeof job.queue_position === "number" && job.queue_position > 0) {
@@ -10105,7 +10167,19 @@ function startRecapJobPolling(jobId) {
                 if (stepText) stepText.innerText = "";
             }
 
-            if (data.status === "SCRIPT_READY") {
+            if (data.status !== "SCRIPT_READY") {
+                if (state.recapScriptReadyJobId === jobId) state.recapScriptReadyJobId = null;
+            }
+            if (data.status === "WAITING_CHOICE") {
+                setRecapStage(null, "WAITING_CHOICE");
+                if (statusMsg) statusMsg.innerText = t("live_job_status_waiting_choice");
+                if (stepText) stepText.innerText = `${t("recap_waiting_choice_detail")} · ${t("recap_waiting_choice_bot_hint")}`;
+                const cancelBtn = document.getElementById("btn-recap-cancel");
+                if (cancelBtn) {
+                    cancelBtn.classList.remove("hidden");
+                    cancelBtn.disabled = false;
+                }
+            } else if (data.status === "SCRIPT_READY") {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
                 // The job is NOT done: it waits for script review and
@@ -11217,6 +11291,7 @@ function paintTtsTodaySurfaces(data) {
     const recapVal = document.getElementById("home-free-recap-value");
     if (recapVal) recapVal.innerText = data.is_admin ? "∞" : tf("home_free_value_credits", { count: data.recap_credits || 0 });
     paintHomeStatusStrip(data);
+    if (typeof paintTtsCostHintTiered === "function") paintTtsCostHintTiered(window._lastTtsQuota || null, data);
 }
 
 // The same two surfaces refreshed from a /api/tts/quota response —
@@ -11247,13 +11322,20 @@ function paintTtsChipFromQuota(q) {
     }
     paintHomeTilePeriods((state && state.user) || {}, q);
     paintHomeStatusStripFromQuota(q);
+    if (typeof paintTtsCostHintTiered === "function") paintTtsCostHintTiered(q, (state && state.user) || null);
 }
 
 function paintVoiceTtsBalanceLine(profile) {
     // AW-11: the Voice tab labels the referral bucket as TTS-only —
-    // it is NOT part of the clone balance anymore.
+    // it is NOT part of the clone balance anymore. Admins sit outside
+    // referral/gift framing so the line stays hidden for them.
     const el = document.getElementById("voice-tts-balance-line");
     if (!el) return;
+    if (profile && profile.is_admin) {
+        el.textContent = "";
+        el.classList.add("hidden");
+        return;
+    }
     const secs = profile && typeof profile.tts_balance_seconds === "number"
         ? profile.tts_balance_seconds : 0;
     if (secs > 0) {
@@ -11265,6 +11347,32 @@ function paintVoiceTtsBalanceLine(profile) {
     }
 }
 window.paintVoiceTtsBalanceLine = paintVoiceTtsBalanceLine;
+
+function paintTtsCostHintTiered(q, profile) {
+    const u = profile || (typeof state !== "undefined" && state && state.user) || {};
+    const isAdmin = Boolean((q && q.is_admin) || u.is_admin);
+    const isVip = Boolean(u.is_vip) && !isAdmin;
+    const refSec = (q && typeof q.referral_seconds === "number")
+        ? q.referral_seconds
+        : (typeof u.tts_referral_seconds === "number" ? u.tts_referral_seconds : (u.tts_balance_seconds || 0));
+    const hasRef = refSec > 0;
+    const maxChars = (u.character_limit || (isAdmin || isVip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000))).toLocaleString();
+
+    const shortEl = document.querySelector('#tab-tts [data-i18n="tts_cost_hint"]');
+    if (shortEl) {
+        if (isAdmin) shortEl.textContent = t("tts_cost_hint_admin");
+        else if (isVip) shortEl.textContent = t(hasRef ? "tts_cost_hint_vip_ref" : "tts_cost_hint_vip");
+        else shortEl.textContent = t(hasRef ? "tts_cost_hint" : "tts_cost_hint_free_noref");
+    }
+
+    const moreEl = document.querySelector('#tts-cost-hint-more [data-i18n="tts_cost_hint_more"]');
+    if (moreEl) {
+        if (isAdmin) moreEl.textContent = tf("tts_cost_hint_more_admin", { max_chars: maxChars });
+        else if (isVip) moreEl.textContent = tf(hasRef ? "tts_cost_hint_more_vip_ref" : "tts_cost_hint_more_vip", { max_chars: maxChars });
+        else moreEl.textContent = t("tts_cost_hint_more");
+    }
+}
+window.paintTtsCostHintTiered = paintTtsCostHintTiered;
 
 // Batch BB-4 (diagnosed): this loader was the ONLY balance paint in
 // the app that ignored the fetchWithTimeout standard — ONE bare fetch
@@ -11409,6 +11517,7 @@ function paintTtsQuotaInstant() {
     const profile = state.user;
     if (!profile || typeof profile.tts_balance_seconds !== "number") return;
     const refMin = (profile.tts_balance_seconds / 60).toFixed(1);
+    paintTtsCostHintTiered(null, profile);
     paintTtsBalanceLine(-1, (line) => {
         line.classList.remove("tts-balance-retry");
         delete line.dataset.quotaError;
@@ -11500,9 +11609,11 @@ function paintTtsTasteNote(q) {
     const note = document.getElementById("tts-taste-note");
     if (!note) return;
     const remaining = q ? q.gemini_taste_remaining_seconds : null;
+    const u = (typeof state !== "undefined" && state && state.user) ? state.user : null;
+    const isPrivileged = Boolean((q && q.is_admin) || (u && (u.is_admin || u.is_vip)));
     // Taste lines are FREE-only and pointless once an own key routes
     // first — for everyone else the note stays hidden.
-    if (remaining === null || remaining === undefined || (q && q.has_own_key)) {
+    if (isPrivileged || remaining === null || remaining === undefined || (q && q.has_own_key)) {
         note.classList.add("hidden");
         note.textContent = "";
         return;
@@ -11766,10 +11877,8 @@ function pollTtsJob(jobId) {
             const resultBox = document.getElementById("tts-result-box");
             const fill = document.getElementById("tts-progress-fill");
             const btn = document.getElementById("btn-generate-tts");
-            if (data.status === "QUEUED") {
-                if (fill) fill.style.width = "45%";
-            } else if (data.status === "RUNNING") {
-                if (fill) fill.style.width = "80%";
+            if (data.status === "QUEUED" || data.status === "RUNNING") {
+                if (fill) paintProgressBarFill(fill, { status: data.status, progress_percent: 0 });
             } else if (data.status === "SUCCESS") {
                 clearInterval(ttsState.pollTimer);
                 haptic("success");
@@ -15097,10 +15206,14 @@ async function checkStartupDeepLinks() {
                         },
                         t("alert_btn_watch")
                     );
-                } else if (data.status === "RUNNING" || data.status === "QUEUED") {
+                } else if (data.status === "RUNNING" || data.status === "QUEUED" || data.status === "WAITING_CHOICE") {
                     state.recapJobId = recapJobId;
                     startRecapJobPolling(recapJobId);
-                } else if (data.status === "FAILED") {
+                } else if (data.status === "SCRIPT_READY") {
+                    state.recapJobId = recapJobId;
+                    state.recapScriptReadyJobId = recapJobId;
+                    openRecapScriptEditor(recapJobId);
+                } else if (data.status === "FAILED" || data.status === "CANCELLED") {
                     try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
                 }
             }
@@ -16148,6 +16261,9 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (state && state.user && typeof paintTtsTodaySurfaces === "function") {
             paintTtsTodaySurfaces(state.user);
+        }
+        if (typeof paintTtsCostHintTiered === "function") {
+            paintTtsCostHintTiered(window._lastTtsQuota || null, (state && state.user) || null);
         }
         if (window._lastTtsQuota && typeof paintTtsChipFromQuota === "function") {
             paintTtsChipFromQuota(window._lastTtsQuota);

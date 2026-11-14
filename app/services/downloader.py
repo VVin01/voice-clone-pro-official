@@ -2201,6 +2201,9 @@ class MediaDownloader:
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        part_index: int = 1,
+        total_parts: int = 1,
+        prev_part_summary: str = "",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -2226,7 +2229,10 @@ class MediaDownloader:
             if progress_callback:
                 progress_callback(0, 4, "📥 Downloading source video from URL...")
             recap_max_height = 1080 if is_vip else 720
+            _dl_t0 = time.monotonic()
             source_video_path, info = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
+            _dl_elapsed = round(max(0.0, time.monotonic() - _dl_t0), 3)
+            _download_stage_sec = _dl_elapsed
 
         # Enforce maximum video duration limit: Free users = 2 mins (120s), VIP = 10 mins (600s)
         try:
@@ -2309,7 +2315,14 @@ class MediaDownloader:
             log_fn=log_callback,
             progress_fn=progress_callback,
             should_stop=should_stop,
+            part_index=part_index,
+            total_parts=total_parts,
+            prev_part_summary=prev_part_summary,
         )
+        if isinstance(recap_res, dict) and "_download_stage_sec" in locals():
+            _st = dict(recap_res.get("stage_timings") or {})
+            _st.setdefault("download", _download_stage_sec)
+            recap_res["stage_timings"] = _st
 
         return recap_res
 

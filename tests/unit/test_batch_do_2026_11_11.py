@@ -144,8 +144,8 @@ def test_ask_on_38_flash_sends_the_short_prompt(tmp_path, monkeypatch):
 
 def test_ask_on_38_lite_sends_the_short_prompt(tmp_path, monkeypatch):
     recorder = _Recorder()
+    monkeypatch.setattr(gte, "_effective_tts_models", lambda: ("gemini-3.8-flash-lite-tts",))
     eng = _engine(tmp_path, monkeypatch, recorder)
-    gte._TTS_MODEL_CURSOR = 2  # rotation starts on TTS_MODELS[2]
     eng._ask("မင်္ဂလာပါ", "Kore")
     _key, model, contents = recorder.calls[0]
     assert model == "gemini-3.8-flash-lite-tts"

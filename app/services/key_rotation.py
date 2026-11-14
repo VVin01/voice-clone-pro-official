@@ -44,6 +44,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
@@ -55,6 +56,12 @@ logger = logging.getLogger(__name__)
 
 # Same 30 minutes the VoxCPM token pool uses for quota-class failures.
 DEFAULT_COOLDOWN_SECONDS = 1800.0
+# Part 2 (§2C Item 1): per-(model, key) cooldowns use short initial backoff
+# (25-65 s for RPM / transient 429s) instead of immediately cooling the key
+# across ALL models for 30 minutes.
+MODEL_INITIAL_COOLDOWN_MIN = 25.0
+MODEL_INITIAL_COOLDOWN_MAX = 65.0
+MODEL_COOLDOWN_BACKOFF_STEPS = (120.0, 300.0, 900.0, DEFAULT_COOLDOWN_SECONDS)
 
 # Batch DN: per-model DAILY request caps (requests per day per key /
 # project), measured firsthand from the AI Studio rate-limit table
@@ -279,11 +286,15 @@ class KeyHealth:
         # default); tests inject a fake clock to control expiry.
         self._clock = clock or time.time
         self._lock = threading.Lock()
-        self._cooldowns: dict[str, float] = {}  # key_id -> cooldown expiry
+        self._cooldowns: dict[str, float] = {}  # kid or "model:kid" -> expiry
+        self._strikes: dict[str, int] = {}  # kid or "model:kid" -> strike count
         self._cursor = 0
         # Batch DN usage ledger: model -> key_id -> [pacific_day, count]
         # of SUCCESSFUL calls. Digests only, like the cooldowns.
         self._usage: dict[str, dict[str, list]] = {}
+        # Part 2 (§2C Item 3): per-model TTS accept / DQ-reject counters
+        # keyed by model -> [pacific_day, accept, dq_reject] in aj_kh:gemini_tts.
+        self._tts_stats: dict[str, list] = {}
         # Batch AJ (M12) persistence backstop — off for direct instances.
         self._persist_provider: str | None = None
         self._persist_loaded = False
@@ -308,9 +319,7 @@ class KeyHealth:
 
     def snapshot_state(self) -> dict:
         """JSON-serialisable snapshot (digests + expiries + cursor +
-        today's usage counts, Batch DN). Usage entries from a stale
-        Pacific day are pruned here so a snapshot never carries
-        yesterday's counts into a restore."""
+        today's usage counts + per-model TTS accept/DQ stats)."""
         with self._lock:
             now = self._clock()
             cooldowns = {
@@ -328,12 +337,21 @@ class KeyHealth:
                 }
                 if rows:
                     usage[model] = rows
-            return {
+            tts_stats: dict[str, dict[str, int]] = {}
+            for model, entry in self._tts_stats.items():
+                if entry and entry[0] == day:
+                    acc, rej = int(entry[1]), int(entry[2])
+                    if acc > 0 or rej > 0:
+                        tts_stats[model] = {"accept": acc, "dq_reject": rej}
+            snap = {
                 "v": 1,
                 "cooldowns": cooldowns,
                 "cursor": int(self._cursor),
                 "usage": usage,
             }
+            if tts_stats:
+                snap["tts_stats"] = tts_stats
+            return snap
 
     def restore_state(self, state: object) -> None:
         """Merge a snapshot back in; expired cooldowns are pruned."""
@@ -379,6 +397,25 @@ class KeyHealth:
                             existing[1] = max(int(existing[1]), count)
                         else:
                             target[str(kid)] = [day, count]
+            raw_stats = state.get("tts_stats") or {}
+            if isinstance(raw_stats, dict):
+                day = self._pacific_day()
+                for model, row in raw_stats.items():
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        acc = max(0, int(row.get("accept") or 0))
+                        rej = max(0, int(row.get("dq_reject") or 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if acc <= 0 and rej <= 0:
+                        continue
+                    cur = self._tts_stats.get(str(model))
+                    if cur is not None and cur[0] == day:
+                        cur[1] = max(int(cur[1]), acc)
+                        cur[2] = max(int(cur[2]), rej)
+                    else:
+                        self._tts_stats[str(model)] = [day, acc, rej]
 
     def load_persisted(self) -> bool:
         """Lazy one-shot load from the store. True when state was read."""
@@ -421,27 +458,127 @@ class KeyHealth:
         self._persist_timer = timer
         timer.start()
 
-    def in_cooldown(self, key: str) -> bool:
-        self._maybe_load()
-        kid = key_id(key)
-        with self._lock:
-            return self._cooldowns.get(kid, 0.0) > self._clock()
+    def _is_cooling_locked(self, kid: str, model: str, now: float) -> bool:
+        """Check whether `kid` is in cooldown (key-wide OR for `model`). Caller holds `_lock`."""
+        if self._cooldowns.get(kid, 0.0) > now:
+            return True
+        if model:
+            return self._cooldowns.get(f"{model}:{kid}", 0.0) > now
+        prefix = f":{kid}"
+        return any(
+            k.endswith(prefix) and until > now
+            for k, until in self._cooldowns.items()
+        )
 
-    def mark_failure(self, key: str, cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS) -> None:
-        """Sideline `key` for `cooldown_seconds` (default 30 min, for 429/quota)."""
+    def in_cooldown(self, key: str, model: str = "") -> bool:
         self._maybe_load()
         kid = key_id(key)
+        model_norm = str(model or "").strip()
         with self._lock:
-            self._cooldowns[kid] = self._clock() + max(0.0, float(cooldown_seconds))
+            return self._is_cooling_locked(kid, model_norm, self._clock())
+
+    def mark_failure(
+        self,
+        key: str,
+        cooldown_seconds: float | None = None,
+        *,
+        model: str = "",
+    ) -> None:
+        """Sideline `key` (per `(model, key)` when `model` is given, else key-wide).
+
+        Part 2 (§2C Item 1): when `model` is supplied and no explicit
+        `cooldown_seconds` is forced, strike 1 cools 25–65 s (short RPM/429
+        window) with exponential backoff on subsequent consecutive strikes
+        for that `(model, key)` instead of locking the key across all
+        models for 30 minutes.
+        """
+        self._maybe_load()
+        kid = key_id(key)
+        model_norm = str(model or "").strip()
+        scope = f"{model_norm}:{kid}" if model_norm else kid
+        with self._lock:
+            strike = self._strikes.get(scope, 0) + 1
+            self._strikes[scope] = strike
+            if cooldown_seconds is not None:
+                ttl = max(0.0, float(cooldown_seconds))
+            elif model_norm:
+                if strike <= 1:
+                    ttl = random.uniform(
+                        MODEL_INITIAL_COOLDOWN_MIN,
+                        MODEL_INITIAL_COOLDOWN_MAX,
+                    )
+                else:
+                    idx = min(strike - 2, len(MODEL_COOLDOWN_BACKOFF_STEPS) - 1)
+                    ttl = MODEL_COOLDOWN_BACKOFF_STEPS[idx]
+            else:
+                ttl = DEFAULT_COOLDOWN_SECONDS
+            self._cooldowns[scope] = self._clock() + ttl
         self._schedule_persist()
 
-    def mark_success(self, key: str) -> None:
-        """A key that just worked is healthy again: clear any cooldown."""
+    def mark_success(self, key: str, *, model: str = "") -> None:
+        """A key that just worked is healthy again: clear its cooldown/strikes."""
         self._maybe_load()
         kid = key_id(key)
+        model_norm = str(model or "").strip()
         with self._lock:
-            self._cooldowns.pop(kid, None)
+            if model_norm:
+                scope = f"{model_norm}:{kid}"
+                self._cooldowns.pop(scope, None)
+                self._strikes.pop(scope, None)
+            else:
+                self._cooldowns.pop(kid, None)
+                self._strikes.pop(kid, None)
+                suffix = f":{kid}"
+                for k in [k for k in self._cooldowns if k.endswith(suffix)]:
+                    self._cooldowns.pop(k, None)
+                for k in [k for k in self._strikes if k.endswith(suffix)]:
+                    self._strikes.pop(k, None)
         self._schedule_persist()
+
+    def record_tts_outcome(self, model: str, *, accepted: bool) -> None:
+        """Increment today's accept or DQ-reject counter for `model`."""
+        self._maybe_load()
+        model_norm = str(model or "").strip()
+        if not model_norm:
+            return
+        with self._lock:
+            day = self._pacific_day()
+            entry = self._tts_stats.get(model_norm)
+            if entry is None or entry[0] != day:
+                entry = [day, 0, 0]
+                self._tts_stats[model_norm] = entry
+            if accepted:
+                entry[1] = int(entry[1]) + 1
+            else:
+                entry[2] = int(entry[2]) + 1
+        self._schedule_persist()
+
+    def record_tts_accept(self, model: str) -> None:
+        self.record_tts_outcome(model, accepted=True)
+
+    def record_tts_dq_reject(self, model: str) -> None:
+        self.record_tts_outcome(model, accepted=False)
+
+    def tts_model_stats(self, model: str | None = None) -> dict:
+        """Return today's per-model `{accept, dq_reject, total, dq_reject_rate}` counters."""
+        self._maybe_load()
+        with self._lock:
+            day = self._pacific_day()
+            def _fmt(entry: list | None) -> dict[str, float | int]:
+                if not entry or entry[0] != day:
+                    return {"accept": 0, "dq_reject": 0, "total": 0, "dq_reject_rate": 0.0}
+                acc = int(entry[1])
+                rej = int(entry[2])
+                tot = acc + rej
+                rate = round(rej / tot, 4) if tot > 0 else 0.0
+                return {"accept": acc, "dq_reject": rej, "total": tot, "dq_reject_rate": rate}
+            if model is not None:
+                return _fmt(self._tts_stats.get(str(model or "").strip()))
+            return {
+                m: _fmt(entry)
+                for m, entry in self._tts_stats.items()
+                if entry and entry[0] == day and (int(entry[1]) > 0 or int(entry[2]) > 0)
+            }
 
     # -- Batch DN: usage ledger + quota-aware ordering -----------------
 
@@ -531,7 +668,11 @@ class KeyHealth:
             start = self._cursor % len(pool)
             self._cursor += 1
             now = self._clock()
-            cooling = {kid for kid, until in self._cooldowns.items() if until > now}
+            cooling = {
+                key_id(k)
+                for k in pool
+                if self._is_cooling_locked(key_id(k), model, now)
+            }
             used = {key_id(k): self._usage_count_today(key_id(k), model) for k in pool}
         self._schedule_persist()  # cursor advanced — coalesced write
         rotated = pool[start:] + pool[:start]
@@ -556,7 +697,11 @@ class KeyHealth:
             start = self._cursor % len(pool)
             self._cursor += 1
             now = self._clock()
-            cooling = {kid for kid, until in self._cooldowns.items() if until > now}
+            cooling = {
+                key_id(k)
+                for k in pool
+                if self._is_cooling_locked(key_id(k), "", now)
+            }
         self._schedule_persist()  # cursor advanced — coalesced write
         rotated = pool[start:] + pool[:start]
         healthy = [k for k in rotated if key_id(k) not in cooling]
@@ -578,7 +723,11 @@ class KeyHealth:
             return pool
         with self._lock:
             now = self._clock()
-            cooling = {kid for kid, until in self._cooldowns.items() if until > now}
+            cooling = {
+                key_id(k)
+                for k in pool
+                if self._is_cooling_locked(key_id(k), "", now)
+            }
         if not cooling:
             return pool
         healthy = [k for k in pool if key_id(k) not in cooling]
@@ -589,7 +738,9 @@ class KeyHealth:
     def reset(self) -> None:
         with self._lock:
             self._cooldowns.clear()
+            self._strikes.clear()
             self._usage.clear()
+            self._tts_stats.clear()
             self._cursor = 0
         # A reset is also a persisted reset: a later process must not
         # resurrect state this process deliberately cleared.

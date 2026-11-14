@@ -629,7 +629,7 @@ async def test_b1_worker_auto_deliver_oversize_notifies_instead(db_session, tmp_
     mock_bot.send_audio.assert_not_called()
     mock_bot.send_message.assert_awaited_once()
     kwargs = mock_bot.send_message.call_args[1]
-    assert "50MB" in kwargs["text"]
+    assert "50 MB" in kwargs["text"]
     targets = [
         btn.web_app.url
         for row in kwargs["reply_markup"].inline_keyboard
@@ -674,7 +674,7 @@ async def test_b1_bot_callback_oversize_routes_to_miniapp(db_session, tmp_path, 
     cb.bot.send_audio.assert_not_called()
     cb.bot.send_message.assert_awaited_once()
     kwargs = cb.bot.send_message.call_args[1]
-    assert "50MB" in kwargs["text"]
+    assert "50 MB" in kwargs["text"]
     assert "/api/" not in kwargs["text"]
     targets = [
         btn.web_app.url
@@ -688,7 +688,7 @@ def test_b1_too_large_locale_key_in_both_bot_locales():
     from app.services.i18n import t
     for lang in ("my", "en"):
         text = t("clone_audio_too_large_text", lang, job_id="abc12345")
-        assert "50MB" in text
+        assert "50 MB" in text
         assert "abc12345" in text
 
 

@@ -194,9 +194,9 @@ def test_corrupt_riff_container_rejected_in_ask_instead_of_writing_noise(tmp_pat
 
 
 def test_duration_gate_uses_unwrapped_pcm_not_c2pa_padding(tmp_path, monkeypatch):
-    # Text length 20 -> max plausible = 20 / 9 + 4 = 6.222 s.
-    # Give 6.20 s of pure PCM (< bound) plus 7,655-byte C2PA (+0.16s if not stripped -> 6.36s!).
-    pcm_under_bound = b"\x00\x01" * int(6.20 * 24000)
+    # Text length 20 -> max plausible = min(20/9+4, 20/8.5+2.2) = 4.5529 s.
+    # Give 4.48 s of pure PCM (< bound) plus 7,655-byte C2PA (+0.16s if not stripped -> 4.64s!).
+    pcm_under_bound = b"\x00\x01" * int(4.48 * 24000)
     wav_under_bound = _wav_with_c2pa(pcm_under_bound, c2pa_size=7655)
     assert gte._pcm_seconds(wav_under_bound) > gte._max_plausible_seconds(20)
     assert gte._pcm_seconds(pcm_under_bound) < gte._max_plausible_seconds(20)

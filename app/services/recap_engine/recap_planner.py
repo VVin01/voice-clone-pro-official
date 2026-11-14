@@ -1477,6 +1477,9 @@ def build_story_context(
     checkpoint_path: Path | None = None,
     source_fingerprint: str = "",
     reuse: bool = True,
+    part_index: int = 1,
+    total_parts: int = 1,
+    prev_part_summary: str = "",
 ) -> dict[str, Any]:
     """Create durable context memory in a separate pass before translation, resumably."""
     batches = _batch_by_size(units, max_items=batch_max_items, max_chars=24000)
@@ -1499,6 +1502,11 @@ def build_story_context(
                     completed = 0
         except Exception:
             completed = 0
+    part_note = ""
+    if int(total_parts or 1) > 1:
+        part_note = f"\nMULTI-PART CONTEXT: Part {int(part_index)}/{int(total_parts)}."
+        if int(part_index) > 1 and str(prev_part_summary or "").strip():
+            part_note += f" Earlier part summary (keep exact names/roles): {str(prev_part_summary).strip()}"
     for i, batch in enumerate(batches, 1):
         if i <= completed:
             continue
@@ -1507,7 +1515,7 @@ def build_story_context(
         title_block = f"\nVIDEO TITLE / PREMISE (အဓိက ခေါင်းစဉ်နှင့် ဇာတ်လမ်းနောက်ခံ):\n{source_title.strip()}\n" if source_title.strip() else ""
         prompt = f"""
 You are building CONTEXT MEMORY for a later translation task.
-Do not translate the transcript now. Do not write narration. Do not summarize away named facts.{title_block}
+Do not translate the transcript now. Do not write narration. Do not summarize away named facts.{title_block}{part_note}
 Read this next chronological source chunk and UPDATE the existing compact context memory.
 The memory exists only to keep names, relationships, terminology, locations, identities,
 and the current story state consistent when later translation requests are sent in separate API calls.
@@ -1662,14 +1670,28 @@ def translate_batch(
     is_female: bool = False,
     _split_depth: int = 0,
     previous_context_is_source: bool = False,
+    part_index: int = 1,
+    total_parts: int = 1,
+    prev_part_summary: str = "",
 ) -> list[dict[str, Any]]:
     style = str(narrative_style or "viral").lower().strip()
     is_very_first_batch = not previous_context and bool(current) and int(current[0].get("id", 0)) == 1
-    intro_rule = (
-        "- For ID 1 ONLY (the opening line of the video), you may open with a brief, punchy hook introducing the situation, then immediately narrate ID 1's actual scene event. The hook must establish the story's premise concretely from the source itself — where we are, who matters, and what is going wrong — and it must AGREE with the opening scene: never tease a moment and then restart the story from a different place or contradict the first scene."
-        if is_very_first_batch
-        else "- DO NOT use opening intro phrases ('ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', 'ပရိသတ်ကြီးတို့ရေ...') anywhere in this batch because the story is already in progress!"
-    )
+    part_idx_val = max(1, int(part_index or 1))
+    total_parts_val = max(1, int(total_parts or 1))
+    if is_very_first_batch:
+        if part_idx_val > 1:
+            intro_rule = (
+                f"- PART {part_idx_val}/{total_parts_val} SEAMLESS CONTINUATION (NO INTRO CLICHÉS): Do NOT say "
+                "'ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', or restart from Episode 1 — pick up directly from "
+                "the previous part's momentum and open IDs 1–2 with a punchy immediate hook for THIS part's turn."
+            )
+        else:
+            intro_rule = (
+                "- For ID 1 ONLY (the opening line of the video), you may open with a brief, punchy hook introducing the situation, then immediately narrate ID 1's actual scene event. The hook must establish the story's premise concretely from the source itself — where we are, who matters, and what is going wrong — and it must AGREE with the opening scene: never tease a moment and then restart the story from a different place or contradict the first scene.\n"
+                "- MANDATORY 3-SECOND HOOK (IDs 1–2 FOR EVERY STYLE): Open IDs 1–2 within the first ~3 seconds with ONE sharp, concrete curiosity loop or tension trigger from the real story (never spoilers, never generic clichés), then glide straight into the scene."
+            )
+    else:
+        intro_rule = "- DO NOT use opening intro phrases ('ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', 'ပရိသတ်ကြီးတို့ရေ...') anywhere in this batch because the story is already in progress!"
     pov_pronoun = "ကျွန်မ" if is_female else "ကျွန်တော်"
     pov_possessive = "ကျွန်မရဲ့" if is_female else "ကျွန်တော့်ရဲ့"
     gender_rule = (
@@ -1679,6 +1701,7 @@ def translate_batch(
     )
     if style == "viral":
         style_prompt = f"""PRESENTATION STYLE: VIRAL MOVIE RECAP STORYTELLER (🔥 ဆွဲဆောင်မှုရှိပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင်)
+- DISTINCT IDENTITY: Fast-paced, high-retention social recap energy — snap straight to the turning point, heighten stakes cleanly with urgent spoken connectives ('အဲဒီမှာတင်...', 'မထင်ထားတဲ့ အချိုးအကွေ့က...', 'တကယ်တော့...'), and keep every beat kinetic.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the listener clearly understands WHO is doing WHAT, TO WHOM, and WHY (ဇာတ်လမ်း အချိတ်အဆက် မိပြီး အဓိပ္ပာယ်ပြည့်စုံရမည်).
 {intro_rule}
 {gender_rule}
@@ -1691,6 +1714,7 @@ def translate_batch(
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     elif style == "funny":
         style_prompt = f"""PRESENTATION STYLE: HUMOROUS & WITTY MOVIE RECAP (😂 ပေါ့ပါးသွက်လက်ပြီး အချိတ်အဆက်မိသော ဟာသဇာတ်လမ်းပြော စတိုင်)
+- DISTINCT IDENTITY: Light-hearted, sharp comic commentary — deliver the plot cleanly while adding relatable Burmese colloquial irony, dry understatement, or amused timing ('ဟုတ်ကဲ့ပါ တကယ်ကြီး...', 'အလွဲကြီး လွဲတော့တာပဲ', 'ဒီအခြေအနေကြီးကတော့ ရယ်ရခက် ငိုရခက်'). Never stiff or melodramatic on comic scenes.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the plot is 100% coherent and easy to follow.
 {intro_rule}
 {gender_rule}
@@ -1701,6 +1725,7 @@ def translate_batch(
 - STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်ပါတယ်'။"""
     elif style == "pov":
         style_prompt = f"""PRESENTATION STYLE: FIRST-PERSON PROTAGONIST POV (👁️ အဓိကဇာတ်ကောင် '{pov_pronoun}' ရှုထောင့်မှ ကိုယ်တိုင်ကြုံတွေ့ရသလို အချိတ်အဆက်မိမိ ပြောပြသော စတိုင်)
+- DISTINCT IDENTITY: Confessional, intimate inner monologue — the listener is inside '{pov_pronoun}'s head feeling every shock, suspicion, and split-second decision directly from the heart, never sounding like an external YouTube commentator.
 - SEAMLESS FIRST-PERSON POV CONTINUITY IS PRIORITY #1: Narrate the entire story consistently from the main character's own first-person perspective using '{pov_pronoun}' ('{pov_possessive}').
 - PRONOUN & SPEAKER CLARITY RULE (အလွန်အရေးကြီး):
   1. Always refer to yourself (the protagonist narrator) as '{pov_pronoun}' — NEVER use crude 'ငါ' for narration and NEVER switch to third-person narrator commentary ('သူတို့...', 'ကောင်မလေးက...', '...ကြပါတော့တယ်ဗျာ') in later scenes!
@@ -1713,6 +1738,7 @@ def translate_batch(
 - STRICTLY PROHIBITED: Dry, bookish literary writing ('သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်')."""
     elif style == "dramatic":
         style_prompt = f"""PRESENTATION STYLE: SUSPENSE / THRILLER DRAMATIC RECAP (🎭 သည်းထိတ်ရင်ဖို ဒရာမာ ဇာတ်လမ်းပြော စတိုင်)
+- DISTINCT IDENTITY: Dark, atmospheric thriller tension — build suspense through sensory details, ominous silence, and sharp staccato peril beats; never use bubbly slang, casual giggles, or hype filler.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment, clearly explaining the cause-and-effect of every tense moment.
 {intro_rule}
 {gender_rule}
@@ -1722,6 +1748,7 @@ def translate_batch(
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     else:  # standard / narrator
         style_prompt = f"""PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (📖 သဘာဝကျပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
+- DISTINCT IDENTITY: Classic cinema-grade storyteller — warm, lucid, emotionally grounded chronological flow that lets drama breathe naturally without hyper viral hype or comedy riffs.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the entire video sounds like ONE continuous, coherent story.
 {intro_rule}
 {gender_rule}
@@ -1790,8 +1817,17 @@ HARD RULES:
 9. Timestamps are local metadata. Return no timestamps.
 10. Return JSON only with top-level key "items". Each item must contain integer "id" and non-empty string "translation".
 11. NEVER return placeholders such as "...", "…", dashes, or empty text.
+12. BURMESE NUMERALS & SUBTITLE PHRASING: ALWAYS write numbers, ages, counts, years, and times in Burmese numerals or Burmese words (e.g. '၁၀', 'ဆယ်', '၂၀၂၆', '၃ နာရီ' — NEVER ASCII digits '0–9' or Latin acronyms, because subtitle fonts show blank boxes for ASCII). Group words naturally with spaces every 10–22 characters (natural '၊'/'။' clause breaks ~20–42 chars) for clean subtitle wrapping.
 """
     title_block = f"\nVIDEO TITLE / PREMISE (အဓိက ခေါင်းစဉ်နှင့် ဇာတ်လမ်းနောက်ခံ):\n{source_title.strip()}\n" if source_title.strip() else ""
+    part_block = ""
+    if total_parts_val > 1:
+        part_block = f"\nSERIES PART CONTEXT: This video is Part {part_idx_val} of {total_parts_val}."
+        if part_idx_val > 1 and str(prev_part_summary or "").strip():
+            part_block += f"\nPREVIOUS PART RECAP SUMMARY (continue seamlessly from here with identical names): {str(prev_part_summary).strip()}"
+        if part_idx_val < total_parts_val:
+            part_block += f"\nPART-END CLIFFHANGER: On the very final segment of Part {part_idx_val}, end on a tense open beat teasing what comes next in Part {part_idx_val + 1} without concluding the overall story."
+        part_block += "\n"
     # Batch AL-P: parallel batches (all but the first pending one) are
     # translated before their predecessor's translation exists, so
     # their previous context is the predecessor's SOURCE lines. The
@@ -1808,7 +1844,7 @@ HARD RULES:
         prev_header = "PREVIOUS CONTEXT (READ-ONLY):"
         prev_block = _translation_lines(previous_context) if previous_context else "(none)"
     prompt = f"""
-{task_rules}{title_block}
+{task_rules}{title_block}{part_block}
 
 STORY CONTEXT MEMORY:
 {json.dumps(story_context, ensure_ascii=False)}
@@ -1914,6 +1950,11 @@ CRITICAL OUTPUT ID PROTOCOL:
         context_limit = max(1, len(previous_context) or 6)
         lookahead_limit = max(6, len(next_context) or 0)
         left_next = (right_rows + list(next_context or []))[:lookahead_limit]
+        _split_part_kw = (
+            {"part_index": part_idx_val, "total_parts": total_parts_val, "prev_part_summary": prev_part_summary}
+            if (total_parts_val > 1 or part_idx_val > 1 or bool(prev_part_summary))
+            else {}
+        )
         translated_left = translate_batch(
             ai,
             source_title=source_title,
@@ -1925,6 +1966,7 @@ CRITICAL OUTPUT ID PROTOCOL:
             narrative_style=narrative_style,
             is_female=is_female,
             _split_depth=_split_depth + 1,
+            **_split_part_kw,
         )
         right_prev = (list(previous_context or []) + translated_left)[-context_limit:]
         translated_right = translate_batch(
@@ -1938,6 +1980,7 @@ CRITICAL OUTPUT ID PROTOCOL:
             narrative_style=narrative_style,
             is_female=is_female,
             _split_depth=_split_depth + 1,
+            **_split_part_kw,
         )
         combined = translated_left + translated_right
         _assert_no_adjacent_translation_duplicates(combined, list(previous_context or []))
@@ -1972,14 +2015,23 @@ def audit_and_repair_batch(
     style = str(narrative_style or "narrator").lower().strip()
     pov_pronoun = "ကျွန်မ" if is_female else "ကျွန်တော်"
     target_name = f"Burmese movie recap narration ({style.upper()} style)"
+    style_drift_checklist = {
+        "viral": "- STYLE CHECK (VIRAL): Needs kinetic pace, sharp curiosity hooks on scene turns, and punchy transitions — repair flat slow documentary phrasing.",
+        "funny": "- STYLE CHECK (FUNNY): Needs crisp comedic timing, playful colloquial irony, or amused contrast on light beats (while staying respectful in tragedy) — repair humorless dry phrasing.",
+        "pov": f"- STRICT POV CONSISTENCY: Every row MUST stay in intimate first-person protagonist POV using '{pov_pronoun}'. NEVER use crude 'ငါ' for the narrator, NEVER let another character's direct quote use 'ငါ' without clear reported-speech framing, and NEVER drift into third-person commentator voice or 'ဗျာ'/'ခင်ဗျာ'!",
+        "dramatic": "- STYLE CHECK (DRAMATIC): Needs tense noir dread, sensory details, and short breathless danger beats vs lingering calm beats — repair cheerful slang or flat casual summary.",
+        "narrator": "- STYLE CHECK (NARRATOR): Needs warm, grounded cinema storytelling clarity — repair hyped viral slang, random jokes, or stiff bookish phrasing.",
+    }
+    style_check_line = style_drift_checklist.get(style, style_drift_checklist["narrator"])
+    gender_check_line = (
+        "- VOICE GENDER CONSISTENCY: The narrator voice is FEMALE — NEVER use male particles 'ဗျာ' or 'ခင်ဗျာ'!"
+        if (is_female and style != "pov")
+        else "- VOICE GENDER CONSISTENCY: Keep natural spoken Burmese sentence endings."
+    )
     audit_style_rule = (
-        f"- STRICT POV CONSISTENCY: Every row MUST stay in first-person protagonist POV using '{pov_pronoun}'. NEVER use crude 'ငါ' for the narrator, NEVER let another character's direct quote use 'ငါ' without clear reported-speech framing, and NEVER switch to third-person commentary or use 'ဗျာ'/'ခင်ဗျာ'!"
-        if style == "pov"
-        else (
-            "- VOICE GENDER CONSISTENCY: The narrator voice is FEMALE — NEVER use male particles 'ဗျာ' or 'ခင်ဗျာ'!"
-            if is_female
-            else "- VOICE GENDER CONSISTENCY: Keep natural spoken Burmese sentence endings."
-        )
+        f"{style_check_line}\n{gender_check_line}"
+        if style != "pov"
+        else style_check_line
     )
 
     def _audit_window(
@@ -2022,6 +2074,7 @@ For EVERY CURRENT ID check:
 - scene anchoring & subject clarity: a row that opens a new scene re-names its actor, place and stake instead of floating a bare pronoun carried over from the previous scene; dialogue is narrated as beats, never transcribed question-and-answer exchanges; no vague invented filler replacing the source's concrete facts; complete standard words only (no truncated coined forms); named characters are called by the source's own names, never by vague coined role paraphrases; the standard form 'အဲဒီ' is used (never 'အဲ့ဒီ');
 - spelling & word-choice discipline: standard spelling throughout — never the malformed 'တကြီး' adverb family ('အံ့ဩတကြီး', 'စိုးရိမ်တကြီး' — write 'အံ့ဩစွာ', 'စိုးရိမ်စွာ'); every foreign name keeps ONE consistent natural spelling across all rows (never stacked inventions like 'လို့စ်'); things are called by their true names (a robot is 'စက်ရုပ်', never 'သရဲ'); natural constructions only (never 'အန္တရာယ်ကြားဆီ' or 'နင်းခြေတာခံရတော့မှာ'); sentence endings are varied — a batch where nearly every row closes '…ခဲ့ပါတယ်' needs repair;
 - strictly standard Myanmar Unicode characters only (no homoglyphs from Ethiopic or Georgian scripts);
+- BURMESE NUMERALS ONLY (font tofu guard): replace any ASCII digits '0–9' with Burmese numerals or words (e.g. '၁၀', '၂၀၂၆');
 - no shifted chain where a row narrates another row;
 - no adjacent duplicate/near-duplicate outputs for different sources;
 - consistent names/pronouns throughout the story.
@@ -2186,24 +2239,43 @@ def make_translation_plan(units: list[dict[str, Any]], video_duration: float, *,
     }
 
 
+_AUDIT_BOOKISH_RE = re.compile(r"(?:သဖြင့်|ပေသည်|ခဲ့ပေသည်|လျက်ရှိသည်|သည်(?=[။\s]|$))")
+_AUDIT_TAGYI_RE = re.compile(r"\S+တကြီး")
+_AUDIT_AED_RE = re.compile(r"အဲ့ဒီ")
+_AUDIT_ASCII_DIGITS_RE = re.compile(r"[0-9]")
+
+
 def _batch_audit_flags(
     translated: list[dict[str, Any]],
     previous_rows: list[dict[str, Any]],
     next_units: list[dict[str, Any]],
 ) -> list[str]:
-    """Batch AL-P audit-on-flag: the free local detectors (the same
-    ones translate_batch validates with and build() warns with) over
-    one translated batch. A non-empty result means the batch deserves
-    the paid audit_and_repair pass; clean batches skip it."""
+    """Batch AL-P + §2B audit-on-flag: free local regex/structural detectors
+    over one translated batch. Non-empty -> run paid audit_and_repair pass;
+    clean batches skip the LLM audit (after Batch-1 hook spot-check)."""
     flags: list[str] = []
+    khae_rows = 0
     for row in translated:
-        text = row.get("translation")
+        uid = int(row["id"])
+        text = str(row.get("translation") or "")
         if _foreign_letters(text):
-            flags.append(f"foreign letters (ID {int(row['id'])})")
+            flags.append(f"foreign letters (ID {uid})")
         if _latin_words(text):
-            flags.append(f"English words kept (ID {int(row['id'])})")
+            flags.append(f"English words kept (ID {uid})")
         if _note_text(text):
-            flags.append(f"note-like text (ID {int(row['id'])})")
+            flags.append(f"note-like text (ID {uid})")
+        if _AUDIT_BOOKISH_RE.search(text):
+            flags.append(f"bookish 'သည်'/'သဖြင့်' (ID {uid})")
+        if _AUDIT_TAGYI_RE.search(text):
+            flags.append(f"'-တကြီး' typo (ID {uid})")
+        if _AUDIT_AED_RE.search(text):
+            flags.append(f"'အဲ့ဒီ' spelling (ID {uid})")
+        if _AUDIT_ASCII_DIGITS_RE.search(text):
+            flags.append(f"ASCII digits (ID {uid})")
+        if "ခဲ့ပါတယ်" in text:
+            khae_rows += 1
+    if translated and khae_rows >= 3 and (khae_rows * 2) >= len(translated):
+        flags.append(f"overused 'ခဲ့ပါတယ်' ({khae_rows}/{len(translated)})")
     if find_repeated_next_lines(translated, previous_rows):
         flags.append("repeated seam line")
     if find_near_duplicates(translated, previous_rows):
@@ -2233,6 +2305,9 @@ def translate_batches_in_parallel(
     is_female: bool = False,
     max_workers: int = 3,
     on_commit: Callable[[list[dict[str, Any]]], None] | None = None,
+    part_index: int = 1,
+    total_parts: int = 1,
+    prev_part_summary: str = "",
 ) -> list[dict[str, Any]]:
     """Batch AL-P: translate the pending batches concurrently (max 3),
     then commit them strictly in batch order.
@@ -2264,6 +2339,12 @@ def translate_batches_in_parallel(
     results: dict[int, list[dict[str, Any]]] = {}
     errors: dict[int, BaseException] = {}
 
+    _part_kw = (
+        {"part_index": int(part_index), "total_parts": int(total_parts), "prev_part_summary": str(prev_part_summary or "")}
+        if (int(total_parts or 1) > 1 or int(part_index or 1) > 1 or bool(prev_part_summary))
+        else {}
+    )
+
     def _task(pos: int, bi: int) -> None:
         batch = batches[bi]
         if pos == 0:
@@ -2287,6 +2368,7 @@ def translate_batches_in_parallel(
                 narrative_style=narrative_style,
                 is_female=is_female,
                 previous_context_is_source=prev_is_source,
+                **_part_kw,
             )
         except BaseException as exc:
             errors[bi] = exc
@@ -2316,9 +2398,13 @@ def translate_batches_in_parallel(
         nxt = _next_units(batch)
         if translation_audit:
             flags = _batch_audit_flags(translated, prev_committed, nxt)
-            if flags or (bi + 1) % 4 == 0:
+            # §2B Item 7: call the paid LLM audit only when regex/structural
+            # flags fire, keeping the Batch-1 (bi == 0) hook spot-check.
+            if flags or bi == 0:
                 if flags:
                     log(f"🔎 Translate batch {bi + 1}/{len(batches)} audit — flags: {', '.join(flags)}")
+                else:
+                    log(f"🔎 Translate batch 1/{len(batches)} hook spot-check audit")
                 translated = audit_and_repair_batch(
                     ai,
                     translated,
@@ -2379,6 +2465,9 @@ class RecapPlanBuilder:
         is_female: bool = False,
         source_language: str = "",
         translate_workers: int | None = None,
+        part_index: int = 1,
+        total_parts: int = 1,
+        prev_part_summary: str = "",
     ):
         self.runtime_root = Path(runtime_root).resolve()
         self.gemini_env_path = Path(gemini_env_path).expanduser().resolve() if str(gemini_env_path or "").strip() else None
@@ -2394,6 +2483,9 @@ class RecapPlanBuilder:
         self.is_female = bool(is_female)
         # User-picked STT language ("" = auto-detect via WHISPER_LANGUAGE).
         self.source_language = normalize_source_language(source_language)
+        self.part_index = max(1, int(part_index or 1))
+        self.total_parts = max(1, int(total_parts or 1))
+        self.prev_part_summary = str(prev_part_summary or "").strip()
         self.translation_batch_max_items = max(5, int(translation_batch_max_items))
         self.story_context_batch_max_items = max(10, int(story_context_batch_max_items))
         self.context_overlap = max(0, int(context_overlap))
@@ -2482,6 +2574,8 @@ class RecapPlanBuilder:
             except Exception:
                 pass
 
+        stage_timings: dict[str, float] = {}
+        t_transcribe_start = time.monotonic()
         duration = _probe_video_duration(self.ffprobe, source)
         audio_duration = _probe_audio_duration(self.ffprobe, source)
         self.log(f"🎬 Source: {source}")
@@ -2625,6 +2719,15 @@ class RecapPlanBuilder:
 
         if self.should_stop():
             raise InterruptedError("STOP requested after timestamp transcription")
+        stage_timings["transcribe"] = round(max(0.0, time.monotonic() - t_transcribe_start), 3)
+
+        part_idx_val = max(1, int(self.part_index or 1))
+        total_parts_val = max(1, int(self.total_parts or 1))
+        part_kw = (
+            {"part_index": part_idx_val, "total_parts": total_parts_val, "prev_part_summary": self.prev_part_summary}
+            if (total_parts_val > 1 or part_idx_val > 1 or bool(self.prev_part_summary))
+            else {}
+        )
 
         with _pushd(self.runtime_root):
             ai = ai_mod.AIService()
@@ -2639,6 +2742,7 @@ class RecapPlanBuilder:
 
             self.progress(1, 4, "Story context memory")
             self.log("🧠 [2/4] Gemini Story Context Memory pass...")
+            t_context_start = time.monotonic()
             context_source_fp = fp + "|seg:" + segmentation_profile
             story_context = build_story_context(
                 ai, units,
@@ -2649,7 +2753,9 @@ class RecapPlanBuilder:
                 checkpoint_path=context_checkpoint_file,
                 source_fingerprint=context_source_fp,
                 reuse=reuse,
+                **part_kw,
             )
+            stage_timings["context"] = round(max(0.0, time.monotonic() - t_context_start), 3)
             _atomic_json(context_file, {
                 "planner_mode": PLANNER_MODE,
                 "source_fingerprint": context_source_fp,
@@ -2658,6 +2764,7 @@ class RecapPlanBuilder:
 
             self.progress(2, 4, "Timestamp translation")
             self.log("🌐 [3/4] Gemini English → Myanmar translation — narrator source | V2 Smart Sync | no summary / no shortening...")
+            t_translate_start = time.monotonic()
             batches = _batch_by_size(units, max_items=self.translation_batch_max_items, max_chars=16000)
             translated_all: list[dict[str, Any]] = []
             if reuse and translations_file.is_file():
@@ -2779,6 +2886,7 @@ class RecapPlanBuilder:
                     is_female=self.is_female,
                     max_workers=self.translate_workers,
                     on_commit=_write_translations_checkpoint,
+                    **part_kw,
                 )
             else:
                 for bi0 in pending:
@@ -2802,6 +2910,7 @@ class RecapPlanBuilder:
                             log=self.log,
                             narrative_style=self.narrative_style,
                             is_female=self.is_female,
+                            **part_kw,
                         )
                     except GeminiKeyPoolExhaustedError as exc:
                         saved = len(translated_all)
@@ -2812,16 +2921,20 @@ class RecapPlanBuilder:
                             f"remaining: {remaining}. Resume will start at ID {batch_ids[0]:05d}."
                         ) from exc
                     if self.translation_audit:
-                        translated = audit_and_repair_batch(
-                            ai,
-                            translated,
-                            story_context=story_context,
-                            previous_context=prev,
-                            next_context=nxt,
-                            log=self.log,
-                            narrative_style=self.narrative_style,
-                            is_female=self.is_female,
-                        )
+                        flags = _batch_audit_flags(translated, prev, nxt)
+                        if flags or bi0 == 0:
+                            if flags:
+                                self.log(f"🔎 Translate batch {bi}/{len(batches)} audit — flags: {', '.join(flags)}")
+                            translated = audit_and_repair_batch(
+                                ai,
+                                translated,
+                                story_context=story_context,
+                                previous_context=prev,
+                                next_context=nxt,
+                                log=self.log,
+                                narrative_style=self.narrative_style,
+                                is_female=self.is_female,
+                            )
                     translated = _drop_foreign_letters(translated, self.log)
                     for row in translated:
                         if _latin_words(row.get("translation")):
@@ -2836,9 +2949,11 @@ class RecapPlanBuilder:
 
         if [int(x["id"]) for x in translated_all] != [int(x["id"]) for x in units]:
             raise RuntimeError("Final translation ID sequence mismatch")
+        stage_timings["translate"] = round(max(0.0, time.monotonic() - t_translate_start), 3)
 
         self.progress(3, 4, "Build Smart Sync plan")
         self.log("🧩 [4/4] V2 Smart Sync boundaries → full source coverage + midpoint gap split...")
+        t_plan_start = time.monotonic()
         plan = make_translation_plan(
             translated_all,
             duration,
@@ -2855,6 +2970,13 @@ class RecapPlanBuilder:
         plan["target_language"] = "mm"
         plan["translation_batch_count"] = len(batches)
         plan["atomic_unit_count"] = len(translated_all)
+        plan["part_index"] = part_idx_val
+        plan["total_parts"] = total_parts_val
+        _tail_lines = [str(r.get("translation") or "").strip() for r in translated_all[-2:] if str(r.get("translation") or "").strip()]
+        _plot_tail = [str(p).strip() for p in (story_context.get("plot_state") or [])[-2:] if str(p).strip()]
+        plan["part_summary"] = " | ".join(_plot_tail + _tail_lines)[:380]
+        stage_timings["plan"] = round(max(0.0, time.monotonic() - t_plan_start), 3)
+        plan["stage_timings"] = stage_timings
         plan["translation_rules"] = {
             "task": "translate",
             "summarize": False,

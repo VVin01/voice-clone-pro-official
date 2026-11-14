@@ -598,9 +598,12 @@ def test_recap_poller_has_cancelled_branch_with_proven_refund_only():
 
 
 def test_voice_poller_has_cancelled_branch():
-    # Voice + recap pollers, plus the Batch AW TTS poller — every
-    # polling loop stops honestly on a cancelled job.
-    assert APP_JS.count('data.status === "CANCELLED"') == 3
+    # Four polling / startup-resume handlers handle CANCELLED cleanly:
+    # (1) voice status poller (startJobPolling),
+    # (2) recap status poller (recapPollTick in startRecapJobPolling),
+    # (3) Batch AW TTS status poller (pollTtsJob),
+    # (4) startup deep-link recap resume (checkStartupDeepLinks, §2F).
+    assert APP_JS.count('data.status === "CANCELLED"') == 4
     assert 't("voice_cancelled_toast")' in APP_JS
 
 
@@ -747,5 +750,5 @@ def test_action_fallback_errors_are_localized():
 
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("20261114_r148") == 4
+    assert INDEX_HTML.count("20261114_r149") == 4
     assert "20261103_r44" not in INDEX_HTML

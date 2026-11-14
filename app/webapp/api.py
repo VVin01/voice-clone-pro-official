@@ -502,7 +502,7 @@ async def _save_upload_streaming(upload_file, dest_path, max_bytes: int) -> int:
         # Never leak the raw exception (paths/internals) to the client:
         # log it server-side, return a clean user-safe detail.
         logger.warning("Failed to save uploaded file %s: %s", dest_path, exc)
-        raise HTTPException(status_code=500, detail="ဖိုင် သိမ်းဆည်းရာတွင် အဆင်မပြေ ဖြစ်သွားပါသည် — ခဏနေ ပြန်ကြိုးစားပါ")
+        raise HTTPException(status_code=500, detail="ဖိုင် သိမ်းဆည်းရာတွင် အဆင်မပြေ ဖြစ်သွားပါသည်")
     return total
 
 
@@ -526,7 +526,7 @@ def _require_disk_headroom() -> None:
     if free < DISK_HEADROOM_MIN_FREE_BYTES:
         raise HTTPException(
             status_code=507,
-            detail="ဆာဗာ သိုလှောင်နေရာ ပြည့်လုနီးပါး ဖြစ်နေပါသည်။ ခဏနေ ပြန်ကြိုးစားပေးပါ ခင်ဗျာ။",
+            detail="ဆာဗာ သိုလှောင်နေရာ ပြည့်လုနီးပါး ဖြစ်နေပါတယ် — ခဏနေ ပြန်စမ်းကြည့်ပါ။",
         )
 
 
@@ -1015,12 +1015,12 @@ def _validate_logo_image(path: Path, expected_format: str) -> None:
     except Exception:
         raise HTTPException(
             status_code=400,
-            detail="တင်လိုက်သော ဖိုင်သည် မှန်ကန်သော ပုံဖိုင် မဟုတ်ပါ — PNG, JPG သို့မဟုတ် WEBP ပုံ ပြန်ရွေးပေးပါ",
+            detail="တင်လိုက်တဲ့ ဖိုင်ဟာ မှန်ကန်တဲ့ ပုံဖိုင် မဟုတ်ပါ — PNG, JPG ဒါမှမဟုတ် WEBP ပုံ ပြန်ရွေးပေးပါ",
         )
     if fmt != expected_format or not (1 <= width <= 4096 and 1 <= height <= 4096):
         raise HTTPException(
             status_code=400,
-            detail="တင်လိုက်သော ဖိုင်သည် မှန်ကန်သော ပုံဖိုင် မဟုတ်ပါ — PNG, JPG သို့မဟုတ် WEBP ပုံ ပြန်ရွေးပေးပါ",
+            detail="တင်လိုက်တဲ့ ဖိုင်ဟာ မှန်ကန်တဲ့ ပုံဖိုင် မဟုတ်ပါ — PNG, JPG ဒါမှမဟုတ် WEBP ပုံ ပြန်ရွေးပေးပါ",
         )
 
 
@@ -2121,7 +2121,10 @@ _RECAP_STAGE_RANK = {
     "tts": 5,
     "sync": 6,
     "split": 6,
-    "finalize": 7,
+    "png": 7,
+    "overlay": 8,
+    "mux": 9,
+    "finalize": 10,
 }
 _RECAP_STAGE_WITNESS_FILE = "progress_stage.json"
 _STAGE_WITNESS_RANKS: dict[str, int] = {}
@@ -2252,6 +2255,8 @@ async def _persist_recap_warnings(entry: dict) -> None:
             if state is None:
                 return
             state["warnings"] = list(entry.get("warnings") or [])
+            if entry.get("stage_timings"):
+                state["stage_timings"] = dict(entry.get("stage_timings") or {})
             job.recap_config = json.dumps(state, ensure_ascii=False)
             await session.commit()
     except Exception as exc:
@@ -2881,7 +2886,7 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         "user_id": job.user_id,
         "title": clean_title,
         "status": "QUEUED",
-        "progress_percent": 5,
+        "progress_percent": 0,
         "progress_step": "0/4",
         "progress_label": t("recap_progress_picking_up", getattr(user, "language_code", None) or "my"),
         "created_at": time.time(),
@@ -3614,8 +3619,13 @@ async def get_user_profile(
             select(Job)
             .where(
                 Job.user_id == user.id,
-                Job.created_at >= recent_cutoff,
-                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                or_(
+                    Job.status == JobStatus.WAITING_CHOICE.value,
+                    (
+                        (Job.created_at >= recent_cutoff)
+                        & Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value])
+                    ),
+                ),
             )
             .order_by(Job.created_at.desc())
             .limit(5)
@@ -4045,7 +4055,7 @@ async def create_voice_job(
     # spoken length; create_voice_clone_job converts again idempotently.
     clean_text = convert_zawgyi_to_unicode(req.text.strip())
     if not clean_text:
-        raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ရန် လိုအပ်ပါသည်")
+        raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ပေးပါ")
 
     _require_valid_preset_voice(req.preset_voice)
 
@@ -4055,8 +4065,8 @@ async def create_voice_job(
     if len(clean_text) > char_limit:
         raise HTTPException(
             status_code=400,
-            detail=f"စာသား စာလုံးရေ ({len(clean_text)}) သည် ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါသည်။ "
-                   + (f"အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ {settings.character_limit_purchased:,} အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
+            detail=f"စာသား စာလုံးရေ ({len(clean_text)}) ဟာ ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါတယ်။ "
+                   + (f"Free အသုံးပြုသူတွေအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါတယ်။ စာလုံးရေ {settings.character_limit_purchased:,} အထိ သုံးလိုပါက Plan ဝယ်ယူနိုင်ပါတယ်။" if not is_vip else ""),
         )
 
     # Determine engine & resolve authorized model
@@ -4098,7 +4108,7 @@ async def create_voice_job(
         res = await db.execute(stmt)
         model = res.scalar_one_or_none()
         if not model:
-            raise HTTPException(status_code=404, detail="အသံမော်ဒယ် မတွေ့ရှိပါ")
+            raise HTTPException(status_code=404, detail="အသံမော်ဒယ် ရှာမတွေ့ပါ")
 
     # Dynamically resolve edge_voice from preset_voice or gender_preset
     resolved_edge_voice = "my-MM-ThihaNeural"
@@ -4172,7 +4182,7 @@ async def create_voice_job_with_audio(
     # as the JSON endpoint above.
     clean_text = convert_zawgyi_to_unicode(text.strip())
     if not clean_text:
-        raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ရန် လိုအပ်ပါသည်")
+        raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ပေးပါ")
 
     _require_valid_preset_voice(preset_voice)
 
@@ -4182,8 +4192,8 @@ async def create_voice_job_with_audio(
     if len(clean_text) > char_limit:
         raise HTTPException(
             status_code=400,
-            detail=f"စာသား စာလုံးရေ ({len(clean_text)}) သည် ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါသည်။ "
-                   + (f"အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါသည်။ စာလုံးရေ {settings.character_limit_purchased:,} အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။" if not is_vip else ""),
+            detail=f"စာသား စာလုံးရေ ({len(clean_text)}) ဟာ ကန့်သတ်ချက် ({char_limit} လုံး) ထက် ကျော်လွန်နေပါတယ်။ "
+                   + (f"Free အသုံးပြုသူတွေအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါတယ်။ စာလုံးရေ {settings.character_limit_purchased:,} အထိ သုံးလိုပါက Plan ဝယ်ယူနိုင်ပါတယ်။" if not is_vip else ""),
         )
 
     # Determine engine & resolve authorized model
@@ -4225,7 +4235,7 @@ async def create_voice_job_with_audio(
         res = await db.execute(stmt)
         model = res.scalar_one_or_none()
         if not model:
-            raise HTTPException(status_code=404, detail="အသံမော်ဒယ် မတွေ့ရှိပါ")
+            raise HTTPException(status_code=404, detail="အသံမော်ဒယ် ရှာမတွေ့ပါ")
 
     ref_audio_path = None
     if reference_audio and reference_audio.filename:
@@ -4250,7 +4260,7 @@ async def create_voice_job_with_audio(
             if exc.status_code == 413:
                 raise HTTPException(
                     status_code=413,
-                    detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါသည်",
+                    detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါတယ်",
                 )
             raise
         if saved_bytes > 100:
@@ -4678,6 +4688,7 @@ _LIVE_ACTIVE_STATUSES = (
     JobStatus.PENDING.value,
     JobStatus.QUEUED.value,
     JobStatus.RUNNING.value,
+    JobStatus.WAITING_CHOICE.value,
 )
 
 
@@ -4728,14 +4739,10 @@ def _live_job_payload(job, registry_entry=None, now=None, medians=None) -> Dict[
     elif is_recap:
         if status == JobStatus.SUCCESS.value:
             progress_percent, stage_index, stage_total = 100, 4, 4
-        elif status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
-            progress_percent, stage_index, stage_total = 15, 1, 4
+        elif status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.WAITING_CHOICE.value):
+            progress_percent, stage_index, stage_total = 0, 0, 4
     else:
-        if status == JobStatus.QUEUED.value:
-            progress_percent = 45
-        elif status == JobStatus.RUNNING.value:
-            progress_percent = 80
-        elif status == JobStatus.SUCCESS.value:
+        if status == JobStatus.SUCCESS.value:
             progress_percent = 100
 
     created = job.created_at
@@ -4929,7 +4936,11 @@ async def cancel_voice_job(
         or job.engine == "recap"
     ):
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.status not in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+    if job.status not in (
+        JobStatus.QUEUED.value,
+        JobStatus.RUNNING.value,
+        JobStatus.WAITING_CHOICE.value,
+    ):
         raise HTTPException(
             status_code=409,
             detail="လုပ်ဆောင်နေဆဲ အသံ အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
@@ -5244,7 +5255,7 @@ async def extract_media_info(
     raw_url = req.url.strip()
     url = extract_first_url(raw_url) or raw_url
     if not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="မှန်ကန်တဲ့ Video URL ထည့်သွင်းပေးပါ")
 
     try:
         # unshorten_url follows redirects synchronously — off the
@@ -5445,7 +5456,7 @@ async def fetch_downloader_format(
     raw_url = req.url.strip()
     url = extract_first_url(raw_url) or raw_url
     if not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="မှန်ကန်တဲ့ Video URL ထည့်သွင်းပေးပါ")
     try:
         # Same event-loop fix as the extract endpoint (deep-hunt #4 D1):
         # redirect-following is synchronous network work.
@@ -5491,7 +5502,7 @@ async def fetch_downloader_format(
         # the user learns WHY the source failed — blocked, removed,
         # login-walled — instead of one generic line for every cause.
         logger.warning(f"downloader fetch ({fmt}) failed for {canonical_url}: {e}")
-        detail = str(e) if str(e).startswith("⚠️") else "ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။"
+        detail = str(e) if str(e).startswith("⚠️") else "ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါ။"
         raise HTTPException(status_code=400, detail=detail)
 
     if not file_path or not Path(file_path).is_file():
@@ -5500,7 +5511,7 @@ async def fetch_downloader_format(
         # "Download failed" — the only non-localized detail left in
         # this endpoint. Same wording as the fetch-failure detail
         # above so the client renders one consistent message.
-        raise HTTPException(status_code=400, detail="ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။")
+        raise HTTPException(status_code=400, detail="ဒေါင်းလုဒ် မအောင်မြင်ပါ။ လင့်ခ်ကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါ။")
 
     meta = {
         "download_id": download_id,
@@ -5558,7 +5569,7 @@ async def send_downloader_to_telegram(
     meta = _dl_require_owner(download_id, user)
     file_path = _dl_dir(download_id) / str(meta.get("filename") or "")
     if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
+        raise HTTPException(status_code=404, detail="ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါ။")
     if file_path.stat().st_size > _DL_TELEGRAM_LIMIT:
         raise HTTPException(status_code=413, detail="file_too_large_telegram")
 
@@ -5575,10 +5586,10 @@ async def send_downloader_to_telegram(
             await bot.send_audio(chat_id=user.id, audio=upload, caption=caption, parse_mode="HTML")
         else:
             await bot.send_document(chat_id=user.id, document=upload, caption=caption, parse_mode="HTML")
-        return {"success": True, "message": "Telegram သို့ ဖိုင် ပို့ပြီးပါပြီခင်ဗျာ!"}
+        return {"success": True, "message": "Telegram ဆီ ဖိုင်ပို့ပြီးပါပြီ!"}
     except Exception as e:
         logger.warning(f"Failed to send downloader file {download_id} to {user.id}: {e}")
-        raise HTTPException(status_code=500, detail="Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်")
+        raise HTTPException(status_code=500, detail="Telegram ဆီ ပေးပို့၍ မရပါ — ခဏနေ ပြန်စမ်းကြည့်ပါ။")
     finally:
         await bot.session.close()
 
@@ -5591,7 +5602,7 @@ async def upload_recap_video(
 ):
     """Directly upload a video file (MP4/MKV/MOV/WEBM) for Movie Recap."""
     if not video_file.filename:
-        raise HTTPException(status_code=400, detail="ဗီဒီယိုဖိုင် ရွေးချယ်ပေးပါခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="ဗီဒီယိုဖိုင် ရွေးချယ်ပေးပါ")
 
     # Batch AJ M1: refuse the upload up front when the disk is nearly
     # full instead of writing up to 1 GB into a dying filesystem.
@@ -5683,7 +5694,7 @@ async def upload_recap_voice_ref(
     if not _can_use_custom_logo(user):
         raise HTTPException(status_code=403, detail=RECAP_OWN_VOICE_VIP_ONLY_DETAIL)
     if not reference_audio.filename:
-        raise HTTPException(status_code=400, detail="အသံနမူနာဖိုင် ရွေးချယ်ပေးပါခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="အသံနမူနာဖိုင် ရွေးချယ်ပေးပါ")
 
     _require_disk_headroom()
     ref_dir = settings.storage_root / "temp" / "voxcpm_refs"
@@ -5700,7 +5711,7 @@ async def upload_recap_voice_ref(
         if exc.status_code == 413:
             raise HTTPException(
                 status_code=413,
-                detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါသည်",
+                detail="အသံနမူနာဖိုင် အရွယ်အစား 50 MB ထက် ကျော်လွန်နေပါတယ်",
             )
         raise
     if saved_bytes <= 100:
@@ -5733,10 +5744,10 @@ async def upload_recap_sub_font(
     a file the PNG renderer cannot load is rejected here instead
     of failing (or silently falling back) at render time."""
     if not font_file.filename:
-        raise HTTPException(status_code=400, detail="Font ဖိုင် ရွေးချယ်ပေးပါခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="Font ဖိုင် ရွေးချယ်ပေးပါ")
     ext = Path(font_file.filename).suffix.lower()
     if ext not in RECAP_SUB_FONT_EXTS:
-        raise HTTPException(status_code=400, detail="TTF သို့မဟုတ် OTF font ဖိုင်သာ တင်နိုင်ပါသည်ခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="TTF သို့မဟုတ် OTF font ဖိုင်သာ တင်နိုင်ပါတယ်")
     _require_disk_headroom()
     font_dir = settings.storage_root / "temp" / "sub_fonts"
     font_dir.mkdir(parents=True, exist_ok=True)
@@ -5750,7 +5761,7 @@ async def upload_recap_sub_font(
         if exc.status_code == 413:
             raise HTTPException(
                 status_code=413,
-                detail="Font ဖိုင် အရွယ်အစား 5 MB ထက် ကျော်လွန်နေပါသည်",
+                detail="Font ဖိုင် အရွယ်အစား 5 MB ထက် ကျော်လွန်နေပါတယ်",
             )
         raise
     try:
@@ -5761,7 +5772,7 @@ async def upload_recap_sub_font(
         save_file.unlink(missing_ok=True)
         raise HTTPException(
             status_code=400,
-            detail="Font ဖိုင် မမှန်ကန်ပါ — ဖတ်ယူ၍ မရပါ။ အခြား font ဖိုင် စမ်းကြည့်ပါခင်ဗျာ။",
+            detail="Font ဖိုင် မမှန်ကန်ပါ — ဖတ်ယူ၍ မရပါ။ အခြား font ဖိုင် ပြောင်းစမ်းကြည့်ပါ။",
         )
     return {
         "success": True,
@@ -5916,7 +5927,7 @@ async def recap_preview_frame(
     raw_url = (req.url or "").strip()
     url = extract_first_url(raw_url) or raw_url
     if not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="မှန်ကန်တဲ့ Video URL ထည့်သွင်းပေးပါ")
     try:
         canonical_url = await asyncio.to_thread(unshorten_url, url)
         from app.services.url_safety import validate_public_url
@@ -6144,7 +6155,7 @@ async def recap_preview_composite(
         raw_url = (req.url or "").strip()
         url = extract_first_url(raw_url) or raw_url
         if not url.startswith("http"):
-            raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+            raise HTTPException(status_code=400, detail="မှန်ကန်တဲ့ Video URL ထည့်သွင်းပေးပါ")
         try:
             canonical_url = await asyncio.to_thread(unshorten_url, url)
             from app.services.url_safety import validate_public_url
@@ -6179,13 +6190,13 @@ async def recap_preview_composite(
                 except Exception as e:
                     logger.warning(f"preview-composite download failed for {canonical_url}: {e}")
                     detail = classify_source_error(str(e), canonical_url) or (
-                        "⚠️ ဒီ လင့်ခ်မှ နမူနာပုံ မရယူနိုင်ပါ။ ဗီဒီယိုဖိုင်ကို Mini App ရှိ "
-                        "'📁 Video Upload' မှ တိုက်ရိုက် တင်၍ ပြုလုပ်နိုင်ပါသည် ခင်ဗျာ။"
+                        "⚠️ ဒီလင့်ခ်ကနေ နမူနာပုံ မရယူနိုင်ပါ။ ဗီဒီယိုဖိုင်ကို Mini App ထဲက "
+                        "'📁 Video Upload' ကနေ တိုက်ရိုက်တင်ပြီး ပြုလုပ်နိုင်ပါတယ်။"
                     )
                     raise HTTPException(status_code=422, detail=detail)
                 source_path = Path(downloaded)
     else:
-        raise HTTPException(status_code=400, detail="မှန်ကန်သော Video URL ထည့်သွင်းပေးပါခင်ဗျာ")
+        raise HTTPException(status_code=400, detail="မှန်ကန်တဲ့ Video URL ထည့်သွင်းပေးပါ")
 
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
     logo_path_arg = _resolve_recap_logo_path(user.id, req.include_logo, is_vip)
@@ -6253,7 +6264,7 @@ async def recap_preview_composite(
         )
     except Exception as e:
         logger.warning(f"preview-composite render failed: {e}")
-        raise HTTPException(status_code=422, detail="နမူနာပုံ မရယူနိုင်ပါ ခင်ဗျာ")
+        raise HTTPException(status_code=422, detail="နမူနာပုံ မရယူနိုင်ပါ")
     if out_img and Path(out_img).is_file():
         return FileResponse(out_img, media_type="image/jpeg")
     raise HTTPException(status_code=404, detail="Frame not found")
@@ -6839,14 +6850,17 @@ def _recap_reference_trimmed(job_dir) -> bool:
 # backwards within a job: callers pass the entry's current percent and
 # keep the returned maximum.
 _RECAP_STAGE_BANDS = {
-    "download": (5, 15),
-    "transcribe": (15, 30),
-    "context": (30, 42),
-    "translate": (42, 54),
-    "plan": (54, 64),
-    "tts": (64, 82),
-    "sync": (82, 95),
-    "finalize": (95, 99),
+    "download": (5, 14),
+    "transcribe": (14, 28),
+    "context": (28, 38),
+    "translate": (38, 50),
+    "plan": (50, 60),
+    "tts": (60, 76),
+    "sync": (76, 85),
+    "png": (85, 89),
+    "overlay": (89, 95),
+    "mux": (95, 98),
+    "finalize": (98, 99),
     "script_ready": (60, 64),
     "split": (90, 95),
 }
@@ -6858,6 +6872,9 @@ _RECAP_STAGE_STEPS = {
     "plan": "2/4",
     "tts": "3/4",
     "sync": "3/4",
+    "png": "3/4",
+    "overlay": "4/4",
+    "mux": "4/4",
     "finalize": "4/4",
     "script_ready": "2/4",
     "split": "3/4",
@@ -6944,6 +6961,12 @@ def _recap_stage_progress(label, prev_percent=0):
         stage = "tts"
     elif "smart sync video" in low or tail.startswith("video "):
         stage = "sync"
+    elif "rendering subtitle png" in low or "subtitle pngs" in low:
+        stage = "png"
+    elif "compositing video overlay" in low or "production overlay pass" in low:
+        stage = "overlay"
+    elif "muxing final video" in low or "final mux" in low:
+        stage = "mux"
     else:
         return None, "", prev, ""
     lo, hi = _RECAP_STAGE_BANDS[stage]
@@ -7694,7 +7717,7 @@ async def _execute_recap_background_job(
 
     entry["status"] = "RUNNING"
     entry["eta_run_started_at"] = time.time()
-    entry["progress_percent"] = 15
+    entry["progress_percent"] = 0
     entry["progress_step"] = "1/4"
     _recap_set_entry_label(entry, "📥 Downloading source video from URL...", stage="download")
 
@@ -7944,10 +7967,12 @@ async def _execute_recap_background_job(
         # reviewed whole-video script, so it is never segmented.
         segmented_mode = False
         segment_files: list[dict] = []
+        _seg_dl_sec = 0.0
         if phase == "full" and req.split_video:
             if is_local_media(canonical_source_url):
                 local_source = str(Path(canonical_source_url).resolve())
             else:
+                _seg_dl_t0 = time.monotonic()
                 local_source, _dl_info = await loop.run_in_executor(
                     None,
                     functools.partial(
@@ -7957,6 +7982,7 @@ async def _execute_recap_background_job(
                         max_height=1080 if is_vip else 720,
                     ),
                 )
+                _seg_dl_sec = round(max(0.0, time.monotonic() - _seg_dl_t0), 3)
             from app.services.downloader import probe_local_media
 
             _src_dur = float(
@@ -8093,7 +8119,7 @@ async def _execute_recap_background_job(
                 )
                 _cg_route_ctx = None
 
-        def _make_recap_fn(source, target_dir):
+        def _make_recap_fn(source, target_dir, **extra_kw):
             return functools.partial(
             downloader.generate_recap_video,
             url_or_path=source,
@@ -8157,12 +8183,14 @@ async def _execute_recap_background_job(
             is_vip=is_vip,
             max_duration_seconds=max_dur_limit,
             progress_callback=progress_cb,
+            **extra_kw,
         )
 
         part_urls: list[dict] = []
         first_part_dest: Optional[str] = None
         _cg_outcomes: list[dict] = []
         _seg_media_records: list[tuple[int, Optional[str], Optional[str], Optional[float]]] = []
+        _seg_stage_timings: list[dict] = []
         if segmented_mode:
             # Process every segment through the normal pipeline; each
             # segment render becomes one deliverable part (≤cap each).
@@ -8176,16 +8204,27 @@ async def _execute_recap_background_job(
             total_segs = len(segment_files)
             recap_res = None
             seg_warnings: list[str] = []
+            running_prev_summary = ""
             for seg in segment_files:
                 _recap_set_entry_label(
                     entry, f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
                 )
                 seg_res = await loop.run_in_executor(
                     None,
-                    _make_recap_fn(seg["path"], str(job_dir / f"seg{seg['n']:02d}")),
+                    _make_recap_fn(
+                        seg["path"],
+                        str(job_dir / f"seg{seg['n']:02d}"),
+                        part_index=int(seg["n"]),
+                        total_parts=total_segs,
+                        prev_part_summary=running_prev_summary,
+                    ),
                 )
+                if seg_res.get("part_summary"):
+                    running_prev_summary = str(seg_res["part_summary"]).strip()
                 if seg_res.get("gemini_route"):
                     _cg_outcomes.append(seg_res["gemini_route"])
+                if isinstance(seg_res.get("stage_timings"), dict):
+                    _seg_stage_timings.append(seg_res["stage_timings"])
                 for _w in (seg_res.get("warnings") or []):
                     if _w not in seg_warnings:
                         seg_warnings.append(_w)
@@ -8302,8 +8341,17 @@ async def _execute_recap_background_job(
         # segmented jobs union the warnings of every segment render.
         if segmented_mode:
             entry["warnings"] = seg_warnings
+            _agg_st: dict[str, float] = {}
+            if _seg_dl_sec > 0:
+                _agg_st["download"] = _seg_dl_sec
+            for _s_res_item in (_seg_stage_timings or []):
+                for _sk, _sv in (_s_res_item or {}).items():
+                    if isinstance(_sv, (int, float)):
+                        _agg_st[_sk] = round(_agg_st.get(_sk, 0.0) + float(_sv), 3)
+            entry["stage_timings"] = _agg_st
         else:
             entry["warnings"] = list(recap_res.get("warnings") or [])
+            entry["stage_timings"] = dict(recap_res.get("stage_timings") or {})
 
         entry["status"] = "SUCCESS"
         entry["progress_percent"] = 100
@@ -9504,7 +9552,7 @@ async def create_recap_job(
     if get_curated_voice(_voice_slug) is None and _voice_slug not in RECAP_LEGACY_EDGE_VOICE_SLUGS:
         raise HTTPException(
             status_code=400,
-            detail="ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ အသံ ပြန်ရွေးပေးပါခင်ဗျာ။",
+            detail="ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ — အသံ ပြန်ရွေးပေးပါ။",
         )
 
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
@@ -9615,9 +9663,9 @@ async def create_recap_job(
             if is_vip and req.split_video and req.script_review:
                 hint = _SCRIPT_REVIEW_SPLIT_HINT
             elif is_vip:
-                hint = "✂️ ၁၀ မိနစ်ထက် ရှည်သော ဗီဒီယိုများကို 'အပိုင်းခွဲ ထုတ်မယ်' ကို ဖွင့်ပြီး အပိုင်းလိုက် ထုတ်နိုင်ပါသည်ခင်ဗျာ။"
+                hint = "'အပိုင်းခွဲ ထုတ်မယ်' ကို ဖွင့်ပြီး ၁၀ မိနစ်ထက် ရှည်တဲ့ ဗီဒီယိုတွေကို အပိုင်းလိုက် ထုတ်နိုင်ပါတယ်။"
             else:
-                hint = "ပိုရှည်သော ဗီဒီယိုများ (၁၀ မိနစ်အထိ) ပြုလုပ်လိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။"
+                hint = "၁၀ မိနစ်အထိ ဗီဒီယို ရှည်ရှည် ဖန်တီးလိုပါက Plan ဝယ်ယူနိုင်ပါတယ်။"
             from app.services.downloader import recap_over_limit_message
 
             raise HTTPException(
@@ -9820,7 +9868,7 @@ async def create_recap_job(
         "user_id": user.id,
         "title": clean_display_title,
         "status": "QUEUED",
-        "progress_percent": 5,
+        "progress_percent": 0,
         "progress_step": "0/4",
         "progress_label": t("recap_progress_preparing", user.language_code or "my"),
         "created_at": time.time(),
@@ -9865,6 +9913,7 @@ async def create_recap_job(
         "voice_refunded": False,
         "voice_seconds_refunded": 0,
         "parts_count": None,
+        "stage_timings": {},
     }
 
     # Record Recap Job in database table for 24h history and tracking
@@ -10154,6 +10203,7 @@ async def get_recap_status(
             "voice_settled": bool(entry.get("voice_settled")),
             "voice_refunded": bool(entry.get("voice_refunded")),
             "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
+            "stage_timings": entry.get("stage_timings") or {},
         }
 
     # Cold path only (registry miss): open the one DB session this
@@ -10168,7 +10218,8 @@ async def get_recap_status(
             job = await _require_job_owner(_session, job_id, user)
 
     is_success = (job.status == JobStatus.SUCCESS.value)
-    is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value))
+    is_waiting_choice = (job.status == JobStatus.WAITING_CHOICE.value)
+    is_active = (job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.WAITING_CHOICE.value))
     # Result warnings persisted on the Job row at completion (blur
     # safefix 2026-11-03); rows that predate persistence have none.
     _db_state = _load_persisted_recap_state(job)
@@ -10249,9 +10300,9 @@ async def get_recap_status(
         "warnings": _db_warnings,
         "output_size_bytes": _r_size,
         "telegram_sendable": _r_sendable,
-        "progress_percent": 100 if is_success else (15 if is_active else 0),
-        "progress_step": "4/4" if is_success else ("1/4" if is_active else ""),
-        "progress_label": t("webapp_status_completed", user.language_code or "my") if is_success else (t("webapp_status_processing", user.language_code or "my") if is_active else (job.error_message or t("webapp_status_failed", user.language_code or "my"))),
+        "progress_percent": 100 if is_success else 0,
+        "progress_step": "4/4" if is_success else ("0/4" if is_active else ""),
+        "progress_label": t("webapp_status_completed", user.language_code or "my") if is_success else (t("live_job_status_waiting_choice", user.language_code or "my") if is_waiting_choice else (t("webapp_status_processing", user.language_code or "my") if is_active else (job.error_message or t("webapp_status_failed", user.language_code or "my")))),
         "error_message": job.error_message,
         "parts": _db_parts,
         "segmented": len(_db_parts) >= 2,
@@ -10270,6 +10321,7 @@ async def get_recap_status(
         "voice_refunded": bool(_db_state.get("voice_refunded")),
         "voice_seconds_refunded": int(_db_state.get("voice_seconds_refunded") or 0),
         "is_expired": is_expired,
+        "stage_timings": (_db_state.get("stage_timings") or {}),
         "download_urls": _with_stream_url({
             "video": f"/api/recap/download/{job_id}/video" if media_available else None,
             "audio": f"/api/recap/download/{job_id}/audio" if media_available else None,
@@ -10345,7 +10397,7 @@ async def update_recap_script(
         # apply_script_edits' ValueErrors are developer-facing
         # validation text; log the specifics, answer cleanly (F11).
         logger.warning(f"Script edit rejected for job {job_id}: {exc}")
-        raise HTTPException(status_code=400, detail="Script ပြင်ဆင်မှု မအောင်မြင်ပါ — အကြောင်းအရာကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါခင်ဗျာ။")
+        raise HTTPException(status_code=400, detail="Script ပြင်ဆင်မှု မအောင်မြင်ပါ — အကြောင်းအရာကို ပြန်စစ်ပြီး ထပ်ကြိုးစားပါ။")
 
     if result["updated"]:
         atomic_write_json(plan_path, plan)
@@ -10384,7 +10436,6 @@ async def render_recap_job(
     req = RecapConfigRequest(**snapshot)
     entry["status"] = "RUNNING"
     entry["eta_run_started_at"] = time.time()
-    entry["progress_percent"] = 15
     entry["progress_step"] = "3/4"
     _recap_set_entry_label(entry, "🗣️ Rendering with your reviewed script...", stage="tts")
     asyncio.create_task(_run_recap_background_job(
@@ -10498,9 +10549,9 @@ async def cancel_recap_job(
         raise HTTPException(status_code=404, detail="Recap job not found")
 
     entry_status = str((entry or {}).get("status") or "")
-    cancellable = entry_status in ("QUEUED", "RUNNING", "SCRIPT_READY") or (
+    cancellable = entry_status in ("QUEUED", "RUNNING", "SCRIPT_READY", "WAITING_CHOICE") or (
         job is not None
-        and job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
+        and job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.WAITING_CHOICE.value)
     )
     if not cancellable:
         raise HTTPException(
@@ -10529,6 +10580,7 @@ async def cancel_recap_job(
             "recap_credits": int(entry.get("credits_refunded") or 0),
             "voice_refunded": bool(entry.get("voice_refunded")),
             "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
+            "stage_timings": entry.get("stage_timings") or {},
         }
 
     return {
@@ -10591,7 +10643,7 @@ async def send_recap_demo(
         logger.warning(f"Could not send recap demo to user {user.id}: {exc}")
         raise HTTPException(
             status_code=502,
-            detail="နမူနာ ပို့တာ မအောင်မြင်ပါ — ခဏနေ ပြန်စမ်းပါခင်ဗျာ။",
+            detail="နမူနာ ပို့တာ မအောင်မြင်ပါ — ခဏနေ ပြန်စမ်းပါ။",
         )
     finally:
         await bot.session.close()
@@ -10731,7 +10783,7 @@ async def send_recap_to_telegram(
     video_path = resolve_recap_deliverable_path(job_id, "video", result_path=db_res_path)
 
     if not video_path or not Path(video_path).is_file():
-        raise HTTPException(status_code=404, detail="ဗီဒီယို ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
+        raise HTTPException(status_code=404, detail="ဗီဒီယိုဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါ။")
 
     entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
     clean_title = _clean_recap_display_title(entry.get("title"), db_job.input_text if db_job else None)
@@ -10816,15 +10868,15 @@ def _tts_error_detail(reason: str, user: User) -> str:
         # submit paths' message.
         is_admin = settings.is_admin(user.id)
         limit = tts_character_limit(user, is_admin=is_admin)
-        detail = f"စာသား အလွန်ရှည်နေပါသည်။ စာလုံးရေ {limit:,} လုံးအောက် ထားပေးပါခင်ဗျာ။"
+        detail = f"စာသား ရှည်လွန်းနေပါတယ်။ စာလုံးရေ {limit:,} လုံးအောက် ထားပေးပါ။"
         if not is_admin and user.account_category != AccountCategory.PURCHASED.value:
             detail += (
-                f" အခမဲ့ (Free) အသုံးပြုသူများအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါသည်။"
-                f" စာလုံးရေ {settings.character_limit_purchased:,} အထိ အသုံးပြုလိုပါက VIP သို့ အဆင့်မြှင့်တင်ပါခင်ဗျာ။"
+                f" Free အသုံးပြုသူတွေအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါတယ်။"
+                f" စာလုံးရေ {settings.character_limit_purchased:,} အထိ သုံးလိုပါက VIP Plan ဝယ်ယူနိုင်ပါတယ်။"
             )
         return detail
     if reason == "EMPTY_TEXT":
-        return "အသံပြောင်းရန် စာသား အရင် ရိုက်ထည့်ပေးပါခင်ဗျာ။"
+        return "အသံပြောင်းဖို့ စာသား အရင် ရိုက်ထည့်ပေးပါ။"
     if reason == "CONCURRENT_JOB_LIMIT_EXCEEDED":
         return "လုပ်ဆောင်နေဆဲ အလုပ်များ ရှိနေပါသည်။ ပြီးဆုံးမှ ထပ်မံ ကြိုးစားပါခင်ဗျာ။"
     if reason in ("INVALID_ENGINE", "INVALID_VOICE", "INVALID_SPEED"):
@@ -11034,7 +11086,7 @@ async def send_voice_to_telegram(
                 audio_path = cand
 
     if not audio_path or not audio_path.is_file():
-        raise HTTPException(status_code=404, detail="အသံဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါခင်ဗျာ။")
+        raise HTTPException(status_code=404, detail="အသံဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါ။")
 
     # Telegram Bot API send cap (hunt #3 B1): voice WAVs run ~5.8 MB/min,
     # so a ≳9-minute result exceeds 50 MB and the send would fail inside
@@ -11060,16 +11112,16 @@ async def send_voice_to_telegram(
         )
         caption = (
             f"🎧 <b>TTS အသံ</b>\n"
-            f"✨ <i>Mini App TTS Tab မှ တောင်းဆိုချက်အရ သင့်ထံ ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
+            f"✨ <i>Mini App TTS Tab ကနေ ဖန်တီးထားတဲ့ အသံဖိုင်ပါ။</i>"
         ) if _is_tts_job else (
             f"🎙️ <b>AI Myanmar Voice Clone</b>\n"
-            f"✨ <i>Mini App မှ တောင်းဆိုချက်အရ သင့်ထံ ပေးပို့လိုက်ပါသည်ခင်ဗျာ။</i>"
+            f"✨ <i>Mini App ကနေ ဖန်တီးထားတဲ့ အသံဖိုင်ပါ။</i>"
         )
         await bot.send_audio(chat_id=user.id, audio=af, caption=caption, parse_mode="HTML")
-        return {"success": True, "message": "Telegram သို့ အသံဖိုင် ပို့ပြီးပါပြီခင်ဗျာ!"}
+        return {"success": True, "message": "Telegram ဆီ အသံဖိုင် ပို့ပြီးပါပြီ!"}
     except Exception as e:
         logger.warning(f"Failed to send voice to Telegram chat {user.id}: {e}")
-        raise HTTPException(status_code=500, detail="Telegram သို့ ပေးပို့ရာတွင် အမှားဖြစ်ပေါ်ပါသည်")
+        raise HTTPException(status_code=500, detail="Telegram ဆီ ပေးပို့၍ မရပါ — ခဏနေ ပြန်စမ်းကြည့်ပါ။")
     finally:
         await bot.session.close()
 
@@ -12072,7 +12124,7 @@ async def submit_payment_slip(
             dest_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=409,
-                detail="ဒီ ပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ ထပ်မပို့ဘဲ စောင့်ပေးပါ ခင်ဗျာ။",
+                detail="ဒီပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ ထပ်မပို့ဘဲ စောင့်ပေးပါ။",
             )
 
     pending_slips = (await db.execute(
@@ -12088,7 +12140,7 @@ async def submit_payment_slip(
             dest_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=409,
-                detail="ဒီ ပြေစာပုံကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ စစ်ဆေးနေဆဲ ဖြစ်လို့ ထပ်မပို့ဘဲ ခဏ စောင့်ပေးပါ ခင်ဗျာ။",
+                detail="ဒီပြေစာပုံကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ Admin စစ်ဆေးနေဆဲမို့ ထပ်မပို့ဘဲ ခဏစောင့်ပေးပါ။",
             )
 
     # Batch AJ M1: everything from plan resolution to the commit is
@@ -12148,7 +12200,7 @@ async def submit_payment_slip(
         dest_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=409,
-            detail="ဒီ ပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ ထပ်မပို့ဘဲ စောင့်ပေးပါ ခင်ဗျာ။",
+            detail="ဒီပြေစာကို ပို့ထားပြီးသား ဖြစ်ပါတယ်။ ထပ်မပို့ဘဲ စောင့်ပေးပါ။",
         )
     except Exception:
         dest_path.unlink(missing_ok=True)
@@ -13446,7 +13498,7 @@ async def retry_queued_job(
             if _owner is None or int(_owner.recap_credits or 0) < _debit_total:
                 raise HTTPException(
                     status_code=402,
-                    detail="အသုံးပြုသူ၏ Recap Credit မလုံလောက်သောကြောင့် ဒီအလုပ်ကို ပြန်စရန် မဖြစ်နိုင်ပါ။",
+                    detail="အသုံးပြုသူရဲ့ Recap Credit မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
                 )
             _owner.recap_credits = int(_owner.recap_credits or 0) - _debit_total
             await record_recap_credit_event(
@@ -13482,7 +13534,7 @@ async def retry_queued_job(
                         except ValueError:
                             raise HTTPException(
                                 status_code=402,
-                                detail="အသုံးပြုသူ၏ Voice Clone မိနစ် မလုံလောက်သောကြောင့် ဒီအလုပ်ကို ပြန်စရန် မဖြစ်နိုင်ပါ။",
+                                detail="အသုံးပြုသူရဲ့ Voice Clone မိနစ် မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
                             )
                     _state["voice_refunded"] = False
                     _state["voice_seconds_refunded"] = 0
@@ -13552,10 +13604,14 @@ async def cancel_queued_job(
     job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.status not in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+    if job.status not in (
+        JobStatus.QUEUED.value,
+        JobStatus.RUNNING.value,
+        JobStatus.WAITING_CHOICE.value,
+    ):
         raise HTTPException(
             status_code=400,
-            detail=f"Only QUEUED or RUNNING jobs can be cancelled (this job is {job.status})",
+            detail=f"Only QUEUED, RUNNING, or WAITING_CHOICE jobs can be cancelled (this job is {job.status})",
         )
 
     is_recap = (job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap")
@@ -14168,7 +14224,7 @@ async def approve_payment_slip(
         if _code == "CLAIMED_BY_OTHER":
             raise HTTPException(
                 status_code=409,
-                detail="အခြား Admin တစ်ဦးက ဒီပြေစာကို စစ်ဆေးနေပါသည်။ ခဏ စောင့်ပေးပါ ခင်ဗျာ။",
+                detail="အခြား Admin တစ်ဦးက ဒီပြေစာကို စစ်ဆေးနေပါတယ်။ ခဏစောင့်ပေးပါ။",
             )
         raise HTTPException(status_code=404, detail="Pending payment request not found")
     await db.commit()
@@ -14255,7 +14311,7 @@ async def reject_payment_slip(
         if _code == "CLAIMED_BY_OTHER":
             raise HTTPException(
                 status_code=409,
-                detail="အခြား Admin တစ်ဦးက ဒီပြေစာကို စစ်ဆေးနေပါသည်။ ခဏ စောင့်ပေးပါ ခင်ဗျာ။",
+                detail="အခြား Admin တစ်ဦးက ဒီပြေစာကို စစ်ဆေးနေပါတယ်။ ခဏစောင့်ပေးပါ။",
             )
         raise HTTPException(status_code=404, detail="Pending payment request not found")
     await db.commit()
@@ -14506,7 +14562,7 @@ async def send_admin_broadcast(
         # before any delivery is attempted.
         raise HTTPException(
             status_code=400,
-            detail="Broadcast စာသား ရှည်လွန်းပါသည် — Telegram ကန့်သတ်ချက် (အက္ခရာ 4096 လုံး) ထက် ကျော်နေပါသည်။ တိုအောင် ပြင်ပြီး ပြန်စမ်းပါခင်ဗျာ။",
+            detail="Broadcast စာသား ရှည်လွန်းပါတယ် — Telegram ကန့်သတ်ချက် (အက္ခရာ 4096 လုံး) ထက် ကျော်နေပါတယ်။ တိုအောင် ပြင်ပြီး ပြန်စမ်းကြည့်ပါ။",
         )
 
     # 1. Total users in database

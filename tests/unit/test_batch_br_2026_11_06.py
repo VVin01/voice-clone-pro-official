@@ -144,8 +144,8 @@ def test_br_renderer_uses_pill_text_source_and_store_step_fields():
     # carries it); the boilerplate fallback matches the old line.
     assert 'tf("recap_queue_ahead", { count: job.queue_position })' in body
     assert 'stepBits.push(t("queue_notice_recap"));' in body
-    # Fill + stage stepper follow the same store job.
-    assert "progressFill.style.width = `${Math.min(100, Math.max(10, job.progress_percent))}%`;" in body
+    # Fill + stage stepper follow the same store job (Quality Pass §2F removes the 10% floor).
+    assert "paintProgressBarFill(progressFill, job);" in body
     assert "setRecapStage(`${job.stage_index || 0}/${job.stage_total || 4}`, job.status);" in body
     # Terminal store jobs clear the step line (the outcome text
     # itself comes from liveJobStageText, as on the pill).
@@ -298,5 +298,5 @@ def test_br_prefill_still_sets_title_from_job_config():
 # ── Token ────────────────────────────────────────────────────────
 
 def test_br_cache_token_is_r89():
-    assert INDEX_HTML.count("20261114_r148") == 4
+    assert INDEX_HTML.count("20261114_r149") == 4
     assert "20261104_r88" not in INDEX_HTML

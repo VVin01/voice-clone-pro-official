@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -321,18 +323,26 @@ class PngSubtitleRenderer:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._fonts: dict[tuple[str, int], Any] = {}
+        self._local = threading.local()
 
     def _font(self, font_path: Path, font_px: int):
         from PIL import ImageFont
 
         key = (str(font_path), int(font_px))
-        font = self._fonts.get(key)
+        if threading.current_thread() is threading.main_thread():
+            cache = self._fonts
+        else:
+            cache = getattr(self._local, "fonts", None)
+            if cache is None:
+                cache = {}
+                self._local.fonts = cache
+        font = cache.get(key)
         if font is None:
             font = ImageFont.truetype(
                 str(font_path), int(font_px),
                 layout_engine=ImageFont.Layout.RAQM,
             )
-            self._fonts[key] = font
+            cache[key] = font
         return font
 
     def render_lines(
@@ -426,7 +436,16 @@ class PngSubtitleRenderer:
             spacing=spacing,
             align="center",
         )
-        img.save(str(out), "PNG")
+        _tmp = out.with_name(f".{out.stem}.{threading.get_ident()}.tmp.png")
+        try:
+            img.save(str(_tmp), "PNG", compress_level=1)
+            os.replace(_tmp, out)
+        except Exception:
+            try:
+                _tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            img.save(str(out), "PNG", compress_level=1)
         return out, w, h
 
     def render_text(

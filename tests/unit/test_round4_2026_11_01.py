@@ -186,17 +186,17 @@ def test_fc_stage_mapping_core_labels():
     f = api_mod._recap_stage_progress
     stage, sub, pct, step = f("Smart Sync: VoxCPM 2 3/10", 15)
     assert (stage, sub, step) == ("tts", "3/10", "3/4")
-    assert pct == 69  # 64 + 0.3 * (82-64)
+    assert pct == 65  # §2E stage band (60, 76): 60 + 0.3 * 16 = 64.8 -> 65
 
-    stage, sub, pct, step = f("Smart Sync: Smart Sync video 10/10", 69)
+    stage, sub, pct, step = f("Smart Sync: Smart Sync video 10/10", 65)
     assert (stage, sub, step) == ("sync", "10/10", "3/4")
-    assert pct == 95
+    assert pct == 85  # §2E stage band (76, 85), leaving 85-99 for png/overlay/mux/finalize
 
     assert f("Timestamp translation", 30)[0] == "translate"
     assert f("Story context memory", 15)[0] == "context"
     assert f("Speech timestamp transcription", 15)[0] == "transcribe"
     assert f("Build Smart Sync plan", 54)[0] == "plan"
-    assert f("Plan ready", 54) == ("plan", "", 64, "2/4")
+    assert f("Plan ready", 54) == ("plan", "", 60, "2/4")
     assert f("🗣️ [3/4] VoxCPM 2 Cloud Voice & Smart Sync Render...", 54)[0] == "tts"
     assert f("Smart Sync: Audio 4/10", 64)[0] == "tts"
     assert f("Video 2/10", 82)[0] == "sync"
