@@ -657,7 +657,8 @@ def _fake_translate_factory(rec: _PlannerRecorder, *, flagged_ids=(), fail_at_ba
                 raise planner.GeminiKeyPoolExhaustedError("pool dead")
             rows = []
             for row in current:
-                text = f"မြန်မာ ဘာသာပြန် စာကြောင်း {int(row['id'])} ဖြစ်ပါတယ်"
+                _my_id = str(int(row['id'])).translate(str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉"))
+                text = f"မြန်မာ ဘာသာပြန် စာကြောင်း {_my_id} ဖြစ်ပါတယ်"
                 if int(row["id"]) in flagged_ids:
                     text = "This line kept English words inside"
                 rows.append({
@@ -731,8 +732,8 @@ def test_parallel_translation_commits_in_order_with_source_overlap(monkeypatch):
     assert by_first[4]["prev_is_source"] is True
     assert by_first[4]["prev_ids"] == [2, 3]  # overlap tail of batch 1's source units
     assert by_first[7]["prev_ids"] == [5, 6]
-    # Audit-on-flag: clean batches are skipped except every 4th (batch 4).
-    assert [c["first_id"] for c in rec.audit_calls] == [10]
+    # Audit-on-flag + Batch-1 hook spot-check (§2B).
+    assert [c["first_id"] for c in rec.audit_calls] == [1]
 
 
 def test_parallel_translation_audit_on_flag_and_true_neighbours(monkeypatch):
@@ -744,10 +745,10 @@ def test_parallel_translation_audit_on_flag_and_true_neighbours(monkeypatch):
                                 unit_index=unit_index, flagged_ids={5})
     assert [int(r["id"]) for r in out] == list(range(1, 16))
     audited = [c["first_id"] for c in rec.audit_calls]
-    assert audited == [4, 10]  # flagged batch 2 + sampled batch 4
+    assert audited == [1, 4]  # Batch-1 hook spot-check + flagged batch 2 (§2B)
     # The audit saw TRUE neighbouring translations (batch 1's committed
     # rows), not source text.
-    audit_b2 = rec.audit_calls[0]
+    audit_b2 = next(c for c in rec.audit_calls if c["first_id"] == 4)
     assert audit_b2["prev_ids"] == [2, 3]
     assert all(t and "မြန်မာ" in t for t in audit_b2["prev_translations"])
 

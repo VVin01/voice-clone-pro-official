@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import shutil
 import logging
 from pathlib import Path
@@ -359,6 +360,9 @@ def run_recap_pipeline(
     logo_scale: float = 0.16,
     logo_opacity: float = 0.70,
     extra_text: Optional[str] = None,
+    part_index: int = 1,
+    total_parts: int = 1,
+    prev_part_summary: str = "",
 ) -> Dict[str, Any]:
     """
     Executes the full Recap English -> Myanmar workflow:
@@ -434,6 +438,15 @@ def run_recap_pipeline(
         source_language=source_language,
     )
 
+    _part_kw = (
+        {
+            "part_index": part_index,
+            "total_parts": total_parts,
+            "prev_part_summary": prev_part_summary,
+        }
+        if int(total_parts or 1) > 1 or str(prev_part_summary or "").strip()
+        else {}
+    )
     plan_path, plan = planner.build(
         source=source,
         job_dir=target_job_dir,
@@ -442,6 +455,7 @@ def run_recap_pipeline(
         # (previously the overlay title text doubled as context).
         source_title=source.stem,
         reuse=True,
+        **_part_kw,
     )
 
     if stop_check():
@@ -733,6 +747,17 @@ def run_recap_pipeline(
     runner.short_pauses = True
 
     result = runner.run()
+    # Quality Pass §2E: fold EdgeSmartSync stage_timings back onto
+    # smart_sync_plan.json so plan_path itself retains full end-to-end
+    # timings alongside checkpoint.json and smart_sync_plan_edge_tts.json.
+    if isinstance(result.get("stage_timings"), dict) and result["stage_timings"]:
+        _merged_st = dict(plan.get("stage_timings") or {})
+        _merged_st.update(result["stage_timings"])
+        plan["stage_timings"] = _merged_st
+        try:
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
     # Batch DI: Protection Strong — one post-process over the whole
     # finished output (grain + metadata strip ONLY). The Batch DD
     # micro speed/pitch pass is removed (owner order: Strong back
@@ -758,6 +783,8 @@ def run_recap_pipeline(
         "warnings": _job_warnings,
         # Batch CG: BYOK route outcome for the runner's accounting.
         "gemini_route": result.get("gemini_route"),
+        "part_summary": plan.get("part_summary", ""),
+        "stage_timings": result.get("stage_timings") or plan.get("stage_timings") or {},
     }
 
 
@@ -771,6 +798,9 @@ def build_recap_script_plan(
     log_fn: Optional[Callable[[str], None]] = None,
     progress_fn: Optional[Callable[[int, int, str], None]] = None,
     env_path: Optional[str | Path] = None,
+    part_index: int = 1,
+    total_parts: int = 1,
+    prev_part_summary: str = "",
 ) -> Dict[str, Any]:
     """Phase 1 of the two-phase recap (script review flow, 2026-10-29).
 
@@ -822,17 +852,29 @@ def build_recap_script_plan(
         is_female=bool(is_female),
         source_language=source_language,
     )
+    _plan_part_kw = (
+        {
+            "part_index": part_index,
+            "total_parts": total_parts,
+            "prev_part_summary": prev_part_summary,
+        }
+        if int(total_parts or 1) > 1 or str(prev_part_summary or "").strip()
+        else {}
+    )
     plan_path, plan = planner.build(
         source=source,
         job_dir=target_job_dir,
         source_title=source_title or source.stem,
         reuse=True,
+        **_plan_part_kw,
     )
     return {
         "plan_path": str(plan_path),
         "job_dir": str(target_job_dir),
         "segments": len(plan.get("segments", [])),
         "plan": plan,
+        "part_summary": plan.get("part_summary", ""),
+        "stage_timings": plan.get("stage_timings") or {},
     }
 
 

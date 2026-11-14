@@ -56,7 +56,7 @@ def _reset_state():
 
 def test_dq_cache_token_is_r140():
     html = (REPO / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261114_r148") == 4
+    assert html.count("20261114_r149") == 4
     assert "r138" not in html
 
 
@@ -70,10 +70,11 @@ def test_pcm_seconds_math():
 
 
 def test_max_plausible_seconds_math():
-    assert gte._max_plausible_seconds(79) == pytest.approx(12.777777777777779)
-    assert gte._max_plausible_seconds(150) == pytest.approx(20.666666666666668)
-    assert gte._max_plausible_seconds(20) == pytest.approx(6.222222222222222)
-    assert gte._max_plausible_seconds(1000) == pytest.approx(115.11111111111111)
+    # Quality Pass §2C item 3 narrowed bound: min(n/9.0 + 4.0, n/8.5 + 2.2)
+    assert gte._max_plausible_seconds(79) == pytest.approx(79 / 8.5 + 2.2)
+    assert gte._max_plausible_seconds(150) == pytest.approx(150 / 8.5 + 2.2)
+    assert gte._max_plausible_seconds(20) == pytest.approx(20 / 8.5 + 2.2)
+    assert gte._max_plausible_seconds(1000) == pytest.approx(1000 / 9.0 + 4.0)
 
 
 # ── The gate through _ask ───────────────────────────────────────────
@@ -162,8 +163,8 @@ def test_normal_first_response_returned_immediately(tmp_path, monkeypatch):
 
 
 def test_audio_exactly_at_the_bound_is_accepted(tmp_path, monkeypatch):
-    # 90 chars -> bound exactly 14.0 s; the gate rejects only ABOVE it.
-    at_bound = _pcm(14.0)
+    # 90 chars -> tightened §2C bound 90/8.5 + 2.2 = 12.788235 s; gate rejects only ABOVE it.
+    at_bound = _pcm(90 / 8.5 + 2.2)
     recorder = _Recorder([at_bound])
     eng = _engine(tmp_path, monkeypatch, recorder)
     assert eng._ask("က" * 90, "Charon") == at_bound
@@ -179,7 +180,7 @@ def test_long_legit_text_accepted_on_first_attempt(tmp_path, monkeypatch):
     assert len(recorder.calls) == 1
 
 
-# ── Ledger honesty: a rejection still consumed quota ────────────────
+# ── Ledger honesty (§2C item 3): DQ reject tracked separately, not as quota usage ─
 
 def test_rejected_attempt_still_records_usage(tmp_path, monkeypatch):
     recorder = _Recorder([_pcm(18.5), _pcm(5.5)])
@@ -187,10 +188,13 @@ def test_rejected_attempt_still_records_usage(tmp_path, monkeypatch):
     eng._ask(HOOK, "Charon")
     health = key_rotation.health_for("gemini_tts")
     (key1, model1), (key2, model2) = recorder.calls
-    # BOTH attempts are counted: the rejected request really hit the
-    # API, so DN's remaining-quota ledger must charge it too.
-    assert health.remaining(key1, model1) == 9
+    # Quality Pass §2C item 3: stop calling mark_success/record_usage before
+    # DQ passes — rejected attempt increments dq_reject without charging usage;
+    # the verified second attempt increments accept and charges remaining quota.
+    assert health.remaining(key1, model1) == 10
+    assert health.tts_model_stats(model1)["dq_reject"] == 1
     assert health.remaining(key2, model2) == 9
+    assert health.tts_model_stats(model2)["accept"] == 1
 
 
 def test_byok_rejection_records_nothing(tmp_path, monkeypatch):

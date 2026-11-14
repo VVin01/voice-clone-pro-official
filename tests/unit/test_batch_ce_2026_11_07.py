@@ -487,7 +487,7 @@ def test_ce_cache_token_is_r103():
     html = (ROOT / "app" / "webapp" / "static" / "index.html").read_text(
         encoding="utf-8"
     )
-    assert html.count("20261114_r148") == 4
+    assert html.count("20261114_r149") == 4
     assert ("20261104_r" + "103") not in html
 
 

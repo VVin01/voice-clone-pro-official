@@ -238,7 +238,8 @@ async def test_live_jobs_own_only_shape_and_recent_terminal(db_session):
             "progress_percent", "elapsed_seconds", "title",
         }
     assert by_id["ac-v1"]["kind"] == "voice"
-    assert by_id["ac-v1"]["progress_percent"] == 45
+    # Quality Pass §2F removes the fake 45% placeholder on QUEUED voice jobs.
+    assert by_id["ac-v1"]["progress_percent"] == 0
     assert by_id["ac-v1"]["queue_position"] is not None
     assert by_id["ac-r1"]["kind"] == "recap"
     assert by_id["ac-r1"]["title"] == "Some Movie Title"
@@ -525,7 +526,7 @@ def test_new_i18n_keys_in_both_languages():
 
 
 def test_cache_bump_r62():
-    assert INDEX_HTML.count("?v=20261114_r148") == 4
+    assert INDEX_HTML.count("?v=20261114_r149") == 4
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────

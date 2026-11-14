@@ -843,7 +843,7 @@ def test_batch_l_frontend_wiring_pins():
     ):
         assert f'id="{element_id}"' in INDEX_HTML, element_id
     # Static assets moved to the batch's cache version.
-    assert "20261114_r148" in INDEX_HTML
+    assert "20261114_r149" in INDEX_HTML
     assert "20261103_r43" not in INDEX_HTML
 
     # Poller renders the server's job-aware position/ETA.

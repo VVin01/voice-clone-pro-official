@@ -59,6 +59,7 @@ the user.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import os
@@ -69,7 +70,7 @@ import threading
 import time
 import wave
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 # Audit fix E: the Gemini pool is built by ONE shared helper
 # (app.services.key_rotation) so TTS sees the same union of keys as the
@@ -121,6 +122,56 @@ TTS_MODELS = (
 # only, the same lifetime as KeyHealth). Advanced once per _ask() call.
 _TTS_MODEL_LOCK = threading.Lock()
 _TTS_MODEL_CURSOR = 0
+# 2026-11-17 retirement shield: preview models returning 404/retired are
+# remembered here so later calls skip directly to active GA models
+# instead of poisoning API keys.
+_RETIRED_MODELS: set[str] = set()
+_PRIMARY_QUOTA_LITE_THRESHOLD = 0.7
+
+
+def clear_retired_tts_models() -> None:
+    """Clear in-memory retired TTS model flags (used in tests)."""
+    with _TTS_MODEL_LOCK:
+        _RETIRED_MODELS.clear()
+
+
+def _mark_model_retired(model: str) -> None:
+    name = str(model or "").strip()
+    if name:
+        with _TTS_MODEL_LOCK:
+            _RETIRED_MODELS.add(name)
+
+
+def _is_model_retired(model: str) -> bool:
+    name = str(model or "").strip()
+    if not name:
+        return False
+    with _TTS_MODEL_LOCK:
+        return name in _RETIRED_MODELS
+
+
+def _is_retired_model_error(code: int, exc: BaseException) -> bool:
+    """Return True when Gemini rejects the model itself (retired/404/unknown)
+    rather than the caller's key quota or request content."""
+    msg = str(exc).lower()
+    if "location is not supported" in msg:
+        return False
+    if code == 404:
+        return True
+    if code == 400 and any(
+        tok in msg
+        for tok in (
+            "not found",
+            "deprecated",
+            "retired",
+            "no longer supported",
+            "no longer available",
+            "not supported for generatecontent",
+            "unknown model",
+        )
+    ):
+        return True
+    return False
 
 
 def _effective_tts_models() -> tuple[str, ...]:
@@ -150,17 +201,72 @@ def _effective_tts_models() -> tuple[str, ...]:
     return tuple(seen) if seen else TTS_MODELS
 
 
-def _rotated_tts_models() -> tuple[str, ...]:
+def _primary_quota_fraction_used(
+    primaries: Sequence[str],
+    health: Any,
+    keys: Sequence[str],
+) -> float:
+    """Aggregate today's consumed fraction across primary models & keys."""
+    if health is None or not keys or not primaries:
+        return 0.0
+    caps = getattr(_key_rotation, "MODEL_DAILY_CAPS", None) or {}
+    default_cap = int(getattr(_key_rotation, "DEFAULT_MODEL_DAILY_CAP", 10) or 10)
+    total_cap = 0
+    total_used = 0
+    for model in primaries:
+        model_cap = int(caps.get(model, default_cap) or default_cap)
+        if model_cap <= 0:
+            continue
+        for key in keys:
+            rem = None
+            try:
+                rem = health.remaining(key, model)
+            except Exception:
+                rem = None
+            used = 0 if rem is None else max(0, min(model_cap, model_cap - int(rem)))
+            total_cap += model_cap
+            total_used += used
+    if total_cap <= 0:
+        return 0.0
+    return total_used / float(total_cap)
+
+
+def _rotated_tts_models(
+    health: Any = None,
+    keys: Sequence[str] = (),
+) -> tuple[str, ...]:
     """Configured TTS models rotated so consecutive calls start on different
-    models; failover inside the call walks the remaining model(s)."""
+    models; failover inside the call walks the remaining model(s).
+
+    Retired models (marked after 404/deprecation) are skipped when active
+    models remain. When pool keys/health are supplied, lite models stay
+    behind primary models until primaries reach >= 70% (7/10) daily usage.
+    """
     global _TTS_MODEL_CURSOR
     models = _effective_tts_models()
-    if len(models) < 2:
-        return models
     with _TTS_MODEL_LOCK:
-        start = _TTS_MODEL_CURSOR % len(models)
+        active = tuple(m for m in models if m not in _RETIRED_MODELS) or models
+    primaries = tuple(m for m in active if "lite" not in m.lower())
+    lites = tuple(m for m in active if "lite" in m.lower())
+    keep_lite_behind = bool(
+        primaries
+        and lites
+        and (keys or health is not None)
+        and _primary_quota_fraction_used(primaries, health, keys) < _PRIMARY_QUOTA_LITE_THRESHOLD
+    )
+    if keep_lite_behind:
+        if len(primaries) < 2:
+            return primaries + lites
+        with _TTS_MODEL_LOCK:
+            start = _TTS_MODEL_CURSOR % len(primaries)
+            _TTS_MODEL_CURSOR += 1
+        return primaries[start:] + primaries[:start] + lites
+    if len(active) < 2:
+        return active
+    with _TTS_MODEL_LOCK:
+        start = _TTS_MODEL_CURSOR % len(active)
         _TTS_MODEL_CURSOR += 1
-    return models[start:] + models[:start]
+    return active[start:] + active[:start]
 PROFILE_VERSION = "single_narrator_v3"
 DEFAULT_DIRECTION = ("An energetic, ALIVE Burmese storyteller PERFORMING the story for listeners — warm, vivid and "
                      "gripping, never flat or robotic: the pace breathes with the scene (quicker and tighter at "
@@ -187,7 +293,10 @@ BUSY_ROUNDS, BUSY_WAIT_SECONDS = 2, 10
 # (60 for a 10-key pool) at the client's 180 s timeout. Unclassified
 # errors are now marked dead for the run exactly like quota deaths,
 # and this cap bounds whatever mix remains.
-GEMINI_TTS_MAX_ATTEMPTS_PER_CALL = 24
+GEMINI_TTS_MAX_ATTEMPTS_PER_CALL = 12
+GEMINI_TTS_TIMEOUT_MS = 45_000
+BYOK_SINGLE_KEY_MAX_WORKERS = 2
+BYOK_SINGLE_KEY_STAGGER_SECONDS = 1.5
 
 
 _PCM_SUBFORMAT_GUID = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
@@ -279,13 +388,11 @@ def _pcm_seconds(data: bytes, channels: int = 1, sampwidth: int = 2, framerate: 
 
 
 def _max_plausible_seconds(chars: int) -> float:
-    """Batch DQ: the longest audio a transcript of ``chars`` cleaned
-    characters could plausibly produce. Clean Burmese narration
-    measures 13–16 chars/s; 9 chars/s is a slower-than-any-real-read
-    floor and the +4 s slack absorbs natural pauses — 79 chars →
-    12.8 s (clean reads measured 5.2–6.0 s; a prompt-leaking read
-    measured 18.4 s), 150 chars → 20.7 s (clean 9–11 s)."""
-    return chars / 9.0 + 4.0
+    """Batch DQ + Quality Pass (§2C): the longest audio a transcript of
+    ``chars`` cleaned characters could plausibly produce without leaking
+    prompt text. Bounded by min(n/9.0 + 4.0, n/8.5 + 2.2) so both short
+    and longer segments tighten slack (79 chars -> ~11.5 s vs 18.4 s leak)."""
+    return min(chars / 9.0 + 4.0, chars / 8.5 + 2.2)
 
 
 # Batch AJ / L21: the ffmpeg trim/resample below may only open
@@ -416,7 +523,7 @@ def _client(key: str):
 
     via = _proxy()
     return genai.Client(api_key=key, http_options=types.HttpOptions(
-        timeout=180_000, retry_options=types.HttpRetryOptions(attempts=1),
+        timeout=GEMINI_TTS_TIMEOUT_MS, retry_options=types.HttpRetryOptions(attempts=1),
         client_args={"proxy": via} if via else None, async_client_args={"proxy": via} if via else None))
 
 
@@ -443,6 +550,7 @@ class GeminiTTSEngine:
         self.keys = list(keys) if keys is not None else collect_gemini_keys()
         if not self.keys:
             raise GeminiTTSError("Gemini TTS: no Gemini API key configured (GEMINI_API_KEY / GEMINI_API_KEYS).")
+        self._lock = threading.Lock()
         self._dead: set[tuple[str, int]] = set()
         self._last_key = 0
         self.exhausted = False  # circuit breaker: total failure -> later lines fail fast
@@ -462,6 +570,29 @@ class GeminiTTSEngine:
         # CG key_error_codes classification are unaffected either way.
         self._record_usage = bool(record_usage)
         self._tls = threading.local()
+        # Quality Pass §2C item 10: a user's own single Gemini key has
+        # tight 3 RPM / concurrent-request limits; cap concurrency and
+        # stagger request starts to avoid immediate 429 bursts.
+        if not self._record_usage and len(self.keys) <= 1:
+            self._byok_sem: Optional[threading.Semaphore] = threading.Semaphore(BYOK_SINGLE_KEY_MAX_WORKERS)
+            self._byok_stagger_lock: Optional[threading.Lock] = threading.Lock()
+        else:
+            self._byok_sem = None
+            self._byok_stagger_lock = None
+        self._byok_next_start = 0.0
+
+    def _wait_byok_stagger(self) -> None:
+        if self._byok_stagger_lock is None:
+            return
+        stagger = max(0.0, float(BYOK_SINGLE_KEY_STAGGER_SECONDS))
+        if stagger <= 0.0:
+            return
+        with self._byok_stagger_lock:
+            now = time.monotonic()
+            wait = max(0.0, self._byok_next_start - now)
+            self._byok_next_start = max(now, self._byok_next_start) + stagger
+        if wait > 0.0:
+            time.sleep(wait)
 
     def fingerprint(self, voice: str) -> str:
         profile = narrator_prompt("", voice, self.direction)
@@ -480,7 +611,9 @@ class GeminiTTSEngine:
         bucket. Any registry failure degrades to the plain rotated
         offset order."""
         order = list(range(len(self.keys)))
-        order = order[self._last_key:] + order[:self._last_key]
+        with self._lock:
+            last_key = self._last_key % max(1, len(order))
+        order = order[last_key:] + order[:last_key]
         if tts_health is None:
             return order
         try:
@@ -504,146 +637,165 @@ class GeminiTTSEngine:
         # per-key quota is separate from the text models', so a
         # TTS-dead key must not sideline the planner.
         tts_health = _key_rotation.health_for("gemini_tts") if _key_rotation is not None else None
-        models = _rotated_tts_models()
+        models = _rotated_tts_models(
+            health=tts_health if self._record_usage else None,
+            keys=self.keys,
+        )
         # Batch DQ: the output-duration gate's yardstick — the
         # CLEANED transcript length, computed once per call (the
         # prompts are built from this same cleaned text).
         cleaned_chars = len(_clean_tts_text(text))
         last = ""
         attempts = 0
-        for _round_no in range(BUSY_ROUNDS):
-            busy = False
-            for model in models:
-                # Batch DO: per-model prompt shape — the 3.8 family
-                # must never receive the full AUDIO-PROFILE text (it
-                # reads it aloud); previews keep the full profile.
-                prompt = _prompt_for_model(model, text, voice_name, self.direction)
-                # Batch DN: per-model quota-aware key order (richest
-                # key first for THIS model) — see _key_order_for_model.
-                order = self._key_order_for_model(model, tts_health)
-                for i in order:
-                    if (model, i) in self._dead:
+        gate = self._byok_sem if self._byok_sem is not None else contextlib.nullcontext()
+        with gate:
+            for _round_no in range(BUSY_ROUNDS):
+                busy = False
+                for model in models:
+                    if _is_model_retired(model):
                         continue
-                    # Batch AJ / L20: total-attempt cap (see the
-                    # constant's comment) — checked before every
-                    # request so no error mix can exceed it.
-                    attempts += 1
-                    if attempts > GEMINI_TTS_MAX_ATTEMPTS_PER_CALL:
-                        self.exhausted = True
-                        raise GeminiTTSError(
-                            "Gemini TTS: attempt budget exhausted "
-                            f"({GEMINI_TTS_MAX_ATTEMPTS_PER_CALL} requests for one "
-                            f"line) — remaining lines will use the persona engine "
-                            f"instead. ({last})"
-                        )
-                    try:
-                        client = _client(self.keys[i])  # kept in a variable: a dropped genai Client closes itself
-                        response = client.models.generate_content(model=model, contents=prompt, config=config)
-                        rejected = False
-                        had_invalid_audio = False
-                        for part in response.candidates[0].content.parts:
-                            data = getattr(getattr(part, "inline_data", None), "data", None)
-                            if data:
-                                try:
-                                    pcm, channels, sampwidth, framerate = _unwrap_tts_audio(data)
-                                except GeminiTTSError as wav_err:
-                                    last = f"{model}: {wav_err}"
-                                    had_invalid_audio = True
-                                    break
-                                if not pcm:
-                                    last = f"{model}: empty audio in the answer"
-                                    had_invalid_audio = True
-                                    break
-                                self._last_key = i
-                                if tts_health is not None:
-                                    tts_health.mark_success(self.keys[i])
-                                    # Batch DN: count the success
-                                    # against this (key, model)'s
-                                    # daily cap so later calls start
-                                    # from a richer key. BYOK engines
-                                    # (record_usage=False) skip this —
-                                    # a user's own quota never enters
-                                    # the shared pool ledger.
-                                    if self._record_usage:
-                                        try:
-                                            tts_health.record_usage(self.keys[i], model)
-                                        except Exception:
-                                            pass
-                                # Batch DQ: output-duration gate.
-                                # The 3.8 family STOCHASTICALLY reads
-                                # its (short) instruction line aloud
-                                # and/or repeats the transcript (probe
-                                # 2026-11-11: 5.96 / 18.41 / 5.21 /
-                                # 5.85 s on identical input, ASR-
-                                # verified) — no prompt shape can rule
-                                # that out, so the OUTPUT is verified
-                                # instead: an impossibly long read is
-                                # rejected and the walk continues to
-                                # the next key/model. The bookkeeping
-                                # above already fired exactly as for
-                                # an accept — the request really
-                                # consumed quota and the key is
-                                # healthy — so the (model, key) is
-                                # NOT marked dead and no busy state
-                                # is set.
-                                secs = _pcm_seconds(
-                                    pcm,
-                                    channels=channels,
-                                    sampwidth=sampwidth,
-                                    framerate=framerate,
-                                )
-                                if cleaned_chars >= 1 and secs > _max_plausible_seconds(cleaned_chars):
-                                    self.log(f"🛡️ Gemini TTS output rejected — {secs:.1f}s for {cleaned_chars} chars on {model} (possible prompt leak); retrying")
-                                    last = f"{model}: output too long ({secs:.1f}s for {cleaned_chars} chars) — rejected as a possible prompt leak"
-                                    rejected = True
-                                    break
-                                if hasattr(self, "_tls"):
-                                    self._tls.pcm_spec = (channels, sampwidth, framerate)
-                                return pcm
-                        if not rejected and not had_invalid_audio:
-                            last = f"{model}: no audio in the answer"
-                    except Exception as exc:  # noqa: BLE001
-                        code = _code(exc)
-                        self.key_error_codes[i] = code
-                        self.key_error_texts[i] = str(exc)[:200]
-                        last = f"{model} key {i + 1}: {code or ''} {str(exc)[:160]}"
-                        if "location is not supported" in str(exc).lower():
-                            self.exhausted = True
-                            raise GeminiTTSError(
-                                "Gemini TTS: this server location is not supported by Gemini TTS — "
-                                "narration lines will use the persona engine instead."
-                            ) from exc
-                        if code == 429 or code in (400, 401, 403):
-                            self._dead.add((model, i))
-                            # Audit fix E: quota/auth deaths (not 400,
-                            # which can be request-specific) also cool
-                            # the key for later runs, not just this one.
-                            if tts_health is not None and code != 400:
-                                tts_health.mark_failure(self.keys[i])
-                            continue
-                        if code in (500, 502, 503, 504):
-                            busy = True
-                            self.log(f"⏳ Gemini TTS {model} is busy ({code}) — next key/model")
+                    # Batch DO: per-model prompt shape — the 3.8 family
+                    # must never receive the full AUDIO-PROFILE text (it
+                    # reads it aloud); previews keep the full profile.
+                    prompt = _prompt_for_model(model, text, voice_name, self.direction)
+                    # Batch DN: per-model quota-aware key order (richest
+                    # key first for THIS model) — see _key_order_for_model.
+                    order = self._key_order_for_model(model, tts_health)
+                    for i in order:
+                        if _is_model_retired(model):
                             break
-                        # Batch AJ / L20: unclassified errors (not
-                        # 429/auth, not 5xx) used to fall through
-                        # here with NO dead-marking, so the same
-                        # (model, key) was retried on every busy
-                        # round. Mark it dead for this run — the
-                        # request-specific failure gets one try per
-                        # model, exactly like a quota death, and the
-                        # attempt cap above bounds the rest.
-                        self._dead.add((model, i))
-                        self.log(f"⚠️ Gemini TTS key {i + 1}: {str(exc)[:100]}")
-            if not busy:
-                break
-            # Batch CY: no wait after the FINAL round — the call is
-            # about to fail over to the persona engine, and sleeping
-            # first was pure stall.
-            if _round_no < BUSY_ROUNDS - 1:
-                self.log(f"⏳ Gemini TTS busy — waiting {BUSY_WAIT_SECONDS} s")
-                time.sleep(BUSY_WAIT_SECONDS)
-        self.exhausted = True
+                        with self._lock:
+                            if (model, i) in self._dead:
+                                continue
+                        # Batch AJ / L20: total-attempt cap (see the
+                        # constant's comment) — checked before every
+                        # request so no error mix can exceed it.
+                        attempts += 1
+                        if attempts > GEMINI_TTS_MAX_ATTEMPTS_PER_CALL:
+                            with self._lock:
+                                self.exhausted = True
+                            raise GeminiTTSError(
+                                "Gemini TTS: attempt budget exhausted "
+                                f"({GEMINI_TTS_MAX_ATTEMPTS_PER_CALL} requests for one "
+                                f"line) — remaining lines will use the persona engine "
+                                f"instead. ({last})"
+                            )
+                        try:
+                            self._wait_byok_stagger()
+                            client = _client(self.keys[i])  # kept in a variable: a dropped genai Client closes itself
+                            response = client.models.generate_content(model=model, contents=prompt, config=config)
+                            rejected = False
+                            had_invalid_audio = False
+                            for part in response.candidates[0].content.parts:
+                                data = getattr(getattr(part, "inline_data", None), "data", None)
+                                if data:
+                                    try:
+                                        pcm, channels, sampwidth, framerate = _unwrap_tts_audio(data)
+                                    except GeminiTTSError as wav_err:
+                                        last = f"{model}: {wav_err}"
+                                        had_invalid_audio = True
+                                        break
+                                    if not pcm:
+                                        last = f"{model}: empty audio in the answer"
+                                        had_invalid_audio = True
+                                        break
+                                    # Quality Pass §2C item 3: verify the DQ output-duration gate
+                                    # BEFORE recording success/quota usage so leaked reads never
+                                    # burn pool credit as healthy accepts; track accept vs dq_reject.
+                                    secs = _pcm_seconds(
+                                        pcm,
+                                        channels=channels,
+                                        sampwidth=sampwidth,
+                                        framerate=framerate,
+                                    )
+                                    if cleaned_chars >= 1 and secs > _max_plausible_seconds(cleaned_chars):
+                                        if tts_health is not None and self._record_usage:
+                                            try:
+                                                tts_health.record_tts_dq_reject(model)
+                                            except Exception:
+                                                pass
+                                        self.log(f"🛡️ Gemini TTS output rejected — {secs:.1f}s for {cleaned_chars} chars on {model} (possible prompt leak); retrying")
+                                        last = f"{model}: output too long ({secs:.1f}s for {cleaned_chars} chars) — rejected as a possible prompt leak"
+                                        rejected = True
+                                        break
+                                    with self._lock:
+                                        self._last_key = i
+                                    if tts_health is not None:
+                                        tts_health.mark_success(self.keys[i], model=model)
+                                        # Batch DN: count the success
+                                        # against this (key, model)'s
+                                        # daily cap so later calls start
+                                        # from a richer key. BYOK engines
+                                        # (record_usage=False) skip this —
+                                        # a user's own quota never enters
+                                        # the shared pool ledger.
+                                        if self._record_usage:
+                                            try:
+                                                tts_health.record_usage(self.keys[i], model)
+                                            except Exception:
+                                                pass
+                                            try:
+                                                tts_health.record_tts_accept(model)
+                                            except Exception:
+                                                pass
+                                    if hasattr(self, "_tls"):
+                                        self._tls.pcm_spec = (channels, sampwidth, framerate)
+                                    return pcm
+                            if not rejected and not had_invalid_audio:
+                                last = f"{model}: no audio in the answer"
+                        except Exception as exc:  # noqa: BLE001
+                            code = _code(exc)
+                            with self._lock:
+                                self.key_error_codes[i] = code
+                                self.key_error_texts[i] = str(exc)[:200]
+                            last = f"{model} key {i + 1}: {code or ''} {str(exc)[:160]}"
+                            if "location is not supported" in str(exc).lower():
+                                with self._lock:
+                                    self.exhausted = True
+                                raise GeminiTTSError(
+                                    "Gemini TTS: this server location is not supported by Gemini TTS — "
+                                    "narration lines will use the persona engine instead."
+                                ) from exc
+                            if _is_retired_model_error(code, exc):
+                                _mark_model_retired(model)
+                                with self._lock:
+                                    self._dead.add((model, i))
+                                self.log(f"🪦 Gemini TTS model {model} unavailable/retired ({code or 'err'}) — skipping to next model")
+                                break
+                            if code == 429 or code in (400, 401, 403):
+                                with self._lock:
+                                    self._dead.add((model, i))
+                                # Audit fix E: quota/auth deaths (not 400,
+                                # which can be request-specific) also cool
+                                # the key for later runs, not just this one.
+                                if tts_health is not None and code != 400:
+                                    tts_health.mark_failure(self.keys[i], model=model)
+                                continue
+                            if code in (500, 502, 503, 504):
+                                busy = True
+                                self.log(f"⏳ Gemini TTS {model} is busy ({code}) — next key/model")
+                                break
+                            # Batch AJ / L20: unclassified errors (not
+                            # 429/auth, not 5xx) used to fall through
+                            # here with NO dead-marking, so the same
+                            # (model, key) was retried on every busy
+                            # round. Mark it dead for this run — the
+                            # request-specific failure gets one try per
+                            # model, exactly like a quota death, and the
+                            # attempt cap above bounds the rest.
+                            with self._lock:
+                                self._dead.add((model, i))
+                            self.log(f"⚠️ Gemini TTS key {i + 1}: {str(exc)[:100]}")
+                if not busy:
+                    break
+                # Batch CY: no wait after the FINAL round — the call is
+                # about to fail over to the persona engine, and sleeping
+                # first was pure stall.
+                if _round_no < BUSY_ROUNDS - 1:
+                    self.log(f"⏳ Gemini TTS busy — waiting {BUSY_WAIT_SECONDS} s")
+                    time.sleep(BUSY_WAIT_SECONDS)
+        with self._lock:
+            self.exhausted = True
         raise GeminiTTSError(
             "Gemini TTS: all keys' quota is exhausted or unavailable for today — "
             f"remaining lines will use the persona engine instead. ({last})"
@@ -651,7 +803,9 @@ class GeminiTTSEngine:
 
     def generate_channel99_voice(self, text: str, voice: str) -> Path:
         """The line as 48 kHz mono WAV, silence at both ends trimmed, speed applied (cached in the job)."""
-        if self.exhausted:
+        with self._lock:
+            is_exhausted = self.exhausted
+        if is_exhausted:
             raise GeminiTTSError("Gemini TTS exhausted for this run — persona fallback.")
         name = str(voice or "").removeprefix("gemini:")
         if name not in GEMINI_VOICE_NAMES:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -57,6 +58,30 @@ except Exception:  # pragma: no cover - standalone load without the app package
 LogFn = Callable[[str], None]
 def _noop(_: str) -> None:
     pass
+
+
+def _emit_progress_stage(progress_fn: Any, label: str) -> None:
+    """Invoke a stage progress callback supporting both 1-arg and 3-arg signatures."""
+    if not progress_fn:
+        return
+    try:
+        params = list(inspect.signature(progress_fn).parameters.values())
+    except (TypeError, ValueError):
+        params = []
+    positional = [
+        p
+        for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    required = [p for p in positional if p.default is inspect.Parameter.empty]
+    has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+    try:
+        if len(required) >= 3 or (not has_varargs and len(positional) >= 3 and len(required) == 0):
+            progress_fn(1, 1, label)
+        else:
+            progress_fn(label)
+    except Exception:
+        pass
 
 
 class RecapParkRequested(Exception):
@@ -350,6 +375,7 @@ class EdgeTTSEngine:
         # counter must advance atomically or two concurrent calls with
         # the same text could mint the same temp file stem.
         self._counter_lock = threading.Lock()
+        self._tls = threading.local()
         try:
             from importlib.metadata import version as _pkg_version
             edge_ver = _pkg_version("edge-tts")
@@ -375,13 +401,58 @@ class EdgeTTSEngine:
 
     async def _save_mp3_async(self, text: str, voice: str, mp3: Path, proxy: str | None = None) -> None:
         import edge_tts
-        communicate = edge_tts.Communicate(
-            text,
-            voice=str(voice),
-            rate=self.rate,
-            pitch=self.pitch,
-            proxy=proxy,
-        )
+        try:
+            communicate = edge_tts.Communicate(
+                text,
+                voice=str(voice),
+                rate=self.rate,
+                pitch=self.pitch,
+                proxy=proxy,
+                boundary="WordBoundary",
+            )
+        except TypeError:
+            communicate = edge_tts.Communicate(
+                text,
+                voice=str(voice),
+                rate=self.rate,
+                pitch=self.pitch,
+                proxy=proxy,
+            )
+        tls = getattr(self, "_tls", None)
+        if tls is not None:
+            tls.last_word_timings = []
+        # Quality Pass §2G: stream MP3 + WordBoundary events when Edge TTS
+        # supports stream(), falling back to save() for mocks or older wrappers.
+        if callable(getattr(communicate, "stream", None)):
+            async def _stream_to_file() -> None:
+                audio_buf = bytearray()
+                boundaries: list[dict[str, Any]] = []
+                async for chunk in communicate.stream():
+                    ctype = chunk.get("type") if isinstance(chunk, dict) else None
+                    if ctype == "audio":
+                        data = chunk.get("data") or b""
+                        if data:
+                            audio_buf.extend(data)
+                    elif ctype in ("WordBoundary", "SentenceBoundary"):
+                        off = float(chunk.get("offset") or 0.0) / 10_000_000.0
+                        dur = max(0.0, float(chunk.get("duration") or 0.0)) / 10_000_000.0
+                        tok = str(chunk.get("text") or "").strip()
+                        if tok:
+                            boundaries.append({
+                                "type": str(ctype),
+                                "start": round(off, 4),
+                                "end": round(off + dur, 4),
+                                "text": tok,
+                            })
+                if not audio_buf:
+                    raise RuntimeError("Edge TTS stream produced no audio bytes.")
+                mp3.write_bytes(bytes(audio_buf))
+                if tls is not None:
+                    tls.last_word_timings = boundaries
+
+            await asyncio.wait_for(_stream_to_file(), timeout=EDGE_TTS_TIMEOUT_SECONDS)
+            return
+
         # Batch AJ / M11: per-call timeout — the retry loop in
         # generate_channel99_voice catches the TimeoutError like any
         # other route failure, so a stalled socket fails over (and
@@ -2223,8 +2294,9 @@ def _load_title_font(font_size: int, font_path: str = ""):
     fonts_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
     cand_fonts = [
         str(font_path or "").strip(),
-        str(fonts_dir / "Pyidaungsu.ttf"),
-        str(fonts_dir / "NotoSansMyanmar.ttf"),
+        str(fonts_dir / "Padauk-Bold.ttf"),
+        str(fonts_dir / "Pyidaungsu-Bold.ttf"),
+        str(fonts_dir / "NotoSansMyanmar-Bold.ttf"),
         os.getenv("RECAP_MM_FONT", ""),
         "/usr/share/fonts/truetype/padauk/Padauk-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf",
@@ -2479,7 +2551,7 @@ def render_brand_pattern_png(
     fh = max(64, int(frame_height))
     opacity = max(0.08, min(0.35, float(opacity)))
     alpha = int(round(255 * opacity))
-    font_file = bundled_fonts_dir() / "NotoSansMyanmar.ttf"
+    font_file = bundled_fonts_dir() / "Padauk-Regular.ttf"
     font_size = max(15, int(round(min(fw, fh) * 0.046)))
     sprite = _brand_text_sprite(font_file, font_size, alpha)
 
@@ -4163,12 +4235,164 @@ def _subtitle_max_chars(is_vert: bool, lines_per_cue: int,
     return max(8, int(round(base * w / 0.92)))
 
 
+def _merge_short_chunks_for_readability(
+    chunks: list[str],
+    total_dur: float,
+    max_chars: int,
+    min_dur: float,
+    orig_text: str,
+) -> list[str]:
+    """Merge tiny chunks with an adjacent chunk BEFORE timing when line
+    budget allows, avoiding micro-flash cues without stretching timestamps."""
+    out = [c for c in chunks if c]
+    if len(out) <= 1 or total_dur <= 0.0 or min_dur <= 0.0:
+        return out
+    max_c = max(8, int(max_chars or 40))
+    orig_norm = re.sub(r"\s+", " ", str(orig_text or "")).strip()
+    while len(out) > 1:
+        tot_chars = sum(len(c) for c in out) or 1
+        shortest_idx = -1
+        shortest_dur = min_dur
+        for idx, ch in enumerate(out):
+            est = (len(ch) / tot_chars) * total_dur
+            if est < shortest_dur:
+                shortest_dur = est
+                shortest_idx = idx
+        if shortest_idx < 0:
+            break
+        candidates: list[tuple[int, int, str]] = []
+        for nb in (shortest_idx - 1, shortest_idx + 1):
+            if 0 <= nb < len(out):
+                left, right = (nb, shortest_idx) if nb < shortest_idx else (shortest_idx, nb)
+                sep = " " if (out[left] + " " + out[right]) in orig_norm else ""
+                merged = (out[left] + sep + out[right]).strip()
+                if len(merged) <= max_c:
+                    candidates.append((len(merged), left, merged))
+        if not candidates:
+            break
+        candidates.sort(key=lambda item: item[0])
+        _, left_idx, merged_text = candidates[0]
+        out[left_idx] = merged_text
+        out.pop(left_idx + 1)
+    return out
+
+
+def _word_boundary_boundary_fracs(
+    units: list[str],
+    word_timings: list[dict[str, Any]] | None,
+) -> list[float] | None:
+    """Derive monotonic internal boundary fractions in (0, 1) from Edge TTS
+    WordBoundary timings when they coherently cover `units`."""
+    if not word_timings or len(units) < 2:
+        return None
+    clean_events: list[tuple[float, float, str]] = []
+    prev_s = -1.0
+    for ev in word_timings:
+        if not isinstance(ev, dict):
+            continue
+        tok = re.sub(r"\s+", "", str(ev.get("text") or ""))
+        try:
+            st = float(ev.get("start") or 0.0)
+            en = float(ev.get("end") or st)
+        except (TypeError, ValueError):
+            continue
+        if not tok or en < st or st < prev_s - 0.05:
+            continue
+        prev_s = max(prev_s, st)
+        clean_events.append((max(0.0, st), max(0.0, st, en), tok))
+    if len(clean_events) < 2:
+        return None
+    wt_max = max(en for _, en, _ in clean_events)
+    if wt_max <= 0.1:
+        return None
+
+    wt_lens = [len(tok) for _, _, tok in clean_events]
+    wt_total = sum(wt_lens)
+    unit_lens = [len(re.sub(r"\s+", "", u)) for u in units]
+    unit_total = sum(unit_lens)
+    if wt_total < 4 or unit_total < 4:
+        return None
+    ratio = wt_total / float(unit_total)
+    if ratio < 0.65 or ratio > 1.35:
+        return None
+
+    # Map each cumulative unit end char offset into WordBoundary timestamps
+    fracs: list[float] = []
+    cum_u = 0
+    for idx in range(len(units) - 1):
+        cum_u += unit_lens[idx]
+        target = (cum_u / float(unit_total)) * wt_total
+        seen = 0.0
+        boundary_t = None
+        for st, en, tok in clean_events:
+            tok_l = float(len(tok))
+            if seen + tok_l >= target:
+                inner = max(0.0, min(1.0, (target - seen) / tok_l)) if tok_l > 0 else 1.0
+                boundary_t = st + inner * (en - st)
+                break
+            seen += tok_l
+        if boundary_t is None:
+            boundary_t = clean_events[-1][1]
+        fracs.append(max(0.0, min(1.0, boundary_t / wt_max)))
+
+    # Validate strict monotonicity and guard against degenerate zero-length cues
+    prop_weights = [max(1, len(u)) for u in units]
+    prop_total = float(sum(prop_weights))
+    prev_f = 0.0
+    for i, f in enumerate(fracs):
+        prop_share = prop_weights[i] / prop_total
+        if f - prev_f < max(0.01, 0.35 * prop_share):
+            return None
+        prev_f = f
+    if 1.0 - prev_f < max(0.01, 0.35 * (prop_weights[-1] / prop_total)):
+        return None
+    return fracs
+
+
+def _allocate_cue_times(
+    start_sec: float,
+    end_sec: float,
+    units: list[str],
+    word_timings: list[dict[str, Any]] | None = None,
+) -> list[tuple[float, float]]:
+    """Allocate contiguous cue timestamps spanning [start_sec, end_sec] with
+    zero drift and zero artificial time-stretching."""
+    start_f = float(start_sec)
+    end_f = max(start_f, float(end_sec))
+    total_dur = end_f - start_f
+    if len(units) <= 1 or total_dur <= 0.0:
+        return [(round(start_f, 3), round(end_f, 3)) for _ in units] or [(round(start_f, 3), round(end_f, 3))]
+
+    fracs = _word_boundary_boundary_fracs(units, word_timings)
+    if fracs is None:
+        weights = [max(1, len(u)) for u in units]
+        tot = float(sum(weights))
+        cum = 0
+        fracs = []
+        for w in weights[:-1]:
+            cum += w
+            fracs.append(cum / tot)
+
+    r_start = round(start_f, 3)
+    r_end = round(end_f, 3)
+    out: list[tuple[float, float]] = []
+    cur = r_start
+    for f in fracs:
+        nxt = round(start_f + f * total_dur, 3)
+        nxt = max(cur, min(r_end, nxt))
+        out.append((cur, nxt))
+        cur = nxt
+    out.append((cur, r_end))
+    return out
+
+
 def split_burmese_subtitle_cues(
     start_sec: float,
     end_sec: float,
     text: str,
     max_cue_chars: int = 40,
     lines_per_cue: int = 1,
+    word_timings: list[dict[str, Any]] | None = None,
 ) -> list[tuple[float, float, str]]:
     """
     Formats spoken segment narration into synchronized, comfortable, and readable subtitle cues.
@@ -4177,6 +4401,10 @@ def split_burmese_subtitle_cues(
     - If lines_per_cue == 2: wraps into 2 balanced lines within the same cue.
     - If lines_per_cue == 3 (Batch DD): wraps into up to 3 balanced lines
       within the same cue.
+    - Quality Pass §2G: removes artificial max(1.1/1.8) time-stretching that caused
+      late drift and crushed final cues; merges short chunks before timing when
+      line width allows, prefers Edge TTS WordBoundary phrase timing when valid,
+      and scales cue boundaries proportionally across exact [start_sec, end_sec].
     - NEVER cuts words in half (preserves compounds and syllables).
     """
     text = canonicalize_burmese_text(text)
@@ -4184,35 +4412,21 @@ def split_burmese_subtitle_cues(
         return []
 
     lines_cnt = min(3, max(1, int(lines_per_cue or 1)))
-    total_dur = max(0.6, float(end_sec) - float(start_sec))
+    total_dur = max(0.01, float(end_sec) - float(start_sec))
 
     if lines_cnt == 1:
         chunks = _split_burmese_into_single_line_chunks(text, max_chars=max_cue_chars)
+        chunks = _merge_short_chunks_for_readability(
+            chunks, total_dur, max_cue_chars, min_dur=0.65, orig_text=text
+        )
         if len(chunks) <= 1:
             return [(round(start_sec, 3), round(end_sec, 3), _format_cue_lines(text, 1))]
 
-        tot_chars = sum(len(c) for c in chunks) or 1
-        cur_t = start_sec
-        results = []
-        for i, chunk in enumerate(chunks):
-            c_dur = max(1.1, (len(chunk) / tot_chars) * total_dur)
-            c_end = cur_t + c_dur if i < len(chunks) - 1 else end_sec
-            if c_end > end_sec:
-                c_end = end_sec
-            results.append((round(cur_t, 3), round(c_end, 3), _format_cue_lines(chunk, 1)))
-            cur_t = c_end
-        return results
+        spans = _allocate_cue_times(start_sec, end_sec, chunks, word_timings=word_timings)
+        return [(s, e, _format_cue_lines(chunk, 1)) for (s, e), chunk in zip(spans, chunks)]
 
     # If lines_per_cue >= 2:
     # Batch DI: pack sentences greedily up to the per-cue budget.
-    # The pre-DI branch emitted ONE cue per sentence whenever the
-    # window allowed (short sentences = short cues), and otherwise
-    # kept the whole segment as one cue no matter how far over the
-    # budget it ran (the PNG burn then shredded it into short
-    # pieces). Packing fills each cue close to max_cue_chars; a
-    # segment that packs into a single group — or whose window is
-    # too short to give every group a readable share — keeps the
-    # historical whole-cue wrap below.
     if "။" in text:
         sentences = [s.strip() for s in re.split(r'(?<=[။])\s*', text) if s.strip()]
         if len(sentences) >= 2:
@@ -4227,17 +4441,12 @@ def split_burmese_subtitle_cues(
                     cur_group = cand
             if cur_group:
                 groups.append(cur_group)
+            groups = _merge_short_chunks_for_readability(
+                groups, total_dur, max_cue_chars, min_dur=1.1, orig_text=text
+            )
             if len(groups) >= 2 and (total_dur / len(groups)) >= 1.8:
-                tot_chars = sum(len(g) for g in groups) or 1
-                cur_t = start_sec
-                results = []
-                for i, grp in enumerate(groups):
-                    s_dur = max(1.8, (len(grp) / tot_chars) * total_dur)
-                    s_end = cur_t + s_dur if i < len(groups) - 1 else end_sec
-                    formatted = _format_cue_lines(grp, lines_cnt)
-                    results.append((round(cur_t, 3), round(s_end, 3), formatted))
-                    cur_t = s_end
-                return results
+                spans = _allocate_cue_times(start_sec, end_sec, groups, word_timings=word_timings)
+                return [(s, e, _format_cue_lines(grp, lines_cnt)) for (s, e), grp in zip(spans, groups)]
 
     # Otherwise, keep as ONE cue spanning the full spoken segment duration!
     formatted_text = _format_cue_lines(text, lines_cnt)
@@ -4484,6 +4693,8 @@ def apply_production_overlays(
     layout: dict[str, Any] | None = None,
     render_quality: str = "standard",
     duration: float | None = None,
+    timings_out: dict[str, float] | None = None,
+    progress_fn: Any = None,
 ) -> Path:
     overlays = dict(overlays or {})
     cw, ch = int(frame_size[0]), int(frame_size[1])
@@ -4607,6 +4818,7 @@ def apply_production_overlays(
     # horizontal resolver — centred verbatim by default.
     cue_inputs: list[tuple[Path, int, str, float, float]] = []
     if sub_job is not None:
+        _t_png0 = time.monotonic()
         renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
         lay_dict = {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
         x_expr = _subtitle_overlay_x_expr(cw, ch, lay_dict, overlays.get("sub_x"))
@@ -4616,7 +4828,10 @@ def apply_production_overlays(
         # sequential one-line pieces (its time window split with
         # it); cues that already fit render exactly as before.
         fit_max_w = int(round(_sub_w_fraction(overlays) * pw))
-        for cue_start, cue_end, cue_text in sub_job["cues"]:
+
+        def _render_cue_item(cue_item):
+            cue_start, cue_end, cue_text = cue_item
+            pieces: list[tuple[Path, int, str, float, float]] = []
             for fit_lines, fit_px, fit_visuals, piece_start, piece_end in fit_png_cue_pieces(
                 renderer,
                 cue_text,
@@ -4643,7 +4858,23 @@ def apply_production_overlays(
                     block_h=png_h,
                     sub_margin=overlays.get("sub_margin"),
                 )
-                cue_inputs.append((png_path, top, x_expr, float(piece_start), float(piece_end)))
+                pieces.append((png_path, top, x_expr, float(piece_start), float(piece_end)))
+            return pieces
+
+        if progress_fn and sub_job["cues"]:
+            _emit_progress_stage(progress_fn, f"Rendering subtitle PNGs ({len(sub_job['cues'])} cues)")
+        if len(sub_job["cues"]) > 1:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="recap-png") as _png_pool:
+                for _pieces in _png_pool.map(_render_cue_item, sub_job["cues"]):
+                    cue_inputs.extend(_pieces)
+        else:
+            for _cue_item in sub_job["cues"]:
+                cue_inputs.extend(_render_cue_item(_cue_item))
+        if timings_out is not None:
+            timings_out["png"] = round(max(0.0, time.monotonic() - _t_png0), 3)
+
+    if progress_fn:
+        _emit_progress_stage(progress_fn, "Compositing video overlay")
 
     def _build_step2_cmd(
         step_encoder: str,
@@ -4907,6 +5138,7 @@ def apply_production_overlays(
     # already up — instead of OOM-ing both. Heavy jobs skip the
     # single-pass attempt (see the OVERLAY_HEAVY_* note above) and
     # route their step 2 to the chunked pass.
+    _t_ov0 = time.monotonic()
     with _OVERLAY_SINGLE_PASS_SLOT:
         if boxes and not heavy:
             single_done = _attempt_single_pass()
@@ -4939,6 +5171,8 @@ def apply_production_overlays(
                 used_encoder, p = _run_overlay_step(_build_step2_cmd, used_encoder)
                 if p.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
                     raise RuntimeError("Production overlay render failed: " + p.stderr[-3000:])
+    if timings_out is not None:
+        timings_out["overlay"] = round(max(0.0, time.monotonic() - _t_ov0), 3)
     if intermediate is not None:
         try:
             intermediate.unlink()
@@ -5376,6 +5610,7 @@ class EdgeSmartSync:
         dst = paths.tts_parts / f"{base}.wav"
         fp = segment_fingerprint(seg, fingerprint_voice)
         rec = checkpoint["audio"].get(base, {})
+        _seg_word_timings: list[dict[str, Any]] = []
         # Batch DP: an "edge_all" resume redoes EVERY segment in the
         # Edge/persona voice (one consistent voice — the owner's
         # explicit choice), so finished clone segments are NOT reused.
@@ -5495,6 +5730,8 @@ class EdgeSmartSync:
                 curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
                 self.progress(idx - 1, total_segments, f"Studio TTS {idx}/{total_segments}")
                 self.log(f"🗣️ [{idx}/{total_segments}] {base} generate via Studio Persona ({curr_persona})")
+                _edge_tls = getattr(engine, "_tls", None)
+                _seg_word_timings: list[dict[str, Any]] = []
                 try:
                     from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
                     if get_curated_voice(curr_persona):
@@ -5507,10 +5744,15 @@ class EdgeSmartSync:
                         )
                         produced = dst
                     else:
+                        if _edge_tls is not None:
+                            _edge_tls.last_word_timings = []
                         produced = engine.generate_channel99_voice(speak, base_edge_voice)
+                        _seg_word_timings = list(getattr(_edge_tls, "last_word_timings", None) or [])
                 except Exception as persona_err:
                     self.log(f"⚠️ Persona TTS notice: {persona_err} — using standard engine")
                     try:
+                        if _edge_tls is not None:
+                            _edge_tls.last_word_timings = []
                         produced = engine.generate_channel99_voice(speak, base_edge_voice)
                     except Exception as first:
                         plain = without_english(speak)
@@ -5519,7 +5761,10 @@ class EdgeSmartSync:
                         # A line mixing English and Burmese sometimes gets no audio at all
                         self.log(f"⚠️ [{idx}/{total_segments}] no audio — trying again without the English words "
                                  "(Edit Text can rewrite the line)")
+                        if _edge_tls is not None:
+                            _edge_tls.last_word_timings = []
                         produced = engine.generate_channel99_voice(plain, base_edge_voice)
+                    _seg_word_timings = list(getattr(_edge_tls, "last_word_timings", None) or [])
                     if not produced or not Path(produced).is_file():
                         raise RuntimeError("TTS output path မရပါ။")
                 except Exception as exc:
@@ -5544,6 +5789,8 @@ class EdgeSmartSync:
                 "video_end": seg["video_end"],
                 "text": seg["narration"],
             }
+            if _seg_word_timings:
+                record["word_timings"] = _seg_word_timings
             self.log(f"✅ {base}.wav = {duration:.2f}s")
 
         part = dst
@@ -5557,6 +5804,7 @@ class EdgeSmartSync:
             "duration": duration,
             "part": part,
             "record": record,
+            "word_timings": record.get("word_timings") if isinstance(locals().get("record"), dict) else None,
             "fell_back": fell_back,
         }
 
@@ -5682,6 +5930,11 @@ class EdgeSmartSync:
             raise FileNotFoundError(f"smart_sync_plan.json မတွေ့ပါ: {plan_file}")
 
         plan = load_json(plan_file)
+        _stage_timings: dict[str, float] = {
+            str(k): round(float(v), 3)
+            for k, v in (plan.get("stage_timings") or {}).items()
+            if isinstance(v, (int, float))
+        }
         segments = normalize_segments(plan)
         # Arm the whole-job deadline (audit fix 2026-11-03).
         self._run_started = time.monotonic()
@@ -5997,6 +6250,7 @@ class EdgeSmartSync:
         _render_queue: "queue.Queue[Any] | None" = None
         _render_abort = threading.Event()
         _render_state: dict[str, Any] = {"error": None}
+        _sync_acc: dict[str, float] = {"parts_sec": 0.0}
         _renderer_thread: threading.Thread | None = None
         render_pipelined = bool(self.render_final_video)
         # Batch AB: NVENC must be listed AND probe-usable — the
@@ -6031,6 +6285,7 @@ class EdgeSmartSync:
                 if self.should_stop():
                     raise InterruptedError("STOP requested — video parts checkpoint ထဲကနေ Resume လုပ်နိုင်ပါတယ်။")
                 self._check_run_deadline("video render")
+                _part_t0 = time.monotonic()
                 base = segment_basename(seg)
                 dst = paths.video_parts / f"{base}.mp4"
                 target = float(item["audio_duration"])
@@ -6115,6 +6370,7 @@ class EdgeSmartSync:
                     checkpoint["selected_encoder"] = encoder
                     with _checkpoint_lock:
                         atomic_write_json(paths.checkpoint, checkpoint)
+                _sync_acc["parts_sec"] += max(0.0, time.monotonic() - _part_t0)
                 video_parts.append(dst)
                 self.progress(idx, len(segments), f"Video {idx}/{len(segments)}")
 
@@ -6165,6 +6421,82 @@ class EdgeSmartSync:
             _render_abort.clear()
 
 
+        _prewarm_pool: ThreadPoolExecutor | None = None
+        _prewarm_spec: dict[str, Any] | None = None
+        _prewarm_renderer = None
+        _prewarm_params: tuple[int, int, int] | None = None
+        _prewarm_wait_sec = 0.0
+        if render_pipelined and self.overlays.get("burn_subtitles", True):
+            try:
+                _cw_pre = int(layout.get("cw", 1920))
+                _ch_pre = int(layout.get("ch", 1080))
+                _lpc_pre = int(self.overlays.get("sub_lines", 1))
+                _is_vert_pre = (_ch_pre > _cw_pre) or (self.output_ratio == "9:16")
+                _max_chars_pre = _subtitle_max_chars(
+                    _is_vert_pre, _lpc_pre, self.overlays.get("sub_w"),
+                    font_size=int(self.overlays.get("subtitles_font_size", 16)),
+                )
+                _prewarm_spec = _resolve_png_subtitle_job(
+                    {**self.overlays, "subtitle_cues": [(0.0, 1.0, "c")]},
+                    _cw_pre, _ch_pre, layout,
+                )
+                if _prewarm_spec is not None:
+                    _prewarm_renderer = _png_subs.PngSubtitleRenderer(paths.work / "subtitle_png_cache")
+                    _prewarm_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="recap-png-pre")
+                    _pw_pre = int(layout.get("pw", _cw_pre))
+                    _prewarm_params = (_max_chars_pre, _lpc_pre, int(round(_sub_w_fraction(self.overlays) * _pw_pre)))
+            except Exception:
+                _prewarm_pool = None
+                _prewarm_spec = None
+
+        def _prewarm_segment_cues(st: float, en: float, seg_text: str, wt: list[dict[str, Any]] | None) -> None:
+            if _prewarm_pool is None or _prewarm_spec is None or _prewarm_renderer is None or _prewarm_params is None:
+                return
+            _mc, _lpc, _fit_mw = _prewarm_params
+            try:
+                cues = split_burmese_subtitle_cues(
+                    st, en, seg_text, max_cue_chars=_mc, lines_per_cue=_lpc, word_timings=wt
+                )
+            except Exception:
+                return
+            def _do_warm(_cues=cues) -> None:
+                try:
+                    for c_st, c_en, c_txt in _cues:
+                        for f_lines, f_px, f_vis, _ps, _pe in fit_png_cue_pieces(
+                            _prewarm_renderer,
+                            c_txt,
+                            _prewarm_spec["font_px"],
+                            _prewarm_spec["font_path"],
+                            _prewarm_spec["visuals"],
+                            _fit_mw,
+                            c_st,
+                            c_en,
+                            max_lines=_prewarm_spec["sub_lines"],
+                        ):
+                            if f_lines:
+                                _prewarm_renderer.render_lines(
+                                    f_lines, f_px, _prewarm_spec["font_path"], f_vis
+                                )
+                except Exception:
+                    pass
+            try:
+                _prewarm_pool.submit(_do_warm)
+            except Exception:
+                pass
+
+        def _shutdown_prewarm(wait: bool) -> float:
+            nonlocal _prewarm_pool
+            if _prewarm_pool is None:
+                return 0.0
+            _tw0 = time.monotonic()
+            try:
+                _prewarm_pool.shutdown(wait=wait)
+            except Exception:
+                pass
+            _prewarm_pool = None
+            return max(0.0, time.monotonic() - _tw0)
+
+        _t_tts_stage0 = time.monotonic()
         for _tts_pass in range(2):
             engine_provider = "gemini" if use_gemini else ("voxcpm" if use_voxcpm else "edge_tts")
             if use_gemini:
@@ -6213,6 +6545,10 @@ class EdgeSmartSync:
                     _start = cursor
                     _end = _start + _dur
                     cursor = _end
+                    _cached_wt = (
+                        _res.get("word_timings")
+                        or ((checkpoint.get("audio") or {}).get(segment_basename(_seg)) or {}).get("word_timings")
+                    )
                     _item = {
                         "segment_id": _seg["segment_id"],
                         "source_index": _seg["source_index"],
@@ -6224,10 +6560,13 @@ class EdgeSmartSync:
                         "text": _seg["narration"],
                         "audio_file": str(_res["part"]),
                     }
+                    if _cached_wt:
+                        _item["word_timings"] = _cached_wt
                     timing.append(_item)
                     audio_parts.append(_res["part"])
                     if _render_queue is not None:
                         _render_queue.put((_idx, _seg, _item))
+                    _prewarm_segment_cues(_start, _end, _seg["narration"], _cached_wt)
                     _assemble_next[0] += 1
 
             def _produce_and_commit(_slot: int, _idx: int, _seg: dict[str, Any]) -> None:
@@ -6273,6 +6612,18 @@ class EdgeSmartSync:
                     _drain_timing()
 
             _worker_count = max(1, min(self.tts_workers, len(segments)))
+            if use_gemini and gem_engine is not None:
+                _own_eng = getattr(gem_engine, "own_engine", None)
+                if (
+                    _own_eng is not None
+                    and not getattr(gem_engine, "_own_spent", True)
+                    and len(getattr(_own_eng, "keys", ())) <= 1
+                ) or (
+                    _own_eng is None
+                    and not getattr(gem_engine, "_record_usage", True)
+                    and len(getattr(gem_engine, "keys", ())) <= 1
+                ):
+                    _worker_count = min(_worker_count, 2)
             if _worker_count <= 1:
                 for _idx, _seg in enumerate(segments, 1):
                     _produce_and_commit(0, _idx, _seg)
@@ -6297,6 +6648,7 @@ class EdgeSmartSync:
             fallback_segments.sort()
             if _tts_errors:
                 _stop_part_renderer()
+                _shutdown_prewarm(wait=False)
                 raise _tts_errors[min(_tts_errors)]
 
             if (
@@ -6339,6 +6691,7 @@ class EdgeSmartSync:
                 # pass. Stop it, drop its pass-0 parts (they embed
                 # pass-0 audio durations) and let pass 2 start fresh.
                 _stop_part_renderer()
+                _sync_acc["parts_sec"] = 0.0
                 audio_cursor = 0.0
                 frames_done = 0
                 # Fresh error state for pass 2 (Batch DB): an error
@@ -6365,6 +6718,8 @@ class EdgeSmartSync:
                 else "voxcpm+edge_fallback" if use_voxcpm
                 else "edge_tts"
             )
+            _stage_timings["tts"] = round(max(0.0, time.monotonic() - _t_tts_stage0), 3)
+            checkpoint["stage_timings"] = dict(_stage_timings)
             atomic_write_json(paths.checkpoint, checkpoint)
 
         # Batch CG: finalise the BYOK route outcome now that every
@@ -6459,6 +6814,7 @@ class EdgeSmartSync:
             for item in timing
         ]
         out_plan["production_overlays"] = self.overlays
+        out_plan["stage_timings"] = dict(_stage_timings)
         atomic_write_json(paths.plan, out_plan)
 
         # Generate synchronized Myanmar SRT & ASS subtitle files
@@ -6488,7 +6844,8 @@ class EdgeSmartSync:
                 sub_cues = split_burmese_subtitle_cues(
                     raw_st, raw_en, txt,
                     max_cue_chars=max_chars,
-                    lines_per_cue=lines_per_cue
+                    lines_per_cue=lines_per_cue,
+                    word_timings=s_item.get("word_timings"),
                 )
                 if not sub_cues:
                     # Single-cue fallback: the raw line never reached the
@@ -6542,12 +6899,14 @@ class EdgeSmartSync:
             ]
 
         if not self.render_final_video:
+            _shutdown_prewarm(wait=False)
             self.log("✅ Audio + Smart Sync plan READY (final video render skipped).")
             return {
                 "audio": str(paths.voice),
                 "plan": str(paths.plan),
                 "final": None,
                 "segments": len(timing),
+                "stage_timings": dict(_stage_timings),
             }
 
         self.log("🎬 Smart Sync video parts render စမယ်...")
@@ -6582,13 +6941,19 @@ class EdgeSmartSync:
         synced = paths.synced_video_noaudio
         if late.get("concat") == concat_fp and synced.is_file() and synced.stat().st_size > 5000:
             self.log("♻️ Smart Sync concat reuse (inputs unchanged)")
+            _stage_timings["sync"] = round(max(0.0, _sync_acc["parts_sec"]), 3)
         else:
             self._check_run_deadline("concat")
             self.log("🔗 Smart Sync video parts concat...")
+            _t_concat0 = time.monotonic()
             concat_video_parts(self.ffmpeg, video_parts, synced, paths.work, total_duration=audio_cursor)
+            _concat_sec = max(0.0, time.monotonic() - _t_concat0)
             late["concat"] = concat_fp
+            _stage_timings["sync"] = round(max(0.0, _sync_acc["parts_sec"] + _concat_sec), 3)
+            checkpoint["stage_timings"] = dict(_stage_timings)
             atomic_write_json(paths.checkpoint, checkpoint)
         self._log_sync_check(paths, segments, checkpoint)
+        _prewarm_wait_sec = _shutdown_prewarm(wait=True)
         video_for_mux = paths.synced_video_noaudio
         overlays_active = bool(
             self.overlays.get("blur_boxes")
@@ -6614,17 +6979,36 @@ class EdgeSmartSync:
             if late.get("overlay") == overlay_fp and decorated.is_file() and decorated.stat().st_size > 5000:
                 self.log("♻️ Production overlay reuse (inputs unchanged)")
                 video_for_mux = decorated
+                _stage_timings.setdefault("png", round(_prewarm_wait_sec, 3))
+                _stage_timings.setdefault("overlay", 0.0)
             else:
                 self._check_run_deadline("overlay")
                 self.log(f"🎨 Production overlay pass — Blur / Title PNG / Logo / Subtitles... [encoder={encoder}]")
                 _overlay_started = time.monotonic()
+                _ov_timings: dict[str, float] = {}
+                import inspect as _inspect_mod
+                _ov_kw: dict[str, Any] = {
+                    "layout": layout,
+                    "render_quality": self.render_quality,
+                    "duration": audio_cursor,
+                }
+                _ov_params = _inspect_mod.signature(apply_production_overlays).parameters
+                if "timings_out" in _ov_params:
+                    _ov_kw["timings_out"] = _ov_timings
+                if "progress_fn" in _ov_params:
+                    _ov_kw["progress_fn"] = lambda _msg: self.progress(1, 1, _msg)
                 video_for_mux = apply_production_overlays(
                     self.ffmpeg, paths.synced_video_noaudio, paths.decorated_video_noaudio,
                     self.overlays, encoder, paths.work, self.log, frame_size=(layout["cw"], layout["ch"]),
-                    layout=layout, render_quality=self.render_quality,
-                    duration=audio_cursor,
+                    **_ov_kw,
                 )
                 late["overlay"] = overlay_fp
+                _stage_timings["png"] = round(max(0.0, _prewarm_wait_sec + float(_ov_timings.get("png", 0.0))), 3)
+                _stage_timings["overlay"] = round(
+                    float(_ov_timings.get("overlay", max(0.0, time.monotonic() - _overlay_started))),
+                    3,
+                )
+                checkpoint["stage_timings"] = dict(_stage_timings)
                 atomic_write_json(paths.checkpoint, checkpoint)
                 # Batch AB: a completion line with elapsed time — the
                 # OOM loop left NO log trace of the pass ever finishing
@@ -6647,8 +7031,11 @@ class EdgeSmartSync:
         })
         if late.get("mux") == mux_fp and paths.final.is_file() and paths.final.stat().st_size > 5000:
             self.log("♻️ Final mux reuse (inputs unchanged)")
+            _stage_timings.setdefault("mux", 0.0)
         else:
             self._check_run_deadline("mux")
+            self.progress(1, 1, "Muxing final video")
+            _t_mux0 = time.monotonic()
             mux_audio(
                 self.ffmpeg,
                 video_for_mux,
@@ -6660,7 +7047,11 @@ class EdgeSmartSync:
                 duration=audio_cursor,
             )
             late["mux"] = mux_fp
-            atomic_write_json(paths.checkpoint, checkpoint)
+            _stage_timings["mux"] = round(max(0.0, time.monotonic() - _t_mux0), 3)
+        checkpoint["stage_timings"] = dict(_stage_timings)
+        out_plan["stage_timings"] = dict(_stage_timings)
+        atomic_write_json(paths.checkpoint, checkpoint)
+        atomic_write_json(paths.plan, out_plan)
         final_duration = probe_duration(self.ffprobe, paths.final)
 
         # Copy synced SRT and ASS next to final video
@@ -6708,4 +7099,5 @@ class EdgeSmartSync:
             "duration": final_duration,
             # Batch CG: BYOK route outcome (None for non-routed runs).
             "gemini_route": self._gemini_outcome,
+            "stage_timings": dict(_stage_timings),
         }

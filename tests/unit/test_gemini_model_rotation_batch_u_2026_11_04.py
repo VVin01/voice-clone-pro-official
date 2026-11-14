@@ -278,8 +278,22 @@ def test_tts_start_model_rotates_per_call(tmp_path, monkeypatch):
     for _ in range(5):
         assert eng._ask("prompt", "Charon")
     models = gte.TTS_MODELS
-    # Batch DN: 4 models in rotation (was 2) — the start walks the
-    # full tuple and wraps. Same assertion strength, new tuple size.
+    # Quality Pass §2C item E: lite stays behind primary models while primaries
+    # are < 7/10 used, so the 3 primary models rotate first.
+    primaries = [m for m in models if "lite" not in m]
+    assert [model for _key, model in recorder.calls] == [
+        primaries[0], primaries[1], primaries[2], primaries[0], primaries[1]]
+
+    # Once primaries reach >= 7/10 usage on pool keys, lite joins starting rotation.
+    health = key_rotation.health_for("gemini_tts")
+    health.reset()
+    gte._TTS_MODEL_CURSOR = 0
+    for k in ("tts-key-1", "tts-key-2", "tts-key-3"):
+        for m in primaries:
+            health.record_usage(k, m, n=7)
+    recorder.calls.clear()
+    for _ in range(5):
+        assert eng._ask("prompt", "Charon")
     assert [model for _key, model in recorder.calls] == [
         models[0], models[1], models[2], models[3], models[0]]
 
