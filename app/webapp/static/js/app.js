@@ -11133,6 +11133,57 @@ window.ttsState = ttsState;
 // with a 0 daily limit means the tier's allowance is unlimited; a
 // null remaining for any other reason (quota read failed) falls back
 // to the referral figure, the most the client can state truthfully.
+function formatTtsTabBalanceLine(opts) {
+    const isAdmin = !!(opts && opts.isAdmin);
+    const isVip = !!(opts && opts.isVip);
+    const unlimited = !!(opts && opts.unlimited);
+    const refSec = Math.max(0, Number(opts && opts.refSec) || 0);
+    const remainSec = Math.max(0, Number(opts && opts.remainSec) || 0);
+    const refMin = (refSec / 60).toFixed(1);
+    const remainMin = (remainSec / 60).toFixed(1);
+    if (isAdmin) return t("tts_balance_line_admin");
+    if (unlimited) {
+        return (!isVip && refSec > 0)
+            ? tf("tts_balance_line_unlimited", { ref_min: refMin })
+            : t("tts_balance_line_unlimited_clean");
+    }
+    if (isVip) return tf("tts_balance_line_paid", { remain_min: remainMin });
+    if (refSec > 0) return tf("tts_balance_line", { ref_min: refMin, remain_min: remainMin });
+    return tf("tts_balance_line_free_daily", { remain_min: remainMin });
+}
+
+function paintHomeTilePeriods(data, quota) {
+    const u = data || (state && state.user) || {};
+    const q = quota || window._lastTtsQuota || null;
+    const isAdmin = Boolean((q && q.is_admin) || u.is_admin);
+    const isVip = Boolean(u.is_vip);
+    const isUnlimited = Boolean(isAdmin || (q && q.unlimited));
+    const dailyCapMin = (q && typeof q.daily_limit_minutes === "number" && q.daily_limit_minutes > 0)
+        ? Math.round(q.daily_limit_minutes)
+        : (typeof u.tts_daily_limit_seconds === "number" && u.tts_daily_limit_seconds > 0
+            ? Math.round(u.tts_daily_limit_seconds / 60)
+            : (isVip ? 60 : 15));
+
+    const ttsPeriod = document.querySelector('#home-free-card [data-i18n="home_free_tts_period"]');
+    if (ttsPeriod) {
+        ttsPeriod.textContent = isUnlimited
+            ? t("home_tile_period_unlimited")
+            : tf("home_tile_tts_period_cap", { min: dailyCapMin });
+    }
+    const voicePeriod = document.querySelector('#home-free-card [data-i18n="home_free_voice_period"]');
+    if (voicePeriod) {
+        voicePeriod.textContent = isAdmin
+            ? t("home_tile_period_unlimited")
+            : (isVip ? t("home_tile_voice_period_paid") : t("home_free_voice_period"));
+    }
+    const recapPeriod = document.querySelector('#home-free-card [data-i18n="home_free_recap_period"]');
+    if (recapPeriod) {
+        recapPeriod.textContent = isAdmin
+            ? t("home_tile_period_unlimited")
+            : (isVip ? t("home_tile_recap_period_paid") : t("home_free_recap_period"));
+    }
+}
+
 function paintTtsTodaySurfaces(data) {
     if (!data) return;
     const rem = data.tts_today_remaining_seconds;
@@ -11153,13 +11204,14 @@ function paintTtsTodaySurfaces(data) {
     const note = document.getElementById("home-free-tts-note");
     if (note) {
         const ref = (data.tts_referral_seconds != null) ? data.tts_referral_seconds : data.tts_balance_seconds;
-        if (!data.is_admin && typeof ref === "number" && ref > 0) {
+        if (!data.is_admin && !data.is_vip && typeof ref === "number" && ref > 0) {
             note.innerText = tf("home_free_tts_referral_note", { min: (ref / 60).toFixed(1) });
             note.classList.remove("hidden");
         } else {
             note.classList.add("hidden");
         }
     }
+    if (typeof paintHomeTilePeriods === "function") paintHomeTilePeriods(data, window._lastTtsQuota || null);
     const voiceVal = document.getElementById("home-free-voice-value");
     if (voiceVal) voiceVal.innerText = data.is_admin ? "∞" : tf("home_free_value_min", { min: data.balance_minutes });
     const recapVal = document.getElementById("home-free-recap-value");
@@ -11182,15 +11234,18 @@ function paintTtsChipFromQuota(q) {
         if (chip) chip.innerText = `🎧 ${(total / 60).toFixed(1)}m`;
         if (ttsVal) ttsVal.innerText = tf("home_free_value_min", { min: (total / 60).toFixed(1) });
     }
+    window._lastTtsQuota = q;
     const note = document.getElementById("home-free-tts-note");
     if (note) {
-        if (!q.is_admin && (q.referral_seconds || 0) > 0) {
+        const isVipUser = Boolean(state && state.user && state.user.is_vip);
+        if (!q.is_admin && !isVipUser && (q.referral_seconds || 0) > 0) {
             note.innerText = tf("home_free_tts_referral_note", { min: ((q.referral_seconds || 0) / 60).toFixed(1) });
             note.classList.remove("hidden");
         } else {
             note.classList.add("hidden");
         }
     }
+    paintHomeTilePeriods((state && state.user) || {}, q);
     paintHomeStatusStripFromQuota(q);
 }
 
@@ -11291,14 +11346,13 @@ async function refreshTtsQuota() {
                 paintTtsBalanceLine(runId, (line) => {
                     line.classList.remove("tts-balance-retry");
                     delete line.dataset.quotaError;
-                    if (q.unlimited) {
-                        line.textContent = tf("tts_balance_line_unlimited", { ref_min: refMin });
-                    } else {
-                        line.textContent = tf("tts_balance_line", {
-                            ref_min: refMin,
-                            remain_min: (((q.remaining_seconds || 0)) / 60).toFixed(1),
-                        });
-                    }
+                    line.textContent = formatTtsTabBalanceLine({
+                        isAdmin: Boolean(q.is_admin || (state && state.user && state.user.is_admin)),
+                        isVip: Boolean(state && state.user && state.user.is_vip),
+                        unlimited: Boolean(q.unlimited),
+                        refSec: q.referral_seconds || 0,
+                        remainSec: q.remaining_seconds || 0,
+                    });
                 });
                 return;
             } catch (e) { /* retry, then the fallback paint below */ }
@@ -11358,9 +11412,16 @@ function paintTtsQuotaInstant() {
     paintTtsBalanceLine(-1, (line) => {
         line.classList.remove("tts-balance-retry");
         delete line.dataset.quotaError;
-        line.textContent = profile.is_admin
-            ? tf("tts_balance_line_unlimited", { ref_min: refMin })
-            : tf("voice_tts_balance_line", { min: refMin });
+        const remSec = (typeof profile.tts_today_remaining_seconds === "number")
+            ? profile.tts_today_remaining_seconds
+            : (typeof profile.tts_daily_limit_seconds === "number" ? profile.tts_daily_limit_seconds : (profile.is_vip ? 3600 : 900));
+        line.textContent = formatTtsTabBalanceLine({
+            isAdmin: Boolean(profile.is_admin),
+            isVip: Boolean(profile.is_vip),
+            unlimited: Boolean(profile.is_admin),
+            refSec: profile.tts_referral_seconds ?? profile.tts_balance_seconds ?? 0,
+            remainSec: remSec,
+        });
     });
 }
 
@@ -13856,6 +13917,48 @@ window.loadAdminAudit = loadAdminAudit;
 
 // ── Pricing ──────────────────────────────────────────────────────────
 
+function renderAdminPricingList(plans) {
+    const box = document.getElementById("admin-pricing-list");
+    if (!box) return;
+    if (!Array.isArray(plans) || !plans.length) { admStateEmpty(box, "admin_empty"); return; }
+    window._lastAdminPricingPlans = plans;
+    box.innerHTML = plans.map(p => {
+        const code = String(p.code || "");
+        const titleKey = `admin_plan_name_${code}`;
+        const rawTitle = t(titleKey);
+        const titleText = (rawTitle && rawTitle !== titleKey) ? rawTitle : code;
+        const catKey = `admin_plan_cat_${String(p.category || "").toLowerCase()}`;
+        const rawCat = t(catKey);
+        const catText = (rawCat && rawCat !== catKey) ? rawCat : (p.category || "");
+        const alloc = p.recap_credits > 0 && p.minutes > 0
+            ? tf("admin_plan_spec_combo", { min: p.minutes, cr: p.recap_credits })
+            : (p.recap_credits > 0
+                ? tf("admin_plan_spec_cr", { cr: p.recap_credits })
+                : tf("admin_plan_spec_min", { min: p.minutes }));
+        const safeCode = escapeHtml(code);
+        return `
+        <div class="adm-price-row adm-price-card">
+            <div class="adm-price-main">
+                <div class="adm-price-head">
+                    <div class="adm-price-title">${escapeHtml(titleText)}</div>
+                    <span class="adm-price-cat-badge">${escapeHtml(catText)}</span>
+                </div>
+                <div class="adm-price-meta">
+                    <span class="adm-price-alloc">${escapeHtml(alloc)}</span>
+                    <span class="adm-price-code">${escapeHtml(t("admin_plan_code_prefix"))}: ${safeCode}</span>
+                </div>
+            </div>
+            <div class="adm-price-controls">
+                <div class="adm-price-input-wrap">
+                    <input type="number" class="studio-input adm-price-input" id="adm-price-${safeCode}" value="${p.price_mmk}" min="100" step="100" aria-label="${escapeHtml(titleText)}">
+                    <span class="adm-price-cur">MMK</span>
+                </div>
+                <button type="button" class="btn mini-btn gold-btn adm-price-save-btn" onclick="adminSavePrice('${safeCode}')">${escapeHtml(t("admin_pricing_save"))}</button>
+            </div>
+        </div>`;
+    }).join("");
+}
+
 async function loadAdminPricing() {
     const box = document.getElementById("admin-pricing-list");
     if (!box) return;
@@ -13864,23 +13967,7 @@ async function loadAdminPricing() {
         const res = await fetchWithTimeout("/api/admin/pricing", { headers: getAuthHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
-        const plans = data.plans || [];
-        if (!plans.length) { admStateEmpty(box, "admin_empty"); return; }
-        box.innerHTML = plans.map(p => {
-            const alloc = p.recap_credits > 0 && p.minutes > 0
-                ? `${p.minutes}m + ${p.recap_credits} cr`
-                : (p.recap_credits > 0 ? `${p.recap_credits} credits` : `${p.minutes} min`);
-            return `
-            <div class="adm-price-row">
-                <div class="adm-price-main">
-                    <div class="adm-price-code">${escapeHtml(p.code)}</div>
-                    <div class="adm-price-alloc">${escapeHtml(p.category)} • ${alloc}</div>
-                </div>
-                <input type="number" class="studio-input adm-price-input" id="adm-price-${escapeHtml(p.code)}" value="${p.price_mmk}" min="100" step="100">
-                <span class="adm-price-cur">MMK</span>
-                <button class="btn mini-btn gold-btn" onclick="adminSavePrice('${escapeHtml(p.code)}')">${t("admin_pricing_save")}</button>
-            </div>`;
-        }).join("");
+        renderAdminPricingList(data.plans || []);
     } catch (e) {
         admStateError(box, "loadAdminPricing()");
     }
@@ -14666,9 +14753,11 @@ function hubHistoryRowHtml(j) {
     const title = isRecap ? escapeHtml(snippet) : `&quot;${escapeHtml(snippet)}&quot;`;
     const durText = formatJobDuration(j);
     const exp = computeHistoryExpiryState(j);
-    const expiryPillHtml = exp.expiresSoon && !exp.expired && j.status === "SUCCESS"
-        ? `<span class="vcp-badge vcp-badge-warning hub-expires-soon-badge">${escapeHtml(tf("hist_expires_soon_badge", { time: exp.timeText }))}</span>`
-        : "";
+    const expiryPillHtml = (typeof computeRetentionBadgeHtml === "function")
+        ? computeRetentionBadgeHtml(j)
+        : (exp.expiresSoon && !exp.expired && j.status === "SUCCESS"
+            ? `<span class="vcp-badge vcp-badge-warning hub-expires-soon-badge">${escapeHtml(tf("hist_expires_soon_badge", { time: exp.timeText }))}</span>`
+            : "");
     const isRunningOrQueued = j.status === "RUNNING" || j.status === "QUEUED";
     const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (j.status === "RUNNING" ? 55 : 22)));
     const progressHtml = isRunningOrQueued
@@ -14697,7 +14786,7 @@ function hubHistoryRowHtml(j) {
                 <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
                 <span class="hub-row-text">
                     <span class="hub-row-title">${title}</span>
-                    <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} · <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                    <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
                 </span>
                 <span class="hub-chevron">${open ? "⌃" : "›"}</span>
             </span>
@@ -16048,11 +16137,26 @@ window.toggleRecapBlurL2Detail = toggleRecapBlurL2Detail;
 
 function refreshPhase1to4LanguageSurfaces() {
     try {
+        if (state && state.user && typeof paintCachedUserHeader === "function") {
+            paintCachedUserHeader(state.user);
+        }
         if (state && state.user && typeof paintHomeStatusStrip === "function") {
             paintHomeStatusStrip(state.user);
         }
         if (state && state.user && typeof paintVipPlanBalances === "function") {
             paintVipPlanBalances(state.user);
+        }
+        if (state && state.user && typeof paintTtsTodaySurfaces === "function") {
+            paintTtsTodaySurfaces(state.user);
+        }
+        if (window._lastTtsQuota && typeof paintTtsChipFromQuota === "function") {
+            paintTtsChipFromQuota(window._lastTtsQuota);
+        }
+        if (typeof paintTtsQuotaInstant === "function") {
+            paintTtsQuotaInstant();
+        }
+        if (Array.isArray(window._lastAdminPricingPlans) && typeof renderAdminPricingList === "function") {
+            renderAdminPricingList(window._lastAdminPricingPlans);
         }
         if (typeof renderHomeRecentProjects === "function") {
             renderHomeRecentProjects();

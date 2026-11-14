@@ -11,8 +11,8 @@ PHASE5_CSS = STYLE_CSS.split(PHASE5_MARKER, 1)[1]
 
 
 def test_v2_phase5_cache_token_current():
-    assert INDEX_HTML.count("?v=20261113_r147") == 4
-    assert "20261113_r146" not in INDEX_HTML
+    assert INDEX_HTML.count("?v=20261114_r148") == 4
+    assert "20261114_r146" not in INDEX_HTML
 
 
 def test_v2_phase5_zero_backdrop_filter_in_scrolling_surfaces():

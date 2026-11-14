@@ -65,7 +65,7 @@ def _i18n_values(key: str) -> list[str]:
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_bb_cache_token_is_r79():
-    assert HTML.count("20261113_r147") == 4
+    assert HTML.count("20261114_r148") == 4
     assert "20261104_r74" not in HTML
 
 
@@ -342,8 +342,11 @@ def test_bb4_loader_uses_timeout_retries_and_a_fallback_paint():
     assert 't("tts_balance_error")' in body
     assert 'line.dataset.quotaError = "1"' in body
     # The success paints are unchanged from AW.
-    assert 'tf("tts_balance_line_unlimited", { ref_min: refMin })' in body
-    assert 'tf("tts_balance_line", {' in body
+    # SUPERSEDED by Polish Pass 1 (2026-11-14, brief 1D): refreshTtsQuota
+    # now delegates to tier-truthful formatTtsTabBalanceLine (Admin sees no referral line).
+    assert "formatTtsTabBalanceLine" in body
+    assert 'formatTtsTabBalanceLine' in APP_JS
+    assert 'tf("tts_balance_line", {' in APP_JS
     # Tap-to-retry is wired in initTtsTab.
     init = _between(APP_JS, "function initTtsTab", "document.addEventListener")
     assert 'balLine.dataset.quotaError === "1"' in init
