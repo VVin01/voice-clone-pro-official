@@ -10872,7 +10872,7 @@ def _tts_error_detail(reason: str, user: User) -> str:
         if not is_admin and user.account_category != AccountCategory.PURCHASED.value:
             detail += (
                 f" Free အသုံးပြုသူတွေအတွက် တစ်ကြိမ်လျှင် စာလုံးရေ {settings.character_limit_free:,} အထိသာ ကန့်သတ်ထားပါတယ်။"
-                f" စာလုံးရေ {settings.character_limit_purchased:,} အထိ သုံးလိုပါက Plan ဝယ်ယူနိုင်ပါတယ်။"
+                f" စာလုံးရေ {settings.character_limit_purchased:,} အထိ သုံးလိုပါက VIP Plan ဝယ်ယူနိုင်ပါတယ်။"
             )
         return detail
     if reason == "EMPTY_TEXT":

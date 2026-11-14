@@ -10174,7 +10174,6 @@ function startRecapJobPolling(jobId) {
                 setRecapStage(null, "WAITING_CHOICE");
                 if (statusMsg) statusMsg.innerText = t("live_job_status_waiting_choice");
                 if (stepText) stepText.innerText = `${t("recap_waiting_choice_detail")} · ${t("recap_waiting_choice_bot_hint")}`;
-                if (progressFill) paintProgressBarFill(progressFill, { status: "WAITING_CHOICE", progress_percent: 0 });
                 const cancelBtn = document.getElementById("btn-recap-cancel");
                 if (cancelBtn) {
                     cancelBtn.classList.remove("hidden");

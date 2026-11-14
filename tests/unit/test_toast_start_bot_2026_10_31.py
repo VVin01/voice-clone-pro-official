@@ -146,8 +146,8 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
                 "<b>၄။ လက်ကျန်မိနစ်နှင့် အကောင့်အဆင့်များ</b>",
                 "<b>၅။ TTS အသံ အခမဲ့ ရယူနည်း (Refer & Earn)</b>",
                 "<b>၆။ ဘာသာစကား (Language)</b>",
-                "• ဖန်တီးထားသော ဖိုင်များကို မှတ်တမ်း (History) မှာ 24 နာရီအထိ ပြန်ဒေါင်းနိုင်ပါသည်။",
-                "• 🚀 <b>Studio ဖွင့်မည်</b> ခလုတ်မှ Voice Tab ကို ဖွင့်ပါ (သို့မဟုတ် ဒီ Chat ထဲမှာပဲ စာသား ပို့လည်း ရပါသည်)။",
+                "• ဖန်တီးထားသော ဖိုင်များကို မှတ်တမ်း (History) မှာ 24 နာရီအထိ ပြန်ဒေါင်းနိုင်ပါတယ်။",
+                "• 🚀 <b>Studio ဖွင့်မည်</b> ခလုတ်မှ Voice Tab ကို ဖွင့်ပါ (သို့မဟုတ် ဒီ Chat ထဲမှာပဲ စာသား ပို့လည်း ရပါတယ်)။",
                 # Batch BE-3: the price marker follows the armed
                 # truth (duration band), replacing the per-part one.
                 "၃ မိနစ် တစ်ပိုင်းလျှင် 1 Credit",
@@ -174,7 +174,7 @@ def test_help_guide_new_sections_and_formatting(lang, markers):
     # R40: the retention line is dynamic ({retention_hours} since
     # Batch X — the 24-hour window, a setting) — its marker is only
     # meaningful in the rendered text below.
-    dynamic = ("ပြန်ဒေါင်းနိုင်ပါသည်", "stay downloadable")
+    dynamic = ("ပြန်ဒေါင်းနိုင်ပါတယ်", "stay downloadable")
     for m in markers:
         if any(d in m for d in dynamic):
             continue

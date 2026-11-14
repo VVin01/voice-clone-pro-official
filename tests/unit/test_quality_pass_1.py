@@ -440,11 +440,13 @@ def test_2f_and_2e_api_runtime_when_fastapi_installed():
     now = datetime.now(timezone.utc)
     q_voice = SimpleNamespace(
         id="v_q", job_type="TTS", engine="edge_tts", status="QUEUED",
-        preset_voice="Nilar", created_at=now, finished_at=None, result_path=None,
+        preset_voice="Nilar", input_text="Sample voice text",
+        created_at=now, finished_at=None, result_path=None,
     )
     w_recap = SimpleNamespace(
         id="rc_w", job_type="RECAP", engine="recap", status="WAITING_CHOICE",
-        preset_voice="nilar", created_at=now, finished_at=None, result_path=None,
+        preset_voice="nilar", input_text="Sample recap video",
+        created_at=now, finished_at=None, result_path=None,
     )
     p_voice = api_mod._live_job_payload(q_voice, now=now)
     p_recap = api_mod._live_job_payload(w_recap, now=now)
