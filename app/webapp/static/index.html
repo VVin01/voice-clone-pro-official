@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261114_r149">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261114_r150">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261114_r149" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261114_r150" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -2404,6 +2404,17 @@
                             <p class="text-muted">—</p>
                         </div>
                     </div>
+
+                    <div class="card glass mt-3" id="admin-stage-timings-card">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="adm_stage_timings_title">⏱️ Recap Stage ကြာချိန်များ (B0)</div>
+                            <button type="button" class="mini-chip" id="adm-stage-timings-refresh-btn" onclick="loadAdminStageTimings(true)">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                        </div>
+                        <p class="text-muted text-xs mt-1" id="adm-stage-timings-meta">—</p>
+                        <div id="adm-stage-timings-body" class="mt-2">
+                            <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ── SCREEN: Payments ─────────────────────────────── -->
@@ -3463,7 +3474,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261114_r149"></script>
-    <script src="/static/js/app.js?v=20261114_r149"></script>
+    <script src="/static/js/i18n.js?v=20261114_r150"></script>
+    <script src="/static/js/app.js?v=20261114_r150"></script>
 </body>
 </html>
