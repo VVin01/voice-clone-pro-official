@@ -11412,6 +11412,9 @@ function paintTtsCostHintTiered(q, profile) {
         if (isAdmin) shortEl.textContent = t("tts_cost_hint_admin");
         else if (isVip) shortEl.textContent = t(hasRef ? "tts_cost_hint_vip_ref" : "tts_cost_hint_vip");
         else shortEl.textContent = t(hasRef ? "tts_cost_hint" : "tts_cost_hint_free_noref");
+        if (shortEl.classList && typeof shortEl.classList.toggle === "function") {
+            shortEl.classList.toggle("hidden", Boolean(isAdmin));
+        }
     }
 
     const moreEl = document.querySelector('#tts-cost-hint-more [data-i18n="tts_cost_hint_more"]');
@@ -13521,6 +13524,7 @@ function renderAdminQueueData(data) {
     set("cnt-total", c.total_listed);
     set("cnt-queued", c.queued);
     set("cnt-running", c.running);
+    set("cnt-waiting-choice", c.waiting_choice ?? 0);
     set("cnt-success", c.success);
     set("cnt-failed", c.failed);
     set("adm-queued-jobs", c.queued);

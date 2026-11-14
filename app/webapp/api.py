@@ -12645,6 +12645,7 @@ async def get_admin_overview(
         "pending_slips": pending_slips,
         "queued_jobs": queued_jobs,
         "running_jobs": running_jobs,
+        "waiting_choice_jobs": jobs_by_status.get(JobStatus.WAITING_CHOICE.value, 0),
         "cloud_worker_status": "ONLINE (Render Cloud)",
         "failed_jobs_24h": failed_24h,
         "jobs_by_status": jobs_by_status,
@@ -13331,6 +13332,7 @@ async def get_admin_queue(
 
     queued_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value))).scalar() or 0
     running_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.RUNNING.value))).scalar() or 0
+    waiting_choice_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.WAITING_CHOICE.value))).scalar() or 0
     success_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.SUCCESS.value, Job.created_at >= cutoff_24h))).scalar() or 0
     failed_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.FAILED.value, Job.created_at >= cutoff_24h))).scalar() or 0
 
@@ -13430,6 +13432,7 @@ async def get_admin_queue(
         "counts": {
             "queued": queued_cnt,
             "running": running_cnt,
+            "waiting_choice": waiting_choice_cnt,
             "success": success_cnt,
             "failed": failed_cnt,
             "total_listed": len(jobs_out),

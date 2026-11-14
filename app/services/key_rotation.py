@@ -40,6 +40,7 @@ Semantics, mirroring the VoxCPM token pool:
 """
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -142,23 +143,43 @@ _ASYNC_PG_SSL_TO_SSLMODE = {
     "verify-ca": "verify-ca",
     "verify-full": "verify-full",
 }
+_ASYNCPG_ONLY_PARAMS = frozenset({
+    "statement_cache_size",
+    "prepared_statement_cache_size",
+    "command_timeout",
+    "timeout",
+    "max_cached_statement_lifetime",
+    "max_cacheable_statement_size",
+})
+_DEFAULT_SQLITE_URL = "sqlite+aiosqlite:///./data/voice_clone_v2.db"
+_URL_CREDS_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s@]+@")
+
+
+def _redact_url_creds(text: object) -> str:
+    return _URL_CREDS_RE.sub(r"\1***:***@", str(text or ""))
 
 
 def _to_sync_url(url: str) -> str:
-    """Convert an async DATABASE_URL into its sync-driver equivalent.
+    """Convert an async or generic DATABASE_URL into its sync-driver equivalent.
 
-    Driver swaps: ``sqlite+aiosqlite:`` -> ``sqlite:`` and the asyncpg
-    drivers -> ``postgresql+psycopg2:``. For psycopg2 URLs the query
-    string is translated too (Batch DO): an ``ssl`` param is removed
-    and ``sslmode`` is set from it (an existing ``sslmode`` wins);
-    every other query param is preserved. Non-psycopg2 URLs keep the
-    historical driver-swap-only behaviour."""
-    sync_url = (
-        str(url or "")
-        .replace("sqlite+aiosqlite:", "sqlite:")
-        .replace("postgresql+asyncpg:", "postgresql+psycopg2:")
-        .replace("postgres+asyncpg:", "postgresql+psycopg2:")
-    )
+    Driver swaps: ``sqlite+aiosqlite:`` -> ``sqlite:``, and PostgreSQL
+    schemes (``postgresql+asyncpg:``, ``postgres+asyncpg:``, ``postgres:``,
+    ``postgresql:``) -> ``postgresql+psycopg2:``. For psycopg2 URLs, asyncpg-only
+    query parameters are stripped and an ``ssl`` param is translated to
+    ``sslmode`` (an existing ``sslmode`` wins); valid libpq params remain."""
+    raw = str(url or "").strip()
+    if raw.startswith("sqlite+aiosqlite:"):
+        return "sqlite:" + raw[len("sqlite+aiosqlite:"):]
+    sync_url = raw
+    for prefix in (
+        "postgresql+asyncpg://",
+        "postgres+asyncpg://",
+        "postgresql://",
+        "postgres://",
+    ):
+        if sync_url.startswith(prefix):
+            sync_url = "postgresql+psycopg2://" + sync_url[len(prefix):]
+            break
     if "+psycopg2:" not in sync_url:
         return sync_url
     from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -169,10 +190,15 @@ def _to_sync_url(url: str) -> str:
     except Exception:
         return sync_url
     ssl_values = [value for name, value in pairs if name == "ssl"]
-    if not ssl_values:
+    dropped_asyncpg = any(name in _ASYNCPG_ONLY_PARAMS for name, _value in pairs)
+    if not ssl_values and not dropped_asyncpg:
         return sync_url
-    kept = [(name, value) for name, value in pairs if name != "ssl"]
-    if not any(name == "sslmode" for name, _value in kept):
+    kept = [
+        (name, value)
+        for name, value in pairs
+        if name != "ssl" and name not in _ASYNCPG_ONLY_PARAMS
+    ]
+    if ssl_values and not any(name == "sslmode" for name, _value in kept):
         sslmode = _ASYNC_PG_SSL_TO_SSLMODE.get(
             ssl_values[0].strip().lower(), "require")
         kept.append(("sslmode", sslmode))
@@ -186,14 +212,16 @@ def _sync_engine():
     global _SYNC_ENGINE, _SYNC_ENGINE_URL
     url = _SYNC_STORE_OVERRIDE
     if url is None:
-        if not os.environ.get("DATABASE_URL"):
-            return None
-        try:
-            from app.config import settings
+        url = os.environ.get("DATABASE_URL") or ""
+        if not url:
+            try:
+                from app.config import settings
 
-            url = str(settings.database_url)
-        except Exception:
-            url = os.environ.get("DATABASE_URL", "")
+                cfg_url = str(getattr(settings, "database_url", "") or "")
+                if cfg_url and cfg_url != _DEFAULT_SQLITE_URL:
+                    url = cfg_url
+            except Exception:
+                url = ""
     if not url or ":memory:" in url:
         return None
     sync_url = _to_sync_url(url)
@@ -206,7 +234,10 @@ def _sync_engine():
             _SYNC_ENGINE = create_engine(sync_url, pool_pre_ping=True)
             _SYNC_ENGINE_URL = sync_url
         except Exception as exc:
-            logger.debug("key_rotation: sync store unavailable: %s", exc)
+            logger.warning(
+                "key_rotation: sync store unavailable (%s): %s",
+                type(exc).__name__, _redact_url_creds(exc),
+            )
             _SYNC_ENGINE = None
             _SYNC_ENGINE_URL = None
         return _SYNC_ENGINE
@@ -226,12 +257,15 @@ def botsetting_sync_read(key: str) -> str | None:
             ).first()
         return str(row[0]) if row is not None else None
     except Exception as exc:
-        logger.debug("key_rotation: sync store read failed: %s", exc)
+        logger.warning(
+            "key_rotation: sync store read failed (key=%s, %s): %s",
+            key, type(exc).__name__, _redact_url_creds(exc),
+        )
         return None
 
 
 def botsetting_sync_write(key: str, value: str) -> bool:
-    """Upsert one bot_settings value synchronously (False on failure)."""
+    """Atomically upsert one bot_settings value synchronously (False on failure)."""
     engine = _sync_engine()
     if engine is None:
         return False
@@ -242,18 +276,21 @@ def botsetting_sync_write(key: str, value: str) -> bool:
 
         now = datetime.now(timezone.utc)
         with engine.begin() as conn:
-            result = conn.execute(
-                text("UPDATE bot_settings SET value = :v, updated_at = :t WHERE key = :k"),
-                {"v": str(value), "t": now, "k": str(key)},
+            conn.execute(
+                text(
+                    "INSERT INTO bot_settings (key, value, updated_at) "
+                    "VALUES (:k, :v, :t) "
+                    "ON CONFLICT (key) DO UPDATE SET "
+                    "value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
+                ),
+                {"k": str(key), "v": str(value), "t": now},
             )
-            if not result.rowcount:
-                conn.execute(
-                    text("INSERT INTO bot_settings (key, value, updated_at) VALUES (:k, :v, :t)"),
-                    {"k": str(key), "v": str(value), "t": now},
-                )
         return True
     except Exception as exc:
-        logger.debug("key_rotation: sync store write failed: %s", exc)
+        logger.warning(
+            "key_rotation: sync store write failed (key=%s, %s): %s",
+            key, type(exc).__name__, _redact_url_creds(exc),
+        )
         return False
 
 
@@ -269,7 +306,10 @@ def botsetting_sync_delete(key: str) -> bool:
             conn.execute(text("DELETE FROM bot_settings WHERE key = :k"), {"k": str(key)})
         return True
     except Exception as exc:
-        logger.debug("key_rotation: sync store delete failed: %s", exc)
+        logger.warning(
+            "key_rotation: sync store delete failed (key=%s, %s): %s",
+            key, type(exc).__name__, _redact_url_creds(exc),
+        )
         return False
 
 
@@ -428,7 +468,10 @@ class KeyHealth:
         try:
             self.restore_state(json.loads(raw))
         except Exception as exc:
-            logger.debug("key_rotation: persisted state unreadable: %s", exc)
+            logger.warning(
+                "key_rotation: persisted state unreadable (key=%s, %s): %s",
+                self._store_key(), type(exc).__name__, _redact_url_creds(exc),
+            )
             return False
         return True
 
@@ -441,22 +484,31 @@ class KeyHealth:
         store_key = self._store_key()
         if store_key is None:
             return False
+        with self._lock:
+            timer = self._persist_timer
+            self._persist_timer = None
+        if timer is not None and timer is not threading.current_thread():
+            timer.cancel()
         try:
             payload = json.dumps(self.snapshot_state())
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "key_rotation: snapshot encode failed (key=%s, %s): %s",
+                store_key, type(exc).__name__, _redact_url_creds(exc),
+            )
             return False
         return botsetting_sync_write(store_key, payload)
 
     def _schedule_persist(self) -> None:
         if not self._persist_provider:
             return
-        timer = self._persist_timer
-        if timer is not None:
-            timer.cancel()
-        timer = threading.Timer(_PERSIST_DEBOUNCE_SECONDS, self.flush_persistence)
-        timer.daemon = True
-        self._persist_timer = timer
-        timer.start()
+        with self._lock:
+            if self._persist_timer is not None:
+                self._persist_timer.cancel()
+            timer = threading.Timer(_PERSIST_DEBOUNCE_SECONDS, self.flush_persistence)
+            timer.daemon = True
+            self._persist_timer = timer
+            timer.start()
 
     def _is_cooling_locked(self, kid: str, model: str, now: float) -> bool:
         """Check whether `kid` is in cooldown (key-wide OR for `model`). Caller holds `_lock`."""
@@ -736,12 +788,18 @@ class KeyHealth:
         return healthy + [k for k in pool if key_id(k) in cooling]
 
     def reset(self) -> None:
+        timer = None
         with self._lock:
+            if self._persist_timer is not None:
+                timer = self._persist_timer
+                self._persist_timer = None
             self._cooldowns.clear()
             self._strikes.clear()
             self._usage.clear()
             self._tts_stats.clear()
             self._cursor = 0
+        if timer is not None:
+            timer.cancel()
         # A reset is also a persisted reset: a later process must not
         # resurrect state this process deliberately cleared.
         self._persist_loaded = True
@@ -770,6 +828,27 @@ def health_for(provider: str) -> KeyHealth:
             health.enable_persistence(name)
             _REGISTRY[name] = health
         return health
+
+
+def flush_all_persistence() -> int:
+    """Flush every persistent registry KeyHealth snapshot synchronously.
+
+    Safe to call from shutdown hooks and ``atexit`` so debounced updates
+    made just before a deploy restart are not discarded with daemon timers.
+    """
+    with _REGISTRY_LOCK:
+        instances = list(_REGISTRY.values())
+    flushed = 0
+    for health in instances:
+        try:
+            if health.flush_persistence():
+                flushed += 1
+        except Exception:
+            pass
+    return flushed
+
+
+atexit.register(flush_all_persistence)
 
 
 def collect_gemini_key_pool(env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
@@ -828,6 +907,7 @@ __all__ = [
     "botsetting_sync_write",
     "collect_gemini_key_pool",
     "configure_sync_store",
+    "flush_all_persistence",
     "health_for",
     "key_id",
 ]
