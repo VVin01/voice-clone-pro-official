@@ -68,5 +68,5 @@ def test_cp_other_inputs_untouched():
 
 
 def test_cp_cache_token_is_r112():
-    assert HTML.count("20261113_r147") == 4
+    assert HTML.count("20261114_r148") == 4
     assert ("20261104_" + "r111") not in HTML

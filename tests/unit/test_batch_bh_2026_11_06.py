@@ -78,8 +78,10 @@ def test_bh1_instant_paint_reads_profile_tts_balance_seconds():
 def test_bh1_instant_paint_formats_admin_unlimited_else_voice_line():
     # Admins sit outside the daily cap -> unlimited format; everyone
     # else gets the referral-minutes line in the Voice tab's format.
-    assert 'tf("tts_balance_line_unlimited", { ref_min: refMin })' in INSTANT
-    assert 'tf("voice_tts_balance_line", { min: refMin })' in INSTANT
+    # SUPERSEDED by Polish Pass 1 (2026-11-14, brief 1D): paintTtsQuotaInstant
+    # now delegates to tier-truthful formatTtsTabBalanceLine (Admin/VIP never see referral/gift copy).
+    assert "formatTtsTabBalanceLine(" in INSTANT
+    assert 'tts_balance_line_admin' in APP_JS
     assert "profile.is_admin" in INSTANT
 
 
@@ -167,5 +169,5 @@ def test_bh4_reused_i18n_keys_unchanged_in_both_languages():
 
 
 def test_bh4_token_bumped_to_r81():
-    assert INDEX_HTML.count("20261113_r147") == 4
+    assert INDEX_HTML.count("20261114_r148") == 4
     assert "20261104_r80" not in INDEX_HTML

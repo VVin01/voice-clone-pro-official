@@ -10367,3 +10367,410 @@ html[data-theme="dark"].lite .modal-content {
     background: #141D33 !important;
     box-shadow: none !important;
 }
+
+/* ══ POLISH PASS 1 (20261114_r148) ══════════════════════════════════════════ */
+/* NOTE: Pure opaque/gradient surfaces only after V2 Phase 3/4/5 markers.  */
+
+/* 1A. Home Hero Greeting & Tile Sub-Line Fit (no clipping / tidy wrap)      */
+#tab-home .vcp-hero-top {
+    padding: 13px 14px !important;
+    gap: 6px;
+    align-items: flex-start;
+}
+#tab-home .home-status-left {
+    gap: 5px;
+    min-width: 0;
+}
+#tab-home .vcp-hero-badges {
+    gap: 4px;
+    flex-shrink: 0;
+}
+#tab-home .vcp-hero-ready-chip {
+    padding: 3px 7px;
+    font-size: 11px;
+}
+#tab-home #home-greeting-text {
+    font-size: 15.5px;
+    line-height: 1.38;
+    word-break: keep-all;
+}
+#tab-home .home-free-grid {
+    gap: 7px;
+}
+#tab-home .vcp-bal-tile {
+    height: auto !important;
+    min-height: 0;
+    padding: 10px 6px !important;
+    gap: 4px;
+    overflow: visible !important;
+}
+#tab-home .vcp-bal-value {
+    line-height: 1.25;
+}
+#tab-home .vcp-bal-period,
+#tab-home .home-free-period-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    width: auto;
+    max-width: 100%;
+    height: auto !important;
+    min-height: 20px;
+    padding: 3px 4px !important;
+    font-size: 8.8px !important;
+    font-weight: 700;
+    line-height: 1.35 !important;
+    white-space: normal !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+}
+
+/* 1B. Admin Pricing Editor Cards                                            */
+#admin-pricing-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+#admin-pricing-list .adm-price-row.adm-price-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 13px 14px;
+    border-radius: 16px;
+    background: rgba(248, 250, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.09);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.09);
+    box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.06);
+}
+#admin-pricing-list .adm-price-main {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+#admin-pricing-list .adm-price-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+#admin-pricing-list .adm-price-title {
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.42;
+    color: var(--vcp-text-primary, #0F172A);
+    min-width: 0;
+    word-break: keep-all;
+}
+#admin-pricing-list .adm-price-cat-badge {
+    flex-shrink: 0;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.10);
+    color: #1D4ED8;
+    border: 1px solid rgba(37, 99, 235, 0.22);
+    white-space: nowrap;
+}
+#admin-pricing-list .adm-price-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 10px;
+}
+#admin-pricing-list .adm-price-alloc {
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--vcp-text-primary, #1E293B);
+    white-space: nowrap;
+}
+#admin-pricing-list .adm-price-code {
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--vcp-text-secondary, #64748B);
+    white-space: nowrap;
+}
+#admin-pricing-list .adm-price-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 9px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.30);
+}
+#admin-pricing-list .adm-price-input-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+#admin-pricing-list .adm-price-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto !important;
+    min-height: 42px;
+    padding: 8px 11px;
+    font-size: 15px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+#admin-pricing-list .adm-price-cur {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--vcp-text-secondary, #64748B);
+}
+#admin-pricing-list .adm-price-save-btn {
+    flex-shrink: 0;
+    min-height: 42px;
+    padding: 0 16px;
+    border-radius: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+#adm-acc-pricing .adm-acc-body {
+    padding-top: 4px;
+    padding-bottom: 14px;
+}
+
+/* 1C. Admin Nav Overview Label, Triage Banner, KPI Redesign & Sticky Save   */
+#tab-admin #adm-nav .adm-nav-btn {
+    font-size: 11px;
+    padding: 6px 4px;
+}
+#tab-admin #adm-nav .adm-nav-btn[data-adm-section="overview"] span {
+    display: inline-block;
+    opacity: 1 !important;
+    visibility: visible !important;
+    width: auto !important;
+    height: auto !important;
+    font-size: inherit !important;
+    line-height: 1.3;
+    overflow: visible !important;
+}
+#tab-admin .adm-triage-banner {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 13px 15px;
+}
+#tab-admin .adm-triage-copy {
+    width: 100%;
+    min-width: 0;
+}
+#tab-admin .adm-triage-title {
+    font-size: 13px;
+    line-height: 1.45;
+}
+#tab-admin .adm-triage-sub {
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 1.45;
+}
+#tab-admin .adm-triage-cta {
+    align-self: flex-end;
+    min-height: 38px;
+    padding: 0 14px;
+}
+@media (min-width: 520px) {
+    #tab-admin .adm-triage-banner {
+        flex-direction: row;
+        align-items: center;
+    }
+    #tab-admin .adm-triage-cta {
+        align-self: center;
+    }
+}
+#tab-admin .stat-mini-card.adm-kpi-card,
+#tab-admin .stat-mini-card.adm-kpi-ops {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    text-align: left;
+    padding: 12px 12px 10px;
+    border-radius: 16px;
+    border-top: 3px solid rgba(148, 163, 184, 0.35) !important;
+    transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+#tab-admin .stat-mini-card.adm-kpi-card { min-height: 112px; }
+#tab-admin .stat-mini-card.adm-kpi-ops { min-height: 94px; }
+#tab-admin .stat-mini-card.adm-kpi-users { border-top-color: #2563EB !important; }
+#tab-admin .stat-mini-card.adm-kpi-vip { border-top-color: #D97706 !important; }
+#tab-admin .stat-mini-card.adm-kpi-slips { border-top-color: #DC2626 !important; }
+#tab-admin .stat-mini-card.adm-kpi-queue { border-top-color: #0891B2 !important; }
+#tab-admin .stat-mini-card.adm-kpi-danger { border-top-color: #EF4444 !important; }
+#tab-admin .stat-mini-card.adm-kpi-success { border-top-color: #10B981 !important; }
+#tab-admin .stat-mini-card.adm-kpi-muted { border-top-color: #64748B !important; }
+#tab-admin .stat-mini-card.adm-kpi-card .stat-num {
+    font-size: 25px;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+#tab-admin .stat-mini-card.adm-kpi-ops .stat-num {
+    font-size: 21px;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+#tab-admin .adm-stat-cue {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.28);
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #2563EB;
+}
+#tab-admin .stat-mini-card.adm-kpi-vip .adm-stat-cue { color: #B45309; }
+#tab-admin .stat-mini-card.adm-kpi-slips .adm-stat-cue,
+#tab-admin .stat-mini-card.adm-kpi-danger .adm-stat-cue { color: #DC2626; }
+#tab-admin .stat-mini-card.adm-kpi-queue .adm-stat-cue { color: #0E7490; }
+#tab-admin .stat-mini-card.adm-kpi-success .adm-stat-cue { color: #047857; }
+#tab-admin .stat-mini-card.adm-kpi-muted .adm-stat-cue { color: #475569; }
+#tab-admin .stat-mini-card.adm-tap {
+    cursor: pointer;
+}
+#tab-admin .stat-mini-card.adm-tap:active {
+    transform: scale(0.98);
+}
+
+#tab-admin #adm-screen-settings {
+    padding-bottom: 12px;
+}
+#tab-admin .adm-settings-save-bar {
+    position: sticky;
+    bottom: calc(var(--nav-h, 64px) + env(safe-area-inset-bottom, 0px) + 14px);
+    z-index: 95;
+    margin-top: 14px;
+    padding: 8px;
+    border-radius: 18px;
+    background: rgba(248, 250, 252, 0.96);
+    border: 1px solid rgba(15, 23, 42, 0.10);
+    box-shadow: 0 -6px 20px -8px rgba(15, 23, 42, 0.14), 0 8px 22px -6px rgba(15, 23, 42, 0.20);
+}
+
+/* 1D & 1E. Global Bottom Scroll Clearance, Stepper Pills, Step 2 & Users    */
+.content-viewport {
+    padding-bottom: calc(var(--nav-h, 64px) + 84px + env(safe-area-inset-bottom, 0px)) !important;
+}
+.tab-pane.active {
+    padding-bottom: 16px;
+}
+#tab-vip.tab-pane.active,
+#tab-admin.tab-pane.active,
+#tab-recap.tab-pane.active {
+    padding-bottom: 28px;
+}
+#tab-recap .recap-steps-nav {
+    margin-bottom: 8px;
+}
+#tab-recap .recap-steps-capsule {
+    gap: 4px;
+    padding: 5px;
+}
+#tab-recap .recap-steps-nav-item {
+    flex: 0 0 38px;
+    min-width: 38px;
+    padding: 0 4px;
+}
+#tab-recap .recap-steps-nav-item.is-active {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 11px 0 8px !important;
+}
+#tab-recap .recap-steps-nav-name {
+    font-size: 12px;
+    line-height: 1.45;
+}
+#tab-recap .vcp-step2-sticky-preview {
+    padding: 6px 8px 8px;
+    margin-bottom: 8px;
+}
+#tab-recap .vcp-preview-stage-bar {
+    min-height: 36px;
+    margin-bottom: 4px;
+}
+#tab-recap #recap-step2,
+#tab-recap .recap-step-card[data-step="2"] {
+    padding-bottom: 24px;
+}
+#tab-recap #recap-engine-picker .pill-btn {
+    font-size: 11.5px;
+    padding: 8px 4px;
+    white-space: nowrap;
+}
+#adm-users-main .admin-action-row {
+    gap: 6px;
+}
+#adm-users-main #adm-user-search-q {
+    font-size: 12.5px;
+    padding: 9px 10px;
+}
+#adm-users-main .admin-action-row .btn {
+    padding: 0 11px;
+    white-space: nowrap;
+    font-size: 12.5px;
+}
+
+/* Dark & Lite Parity for Polish Pass 1                                      */
+html[data-theme="dark"] #admin-pricing-list .adm-price-row.adm-price-card {
+    background: rgba(15, 23, 42, 0.88);
+    border-color: rgba(148, 163, 184, 0.22);
+    box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.35);
+}
+html[data-theme="dark"] #admin-pricing-list .adm-price-title,
+html[data-theme="dark"] #admin-pricing-list .adm-price-alloc {
+    color: #F8FAFC;
+}
+html[data-theme="dark"] #admin-pricing-list .adm-price-cat-badge {
+    background: rgba(59, 130, 246, 0.18);
+    color: #93C5FD;
+    border-color: rgba(96, 165, 250, 0.30);
+}
+html[data-theme="dark"] #admin-pricing-list .adm-price-code,
+html[data-theme="dark"] #admin-pricing-list .adm-price-cur {
+    color: #94A3B8;
+}
+html[data-theme="dark"] #tab-admin .adm-stat-cue {
+    color: #60A5FA;
+    border-top-color: rgba(148, 163, 184, 0.20);
+}
+html[data-theme="dark"] #tab-admin .stat-mini-card.adm-kpi-vip .adm-stat-cue { color: #FBBF24; }
+html[data-theme="dark"] #tab-admin .stat-mini-card.adm-kpi-slips .adm-stat-cue,
+html[data-theme="dark"] #tab-admin .stat-mini-card.adm-kpi-danger .adm-stat-cue { color: #F87171; }
+html[data-theme="dark"] #tab-admin .stat-mini-card.adm-kpi-queue .adm-stat-cue { color: #22D3EE; }
+html[data-theme="dark"] #tab-admin .stat-mini-card.adm-kpi-success .adm-stat-cue { color: #34D399; }
+html[data-theme="dark"] #tab-admin .stat-mini-card.adm-kpi-muted .adm-stat-cue { color: #CBD5E1; }
+html[data-theme="dark"] #tab-admin .adm-settings-save-bar {
+    background: rgba(15, 23, 42, 0.96);
+    border-color: rgba(148, 163, 184, 0.24);
+    box-shadow: 0 -6px 20px -8px rgba(0, 0, 0, 0.45), 0 8px 22px -6px rgba(0, 0, 0, 0.50);
+}
+html.lite #tab-admin .adm-settings-save-bar,
+html[data-theme="dark"].lite #tab-admin .adm-settings-save-bar {
+    box-shadow: none;
+}
+html.lite #admin-pricing-list .adm-price-row.adm-price-card {
+    background: #FFFFFF;
+    box-shadow: none;
+}
+html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
+    background: #141D33;
+    box-shadow: none;
+}

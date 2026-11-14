@@ -15,8 +15,8 @@ PHASE3_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 3") :]
 
 
 def test_v2_phase3_cache_token_current():
-    assert INDEX_HTML.count("?v=20261113_r147") == 4
-    assert "20261113_r146" not in INDEX_HTML
+    assert INDEX_HTML.count("?v=20261114_r148") == 4
+    assert "20261114_r146" not in INDEX_HTML
 
 
 def test_v2_phase3_zero_backdrop_filter_in_scrolling_recap_cards():
