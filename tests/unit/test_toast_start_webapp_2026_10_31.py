@@ -134,7 +134,7 @@ def test_mapper_and_helpers_defined_and_exported():
     # tests in test_predeploy_minifix_2026_10_31.py prove
     # raw/technical strings still never pass.
     body = APP_JS.split("function mapErrorToToast")[1].split("function showErrorToast")[0]
-    assert body.count("return rawStr;") == 3
+    assert body.count("localizeServerText(rawStr)") == 3
     assert "if (flow === 'recap' && has(" in body
     assert "if (flow === 'voice'" in body and "[\\u1000-\\u109F]" in body
     assert "return msg" not in body
