@@ -971,52 +971,31 @@ async def settle_recap_voice_seconds(
     charge = min(overrun_needed, int(balance.clone_spendable_seconds))
     charged_now = 0
     if charge > 0:
+        overrun_suffix = (
+            f": {note}" if note and not note.startswith(overrun_prefix) else ""
+        )
         rem = charge
-        if rem > 0 and balance.monthly_free_seconds > 0:
-            d = min(balance.monthly_free_seconds, rem)
-            balance.monthly_free_seconds -= d
-            rem -= d
-            charged_now += d
-            session.add(
-                MinuteLedgerEvent(
-                    user_id=user_id,
-                    source=LedgerSource.MONTHLY_FREE.value,
-                    direction=LedgerDirection.DEBIT.value,
-                    seconds=d,
-                    reference_id=job_id,
-                    note=note or f"{overrun_prefix} (Monthly Free)",
+        for _src_val, _attr, _label in (
+            (LedgerSource.MONTHLY_FREE.value, "monthly_free_seconds", "Monthly Free"),
+            (LedgerSource.WELCOME.value, "welcome_seconds", "Welcome"),
+            (LedgerSource.PURCHASE.value, "purchased_seconds", "Purchased"),
+        ):
+            _avail = getattr(balance, _attr)
+            if rem > 0 and _avail > 0:
+                d = min(_avail, rem)
+                setattr(balance, _attr, _avail - d)
+                rem -= d
+                charged_now += d
+                session.add(
+                    MinuteLedgerEvent(
+                        user_id=user_id,
+                        source=_src_val,
+                        direction=LedgerDirection.DEBIT.value,
+                        seconds=d,
+                        reference_id=job_id,
+                        note=f"{overrun_prefix} ({_label}){overrun_suffix}",
+                    )
                 )
-            )
-        if rem > 0 and balance.welcome_seconds > 0:
-            d = min(balance.welcome_seconds, rem)
-            balance.welcome_seconds -= d
-            rem -= d
-            charged_now += d
-            session.add(
-                MinuteLedgerEvent(
-                    user_id=user_id,
-                    source=LedgerSource.WELCOME.value,
-                    direction=LedgerDirection.DEBIT.value,
-                    seconds=d,
-                    reference_id=job_id,
-                    note=note or f"{overrun_prefix} (Welcome)",
-                )
-            )
-        if rem > 0 and balance.purchased_seconds > 0:
-            d = min(balance.purchased_seconds, rem)
-            balance.purchased_seconds -= d
-            rem -= d
-            charged_now += d
-            session.add(
-                MinuteLedgerEvent(
-                    user_id=user_id,
-                    source=LedgerSource.PURCHASE.value,
-                    direction=LedgerDirection.DEBIT.value,
-                    seconds=d,
-                    reference_id=job_id,
-                    note=note or f"{overrun_prefix} (Purchased)",
-                )
-            )
         balance.consumed_seconds = int(balance.consumed_seconds or 0) + charged_now
         balance.updated_at = utc_now()
         user.updated_at = utc_now()

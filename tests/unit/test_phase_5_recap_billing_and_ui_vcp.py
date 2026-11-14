@@ -295,6 +295,64 @@ async def test_p5_overrun_when_balance_spent_mid_render_caps_safely_never_fails(
     await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_p5_overrun_with_caller_note_remains_idempotent_on_replay(tmp_path, monkeypatch):
+    """Part C fix pin: api._execute_recap_background_job passes
+    note=f'Recap clone settle ({job_id})'. Overrun debits MUST retain the
+    overrun prefix so replaying settle_recap_voice_seconds never inflates
+    held_seconds or double-charges after a subsequent top-up."""
+    engine, maker = await _open_store(tmp_path, monkeypatch, "p5_overrun_replay.db")
+    api_mod.RECAP_JOBS_REGISTRY.clear()
+    _patch_submit_env(monkeypatch)
+    uid = await _seed_user(
+        maker, 881015, category=AccountCategory.PURCHASED.value, recap_credits=3, purchased=70
+    )
+
+    async with maker() as db:
+        u = (await db.execute(select(User).where(User.id == uid))).scalar_one()
+        res = await api_mod.create_recap_job(_req(duration_seconds=60), user=u, db=db, _gate=u)
+    job_id = res["recap_id"]  # holds 60s, leaves 10s
+
+    caller_note = f"Recap clone settle ({job_id})"
+    async with maker() as s:
+        s1 = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=90, note=caller_note)
+        await s.commit()
+        assert s1["held_seconds"] == 60
+        assert s1["overrun_charged_seconds"] == 10
+        assert s1["overrun_uncovered_seconds"] == 20
+        assert s1["settled_seconds"] == 70
+
+        # Simulate user buying more minutes before an unexpected settle replay
+        bal = await get_minute_balance(s, uid)
+        bal.purchased_seconds += 100
+        await s.commit()
+
+        s2 = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=90, note=caller_note)
+        await s.commit()
+        assert s2 == s1
+        assert s2["held_seconds"] == 60
+        assert s2["overrun_charged_seconds"] == 10
+        assert s2["overrun_uncovered_seconds"] == 20
+        assert s2["settled_seconds"] == 70
+        bal_after = await get_minute_balance(s, uid)
+        assert bal_after.clone_spendable_seconds == 100  # replay must NOT debit topped-up minutes
+        ev_notes = (
+            await s.execute(
+                select(MinuteLedgerEvent.note).where(
+                    MinuteLedgerEvent.user_id == uid,
+                    MinuteLedgerEvent.reference_id == job_id,
+                    MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
+                )
+            )
+        ).scalars().all()
+        assert any(
+            (n or "").startswith(f"Recap clone settle overrun ({job_id})") and caller_note in (n or "")
+            for n in ev_notes
+        )
+
+    await engine.dispose()
+
+
 # ── 3. Failure, Cancel, Stranded & Parked Expiry Full Refunds ─────────────────
 
 
