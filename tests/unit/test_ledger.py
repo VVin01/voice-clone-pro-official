@@ -6,13 +6,19 @@ from app.services.ledger import (
     MAX_REFERRALS_REWARDED,
     REFERRAL_REWARD_SECONDS,
     WELCOME_BONUS_SECONDS,
+    admin_adjust_balance,
     award_welcome_bonus,
     confirm_referral_and_reward,
     consume_seconds,
     credit_purchased_minutes,
+    draw_tts_referral_seconds,
     get_minute_balance,
     get_or_create_user,
     get_referral_stats,
+    grant_monthly_free_allowance,
+    refund_job_seconds,
+    refund_tts_referral_seconds,
+    settle_recap_voice_seconds,
 )
 
 
@@ -168,3 +174,127 @@ async def test_ledger_events_audit_trail(db_session):
     assert events[0].source == "WELCOME" and events[0].direction == "CREDIT" and events[0].seconds == 300
     assert events[1].source == "PURCHASE" and events[1].direction == "CREDIT" and events[1].seconds == 120
     assert events[2].source == "WELCOME" and events[2].direction == "DEBIT" and events[2].seconds == 60
+
+
+def _derive_bucket_totals_from_ledger(events: list[MinuteLedgerEvent]) -> dict[str, int]:
+    """Derive net seconds per bucket from MinuteLedgerEvent rows.
+
+    Note: admin_adjust_balance writes source='ADJUST' with the target bucket
+    tagged in ``note`` as '(PURCHASE)'/'(WELCOME)'/etc., so total usable
+    seconds is exact directly from directions while per-bucket attribution for
+    ADJUST rows maps that trailing bucket tag.
+    """
+    totals = {
+        LedgerSource.MONTHLY_FREE.value: 0,
+        LedgerSource.WELCOME.value: 0,
+        LedgerSource.REFERRAL.value: 0,
+        LedgerSource.PURCHASE.value: 0,
+    }
+    for ev in events:
+        src = ev.source
+        if src == LedgerSource.ADJUST.value and ev.note:
+            for candidate in totals:
+                if ev.note.endswith(f"({candidate})"):
+                    src = candidate
+                    break
+        if src not in totals:
+            totals[src] = 0
+        delta = int(ev.seconds or 0)
+        if ev.direction == LedgerDirection.CREDIT.value:
+            totals[src] += delta
+        elif ev.direction == LedgerDirection.DEBIT.value:
+            totals[src] -= delta
+    return totals
+
+
+async def _assert_minute_balance_matches_ledger(db_session, user_id: int) -> None:
+    bal = await get_minute_balance(db_session, user_id)
+    events = (
+        await db_session.execute(
+            select(MinuteLedgerEvent)
+            .where(MinuteLedgerEvent.user_id == user_id)
+            .order_by(MinuteLedgerEvent.id)
+        )
+    ).scalars().all()
+    derived = _derive_bucket_totals_from_ledger(events)
+    assert bal.monthly_free_seconds == derived[LedgerSource.MONTHLY_FREE.value]
+    assert bal.welcome_seconds == derived[LedgerSource.WELCOME.value]
+    assert bal.referral_seconds == derived[LedgerSource.REFERRAL.value]
+    assert bal.purchased_seconds == derived[LedgerSource.PURCHASE.value]
+    total_from_all_events = sum(
+        int(e.seconds or 0) if e.direction == LedgerDirection.CREDIT.value else -int(e.seconds or 0)
+        for e in events
+    )
+    assert bal.total_usable_seconds == total_from_all_events
+
+
+@pytest.mark.asyncio
+async def test_part_c_minute_balance_derivable_from_ledger_events(db_session):
+    """Part C Area 4: after every grant, purchase, voice consume/refund,
+    Option B hold/under-run/overrun settle, TTS referral draw/refund, and admin
+    adjustment, per-bucket SUM(CREDIT)-SUM(DEBIT) matches MinuteBalance exactly."""
+    user, _ = await get_or_create_user(db_session, telegram_id=5099)
+    await award_welcome_bonus(db_session, user.id)
+    await grant_monthly_free_allowance(db_session, user.id)
+    await credit_purchased_minutes(db_session, user.id, minutes=10, payment_id="PAY-PARTC-1")
+
+    ref_user, _ = await get_or_create_user(
+        db_session, telegram_id=5100, referral_code_arg=user.referral_code
+    )
+    assert ref_user.id == 5100
+    await confirm_referral_and_reward(db_session, ref_user.id)
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+
+    # 1) Voice clone consume + full refund symmetry
+    await consume_seconds(db_session, user.id, 350, job_id="vc-partc-1")
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+    await refund_job_seconds(db_session, user.id, "vc-partc-1")
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+
+    # 2) Option B recap hold + under-run settle
+    await consume_seconds(db_session, user.id, 200, job_id="rc_partc_under")
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+    await settle_recap_voice_seconds(
+        db_session, user.id, "rc_partc_under", actual_seconds=110, note="Recap clone settle (rc_partc_under)"
+    )
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+
+    # 3) Option B recap hold + overrun settle + replay
+    await consume_seconds(db_session, user.id, 80, job_id="rc_partc_over")
+    await settle_recap_voice_seconds(
+        db_session, user.id, "rc_partc_over", actual_seconds=120, note="Recap clone settle (rc_partc_over)"
+    )
+    await settle_recap_voice_seconds(
+        db_session, user.id, "rc_partc_over", actual_seconds=120, note="Recap clone settle (rc_partc_over)"
+    )
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+
+    # 4) TTS referral draw + settle delta
+    drawn = await draw_tts_referral_seconds(db_session, user.id, "tts-partc-1", 80)
+    assert drawn == 80
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+    await refund_tts_referral_seconds(db_session, user.id, "tts-partc-1", keep_seconds=50)
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
+
+    # 5) Admin manual adjustments (+purchase and -purchase)
+    await admin_adjust_balance(
+        db_session,
+        user_id=user.id,
+        admin_id=1,
+        seconds=90,
+        source=LedgerSource.PURCHASE,
+        direction=LedgerDirection.CREDIT,
+        reason="Topup",
+        idempotency_key="partc-adj-1",
+    )
+    await admin_adjust_balance(
+        db_session,
+        user_id=user.id,
+        admin_id=1,
+        seconds=30,
+        source=LedgerSource.PURCHASE,
+        direction=LedgerDirection.DEBIT,
+        reason="Trim",
+        idempotency_key="partc-adj-2",
+    )
+    await _assert_minute_balance_matches_ledger(db_session, user.id)
