@@ -231,11 +231,6 @@ def attach_bot(bot: Any, dispatcher: Any) -> None:
     _runtime["dispatcher"] = dispatcher
 
 
-def detach_bot() -> None:
-    _runtime["bot"] = None
-    _runtime["dispatcher"] = None
-
-
 def get_attached() -> tuple[Any, Any]:
     return _runtime["bot"], _runtime["dispatcher"]
 

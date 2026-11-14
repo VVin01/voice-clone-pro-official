@@ -196,11 +196,6 @@ def membership_recheck_due(user_id: int) -> bool:
     return due_at is None or _now() >= due_at
 
 
-def reset_membership_cache() -> None:
-    """Test helper: clear all cached re-check state."""
-    _next_check_at.clear()
-
-
 async def recheck_verified_membership(
     session: AsyncSession,
     user: User,

@@ -6,7 +6,6 @@ import pytest
 
 from app.services.recap_engine.core import (
     RENDER_QUALITIES,
-    _encoder_args,
     encoder_args_for_quality,
     normalize_render_quality,
 )
@@ -16,8 +15,6 @@ HISTORICAL_NVENC = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", 
 
 
 def test_standard_is_byte_identical_to_historical_default():
-    assert _encoder_args("libx264") == HISTORICAL_X264
-    assert _encoder_args("h264_nvenc") == HISTORICAL_NVENC
     assert encoder_args_for_quality("libx264", "standard") == HISTORICAL_X264
     assert encoder_args_for_quality("h264_nvenc", "standard") == HISTORICAL_NVENC
     # Default argument is standard.

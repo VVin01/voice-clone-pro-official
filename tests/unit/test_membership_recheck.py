@@ -82,9 +82,9 @@ def _gate_env(monkeypatch):
     monkeypatch.setattr(settings, "membership_recheck_error_retry_seconds", 600)
     clock = _Clock()
     monkeypatch.setattr(gate, "_now", clock)
-    gate.reset_membership_cache()
+    gate._next_check_at.clear()
     yield clock
-    gate.reset_membership_cache()
+    gate._next_check_at.clear()
 
 
 def _session_maker(db_session):

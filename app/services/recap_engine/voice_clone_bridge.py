@@ -14,11 +14,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-def get_available_clone_models() -> Dict[str, Dict[str, Any]]:
-    """No legacy trained models are available in Voice v2."""
-    return {}
-
-
 def resolve_clone_model(model_tag: str) -> Optional[Dict[str, Any]]:
     """Legacy model tags no longer resolve to a model."""
     return None

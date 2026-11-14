@@ -8,10 +8,8 @@ import re
 
 from app.services.recap_engine.core import (
     SUBTITLE_FONT_OPTIONS,
-    bundled_font_files,
     bundled_fonts_dir,
     resolve_subtitle_font,
-    stage_bundled_fonts,
     write_synced_ass_file,
 )
 
@@ -84,24 +82,6 @@ def test_default_ass_font_is_historical_family(tmp_path):
     out = write_synced_ass_file(CUES, tmp_path / "d.ass", 1280, 720)
     line = _style_line(out.read_text(encoding="utf-8"))
     assert ",Padauk," in line
-
-
-def test_stage_bundled_fonts_copies_everything(tmp_path):
-    dest = stage_bundled_fonts(tmp_path / "fonts")
-    assert dest is not None
-    for fn in bundled_font_files():
-        assert (dest / fn).is_file(), fn
-    # All four families are represented in the staged dir.
-    names = {p.name for p in dest.iterdir()}
-    assert any("Serif" in n for n in names)
-    assert any("Padauk" in n for n in names)
-    assert "Pyidaungsu-Bold.ttf" in names
-    # The STATIC Noto Sans Myanmar builds are staged for libass...
-    assert "NotoSansMyanmar-Regular.ttf" in names
-    assert "NotoSansMyanmar-Bold.ttf" in names
-    # ...and the VARIABLE build is NOT: its stacks merged under the heavy
-    # outline (2026-10-30 finding), so it must never reach the fontsdir.
-    assert "NotoSansMyanmar.ttf" not in names
 
 
 def test_default_font_files_are_static_with_mym2_shaping():

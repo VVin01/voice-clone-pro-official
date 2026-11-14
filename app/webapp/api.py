@@ -1280,17 +1280,6 @@ async def _recap_median_buckets() -> dict:
     return medians
 
 
-async def _recap_recent_median_seconds() -> Optional[float]:
-    """Median render duration of the last ~25 completed recap jobs
-    (Batch L's global level, kept as the compat surface). Returns
-    None when fewer than 3 usable samples exist."""
-    medians = await _recap_median_buckets()
-    glob = medians.get("global")
-    if glob and glob[1] >= recap_eta.MEDIAN_THRESHOLDS["global"]:
-        return float(glob[0])
-    return None
-
-
 def _recap_resolve_total_range(
     medians: dict,
     engine: str,
@@ -1649,43 +1638,6 @@ async def _recap_db_queue_position(job) -> Optional[int]:
         return None
 
 
-def _recap_eta_seconds(
-    position: Optional[int],
-    status: str,
-    progress_percent,
-    median_seconds: Optional[float],
-) -> Optional[int]:
-    """ETA in seconds from the queue position + real median duration.
-
-    QUEUED: the jobs ahead drain two at a time (the execution
-    semaphore), so the wait is ceil((ahead + 1) / 2) median-length
-    waves including this job's own render (Batch L, unchanged).
-
-    RUNNING (Batch CB): the pre-CB formula — the median scaled by
-    (1 - progress%) — is REPLACED by the stage decomposition in
-    app.services.recap_eta: the stage the progress implies keeps its
-    calibrated share of the total, and every stage after it counts in
-    full, so a job deep in the narration stage no longer collapses
-    toward zero. This bare-(progress, median) shape survives for
-    callers with nothing richer; the status endpoints use
-    _recap_eta_from_entry / _recap_eta_from_row, which feed the same
-    decomposition the job's real stage, segment counters and own
-    observed pace. Anything else — or no median sample — yields None
-    (no fabricated numbers).
-    """
-    if median_seconds is None:
-        return None
-    if status == "QUEUED":
-        waves = ((position or 0) + 2) // 2
-        return int(round(waves * median_seconds))
-    if status == "RUNNING":
-        _low, _high, point = recap_eta.remaining_from_progress(
-            progress_percent, float(median_seconds)
-        )
-        return int(round(point))
-    return None
-
-
 async def _recap_submit_eta_range(engine, duration_seconds, quality) -> Optional[list]:
     """Batch CB Item 3: the pre-submit TOTAL range for a job shape —
     the shape's bucket/engine/global median with its spread when a
@@ -1797,11 +1749,6 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
     except Exception as exc:
         logger.warning(f"Recap credit refund failed for user {user_id}: {exc}")
         return False
-
-
-async def _refund_recap_credit(user_id: int) -> bool:
-    """Refund one recap credit (see _refund_recap_credits)."""
-    return await _refund_recap_credits(user_id, 1)
 
 
 async def _charge_recap_credits(user_id: int, count: int, *, job_id: str | None = None) -> bool:
