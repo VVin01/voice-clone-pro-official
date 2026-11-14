@@ -398,12 +398,15 @@ async def test_refund_writes_ledger_row_and_never_twice(tmp_path, monkeypatch):
     uid = await _make_user(maker, recap_credits=5)
     assert await api_mod._refund_recap_credits(uid, 2, job_id="rc_t1") is True
     assert await _balance(maker, uid) == 7
-    assert await _ledger_rows(maker, uid) == [("CREDIT", 2, "REFUND:rc_t1")]
+    assert await _ledger_rows(maker, uid) == [
+        ("CREDIT", 3, f"SIGNUP:{uid}"),
+        ("CREDIT", 2, "REFUND:rc_t1"),
+    ]
     # A second refund attempt for the same job is refused by the
     # ledger cross-check and moves nothing.
     assert await api_mod._refund_recap_credits(uid, 2, job_id="rc_t1") is False
     assert await _balance(maker, uid) == 7
-    assert len(await _ledger_rows(maker, uid)) == 1
+    assert len(await _ledger_rows(maker, uid)) == 2
 
 
 @pytest.mark.asyncio
@@ -446,7 +449,10 @@ async def test_job_charge_refund_exactly_once_across_paths(tmp_path, monkeypatch
     assert blob["credit_refunded"] is True
     assert blob["credits_refunded"] == 2
     rows = await _ledger_rows(maker, uid)
-    assert rows == [("CREDIT", 2, "REFUND:rc_t3")]
+    assert rows == [
+        ("CREDIT", 3, f"SIGNUP:{uid}"),
+        ("CREDIT", 2, "REFUND:rc_t3"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -524,7 +530,10 @@ async def test_cancel_core_refunds_recorded_segmented_amount(tmp_path, monkeypat
     assert await _balance(maker, uid) == 3
     blob = await _blob(maker, "rc_t6")
     assert blob["credit_refunded"] is True
-    assert await _ledger_rows(maker, uid) == [("CREDIT", 3, "REFUND:rc_t6")]
+    assert await _ledger_rows(maker, uid) == [
+        ("CREDIT", 3, f"SIGNUP:{uid}"),
+        ("CREDIT", 3, "REFUND:rc_t6"),
+    ]
 
 
 @pytest.mark.asyncio

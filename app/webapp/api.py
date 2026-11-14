@@ -118,14 +118,15 @@ async def get_current_user(
     user_id = int(telegram_user_data["id"])
     user = await db.get(User, user_id)
     if not user:
-        user = User(
-            id=user_id,
-            first_name=telegram_user_data.get("first_name", "User"),
+        from app.services.ledger import get_or_create_user
+
+        user, _ = await get_or_create_user(
+            db,
+            telegram_id=user_id,
             username=telegram_user_data.get("username"),
+            first_name=telegram_user_data.get("first_name", "User"),
             language_code=telegram_user_data.get("language_code", "my"),
-            account_category=AccountCategory.FREE.value,
         )
-        db.add(user)
         await db.commit()
         await db.refresh(user)
     else:
