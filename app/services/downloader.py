@@ -748,20 +748,6 @@ def _is_tiktok_url(url: str) -> bool:
     return "tiktok.com" in str(url or "").lower()
 
 
-def _is_blocked_family_error(err_msg: str) -> bool:
-    """True when a raw extractor error belongs to the blocked/failed
-    family — the same needles classify_source_error() maps to its
-    blocked copy (403 wall, per-item IP block, failed-to-extract)."""
-    low = str(err_msg or "").lower()
-    return (
-        ("403" in low and ("forbidden" in low or "http error" in low))
-        or "ip address is blocked" in low
-        or "ip is blocked" in low
-        or "blocked from accessing" in low
-        or "failed to extract" in low
-    )
-
-
 # Definitive content truths: rotating to another player client can
 # never resurrect a private/deleted/removed video or make an
 # unsupported URL supported, so the chain stops at the first attempt.

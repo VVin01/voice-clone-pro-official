@@ -2613,11 +2613,6 @@ def encoder_args_for_quality(encoder: str, quality: Any = "standard") -> list[st
     return list(table.get(encoder) or table["libx264"])
 
 
-def _encoder_args(encoder: str) -> list[str]:
-    # Historical default encode == the "standard" quality preset.
-    return encoder_args_for_quality(encoder, "standard")
-
-
 BURMESE_SYLLABLE_BREAK = re.compile(
     r'(?<![္])(?=[က-အ\u1023-\u102A\u104E](?![\u1037\u1038]?[်္]))'
 )
@@ -3147,25 +3142,6 @@ def manual_blur_boxes_to_canvas_boxes(
         if len(out) >= 5:
             break
     return out
-
-
-def stage_bundled_fonts(dest_dir: Path) -> Path | None:
-    """Copy every bundled subtitle font into dest_dir for libass fontsdir.
-
-    Returns dest_dir when at least one font was staged, else None.
-    """
-    src_dir = bundled_fonts_dir()
-    try:
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        staged = False
-        for fn in bundled_font_files():
-            src_f = src_dir / fn
-            if src_f.is_file():
-                shutil.copy2(src_f, dest_dir / fn)
-                staged = True
-        return dest_dir if staged else None
-    except Exception:
-        return None
 
 
 def split_into_burmese_syllables(text: str) -> list[str]:

@@ -6,8 +6,6 @@ import logging
 import os
 from pathlib import Path
 
-from PIL import Image
-
 try:
     from playwright.sync_api import sync_playwright
 except Exception:
@@ -341,55 +339,6 @@ def make_video_part_png(part_index: int, part_count: int, out_path: Path, cfg: d
         radius=int(cfg.get("panel_radius", 28)),
         padding_x=int(cfg.get("part_horizontal_padding", 40)),
         padding_y=int(cfg.get("part_vertical_padding", 10)),
-        stroke_px=float(cfg.get("stroke_px", 1.6)),
-        font_weight=int(cfg.get("font_weight", 400)),
-    )
-
-
-def make_title_png(title: str, part_index: int, part_count: int, out_path: Path, cfg: dict) -> Path:
-    """Backward-compatible combined helper. Text itself is still browser-rendered."""
-    title_h = int(cfg.get("video_title_panel_height", 170))
-    part_h = int(cfg.get("video_part_panel_height", 118))
-    gap = int(cfg.get("video_header_gap", 8))
-    w = int(cfg.get("panel_width", 980))
-
-    title_tmp = out_path.with_name(out_path.stem + ".title.tmp.png")
-    part_tmp = out_path.with_name(out_path.stem + ".part.tmp.png")
-    make_video_title_png(title, title_tmp, cfg)
-    make_video_part_png(part_index, part_count, part_tmp, cfg)
-
-    with Image.open(title_tmp) as a, Image.open(part_tmp) as b:
-        top = a.convert("RGBA")
-        bottom = b.convert("RGBA")
-        img = Image.new("RGBA", (w, title_h + gap + part_h), (0, 0, 0, 0))
-        img.alpha_composite(top, (0, 0))
-        img.alpha_composite(bottom, (0, title_h + gap))
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(out_path)
-
-    title_tmp.unlink(missing_ok=True)
-    part_tmp.unlink(missing_ok=True)
-    return out_path
-
-
-def make_part_only_png(part_index: int, part_count: int, out_path: Path, cfg: dict) -> Path:
-    """Thumbnail part label, rendered with the same Chromium Myanmar shaping."""
-    font_path = find_mm_font()
-    text = f"အပိုင်း {mm_number(part_index)} / {mm_number(part_count)}"
-    return _render_browser_text_png(
-        text=text,
-        out_path=out_path,
-        width=int(cfg.get("thumbnail_part_panel_width", 650)),
-        height=int(cfg.get("thumbnail_part_panel_height", 150)),
-        font_path=font_path,
-        font_size=int(cfg.get("thumbnail_part_font_size", 70)),
-        min_font_size=int(cfg.get("min_part_font_size", 42)),
-        max_lines=1,
-        single_line=True,
-        bg_alpha=float(cfg.get("thumbnail_panel_bg_alpha", 0.59)),
-        radius=int(cfg.get("thumbnail_panel_radius", 32)),
-        padding_x=28,
-        padding_y=12,
         stroke_px=float(cfg.get("stroke_px", 1.6)),
         font_weight=int(cfg.get("font_weight", 400)),
     )

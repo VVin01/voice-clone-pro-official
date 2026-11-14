@@ -1437,43 +1437,6 @@ async def admin_adjust_balance(
     return balance
 
 
-async def get_paginated_users(
-    session: AsyncSession,
-    page: int = 1,
-    page_size: int = 5,
-) -> tuple[list[User], int, int]:
-    """Retrieve users with pagination. Returns (users, total_users, total_pages)."""
-    count_stmt = select(func.count()).select_from(User)
-    total_users = (await session.execute(count_stmt)).scalar() or 0
-    total_pages = max(1, (total_users + page_size - 1) // page_size) if total_users > 0 else 1
-
-    clamped_page = max(1, min(page, total_pages))
-    stmt = (
-        select(User)
-        .order_by(User.created_at.desc(), User.id.desc())
-        .offset((clamped_page - 1) * page_size)
-        .limit(page_size)
-    )
-    users = list((await session.execute(stmt)).scalars().all())
-    return users, total_users, total_pages
-
-
-async def get_user_recent_ledger_events(
-    session: AsyncSession,
-    user_id: int,
-    limit: int = 3,
-) -> list[MinuteLedgerEvent]:
-    """Fetch recent minute ledger events for a user."""
-    stmt = (
-        select(MinuteLedgerEvent)
-        .where(MinuteLedgerEvent.user_id == user_id)
-        .order_by(MinuteLedgerEvent.created_at.desc(), MinuteLedgerEvent.id.desc())
-        .limit(limit)
-    )
-    res = await session.execute(stmt)
-    return list(res.scalars().all())
-
-
 async def get_referral_stats(session: AsyncSession, user_id: int) -> dict:
     """Return rewarded referrals count, earned minutes, and remaining capacity."""
     count_stmt = select(func.count()).select_from(ReferralReward).where(ReferralReward.referrer_id == user_id)
