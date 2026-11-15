@@ -5277,14 +5277,7 @@ function recapHasSource() {
 }
 window.recapHasSource = recapHasSource;
 
-// ── Batch AX: Recap wizard (owner direction 2026-11-06) ──────────
-// One step at a time: exactly ONE step card is visible; completed
-// steps disappear and their state lives in the 1-2-3-4 indicator
-// chips (number, or ✓ when completed). Navigation is free — tapping
-// any chip shows that step — and no control value is ever touched by
-// navigation. The AV summary strips are gone; their information role
-// moved to the chips and the Step 4 choices line (refreshRecapStep4Choices).
-// DOM visibility only — no state, payload or prefs keys change here.
+// Recap wizard (gated 2026-11-15)
 const RECAP_STEP_DONE = { 1: false, 2: false, 3: false, 4: false };
 let recapCurrentStep = 1;
 
@@ -5309,18 +5302,25 @@ function isRecapStepOpen(n) {
 // progress reads from the tinted ✓ segments + the expanded one.
 // This refresh only re-paints the state classes — session-truth
 // (AX-3R) lives in RECAP_STEP_DONE and its earners, untouched.
+function recapFirstIncompleteBefore(n) {
+    for (let m = 1; m < n; m++) { if (!RECAP_STEP_DONE[m]) return m; }
+    return null;
+}
+
 function refreshRecapStepIndicator() {
-    document.querySelectorAll('#recap-steps-nav [data-step-toggle]')
-        .forEach(item => {
-            const m = parseInt(item.getAttribute("data-step-toggle"), 10);
-            item.classList.toggle("is-active", m === recapCurrentStep);
-            item.classList.toggle("is-done", !!RECAP_STEP_DONE[m]);
-        });
+    document.querySelectorAll('#recap-steps-nav [data-step-toggle]').forEach(item => {
+        const m = parseInt(item.getAttribute("data-step-toggle"), 10);
+        const locked = recapFirstIncompleteBefore(m) !== null;
+        item.classList.toggle("is-active", m === recapCurrentStep);
+        item.classList.toggle("is-done", !!RECAP_STEP_DONE[m]);
+        item.classList.toggle("is-locked", locked);
+        if (locked) item.setAttribute("aria-disabled", "true");
+        else item.removeAttribute("aria-disabled");
+    });
 }
 window.refreshRecapStepIndicator = refreshRecapStepIndicator;
 
-// The one door (AX-1): hides every step card, shows step n, updates
-// the indicator, scrolls the tab back to the top of the wizard.
+// One door: show step n after enforcing duration cap and step order.
 function showRecapStep(n) {
     if (!document.getElementById("recap-step-" + n)) return;
     // Batch CI: a FREE source over the duration cap may not advance
@@ -5335,6 +5335,11 @@ function showRecapStep(n) {
             m: Math.floor(recapNormalMaxSeconds() / 60),
             hint: t("toast_recap_over_hint_free"),
         }), 'warning', 6000);
+        return;
+    }
+    const missing = recapFirstIncompleteBefore(n);
+    if (missing !== null) {
+        showStudioToast(tf("recap_step_locked_hint", { n: missing }), "warning", 3000);
         return;
     }
     recapCurrentStep = n;
@@ -5749,8 +5754,7 @@ function initRecapSteps() {
     if (state.recapStepsInitialised) return;
     if (!document.getElementById("recap-steps-nav")) return;
     state.recapStepsInitialised = true;
-    // Free navigation (AX-1): tapping any indicator chip shows that
-    // step — no locking, no forced order, no state touched.
+    // Gated navigation (2026-11-15)
     document.querySelectorAll("[data-step-toggle]").forEach(el => {
         el.addEventListener("click", () => showRecapStep(parseInt(el.getAttribute("data-step-toggle"), 10)));
     });
@@ -15911,6 +15915,7 @@ function setCustomCloneStep(stepNum, file) {
             const n = parseInt(el.getAttribute("data-clone-step") || "1", 10);
             el.classList.toggle("is-active", n === stepNum);
             el.classList.toggle("is-done", n < stepNum);
+            el.classList.toggle("is-locked", n > stepNum);
         });
     }
     const checkEl = document.getElementById("custom-clone-check-status");

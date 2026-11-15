@@ -27,7 +27,7 @@ def _extract_fn(src: str, name: str) -> str:
 
 
 def test_r148_cache_token_and_budgets():
-    assert INDEX_HTML.count("?v=20261114_r151") == 4
+    assert INDEX_HTML.count("?v=20261115_r152") == 4
     assert "r147" not in INDEX_HTML
 
     total_lf = sum(
