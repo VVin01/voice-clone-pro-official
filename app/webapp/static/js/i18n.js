@@ -1578,6 +1578,23 @@ const translations = {
         srv_purged_count: "မှတ်တမ်းနှင့် ဖိုင်တွဲ {count} ခုကို အောင်မြင်စွာ ရှင်းလင်းဖျက်သိမ်းပြီးပါပြီ။",
         srv_text_over_limit_n: "စာသား ရှည်လွန်းနေပါတယ်။ စာလုံးရေ {limit} လုံးအောက် ထားပေးပါ။",
         srv_voice_text_over_limit: "စာသား စာလုံးရေ ({len}) ဟာ ကန့်သတ်ချက် ({limit} လုံး) ထက် ကျော်လွန်နေပါတယ်။",
+        adm_stage_timings_title: "⏱️ Recap Stage ကြာချိန်များ (B0)",
+        adm_stage_timings_meta: "Recap {timed}/{scanned} ခု (နောက်ဆုံး {limit} ခု)",
+        adm_stage_timings_cached: "Cache မှ",
+        adm_stage_timings_total: "စုစုပေါင်း (Total)",
+        adm_stage_timings_col_stage: "အဆင့်",
+        adm_stage_timings_col_p50: "p50",
+        adm_stage_timings_col_p95: "p95",
+        adm_stage_timings_col_max: "Max",
+        adm_stage_timings_empty: "Stage timing မှတ်တမ်း မရှိသေးပါ",
+        adm_stage_lbl_download: "Download",
+        adm_stage_lbl_transcribe: "Transcribe",
+        adm_stage_lbl_translate: "Translate",
+        adm_stage_lbl_tts: "TTS",
+        adm_stage_lbl_sync: "Sync",
+        adm_stage_lbl_png: "Subtitle PNG",
+        adm_stage_lbl_overlay: "Overlay",
+        adm_stage_lbl_mux: "Mux",
     },
     en: {
         // App Top Bar & Brand
@@ -3151,6 +3168,23 @@ const translations = {
         srv_purged_count: "Cleaned up {count} history records and folders.",
         srv_text_over_limit_n: "Text is too long. Please keep it under {limit} characters.",
         srv_voice_text_over_limit: "Text length ({len}) exceeds your {limit}-character limit.",
+        adm_stage_timings_title: "⏱️ Recap Stage Timings (B0)",
+        adm_stage_timings_meta: "{timed}/{scanned} recaps with timings (last {limit})",
+        adm_stage_timings_cached: "Cached",
+        adm_stage_timings_total: "Total",
+        adm_stage_timings_col_stage: "Stage",
+        adm_stage_timings_col_p50: "p50",
+        adm_stage_timings_col_p95: "p95",
+        adm_stage_timings_col_max: "Max",
+        adm_stage_timings_empty: "No stage timing samples recorded yet",
+        adm_stage_lbl_download: "Download",
+        adm_stage_lbl_transcribe: "Transcribe",
+        adm_stage_lbl_translate: "Translate",
+        adm_stage_lbl_tts: "TTS",
+        adm_stage_lbl_sync: "Sync",
+        adm_stage_lbl_png: "Subtitle PNG",
+        adm_stage_lbl_overlay: "Overlay",
+        adm_stage_lbl_mux: "Mux",
     }
 };
 
@@ -3253,6 +3287,9 @@ function setLanguage(lang) {
     // custom presets, voice/TTS cost badges & excess banners)
     if (typeof window.refreshPhase1to4LanguageSurfaces === "function") {
         window.refreshPhase1to4LanguageSurfaces();
+    }
+    if (typeof window.renderAdminStageTimings === "function") {
+        window.renderAdminStageTimings();
     }
 
     // Notify backend if user is authenticated. The promise is kept

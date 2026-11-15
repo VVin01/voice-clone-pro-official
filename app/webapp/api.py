@@ -12779,6 +12779,170 @@ async def get_admin_key_health(
     return await asyncio.to_thread(_key_health.get_key_health, bool(refresh))
 
 
+_RECAP_STAGE_TIMINGS_STAGES: tuple[str, ...] = (
+    "download",
+    "transcribe",
+    "translate",
+    "tts",
+    "sync",
+    "png",
+    "overlay",
+    "mux",
+)
+_STAGE_TIMINGS_CACHE_TTL_SECONDS = 900.0
+_STAGE_TIMINGS_CACHE: dict[str, Any] = {}
+
+
+def clear_admin_stage_timings_cache() -> None:
+    """Clear the cached B0 recap stage-timings summary."""
+    _STAGE_TIMINGS_CACHE.clear()
+
+
+def _percentile_sorted(sorted_vals: list[float], q: float) -> float:
+    """Compute linear-interpolated quantile over a non-empty sorted list."""
+    n = len(sorted_vals)
+    if n == 1:
+        return round(sorted_vals[0], 2)
+    idx = q * (n - 1)
+    lo = int(math.floor(idx))
+    hi = int(math.ceil(idx))
+    frac = idx - lo
+    val = sorted_vals[lo] + frac * (sorted_vals[hi] - sorted_vals[lo])
+    return round(val, 2)
+
+
+def _summarize_timing_samples(vals: list[float]) -> dict[str, Any]:
+    if not vals:
+        return {"count": 0, "p50": None, "p95": None, "max": None}
+    s = sorted(vals)
+    return {
+        "count": len(s),
+        "p50": _percentile_sorted(s, 0.50),
+        "p95": _percentile_sorted(s, 0.95),
+        "max": round(s[-1], 2),
+    }
+
+
+def _to_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _aggregate_recap_stage_timings(
+    rows: list[tuple[str, Optional[str], Optional[datetime], Optional[datetime]]],
+    *,
+    sample_limit: int,
+) -> dict[str, Any]:
+    stage_buckets: dict[str, list[float]] = {k: [] for k in _RECAP_STAGE_TIMINGS_STAGES}
+    totals: list[float] = []
+    jobs_with_timings = 0
+
+    for _job_id, raw_cfg, started_at, finished_at in rows:
+        timings: dict[str, float] = {}
+        if raw_cfg:
+            try:
+                blob = json.loads(raw_cfg)
+            except Exception:
+                blob = None
+            raw_st = blob.get("stage_timings") if isinstance(blob, dict) else None
+            if isinstance(raw_st, dict):
+                for sk, sv in raw_st.items():
+                    if (
+                        isinstance(sv, (int, float))
+                        and not isinstance(sv, bool)
+                        and math.isfinite(sv)
+                        and sv >= 0
+                    ):
+                        timings[str(sk)] = float(sv)
+
+        has_any_stage = False
+        for stage in _RECAP_STAGE_TIMINGS_STAGES:
+            if stage in timings:
+                stage_buckets[stage].append(timings[stage])
+                has_any_stage = True
+
+        s_utc = _to_utc_aware(started_at)
+        f_utc = _to_utc_aware(finished_at)
+        total_sec: Optional[float] = None
+        if s_utc is not None and f_utc is not None and f_utc >= s_utc:
+            total_sec = (f_utc - s_utc).total_seconds()
+        elif "total" in timings:
+            total_sec = timings["total"]
+        elif timings:
+            total_sec = sum(
+                val for key, val in timings.items()
+                if key != "total"
+            )
+
+        if total_sec is not None and math.isfinite(total_sec) and total_sec >= 0:
+            totals.append(float(total_sec))
+
+        if has_any_stage or timings:
+            jobs_with_timings += 1
+
+    return {
+        "sample_limit": sample_limit,
+        "jobs_scanned": len(rows),
+        "jobs_with_timings": jobs_with_timings,
+        "stages": {
+            stage: _summarize_timing_samples(stage_buckets[stage])
+            for stage in _RECAP_STAGE_TIMINGS_STAGES
+        },
+        "total": _summarize_timing_samples(totals),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "cached": False,
+    }
+
+
+@api_router.get("/admin/stage-timings")
+async def get_admin_stage_timings(
+    refresh: int = 0,
+    limit: int = Query(100, ge=1, le=100),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Part B0: aggregate per-stage and total timings over recent completed recap jobs.
+
+    Reads the last ``limit`` (default 100) completed RECAP jobs' persisted
+    ``stage_timings`` without adding work to the recap execution path.
+    Cached per DB bind for ~15 min; pass ``?refresh=1`` for on-demand refresh.
+    """
+    sample_limit = min(max(1, int(limit or 100)), 100)
+    try:
+        bind_id = id(db.get_bind())
+    except Exception:
+        bind_id = None
+    cache_key = (bind_id, sample_limit)
+    now_mono = time.monotonic()
+
+    if not refresh:
+        cached_entry = _STAGE_TIMINGS_CACHE.get(cache_key)
+        if cached_entry and now_mono < cached_entry.get("expires_at", 0.0):
+            return {**cached_entry["payload"], "cached": True}
+
+    stmt = (
+        select(Job.id, Job.recap_config, Job.started_at, Job.finished_at)
+        .where(
+            Job.status == JobStatus.SUCCESS.value,
+            or_(
+                Job.job_type == JobType.RECAP.value,
+                Job.id.startswith("rc_"),
+                Job.engine == "recap",
+            ),
+        )
+        .order_by(func.coalesce(Job.finished_at, Job.created_at).desc(), Job.id.desc())
+        .limit(sample_limit)
+    )
+    rows = list((await db.execute(stmt)).all())
+    payload = _aggregate_recap_stage_timings(rows, sample_limit=sample_limit)
+    _STAGE_TIMINGS_CACHE[cache_key] = {
+        "payload": payload,
+        "expires_at": time.monotonic() + _STAGE_TIMINGS_CACHE_TTL_SECONDS,
+    }
+    return payload
+
+
 def _admin_category_filter(category: str = "") -> str:
     """Normalize the optional users-list category filter.
 
