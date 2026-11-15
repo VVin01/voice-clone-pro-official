@@ -49,6 +49,29 @@ except Exception:  # pragma: no cover - standalone load
     except Exception:
         _key_rotation = None  # type: ignore[assignment]
 
+try:
+    from app.services import speed as _speed_mod
+except Exception:  # pragma: no cover - standalone load
+    try:
+        _sp_spec = importlib.util.spec_from_file_location(
+            "speed", Path(__file__).resolve().parents[1] / "speed.py"
+        )
+        if _sp_spec is None or _sp_spec.loader is None:
+            raise ImportError("speed spec unavailable")
+        _speed_mod = importlib.util.module_from_spec(_sp_spec)
+        _sp_spec.loader.exec_module(_speed_mod)
+    except Exception:
+        _speed_mod = None  # type: ignore[assignment]
+
+try:
+    from app.services.queue import MEASURED_CHARS_PER_SECOND as _MEASURED_CPS
+except Exception:  # pragma: no cover - standalone load without SQLAlchemy/FastAPI
+    _MEASURED_CPS = 17.6
+
+MEASURED_CHARS_PER_SECOND: float = float(_MEASURED_CPS)
+DEFAULT_SPEED: str = str(getattr(_speed_mod, "DEFAULT_SPEED", "+12%") or "+12%")
+DEFAULT_MAX_VIDEO_SLOW: float = 1.20
+
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
 # Batch AJ / L21: this module's ffprobe/ffmpeg calls may only open
@@ -1990,6 +2013,345 @@ CRITICAL OUTPUT ID PROTOCOL:
     raise RuntimeError(f"Translation batch could not be validated: {last}")
 
 
+_TS_PART_RE = re.compile(r"(\d{1,3}):(\d{2}):(\d{2})(?:[.,](\d{1,3}))?")
+
+
+def _resolve_tempo(voice_speed: str | float | int | None = None) -> float:
+    """Resolve the job's voice speed setting to a positive delivered tempo multiplier."""
+    if isinstance(voice_speed, (int, float)) and not isinstance(voice_speed, bool):
+        return max(0.5, float(voice_speed))
+    if _speed_mod is not None:
+        return max(0.5, float(_speed_mod.resolve_speed_tempo(voice_speed)))
+    raw = str(voice_speed or DEFAULT_SPEED).strip()
+    m = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)\s*%", raw)
+    if m:
+        return max(0.5, 1.0 + float(m.group(1)) / 100.0)
+    return 1.12
+
+
+def _clean_tts_text_for_budget(text: Any) -> str:
+    """Mirror gemini_tts_engine._clean_tts_text so char counts reflect spoken Burmese text."""
+    cleaned = re.sub(r"\s*\([A-Za-z0-9 ,.'\-]+\)", "", str(text or ""))
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def estimate_raw_speech_seconds(
+    text: Any,
+    *,
+    chars_per_second: float = MEASURED_CHARS_PER_SECOND,
+) -> float:
+    """Estimate raw (pre-tempo) TTS duration in seconds from MEASURED_CHARS_PER_SECOND (17.6)."""
+    cleaned = _clean_tts_text_for_budget(text)
+    if not cleaned:
+        return 0.0
+    return len(cleaned) / max(1e-6, float(chars_per_second))
+
+
+def _parse_srt_seconds(ts: Any) -> float | None:
+    m = _TS_PART_RE.search(str(ts or ""))
+    if not m:
+        return None
+    hours = int(m.group(1))
+    minutes = int(m.group(2))
+    seconds = int(m.group(3))
+    millis = int((m.group(4) or "0").ljust(3, "0")[:3])
+    return hours * 3600.0 + minutes * 60.0 + seconds + millis / 1000.0
+
+
+def segment_window_seconds(row: dict[str, Any]) -> float | None:
+    """Return the visual window in seconds, matching assign_full_coverage_boundaries when available."""
+    if row.get("video_start") is not None and row.get("video_end") is not None:
+        try:
+            return max(0.0, float(row["video_end"]) - float(row["video_start"]))
+        except (TypeError, ValueError):
+            pass
+    if row.get("speech_start") is not None and row.get("speech_end") is not None:
+        try:
+            return max(0.0, float(row["speech_end"]) - float(row["speech_start"]))
+        except (TypeError, ValueError):
+            pass
+    ts = str(row.get("timestamp") or "")
+    if "-->" in ts:
+        parts = ts.split("-->", 1)
+        start_s = _parse_srt_seconds(parts[0])
+        end_s = _parse_srt_seconds(parts[1])
+        if start_s is not None and end_s is not None:
+            return max(0.0, end_s - start_s)
+    return None
+
+
+def segment_raw_duration_budget(
+    row: dict[str, Any],
+    *,
+    voice_speed: str | float | None = DEFAULT_SPEED,
+    max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
+) -> float | None:
+    """Max raw (pre-tempo) TTS seconds allowed so post-tempo <= window * max_video_slow."""
+    window = segment_window_seconds(row)
+    if window is None or window <= 0.0:
+        return None
+    slow_cap = max(1.0, float(max_video_slow))
+    tempo = _resolve_tempo(voice_speed)
+    return window * slow_cap * tempo
+
+
+def _overbudget_rows(
+    rows: list[dict[str, Any]],
+    *,
+    voice_speed: str | float | None = DEFAULT_SPEED,
+    max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
+) -> list[dict[str, Any]]:
+    """Collect descriptors for every row whose estimated raw speech exceeds its budget."""
+    tempo = _resolve_tempo(voice_speed)
+    slow_cap = max(1.0, float(max_video_slow))
+    over: list[dict[str, Any]] = []
+    for row in rows:
+        window = segment_window_seconds(row)
+        raw_budget = segment_raw_duration_budget(
+            row, voice_speed=voice_speed, max_video_slow=slow_cap
+        )
+        if window is None or raw_budget is None:
+            continue
+        cleaned = _clean_tts_text_for_budget(row.get("translation", ""))
+        est_raw = (len(cleaned) / MEASURED_CHARS_PER_SECOND) if cleaned else 0.0
+        if est_raw <= raw_budget + 1e-6:
+            continue
+        max_chars = max(1, int(math.floor(raw_budget * MEASURED_CHARS_PER_SECOND)))
+        over.append({
+            "id": int(row["id"]),
+            "window_seconds": window,
+            "raw_budget_seconds": raw_budget,
+            "delivered_budget_seconds": window * slow_cap,
+            "est_raw_seconds": est_raw,
+            "est_post_seconds": est_raw / tempo,
+            "current_chars": len(cleaned),
+            "max_chars": max_chars,
+        })
+    return over
+
+
+def _duration_budget_directive(
+    overbudget: list[dict[str, Any]],
+    *,
+    tempo: float,
+    max_video_slow: float,
+) -> str:
+    if not overbudget:
+        return ""
+    lines = [
+        f"- SPOKEN-DURATION BUDGET (HARD CAP: post-tempo <= window * {max_video_slow:.2f}x at tempo {tempo:.2f}x):",
+        '  The CURRENT IDs below EXCEED their spoken-duration budget and MUST use status="repair"',
+        "  with a shorter spoken Burmese rewrite (trimming filler/repetition while preserving meaning,",
+        "  character names, and key plot facts — NEVER drop or merge an ID; keep within-budget IDs unchanged):",
+    ]
+    for item in overbudget:
+        lines.append(
+            f"  * ID {item['id']}: window={item['window_seconds']:.2f}s | "
+            f"est_raw={item['est_raw_seconds']:.2f}s > budget={item['raw_budget_seconds']:.2f}s "
+            f"({item['current_chars']} chars -> MUST be <= {item['max_chars']} spoken chars)"
+        )
+    return "\n".join(lines)
+
+
+def _build_compression_prompt(
+    *,
+    target_rows: list[dict[str, Any]],
+    targets_by_id: dict[int, dict[str, Any]],
+    story_context: dict[str, Any],
+    previous_context: list[dict[str, Any]],
+    next_context: list[dict[str, Any]],
+    style: str,
+    is_female: bool,
+    tempo: float,
+    max_video_slow: float,
+    round_idx: int,
+) -> str:
+    target_ids = [int(r["id"]) for r in target_rows]
+    exact_ids_json = json.dumps(target_ids, ensure_ascii=False)
+    sample_json = json.dumps(
+        {"items": [{"id": target_ids[0], "translation": f"concise Burmese line for ID {target_ids[0]}"}]},
+        ensure_ascii=False,
+    )
+    budget_lines = []
+    for r in target_rows:
+        info = targets_by_id[int(r["id"])]
+        budget_lines.append(
+            f"[ID {info['id']:05d}] window={info['window_seconds']:.2f}s | "
+            f"MAX_SPOKEN_CHARS={info['max_chars']} (raw_budget={info['raw_budget_seconds']:.2f}s @ tempo {tempo:.2f}x, "
+            f"slow_cap={max_video_slow:.2f}x) | CURRENT={info['current_chars']} chars ({info['est_raw_seconds']:.2f}s)\n"
+            f"SOURCE: {_clean(r.get('source_text'))}\n"
+            f"CURRENT_TRANSLATION: {_clean(r.get('translation'))}"
+        )
+    gender_rule = (
+        "Female narrator voice: NEVER use 'ဗျာ' or 'ခင်ဗျာ'."
+        if is_female
+        else "Keep natural spoken Burmese narrator voice."
+    )
+    return f"""You are an EXPERT BURMESE MOVIE RECAP EDITOR (Compression Round {round_idx}).
+Compress ONLY the listed over-budget CURRENT IDs into concise spoken Burmese ({style.upper()} style) so each segment fits its spoken-duration budget.
+
+STRICT RULES:
+- Return JSON ONLY matching: {sample_json}
+- Copy each ID in exact sequence: {exact_ids_json}. NEVER drop, merge, skip, or renumber any ID.
+- EVERY item MUST satisfy len(translation) <= MAX_SPOKEN_CHARS (strictly shorter than CURRENT).
+- Preserve the core meaning, character names, numbers, and key plot/action facts of each segment.
+- Cut redundant connectives, repetitive modifiers, and conversational padding — write crisp, vivid spoken Burmese (no bookish 'သည်'/'သဖြင့်', no English/Latin words, Burmese numerals only, standard 'အဲဒီ', never '-တကြီး').
+- {gender_rule}
+
+STORY CONTEXT:
+{json.dumps(story_context, ensure_ascii=False)}
+
+PREVIOUS CONTEXT (READ-ONLY):
+{_translation_lines(previous_context[-3:]) if previous_context else '(none)'}
+
+NEXT SOURCE CONTEXT (READ-ONLY):
+{_source_lines(next_context[:3]) if next_context else '(none)'}
+
+ITEMS TO COMPRESS:
+{chr(10).join(budget_lines)}
+"""
+
+
+def _apply_compressed_candidates(
+    working: list[dict[str, Any]],
+    items: list[Any],
+    targets_by_id: dict[int, dict[str, Any]],
+    *,
+    style: str,
+    is_female: bool,
+    prev_rows: list[dict[str, Any]],
+) -> int:
+    index_by_id = {int(row["id"]): idx for idx, row in enumerate(working)}
+    changed = 0
+    for item in items:
+        if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        try:
+            uid = int(item["id"])
+        except (TypeError, ValueError):
+            continue
+        if uid not in targets_by_id or uid not in index_by_id:
+            continue
+        idx = index_by_id[uid]
+        cand = _enforce_style_and_gender_particles(
+            _clean(item.get("translation")), style=style, is_female=is_female
+        )
+        if not _has_speakable_content(cand):
+            continue
+        cur_text = str(working[idx].get("translation") or "")
+        if len(_clean_tts_text_for_budget(cand)) >= len(_clean_tts_text_for_budget(cur_text)):
+            continue
+        neighbors: list[dict[str, Any]] = []
+        if idx > 0:
+            neighbors.append(working[idx - 1])
+        elif prev_rows:
+            neighbors.append(prev_rows[-1])
+        if idx + 1 < len(working):
+            neighbors.append(working[idx + 1])
+        cand_cmp = _comparison_text(cand)
+        src_cmp = _comparison_text(working[idx].get("source_text"))
+        if any(
+            cand_cmp and cand_cmp == _comparison_text(adj.get("translation")) and src_cmp != _comparison_text(adj.get("source_text"))
+            for adj in neighbors
+        ):
+            continue
+        working[idx] = dict(working[idx])
+        working[idx]["translation"] = cand
+        changed += 1
+    return changed
+
+
+def _compress_overbudget_rows(
+    ai: Any,
+    rows: list[dict[str, Any]],
+    *,
+    story_context: dict[str, Any],
+    previous_context: list[dict[str, Any]] | None,
+    next_context: list[dict[str, Any]] | None,
+    log: LogFn,
+    narrative_style: str = "narrator",
+    is_female: bool = False,
+    voice_speed: str | float | None = DEFAULT_SPEED,
+    max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
+    max_rounds: int = 2,
+) -> list[dict[str, Any]]:
+    """Compress over-budget rows before synthesis while keeping within-budget rows byte-identical."""
+    initial_over = _overbudget_rows(
+        rows, voice_speed=voice_speed, max_video_slow=max_video_slow
+    )
+    if not initial_over:
+        return list(rows)
+
+    working = [dict(r) for r in rows]
+    style = str(narrative_style or "narrator").lower().strip()
+    tempo = _resolve_tempo(voice_speed)
+    slow_cap = max(1.0, float(max_video_slow))
+    prev_list = list(previous_context or [])
+    next_list = list(next_context or [])
+    compressed_ids: set[int] = set()
+
+    for round_idx in range(1, max(1, int(max_rounds)) + 1):
+        overbudget = _overbudget_rows(
+            working, voice_speed=voice_speed, max_video_slow=slow_cap
+        )
+        if not overbudget:
+            break
+        targets_by_id = {item["id"]: item for item in overbudget}
+        target_rows = [r for r in working if int(r["id"]) in targets_by_id]
+        compress_prompt = _build_compression_prompt(
+            target_rows=target_rows,
+            targets_by_id=targets_by_id,
+            story_context=story_context,
+            previous_context=prev_list,
+            next_context=next_list,
+            style=style,
+            is_female=is_female,
+            tempo=tempo,
+            max_video_slow=slow_cap,
+            round_idx=round_idx,
+        )
+        try:
+            payload = _gemini_json(ai, compress_prompt, retries=2, log=log, rotation_tier="full")
+        except GeminiKeyPoolExhaustedError:
+            raise
+        except Exception as exc:
+            log(f"⚠️ Duration budget compression round {round_idx}/{max_rounds} failed: {exc}")
+            continue
+
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            log(f"⚠️ Duration budget compression round {round_idx}/{max_rounds} returned no items array")
+            continue
+        before_texts = {int(r["id"]): r.get("translation") for r in target_rows}
+        changed = _apply_compressed_candidates(
+            working, items, targets_by_id, style=style, is_female=is_female, prev_rows=prev_list
+        )
+        for r in working:
+            uid = int(r["id"])
+            if uid in before_texts and r.get("translation") != before_texts[uid]:
+                compressed_ids.add(uid)
+        if changed == 0 and round_idx >= max_rounds:
+            break
+
+    _assert_speakable_translation_items(working)
+    remaining = _overbudget_rows(working, voice_speed=voice_speed, max_video_slow=slow_cap)
+    if compressed_ids and not remaining:
+        log(
+            f"✂️ Duration budget compressed {len(compressed_ids)} segment(s) within cap "
+            f"({slow_cap:.2f}x slow @ tempo {tempo:.2f}x)"
+        )
+    elif remaining:
+        over_desc = ", ".join(
+            f"ID {x['id']}({x['est_raw_seconds']:.1f}s>{x['raw_budget_seconds']:.1f}s)"
+            for x in remaining[:5]
+        )
+        log(
+            f"⚠️ Duration budget: {len(remaining)} segment(s) remain over raw budget "
+            f"after {max_rounds} compression round(s): {over_desc}"
+        )
+    return working
+
+
 def audit_and_repair_batch(
     ai: Any,
     translated: list[dict[str, Any]],
@@ -2000,6 +2362,8 @@ def audit_and_repair_batch(
     log: LogFn,
     narrative_style: str = "narrator",
     is_female: bool = False,
+    voice_speed: str | float | None = DEFAULT_SPEED,
+    max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
 ) -> list[dict[str, Any]]:
     """Mandatory per-ID ownership/completeness audit; only failed rows may be rewritten.
 
@@ -2010,6 +2374,11 @@ def audit_and_repair_batch(
     automatically re-audit the *same translated rows* in smaller windows.  Translation,
     timestamps, segmentation, TTS and Smart Sync are not changed by this fallback.
     """
+    if not translated:
+        return []
+    eff_speed = DEFAULT_SPEED if voice_speed is None else voice_speed
+    eff_slow = DEFAULT_MAX_VIDEO_SLOW if max_video_slow is None else max(1.0, float(max_video_slow))
+    eff_tempo = _resolve_tempo(eff_speed)
     previous_context = list(previous_context or [])
     next_context = list(next_context or [])
     style = str(narrative_style or "narrator").lower().strip()
@@ -2053,6 +2422,13 @@ def audit_and_repair_batch(
                 "translation": f"complete corrected output for ID {expected_ids[1]} only",
             })
         sample_json = json.dumps({"checks": sample_checks}, ensure_ascii=False)
+        overbudget_before = _overbudget_rows(
+            current_rows, voice_speed=eff_speed, max_video_slow=eff_slow
+        )
+        budget_directive = _duration_budget_directive(
+            overbudget_before, tempo=eff_tempo, max_video_slow=eff_slow
+        )
+        budget_block = f"\n{budget_directive}" if budget_directive else ""
         base_prompt = f"""
 You are an EXPERT BURMESE MOVIE RECAP NARRATION AUDITOR.
 Audit the {target_name}. Every visual event, dialogue, and plot development must remain faithfully narrated inside its corresponding timing ID.
@@ -2077,7 +2453,7 @@ For EVERY CURRENT ID check:
 - BURMESE NUMERALS ONLY (font tofu guard): replace any ASCII digits '0–9' with Burmese numerals or words (e.g. '၁၀', '၂၀၂၆');
 - no shifted chain where a row narrates another row;
 - no adjacent duplicate/near-duplicate outputs for different sources;
-- consistent names/pronouns throughout the story.
+- consistent names/pronouns throughout the story.{budget_block}
 
 Return JSON ONLY with every CURRENT ID once and in the exact sequence above.
 Example shape using ACTUAL IDs from this batch:
@@ -2136,6 +2512,18 @@ Your checks[].id list MUST equal exactly: {exact_ids_json}
                 audited = [by_id[uid] for uid in expected_ids]
                 _assert_no_adjacent_translation_duplicates(audited, prev_rows)
                 _assert_speakable_translation_items(audited)
+                audited = _compress_overbudget_rows(
+                    ai,
+                    audited,
+                    story_context=story_context,
+                    previous_context=prev_rows,
+                    next_context=next_rows,
+                    log=log,
+                    narrative_style=style,
+                    is_female=is_female,
+                    voice_speed=eff_speed,
+                    max_video_slow=eff_slow,
+                )
                 prefix = "   " * depth
                 log(
                     f"{prefix}🛠️ Sentence-lock audit repaired {repaired} item(s)"
@@ -2285,6 +2673,72 @@ def _batch_audit_flags(
     return flags
 
 
+def _finalize_batch_translation(
+    ai: Any,
+    translated: list[dict[str, Any]],
+    *,
+    bi: int,
+    total_batches: int,
+    story_context: dict[str, Any],
+    prev_committed: list[dict[str, Any]],
+    nxt: list[dict[str, Any]],
+    log: LogFn,
+    translation_audit: bool,
+    narrative_style: str,
+    is_female: bool,
+    voice_speed: str | float | None = None,
+    max_video_slow: float | None = None,
+) -> list[dict[str, Any]]:
+    """Run quality/budget audit (and compress over-budget rows) for one batch."""
+    enforce_budget = voice_speed is not None or max_video_slow is not None
+    eff_speed = DEFAULT_SPEED if voice_speed is None else voice_speed
+    eff_slow = DEFAULT_MAX_VIDEO_SLOW if max_video_slow is None else max(1.0, float(max_video_slow))
+    budget_over = (
+        _overbudget_rows(translated, voice_speed=eff_speed, max_video_slow=eff_slow)
+        if enforce_budget
+        else []
+    )
+    if translation_audit:
+        flags = _batch_audit_flags(translated, prev_committed, nxt)
+        reasons = list(flags)
+        if budget_over:
+            reasons.append(f"duration_overbudget ({len(budget_over)} IDs)")
+        # §2B Item 7: call the paid LLM audit only when regex/structural
+        # flags (or duration budget overflow) fire, keeping the Batch-1
+        # (bi == 0) hook spot-check.
+        if reasons or bi == 0:
+            if reasons:
+                log(f"🔎 Translate batch {bi + 1}/{total_batches} audit — flags: {', '.join(reasons)}")
+            else:
+                log(f"🔎 Translate batch 1/{total_batches} hook spot-check audit")
+            audit_kw: dict[str, Any] = {
+                "story_context": story_context,
+                "previous_context": prev_committed,
+                "next_context": nxt,
+                "log": log,
+                "narrative_style": narrative_style,
+                "is_female": is_female,
+            }
+            if enforce_budget:
+                audit_kw["voice_speed"] = eff_speed
+                audit_kw["max_video_slow"] = eff_slow
+            return audit_and_repair_batch(ai, translated, **audit_kw)
+    elif budget_over:
+        return _compress_overbudget_rows(
+            ai,
+            translated,
+            story_context=story_context,
+            previous_context=prev_committed,
+            next_context=nxt,
+            log=log,
+            narrative_style=narrative_style,
+            is_female=is_female,
+            voice_speed=eff_speed,
+            max_video_slow=eff_slow,
+        )
+    return translated
+
+
 def translate_batches_in_parallel(
     *,
     ai: Any,
@@ -2308,6 +2762,8 @@ def translate_batches_in_parallel(
     part_index: int = 1,
     total_parts: int = 1,
     prev_part_summary: str = "",
+    voice_speed: str | float | None = None,
+    max_video_slow: float | None = None,
 ) -> list[dict[str, Any]]:
     """Batch AL-P: translate the pending batches concurrently (max 3),
     then commit them strictly in batch order.
@@ -2396,25 +2852,21 @@ def translate_batches_in_parallel(
         translated = results[bi]
         prev_committed = translated_all[-context_overlap:] if context_overlap else []
         nxt = _next_units(batch)
-        if translation_audit:
-            flags = _batch_audit_flags(translated, prev_committed, nxt)
-            # §2B Item 7: call the paid LLM audit only when regex/structural
-            # flags fire, keeping the Batch-1 (bi == 0) hook spot-check.
-            if flags or bi == 0:
-                if flags:
-                    log(f"🔎 Translate batch {bi + 1}/{len(batches)} audit — flags: {', '.join(flags)}")
-                else:
-                    log(f"🔎 Translate batch 1/{len(batches)} hook spot-check audit")
-                translated = audit_and_repair_batch(
-                    ai,
-                    translated,
-                    story_context=story_context,
-                    previous_context=prev_committed,
-                    next_context=nxt,
-                    log=log,
-                    narrative_style=narrative_style,
-                    is_female=is_female,
-                )
+        translated = _finalize_batch_translation(
+            ai,
+            translated,
+            bi=bi,
+            total_batches=len(batches),
+            story_context=story_context,
+            prev_committed=prev_committed,
+            nxt=nxt,
+            log=log,
+            translation_audit=translation_audit,
+            narrative_style=narrative_style,
+            is_female=is_female,
+            voice_speed=voice_speed,
+            max_video_slow=max_video_slow,
+        )
         translated = _drop_foreign_letters(translated, log)
         for row in translated:
             if _latin_words(row.get("translation")):
@@ -2468,6 +2920,8 @@ class RecapPlanBuilder:
         part_index: int = 1,
         total_parts: int = 1,
         prev_part_summary: str = "",
+        voice_speed: str | float | None = DEFAULT_SPEED,
+        max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
     ):
         self.runtime_root = Path(runtime_root).resolve()
         self.gemini_env_path = Path(gemini_env_path).expanduser().resolve() if str(gemini_env_path or "").strip() else None
@@ -2505,6 +2959,18 @@ class RecapPlanBuilder:
             except ValueError:
                 translate_workers = 3
         self.translate_workers = max(1, min(int(translate_workers), 3))
+        if isinstance(voice_speed, (int, float)) and not isinstance(voice_speed, bool):
+            self.voice_speed: str | float = max(0.5, float(voice_speed))
+        else:
+            self.voice_speed = str(voice_speed or DEFAULT_SPEED).strip() or DEFAULT_SPEED
+        self.max_video_slow = max(1.0, float(max_video_slow or DEFAULT_MAX_VIDEO_SLOW))
+
+    def _duration_budget_key(self) -> str:
+        return (
+            f"tempo:{_resolve_tempo(self.voice_speed):.4f}"
+            f"|slow:{self.max_video_slow:.4f}"
+            f"|cps:{MEASURED_CHARS_PER_SECOND:.2f}"
+        )
 
     def _validate_runtime(self) -> None:
         required = [
@@ -2565,6 +3031,7 @@ class RecapPlanBuilder:
                     and str(plan.get("segmentation_profile") or "") == segmentation_profile
                     and str(state.get("boundary_profile") or "") == BOUNDARY_PROFILE
                     and str(plan.get("boundary_profile") or "") == BOUNDARY_PROFILE
+                    and str(state.get("duration_budget_key") or "") == self._duration_budget_key()
                 ):
                     if _plan_has_speakable_narration(plan):
                         self.log("♻️ Timestamp transcript + Translation plan reuse")
@@ -2689,6 +3156,7 @@ class RecapPlanBuilder:
         units = _filter_local_whisper_artifact_units(units, transcript, log=self.log)
         if not units:
             raise RuntimeError("Timestamp transcript units မရှိပါ။")
+        units = assign_full_coverage_boundaries(units, duration)
         _atomic_json(atomic_file, {
             "planner_mode": PLANNER_MODE,
             "segmentation_profile": segmentation_profile,
@@ -2805,6 +3273,9 @@ class RecapPlanBuilder:
                                 break
                             clean_saved = dict(saved_row)
                             clean_saved["translation"] = tr
+                            if src.get("video_start") is not None and src.get("video_end") is not None:
+                                clean_saved["video_start"] = src["video_start"]
+                                clean_saved["video_end"] = src["video_end"]
                             safe_prefix.append(clean_saved)
 
                         translated_all = safe_prefix
@@ -2833,6 +3304,7 @@ class RecapPlanBuilder:
                     "segmentation_profile": segmentation_profile,
                     "source_fingerprint": fp,
                     "translation_direction": TRANSLATION_DIRECTION,
+                    "duration_budget_key": self._duration_budget_key(),
                     "completed": len(rows),
                     "total": len(units),
                     "items": list(rows),
@@ -2866,6 +3338,42 @@ class RecapPlanBuilder:
                     completed_ids = {int(x["id"]) for x in translated_all}
                 pending.append(bi0)
 
+            if translated_all and _overbudget_rows(
+                translated_all, voice_speed=self.voice_speed, max_video_slow=self.max_video_slow
+            ):
+                row_pos = {int(r["id"]): idx for idx, r in enumerate(translated_all)}
+                for bi0, batch in enumerate(batches):
+                    batch_ids = [int(x["id"]) for x in batch]
+                    if not all(uid in row_pos for uid in batch_ids):
+                        continue
+                    batch_rows = [translated_all[row_pos[uid]] for uid in batch_ids]
+                    if not _overbudget_rows(
+                        batch_rows, voice_speed=self.voice_speed, max_video_slow=self.max_video_slow
+                    ):
+                        continue
+                    first_pos = row_pos[batch_ids[0]]
+                    last_index = unit_index[batch_ids[-1]]
+                    prev_rows = translated_all[max(0, first_pos - self.context_overlap):first_pos] if self.context_overlap else []
+                    nxt_rows = units[last_index + 1:last_index + 1 + self.lookahead] if self.lookahead else []
+                    repaired_batch = _finalize_batch_translation(
+                        ai,
+                        batch_rows,
+                        bi=bi0,
+                        total_batches=len(batches),
+                        story_context=story_context,
+                        prev_committed=prev_rows,
+                        nxt=nxt_rows,
+                        log=self.log,
+                        translation_audit=self.translation_audit,
+                        narrative_style=self.narrative_style,
+                        is_female=self.is_female,
+                        voice_speed=self.voice_speed,
+                        max_video_slow=self.max_video_slow,
+                    )
+                    for r in repaired_batch:
+                        translated_all[row_pos[int(r["id"])]] = r
+                    _write_translations_checkpoint(translated_all)
+
             if self.translate_workers > 1 and len(pending) > 1:
                 translated_all = translate_batches_in_parallel(
                     ai=ai,
@@ -2886,6 +3394,8 @@ class RecapPlanBuilder:
                     is_female=self.is_female,
                     max_workers=self.translate_workers,
                     on_commit=_write_translations_checkpoint,
+                    voice_speed=self.voice_speed,
+                    max_video_slow=self.max_video_slow,
                     **part_kw,
                 )
             else:
@@ -2920,21 +3430,21 @@ class RecapPlanBuilder:
                             f"{exc}\n\nSaved progress: {saved}/{len(units)} units; "
                             f"remaining: {remaining}. Resume will start at ID {batch_ids[0]:05d}."
                         ) from exc
-                    if self.translation_audit:
-                        flags = _batch_audit_flags(translated, prev, nxt)
-                        if flags or bi0 == 0:
-                            if flags:
-                                self.log(f"🔎 Translate batch {bi}/{len(batches)} audit — flags: {', '.join(flags)}")
-                            translated = audit_and_repair_batch(
-                                ai,
-                                translated,
-                                story_context=story_context,
-                                previous_context=prev,
-                                next_context=nxt,
-                                log=self.log,
-                                narrative_style=self.narrative_style,
-                                is_female=self.is_female,
-                            )
+                    translated = _finalize_batch_translation(
+                        ai,
+                        translated,
+                        bi=bi0,
+                        total_batches=len(batches),
+                        story_context=story_context,
+                        prev_committed=prev,
+                        nxt=nxt,
+                        log=self.log,
+                        translation_audit=self.translation_audit,
+                        narrative_style=self.narrative_style,
+                        is_female=self.is_female,
+                        voice_speed=self.voice_speed,
+                        max_video_slow=self.max_video_slow,
+                    )
                     translated = _drop_foreign_letters(translated, self.log)
                     for row in translated:
                         if _latin_words(row.get("translation")):
@@ -2996,6 +3506,12 @@ class RecapPlanBuilder:
             "mandatory_per_id_alignment_audit": bool(self.translation_audit),
             "timestamp_authority": "local-whisper",
             "boundary_profile": BOUNDARY_PROFILE,
+            "spoken_duration_budget_enforced": True,
+            "duration_budget_estimator": "measured_chars_per_second",
+            "duration_budget_chars_per_second": MEASURED_CHARS_PER_SECOND,
+            "duration_budget_max_video_slow": self.max_video_slow,
+            "duration_budget_voice_speed": self.voice_speed,
+            "duration_budget_tempo": _resolve_tempo(self.voice_speed),
         }
         _atomic_json(plan_file, plan)
         _atomic_json(state_file, {
@@ -3003,6 +3519,7 @@ class RecapPlanBuilder:
             "planner_mode": PLANNER_MODE,
             "segmentation_profile": segmentation_profile,
             "boundary_profile": BOUNDARY_PROFILE,
+            "duration_budget_key": self._duration_budget_key(),
             "source_fingerprint": fp,
             "source_path": str(source),
             "translation_direction": TRANSLATION_DIRECTION,

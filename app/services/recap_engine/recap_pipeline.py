@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from recap_planner import RecapPlanBuilder
+from recap_planner import DEFAULT_MAX_VIDEO_SLOW, DEFAULT_SPEED, RecapPlanBuilder
 from core import EdgeSmartSync, probe_duration, probe_video_size, frame_layout, source_band_to_canvas_box, user_blur_box_to_canvas_box, extract_preview_with_overlays, detect_source_subtitle_bands, resolve_subtitle_font, subtitle_plate_box, reconcile_source_bands, subtitle_anchor_y, subtitle_anchor_x, ensure_plate_contains_anchor, _layout_content_box
 # Batch DD: manual blur-box list conversion, protection levels and
 # the Strong post-process live in core beside their single-box /
@@ -436,6 +436,8 @@ def run_recap_pipeline(
         narrative_style=narrative_style,
         is_female=bool(is_female),
         source_language=source_language,
+        voice_speed=voice_speed,
+        max_video_slow=DEFAULT_MAX_VIDEO_SLOW,
     )
 
     _part_kw = (
@@ -718,7 +720,7 @@ def run_recap_pipeline(
         ffmpeg_path=ffmpeg_bin,
         ffprobe_path=ffprobe_bin,
         max_video_speed=1.35,
-        max_video_slow=1.20,
+        max_video_slow=DEFAULT_MAX_VIDEO_SLOW,
         mirror_video=bool(mirror_video),
         # Batch DD: Protection Off forces the plain frame (no
         # zoom-crop); Standard/Strong keep the user's zoom.
@@ -802,6 +804,7 @@ def build_recap_script_plan(
     part_index: int = 1,
     total_parts: int = 1,
     prev_part_summary: str = "",
+    voice_speed: str = DEFAULT_SPEED,
 ) -> Dict[str, Any]:
     """Phase 1 of the two-phase recap (script review flow, 2026-10-29).
 
@@ -852,6 +855,8 @@ def build_recap_script_plan(
         narrative_style=narrative_style,
         is_female=bool(is_female),
         source_language=source_language,
+        voice_speed=voice_speed,
+        max_video_slow=DEFAULT_MAX_VIDEO_SLOW,
     )
     _plan_part_kw = (
         {

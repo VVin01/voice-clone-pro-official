@@ -7972,6 +7972,7 @@ async def _execute_recap_background_job(
                     source_title=entry.get("title") or Path(script_source).stem,
                     progress_fn=progress_cb,
                     source_language=req.source_language,
+                    voice_speed=req.voice_speed,
                 ),
             )
 
