@@ -57,4 +57,4 @@ def test_fit_still_registered_on_resize_and_ratio_change():
 
 
 def test_cache_token_is_r140():
-    assert INDEX.count("20261114_r151") == 4
+    assert INDEX.count("20261115_r152") == 4

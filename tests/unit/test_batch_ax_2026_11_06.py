@@ -16,8 +16,12 @@ Invariants pinned here (spec ~/workspace/batch-ax-spec-2026-11-06.md):
   (Batch AZ-9/AZ-11, 2026-11-06: the indicator is rebuilt as a
   liquid segmented capsule and the language pills are retired for
   ONE compact dropdown — the affected pins below are rewritten to
-  the AZ structure, citing the AZ spec; session-truth, navigation,
-  write-path, payload and prefs pins are unchanged.)
+  the AZ structure, citing the AZ spec; session-truth, write-path,
+  payload and prefs pins are unchanged.)
+  (Owner decision 2026-11-15: SUPERSEDES AX-1 free navigation —
+  steps must now be earned in order via RECAP_STEP_DONE inside
+  showRecapStep, with visible lock state and aria-disabled="true" on
+  locked nav chips.)
 - Payload (42 keys) and prefs keys unchanged (asserted in the AV file
   and re-asserted here); api.py untouched by the batch.
 """
@@ -61,6 +65,12 @@ def test_ax_exactly_one_step_visible_in_markup_state():
     for n in (1, 2, 3, 4):
         m = re.search(r'<div class="recap-step-body[^"]*" id="recap-step-%d-body"' % n, TAB)
         assert m and "hidden" not in m.group(0), f"step {n} body must not be hidden"
+    # Owner decision 2026-11-15: steps 2–4 start visibly locked in nav markup.
+    b1 = re.search(r'<button[^>]*data-step-toggle="1"[^>]*>', NAV).group(0)
+    assert 'aria-disabled="true"' not in b1 and "is-locked" not in b1
+    for n in (2, 3, 4):
+        bn = re.search(r'<button[^>]*data-step-toggle="%d"[^>]*>' % n, NAV).group(0)
+        assert "is-locked" in bn and 'aria-disabled="true"' in bn, f"step {n} nav must start locked"
 
 
 def test_ax_show_step_is_the_one_door():
@@ -81,6 +91,11 @@ def test_ax_show_step_is_the_one_door():
     assert "showRecapStep(2);" in APP_JS
     # Returning users land on Step 1 (init shows it last).
     assert "showRecapStep(1);" in APP_JS
+    # Owner decision 2026-11-15 (supersedes AX-1 free nav): showRecapStep enforces order.
+    assert "function recapFirstIncompleteBefore(" in APP_JS
+    assert 'tf("recap_step_locked_hint", { n: missing })' in APP_JS
+    body = APP_JS[APP_JS.index("function showRecapStep("):APP_JS.index("window.showRecapStep = showRecapStep;")]
+    assert body.index("recapFirstIncompleteBefore(n)") < body.index("recapCurrentStep = n;")
 
 
 # ── AX-2: indicator chips — number/✓ only, no text labels ──
@@ -144,6 +159,8 @@ def test_ax2r_track_nodes_and_single_caption():
     assert 'RECAP_STEP_NAME_KEYS' not in APP_JS
     assert 'item.classList.toggle("is-active", m === recapCurrentStep);' in APP_JS
     assert 'item.classList.toggle("is-done", !!RECAP_STEP_DONE[m]);' in APP_JS
+    assert 'item.classList.toggle("is-locked", locked);' in APP_JS
+    assert 'item.setAttribute("aria-disabled", "true");' in APP_JS
 
 
 def test_ax2r_indicator_design_css():
@@ -330,7 +347,7 @@ def test_ax_payload_and_prefs_invariants_hold():
 
 
 def test_ax_cache_token_r79():
-    assert INDEX_HTML.count("20261114_r151") == 4
+    assert INDEX_HTML.count("20261115_r152") == 4
     assert "20261104_r69" not in INDEX_HTML
 
 

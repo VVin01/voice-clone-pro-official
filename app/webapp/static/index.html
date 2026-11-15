@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261114_r151">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261115_r152">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261114_r151" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261115_r152" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -462,10 +462,10 @@
                             <!-- Phase 3: Custom clone as 5 visible guided steps (upload → check → create → test-listen → save) -->
                             <div class="vcp-clone-steps-bar" id="custom-clone-stepper">
                                 <span class="vcp-clone-step is-active" data-clone-step="1" data-i18n="clone_step_1_upload">၁။ ဖိုင်တင်</span>
-                                <span class="vcp-clone-step" data-clone-step="2" data-i18n="clone_step_2_check">၂။ စစ်ဆေး</span>
-                                <span class="vcp-clone-step" data-clone-step="3" data-i18n="clone_step_3_create">၃။ ဖန်တီး</span>
-                                <span class="vcp-clone-step" data-clone-step="4" data-i18n="clone_step_4_listen">၄။ နားထောင်</span>
-                                <span class="vcp-clone-step" data-clone-step="5" data-i18n="clone_step_5_save">၅။ သိမ်းဆည်း</span>
+                                <span class="vcp-clone-step is-locked" data-clone-step="2" data-i18n="clone_step_2_check">၂။ စစ်ဆေး</span>
+                                <span class="vcp-clone-step is-locked" data-clone-step="3" data-i18n="clone_step_3_create">၃။ ဖန်တီး</span>
+                                <span class="vcp-clone-step is-locked" data-clone-step="4" data-i18n="clone_step_4_listen">၄။ နားထောင်</span>
+                                <span class="vcp-clone-step is-locked" data-clone-step="5" data-i18n="clone_step_5_save">၅။ သိမ်းဆည်း</span>
                             </div>
                             <!-- File requirements shown clearly before upload -->
                             <div class="vcp-clone-req-box" id="custom-clone-req-box">
@@ -803,15 +803,15 @@
             <span class="recap-steps-nav-num" data-step-pill="1">1</span>
             <span class="recap-steps-nav-name" data-i18n="recap_step1_title">ဗီဒီယို ထည့်သွင်းပါ</span>
         </button>
-        <button type="button" class="recap-steps-nav-item" data-step-toggle="2" aria-label="2">
+        <button type="button" class="recap-steps-nav-item is-locked" data-step-toggle="2" aria-label="2" aria-disabled="true">
             <span class="recap-steps-nav-num" data-step-pill="2">2</span>
             <span class="recap-steps-nav-name" data-i18n="recap_step_nav_preview">အစမ်းကြည့်ရှုမှု</span>
         </button>
-        <button type="button" class="recap-steps-nav-item" data-step-toggle="3" aria-label="3">
+        <button type="button" class="recap-steps-nav-item is-locked" data-step-toggle="3" aria-label="3" aria-disabled="true">
             <span class="recap-steps-nav-num" data-step-pill="3">3</span>
             <span class="recap-steps-nav-name" data-i18n="recap_step_nav_voice">အသံ</span>
         </button>
-        <button type="button" class="recap-steps-nav-item" data-step-toggle="4" aria-label="4">
+        <button type="button" class="recap-steps-nav-item is-locked" data-step-toggle="4" aria-label="4" aria-disabled="true">
             <span class="recap-steps-nav-num" data-step-pill="4">4</span>
             <span class="recap-steps-nav-name" data-i18n="recap_step4_title">ဖန်တီးရန်</span>
         </button>
@@ -3479,7 +3479,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261114_r151"></script>
-    <script src="/static/js/app.js?v=20261114_r151"></script>
+    <script src="/static/js/i18n.js?v=20261115_r152"></script>
+    <script src="/static/js/app.js?v=20261115_r152"></script>
 </body>
 </html>
