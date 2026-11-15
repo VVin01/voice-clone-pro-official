@@ -2135,7 +2135,7 @@ class MediaDownloader:
         target_dir: Optional[str] = None,
         voice: str = "my-MM-ThihaNeural",
         narrative_style: str = "narrator",
-        voice_speed: str = "+0%",
+        voice_speed: str = "+12%",
         tts_engine: str = "edge_tts",
         source_language: str = "auto",
         render_quality: str = "standard",

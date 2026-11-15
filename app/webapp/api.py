@@ -47,6 +47,12 @@ from app.services.download_names import branded_download_filename
 from app.services.curated_voices import list_curated_voices, get_curated_voice
 from app.services import recap_eta
 from app.services import voice_choice as _voice_choice
+from app.services.speed import (
+    DEFAULT_SPEED,
+    SPEED_OPTIONS,
+    migrate_speed_pref,
+    normalize_api_speed,
+)
 from app.webapp.auth import (
     ADMIN_INIT_DATA_MAX_AGE_SECONDS,
     init_data_auth_date,
@@ -4028,10 +4034,18 @@ class VoiceGenerateRequest(BaseModel):
     # (hunt #4 A2): an over-long string used to sail through
     # validation and die as a Postgres truncation 500 at insert.
     model_slug: str = Field("voxcpm-cloud-ai", max_length=255)  # VoiceModel.slug String(255)
-    speed: str = Field("normal", max_length=20)
+    speed: str = Field(DEFAULT_SPEED, max_length=20)
     gender_preset: str = Field("m2m", max_length=20)
     engine: str = Field("voxcpm", max_length=20)  # Job.engine String(20)
     preset_voice: Optional[str] = Field(None, max_length=50)  # Job.preset_voice String(50)
+
+    @field_validator("speed")
+    @classmethod
+    def _norm_voice_speed(cls, v) -> str:
+        norm = normalize_api_speed(v)
+        if norm is None:
+            raise ValueError(f"Unsupported speed: {v!r}")
+        return norm
 
 
 @api_router.post("/voices/generate")
@@ -4160,7 +4174,7 @@ async def create_voice_job(
 async def create_voice_job_with_audio(
     text: str = Form(...),
     model_slug: str = Form("voxcpm-cloud-ai"),
-    speed: str = Form("normal"),
+    speed: str = Form(DEFAULT_SPEED),
     gender_preset: str = Form("m2m"),
     engine: str = Form("voxcpm"),
     preset_voice: Optional[str] = Form(None),
@@ -4177,6 +4191,9 @@ async def create_voice_job_with_audio(
         raise HTTPException(status_code=400, detail="စာသား ရိုက်ထည့်ပေးပါ")
 
     _require_valid_preset_voice(preset_voice)
+    norm_speed = normalize_api_speed(speed)
+    if norm_speed is None:
+        raise HTTPException(status_code=400, detail="Unsupported speed.")
 
     is_vip = (user.account_category == AccountCategory.PURCHASED.value) or settings.is_admin(user.id)
     char_limit = settings.character_limit_purchased if is_vip else settings.character_limit_free
@@ -4282,7 +4299,7 @@ async def create_voice_job_with_audio(
             text=clean_text,
             model_id=model.id,
             gender_preset=gender_preset,
-            speed_preset=speed,
+            speed_preset=norm_speed,
             edge_voice=resolved_edge_voice,
             engine=actual_engine,
             preset_voice=preset_voice,
@@ -4398,10 +4415,10 @@ async def get_job_status(
 # recapSubW, Batch AG) is NOT per-source — like recapSubY it follows
 # the account.
 USER_PREF_ENUMS: Dict[str, List[str]] = {
-    "voice_speed": ["slow", "normal", "fast"],
+    "voice_speed": list(SPEED_OPTIONS),
     "recapRatio": ["9:16", "16:9", "1:1", "Original"],
     "recapRatioFill": ["blur", "crop", "black"],
-    "recapSpeed": ["+0%", "+8%", "+12%", "+18%", "+22%"],
+    "recapSpeed": list(SPEED_OPTIONS),
     "recapStoryStyle": ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
     # Batch DD: 10 style presets (was 7) + the protection level.
     "recapSubStyle": ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"],
@@ -4462,10 +4479,10 @@ USER_PREF_FLOATS: Dict[str, tuple] = {
 
 DEFAULT_USER_PREFS: Dict[str, Any] = {
     "voice_persona": "komin",
-    "voice_speed": "normal",
+    "voice_speed": DEFAULT_SPEED,
     "recapRatio": "9:16",
     "recapRatioFill": "blur",
-    "recapSpeed": "+12%",
+    "recapSpeed": DEFAULT_SPEED,
     "recapStoryStyle": "viral",
     "recapSubStyle": "yellow",
     "recapSubFont": "padauk",
@@ -4528,12 +4545,30 @@ def _sanitize_user_prefs(raw) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         return out
     raw = dict(raw)
+    if isinstance(raw.get("recap_presets"), str) and raw["recap_presets"]:
+        try:
+            _parsed_presets = json.loads(raw["recap_presets"])
+            if isinstance(_parsed_presets, list):
+                raw["recap_presets"] = _parsed_presets
+        except Exception:
+            pass
     if isinstance(raw.get("recap_presets"), list):
         valid_presets = [
             p for p in raw["recap_presets"][:3]
             if isinstance(p, dict) and isinstance(p.get("name"), str) and isinstance(p.get("settings"), dict)
         ]
+        for _p in valid_presets:
+            _st = _p.get("settings")
+            if isinstance(_st, dict) and "recapSpeed" in _st:
+                _mig = migrate_speed_pref(_st["recapSpeed"])
+                if _mig is not None:
+                    _st["recapSpeed"] = _mig
         raw["recap_presets"] = json.dumps(valid_presets, ensure_ascii=False)
+    for _spk in ("voice_speed", "recapSpeed"):
+        if _spk in raw:
+            _mig_sp = migrate_speed_pref(raw[_spk])
+            if _mig_sp is not None:
+                raw[_spk] = _mig_sp
     _legacy_fonts = {"default": "padauk", "serif": "noto_serif"}
     if raw.get("recapSubFont") in _legacy_fonts:
         raw["recapSubFont"] = _legacy_fonts[raw["recapSubFont"]]
@@ -6507,7 +6542,7 @@ class RecapConfigRequest(BaseModel):
     # the Blur/Black fill modes. Explicit client values are
     # honoured exactly as before.
     zoom_factor: float = 1.0
-    voice_speed: str = "+12%"         # +0%, +8%, +12%, +18%, +22%
+    voice_speed: str = DEFAULT_SPEED   # -6%, +0%, +12%, +20%, +25%
     blur_subtitles: bool = True
     blur_y: int = Field(85, ge=0, le=100)
     blur_h: int = Field(7, ge=1, le=50)
@@ -6688,6 +6723,14 @@ class RecapConfigRequest(BaseModel):
             return None
         s = str(v).strip()
         return s if _HEX_COLOR_RE.match(s) else None
+
+    @field_validator("voice_speed")
+    @classmethod
+    def _norm_recap_voice_speed(cls, v) -> str:
+        norm = normalize_api_speed(v)
+        if norm is None:
+            raise ValueError(f"Unsupported voice_speed: {v!r}")
+        return norm
 
     @field_validator("sub_font_custom_id")
     @classmethod
@@ -10828,7 +10871,7 @@ class TTSGenerateRequest(BaseModel):
     text: str = ""
     engine: str = "gemini"
     voice: str = ""
-    speed: str = "+12%"
+    speed: str = DEFAULT_SPEED
 
 
 def _tts_error_status(reason: str) -> int:
@@ -10905,7 +10948,7 @@ async def generate_tts(
         text=payload.text or "",
         engine=engine,
         voice=voice,
-        speed_rate=str(payload.speed or "+12%"),
+        speed_rate=str(payload.speed or DEFAULT_SPEED),
     )
     if job is None:
         await db.rollback()

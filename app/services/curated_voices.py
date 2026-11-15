@@ -47,6 +47,8 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 
+from app.services.speed import DEFAULT_SPEED, resolve_speed_rate
+
 logger = logging.getLogger(__name__)
 
 CURATED_VOICES: Dict[str, Dict[str, Any]] = {
@@ -605,24 +607,13 @@ def list_curated_voices(lang: str = "my") -> List[Dict[str, Any]]:
 
 
 def compute_curated_rate(base_offset: int, user_speed: float | str | None) -> str:
-    """Calculate the combined speech rate string for Edge TTS (e.g. '+20%')."""
-    extra = 8
-    if isinstance(user_speed, (int, float)):
-        extra = int(round((float(user_speed) - 1.0) * 100))
-    elif isinstance(user_speed, str):
-        s = user_speed.strip().lower()
-        if s in ("fast", "1.2x", "1.2"):
-            extra = 18
-        elif s in ("slow", "0.8x", "0.8"):
-            extra = -8
-        elif s in ("normal", "1.0x", "1.0"):
-            extra = 8
-        elif "%" in s:
-            m = re.search(r"([+-]?\d+)", s)
-            if m:
-                extra = int(m.group(1))
-    total = max(-20, min(100, base_offset + extra))
-    return f"{total:+d}%"
+    """Resolve Edge TTS rate string using the unified speed contract.
+
+    ``base_offset`` is retained for signature compatibility and test fixtures;
+    VoxCPM and Edge fallback now deliver the exact same user-selected tempo
+    without adding hidden per-persona rate offsets.
+    """
+    return resolve_speed_rate(user_speed)
 
 
 # Edge TTS requests are kept short on purpose: one request per chunk, and
@@ -718,7 +709,7 @@ def synthesize_curated_persona(
     text: str,
     persona_id: str,
     output_wav: Path | str,
-    speed: float | str | None = "normal",
+    speed: float | str | None = DEFAULT_SPEED,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> Path:
     """

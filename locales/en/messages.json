@@ -60,7 +60,7 @@
   "tts_text_too_long": "❌ Text is too long. Your account type allows up to {max_chars} characters. (Current: {curr_chars})",
   "tts_insufficient_balance": "❌ Not enough minutes left. Please buy more from the 'Buy Minutes' menu.",
   "tts_choose_gender_preset": "👥 <b>Choose a voice gender:</b>",
-  "tts_choose_speed": "⚡ <b>Choose a speed:</b>\n(Slow: -15% · Normal: +0% · Fast: +15%)",
+  "tts_choose_speed": "⚡ <b>Choose a speed:</b>\n(Slow: -6% · Normal: +12% · Fast: +20%)",
   "tts_choose_base_voice": "🗣️ <b>Choose the base voice:</b>",
   "tts_choose_model": "🎙️ <b>Choose a model:</b>",
   "preset_m2m": "👨 → 👨 Male ➔ Male",
