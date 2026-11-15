@@ -1094,16 +1094,25 @@ def content_rim_y(layout: dict[str, Any] | None, cw: int, ch: int) -> int | None
 # (subtitleFontFraction in app.js) both read it, so the size the
 # user sees is the size the render burns. Batch Q raised every
 # anchor one notch (16pt default 3.2% → 4.0%) after the shaping
-# diagnosis showed small captions, not wrong text, caused the
-# "misspelled" look (~/workspace/subtitle-compare/shaping).
+# S3: recalibrated pt→fraction mapping anchored on the picture's
+# SHORTER side min(picture_width, picture_height) so relative glyph
+# size stays uniform across 9:16 full-frame, letterbox, and 16:9
+# landscape. Default 16pt → 0.050 × 1080 = 54 px (52–60 px sweet spot).
 SUBTITLE_FONT_HEIGHT_FRACTIONS = (
-    (13, 0.032),
-    (16, 0.040),
-    (19, 0.048),
-    (22, 0.056),
+    (13, 0.040),
+    (16, 0.050),
+    (19, 0.060),
+    (22, 0.070),
 )
 SUBTITLE_TWO_LINE_FONT_FACTOR = 1.25
 SUBTITLE_FONT_MIN_PX = 18
+# S1: rendered-width ceiling ≈ 820–860 px at 1080 width, scaled by picture width.
+SUBTITLE_MAX_LINE_WIDTH_AT_1080 = 840
+
+
+def _subtitle_max_line_width_px(picture_w: int) -> int:
+    """S1 visual line-width cap scaled proportionally by render width."""
+    return max(120, int(round(max(240, int(picture_w)) * (SUBTITLE_MAX_LINE_WIDTH_AT_1080 / 1080.0))))
 
 
 def _subtitle_font_fraction(raw_font_size: int) -> float:
@@ -1122,26 +1131,22 @@ def _subtitle_font_fraction(raw_font_size: int) -> float:
 
 def subtitle_font_px(cw: int, ch: int, raw_font_size: int = 16, sub_lines: int = 1,
                      layout: dict[str, Any] | None = None) -> int:
-    """Subtitle font size in px (Batch P: one formula; Batch AK:
-    the basis is the PICTURE height — the Recapter standard).
+    """Subtitle font size in px (S3: anchored on min(picture_width, picture_height)).
 
-    rendered px = picture_height × the picker's height fraction
-    (×1.25 in two-line mode), minimum 18px. Batch P sized from the
-    CANVAS height, so on letterboxed layouts the caption (and its
-    plate) ballooned relative to the picture the viewer actually
-    watches — 24.7% of the picture height for a 1-line plate on the
-    flagship 16:9→9:16 flow (premium audit S3). Sizing from the
-    picture height keeps the caption a constant share of the picture
-    at every layout; full-frame layouts (picture == canvas) are
-    byte-identical to Batch P. With no layout the picture IS the
-    canvas, so legacy no-layout callers are unchanged too.
+    rendered px = min(pw, ph) × the picker's height fraction
+    (×1.25 in two-line mode), minimum 18 px. Anchoring on the shorter
+    side of the content picture keeps 9:16 full-frame (1080×1920 -> 1080)
+    and 16:9 landscape (1920×1080 -> 1080) at matching relative glyph scale,
+    while letterboxed pictures (1080×608 -> 608) stay proportional to the
+    visible frame instead of ballooning.
     """
+    cw = max(240, int(cw))
     ch = max(240, int(ch))
     if layout is not None:
-        _pw, ph, _ox, _oy = _layout_content_box(layout, cw, ch)
-        basis = max(120, int(ph))
+        pw, ph, _ox, _oy = _layout_content_box(layout, cw, ch)
+        basis = max(120, min(int(pw), int(ph)))
     else:
-        basis = ch
+        basis = min(cw, ch)
     frac = _subtitle_font_fraction(raw_font_size)
     if int(sub_lines or 1) != 1:
         frac *= SUBTITLE_TWO_LINE_FONT_FACTOR
@@ -1346,6 +1351,14 @@ def _cx_break_suffixes() -> tuple[str, ...]:
     if _CX_BREAK_SUFFIXES is None:
         _CX_BREAK_SUFFIXES = ("။", "၊", "တာ", "တဲ့") + tuple(sorted(PARTICLE_SYLS))
     return _CX_BREAK_SUFFIXES
+
+
+def _cx_is_stranded_particle(tok: str) -> bool:
+    """True if ``tok`` is a particle/postposition/punctuation that must not start a line."""
+    t = unicodedata.normalize("NFC", (tok or "").strip())
+    if not t:
+        return False
+    return t in STRANDED_LINE_START_PARTICLES or t in _cx_break_suffixes()
 # Minimum readable on-screen time (s) for one split piece, enforced
 # only when the cue window is long enough to allow it.
 _CX_MIN_PIECE_SECONDS = 0.4
@@ -1394,16 +1407,13 @@ def _cx_is_meaningful_break(tokens: list[str], idx: int) -> bool:
 def _cx_next_starts_content(tokens: list[str], idx: int) -> bool:
     """True when the piece starting at tokens[idx] begins with a
     content token: skip whitespace, then the next token must not
-    itself be a break marker. A boundary followed by another
-    particle (အိမ်ထဲ | မှာ) would strand that particle at the
-    start of the next piece — prefer a boundary whose next piece
-    starts with a real word instead."""
+    itself be a break marker or stranded particle."""
     j = idx
     while j < len(tokens) and not tokens[j].strip():
         j += 1
     if j >= len(tokens):
         return False
-    return not _cx_is_break_token(tokens[j])
+    return not _cx_is_break_token(tokens[j]) and not _cx_is_stranded_particle(tokens[j])
 
 
 def _cx_cut_at_space(tokens: list[str], cut: int) -> bool:
@@ -1481,6 +1491,8 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
         # stranded particle).
         end = start
         cur = ""
+        last_punct: int | None = None
+        last_clean_punct: int | None = None
         last_good: int | None = None
         last_clean: int | None = None
         while end < len(tokens):
@@ -1490,9 +1502,14 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
             cur = cand
             end += 1
             if end < len(tokens) and _cx_is_meaningful_break(tokens, end - 1):
+                is_punct = tokens[end - 1].rstrip().endswith(("။", "၊"))
                 last_good = end
+                if is_punct:
+                    last_punct = end
                 if _cx_next_starts_content(tokens, end):
                     last_clean = end
+                    if is_punct:
+                        last_clean_punct = end
         if end == len(tokens):
             if cur.strip():
                 pieces.append(cur.strip())
@@ -1502,12 +1519,12 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
             pieces.append(tokens[start])
             start += 1
             continue
-        # Prefer a clean meaningful cut, then any meaningful cut,
-        # when the piece it leaves is still substantial (≥40% of
-        # the fitting width); a sliver piece flashes awkwardly.
+        # Prefer sentence/clause punctuation (။/၊), then clean meaningful cut,
+        # then any meaningful cut, when the piece it leaves is still
+        # substantial (≥40% of the fitting width); a sliver piece flashes awkwardly.
         cut = end
         full_w = _png_cue_width(renderer, cur.strip(), font_px, font_path, visuals)
-        for cand_cut in (last_clean, last_good):
+        for cand_cut in (last_clean_punct, last_clean, last_punct, last_good):
             if cand_cut is not None and cand_cut > start:
                 cand_w = _png_cue_width(
                     renderer, "".join(tokens[start:cand_cut]).strip(),
@@ -1531,7 +1548,28 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
                 )
                 if full_w > 0 and back_w >= 0.4 * full_w:
                     cut = back
-        pieces.append("".join(tokens[start:cut]).strip())
+        # S1: Avoid starting the next piece with a standalone spaced stranded particle
+        # (e.g. "... 2026 | မှာ"), backtracking only across a clean space boundary so an
+        # unspaced Burmese word/stub keeps its Batch CX/DA boundary behavior.
+        if start < cut < len(tokens) and _cx_cut_at_space(tokens, cut):
+            nxt_idx = cut
+            while nxt_idx < len(tokens) and not tokens[nxt_idx].strip():
+                nxt_idx += 1
+            if nxt_idx < len(tokens) and _cx_is_stranded_particle(tokens[nxt_idx]):
+                head = cut - 1
+                while head > start and not tokens[head].strip():
+                    head -= 1
+                while head > start and not _cx_cut_at_space(tokens, head):
+                    head -= 1
+                if head > start and _cx_cut_at_space(tokens, head):
+                    cand_w = _png_cue_width(
+                        renderer, "".join(tokens[start:head]).strip(),
+                        font_px, font_path, visuals,
+                    )
+                    if full_w > 0 and cand_w >= 0.4 * full_w:
+                        cut = head
+        piece_str = "".join(tokens[start:cut]).strip()
+        pieces.append(piece_str)
         start = cut
     return [p for p in pieces if p]
 
@@ -2621,14 +2659,6 @@ BURMESE_SYLLABLE_BREAK = re.compile(
     r'(?<![္])(?=[က-အ\u1023-\u102A\u104E](?![\u1037\u1038]?[်္]))'
 )
 
-PARTICLE_SYLS = {
-    'ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'ပြီး', 'တဲ့အခါ', 'အခါ', 'သော်လည်း',
-    'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်', 'ဖြစ်ပြီး', 'လျက်',
-    'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတယ်', 'နေတာ', 'ပါပဲ', 'ဖြစ်တယ်', 'ရှိတယ်', 'သွားတယ်',
-    'လိုက်တယ်', 'လိုက်တာ', 'ကို', 'မှာ', 'က', 'နဲ့', 'နှင့်', 'သို့', 'မှ', 'လည်း', 'တော့',
-    'ကနေ', 'နေ', 'ထဲ', 'တုန်း'
-}
-
 
 BURMESE_COMPOUNDS = [
     "ကျွန်တော်", "ကျွန်မ", "သူမ", "သူတို့", "သူက",
@@ -2651,127 +2681,246 @@ PARTICLE_SYLS = {
     'ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'ပြီး', 'တဲ့အခါ', 'အခါ', 'သော်လည်း',
     'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်', 'ဖြစ်ပြီး', 'လျက်',
     'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတယ်', 'နေတာ', 'ပါပဲ', 'ဖြစ်တယ်', 'ရှိတယ်', 'သွားတယ်',
-    'လိုက်တယ်', 'လိုက်တာ', 'တာနဲ့', 'တာမို့', 'ကို', 'မှာ', 'က', 'နဲ့', 'နှင့်', 'သို့', 'မှ', 'လည်း', 'တော့',
-    'ကနေ', 'နေ', 'ထဲ', 'တုန်း'
+    'လိုက်တယ်', 'လိုက်တာ', 'တာနဲ့', 'တာမို့', 'တာကြောင့်', 'တဲ့အတွက်',
+    'ကို', 'မှာ', 'က', 'နဲ့', 'နှင့်', 'ရဲ့', '၏', 'လို့', 'သည်', '၌', 'တွင်',
+    'သို့', 'မှ', 'ဖြင့်', 'လည်း', 'တော့', 'ကနေ', 'နေ', 'ထဲ', 'တုန်း',
 }
 
-SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = {
-    "yellow": {
-        "name": "Classic Gold",
-        "label": "အဝါရောင် (Classic Gold)",
-        "short": "အဝါရောင်",
-        "primary": "&H0000FFFF",  # BGR: Yellow (0x00, 0xFF, 0xFF)
-        "outline_col": "&H00000000",
-        "back_col": "&H80000000",
-        "border_style": 1,
-        "outline": 1.3,
-        "shadow": 0.8,
-    },
-    "white": {
-        "name": "Clean White",
-        "label": "အဖြူရောင် (Clean White)",
-        "short": "အဖြူရောင်",
-        "primary": "&H00FFFFFF",  # BGR: White
-        "outline_col": "&H00000000",
-        "back_col": "&H80000000",
-        "border_style": 1,
-        "outline": 2.2,
-        "shadow": 1.2,
-    },
-    "boxed": {
-        "name": "Dark Box",
-        "label": "နောက်ခံဘောက် (Dark Box)",
-        "short": "နောက်ခံဘောက်",
-        "primary": "&H00FFFFFF",
-        "outline_col": "&H00000000",
-        "back_col": "&H70000000",  # Semi-transparent black box
-        "border_style": 3,
-        "outline": 1.0,
-        "shadow": 0.0,
-    },
-    "neon": {
-        "name": "Neon Cyan",
-        "label": "နီယွန်စိမ်းပြာ (Neon Cyan)",
-        "short": "နီယွန်",
-        "primary": "&H00FFFF00",  # BGR: Cyan (0x00, 0xFF, 0xFF)
-        "outline_col": "&H00151515",
-        "back_col": "&H80000000",
-        "border_style": 1,
-        "outline": 2.2,
-        "shadow": 1.2,
-    },
-    # Added by the production-grade programme (2026-10-29). Both burn-in
-    # paths (ASS writer + SRT force_style) read this dict, so new presets
-    # apply everywhere subtitles are burned; size/position keep flowing
-    # through the existing sub_font_size / sub_y controls.
-    "band": {
-        "name": "Band",
-        "label": "နောက်ခံ Band (Band)",
-        "short": "Band",
-        "primary": "&H00FFFFFF",
-        "outline_col": "&H00000000",
-        "back_col": "&H99000000",  # Stronger translucent black band than "boxed"
-        "border_style": 3,
-        "outline": 1.0,
-        "shadow": 0.0,
-    },
-    "heavy": {
-        "name": "Heavy Outline",
-        "label": "အနားထူ (Heavy Outline)",
-        "short": "အနားထူ",
-        "primary": "&H00FFFFFF",
-        "outline_col": "&H00000000",
-        "back_col": "&H80000000",
-        "border_style": 1,
-        "outline": 4.2,
-        "shadow": 2.0,
-    },
-    "soft": {
-        "name": "Soft",
-        "label": "နူးညံ့ (Soft)",
-        "short": "နူးညံ့",
-        "primary": "&H00FFFFFF",
-        "outline_col": "&H00222222",
-        "back_col": "&HA0000000",
-        "border_style": 1,
-        "outline": 1.2,
-        "shadow": 0.8,
-    },
-    # Batch DD: three more presets in the mock's spirit (10 total).
-    "rose": {
-        "name": "Rose Pink",
-        "label": "ပန်းရောင် (Rose Pink)",
-        "short": "ပန်းရောင်",
-        "primary": "&H00B469FF",  # BGR: #FF69B4
-        "outline_col": "&H00000000",
-        "back_col": "&H80000000",
-        "border_style": 1,
-        "outline": 1.6,
-        "shadow": 1.0,
-    },
-    "orange": {
-        "name": "Sunset Orange",
-        "label": "လိမ္မော်ရောင် (Sunset Orange)",
-        "short": "လိမ္မော်ရောင်",
-        "primary": "&H00008CFF",  # BGR: #FF8C00
-        "outline_col": "&H00000000",
-        "back_col": "&H80000000",
-        "border_style": 1,
-        "outline": 1.6,
-        "shadow": 1.0,
-    },
-    "mint": {
-        "name": "Mint Green",
-        "label": "ပူစီနံစိမ်း (Mint Green)",
-        "short": "ပူစီနံစိမ်း",
-        "primary": "&H009DFF00",  # BGR: #00FF9D
-        "outline_col": "&H00151515",
-        "back_col": "&H80000000",
-        "border_style": 1,
-        "outline": 1.8,
-        "shadow": 1.0,
-    },
-}
+# S1: particles/postpositions/punctuation that belong to the preceding noun or
+# verb and must NEVER appear stranded at the beginning of a wrapped line/cue.
+STRANDED_LINE_START_PARTICLES: frozenset[str] = frozenset(
+    PARTICLE_SYLS
+    | {
+        "တာ", "တဲ့", "ပါ", "ပဲ", "တွေ", "များ", "တို့",
+        "နော်", "လေ", "လား", "မလား", "ပေါ့", "ဆို", "ဟု", "၍",
+        "ကတော့", "မှာတော့", "ကိုတော့", "ဆိုတာ", "ဟာ", "အား",
+        "။", "၊", ",", ".", "!", "?", ":", ";", ")", "]", "”", "’",
+    }
+)
+
+
+def _init_subtitle_style_presets() -> dict[str, dict[str, Any]]:
+    """Build ONE declarative config table for all subtitle presets (S4).
+
+    Consumed uniformly by the PNG renderer (``preset_visuals``), ASS side-file
+    writer (``write_synced_ass_file``), API validation, and Mini App preview.
+    """
+    specs: dict[str, dict[str, Any]] = {
+        "yellow": {
+            "name": "Classic Gold",
+            "label": "အဝါရောင် (Classic Gold)",
+            "short": "အဝါရောင်",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFF00",
+            "outline_color": "#000000",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 1.3,
+            "shadow": 0.8,
+        },
+        "white": {
+            "name": "Clean White",
+            "label": "အဖြူရောင် (Clean White)",
+            "short": "အဖြူရောင်",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFFFF",
+            "outline_color": "#000000",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 2.2,
+            "shadow": 1.2,
+        },
+        "boxed": {
+            "name": "Dark Box",
+            "label": "နောက်ခံဘောက် (Dark Box)",
+            "short": "နောက်ခံဘောက်",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFFFF",
+            "outline_color": "#000000",
+            "back_col": "&H70000000",  # Semi-transparent black box
+            "bg_mode": "box",
+            "bg_color": "#000000",
+            "bg_opacity": round((255 - 0x70) / 255.0, 4),
+            "border_style": 3,
+            "outline": 1.0,
+            "shadow": 0.0,
+        },
+        "neon": {
+            "name": "Neon Cyan",
+            "label": "နီယွန်စိမ်းပြာ (Neon Cyan)",
+            "short": "နီယွန်",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#00FFFF",
+            "outline_color": "#151515",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 2.2,
+            "shadow": 1.2,
+        },
+        "band": {
+            "name": "Band",
+            "label": "နောက်ခံ Band (Band)",
+            "short": "Band",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFFFF",
+            "outline_color": "#000000",
+            "back_col": "&H99000000",  # Stronger translucent black band than "boxed"
+            "bg_mode": "box",
+            "bg_color": "#000000",
+            "bg_opacity": round((255 - 0x99) / 255.0, 4),
+            "border_style": 3,
+            "outline": 1.0,
+            "shadow": 0.0,
+        },
+        "heavy": {
+            "name": "Heavy Outline",
+            "label": "အနားထူ (Heavy Outline)",
+            "short": "အနားထူ",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFFFF",
+            "outline_color": "#000000",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 4.2,
+            "shadow": 2.0,
+        },
+        "soft": {
+            "name": "Soft",
+            "label": "နူးညံ့ (Soft)",
+            "short": "နူးညံ့",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFFFF",
+            "outline_color": "#222222",
+            "back_col": "&HA0000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 1.2,
+            "shadow": 0.8,
+        },
+        "rose": {
+            "name": "Rose Pink",
+            "label": "ပန်းရောင် (Rose Pink)",
+            "short": "ပန်းရောင်",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FF69B4",
+            "outline_color": "#000000",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 1.6,
+            "shadow": 1.0,
+        },
+        "orange": {
+            "name": "Sunset Orange",
+            "label": "လိမ္မော်ရောင် (Sunset Orange)",
+            "short": "လိမ္မော်ရောင်",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FF8C00",
+            "outline_color": "#000000",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 1.6,
+            "shadow": 1.0,
+        },
+        "mint": {
+            "name": "Mint Green",
+            "label": "ပူစီနံစိမ်း (Mint Green)",
+            "short": "ပူစီနံစိမ်း",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#00FF9D",
+            "outline_color": "#151515",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 1.8,
+            "shadow": 1.0,
+        },
+        # S4 additions: Cinematic White (default ONLY for brand-new accounts per D2)
+        # and Modern Clean (Glass Pill, 58% translucent rounded background).
+        "cinematic": {
+            "name": "Cinematic White",
+            "label": "ရုပ်ရှင်အဖြူ (Cinematic White)",
+            "short": "ရုပ်ရှင်အဖြူ",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFFFF",
+            "outline_color": "#000000",
+            "back_col": "&H80000000",
+            "bg_mode": "none",
+            "bg_color": "#000000",
+            "bg_opacity": 0.0,
+            "border_style": 1,
+            "outline": 2.5,  # ≈3 px stroke @ 1080p/9:16 16pt (outside glyph fill)
+            "shadow": 1.6,
+            "shadow_soft": {"alpha": 128, "blur_px": 4, "offset_x": 2, "offset_y": 3},
+        },
+        "glass": {
+            "name": "Modern Clean",
+            "label": "မှန်ကြည် (Modern Clean)",
+            "short": "မှန်ကြည်",
+            "font": "sans",
+            "font_weight": "bold",
+            "text_color": "#FFFFFF",
+            "outline_color": "#000000",
+            "back_col": "&H6B000000",  # 58% opacity black pill (255 - 0x6B = 148/255)
+            "bg_mode": "pill",
+            "bg_color": "#000000",
+            "bg_opacity": round((255 - 0x6B) / 255.0, 4),
+            "bg_radius_frac": 0.42,
+            "bg_pad_x_frac": 0.45,
+            "bg_pad_y_frac": 0.24,
+            "border_style": 3,
+            "outline": 1.0,
+            "shadow": 0.0,
+        },
+    }
+    for entry in specs.values():
+        t_rgba = _png_subs.hex_to_rgba(entry["text_color"]) or (255, 255, 255, 255)
+        o_rgba = _png_subs.hex_to_rgba(entry["outline_color"]) or (0, 0, 0, 255)
+        entry["primary"] = _png_subs.rgba_to_ass_colour(t_rgba)
+        entry["outline_col"] = _png_subs.rgba_to_ass_colour(o_rgba)
+    return specs
+
+
+SUBTITLE_STYLE_PRESETS: dict[str, dict[str, Any]] = _init_subtitle_style_presets()
+
+
+def subtitle_style_config(style_key: str | None) -> dict[str, Any]:
+    """Return a copy of the canonical style configuration for ``style_key``."""
+    key = str(style_key or "yellow").strip().lower()
+    cfg = SUBTITLE_STYLE_PRESETS.get(key, SUBTITLE_STYLE_PRESETS["yellow"])
+    return dict(cfg)
 
 
 # Subtitle font options (recap-quality pass, 2026-10-30). Every file is
@@ -3852,8 +4001,84 @@ def detect_source_subtitle_bands(
         return []
 
 
+def _is_combining_or_myanmar_mark(ch: str) -> bool:
+    """True for dependent vowel signs, medials, asat, tone marks, and Unicode combining marks."""
+    cp = ord(ch)
+    if 0x102B <= cp <= 0x103E and cp != 0x1039:
+        return True
+    if (
+        0x1056 <= cp <= 0x1059
+        or 0x105E <= cp <= 0x1060
+        or 0x1062 <= cp <= 0x1064
+        or 0x1067 <= cp <= 0x106D
+        or 0x1071 <= cp <= 0x1074
+        or 0x1082 <= cp <= 0x108D
+        or cp == 0x108F
+        or 0x109A <= cp <= 0x109D
+    ):
+        return True
+    return unicodedata.category(ch) in ("Mn", "Mc", "Me")
+
+
+def myanmar_grapheme_clusters(text: str) -> list[str]:
+    """Segment ``text`` into visual grapheme clusters (kinzi + consonant +
+    stacked consonants + medials/vowels/asat/tone marks = 1 unit).
+
+    Never breaks inside a Myanmar syllable cluster or combining mark sequence.
+    """
+    t = unicodedata.normalize("NFC", str(text or ""))
+    if not t:
+        return []
+    clusters: list[str] = []
+    n = len(t)
+    i = 0
+    while i < n:
+        # Kinzi (င်္ = 1004 + 103A + 1039) binds forward to its host consonant.
+        if (
+            i + 3 < n
+            and t[i] == "\u1004"
+            and t[i + 1] == "\u103A"
+            and t[i + 2] == "\u1039"
+            and ("\u1000" <= t[i + 3] <= "\u1021" or t[i + 3] == "\u103F")
+        ):
+            j = i + 4
+        else:
+            j = i + 1
+        while j < n:
+            if t[j] == "\u1039" and j + 1 < n:
+                j += 2
+                continue
+            if t[j] == "\u200D" and j + 1 < n:
+                j += 2
+                continue
+            if _is_combining_or_myanmar_mark(t[j]):
+                j += 1
+                continue
+            break
+        clusters.append(t[i:j])
+        i = j
+    return clusters
+
+
+def grapheme_count(text: str) -> int:
+    """Count visual grapheme clusters in ``text`` (ignoring line breaks)."""
+    flat = re.sub(r"\s+", " ", str(text or "").replace("\r\n", " ").replace("\n", " ")).strip()
+    return len(myanmar_grapheme_clusters(flat))
+
+
+def _measure_text_width_px(
+    line: str,
+    font_px: int = 54,
+    font_path: Path | None = None,
+    stroke_px: int = 2,
+) -> int:
+    """Measure rendered ink width (px) of a single line using actual font metrics."""
+    fp = Path(font_path) if font_path is not None else subtitle_font_file(DEFAULT_SUBTITLE_FONT, bold=True)
+    return _png_subs.measure_line_width_px(str(line or ""), max(8, int(font_px)), fp, max(0, int(stroke_px)))
+
+
 def canonicalize_burmese_text(text: str) -> str:
-    """Fix common typing inversions, redundant spaces, and normalize Myanmar Unicode."""
+    """Fix common typing inversions, redundant spaces, and normalize Myanmar Unicode (NFC)."""
     if not text:
         return ""
     # 0. Strip zero-width characters FIRST: they hide inside syllables and
@@ -3864,18 +4089,14 @@ def canonicalize_burmese_text(text: str) -> str:
     #     marks; drop spaces immediately before a combining mark so each
     #     syllable is whole again before it is repaired.
     t = re.sub(r' +(?=[\u102B-\u103E])', '', t)
+    # 0c. Initial Unicode NFC normalization before UTN #11 repair.
+    t = unicodedata.normalize("NFC", t)
     # 1. Full syllabic mark-order repair (app.services.myanmar_text). This
     #    subsumes the old piecemeal swaps -- pre-posed 'ေ', reversed medials,
     #    'ေ' before medials, ျ/ြ order -- by re-sorting every syllable's
-    #    marks into UTN #11 storage order. Correctly-written text passes
-    #    through byte-identical: the guard that protected "မေမေ" / "တွေကို" /
-    #    "နေတယ်" from the old unconditional 'ေ' swap lives on inside the
-    #    repair, which moves a 'ေ' only when it cannot belong to the
-    #    syllable in front of it.
+    #    marks into UTN #11 storage order.
     t = repair_burmese_mark_order(t)
     # 2. Normalize foreign homoglyphs and standard Myanmar orthography / spelling.
-    #    Runs after the repair so the spelling tables see canonical storage
-    #    order and match mis-typed input as well as clean input.
     t = normalize_burmese_orthography(t)
     # 3. Remove unwanted spaces before punctuation or dependent vowels
     t = re.sub(r'\s+([\u102B-\u103E\u104A\u104B])', r'\1', t)
@@ -3885,9 +4106,10 @@ def canonicalize_burmese_text(text: str) -> str:
     t = re.sub(r'(။)+', '။', t)
     # Normalize multiple Myanmar comma (၊၊) → single (၊)
     t = re.sub(r'(၊)+', '၊', t)
-    # Remove trailing Myanmar period at very end if followed by nothing (already ended)
     t = t.rstrip()
-    return t
+    # 5. Final NFC normalization (S6) guarantees canonical order even after
+    #    combined rewrites so dotted-circle artifacts do not occur.
+    return unicodedata.normalize("NFC", t)
 
 
 BURMESE_PROTECTED_WORDS = sorted([
@@ -3916,12 +4138,17 @@ def _is_valid_burmese_token_boundary(text: str, idx: int) -> bool:
 
 def tokenize_burmese_words(text: str) -> list[str]:
     """Tokenize Burmese text into natural words/particles without breaking syllables or vowel clusters."""
+    text = unicodedata.normalize("NFC", str(text or ""))
     tokens = []
     i = 0
     particles = [
         'ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်',
-        'ကြောင့်', 'အတွက်', 'ပါတော့တယ်', 'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ',
-        'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်', '၊', '။', ' ',
+        'တာကြောင့်', 'တဲ့အတွက်', 'တာနဲ့', 'တာမို့', 'ကြောင့်', 'အတွက်',
+        'ပါတော့တယ်', 'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတယ်', 'နေတာ',
+        'ပါပဲ', 'လိုက်တယ်', 'ကတော့', 'မှာတော့', 'ကိုတော့',
+        'က', 'နဲ့', 'နှင့်', 'မှာ', 'ကို', 'တော့', 'ရဲ့', '၏', 'လို့',
+        'ပြီး', 'သည်', '၌', 'တွင်', 'မှ', 'သို့', 'ဖြင့်', 'လည်း',
+        'ပဲ', 'ပါ', 'တွေ', 'များ', 'တို့', 'လေ', 'နော်', '၊', '။', ' ',
     ]
     while i < len(text):
         matched = False
@@ -3939,104 +4166,263 @@ def tokenize_burmese_words(text: str) -> list[str]:
                     matched = True
                     break
         if not matched:
-            m = BURMESE_SYLLABLE_BREAK.search(text, i + 1)
-            next_idx = m.start() if m else len(text)
+            # S1: Never split inside a grapheme cluster (kinzi, stacked consonants,
+            # combining marks) or Latin alphanumeric run.
+            if text[i].isascii() and text[i].isalnum():
+                j = i + 1
+                while j < len(text) and text[j].isascii() and text[j].isalnum():
+                    j += 1
+                next_idx = j
+            elif (
+                i + 3 < len(text)
+                and text[i] == "\u1004"
+                and text[i + 1] == "\u103A"
+                and text[i + 2] == "\u1039"
+                and ("\u1000" <= text[i + 3] <= "\u1021" or text[i + 3] == "\u103F")
+            ):
+                cl = myanmar_grapheme_clusters(text[i:i + 12])
+                next_idx = i + len(cl[0]) if cl else i + 1
+            else:
+                m = BURMESE_SYLLABLE_BREAK.search(text, i + 1)
+                next_idx = m.start() if m else len(text)
+                # Ensure token boundary never cuts inside a single grapheme cluster
+                clusters = myanmar_grapheme_clusters(text[i:next_idx + 8])
+                if clusters and i + len(clusters[0]) > next_idx:
+                    next_idx = i + len(clusters[0])
             tokens.append(text[i:next_idx])
             i = next_idx
     return tokens
 
 
-def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> list[str]:
-    """Split text into 1-line chunks without cutting words or syllables in half.
+def _subtitle_max_clusters(font_size: int = 16, sub_w: float | None = None) -> int:
+    """S1 grapheme-cluster line budget (target 20–28 clusters/line at default 16pt)."""
+    base = 24
+    try:
+        fs = int(font_size) if font_size is not None else 16
+    except (TypeError, ValueError):
+        fs = 16
+    if fs != 16:
+        ratio = _subtitle_font_fraction(16) / max(0.001, _subtitle_font_fraction(fs))
+        base = int(round(base * ratio))
+    if sub_w is not None:
+        try:
+            w = max(0.10, min(1.0, float(sub_w)))
+        except (TypeError, ValueError):
+            w = 0.92
+        if w < 0.77:
+            base = int(round(base * (w / 0.77)))
+    return max(8, base)
 
-    Batch DI: the fill is greedy across sentence/clause boundaries.
-    The pre-DI version hard-split at every "။" (then every "၊") and
-    chunked each fragment on its own, so a narration segment made of
-    several short sentences shipped as several short cues even when
-    the character budget would have held them together (owner,
-    2026-11-10: the subtitles come out as short little pieces).
-    Now words accumulate until the budget fills, so cues run as
-    close to the size-scaled capacity as the text allows. Whole
-    words are never cut: breaks land between the space-delimited
-    phrases Gemini writes (and the PNG burn re-splits any piece
-    that still overflows at meaningful phrase boundaries), and only
-    an over-long phrase falls back to syllable-safe particle
-    tokenization.
+
+def _subtitle_fit_width_px(overlays: dict[str, Any] | None, picture_w: int) -> int:
+    """Hard rendered PNG width cap: respects ``_sub_w_fraction`` while capping
+    default layouts to the S1 legible line width (~840 px at 1080 width).
     """
-    text = re.sub(r'\s+', ' ', text.replace("\r\n", " ").replace("\n", " ")).strip()
-    if len(text) <= max_chars:
-        return [text]
+    pw = max(240, int(picture_w))
+    user_w = int(round(_sub_w_fraction(overlays) * pw))
+    s1_cap = _subtitle_max_line_width_px(pw)
+    return min(user_w, s1_cap)
+
+
+def _split_line_units_s1(
+    text: str,
+    *,
+    max_chars: int | None = None,
+    max_clusters: int | None = None,
+    max_width_px: int | None = None,
+    font_px: int = 54,
+    font_path: Path | None = None,
+    stroke_px: int = 2,
+    legacy_tail_merge: bool = False,
+) -> list[str]:
+    """Split text into single lines respecting grapheme clusters, word boundaries,
+    stranded-particle rules, priority breaks (sentence -> clause/particle ->
+    space -> cluster), visual width cap, and cluster/char bounds (S1).
+    """
+    flat = re.sub(r"\s+", " ", str(text or "").replace("\r\n", " ").replace("\n", " ")).strip()
+    if not flat:
+        return []
+
+    def _fits(cand: str) -> bool:
+        s = cand.strip()
+        if not s:
+            return True
+        if max_chars is not None and len(s) > max_chars:
+            return False
+        if max_clusters is not None and len(myanmar_grapheme_clusters(s)) > max_clusters:
+            return False
+        if max_width_px is not None and _measure_text_width_px(s, font_px, font_path, stroke_px) > max_width_px:
+            return False
+        return True
+
+    if _fits(flat):
+        return [flat]
 
     tokens: list[str] = []
-    for word in text.split(" "):
-        if not word:
-            continue
-        if len(word) > max_chars:
-            tokens.extend(t for t in tokenize_burmese_words(word) if t)
+    words = [w for w in flat.split(" ") if w]
+    for w_idx, word in enumerate(words):
+        if ("။" in word or "၊" in word) or not _fits(word):
+            for sub in tokenize_burmese_words(word):
+                if not sub:
+                    continue
+                if not _fits(sub) and len(myanmar_grapheme_clusters(sub)) > 1:
+                    tokens.extend(myanmar_grapheme_clusters(sub))
+                else:
+                    tokens.append(sub)
         else:
             tokens.append(word)
-        tokens.append(" ")
-    if tokens and tokens[-1] == " ":
-        tokens.pop()
+        if w_idx < len(words) - 1:
+            tokens.append(" ")
     if not tokens:
-        return [text]
+        return [flat]
+
+    def _unit_len(s: str) -> int:
+        if max_clusters is not None:
+            return len(myanmar_grapheme_clusters(s))
+        return len(s)
+
+    def _next_nonspace(idx: int) -> str:
+        j = idx
+        while j < len(tokens) and not tokens[j].strip():
+            j += 1
+        return tokens[j].strip() if j < len(tokens) else ""
+
+    def _prev_nonspace(end_idx: int, lo: int) -> str:
+        j = end_idx - 1
+        while j >= lo and not tokens[j].strip():
+            j -= 1
+        return tokens[j].strip() if j >= lo else ""
 
     chunks: list[str] = []
-    curr = ""
-    for tok in tokens:
-        if curr and (len(curr) + len(tok) > max_chars):
-            chunks.append(curr.strip())
-            curr = tok
-        else:
-            curr += tok
-    if curr.strip():
-        chunks.append(curr.strip())
+    start = 0
+    n_tok = len(tokens)
+    while start < n_tok:
+        while start < n_tok and not tokens[start].strip():
+            start += 1
+        if start >= n_tok:
+            break
+        end = start
+        cur = ""
+        while end < n_tok:
+            cand = (cur + tokens[end]).strip()
+            if cur.strip() and not _fits(cand):
+                break
+            cur += tokens[end]
+            end += 1
+        if end >= n_tok:
+            tail = "".join(tokens[start:]).strip()
+            if tail:
+                chunks.append(tail)
+            break
+        if end == start:
+            chunks.append(tokens[start].strip())
+            start += 1
+            continue
 
-    # Merge very short tail chunk (< 12 chars) with preceding chunk so it doesn't flash awkwardly
-    if len(chunks) > 1 and len(chunks[-1]) < 12:
-        sep = " " if (chunks[-2] + " " + chunks[-1]) in text else ""
+        full_fit = "".join(tokens[start:end]).strip()
+        full_w = max(1, _measure_text_width_px(full_fit, font_px, font_path, stroke_px) if max_width_px is not None else _unit_len(full_fit))
+        best_tier = -1
+        best_cut = end
+
+        for c in range(start + 1, end + 1):
+            left = "".join(tokens[start:c]).strip()
+            if not left:
+                continue
+            nxt = _next_nonspace(c)
+            if nxt and (nxt in STRANDED_LINE_START_PARTICLES or nxt[0] in "။၊.,!?):]”’"):
+                continue
+            prev_ns = _prev_nonspace(c, start)
+            at_space = (tokens[c - 1] == " ") or (c < n_tok and tokens[c] == " ")
+            if max_width_px is not None:
+                lw = _measure_text_width_px(left, font_px, font_path, stroke_px)
+            else:
+                lw = _unit_len(left)
+            fill = lw / full_w
+
+            # Avoid breaking mid-word between non-space tokens inside one unsplit word
+            in_space_word = not at_space and not prev_ns.endswith(("။", "၊")) and prev_ns not in PARTICLE_SYLS and prev_ns not in STRANDED_LINE_START_PARTICLES
+
+            if prev_ns.endswith("။") and fill >= 0.30:
+                tier = 4
+            elif (prev_ns.endswith("၊") or prev_ns in PARTICLE_SYLS or prev_ns in ("တာ", "တဲ့")) and fill >= 0.35:
+                tier = 3
+            elif at_space and fill >= 0.35:
+                tier = 2
+            elif not in_space_word:
+                tier = 1
+            else:
+                tier = 0
+
+            # Prefer higher priority tier; inside same tier prefer rightmost (higher c).
+            if tier > best_tier or (tier == best_tier and c > best_cut):
+                best_tier = tier
+                best_cut = c
+
+        chunks.append("".join(tokens[start:best_cut]).strip())
+        start = best_cut
+
+    if legacy_tail_merge and len(chunks) > 1 and len(chunks[-1]) < 12:
+        sep = " " if (chunks[-2] + " " + chunks[-1]) in flat else ""
         merged_tail = (chunks[-2] + sep + chunks[-1]).strip()
         chunks[-2] = merged_tail
         chunks.pop()
+    elif len(chunks) > 1 and (max_clusters is not None or max_width_px is not None):
+        # Never flash a tiny 1–4 cluster tail if merging back still fits line limits.
+        if len(myanmar_grapheme_clusters(chunks[-1])) <= 4:
+            sep = " " if (chunks[-2] + " " + chunks[-1]) in flat else ""
+            merged_tail = (chunks[-2] + sep + chunks[-1]).strip()
+            if _fits(merged_tail):
+                chunks[-2] = merged_tail
+                chunks.pop()
 
-    return chunks if chunks else [text]
+    return [c for c in chunks if c] or [flat]
+
+
+def _split_burmese_into_single_line_chunks(text: str, max_chars: int = 38) -> list[str]:
+    """Split text into 1-line chunks without cutting grapheme clusters, words,
+    or stranding particles at line starts."""
+    return _split_line_units_s1(
+        text,
+        max_chars=max_chars,
+        legacy_tail_merge=True,
+    )
 
 
 def _format_cue_lines_multi(text: str, lines_cnt: int) -> str:
-    """Batch DD: balance a cue across 3+ lines without cutting words.
-
-    Token-based partition (tokenize_burmese_words keeps shaped
-    clusters whole): choose the cut points that keep every line
-    closest to an equal share of the text, with the same boundary
-    bonuses the 2-line formatter uses (clause punctuation and
-    sentence particles make a cut cheaper). Falls back to fewer
-    lines when the text cannot fill them."""
+    """Batch DD / S1: balance a cue across 3+ lines without cutting grapheme
+    clusters or stranding particles at the start of any wrapped line."""
     tokens = [t for t in tokenize_burmese_words(text) if t != ""]
     if len(tokens) <= 1:
         return text
     n = min(int(lines_cnt), len(tokens))
-    total = sum(len(t) for t in tokens)
+    weights = [len(myanmar_grapheme_clusters(t)) if t.strip() else 1 for t in tokens]
+    total = sum(weights)
     if total <= 0:
         return text
     bonus_after = {
-        "။": 15, "၊": 15, "ပြီးတော့": 15, "ပြီးနောက်": 15, "ပြီးရင်": 15,
-        "တဲ့အခါ": 15, "ဒါပေမဲ့": 15, "ဒါပေမယ့်": 15, "ကြောင့်": 15, "အတွက်": 15,
+        "။": 18, "၊": 14, "ပြီးတော့": 12, "ပြီးနောက်": 12, "ပြီးရင်": 12,
+        "တဲ့အခါ": 12, "ဒါပေမဲ့": 12, "ဒါပေမယ့်": 12, "ကြောင့်": 12, "အတွက်": 12,
         "ပါတယ်": 8, "ခဲ့တယ်": 8, "တယ်": 8, "နေတာ": 8, "ပါပဲ": 8,
-        "လိုက်တယ်": 8, "က": 8, "နဲ့": 8, "မှာ": 8, "ကို": 8, "တော့": 8,
-        "ရဲ့": 8, "လေ": 8, "နော်": 8,
+        "လိုက်တယ်": 8, "က": 6, "နဲ့": 6, "နှင့်": 6, "မှာ": 6, "ကို": 6,
+        "တော့": 6, "ရဲ့": 6, "၏": 6, "လို့": 6, "ပြီး": 6, "သည်": 6,
+        "လေ": 6, "နော်": 6,
     }
-    # Greedy balanced cuts: for each line boundary, take the token
-    # cut closest to the ideal cumulative share (boundary bonuses
-    # pull the cut toward natural phrase ends).
     cuts: list[int] = []
     start = 0
     for line_idx in range(1, n):
         ideal = total * line_idx / n
         best_cut, best_score = None, None
-        cum = sum(len(t) for t in tokens[:start])
+        cum = sum(weights[:start])
         for k in range(start + 1, len(tokens) - (n - line_idx) + 1):
-            cum += len(tokens[k - 1])
-            score = abs(cum - ideal) - bonus_after.get(tokens[k - 1].strip(), 0)
+            cum += weights[k - 1]
+            # Veto cuts that would start the next line with a stranded particle.
+            j = k
+            while j < len(tokens) and not tokens[j].strip():
+                j += 1
+            nxt = tokens[j].strip() if j < len(tokens) else ""
+            penalty = 1000 if nxt in STRANDED_LINE_START_PARTICLES else 0
+            prev_ns = tokens[k - 1].strip() or (tokens[k - 2].strip() if k >= 2 else "")
+            score = abs(cum - ideal) - bonus_after.get(prev_ns, 0) + penalty
             if best_score is None or score < best_score:
                 best_score, best_cut = score, k
         if best_cut is None:
@@ -4055,12 +4441,21 @@ def _format_cue_lines_multi(text: str, lines_cnt: int) -> str:
     return "\n".join(parts) if len(parts) > 1 else text
 
 
-def _format_cue_lines(text: str, lines_cnt: int) -> str:
-    """Format subtitle text into 1 or 2 lines without cutting words in half."""
+def _format_cue_lines(
+    text: str,
+    lines_cnt: int,
+    *,
+    max_clusters: int | None = None,
+    max_width_px: int | None = None,
+    font_px: int = 54,
+    font_path: Path | None = None,
+    stroke_px: int = 2,
+) -> str:
+    """Format subtitle text into 1 or 2+ lines respecting grapheme clusters,
+    priority breaks, particle attachment, and optional width/cluster caps."""
     text = canonicalize_burmese_text(text)
     if lines_cnt == 1:
-        # Strictly return a single line with no embedded newlines!
-        return re.sub(r'\s+', ' ', text.replace("\r\n", " ").replace("\n", " ")).strip()
+        return re.sub(r"\s+", " ", text.replace("\r\n", " ").replace("\n", " ")).strip()
 
     if lines_cnt >= 3:
         if "\n" in text:
@@ -4070,46 +4465,63 @@ def _format_cue_lines(text: str, lines_cnt: int) -> str:
     if "\n" in text:
         return text
 
-    # If spaces exist, try breaking at the most balanced space
-    words = text.split(" ")
-    if len(words) > 1:
-        half = len(text) // 2
-        best_idx = 1
-        best_diff = 9999
-        for i in range(1, len(words)):
-            l1 = " ".join(words[:i])
-            diff = abs(len(l1) - half)
-            if diff < best_diff:
-                best_diff = diff
-                best_idx = i
-        l1 = " ".join(words[:best_idx]).strip()
-        l2 = " ".join(words[best_idx:]).strip()
-        if l1 and l2:
-            return f"{l1}\n{l2}"
+    def _line_ok(s: str) -> bool:
+        if max_clusters is not None and len(myanmar_grapheme_clusters(s)) > max_clusters:
+            return False
+        if max_width_px is not None and _measure_text_width_px(s, font_px, font_path, stroke_px) > max_width_px:
+            return False
+        return True
 
-    # If no spaces, tokenize preserving protected words and particle boundaries
-    tokens = tokenize_burmese_words(text)
+    tokens = [t for t in tokenize_burmese_words(text) if t != ""]
+    if len(tokens) <= 1:
+        return text
 
-    if len(tokens) > 1:
-        half_len = len(text) // 2
-        best_idx = 1
-        best_diff = 9999
-        for k in range(1, len(tokens)):
-            l1 = "".join(tokens[:k])
-            diff = abs(len(l1) - half_len)
-            prev_tok = tokens[k - 1].strip()
-            if prev_tok in ('။', '၊', 'ပြီးတော့', 'ပြီးနောက်', 'ပြီးရင်', 'တဲ့အခါ', 'ဒါပေမဲ့', 'ဒါပေမယ့်', 'ကြောင့်', 'အတွက်'):
-                diff -= 15
-            elif prev_tok in ('ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတာ', 'ပါပဲ', 'လိုက်တယ်', 'က', 'နဲ့', 'မှာ', 'ကို', 'တော့', 'ရဲ့', 'လေ', 'နော်'):
-                diff -= 8
-            if diff < best_diff:
-                best_diff = diff
-                best_idx = k
-        p1 = "".join(tokens[:best_idx]).strip()
-        p2 = "".join(tokens[best_idx:]).strip()
-        if p1 and p2:
-            return f"{p1}\n{p2}"
+    clusters_total = len(myanmar_grapheme_clusters(text))
+    half = max(1.0, clusters_total / 2.0)
+    strong_ends = ("။", "၊", "ပြီးတော့", "ပြီးနောက်", "ပြီးရင်", "တဲ့အခါ", "ဒါပေမဲ့", "ဒါပေမယ့်", "ကြောင့်", "အတွက်")
+    mid_ends = ("ပါတယ်", "ခဲ့တယ်", "တယ်", "နေတာ", "ပါပဲ", "လိုက်တယ်", "က", "နဲ့", "နှင့်", "မှာ", "ကို", "တော့", "ရဲ့", "၏", "လို့", "ပြီး", "သည်")
 
+    best_score: float | None = None
+    best_pair: tuple[str, str] | None = None
+    fallback_score: float | None = None
+    fallback_pair: tuple[str, str] | None = None
+
+    for k in range(1, len(tokens)):
+        p1 = "".join(tokens[:k]).strip()
+        p2 = "".join(tokens[k:]).strip()
+        if not p1 or not p2:
+            continue
+        # Never break mid-word across glued syllables if spaces exist unless needed
+        j = k
+        while j < len(tokens) and not tokens[j].strip():
+            j += 1
+        nxt = tokens[j].strip() if j < len(tokens) else ""
+        if nxt in STRANDED_LINE_START_PARTICLES or (nxt and nxt[0] in "။၊.,!?):]”’"):
+            continue
+        prev_ns = tokens[k - 1].strip() or (tokens[k - 2].strip() if k >= 2 else "")
+        c1 = len(myanmar_grapheme_clusters(p1))
+        diff = abs(c1 - half)
+        if prev_ns.endswith("။"):
+            diff -= 14
+        elif prev_ns.endswith("၊") or prev_ns in strong_ends:
+            diff -= 10
+        elif prev_ns in mid_ends:
+            diff -= 5
+        at_space = (tokens[k - 1] == " ") or (tokens[k] == " ")
+        if not at_space and not prev_ns.endswith(("။", "၊")) and prev_ns not in PARTICLE_SYLS:
+            diff += 8
+        if _line_ok(p1) and _line_ok(p2):
+            if best_score is None or diff < best_score:
+                best_score = diff
+                best_pair = (p1, p2)
+        else:
+            if fallback_score is None or diff < fallback_score:
+                fallback_score = diff
+                fallback_pair = (p1, p2)
+
+    chosen = best_pair or fallback_pair
+    if chosen is not None:
+        return f"{chosen[0]}\n{chosen[1]}"
     return text
 
 
@@ -4371,26 +4783,146 @@ def _allocate_cue_times(
     return out
 
 
+# S2: Reading-speed targets (measured in Burmese grapheme clusters per second).
+SUBTITLE_CPS_IDEAL_MIN = 8.0
+SUBTITLE_CPS_IDEAL_MAX = 12.0
+SUBTITLE_CPS_HARD_MAX = 14.0
+SUBTITLE_MIN_CUE_DURATION = 1.2
+SUBTITLE_GAP_BRIDGE_SEC = 0.2
+SUBTITLE_OVERHANG_SEC = 0.2
+
+
+def cue_cps(duration_sec: float, text: str) -> float:
+    """Measure characters-per-second (grapheme clusters / duration) for one cue."""
+    dur = max(0.01, float(duration_sec or 0.0))
+    return grapheme_count(text) / dur
+
+
+def measure_cue_reading_speed(
+    cues: list[tuple[float, float, str]],
+) -> list[dict[str, Any]]:
+    """Compute measured S2 reading-speed metrics per cue."""
+    out: list[dict[str, Any]] = []
+    for st, en, txt in cues:
+        s = float(st)
+        e = max(s, float(en))
+        dur = max(0.01, e - s)
+        clusters = grapheme_count(txt)
+        cps = round(clusters / dur, 3)
+        if cps > SUBTITLE_CPS_HARD_MAX:
+            status = "over_max"
+        elif cps > SUBTITLE_CPS_IDEAL_MAX:
+            status = "above_ideal"
+        else:
+            status = "ok"
+        out.append({
+            "start": round(s, 3),
+            "end": round(e, 3),
+            "duration": round(dur, 3),
+            "clusters": clusters,
+            "cps": cps,
+            "status": status,
+        })
+    return out
+
+
+def apply_reading_speed_rules(
+    cues: list[tuple[float, float, str]],
+    *,
+    speech_ends: list[float | None] | None = None,
+    timeline_end: float | None = None,
+    min_duration: float = SUBTITLE_MIN_CUE_DURATION,
+    max_gap_bridge: float = SUBTITLE_GAP_BRIDGE_SEC,
+    max_overhang: float = SUBTITLE_OVERHANG_SEC,
+    ideal_cps_max: float = SUBTITLE_CPS_IDEAL_MAX,
+) -> list[tuple[float, float, str]]:
+    """S2 best-effort END-side reading-speed adjustment (D3 compliant).
+
+    Invariants:
+    - Cue START timestamps NEVER move.
+    - Adjusted cues NEVER overlap the next cue's start.
+    - Back-to-back zero-gap cues (e.g. §2G sub-cues) stay untouched.
+    - Trims stale overhang past ``speech_end + max_overhang`` when duration >= min_duration.
+    - Extends short cues toward ``min_duration`` (and fast cues toward ``ideal_cps_max``
+      within silence budget) only where a real gap precedes the next cue.
+    - Bridges inter-cue gaps < ``max_gap_bridge`` to eliminate visual flicker.
+    """
+    if not cues:
+        return []
+    n = len(cues)
+    out: list[tuple[float, float, str]] = []
+    for i, (raw_s, raw_e, txt) in enumerate(cues):
+        start = round(float(raw_s), 3)
+        end = max(start, round(float(raw_e), 3))
+        if i + 1 < n:
+            next_start: float | None = max(end, round(float(cues[i + 1][0]), 3))
+        elif timeline_end is not None:
+            next_start = max(end, round(float(timeline_end), 3))
+        else:
+            next_start = None
+
+        sp_end = (
+            max(start, round(float(speech_ends[i]), 3))
+            if (speech_ends is not None and i < len(speech_ends) and speech_ends[i] is not None)
+            else end
+        )
+        clusters = grapheme_count(txt)
+        overhang_cap = round(sp_end + max_overhang, 3)
+
+        # 1. Trim stale overhang beyond speech_end + 0.2s when already readable.
+        if end > overhang_cap and (end - start) > min_duration:
+            trimmed = max(overhang_cap, round(start + min_duration, 3))
+            if trimmed < end:
+                end = trimmed
+
+        # 2. Best-effort extend cue END into following silence (never past next_start).
+        if next_start is not None and next_start > end + 1e-4:
+            cur_dur = end - start
+            # Minimum cue duration 1.2s into real silence gap.
+            if cur_dur < min_duration:
+                end = min(next_start, round(start + min_duration, 3))
+            # Reduce fast CPS within overhang_cap if gap still remains.
+            cur_dur = max(0.01, end - start)
+            if (clusters / cur_dur) > ideal_cps_max and end < overhang_cap:
+                need_end = round(start + (clusters / ideal_cps_max), 3)
+                end = min(next_start, overhang_cap, max(end, need_end))
+
+        # 3. Anti-flicker: bridge consecutive gaps < 0.2s cleanly to next_start.
+        if i + 1 < n and next_start is not None:
+            gap = next_start - end
+            if 1e-4 < gap < max_gap_bridge:
+                end = next_start
+
+        if next_start is not None:
+            end = min(end, next_start)
+        end = max(start, round(end, 3))
+        out.append((start, end, txt))
+    return out
+
+
 def split_burmese_subtitle_cues(
     start_sec: float,
     end_sec: float,
     text: str,
-    max_cue_chars: int = 40,
+    max_cue_chars: int | None = None,
     lines_per_cue: int = 1,
     word_timings: list[dict[str, Any]] | None = None,
+    *,
+    max_clusters_per_line: int | None = None,
+    max_width_px: int | None = None,
+    font_px: int | None = None,
+    font_path: Path | None = None,
+    stroke_px: int = 2,
 ) -> list[tuple[float, float, str]]:
     """
     Formats spoken segment narration into synchronized, comfortable, and readable subtitle cues.
-    - If lines_per_cue == 1: strictly splits long sentences across time into sequential 1-line cues.
-      NEVER forces 2 lines onto screen when 1 line is selected!
-    - If lines_per_cue == 2: wraps into 2 balanced lines within the same cue.
-    - If lines_per_cue == 3 (Batch DD): wraps into up to 3 balanced lines
-      within the same cue.
-    - Quality Pass §2G: removes artificial max(1.1/1.8) time-stretching that caused
-      late drift and crushed final cues; merges short chunks before timing when
-      line width allows, prefers Edge TTS WordBoundary phrase timing when valid,
-      and scales cue boundaries proportionally across exact [start_sec, end_sec].
-    - NEVER cuts words in half (preserves compounds and syllables).
+    - S1 (default when ``max_cue_chars is None`` or cluster/width bounds passed): splits on
+      Burmese grapheme clusters (20–28 clusters/line target, default 24) and rendered pixel width
+      (≈840 px @ 1080 width scaled by render width), respecting sentence -> clause/particle ->
+      space -> cluster break priorities and never stranding particles at line starts.
+    - Explicit ``max_cue_chars=<int>`` without cluster/width overrides preserves §2G & Batch DD/DI
+      character-budget splitting while enforcing grapheme-safe, particle-safe boundaries and NFC.
+    - Lines 2/3 wrap each cue up to ``lines_per_cue`` lines without cutting clusters or words.
     """
     text = canonicalize_burmese_text(text)
     if not text:
@@ -4398,44 +4930,106 @@ def split_burmese_subtitle_cues(
 
     lines_cnt = min(3, max(1, int(lines_per_cue or 1)))
     total_dur = max(0.01, float(end_sec) - float(start_sec))
+    use_s1_mode = (
+        max_cue_chars is None
+        or max_clusters_per_line is not None
+        or max_width_px is not None
+    )
+
+    if not use_s1_mode:
+        # Legacy explicit max_cue_chars contract (§2G, Batch DD/DI/DJ).
+        assert max_cue_chars is not None
+        if lines_cnt == 1:
+            chunks = _split_burmese_into_single_line_chunks(text, max_chars=max_cue_chars)
+            chunks = _merge_short_chunks_for_readability(
+                chunks, total_dur, max_cue_chars, min_dur=0.65, orig_text=text
+            )
+            if len(chunks) <= 1:
+                return [(round(start_sec, 3), round(end_sec, 3), _format_cue_lines(text, 1))]
+            spans = _allocate_cue_times(start_sec, end_sec, chunks, word_timings=word_timings)
+            return [(s, e, _format_cue_lines(chunk, 1)) for (s, e), chunk in zip(spans, chunks)]
+
+        if "။" in text:
+            sentences = [s.strip() for s in re.split(r'(?<=[။])\s*', text) if s.strip()]
+            if len(sentences) >= 2:
+                groups: list[str] = []
+                cur_group = ""
+                for s in sentences:
+                    cand = f"{cur_group} {s}" if cur_group else s
+                    if cur_group and len(cand) > max_cue_chars:
+                        groups.append(cur_group)
+                        cur_group = s
+                    else:
+                        cur_group = cand
+                if cur_group:
+                    groups.append(cur_group)
+                groups = _merge_short_chunks_for_readability(
+                    groups, total_dur, max_cue_chars, min_dur=1.1, orig_text=text
+                )
+                if len(groups) >= 2 and (total_dur / len(groups)) >= 1.8:
+                    spans = _allocate_cue_times(start_sec, end_sec, groups, word_timings=word_timings)
+                    return [(s, e, _format_cue_lines(grp, lines_cnt)) for (s, e), grp in zip(spans, groups)]
+
+        formatted_text = _format_cue_lines(text, lines_cnt)
+        return [(round(start_sec, 3), round(end_sec, 3), formatted_text)]
+
+    # S1 Grapheme + Visual-Width mode
+    eff_clusters = int(max_clusters_per_line) if max_clusters_per_line is not None else _subtitle_max_clusters()
+    eff_font_px = int(font_px) if font_px is not None else 54
+    eff_width_px = int(max_width_px) if max_width_px is not None else _subtitle_max_line_width_px(1080)
 
     if lines_cnt == 1:
-        chunks = _split_burmese_into_single_line_chunks(text, max_chars=max_cue_chars)
-        chunks = _merge_short_chunks_for_readability(
-            chunks, total_dur, max_cue_chars, min_dur=0.65, orig_text=text
+        line_chunks = _split_line_units_s1(
+            text,
+            max_chars=max_cue_chars,
+            max_clusters=eff_clusters,
+            max_width_px=eff_width_px,
+            font_px=eff_font_px,
+            font_path=font_path,
+            stroke_px=stroke_px,
         )
-        if len(chunks) <= 1:
-            return [(round(start_sec, 3), round(end_sec, 3), _format_cue_lines(text, 1))]
+        if len(line_chunks) <= 1:
+            return [(round(start_sec, 3), round(end_sec, 3), line_chunks[0] if line_chunks else text)]
+        spans = _allocate_cue_times(start_sec, end_sec, line_chunks, word_timings=word_timings)
+        return [(s, e, chunk) for (s, e), chunk in zip(spans, line_chunks)]
 
-        spans = _allocate_cue_times(start_sec, end_sec, chunks, word_timings=word_timings)
-        return [(s, e, _format_cue_lines(chunk, 1)) for (s, e), chunk in zip(spans, chunks)]
+    # Multi-line cue mode (max lines_cnt lines per cue):
+    # If text fits inside lines_cnt balanced lines where every line obeys S1 caps, keep 1 cue.
+    flat = re.sub(r"\s+", " ", text.replace("\r\n", " ").replace("\n", " ")).strip()
+    if lines_cnt == 2:
+        balanced = _format_cue_lines(
+            flat,
+            2,
+            max_clusters=eff_clusters,
+            max_width_px=eff_width_px,
+            font_px=eff_font_px,
+            font_path=font_path,
+            stroke_px=stroke_px,
+        )
+        b_lines = [ln for ln in balanced.split("\n") if ln]
+        if len(b_lines) <= 2 and all(
+            len(myanmar_grapheme_clusters(ln)) <= eff_clusters
+            and _measure_text_width_px(ln, eff_font_px, font_path, stroke_px) <= eff_width_px
+            for ln in b_lines
+        ):
+            return [(round(start_sec, 3), round(end_sec, 3), balanced)]
 
-    # If lines_per_cue >= 2:
-    # Batch DI: pack sentences greedily up to the per-cue budget.
-    if "။" in text:
-        sentences = [s.strip() for s in re.split(r'(?<=[။])\s*', text) if s.strip()]
-        if len(sentences) >= 2:
-            groups: list[str] = []
-            cur_group = ""
-            for s in sentences:
-                cand = f"{cur_group} {s}" if cur_group else s
-                if cur_group and len(cand) > max_cue_chars:
-                    groups.append(cur_group)
-                    cur_group = s
-                else:
-                    cur_group = cand
-            if cur_group:
-                groups.append(cur_group)
-            groups = _merge_short_chunks_for_readability(
-                groups, total_dur, max_cue_chars, min_dur=1.1, orig_text=text
-            )
-            if len(groups) >= 2 and (total_dur / len(groups)) >= 1.8:
-                spans = _allocate_cue_times(start_sec, end_sec, groups, word_timings=word_timings)
-                return [(s, e, _format_cue_lines(grp, lines_cnt)) for (s, e), grp in zip(spans, groups)]
-
-    # Otherwise, keep as ONE cue spanning the full spoken segment duration!
-    formatted_text = _format_cue_lines(text, lines_cnt)
-    return [(round(start_sec, 3), round(end_sec, 3), formatted_text)]
+    all_lines = _split_line_units_s1(
+        flat,
+        max_clusters=eff_clusters,
+        max_width_px=eff_width_px,
+        font_px=eff_font_px,
+        font_path=font_path,
+        stroke_px=stroke_px,
+    )
+    grouped_cues = [
+        "\n".join(all_lines[i:i + lines_cnt])
+        for i in range(0, len(all_lines), lines_cnt)
+    ]
+    if len(grouped_cues) <= 1:
+        return [(round(start_sec, 3), round(end_sec, 3), grouped_cues[0] if grouped_cues else flat)]
+    spans = _allocate_cue_times(start_sec, end_sec, grouped_cues, word_timings=word_timings)
+    return [(s, e, grp) for (s, e), grp in zip(spans, grouped_cues)]
 
 
 def _resolve_png_subtitle_job(
@@ -4812,7 +5406,7 @@ def apply_production_overlays(
         # fit_png_cue_pieces splits an overflowing cue into
         # sequential one-line pieces (its time window split with
         # it); cues that already fit render exactly as before.
-        fit_max_w = int(round(_sub_w_fraction(overlays) * pw))
+        fit_max_w = min(int(round(_sub_w_fraction(overlays) * pw)), _subtitle_max_line_width_px(pw))
 
         def _render_cue_item(cue_item):
             cue_start, cue_end, cue_text = cue_item
@@ -5353,7 +5947,7 @@ def extract_preview_with_overlays(
             canonicalize_burmese_text(sample),
             sub_lines, font_px,
             font_file, visuals,
-            int(round(_sub_w_fraction(overlays) * pw)),
+            min(int(round(_sub_w_fraction(overlays) * pw)), _subtitle_max_line_width_px(pw)),
         )
         rendered = None
         if fit_lines:
@@ -6406,12 +7000,9 @@ class EdgeSmartSync:
             try:
                 _cw_pre = int(layout.get("cw", 1920))
                 _ch_pre = int(layout.get("ch", 1080))
+                _pw_pre = int(layout.get("pw", _cw_pre))
                 _lpc_pre = int(self.overlays.get("sub_lines", 1))
-                _is_vert_pre = (_ch_pre > _cw_pre) or (self.output_ratio == "9:16")
-                _max_chars_pre = _subtitle_max_chars(
-                    _is_vert_pre, _lpc_pre, self.overlays.get("sub_w"),
-                    font_size=int(self.overlays.get("subtitles_font_size", 16)),
-                )
+                _fs_pre = int(self.overlays.get("subtitles_font_size", 16))
                 _prewarm_spec = _resolve_png_subtitle_job(
                     {**self.overlays, "subtitle_cues": [(0.0, 1.0, "c")]},
                     _cw_pre, _ch_pre, layout,
@@ -6419,8 +7010,14 @@ class EdgeSmartSync:
                 if _prewarm_spec is not None:
                     _prewarm_renderer = _png_subs.PngSubtitleRenderer(paths.work / "subtitle_png_cache")
                     _prewarm_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="recap-png-pre")
-                    _pw_pre = int(layout.get("pw", _cw_pre))
-                    _prewarm_params = (_max_chars_pre, _lpc_pre, int(round(_sub_w_fraction(self.overlays) * _pw_pre)))
+                    _fit_w_pre = min(int(round(_sub_w_fraction(self.overlays) * _pw_pre)), _subtitle_max_line_width_px(_pw_pre))
+                    _pad2_pre = 2 * _png_subs.png_pad_x(
+                        _prewarm_spec["visuals"], _prewarm_spec["font_px"],
+                        int(_prewarm_spec["visuals"].get("stroke_px", 1)),
+                    )
+                    _ink_w_pre = max(80, _fit_w_pre - _pad2_pre)
+                    _max_cl_pre = _subtitle_max_clusters(_fs_pre, self.overlays.get("sub_w"))
+                    _prewarm_params = (_max_cl_pre, _lpc_pre, _fit_w_pre, _ink_w_pre)
             except Exception:
                 _prewarm_pool = None
                 _prewarm_spec = None
@@ -6428,10 +7025,15 @@ class EdgeSmartSync:
         def _prewarm_segment_cues(st: float, en: float, seg_text: str, wt: list[dict[str, Any]] | None) -> None:
             if _prewarm_pool is None or _prewarm_spec is None or _prewarm_renderer is None or _prewarm_params is None:
                 return
-            _mc, _lpc, _fit_mw = _prewarm_params
+            _mcl, _lpc, _fit_mw, _ink_w = _prewarm_params
             try:
                 cues = split_burmese_subtitle_cues(
-                    st, en, seg_text, max_cue_chars=_mc, lines_per_cue=_lpc, word_timings=wt
+                    st, en, seg_text, lines_per_cue=_lpc, word_timings=wt,
+                    max_clusters_per_line=_mcl,
+                    max_width_px=_ink_w,
+                    font_px=_prewarm_spec["font_px"],
+                    font_path=_prewarm_spec["font_path"],
+                    stroke_px=int(_prewarm_spec["visuals"].get("stroke_px", 1)),
                 )
             except Exception:
                 return
@@ -6797,18 +7399,29 @@ class EdgeSmartSync:
         srt_file = paths.root / "recap_myanmar_synced.srt"
         ass_file = paths.root / "recap_myanmar_synced.ass"
         all_sub_cues: list[tuple[float, float, str]] = []
+        all_speech_ends: list[float | None] = []
         try:
             srt_lines = []
             cue_counter = 1
             cw_val = int(layout.get("cw", 1920))
             ch_val = int(layout.get("ch", 1080))
-            is_vert = (ch_val > cw_val) or (self.output_ratio == "9:16")
+            pw_val = int(layout.get("pw", cw_val))
             lines_per_cue = int(self.overlays.get("sub_lines", 1))
-            # Batch DD: size-aware budget — the chosen font size
-            # scales the per-cue character budget (frac ratio).
-            max_chars = _subtitle_max_chars(
-                is_vert, lines_per_cue, self.overlays.get("sub_w"),
+            raw_font_size = int(self.overlays.get("subtitles_font_size", 16))
+            st_key = str(self.overlays.get("sub_style") or self.overlays.get("subtitles_style") or "yellow").lower()
+            preset_cfg = SUBTITLE_STYLE_PRESETS.get(st_key, SUBTITLE_STYLE_PRESETS["yellow"])
+            burn_font_px = subtitle_font_px(cw_val, ch_val, raw_font_size, lines_per_cue, layout)
+            burn_font_path = overlays_font_path(self.overlays)
+            burn_visuals = build_subtitle_visuals(
+                preset_cfg, overlays_visual_overrides(self.overlays), ch_val, burn_font_px
+            )
+            burn_stroke = int(burn_visuals.get("stroke_px", 1))
+            fit_max_w = _subtitle_fit_width_px(self.overlays, pw_val)
+            pad_2 = 2 * _png_subs.png_pad_x(burn_visuals, burn_font_px, burn_stroke)
+            max_line_ink_w = max(80, fit_max_w - pad_2)
+            max_clusters_line = _subtitle_max_clusters(
                 font_size=int(self.overlays.get("subtitles_font_size", 16)),
+                sub_w=self.overlays.get("sub_w"),
             )
 
             for s_item in timing:
@@ -6819,24 +7432,36 @@ class EdgeSmartSync:
                     continue
                 sub_cues = split_burmese_subtitle_cues(
                     raw_st, raw_en, txt,
-                    max_cue_chars=max_chars,
                     lines_per_cue=lines_per_cue,
                     word_timings=s_item.get("word_timings"),
+                    max_clusters_per_line=max_clusters_line,
+                    max_width_px=max_line_ink_w,
+                    font_px=burn_font_px,
+                    font_path=burn_font_path,
+                    stroke_px=burn_stroke,
                 )
                 if not sub_cues:
-                    # Single-cue fallback: the raw line never reached the
-                    # canonicalizing splitter, so canonicalize it here --
-                    # the SRT must not carry un-repaired mark order.
                     fallback_txt = canonicalize_burmese_text(txt)
                     sub_cues = [(raw_st, raw_en, fallback_txt)] if fallback_txt else []
                 for c_st, c_en, c_txt in sub_cues:
                     all_sub_cues.append((c_st, c_en, c_txt))
-                    st_ms = max(0, int(round(c_st * 1000)))
-                    en_ms = max(0, int(round(c_en * 1000)))
-                    st_str = f"{st_ms // 3600000:02d}:{(st_ms % 3600000) // 60000:02d}:{(st_ms % 60000) // 1000:02d},{st_ms % 1000:03d}"
-                    en_str = f"{en_ms // 3600000:02d}:{(en_ms % 3600000) // 60000:02d}:{(en_ms % 60000) // 1000:02d},{en_ms % 1000:03d}"
-                    srt_lines.append(f"{cue_counter}\n{st_str} --> {en_str}\n{c_txt}\n")
-                    cue_counter += 1
+                    all_speech_ends.append(float(c_en))
+
+            # S2: best-effort END-side / gap-only reading-speed polish BEFORE
+            # emitting SRT, ASS, and burn-in subtitle_cues so all outputs match.
+            all_sub_cues = apply_reading_speed_rules(
+                all_sub_cues,
+                speech_ends=all_speech_ends,
+                timeline_end=final_audio_duration,
+            )
+
+            for c_st, c_en, c_txt in all_sub_cues:
+                st_ms = max(0, int(round(c_st * 1000)))
+                en_ms = max(0, int(round(c_en * 1000)))
+                st_str = f"{st_ms // 3600000:02d}:{(st_ms % 3600000) // 60000:02d}:{(st_ms % 60000) // 1000:02d},{st_ms % 1000:03d}"
+                en_str = f"{en_ms // 3600000:02d}:{(en_ms % 3600000) // 60000:02d}:{(en_ms % 60000) // 1000:02d},{en_ms % 1000:03d}"
+                srt_lines.append(f"{cue_counter}\n{st_str} --> {en_str}\n{c_txt}\n")
+                cue_counter += 1
             srt_file.write_text("\n".join(srt_lines) + "\n", encoding="utf-8")
             self.log(f"📝 Synced Myanmar SRT saved: {srt_file.name} ({cue_counter - 1} cues)")
 

@@ -87,5 +87,5 @@ def test_df_i18n_keys_complete_both_languages():
 
 
 def test_df_cache_token_is_r140():
-    assert INDEX.count("20261115_r152") == 4
+    assert INDEX.count("20261115_r153") == 4
     assert "20261104_r127" not in INDEX

@@ -187,9 +187,9 @@ def test_phase4_i18n_keys_complete_in_my_and_en():
 
 
 def test_phase1_to_4_retroactive_i18n_and_bug_fixes():
-    # Specimen text on all 10 subtitle sample cards must be under i18n
+    # Specimen text on all 12 subtitle sample cards must be under i18n
     sample_spans = re.findall(r'<span class="vcp-sub-sample[^"]*"[^>]*>', INDEX_HTML)
-    assert len(sample_spans) == 10
+    assert len(sample_spans) == 12
     assert all('data-i18n="recap_sub_sample_specimen"' in span for span in sample_spans)
     assert INDEX_HTML.count('id="recap-my-presets-vip-badge" data-i18n="badge_vip"') == 1
     assert INDEX_HTML.count('id="recap-logo-vip-badge" data-i18n="badge_vip"') == 1

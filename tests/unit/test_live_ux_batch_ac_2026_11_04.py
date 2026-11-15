@@ -83,7 +83,8 @@ async def test_prefs_new_user_gets_todays_defaults(db_session):
     assert res["success"] is True
     assert res["is_new"] is True
     prefs = res["preferences"]
-    assert prefs == api_mod.DEFAULT_USER_PREFS
+    assert api_mod.DEFAULT_USER_PREFS["recapSubStyle"] == "yellow"
+    assert prefs == {**api_mod.DEFAULT_USER_PREFS, "recapSubStyle": "cinematic"}
     assert prefs["recapSubFont"] == "padauk"
     assert prefs["voice_persona"] == "komin"
     assert prefs["recapBlurStrength"] == 18
@@ -115,7 +116,7 @@ async def test_prefs_round_trip_and_own_record_only(db_session):
     # The other user's record is untouched: defaults, still new.
     got_other = await api_mod.get_user_preferences(user=other, db=db_session)
     assert got_other["is_new"] is True
-    assert got_other["preferences"] == api_mod.DEFAULT_USER_PREFS
+    assert got_other["preferences"] == {**api_mod.DEFAULT_USER_PREFS, "recapSubStyle": "cinematic"}
 
 
 @pytest.mark.asyncio
@@ -526,7 +527,7 @@ def test_new_i18n_keys_in_both_languages():
 
 
 def test_cache_bump_r62():
-    assert INDEX_HTML.count("?v=20261115_r152") == 4
+    assert INDEX_HTML.count("?v=20261115_r153") == 4
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────

@@ -184,7 +184,7 @@ def test_ass_outline_never_exceeds_8pct_of_font(tmp_path):
         raw_font_size=16, sub_lines=1, sub_y=0.85, sub_style="yellow",
     )
     fields = _ass_style_fields(out)
-    assert fields["font_size"] == 77  # Batch Q height-fraction formula (Batch P 61, R40-era 44)
+    assert fields["font_size"] == 54  # Brief v2 S3 shortest-edge formula (5.0% of 1080)
     assert fields["outline"] <= 0.08 * fields["font_size"] + 1e-9
     assert fields["outline"] == pytest.approx(3.47, abs=0.05)
 

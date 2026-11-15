@@ -180,9 +180,9 @@ def test_centre_x_full_frame_is_canvas_fraction():
 # ── 4. Plate follows the text ──────────────────────────────────────
 
 def test_plate_defaults_reproduce_pre_ag_dicts():
-    # Batch P's pinned full-frame plate, now via the AG signature.
+    # Brief v2 S3 (54px at 16pt on 1080x1920): natural height settles at min_h=0.07.
     plate = subtitle_plate_box(CW, CH, None, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=0.07)
-    assert plate == {"x": 0.04, "y": 0.85, "w": 0.92, "h": 0.0782}
+    assert plate == {"x": 0.04, "y": 0.85, "w": 0.92, "h": 0.07}
     lb = subtitle_plate_box(CW, CH, LB, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=0.07)
     assert lb["x"] == 0.04 and lb["w"] == 0.92
 
@@ -568,7 +568,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261115_r152") == 4
+    assert INDEX_HTML.count("?v=20261115_r153") == 4
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────

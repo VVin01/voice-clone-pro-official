@@ -72,8 +72,14 @@ def _renderer(tmp_path):
     return pq.PngSubtitleRenderer(tmp_path / "da_cache")
 
 
+# These two files pin splitting BOUNDARIES at their calibrated legacy sizes
+# per the owner decision 2026-11-15; the S3 production sizes are covered by
+# test_subtitle_premium_pass.py.
+_LEGACY_FONT_PX = {13: 61, 16: 77, 19: 92, 22: 108}
+
+
 def _setup(size_pt):
-    font_px = core.subtitle_font_px(CW, CH, size_pt, 1, LB)
+    font_px = _LEGACY_FONT_PX[int(size_pt)]
     font = core.subtitle_font_file("padauk")
     visuals = pq.preset_visuals(
         core.SUBTITLE_STYLE_PRESETS["yellow"], CH, font_px
@@ -118,7 +124,7 @@ def _mid_word_boundaries(cue, texts):
 # ── Release pin: cache token ─────────────────────────────────────
 
 def test_da_cache_token_is_r140():
-    assert INDEX_HTML.count("20261115_r152") == 4
+    assert INDEX_HTML.count("20261115_r153") == 4
     assert "20261104_r" + "122" not in INDEX_HTML
 
 

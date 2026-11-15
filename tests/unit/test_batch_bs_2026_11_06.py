@@ -401,5 +401,5 @@ async def test_bs_webapp_broadcast_persists_fitting_token(db_session, monkeypatc
 
 
 def test_bs_cache_token_is_r90():
-    assert INDEX_HTML.count("20261115_r152") == 4
+    assert INDEX_HTML.count("20261115_r153") == 4
     assert "20261104_r89" not in INDEX_HTML

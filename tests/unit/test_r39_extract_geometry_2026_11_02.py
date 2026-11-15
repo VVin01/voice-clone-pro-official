@@ -641,33 +641,24 @@ def test_letterbox_layout_facts():
 
 
 def test_font_px_full_frame_height_fraction():
-    # Batch P: ONE height-relative formula, whatever the
-    # orientation (the R39 orientation factors/clamps that produced
-    # 44/36 are superseded). Batch Q raised the anchor: 16pt = 4.0%
-    # of the canvas height (Batch P's 3.2% superseded).
-    assert subtitle_font_px(1080, 1920, 16, 1, None) == 77
-    assert subtitle_font_px(1920, 1080, 16, 1, None) == 43
+    # Brief v2 S3: 16pt = 5.0% of min(pw, ph) -> 54px on both 1080x1920 and 1920x1080.
+    assert subtitle_font_px(1080, 1920, 16, 1, None) == 54
+    assert subtitle_font_px(1920, 1080, 16, 1, None) == 54
     full = frame_layout("9:16", "blur", 1080, 1920)
-    assert subtitle_font_px(1080, 1920, 16, 1, full) == 77
+    assert subtitle_font_px(1080, 1920, 16, 1, full) == 54
 
 
 def test_font_px_letterbox_not_content_scaled():
     lay = _letterbox_layout()
-    # Batch P: NO letterbox content-box scaling — the size is the
-    # canvas-height fraction on letterboxed layouts too (the R39
-    # ×608/1080 compression to 25/37 is superseded).
-    # Batch AK (premium audit S3, Recapter standard): the basis is
-    # now the PICTURE height — 4.0% of 608 = 24px at 16pt/1-line on
-    # this letterbox (77px was 4.0% of the 1920 canvas). Full-frame
-    # layouts are unchanged (see the full-frame test above).
-    assert subtitle_font_px(1080, 1920, 16, 1, lay) == 24
-    assert subtitle_font_px(1080, 1920, 16, 2, lay) == 30
+    # Brief v2 S3: 5.0% of min(1080, 608) = 30px at 16pt/1-line, 38px 2-line.
+    assert subtitle_font_px(1080, 1920, 16, 1, lay) == 30
+    assert subtitle_font_px(1080, 1920, 16, 2, lay) == 38
 
 
 def test_plate_full_frame_92_percent_and_safe_margin():
     plate = subtitle_plate_box(1080, 1920, None, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=0.07)
-    # Height fits the Batch Q font (77px): 0.0782 > the 0.07 floor.
-    assert plate == {"x": 0.04, "y": 0.85, "w": 0.92, "h": 0.0782}
+    # Brief v2 S3 (54px at 16pt): natural height ~0.0548 settles on caller's 0.07 floor.
+    assert plate == {"x": 0.04, "y": 0.85, "w": 0.92, "h": 0.07}
     # A centre pushed to the canvas edge is pulled back so the plate
     # bottom respects the ~8% safe margin (bottom == 0.92).
     plate2 = subtitle_plate_box(1080, 1920, None, raw_font_size=16, sub_lines=1, sub_y=0.98, min_h=0.07)
@@ -677,8 +668,8 @@ def test_plate_full_frame_92_percent_and_safe_margin():
 def test_plate_height_grows_for_two_lines():
     plate = subtitle_plate_box(1080, 1920, None, raw_font_size=16, sub_lines=2, sub_y=0.85, min_h=0.07)
     assert plate["h"] > 0.07  # settle-fit: the plate grows to fit the wrapped lines
-    # Batch Q font (96px at 16pt/2-line) drives the fitted height.
-    assert abs(plate["h"] - 0.155) < 0.001
+    # Brief v2 S3 font (68px at 16pt/2-line) drives the fitted height (0.1098).
+    assert abs(plate["h"] - 0.1098) < 0.001
 
 
 def test_plate_letterbox_anchors_at_subtitle_anchor():
@@ -691,11 +682,9 @@ def test_plate_letterbox_anchors_at_subtitle_anchor():
     # (the R39 rim anchor at 1264 is superseded).
     assert abs(centre_px - 1172.8) < 1.5
     # Pure fit (no caller minimum) follows the fitted text height.
-    # Batch AK: at the picture-relative font (24px on this
-    # letterbox) the fitted plate is 47.6px ≈ 0.0248 of canvas
-    # (Batch P's 0.0782 was fitted at the 77px canvas-basis font).
+    # Brief v2 S3 (30px on 608px picture): 58.5 / 1920 ≈ 0.0305.
     fit = subtitle_plate_box(1080, 1920, lay, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=None)
-    assert abs(fit["h"] - 0.0248) < 0.002
+    assert abs(fit["h"] - 0.0305) < 0.002
 
 
 def test_ass_legacy_geometry_without_layout(tmp_path):
@@ -704,8 +693,8 @@ def test_ass_legacy_geometry_without_layout(tmp_path):
         raw_font_size=16, sub_lines=1, sub_y=0.85,
     )
     fields = _ass_style_fields(out)
-    assert fields["font_size"] == 77
-    assert fields["margin_v"] == 244
+    assert fields["font_size"] == 54
+    assert fields["margin_v"] == 257
 
 
 def test_ass_letterbox_geometry(tmp_path):
@@ -715,21 +704,17 @@ def test_ass_letterbox_geometry(tmp_path):
         raw_font_size=16, sub_lines=1, sub_y=0.85, layout=lay,
     )
     fields = _ass_style_fields(out)
-    # Batch AK: font is picture-relative now (24px at 16pt on the
-    # 608px picture); the CENTRE is unchanged (1172.8px), so MarginV
-    # moves only by the smaller text half-height: 1920 − (1172.8 +
-    # 24×1.15/2) = 733 (Batch P's 703 was at the 77px canvas font).
-    assert fields["font_size"] == 24
-    # MarginV 733 → subtitle centre at oy + 0.85 × ph = 1172.8px
-    # (Batch P picture-relative anchor; R39 rim anchor superseded).
-    assert fields["margin_v"] == 733
+    # Brief v2 S3: 30px at 16pt on 608px picture; centre unchanged (1172.8),
+    # MarginV = 1920 - (1172.8 + 30*1.15/2) = 730.
+    assert fields["font_size"] == 30
+    assert fields["margin_v"] == 730
     out2 = write_synced_ass_file(
         [(0.0, 3.0, "မင်္ဂလာပါ")], tmp_path / "c.ass", 1080, 1920,
         raw_font_size=16, sub_lines=2, sub_y=0.85, layout=lay,
     )
     fields2 = _ass_style_fields(out2)
-    assert fields2["font_size"] == 30
-    assert fields2["margin_v"] == 713
+    assert fields2["font_size"] == 38
+    assert fields2["margin_v"] == 704
 
 
 def test_pipeline_uses_plate_helper():

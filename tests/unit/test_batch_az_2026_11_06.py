@@ -207,7 +207,7 @@ def test_az11_subtitle_style_is_one_dropdown():
     m = re.search(r'<select id="sub-style-picker"[^>]*>(.*?)</select>', INDEX_HTML, re.S)
     assert m and "glass-dropdown" in m.group(0)
     values = re.findall(r'<option value="([a-z]+)"', m.group(1))
-    assert values == ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"]
+    assert values == ["cinematic", "glass", "yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"]
     body = APP_JS[APP_JS.index('const styleSel = document.getElementById("sub-style-picker");'):]
     body = body[:body.index("// 10. Subtitle Live Preview Renderer")]
     assert 'styleSel.addEventListener("change", () => {' in body
@@ -264,5 +264,5 @@ def test_az_fallbacks_cover_the_new_layers():
 
 
 def test_az_cache_token_is_r79():
-    assert INDEX_HTML.count("20261115_r152") == 4
+    assert INDEX_HTML.count("20261115_r153") == 4
     assert "20261104_r71" not in INDEX_HTML

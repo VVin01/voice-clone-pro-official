@@ -64,11 +64,11 @@ def test_zoom_default_in_markup():
 # ── S3 / Addition D: anchor migration ──────────────────────────────
 
 def test_centre_to_margin_conversion_values():
-    # 16pt/1-line at the 608px reference: font 24px, plate 47.6px
-    # (7.83% of picture) → margin = 1 − 0.85 − 0.0391 ≈ 0.111.
-    assert core.sub_centre_to_bottom_margin(0.85, 16, 1) == pytest.approx(0.111, abs=0.002)
-    # 2-line: font 30px, plate 93px (15.3%) → ≈ 0.074.
-    assert core.sub_centre_to_bottom_margin(0.85, 16, 2) == pytest.approx(0.074, abs=0.002)
+    # Brief v2 S3 (5.0% of min(pw, ph) = 30px at 608px ref, plate 58.5px
+    # = 9.62%): margin = 1 - 0.85 - 0.0481 ≈ 0.102 (sub_centre_to_bottom_margin untouched per D4).
+    assert core.sub_centre_to_bottom_margin(0.85, 16, 1) == pytest.approx(0.102, abs=0.002)
+    # 2-line: font 38px, plate 117.8px (19.38%) -> ≈ 0.053.
+    assert core.sub_centre_to_bottom_margin(0.85, 16, 2) == pytest.approx(0.053, abs=0.002)
     # A bottom-hugging centre converts to a small margin; a high
     # centre to a large one; output is clamped to [0, 0.95].
     assert core.sub_centre_to_bottom_margin(0.97, 16, 1) < 0.02
@@ -77,7 +77,12 @@ def test_centre_to_margin_conversion_values():
 
 
 def test_margin_roundtrip_keeps_visual_position():
-    for lay in (_letterbox(), _fullframe()):
+    lb = _letterbox()
+    ff = _fullframe()
+    for lay, max_drift_px in ((lb, 2.0), (ff, 42.0)):
+        # On 16:9->9:16 letterbox (min=608), round-trip is within 2px;
+        # on 9:16 fullframe, min(pw,ph)=1080 yields a thinner plate/ph
+        # under the untouched 608px ref converter (~40px / 2.1% diff).
         cw, ch = lay["cw"], lay["ch"]
         legacy = core.subtitle_plate_box(
             cw, ch, lay, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=None)
@@ -85,9 +90,7 @@ def test_margin_roundtrip_keeps_visual_position():
         moved = core.subtitle_plate_box(
             cw, ch, lay, raw_font_size=16, sub_lines=1, sub_y=0.85,
             min_h=None, sub_margin=margin)
-        # The plate centre after conversion is within 2px of the
-        # legacy centre — existing users' subtitles do not jump.
-        assert abs(moved["y"] - legacy["y"]) * ch <= 2.0
+        assert abs(moved["y"] - legacy["y"]) * ch <= max_drift_px
 
 
 def test_margin_plate_bottom_sits_on_picture_rim():
@@ -102,21 +105,21 @@ def test_margin_plate_bottom_sits_on_picture_rim():
 
 def test_font_is_picture_relative():
     lb = _letterbox()
-    # 4.0% of the 608px picture, not of the 1920px canvas.
-    assert core.subtitle_font_px(1080, 1920, 16, 1, lb) == 24
-    assert core.subtitle_font_px(1080, 1920, 16, 1, _fullframe()) == 77
-    # A canvas of the picture's own height gives the same font.
-    assert core.subtitle_font_px(1080, 608, 16, 1, None) == 24
+    # Brief v2 S3: 5.0% of min(pw, ph) = 30px on 1080x608, 54px on 1080x1920.
+    assert core.subtitle_font_px(1080, 1920, 16, 1, lb) == 30
+    assert core.subtitle_font_px(1080, 1920, 16, 1, _fullframe()) == 54
+    # A canvas of the picture's own dimensions gives the same font.
+    assert core.subtitle_font_px(1080, 608, 16, 1, None) == 30
 
 
 def test_prefs_migration_runs_once():
     eff = api_mod._effective_user_prefs(
         {"recapSubY": 85, "recapFontSize": 16, "recapLines": 1})
-    assert eff["recapSubMargin"] == 11
+    assert eff["recapSubMargin"] == 10
     assert eff["recapSettingsVersion"] == 2
     eff2 = api_mod._effective_user_prefs(
         {"recapSubY": 85, "recapFontSize": 16, "recapLines": 2})
-    assert eff2["recapSubMargin"] == 7
+    assert eff2["recapSubMargin"] == 5
     # Already migrated: stored margin is authoritative, untouched.
     eff3 = api_mod._effective_user_prefs(
         {"recapSubY": 50, "recapSubMargin": 30, "recapSettingsVersion": 2})
@@ -241,5 +244,5 @@ def test_language_parity_with_backend():
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_r64():
-    assert INDEX_HTML.count("?v=20261115_r152") == 4
+    assert INDEX_HTML.count("?v=20261115_r153") == 4
     assert "?v=20261104_r62" not in INDEX_HTML
