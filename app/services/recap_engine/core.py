@@ -1489,6 +1489,8 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
         # stranded particle).
         end = start
         cur = ""
+        last_punct: int | None = None
+        last_clean_punct: int | None = None
         last_good: int | None = None
         last_clean: int | None = None
         while end < len(tokens):
@@ -1498,9 +1500,14 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
             cur = cand
             end += 1
             if end < len(tokens) and _cx_is_meaningful_break(tokens, end - 1):
+                is_punct = tokens[end - 1].rstrip().endswith(("။", "၊"))
                 last_good = end
+                if is_punct:
+                    last_punct = end
                 if _cx_next_starts_content(tokens, end):
                     last_clean = end
+                    if is_punct:
+                        last_clean_punct = end
         if end == len(tokens):
             if cur.strip():
                 pieces.append(cur.strip())
@@ -1510,12 +1517,12 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
             pieces.append(tokens[start])
             start += 1
             continue
-        # Prefer a clean meaningful cut, then any meaningful cut,
-        # when the piece it leaves is still substantial (≥40% of
-        # the fitting width); a sliver piece flashes awkwardly.
+        # Prefer sentence/clause punctuation (။/၊), then clean meaningful cut,
+        # then any meaningful cut, when the piece it leaves is still
+        # substantial (≥40% of the fitting width); a sliver piece flashes awkwardly.
         cut = end
         full_w = _png_cue_width(renderer, cur.strip(), font_px, font_path, visuals)
-        for cand_cut in (last_clean, last_good):
+        for cand_cut in (last_clean_punct, last_clean, last_punct, last_good):
             if cand_cut is not None and cand_cut > start:
                 cand_w = _png_cue_width(
                     renderer, "".join(tokens[start:cand_cut]).strip(),
@@ -1539,11 +1546,10 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
                 )
                 if full_w > 0 and back_w >= 0.4 * full_w:
                     cut = back
-        # S1: Avoid starting the next piece with a stranded particle.
-        # Walk backwards across preceding spaces/head word inside [start, cut)
-        # if backtracking keeps >= 35% of the line width; otherwise pull
-        # only non-particle cuts earlier in the span.
-        if start < cut < len(tokens):
+        # S1: Avoid starting the next piece with a standalone spaced stranded particle
+        # (e.g. "... 2026 | မှာ"), backtracking only across a clean space boundary so an
+        # unspaced Burmese word/stub keeps its Batch CX/DA boundary behavior.
+        if start < cut < len(tokens) and _cx_cut_at_space(tokens, cut):
             nxt_idx = cut
             while nxt_idx < len(tokens) and not tokens[nxt_idx].strip():
                 nxt_idx += 1
@@ -1551,12 +1557,14 @@ def _cx_split_line(renderer, line, font_px, font_path, visuals, max_width_px) ->
                 head = cut - 1
                 while head > start and not tokens[head].strip():
                     head -= 1
-                if head > start:
+                while head > start and not _cx_cut_at_space(tokens, head):
+                    head -= 1
+                if head > start and _cx_cut_at_space(tokens, head):
                     cand_w = _png_cue_width(
                         renderer, "".join(tokens[start:head]).strip(),
                         font_px, font_path, visuals,
                     )
-                    if full_w > 0 and cand_w >= 0.35 * full_w:
+                    if full_w > 0 and cand_w >= 0.4 * full_w:
                         cut = head
         piece_str = "".join(tokens[start:cut]).strip()
         pieces.append(piece_str)
@@ -2673,8 +2681,7 @@ PARTICLE_SYLS = {
     'ပါတယ်', 'ခဲ့တယ်', 'တယ်', 'နေတယ်', 'နေတာ', 'ပါပဲ', 'ဖြစ်တယ်', 'ရှိတယ်', 'သွားတယ်',
     'လိုက်တယ်', 'လိုက်တာ', 'တာနဲ့', 'တာမို့', 'တာကြောင့်', 'တဲ့အတွက်',
     'ကို', 'မှာ', 'က', 'နဲ့', 'နှင့်', 'ရဲ့', '၏', 'လို့', 'သည်', '၌', 'တွင်',
-    'သို့', 'မှ', 'ဖြင့်', 'လည်း', 'ပဲ', 'ပါ', 'တော့', 'ကနေ', 'နေ', 'ထဲ', 'တုန်း',
-    'တွေ', 'များ', 'တို့',
+    'သို့', 'မှ', 'ဖြင့်', 'လည်း', 'တော့', 'ကနေ', 'နေ', 'ထဲ', 'တုန်း',
 }
 
 # S1: particles/postpositions/punctuation that belong to the preceding noun or
@@ -2682,7 +2689,8 @@ PARTICLE_SYLS = {
 STRANDED_LINE_START_PARTICLES: frozenset[str] = frozenset(
     PARTICLE_SYLS
     | {
-        "တာ", "တဲ့", "နော်", "လေ", "လား", "မလား", "ပေါ့", "ဆို", "ဟု", "၍",
+        "တာ", "တဲ့", "ပါ", "ပဲ", "တွေ", "များ", "တို့",
+        "နော်", "လေ", "လား", "မလား", "ပေါ့", "ဆို", "ဟု", "၍",
         "ကတော့", "မှာတော့", "ကိုတော့", "ဆိုတာ", "ဟာ", "အား",
         "။", "၊", ",", ".", "!", "?", ":", ";", ")", "]", "”", "’",
     }
