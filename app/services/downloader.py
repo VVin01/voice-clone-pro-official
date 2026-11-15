@@ -2354,6 +2354,7 @@ class MediaDownloader:
         logo_scale: float = 0.16,
         logo_opacity: float = 0.70,
         is_vip: bool = False,
+        watermark: Optional[bool] = None,
     ) -> str:
         """
         Extracts a single frame snapshot with blur box and sample subtitle for preview.
@@ -2421,6 +2422,8 @@ class MediaDownloader:
             logo_position=logo_position,
             logo_scale=logo_scale,
             logo_opacity=logo_opacity,
+            is_vip=is_vip,
+            watermark=watermark,
         )
 
     @staticmethod

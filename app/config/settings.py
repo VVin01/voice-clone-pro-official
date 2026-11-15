@@ -320,6 +320,14 @@ class Settings(BaseSettings):
     worker_laptop_status: str = "OFFLINE"
     worker_laptop_host: str = ""
 
+    # Admin Watermark Controls for Recap
+    watermark_free_enabled: bool = Field(default=True, alias="WATERMARK_FREE_ENABLED")
+    watermark_paid_enabled: bool = Field(default=False, alias="WATERMARK_PAID_ENABLED")
+    watermark_style: str = Field(default="tiled", alias="WATERMARK_STYLE")
+    watermark_position: str = Field(default="bottom-right", alias="WATERMARK_POSITION")
+    watermark_opacity: int = Field(default=20, alias="WATERMARK_OPACITY")
+    watermark_size: int = Field(default=16, alias="WATERMARK_SIZE")
+
 
     @property
     def admin_ids(self) -> set[int]:
@@ -334,6 +342,46 @@ class Settings(BaseSettings):
 settings = Settings()
 
 GROQ_WHISPER_MODEL_DEFAULT = "whisper-large-v3-turbo"
+
+WATERMARK_ALLOWED_STYLES = ("tiled", "logo", "text")
+WATERMARK_ALLOWED_POSITIONS = ("bottom-right", "bottom-left", "top-right", "top-left", "centre")
+
+
+def get_watermark_config(is_vip: bool = False) -> dict[str, str | int | bool]:
+    """Return active server-side watermark settings for a user's tier (read at render/preview time)."""
+    free_val = getattr(settings, "watermark_free_enabled", True)
+    free_on = bool(free_val) if free_val is not None else True
+    paid_val = getattr(settings, "watermark_paid_enabled", False)
+    paid_on = bool(paid_val) if paid_val is not None else False
+    enabled = paid_on if is_vip else free_on
+
+    raw_style = str(getattr(settings, "watermark_style", "tiled") or "tiled").strip().lower()
+    style = raw_style if raw_style in WATERMARK_ALLOWED_STYLES else "tiled"
+
+    raw_pos = str(getattr(settings, "watermark_position", "bottom-right") or "bottom-right").strip().lower()
+    if raw_pos == "center":
+        raw_pos = "centre"
+    pos = raw_pos if raw_pos in WATERMARK_ALLOWED_POSITIONS else "bottom-right"
+
+    try:
+        opacity_pct = max(20, min(100, int(getattr(settings, "watermark_opacity", 20) or 20)))
+    except (TypeError, ValueError):
+        opacity_pct = 20
+
+    try:
+        size_pct = max(5, min(40, int(getattr(settings, "watermark_size", 16) or 16)))
+    except (TypeError, ValueError):
+        size_pct = 16
+
+    return {
+        "watermark": enabled,
+        "watermark_free_enabled": free_on,
+        "watermark_paid_enabled": paid_on,
+        "watermark_style": style,
+        "watermark_position": pos,
+        "watermark_opacity": opacity_pct,
+        "watermark_size": size_pct,
+    }
 
 
 def get_groq_whisper_model() -> str:

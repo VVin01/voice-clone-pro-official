@@ -89,6 +89,12 @@ SETTING_TYPES: dict[str, type] = {
     "worker_laptop_engine": str,
     "worker_laptop_status": str,
     "worker_laptop_host": str,
+    "watermark_free_enabled": bool,
+    "watermark_paid_enabled": bool,
+    "watermark_style": str,
+    "watermark_position": str,
+    "watermark_opacity": int,
+    "watermark_size": int,
 }
 
 
