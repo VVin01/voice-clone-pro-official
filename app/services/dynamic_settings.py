@@ -85,6 +85,9 @@ SETTING_TYPES: dict[str, type] = {
     "gemini_tts_fallback_2": str,
     "voxcpm_timeout": int,
     "groq_whisper_model": str,
+    "recap_thumbnail_monthly_cap_usd": float,
+    "recap_thumbnail_model": str,
+    "recap_thumbnail_prompt_template": str,
     "worker_laptop_heartbeat": str,
     "worker_laptop_engine": str,
     "worker_laptop_status": str,
@@ -137,6 +140,8 @@ async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
                     parsed_val = raw_val.lower() in ("true", "1", "yes")
                 elif expected_type is int:
                     parsed_val = int(raw_val)
+                elif expected_type is float:
+                    parsed_val = float(raw_val)
                 else:
                     parsed_val = str(raw_val)
                 if hasattr(settings, key):
@@ -159,7 +164,7 @@ DYNAMIC_SETTING_KEYS = frozenset(SETTING_TYPES)
 async def set_dynamic_setting(
     session: AsyncSession,
     key: str,
-    value: str | int | bool,
+    value: str | int | float | bool,
     admin_id: int | None = None,
 ) -> None:
     """Save setting to database, apply to in-memory settings, and write an AuditLog entry."""
@@ -199,6 +204,8 @@ async def set_dynamic_setting(
             parsed_val = str_val in ("true", "1", "yes")
         elif expected_type is int:
             parsed_val = int(str_val)
+        elif expected_type is float:
+            parsed_val = float(str_val)
         else:
             parsed_val = str_val
         if hasattr(settings, key):

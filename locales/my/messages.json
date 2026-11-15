@@ -521,5 +521,9 @@
   "dp_choice_not_parked": "ဒီ အလုပ်က ရွေးချယ်မှု စောင့်နေတဲ့ အခြေအနေ မဟုတ်တော့ပါ",
   "dp_park_expired_error": "အသံ quota အချိန်အတော်ကြာ ပြန်မရလို့ အလုပ်ကို ရပ်လိုက်ပါတယ်။ ပေးဆောင်ထားတာကို ပြန်အမ်းပေးထားပါတယ်။",
   "dp_parked_label": "အသံ ရွေးချယ်မှု စောင့်နေပါတယ်",
-  "live_job_status_waiting_choice": "⏸️ Bot တွင် အသံ ရွေးချယ်မှု စောင့်နေပါတယ်"
+  "live_job_status_waiting_choice": "⏸️ Bot တွင် အသံ ရွေးချယ်မှု စောင့်နေပါတယ်",
+  "recap_thumb_cap_reached": "ဒီလအတွက် AI Thumbnail အရေအတွက် ပြည့်သွားပါပြီ",
+  "recap_thumb_vip_only": "👑 AI Thumbnail ဖန်တီးခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည် — VIP Plan သို့ အဆင့်မြှင့်ပြီး အခမဲ့ အသုံးပြုနိုင်ပါသည်။",
+  "recap_thumb_failed": "AI Thumbnail ထုတ်ယူရာတွင် အဆင်မပြေ ဖြစ်သွားပါသည် — ခဏနေ ပြန်စမ်းကြည့်ပါ (Credit မကုန်ပါ)။",
+  "recap_thumb_telegram_caption": "🖼️ <b>AI Thumbnail အဆင်သင့်ဖြစ်ပါပြီ</b>\n🎬 {title}\n✨ <i>VoiceClonePro VIP Perk (အခမဲ့)</i>"
 }

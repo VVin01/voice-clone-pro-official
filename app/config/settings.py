@@ -319,6 +319,25 @@ class Settings(BaseSettings):
     gemini_tts_lite_model: str = Field(default="gemini-3.8-flash-lite-tts", alias="GEMINI_TTS_LITE_MODEL")
     gemini_tts_fallback_2: str = Field(default="gemini-2.5-flash-preview-tts", alias="GEMINI_TTS_FALLBACK_2")
 
+    # Recap AI Thumbnail Generator (HF PRO monthly compute credit pool, paid/admin only)
+    recap_thumbnail_monthly_cap_usd: float = Field(
+        default=1.80,
+        alias="RECAP_THUMBNAIL_MONTHLY_CAP_USD",
+    )
+    recap_thumbnail_model: str = Field(
+        default="black-forest-labs/FLUX.1-schnell",
+        alias="RECAP_THUMBNAIL_MODEL",
+    )
+    recap_thumbnail_prompt_template: str = Field(
+        default=(
+            "Cinematic vertical 9:16 movie poster artwork inspired by {title}, "
+            "dramatic lighting, rich atmospheric colors, ultra detailed, high contrast, "
+            "expressive composition, strictly no text, no letters, no words, no numbers, "
+            "no watermark, no typography, clean text-free illustration"
+        ),
+        alias="RECAP_THUMBNAIL_PROMPT_TEMPLATE",
+    )
+
     # Payment accounts
     payment_kpay_number: str = ""
     payment_kpay_name: str = ""
