@@ -210,17 +210,18 @@ async def test_prefs_put_drops_blur_geometry_from_storage(db_session):
 
 @pytest.mark.asyncio
 async def test_live_jobs_own_only_shape_and_recent_terminal(db_session):
+    now = datetime.now(timezone.utc)
     owner, _ = await get_or_create_user(db_session, telegram_id=OWNER_TG)
     other, _ = await get_or_create_user(db_session, telegram_id=OTHER_TG)
     db_session.add_all([
         _job("ac-v1", owner.id, status="QUEUED"),
         _job("ac-v2", owner.id, status="SUCCESS",
-             finished=NOW - timedelta(minutes=5)),
+             finished=now - timedelta(minutes=5)),
         _job("ac-v3", owner.id, status="SUCCESS",
-             created=NOW - timedelta(hours=2),
-             finished=NOW - timedelta(minutes=55)),  # too old: excluded
+             created=now - timedelta(hours=2),
+             finished=now - timedelta(minutes=55)),  # too old: excluded
         _job("ac-v4", owner.id, status="FAILED",
-             finished=NOW - timedelta(minutes=9)),
+             finished=now - timedelta(minutes=9)),
         _job("ac-r1", owner.id, status="RUNNING", job_type="RECAP",
              engine="recap", text="Some Movie Title"),
         _job("ac-x1", other.id, status="RUNNING"),  # someone else's
