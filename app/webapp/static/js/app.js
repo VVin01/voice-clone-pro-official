@@ -4494,12 +4494,14 @@ function selectRecapOwnVoice() {
     document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card")
         .forEach(c => c.classList.remove("active"));
     syncRecapOwnVoiceCard();
+    if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
 }
 
 function deselectRecapOwnVoice() {
     if (!state.recapOwnVoiceSelected) return;
     state.recapOwnVoiceSelected = false;
     syncRecapOwnVoiceCard();
+    if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
 }
 
 function clearRecapOwnVoice() {
@@ -5359,6 +5361,10 @@ function showRecapStep(n) {
     if (n === 2 && typeof window.__ddFitPreviewFrame === "function") {
         requestAnimationFrame(() => window.__ddFitPreviewFrame());
     }
+    if (n === 2) {
+        if (typeof window.scheduleRecapCompositeRefresh === "function") window.scheduleRecapCompositeRefresh();
+        if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
+    }
     refreshRecapStepIndicator();
     // Batch BO: every step change re-applies the sticky-CTA step
     // gate — the 1-Click CTA bar may show only while Step 4 is the
@@ -5424,19 +5430,26 @@ function refreshRecapStep4Choices() {
     const voiceCard = document.querySelector("#recap-persona-area .voice-card.active .v-name")
         || document.querySelector("#recap-top-voices .voice-card.active .v-name");
     if (voiceEl) {
-        let voiceLine = "🎙️ " + (voiceCard ? voiceCard.textContent.trim() : "");
-        // Batch BX: on the Edge engine the summary must not present
-        // the persona pick as the narration voice — append the Edge
-        // base voice that will actually narrate (gender-matched to
-        // the picked persona, mirroring the server's mapping).
-        if (state.recapTtsEngine === "edge") {
-            const activeCard = voiceCard ? voiceCard.closest(".voice-card") : null;
-            const slug = activeCard ? activeCard.getAttribute("data-voice") : "";
-            const cv = (state.curatedVoices || []).find(v => v.slug === slug);
-            const femaleSlugs = ["mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"];
-            const isFemale = cv ? cv.gender === "female" : femaleSlugs.includes(slug || "");
-            const edgeVoiceName = t(isFemale ? "tts_edge_nilar" : "tts_edge_thiha").replace(/\s*\([^)]*\)\s*$/, "");
-            voiceLine += " " + tf("recap_step4_edge_voice_note", { voice: edgeVoiceName });
+        let voiceLine = "";
+        if (state.recapTtsEngine === "gemini") {
+            const gKey = typeof resolveGeminiPreviewVoice === "function"
+                ? resolveGeminiPreviewVoice() : (state.recapGeminiVoice || "Charon");
+            const gRaw = t("gem_voice_" + String(gKey).toLowerCase());
+            const gName = (gRaw && !gRaw.startsWith("gem_voice_") ? gRaw : String(gKey)).replace(/\s*\([^)]*\)\s*$/, "");
+            voiceLine = "🎙️ Gemini " + gName;
+        } else if (state.recapOwnVoiceSelected && state.recapTtsEngine === "voxcpm") {
+            voiceLine = t("recap_own_voice_display");
+        } else {
+            voiceLine = "🎙️ " + (voiceCard ? voiceCard.textContent.trim() : "");
+            if (state.recapTtsEngine === "edge") {
+                const activeCard = voiceCard ? voiceCard.closest(".voice-card") : null;
+                const slug = activeCard ? activeCard.getAttribute("data-voice") : "";
+                const cv = (state.curatedVoices || []).find(v => v.slug === slug);
+                const femaleSlugs = ["mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"];
+                const isFemale = cv ? cv.gender === "female" : femaleSlugs.includes(slug || "");
+                const edgeVoiceName = t(isFemale ? "tts_edge_nilar" : "tts_edge_thiha").replace(/\s*\([^)]*\)\s*$/, "");
+                voiceLine += " " + tf("recap_step4_edge_voice_note", { voice: edgeVoiceName });
+            }
         }
         voiceEl.textContent = voiceLine;
     }
@@ -5704,7 +5717,7 @@ function refreshRecapStep4Facts() {
     if (state.recapBurnSubs !== false) {
         const styleKey = "sub_style_" + (state.recapSubStyle || "yellow");
         const styleName = t(styleKey);
-        set("recap-fact-subs", "📝 " + (styleName && styleName !== styleKey ? styleName : (state.recapSubStyle || "yellow")));
+        set("recap-fact-subs", "📝 " + (styleName && styleName !== styleKey ? styleName : (state.recapSubStyle || "yellow")) + ` · ${state.recapFontSize || 16}pt`);
     } else {
         set("recap-fact-subs", "📝 " + t("recap_fact_off"));
     }
@@ -5712,6 +5725,8 @@ function refreshRecapStep4Facts() {
     set("recap-fact-blur", "🌫️ " + t(state.recapBlurSubs !== false ? "recap_fact_on" : "recap_fact_off"));
     const qBtn = document.querySelector("#recap-quality-picker .pill-btn.active");
     set("recap-fact-quality", "🎞️ " + (qBtn ? qBtn.textContent.trim() : (state.recapRenderQuality || "standard")));
+    set("recap-fact-speed", "⚡ " + (state.recapSpeed || "+12%"));
+    set("recap-fact-mirror", state.recapMirror !== false ? "🪞 " + t("recap_fact_mirror_on") : "");
 }
 window.refreshRecapStep4Facts = refreshRecapStep4Facts;
 
@@ -6052,6 +6067,8 @@ function setupRecapVisualEditor() {
         if (mode === "pending") {
             if (durSpan) { durSpan.className = "mini-tag"; durSpan.innerText = "⏱️ 00:00"; }
             if (subSpan) { subSpan.className = "mini-tag"; subSpan.innerText = t("recap_info_uploading"); }
+        } else if (mode === "processing") {
+            if (subSpan) { subSpan.className = "mini-tag"; subSpan.innerText = t("recap_info_processing"); }
         } else if (mode === "failed") {
             if (durSpan) { durSpan.className = "mini-tag"; durSpan.innerText = "⏱️ —"; }
             if (subSpan) { subSpan.className = "mini-tag text-danger"; subSpan.innerText = t("recap_info_upload_failed"); }
@@ -6166,7 +6183,7 @@ function setupRecapVisualEditor() {
             if (!ev.lengthComputable) return;
             const pct = Math.min(100, Math.round((ev.loaded / ev.total) * 100));
             if (pct >= 100) {
-                phase = "processing";
+                if (phase !== "processing") { phase = "processing"; setRecapInfoUploadState("processing"); }
                 if (els.bar) { els.bar.style.width = "100%"; els.bar.classList.remove("busy"); els.bar.classList.add("indeterminate"); }
                 if (els.label) els.label.innerText = t("upload_processing_label");
             } else {
@@ -6501,6 +6518,12 @@ function setupRecapVisualEditor() {
     let recapCompositeSeq = 0;
     let recapCompositeTimer = null;
     let recapCompositeHash = "";
+    function recapCompositeSourceUrl() {
+        if (state.uploadedVideoPath) return null;
+        if (state.recapVerifiedSourceUrl) return state.recapVerifiedSourceUrl;
+        const m = ((document.getElementById("recap-url-input")?.value || "").trim()).match(/https?:\/\/[^\s]+/i);
+        return m ? m[0] : null;
+    }
     function recapCompositePayload() {
         const g = (id) => document.getElementById(id);
         const iv = (el, dflt) => el ? parseInt(el.value) : dflt;
@@ -6510,7 +6533,7 @@ function setupRecapVisualEditor() {
         const firstSeg = document.querySelector("#recap-script-list .script-seg-text");
         if (firstSeg && firstSeg.value) sample = firstSeg.value.trim().slice(0, 120);
         return {
-            url: state.uploadedVideoPath ? null : (state.recapVerifiedSourceUrl || null),
+            url: recapCompositeSourceUrl(),
             uploaded_path: state.uploadedVideoPath || null,
             t: seek ? (parseFloat(seek.value) || 5) : 5,
             ratio: state.recapRatio || "9:16",
@@ -6559,13 +6582,13 @@ function setupRecapVisualEditor() {
         return p;
     }
     function scheduleRecapCompositeRefresh() {
-        if (!state.recapVerifiedSourceUrl && !state.uploadedVideoPath) return;
+        if (!recapCompositeSourceUrl() && !state.uploadedVideoPath) return;
         if (recapCompositeTimer) clearTimeout(recapCompositeTimer);
         recapCompositeTimer = setTimeout(refreshRecapCompositePreview, 600);
     }
     window.scheduleRecapCompositeRefresh = scheduleRecapCompositeRefresh;
     async function refreshRecapCompositePreview() {
-        if (!state.recapVerifiedSourceUrl && !state.uploadedVideoPath) return;
+        if (!recapCompositeSourceUrl() && !state.uploadedVideoPath) return;
         const payload = ddCompositePayload();
         const hash = JSON.stringify(payload);
         if (hash === recapCompositeHash) return; // nothing changed
@@ -7857,8 +7880,8 @@ function setupRecapVisualEditor() {
         picker.classList.toggle("fill-picker-disabled", disabled);
         picker.querySelectorAll(".pill-btn").forEach(b => { b.disabled = disabled; });
         if (disabled) {
-            note.classList.add("hidden");
-            note.innerText = "";
+            note.innerText = t("recap_fill_disabled_note");
+            note.classList.remove("hidden");
             return;
         }
         if (fill === "crop") {
@@ -8069,6 +8092,8 @@ function setupRecapVisualEditor() {
             if (canvas) {
                 canvas.classList.toggle("mirrored", state.recapMirror);
             }
+            refreshRecapStep2Summary();
+            if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
         });
     }
 
@@ -8093,6 +8118,7 @@ function setupRecapVisualEditor() {
             btn.classList.add("active");
             state.recapSpeed = btn.getAttribute("data-speed") || "+12%";
             moveSpeedPill(document.getElementById("recap-speed-picker"));
+            if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
         });
     });
 
@@ -8229,6 +8255,7 @@ function setupRecapVisualEditor() {
     if (geminiVoiceSel) {
         geminiVoiceSel.addEventListener("change", () => {
             state.recapGeminiVoice = geminiVoiceSel.value || "";
+            if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
             // Stop a Gemini preview still playing the previous pick.
             if (currentPreviewButton && currentPreviewButton.id === "btn-preview-gemini-voice") {
                 stopCurrentVoicePreview();
@@ -8308,6 +8335,8 @@ function setupRecapVisualEditor() {
             // The band plate tracks the caption (Q1): grow when the
             // caption returns, relax to the slider height when hidden.
             syncBlurBoxVisual();
+            scheduleRecapCompositeRefresh();
+            refreshRecapStep2Summary();
         });
     }
 
@@ -8377,10 +8406,15 @@ function setupRecapVisualEditor() {
     }
     // 11. Font Size — Batch DD: ONE full-width slider (10–26pt)
     // with a numeric readout, replacing the 4 size pills.
-    function syncSubtitleFontSize(sizeVal) {
-        state.recapFontSize = Math.max(10, Math.min(30, parseInt(sizeVal || "16") || 16));
+    function syncSubtitleFontSize(sizeVal, snapThumb = true) {
+        let f = parseFloat(sizeVal);
+        if (!Number.isFinite(f)) f = 16;
+        for (const s of [13, 16, 19, 22]) {
+            if (Math.abs(f - s) <= 0.5) { f = s; break; }
+        }
+        state.recapFontSize = Math.max(10, Math.min(30, Math.round(f)));
         const fsSlider = document.getElementById("slider-font-size");
-        if (fsSlider && parseInt(fsSlider.value) !== state.recapFontSize) fsSlider.value = state.recapFontSize;
+        if (fsSlider && snapThumb && parseFloat(fsSlider.value) !== state.recapFontSize) fsSlider.value = state.recapFontSize;
         const fsVal = document.getElementById("val-font-size");
         if (fsVal) fsVal.innerText = `${state.recapFontSize}pt`;
         updateSubtitleVisualPreview();
@@ -8389,7 +8423,15 @@ function setupRecapVisualEditor() {
     }
     const fontSizeSliderEl = document.getElementById("slider-font-size");
     if (fontSizeSliderEl) {
-        fontSizeSliderEl.addEventListener("input", () => syncSubtitleFontSize(fontSizeSliderEl.value));
+        fontSizeSliderEl.addEventListener("input", () => syncSubtitleFontSize(fontSizeSliderEl.value, false));
+        fontSizeSliderEl.addEventListener("change", () => syncSubtitleFontSize(fontSizeSliderEl.value, true));
+        fontSizeSliderEl.addEventListener("keydown", (e) => {
+            if (e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowDown") {
+                e.preventDefault();
+                const step = (e.key === "ArrowRight" || e.key === "ArrowUp") ? 1 : -1;
+                syncSubtitleFontSize((state.recapFontSize || 16) + step, true);
+            }
+        });
     }
 
     // 12. Subtitle Lines Picker (Synchronized across toolbar & advanced settings)
@@ -8443,6 +8485,7 @@ function setupRecapVisualEditor() {
         const styleName = t("sub_style_" + (state.recapSubStyle || "yellow"));
         const prot = t("recap_protection_" + (state.recapProtection || "standard"));
         const strip = document.getElementById("recap-step2-summary");
+        const mTag = state.recapMirror !== false ? "🪞 " + t("recap_fact_mirror_on") : "";
         if (strip) {
             strip.innerText = [
                 state.recapRatio || "9:16",
@@ -8450,7 +8493,8 @@ function setupRecapVisualEditor() {
                 `${state.recapFontSize || 16}pt`,
                 styleName,
                 `🛡️ ${prot}`,
-            ].join(" · ");
+                mTag,
+            ].filter(Boolean).join(" · ");
         }
         const setVal = (id, txt) => {
             const gEl = document.getElementById(id);
@@ -8462,7 +8506,7 @@ function setupRecapVisualEditor() {
         const nBoxes = (state.recapBlurBoxes || []).length;
         setVal("recap-blur-group", `${state.recapBlurAutoDetect !== false ? t("toggle_on") : t("toggle_off")} · ×${nBoxes}`);
         setVal("recap-logo-group", `${state.recapLogo !== false ? t("toggle_on") : t("toggle_off")} · ${state.recapLogoPos || "top-right"}`);
-        setVal("recap-preview-transform-group", `🛡️ ${prot} · ${state.recapZoom || 1}x`);
+        setVal("recap-preview-transform-group", [`🛡️ ${prot}`, `${state.recapZoom || 1}x`, mTag].filter(Boolean).join(" · "));
     }
     window.refreshRecapStep2Summary = refreshRecapStep2Summary;
 
@@ -8860,6 +8904,9 @@ function setupRecapVisualEditor() {
         let w = Math.min(300, parentW);
         if (window.innerHeight < 640) {
             w = Math.min(w, window.innerHeight * 0.44 * 9 / 16);
+        } else {
+            const capH = window.innerHeight - 240;
+            if (capH > 200 && (w * 16 / 9) > capH) w = Math.min(w, capH * 9 / 16);
         }
         frame.style.width = `${Math.round(w)}px`;
         frame.style.height = `${Math.round(w * 16 / 9)}px`;
@@ -9560,10 +9607,7 @@ function setupRecapVisualEditor() {
     window.restoreRecapSettings = restoreRecapSettings;
     window.__ddFitPreviewFrame = typeof ddFitPreviewFrame === "function" ? ddFitPreviewFrame : null;
     window.refreshRecapStep2Summary = typeof refreshRecapStep2Summary === "function" ? refreshRecapStep2Summary : null;
-    window.refreshRecapStep4Output = function () {
-        if (typeof refreshRecapStep4Thumb === "function") refreshRecapStep4Thumb();
-        if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
-    };
+    window.refreshRecapStep4Output = typeof refreshRecapStep4Output === "function" ? refreshRecapStep4Output : null;
     window.resyncRecapControlsAfterPrefs = function () {
         restoreRecapSettings();
     };
@@ -12713,6 +12757,8 @@ function closeSlipModal() {
     if (modal) modal.classList.add("hidden");
 }
 
+function signedAdminHref(u) { return u && urlCarriesStreamToken(u) ? escapeHtml(u) : "#"; }
+
 function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, title) {
     haptic("light");
     const modal = document.getElementById("admin-media-modal");
@@ -12807,25 +12853,25 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
             buttons += dis(t("dl_open_in_browser_tab"));
         } else if (jobType === "RECAP") {
             if (deliverables.video) {
-                buttons += `<a href="#" data-dl-url="${deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", title, jobId)}" class="mini-chip gold">${escapeHtml(t("adm_media_dl_video"))}</a>`;
+                buttons += `<a href="${signedAdminHref(deliverables.video)}" download="${brandedDlName("Recap", "mp4", title, jobId)}" data-dl-url="${deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", title, jobId)}" class="mini-chip gold">${escapeHtml(t("adm_media_dl_video"))}</a>`;
             }
             if (deliverables.audio) {
-                buttons += `<a href="#" data-dl-url="${deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_audio"))}</a>`;
+                buttons += `<a href="${signedAdminHref(deliverables.audio)}" download="${brandedDlName("RecapAudio", "mp3", title, jobId)}" data-dl-url="${deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_audio"))}</a>`;
             }
             if (deliverables.srt) {
-                buttons += `<a href="#" data-dl-url="${deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_srt"))}</a>`;
+                buttons += `<a href="${signedAdminHref(deliverables.srt)}" download="${brandedDlName("Subtitles", "srt", title, jobId)}" data-dl-url="${deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_srt"))}</a>`;
             }
             if (deliverables.script) {
-                buttons += `<a href="#" data-dl-url="${deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_script"))}</a>`;
+                buttons += `<a href="${signedAdminHref(deliverables.script)}" download="${brandedDlName("Script", "txt", title, jobId)}" data-dl-url="${deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", title, jobId)}" class="mini-chip">${escapeHtml(t("adm_media_dl_script"))}</a>`;
             }
         } else {
             const dlUrl = deliverables.download || downloadUrl;
             if (dlUrl) {
-                buttons += `<a href="#" data-dl-url="${dlUrl}" data-dl-name="${brandedDlName("Voice", "wav", null, jobId)}" class="mini-chip gold">${escapeHtml(t("adm_media_dl_voice"))}</a>`;
+                buttons += `<a href="${signedAdminHref(dlUrl)}" download="${brandedDlName("Voice", "wav", null, jobId)}" data-dl-url="${dlUrl}" data-dl-name="${brandedDlName("Voice", "wav", null, jobId)}" class="mini-chip gold">${escapeHtml(t("adm_media_dl_voice"))}</a>`;
             }
         }
         if (mediaAvailable && downloadUrl) {
-            buttons += `<a href="#" data-open-url="${downloadUrl}" class="mini-chip" style="opacity: 0.85;">${t("dl_open_in_browser_tab")}</a>`;
+            buttons += `<a href="${signedAdminHref(downloadUrl)}" target="_blank" rel="noopener" data-open-url="${downloadUrl}" class="mini-chip" style="opacity: 0.85;">${t("dl_open_in_browser_tab")}</a>`;
         }
         delivEl.innerHTML = buttons;
         // Batch CK: wire these anchors DIRECTLY. The modal's content
@@ -13762,7 +13808,7 @@ function renderAdminQueueData(data) {
         } else if (j.download_url) {
             const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
             actionsHtml += `<button class="queue-act-btn uid adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(qTitle)}">${escapeHtml(t("adm_btn_play"))}</button>`;
-            actionsHtml += `<a href="#" data-open-url="${j.download_url}" class="queue-act-btn uid" title="${escapeHtml(t("adm_open_stream_title"))}">↗️</a>`;
+            actionsHtml += `<a href="${signedAdminHref(j.download_url)}" target="_blank" rel="noopener" data-open-url="${j.download_url}" class="queue-act-btn uid" title="${escapeHtml(t("adm_open_stream_title"))}">↗️</a>`;
         }
 
         const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (statusLower === "running" ? 58 : 22)));
@@ -13950,7 +13996,7 @@ function renderAdminHistoryData(data) {
                         <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>
                     ` : (j.download_url ? `
                         <button class="btn-play-preview adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(titleStr)}">${escapeHtml(t("adm_btn_preview"))}</button>
-                        <a href="#" data-open-url="${j.download_url}" class="history-dl-link" title="${escapeHtml(t("adm_open_stream_title"))}">↗️</a>
+                        <a href="${signedAdminHref(j.download_url)}" target="_blank" rel="noopener" data-open-url="${j.download_url}" class="history-dl-link" title="${escapeHtml(t("adm_open_stream_title"))}">↗️</a>
                     ` : '')}
                     ${isFailed ? `
                         <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>

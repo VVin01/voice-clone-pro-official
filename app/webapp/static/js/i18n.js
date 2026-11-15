@@ -1595,6 +1595,9 @@ const translations = {
         adm_stage_lbl_png: "Subtitle PNG",
         adm_stage_lbl_overlay: "Overlay",
         adm_stage_lbl_mux: "Mux",
+        recap_fact_mirror_on: "Mirror ဖွင့်ထား",
+        recap_fill_disabled_note: "ℹ️ မူရင်းနှင့် အချိုးမတူသော ဘောင်တွင်သာ ရွေးနိုင်သည်",
+        recap_info_processing: "⚙️ ဆာဗာတွင် ပြင်ဆင်နေသည်…",
     },
     en: {
         // App Top Bar & Brand
@@ -3185,6 +3188,9 @@ const translations = {
         adm_stage_lbl_png: "Subtitle PNG",
         adm_stage_lbl_overlay: "Overlay",
         adm_stage_lbl_mux: "Mux",
+        recap_fact_mirror_on: "Mirror: on",
+        recap_fill_disabled_note: "ℹ️ Available when output aspect differs from source",
+        recap_info_processing: "⚙️ Processing on server…",
     }
 };
 
