@@ -156,6 +156,7 @@ def test_history_js_duration_and_22h_display_only_expires_soon_node_vm():
     ]
     helper_stubs = """
     const window = {};
+    const state = { canUseAiThumbnail: false, aiThumbnailCapReached: false, user: null };
     function escapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}
     function brandedDlName(a,b,c,d){return a+'_'+d+'.'+b;}
     let hubOpenDetailId = null;
