@@ -104,7 +104,7 @@ def _capture_audit_prompt(monkeypatch, style: str) -> str:
     ]
 
     def fake_gemini_json(ai, prompt, retries=1, log=None, rotation_tier=None):
-        captured["prompt"] = prompt
+        captured.setdefault("prompt", prompt)
         return {"checks": [{"id": row["id"], "status": "pass"} for row in rows]}
 
     monkeypatch.setattr(planner, "_gemini_json", fake_gemini_json)
