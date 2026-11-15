@@ -9119,6 +9119,8 @@ html, body {
         top: auto;
     }
 }
+#tab-recap .vcp-step2-sticky-preview.is-ratio-9-16,
+#tab-recap .vcp-step2-sticky-preview.is-portrait-stage { position: relative; top: auto; }
 #tab-recap .recap-dock-section {
     position: relative;
     z-index: 18;
@@ -10988,4 +10990,10 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
     text-align: left;
 }
 .adm-stage-table tbody tr:last-child td { border-bottom: none; }
+.slider-ticks { position: relative; height: 15px; margin-top: 2px; font-size: 10.5px; color: var(--text-muted); }
+.slider-ticks span { position: absolute; transform: translateX(-50%); }
+.slider-ticks span:nth-child(1) { left: 18.75%; }
+.slider-ticks span:nth-child(2) { left: 37.5%; }
+.slider-ticks span:nth-child(3) { left: 56.25%; }
+.slider-ticks span:nth-child(4) { left: 75%; }
 .adm-stage-table .adm-num { text-align: right; white-space: nowrap; }
