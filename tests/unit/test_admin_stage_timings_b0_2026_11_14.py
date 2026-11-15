@@ -282,7 +282,7 @@ def test_b0_ui_i18n_and_cache_token():
     assert "loadAdminStageTimings(false)" in APP_JS
     assert "syncTabAdminLifecycle(tabId)" in APP_JS
     assert "syncTabAdminLifecycle(targetTab)" in APP_JS
-    assert INDEX_HTML.count("?v=20261114_r150") == 4
+    assert INDEX_HTML.count("?v=20261115_r151") == 4
     assert "20261114_r149" not in INDEX_HTML
 
     # Verify all new B0 keys exist cleanly in BOTH my and en locales

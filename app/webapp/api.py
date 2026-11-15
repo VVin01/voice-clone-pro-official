@@ -4403,8 +4403,8 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
     "recapRatioFill": ["blur", "crop", "black"],
     "recapSpeed": ["+0%", "+8%", "+12%", "+18%", "+22%"],
     "recapStoryStyle": ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
-    # Batch DD: 10 style presets (was 7) + the protection level.
-    "recapSubStyle": ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"],
+    # S4: 12 style presets (10 original + cinematic & glass).
+    "recapSubStyle": ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint", "cinematic", "glass"],
     "recapProtection": ["off", "standard", "strong"],
     "recapSubFont": ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
     "recapLogoPos": ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
@@ -4622,10 +4622,15 @@ async def get_user_preferences(
             stored = json.loads(row.prefs_json)
         except (TypeError, ValueError):
             stored = None
+    prefs = _effective_user_prefs(stored)
+    # D2 / S4: brand-new accounts (no saved UserPreference row yet) receive
+    # Cinematic White by default; existing saved rows keep stored style / yellow.
+    if row is None:
+        prefs["recapSubStyle"] = "cinematic"
     return {
         "success": True,
         "is_new": row is None,
-        "preferences": _effective_user_prefs(stored),
+        "preferences": prefs,
     }
 
 

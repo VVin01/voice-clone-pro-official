@@ -1819,14 +1819,20 @@ let userPrefsSaveTimer = null;
 // reference picture height (608) matches core's
 // SUB_MARGIN_CONVERT_REF_PICTURE_H.
 function subtitleFontFractionOfPicture(sizePt, lines) {
-    const pts = [[13, 3.2], [16, 4.0], [19, 4.8], [22, 5.6]];
+    const pts = [[13, 4.0], [16, 5.0], [19, 6.0], [22, 7.0]];
     let pt = parseFloat(sizePt);
     if (!Number.isFinite(pt)) pt = 16;
-    pt = Math.min(22, Math.max(13, pt));
     let frac = null;
-    for (let i = 0; i < pts.length - 1; i++) {
-        const x0 = pts[i][0], y0 = pts[i][1], x1 = pts[i + 1][0], y1 = pts[i + 1][1];
-        if (pt >= x0 && pt <= x1) { frac = y0 + (y1 - y0) * ((pt - x0) / (x1 - x0)); break; }
+    if (pt <= pts[0][0]) {
+        frac = pts[0][1] * pt / pts[0][0];
+    } else if (pt >= pts[pts.length - 1][0]) {
+        const a = pts[pts.length - 2], b = pts[pts.length - 1];
+        frac = b[1] + (b[1] - a[1]) * ((pt - b[0]) / (b[0] - a[0]));
+    } else {
+        for (let i = 0; i < pts.length - 1; i++) {
+            const x0 = pts[i][0], y0 = pts[i][1], x1 = pts[i + 1][0], y1 = pts[i + 1][1];
+            if (pt >= x0 && pt <= x1) { frac = y0 + (y1 - y0) * ((pt - x0) / (x1 - x0)); break; }
+        }
     }
     if (frac == null) frac = pts[pts.length - 1][1];
     if ((parseInt(lines) || 1) !== 1) frac *= 1.25;
@@ -6682,13 +6688,17 @@ function setupRecapVisualEditor() {
         return sy;
     }
 
-    // Batch AK: the subtitle PLATE height as a fraction of the
-    // PICTURE height — core._plate_height_px's formula evaluated at
-    // the 608px reference picture height (the fraction is stable
-    // across picture heights to ~0.1pt).
+    // S3: plate height fraction matching core._plate_height_px with font sized
+    // off the shorter picture side min(pw, ph) relative to picture height.
     function subtitlePlateHeightFracOfPicture() {
         const PH = 608;
-        const fp = Math.max(18, PH * subtitleFontFraction(state.recapFontSize || 16, state.recapLines || 1));
+        const r = recapPictureRect();
+        const cw = (canvas ? canvas.clientWidth : 0) || 270;
+        const ch = (canvas ? canvas.clientHeight : 0) || 480;
+        const picH = Math.max(120, r.ph * ch);
+        const basis = Math.max(60, Math.min(r.pw * cw, r.ph * ch));
+        const scaledBasis = PH * (basis / picH);
+        const fp = Math.max(18, scaledBasis * subtitleFontFraction(state.recapFontSize || 16, state.recapLines || 1));
         const textH = fp * ((state.recapLines || 1) === 2 ? 2.30 : 1.15);
         const pad = Math.max(10, fp * 0.40);
         return (textH + 2 * pad) / PH;
@@ -6775,11 +6785,10 @@ function setupRecapVisualEditor() {
         saveRecapSettings();
     }
 
-    // Picker size → fraction of the PICTURE height (Batch AK —
-    // picture-relative, the Recapter standard); mirrors
-    // SUBTITLE_FONT_HEIGHT_FRACTIONS in core.py (×1.25 two-line).
+    // Picker size → fraction of the shorter picture side min(pw, ph);
+    // mirrors SUBTITLE_FONT_HEIGHT_FRACTIONS in core.py (×1.25 two-line).
     function subtitleFontFraction(sizePt, lines) {
-        const pts = [[13, 3.2], [16, 4.0], [19, 4.8], [22, 5.6]];
+        const pts = [[13, 4.0], [16, 5.0], [19, 6.0], [22, 7.0]];
         const v = parseFloat(sizePt) || 16;
         let f;
         if (v <= pts[0][0]) {
@@ -6802,12 +6811,14 @@ function setupRecapVisualEditor() {
     }
 
     function subtitlePreviewFontPx() {
+        const canvasW = canvas ? canvas.clientWidth : 0;
         const canvasH = canvas ? canvas.clientHeight : 0;
         const frac = subtitleFontFraction(state.recapFontSize || 16, state.recapLines || 1);
-        // Batch AK: the fraction applies to the PICTURE's height on
-        // canvas (ph × canvasH), mirroring core.subtitle_font_px.
+        // S3: the fraction applies to min(pw * canvasW, ph * canvasH),
+        // mirroring core.subtitle_font_px across all aspect ratios.
         const r = recapPictureRect();
-        return canvasH > 0 ? Math.max(8, Math.round(frac * r.ph * canvasH)) : 13;
+        const basis = Math.min(r.pw * canvasW, r.ph * canvasH);
+        return basis > 0 ? Math.max(8, Math.round(frac * basis)) : 13;
     }
 
     // 1. Slider Controls for Original Blur and Subtitle Y (100% synced with backend FFmpeg coordinates)
@@ -8581,6 +8592,8 @@ function setupRecapVisualEditor() {
     // (5) Free style controls. A preset SEEDS them (ddSeedStyleControls,
     // called from the style dropdown); the user can still tweak.
     const DD_PRESET_SEED = {
+        cinematic: { text: "#ffffff", outline: "#000000", ow: 2.5, bg: null, bgOp: null, shadow: true },
+        glass: { text: "#ffffff", outline: "#000000", ow: 1.0, bg: "#000000", bgOp: 58, shadow: false },
         yellow: { text: "#ffd700", outline: "#000000", ow: 2.2, bg: null, bgOp: null },
         white: { text: "#ffffff", outline: "#1a1a1a", ow: 1.8, bg: null, bgOp: null },
         boxed: { text: "#ffffff", outline: "#000000", ow: 1.0, bg: "#000000", bgOp: 35 },
@@ -8620,6 +8633,15 @@ function setupRecapVisualEditor() {
             if (bo) bo.value = seed.bgOp;
             const boVal = document.getElementById("val-bg-opacity");
             if (boVal) boVal.innerText = `${seed.bgOp}%`;
+        }
+        if (typeof seed.shadow === "boolean") {
+            state.recapSubShadow = seed.shadow;
+            const shBtn = document.getElementById("btn-toggle-sub-shadow");
+            if (shBtn) {
+                shBtn.classList.toggle("active", seed.shadow);
+                const tv = shBtn.querySelector(".t-val");
+                if (tv) tv.innerText = seed.shadow ? t("toggle_on") : t("toggle_off");
+            }
         }
         ddStyleChanged();
     }
@@ -9201,7 +9223,7 @@ function setupRecapVisualEditor() {
         recapRatioFill: ["blur", "crop", "black"],
         recapSpeed: ["+0%", "+8%", "+12%", "+18%", "+22%"],
         recapStoryStyle: ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
-        recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"],
+        recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint", "cinematic", "glass"],
         recapProtection: ["off", "standard", "strong"],
         recapSubFont: ["padauk", "noto_sans", "pyidaungsu", "noto_serif"],
         recapLogoPos: ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],

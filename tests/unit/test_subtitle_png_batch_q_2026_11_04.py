@@ -161,9 +161,10 @@ def test_band_presets_get_rounded_rect_backing():
 
 
 def test_all_seven_presets_survive():
-    # Batch DD: the original seven survive, plus three more
-    # (rose / orange / mint) for the rebuilt Step-2 style picker.
+    # Batch DD + Brief v2 S4: the ten prior presets survive alongside
+    # cinematic and glass.
     assert set(SUBTITLE_STYLE_PRESETS) == {
+        "cinematic", "glass",
         "yellow", "white", "boxed", "neon", "band", "heavy", "soft",
         "rose", "orange", "mint",
     }
@@ -220,27 +221,27 @@ def test_normalize_cue_lines_rules():
 # ── 7. New size table + preview mirror parity ──────────────────────
 
 @pytest.mark.parametrize(
-    "pt,frac", [(13, 0.032), (16, 0.040), (19, 0.048), (22, 0.056)]
+    "pt,frac", [(13, 0.040), (16, 0.050), (19, 0.060), (22, 0.070)]
 )
 def test_new_font_fraction_table(pt, frac):
     assert core._subtitle_font_fraction(pt) == pytest.approx(frac)
 
 
 def test_default_size_bump_exact_px():
-    # The approved bump: 16pt default 3.2% → 4.0% of canvas height.
-    assert subtitle_font_px(1280, 720, 16, 1, None) == 29   # was 23
-    assert subtitle_font_px(1080, 1920, 16, 1, None) == 77  # was 61
-    assert subtitle_font_px(1920, 1080, 16, 1, None) == 43  # was 35
-    assert subtitle_font_px(1080, 1920, 16, 2, None) == 96  # two-line ×1.25
+    # Brief v2 S3: 16pt = 5.0% of picture shortest edge min(pw, ph).
+    assert subtitle_font_px(1280, 720, 16, 1, None) == 36
+    assert subtitle_font_px(1080, 1920, 16, 1, None) == 54
+    assert subtitle_font_px(1920, 1080, 16, 1, None) == 54
+    assert subtitle_font_px(1080, 1920, 16, 2, None) == 68  # two-line ×1.25
     sizes = {pt: subtitle_font_px(1080, 1920, pt, 1, None) for pt in (13, 16, 19, 22)}
-    assert sizes == {13: 61, 16: 77, 19: 92, 22: 108}
+    assert sizes == {13: 43, 16: 54, 19: 65, 22: 76}
     assert len(set(sizes.values())) == 4
 
 
 def test_preview_mirror_matches_new_table():
-    assert "[[13, 3.2], [16, 4.0], [19, 4.8], [22, 5.6]]" in APP_JS
+    assert "[[13, 4.0], [16, 5.0], [19, 6.0], [22, 7.0]]" in APP_JS
     for _pt, frac in core.SUBTITLE_FONT_HEIGHT_FRACTIONS:
-        assert frac in (0.032, 0.040, 0.048, 0.056)
+        assert frac in (0.040, 0.050, 0.060, 0.070)
 
 
 # ── 8. The libass burn is gone from both graph builders ────────────
@@ -387,5 +388,5 @@ def test_end_to_end_preview_frame_uses_png(tmp_path):
 # ── 11. Cache version ──────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261114_r150") == 4
+    assert INDEX_HTML.count("?v=20261115_r151") == 4
     assert "20261104_r48" not in INDEX_HTML

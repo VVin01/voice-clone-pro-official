@@ -43,7 +43,7 @@ def test_v2_phase1_asset_weight_under_15_percent_cap():
 
 
 def test_v2_phase1_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261114_r150") == 4
+    assert INDEX_HTML.count("?v=20261115_r151") == 4
     assert "20261114_r146" not in INDEX_HTML
 
 

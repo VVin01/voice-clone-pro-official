@@ -326,8 +326,8 @@ def test_custom_font_resolution_and_fallback(tmp_path):
 
 
 def test_ten_style_presets_registered_everywhere():
-    assert len(core.SUBTITLE_STYLE_PRESETS) == 10
-    for key in ("rose", "orange", "mint"):
+    assert len(core.SUBTITLE_STYLE_PRESETS) == 12
+    for key in ("cinematic", "glass", "rose", "orange", "mint"):
         assert key in core.SUBTITLE_STYLE_PRESETS
         assert f'"{key}"' in API_PY  # prefs enum carries it
         assert f'value="{key}"' in INDEX_HTML  # the dropdown offers it
@@ -485,9 +485,9 @@ def test_submit_and_composite_share_dd_payload_fields():
 # ── 9. Cache token ────────────────────────────────────────────────
 
 def test_cache_token_is_r140():
-    assert INDEX_HTML.count("20261114_r150") == 4
+    assert INDEX_HTML.count("20261115_r151") == 4
     assert "r125" not in INDEX_HTML
-    assert INDEX_HTML.count("r150") == 4
+    assert INDEX_HTML.count("r151") == 4
 
 
 def test_dd_sig_declarations_precede_first_use():

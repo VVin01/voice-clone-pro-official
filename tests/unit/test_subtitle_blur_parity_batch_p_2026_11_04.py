@@ -129,8 +129,8 @@ def test_srt_fallback_uses_the_shared_anchor():
 # ── 2. One height-relative font formula ────────────────────────────
 
 @pytest.mark.parametrize(
-    # Batch Q raised every anchor one notch (see Batch Q test file).
-    "pt,frac", [(13, 0.032), (16, 0.040), (19, 0.048), (22, 0.056)]
+    # Brief v2 S3 recalibrated picture-shortest-edge table (5.0% @ 16pt).
+    "pt,frac", [(13, 0.040), (16, 0.050), (19, 0.060), (22, 0.070)]
 )
 def test_font_fraction_table(pt, frac):
     assert core._subtitle_font_fraction(pt) == pytest.approx(frac)
@@ -138,10 +138,8 @@ def test_font_fraction_table(pt, frac):
 
 def test_font_sizes_distinct_and_exact():
     sizes = {pt: subtitle_font_px(CW, CH, pt, 1, LB) for pt in (13, 16, 19, 22)}
-    # Batch AK: picture-relative basis (608px picture) — Batch P's
-    # canvas-basis {61, 77, 92, 108} is superseded on letterboxed
-    # layouts; full-frame values are unchanged.
-    assert sizes == {13: 19, 16: 24, 19: 29, 22: 34}
+    # Brief v2 S3: min(pw, ph) = 608px on LB with 4/5/6/7% fractions.
+    assert sizes == {13: 24, 16: 30, 19: 36, 22: 43}
     assert len(set(sizes.values())) == 4  # no compression
 
 
@@ -159,7 +157,7 @@ def test_font_two_line_factor():
         one = subtitle_font_px(CW, CH, pt, 1, None)
         two = subtitle_font_px(CW, CH, pt, 2, None)
         assert two == pytest.approx(one * 1.25, abs=1.5)
-    assert subtitle_font_px(CW, CH, 16, 2, None) == 96
+    assert subtitle_font_px(CW, CH, 16, 2, None) == 68
 
 
 def test_font_minimum_and_interpolation():
@@ -171,9 +169,9 @@ def test_font_minimum_and_interpolation():
 
 
 def test_font_scales_with_canvas_height_only():
-    # Same fraction at another canvas height (16:9 output).
-    assert subtitle_font_px(1920, 1080, 22, 1, None) == round(1080 * 0.056)
-    assert subtitle_font_px(1920, 1080, 16, 1, None) == round(1080 * 0.040)
+    # Same fraction anchored on shortest edge (1080px for 1920x1080).
+    assert subtitle_font_px(1920, 1080, 22, 1, None) == round(1080 * 0.070)
+    assert subtitle_font_px(1920, 1080, 16, 1, None) == round(1080 * 0.050)
 
 
 # ── 3. Full-frame position geometry unchanged ──────────────────────
@@ -186,11 +184,11 @@ def test_full_frame_anchor_unchanged():
 
 
 def test_full_frame_plate_unchanged():
-    # Position rule unchanged; the fitted height follows the font
-    # (Batch Q: 77px at 16pt → h 0.0782 under the settle-fit
-    # contract, above the caller's 0.07 minimum).
+    # Position rule unchanged; under Brief v2 S3 (54px at 16pt on
+    # 1080x1920), the natural height (~0.0548) sits inside the caller's
+    # 0.07 min_h floor.
     plate = subtitle_plate_box(CW, CH, None, raw_font_size=16, sub_lines=1, sub_y=0.85, min_h=0.07)
-    assert plate == {"x": 0.04, "y": 0.85, "w": 0.92, "h": 0.0782}
+    assert plate == {"x": 0.04, "y": 0.85, "w": 0.92, "h": 0.07}
     # Safe-bottom clamp still applies full-frame.
     plate2 = subtitle_plate_box(CW, CH, None, raw_font_size=16, sub_lines=1, sub_y=0.98, min_h=0.07)
     assert abs((plate2["y"] + plate2["h"] / 2) - 0.92) < 1e-9
@@ -221,13 +219,10 @@ def test_sub_y_none_keeps_legacy_fallbacks(tmp_path):
 # ── 4. Default placement on the live-test geometry ─────────────────
 
 def test_default_subtitle_landing_letterbox():
-    # Default sub_y=85, 16pt, 1 line — where a default job's
-    # subtitle lands now (centre 61.1% of canvas, inside the
-    # picture near its bottom; font 77px since Batch Q's bump).
-    # Batch AK: the anchor centre is unchanged; the FONT is now
-    # picture-relative (24px = 4.0% of the 608px picture height).
+    # Default margin/sub_y=85, 16pt, 1 line — anchor centre unchanged (0.6108),
+    # while Brief v2 S3 sets font to 5.0% of 608px = 30px.
     assert subtitle_anchor_y(CW, CH, LB, sub_y=0.85) == pytest.approx(0.6108, abs=0.001)
-    assert subtitle_font_px(CW, CH, 16, 1, LB) == 24
+    assert subtitle_font_px(CW, CH, 16, 1, LB) == 30
 
 
 # ── 5. Preview mirrors the same geometry (no mockup) ───────────────
@@ -241,9 +236,9 @@ def test_preview_anchor_and_size_helpers():
     assert "function subtitleAnchorCanvasFrac(" in APP_JS
     assert "function subtitleFontFraction(" in APP_JS
     # The JS table is the same table as core.py's.
-    assert "[[13, 3.2], [16, 4.0], [19, 4.8], [22, 5.6]]" in APP_JS
+    assert "[[13, 4.0], [16, 5.0], [19, 6.0], [22, 7.0]]" in APP_JS
     for pt, frac in core.SUBTITLE_FONT_HEIGHT_FRACTIONS:
-        assert frac in (0.032, 0.040, 0.048, 0.056)
+        assert frac in (0.040, 0.050, 0.060, 0.070)
 
 
 def test_preview_sub_and_plate_use_anchor():
@@ -286,5 +281,5 @@ def test_blur_box_basis_canvas_on_both_sides():
 # ── 7. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r50():
-    assert INDEX_HTML.count("?v=20261114_r150") == 4
+    assert INDEX_HTML.count("?v=20261115_r151") == 4
     assert "20261104_r48" not in INDEX_HTML

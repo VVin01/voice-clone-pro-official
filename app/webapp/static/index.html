@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261114_r150">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261115_r151">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261114_r150" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261115_r151" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1173,8 +1173,16 @@
                         </div>
                         <div class="style-selector-row">
                             <span class="style-lbl" data-i18n="sub_style_label">စာတန်း စတိုင်လ်:</span>
-                            <!-- Visual sample cards for all 10 subtitle presets (owner confirmed) -->
+                            <!-- Visual sample cards for all 12 subtitle presets -->
                             <div class="vcp-sub-style-cards-grid mt-1" id="sub-style-cards-grid">
+                                <button type="button" class="vcp-sub-style-card" data-style-card="cinematic" onclick="selectRecapSubStyleCard('cinematic')">
+                                    <span class="vcp-sub-sample sample-cinematic" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_cinematic">🎬 Cinematic White (ရုပ်ရှင်အဖြူ)</span>
+                                </button>
+                                <button type="button" class="vcp-sub-style-card" data-style-card="glass" onclick="selectRecapSubStyleCard('glass')">
+                                    <span class="vcp-sub-sample sample-glass" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
+                                    <span class="vcp-sub-card-name" data-i18n="sub_style_glass">🪟 Modern Clean (မှန်ကြည်)</span>
+                                </button>
                                 <button type="button" class="vcp-sub-style-card active" data-style-card="yellow" onclick="selectRecapSubStyleCard('yellow')">
                                     <span class="vcp-sub-sample sample-yellow" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
                                     <span class="vcp-sub-card-name" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</span>
@@ -1217,6 +1225,8 @@
                                 </button>
                             </div>
                             <select id="sub-style-picker" class="studio-select glass-dropdown mt-2" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
+                                <option value="cinematic" data-i18n="sub_style_cinematic">🎬 Cinematic White (ရုပ်ရှင်အဖြူ)</option>
+                                <option value="glass" data-i18n="sub_style_glass">🪟 Modern Clean (မှန်ကြည်)</option>
                                 <option value="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</option>
                                 <option value="white" data-i18n="sub_style_white">⚪ Clean White (အဖြူ)</option>
                                 <option value="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</option>
@@ -3477,7 +3487,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261114_r150"></script>
-    <script src="/static/js/app.js?v=20261114_r150"></script>
+    <script src="/static/js/i18n.js?v=20261115_r151"></script>
+    <script src="/static/js/app.js?v=20261115_r151"></script>
 </body>
 </html>

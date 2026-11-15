@@ -11,7 +11,7 @@ PHASE5_CSS = STYLE_CSS.split(PHASE5_MARKER, 1)[1]
 
 
 def test_v2_phase5_cache_token_current():
-    assert INDEX_HTML.count("?v=20261114_r150") == 4
+    assert INDEX_HTML.count("?v=20261115_r151") == 4
     assert "20261114_r146" not in INDEX_HTML
 
 
