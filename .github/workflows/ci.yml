@@ -36,6 +36,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
+      TMPDIR: ${{ github.workspace }}/.pytest-tmp
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -57,7 +58,10 @@ jobs:
       # the stale directory before the suite, or later runs fail with
       # "No space left on device" (as in main run #747).
       - name: Clear stale pytest temp dir
-        run: rm -rf /tmp/pytest-of-root
+        run: |
+          rm -rf /tmp/pytest-of-root
+          rm -rf "${{ github.workspace }}/.pytest-tmp"
+          mkdir -p "${{ github.workspace }}/.pytest-tmp"
 
       - name: Run test suite
         run: python -m pytest -q -rs
