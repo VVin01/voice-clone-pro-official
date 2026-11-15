@@ -452,16 +452,19 @@ def test_slider_css_touch_geometry():
 
 def test_voice_speed_labels_use_percent_language():
     i18n_js = _read("app/webapp/static/js/i18n.js")
-    for needle in ('speed_slow: "-20% နှေး"', 'speed_normal: "+0% ပုံမှန်"', 'speed_fast: "+20% မြန်"',
-                   'speed_slow: "-20% Slow"', 'speed_normal: "+0% Normal"', 'speed_fast: "+20% Fast"'):
+    for needle in (
+        'speed_m6: "-6% နှေး"', 'speed_0: "+0% ပုံမှန်"', 'speed_12_capsule: "+12% အကြံပြု"',
+        'speed_20: "+20% မြန်"', 'speed_25: "+25% အထူးမြန်"',
+        'speed_m6: "-6% Slow"', 'speed_0: "+0% Normal"', 'speed_12_capsule: "+12% Top pick"',
+        'speed_20: "+20% Fast"', 'speed_25: "+25% Ultra-fast"',
+    ):
         assert needle in i18n_js
     index = _read("app/webapp/static/index.html")
-    assert '<span class="seg-short">-20%</span>' in index
-    assert '<span class="seg-short">+0%</span>' in index
-    assert '<span class="seg-short">+20%</span>' in index
-    # Values + mappings untouched.
-    assert 'data-speed="slow"' in index and 'data-speed="normal"' in index and 'data-speed="fast"' in index
-    assert '"0.8x"' not in i18n_js.split("speed_slow")[1][:40]
+    for s in ("-6%", "+0%", "+12%", "+20%", "+25%"):
+        assert f'<span class="seg-short">{s}</span>' in index
+        assert f'data-speed="{s}"' in index
+    for tok in ("0.8x", "1.0x", "1.2x"):
+        assert f'"{tok}"' not in i18n_js
 
 
 # ===========================================================================

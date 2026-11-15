@@ -9,6 +9,11 @@ from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import Job, User, VoiceModel, utc_now
 from app.services.ledger import get_minute_balance, get_or_create_user, grant_monthly_free_allowance
 from app.services.models import get_authorized_model
+from app.services.speed import (
+    DEFAULT_SPEED,
+    normalize_api_speed,
+    resolve_speed_tempo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,25 +38,11 @@ PRE_CHECK_SAFETY_MARGIN = 1.15
 
 
 def speed_preset_factor(speed_preset) -> float:
-    """Pace multiplier for a speed preset (1.0 = normal speed).
-
-    Mirrors the preset semantics the worker already applies when
-    sanity-checking produced audio: "fast" / "1.2x" speaks ~1.2x
-    faster (shorter audio), "slow" / "0.8x" ~0.8x (longer audio); a
-    numeric preset is the factor itself, clamped to the range the
-    engines honour.
-    """
-    if isinstance(speed_preset, (int, float)):
-        return min(1.5, max(0.7, float(speed_preset)))
-    sp = str(speed_preset or "normal").strip().lower()
-    if sp in ("fast", "1.2x", "1.2"):
-        return 1.2
-    if sp in ("slow", "0.8x", "0.8"):
-        return 0.8
-    return 1.0
+    """Pace multiplier for a speed preset resolved from the unified speed system."""
+    return resolve_speed_tempo(speed_preset)
 
 
-def estimate_voice_job_seconds(text: str, speed_preset="normal") -> float:
+def estimate_voice_job_seconds(text: str, speed_preset=DEFAULT_SPEED) -> float:
     """Estimated spoken duration (seconds) for a voice job's text,
     including the pre-check safety margin."""
     chars = len((text or "").strip())
@@ -83,7 +74,7 @@ async def create_voice_clone_job(
     edge_voice: str | None = None,
     model_id: int | None = None,
     gender_preset: str = "m2m",
-    speed_preset: str = "normal",
+    speed_preset: str = DEFAULT_SPEED,
     chat_id: int | None = None,
     status_message_id: int | None = None,
     source_audio_path: str | None = None,
@@ -92,6 +83,8 @@ async def create_voice_clone_job(
 ) -> tuple[Job | None, str]:
     """Validate character limits, balance, model authorization and enqueue job."""
     from pathlib import Path
+
+    speed_preset = normalize_api_speed(speed_preset) or DEFAULT_SPEED
 
     # Encoding repair at intake (hunt #4 A1): Zawgyi-typed text is
     # converted to Unicode BEFORE every length/balance check below, so

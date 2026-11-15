@@ -360,6 +360,38 @@ window.showStudioInputModal = showStudioInputModal;
  * Voice Clone Pro & AI Movie Recap Studio
  */
 
+// ── Unified Speed System (Single Source of Truth matching app.services.speed) ──
+const VCP_SPEED_OPTIONS = ["-6%", "+0%", "+12%", "+20%", "+25%"];
+const VCP_LEGACY_SPEED_MAP = {
+    slow: "-6%", "0.8": "-6%", "0.8x": "-6%", "-20%": "-6%", "-15%": "-6%", "-8%": "-6%",
+    "1.0": "+0%", "1.0x": "+0%", "0%": "+0%",
+    normal: "+12%", "+8%": "+12%",
+    fast: "+20%", "1.2": "+20%", "1.2x": "+20%", "+15%": "+20%", "+18%": "+20%",
+    "+22%": "+25%",
+};
+function normalizeSpeedOption(v) {
+    if (v == null) return "+12%";
+    const raw = String(v).trim();
+    if (VCP_SPEED_OPTIONS.includes(raw)) return raw;
+    return VCP_LEGACY_SPEED_MAP[raw.toLowerCase()] || "+12%";
+}
+function speedTempoFactor(v) {
+    const k = String(v == null ? "" : v).trim().toLowerCase();
+    if (k === "slow" || k === "0.8" || k === "0.8x") return 0.94;
+    if (k === "normal") return 1.12;
+    if (k === "fast" || k === "1.2" || k === "1.2x") return 1.20;
+    if (k.includes("%")) {
+        const pct = parseFloat(k.replace("%", ""));
+        if (Number.isFinite(pct)) return Math.min(1.45, Math.max(0.88, 1 + pct / 100));
+    }
+    const num = parseFloat(k);
+    if (Number.isFinite(num) && num >= 0.7 && num <= 1.5) return Math.min(1.45, Math.max(0.88, num));
+    return 1.12;
+}
+window.VCP_SPEED_OPTIONS = VCP_SPEED_OPTIONS;
+window.normalizeSpeedOption = normalizeSpeedOption;
+window.speedTempoFactor = speedTempoFactor;
+
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
     tg: window.Telegram?.WebApp || null,
@@ -370,7 +402,7 @@ const state = {
     selectedPersona: "komin",
     selectedModelSlug: "voxcpm-cloud-ai",
     selectedReferenceFile: null,
-    speed: "normal",
+    speed: "+12%",
     activeJobId: null,
     pollTimer: null,
 
@@ -1877,10 +1909,10 @@ function collectAccountPrefs() {
     const splitToggle = document.getElementById("recap-split-toggle");
     return {
         voice_persona: state.selectedPersona,
-        voice_speed: state.speed,
+        voice_speed: normalizeSpeedOption(state.speed),
         recapRatio: state.recapRatio,
         recapRatioFill: state.recapRatioFill,
-        recapSpeed: state.recapSpeed,
+        recapSpeed: normalizeSpeedOption(state.recapSpeed),
         recapStoryStyle: state.recapStoryStyle,
         recapSubStyle: state.recapSubStyle,
         recapSubFont: state.recapSubFont,
@@ -1963,11 +1995,12 @@ function applyAccountPrefs(prefs) {
         if (typeof renderCuratedVoices === "function") { try { renderCuratedVoices(); } catch (e) {} }
     }
     if (typeof prefs.voice_speed === "string") {
-        state.speed = prefs.voice_speed;
+        state.speed = normalizeSpeedOption(prefs.voice_speed);
         document.querySelectorAll("#speed-selector .speed-seg").forEach(p => {
             p.classList.toggle("active", p.getAttribute("data-speed") === state.speed);
         });
         moveSpeedPill(document.getElementById("speed-selector"));
+        updateVoicePreflight();
     }
     const recapKeys = [
         "recapRatio", "recapRatioFill", "recapSpeed", "recapStoryStyle",
@@ -1986,6 +2019,7 @@ function applyAccountPrefs(prefs) {
         "recapZoom", "recapVoice", "recapGeminiVoice",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
+    state.recapSpeed = normalizeSpeedOption(state.recapSpeed);
     // Batch DD: the blur-box list rides prefs as JSON.
     if (typeof prefs.recapBlurBoxesJson === "string" && prefs.recapBlurBoxesJson) {
         try {
@@ -3707,9 +3741,10 @@ function setupVoiceStudio() {
             haptic("selection");
             speedPills.forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
-            state.speed = pill.getAttribute("data-speed");
+            state.speed = pill.getAttribute("data-speed") || "+12%";
             moveSpeedPill(document.getElementById("speed-selector"));
             updateVoicePreflight();
+            if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
         });
     });
 
@@ -8034,7 +8069,7 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // 6. Narration Speed & Pacing (+0%, +8%, +12%, +18%, +22%)
+    // 6. Narration Speed & Pacing (-6%, +0%, +12%, +20%, +25%)
     const speedBtns = document.querySelectorAll("#recap-speed-picker .speed-seg");
     speedBtns.forEach(btn => {
         btn.addEventListener("click", () => {
@@ -9199,7 +9234,7 @@ function setupRecapVisualEditor() {
     const RECAP_SETTING_ENUMS = {
         recapRatio: ["9:16", "16:9", "1:1", "Original"],
         recapRatioFill: ["blur", "crop", "black"],
-        recapSpeed: ["+0%", "+8%", "+12%", "+18%", "+22%"],
+        recapSpeed: VCP_SPEED_OPTIONS,
         recapStoryStyle: ["viral", "dramatic", "funny", "pov", "standard", "narrator"],
         recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint"],
         recapProtection: ["off", "standard", "strong"],
@@ -9334,6 +9369,7 @@ function setupRecapVisualEditor() {
             );
             saved.recapSettingsVersion = 2;
         }
+        if (saved.recapSpeed != null) saved.recapSpeed = normalizeSpeedOption(saved.recapSpeed);
         Object.entries(RECAP_SETTING_ENUMS).forEach(([k, allowed]) => {
             if (allowed.includes(saved[k])) state[k] = saved[k];
         });
@@ -9518,7 +9554,7 @@ function setupRecapVisualEditor() {
         if (!cfg || typeof cfg !== "object") return;
         const snap = {
             recapRatio: cfg.ratio, recapRatioFill: cfg.ratio_fill,
-            recapSpeed: cfg.voice_speed, recapStoryStyle: cfg.story_style,
+            recapSpeed: normalizeSpeedOption(cfg.voice_speed), recapStoryStyle: cfg.story_style,
             recapSubStyle: cfg.sub_style, recapSubFont: cfg.sub_font,
             recapLogoPos: cfg.logo_pos, recapSourceLanguage: cfg.source_language,
             recapRenderQuality: cfg.render_quality, recapTtsEngine: cfg.tts_engine,
@@ -15826,15 +15862,9 @@ window.toggleVcpHelpHub = toggleVcpHelpHub;
 // ── Phase 3: Voice & TTS Helpers (Excess Banner, Cost Estimate, Custom Clone Steps & BYOK) ──
 function estimateSpeechMinutesFromText(charCount, speedModeOrRate) {
     if (!charCount || charCount <= 0) return null;
-    // Standard Burmese speech rate ~550 chars/min at 1.0x
-    let mult = 1.0;
-    if (speedModeOrRate === "slow") mult = 1.25;
-    else if (speedModeOrRate === "fast") mult = 0.85;
-    else if (typeof speedModeOrRate === "string" && speedModeOrRate.includes("%")) {
-        const pct = parseFloat(speedModeOrRate.replace("%", "")) || 0;
-        mult = 1.0 / Math.max(0.5, 1 + pct / 100);
-    }
-    const mins = Math.max(0.1, (charCount / 550) * mult);
+    // Aligned with backend MEASURED_CHARS_PER_SECOND (17.6 * 60 = 1056 chars/min at 1.00x)
+    const tempo = speedTempoFactor(speedModeOrRate);
+    const mins = Math.max(0.1, charCount / (1056 * tempo));
     return mins.toFixed(1);
 }
 window.estimateSpeechMinutesFromText = estimateSpeechMinutesFromText;
@@ -15854,7 +15884,7 @@ function syncVoiceExcessAndCost(len, max) {
     }
     const costBadge = document.getElementById("voice-btn-est-cost");
     if (costBadge) {
-        const estMin = estimateSpeechMinutesFromText(len, state.speed || "normal");
+        const estMin = estimateSpeechMinutesFromText(len, state.speed || "+12%");
         costBadge.textContent = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
     }
 }
@@ -16190,10 +16220,12 @@ function applyRecapPresetObject(patch) {
         ? window.__snapshotRecapSettings()
         : {};
     const next = Object.assign({}, base, patch);
+    if (next.recapSpeed != null) next.recapSpeed = normalizeSpeedOption(next.recapSpeed);
     const settingsKey = window.__RECAP_SETTINGS_KEY || "vcp_recap_settings";
     try { localStorage.setItem(settingsKey, JSON.stringify(next)); } catch (e) {}
     if (typeof state === "object" && state) {
         Object.assign(state, patch);
+        state.recapSpeed = normalizeSpeedOption(state.recapSpeed);
     }
     const restoreFn = typeof window.restoreRecapSettings === "function"
         ? window.restoreRecapSettings

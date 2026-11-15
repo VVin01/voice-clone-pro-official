@@ -27,6 +27,8 @@ import threading
 from pathlib import Path
 from typing import Optional, Any, Callable, List, Tuple
 
+from app.services.speed import DEFAULT_SPEED, resolve_speed_tempo
+
 try:
     from app.services.key_rotation import key_id as _key_id
 except Exception:  # pragma: no cover - standalone module load fallback
@@ -808,7 +810,7 @@ class VoxCPMEngine:
         prompt_text: str = "",
         cfg_value: float = 2.0,
         preset_voice: Optional[str] = None,
-        speed: float | str | None = "normal",
+        speed: float | str | None = DEFAULT_SPEED,
         progress_cb: Optional[Callable[[str], None]] = None,
         retries: int = 2,
         allow_fallback: bool = True,
@@ -843,22 +845,7 @@ class VoxCPMEngine:
             raise ValueError("VoxCPM input text is empty.")
 
         # Resolve brisk narration tempo multiplier from speed & persona
-        tempo_val = 1.12
-        if isinstance(speed, (int, float)):
-            tempo_val = float(speed)
-        elif isinstance(speed, str):
-            s_low = speed.strip().lower()
-            if s_low in ("fast", "1.2x", "1.2"):
-                tempo_val = 1.20
-            elif s_low in ("slow", "0.8x", "0.8"):
-                tempo_val = 0.94
-            elif s_low in ("normal", "1.0x", "1.0"):
-                tempo_val = 1.12
-            elif "%" in s_low:
-                m_spd = re.search(r"([+-]?\d+)", s_low)
-                if m_spd:
-                    tempo_val = 1.0 + int(m_spd.group(1)) / 100.0
-        tempo_val = max(0.88, min(1.45, round(tempo_val, 3)))
+        tempo_val = resolve_speed_tempo(speed)
 
         # Persona-based control instruction & reference sample tuning
         is_persona_ref = False

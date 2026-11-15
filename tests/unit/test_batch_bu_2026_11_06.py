@@ -332,5 +332,5 @@ def test_bu_miniapp_surfaces_render_the_trim_note():
 
 
 def test_bu_cache_token_is_r92():
-    assert "20261114_r150" in INDEX_HTML
+    assert "20261114_r151" in INDEX_HTML
     assert "20261104_r91" not in INDEX_HTML
