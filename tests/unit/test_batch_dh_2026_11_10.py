@@ -52,5 +52,5 @@ def test_dg_width_first_rule_kept():
 
 def test_cache_token_is_r140():
     html = INDEX.read_text(encoding="utf-8")
-    assert html.count("20261115_r155") == 4
+    assert html.count("20261116_r155") == 4
     assert "20261104_r129" not in html

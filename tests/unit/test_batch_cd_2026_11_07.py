@@ -86,7 +86,7 @@ async def _seed(db, *objs):
 
 def test_cd_cache_token_is_r102():
     html = _read("app/webapp/static/index.html")
-    assert html.count("20261115_r155") == 4
+    assert html.count("20261116_r155") == 4
     assert ("20261104_r" + "101") not in html
 
 

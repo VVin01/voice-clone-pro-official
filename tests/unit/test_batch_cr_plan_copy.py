@@ -44,8 +44,11 @@ def test_voice_pro_true_perks():
 
 def test_style_counts_dropped():
     assert "ဇာတ်လမ်းစတိုင် အမျိုးမျိုး" in API
-    assert "Multiple narration styles (Viral Hook, Drama, Comedy & more)" in API
+    assert "Multiple narration styles (Instant Hook, Drama Prime, Light Comedy & more)" in API
+    # Premium style renames (2026-11-16): the plan copy names the new labels.
+    assert "ချက်ချင်းစွဲဆောင်၊ ဒရာမာ ပရိုင်း၊ ပေါ့ပါးဟာသ" in API
+    assert "Viral Hook" not in API
 
 
 def test_cache_token_r114():
-    assert INDEX.count("20261115_r155") == 4
+    assert INDEX.count("20261116_r155") == 4

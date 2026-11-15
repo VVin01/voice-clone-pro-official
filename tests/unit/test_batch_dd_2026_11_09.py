@@ -485,7 +485,7 @@ def test_submit_and_composite_share_dd_payload_fields():
 # ── 9. Cache token ────────────────────────────────────────────────
 
 def test_cache_token_is_r140():
-    assert INDEX_HTML.count("20261115_r155") == 4
+    assert INDEX_HTML.count("20261116_r155") == 4
     assert "r125" not in INDEX_HTML
     assert INDEX_HTML.count("r155") == 4
 
