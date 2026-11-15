@@ -30,6 +30,7 @@ from app.services.ledger import consume_seconds
 from app.services.models import get_authorized_model
 from app.services.progress import JobProgressTracker, render_stepper_progress, safe_edit_status
 from app.services import voice_choice as _vc
+from app.services.speed import DEFAULT_SPEED, DEFAULT_TEMPO, resolve_speed_tempo
 
 logger = logging.getLogger(__name__)
 
@@ -44,26 +45,16 @@ def _implausible_audio_reason(text: str, duration_seconds: int, speed_preset) ->
     """User-facing reason when produced audio is too short for its text.
 
     Production-measured Burmese narration pace: the primary engine
-    runs ≈17.6 chars/s, the Edge fallback ≈19–22 chars/s, and the
-    fastest legitimate speed preset multiplies pace by ≈1.3 (≈28
-    chars/s at the extreme). A result above ~35 chars/s (30 slow /
-    44 fast) cannot contain the submitted text — it is a truncated
-    synthesis, not a fast reading. Short texts are exempt: duration
-    rounding (whole seconds) dominates there.
+    runs ≈17.6 chars/s, scaled proportionally by the unified speed tempo
+    (1.12x default → 35.0 chars/s threshold; 0.94x slow → 29.4;
+    1.20x fast → 37.5; 1.25x ultra → 39.1). Short texts are exempt:
+    duration rounding (whole seconds) dominates there.
     """
     chars = len((text or "").strip())
     if chars < 300 or not duration_seconds or duration_seconds <= 0:
         return None
-    if isinstance(speed_preset, (int, float)):
-        max_rate = 35.0 * min(1.5, max(0.7, float(speed_preset)))
-    else:
-        sp = str(speed_preset or "normal").strip().lower()
-        if sp in ("fast", "1.2x", "1.2"):
-            max_rate = 44.0
-        elif sp in ("slow", "0.8x", "0.8"):
-            max_rate = 30.0
-        else:
-            max_rate = 35.0
+    tempo = resolve_speed_tempo(speed_preset)
+    max_rate = 35.0 * (tempo / DEFAULT_TEMPO)
     if duration_seconds < chars / max_rate:
         return (
             "ထုတ်လုပ်လိုက်သော အသံသည် စာသားအားလုံးကို မပါဝင်နိုင်လောက်အောင် "
@@ -386,7 +377,7 @@ async def process_single_job(
                     text=job.input_text or "",
                     out_path=base_tts_path,
                     voice=job.edge_voice or "my-MM-ThihaNeural",
-                    speed=job.speed_preset or "normal",
+                    speed=job.speed_preset or DEFAULT_SPEED,
                 )
                 await normalize_audio_to_wav(base_tts_path, norm_wav_path)
 
@@ -525,7 +516,7 @@ async def process_single_job(
                                 reference_wav=ref_wav,
                                 control_instruction=control_instruction,
                                 preset_voice=getattr(job, "preset_voice", None),
-                                speed=job.speed_preset or "normal",
+                                speed=job.speed_preset or DEFAULT_SPEED,
                                 progress_cb=tracker.set_custom_note,
                                 reference_transcript=reference_transcript,
                                 reference_seconds=reference_seconds,
@@ -626,7 +617,7 @@ async def process_single_job(
                             text=clean_text,
                             persona_id=persona_id,
                             output_wav=converted_wav_path,
-                            speed=job.speed_preset or "normal",
+                            speed=job.speed_preset or DEFAULT_SPEED,
                         )
                     )
                     logger.info("Resilient fallback audio generated successfully for job %s: %s", job.id, converted_wav_path)

@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from app.services.speed import DEFAULT_SPEED, resolve_speed_rate, resolve_speed_tempo
+
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
@@ -366,7 +368,7 @@ class EdgeTTSEngine:
         self.ffmpeg = ffmpeg
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        self.rate = str(rate or "+0%").strip()
+        self.rate = resolve_speed_rate(rate if str(rate or "").strip() else "+0%")
         self.pitch = str(pitch or "+0Hz").strip()
         self.log = log
         self.VOICE_DATABASE: dict[str, dict[str, Any]] = {}
@@ -6040,7 +6042,7 @@ class EdgeSmartSync:
         source_path: str | None = None,
         plan_path: str | None = None,
         voice: str,
-        edge_tts_rate: str = "+0%",
+        edge_tts_rate: str = DEFAULT_SPEED,
         edge_tts_pitch: str = "+0Hz",
         ffmpeg_path: str | None = None,
         ffprobe_path: str | None = None,
@@ -6071,7 +6073,7 @@ class EdgeSmartSync:
         self.source_path = Path(source_path).resolve() if source_path else (self.job_dir / "source.mp4")
         self.plan_path = Path(plan_path).resolve() if plan_path else (self.job_dir / "smart_sync_plan.json")
         self.voice = voice
-        self.edge_tts_rate = str(edge_tts_rate or "+0%")
+        self.edge_tts_rate = resolve_speed_rate(edge_tts_rate or DEFAULT_SPEED)
         self.edge_tts_pitch = str(edge_tts_pitch or "+0Hz")
         self.ffmpeg = resolve_binary(ffmpeg_path, "ffmpeg", [r"C:\ffmpeg\bin\ffmpeg.exe"])
         self.ffprobe = resolve_binary(ffprobe_path, "ffprobe", [r"C:\ffmpeg\bin\ffprobe.exe"])
@@ -6316,7 +6318,7 @@ class EdgeSmartSync:
                             text=speak,
                             persona_id=curr_persona,
                             output_wav=dst,
-                            speed=effective_rate or 1.10,
+                            speed=effective_rate,
                             log_fn=self.log,
                         )
                         produced = dst
@@ -6565,10 +6567,8 @@ class EdgeSmartSync:
         self.log(f"🪞 Mirror={'ON' if self.mirror_video else 'OFF'} | Ratio={layout['ratio']} "
                  f"{layout['cw']}x{layout['ch']} ({layout['fill']}){crop_msg} from {source_w}x{source_h} | Zoom={self.zoom_factor:.3f}x")
 
-        # Method 2: Optimize default Edge TTS speed (+12% to eliminate dragging robotic tone)
-        effective_rate = self.edge_tts_rate
-        if not effective_rate or effective_rate in ("+0%", "0%", "+0Hz"):
-            effective_rate = "+12%"
+        # Unified speed contract: respect the exact resolved user speed (including explicit '+0%' == 1.00x).
+        effective_rate = resolve_speed_rate(self.edge_tts_rate)
         effective_pitch = self.edge_tts_pitch or "+0Hz"
 
         engine = EdgeTTSEngine(
@@ -6731,14 +6731,7 @@ class EdgeSmartSync:
             _global_preset_v = None
 
         # Convert Edge-TTS rate string (e.g. "+12%") → VoxCPM float speed (e.g. 1.12)
-        def _rate_to_float(rate_str: str) -> float:
-            import re as _re
-            m = _re.search(r"([+-]?\d+)", str(rate_str or ""))
-            if m:
-                return round(1.0 + int(m.group(1)) / 100.0, 3)
-            return 1.10
-
-        voxcpm_speed_float = _rate_to_float(effective_rate)
+        voxcpm_speed_float = resolve_speed_tempo(effective_rate)
 
         # Persona reference clip (the exact preview sample) — VoxCPM clones THIS voice for every
         # segment, so the recap sounds like the preview and never drifts between lines.

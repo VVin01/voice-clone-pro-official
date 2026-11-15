@@ -315,4 +315,4 @@ def test_frontend_income_and_banned_split_wiring():
 
 def test_cache_version_r52():
     index_html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert index_html.count("?v=20261115_r151") == 4
+    assert index_html.count("?v=20261115_r153") == 4

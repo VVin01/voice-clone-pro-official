@@ -76,10 +76,11 @@ async def _seed_job(db_session, user_id, model_id, *, status, seconds_consumed=0
     return job
 
 
-async def _submit(db_session, user_id, model_id, text="hello"):
+async def _submit(db_session, user_id, model_id, text="hello", speed_preset="+12%"):
     return await create_voice_clone_job(
         session=db_session, user_id=user_id, text=text,
         edge_voice="my-MM-ThihaNeural", model_id=model_id,
+        speed_preset=speed_preset,
     )
 
 
@@ -261,19 +262,23 @@ async def test_daily_minutes_recap_jobs_do_not_count(db_session, tmp_path):
 
 @pytest.mark.asyncio
 async def test_daily_minutes_boundary_exactly_at_cap_passes(db_session, tmp_path):
-    """Boundary (PAID): consumed + estimate == cap is ALLOWED (rejection is
-    strictly >). 352 chars estimates to exactly 23.0s; 1777 + 23.0 == 1800."""
+    """Boundary (PAID): consumed + estimate <= cap is ALLOWED (rejection is
+    strictly >). At true 1.00x ('+0%'), 352 chars estimates to 23.0s;
+    at default 1.12x ('+12%' / 'normal'), 394 chars estimates <= 23.0s."""
     user, _ = await get_or_create_user(db_session, telegram_id=557018)
     await credit_purchased_minutes(db_session, user_id=user.id, minutes=60)
     await db_session.flush()
     model = await _make_model(db_session, tmp_path)
     await _seed_job(db_session, user.id, model.id, status=JobStatus.SUCCESS.value,
                     seconds_consumed=1777)
-    text = "a" * 352
-    assert estimate_voice_job_seconds(text, "normal") == 23.0
-    job, reason = await _submit(db_session, user.id, model.id, text)
+    text_1x = "a" * 352
+    assert estimate_voice_job_seconds(text_1x, "+0%") == 23.0
+    job, reason = await _submit(db_session, user.id, model.id, text_1x, speed_preset="+0%")
     assert job is not None
     assert reason == "QUEUED"
+
+    # Default '+12%' (1.12x) is 12% faster: 394 chars fits inside 23.0s.
+    assert estimate_voice_job_seconds("a" * 394, "normal") <= 23.0
 
 
 @pytest.mark.asyncio
@@ -285,11 +290,12 @@ async def test_daily_minutes_boundary_one_char_over_rejected(db_session, tmp_pat
     model = await _make_model(db_session, tmp_path)
     await _seed_job(db_session, user.id, model.id, status=JobStatus.SUCCESS.value,
                     seconds_consumed=1777)
-    text = "a" * 353
-    assert estimate_voice_job_seconds(text, "normal") > 23.0
-    job, reason = await _submit(db_session, user.id, model.id, text)
+    text_1x = "a" * 353
+    assert estimate_voice_job_seconds(text_1x, "+0%") > 23.0
+    job, reason = await _submit(db_session, user.id, model.id, text_1x, speed_preset="+0%")
     assert job is None
     assert reason == "DAILY_MINUTE_LIMIT_EXCEEDED"
+    assert estimate_voice_job_seconds("a" * 395, "+12%") > 23.0
 
 
 @pytest.mark.asyncio

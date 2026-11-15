@@ -9025,6 +9025,7 @@ html, body {
     color: #059669;
     background: rgba(16, 185, 129, 0.14);
 }
+#tab-recap .recap-steps-nav-item[aria-disabled="true"]{opacity:.45;cursor:not-allowed;color:#94A3B8;background:rgba(148,163,184,.08);border:1px dashed rgba(148,163,184,.38)}
 
 /* ── Step 1: Source URL & Dropzone ──────────────────────────────────────── */
 #tab-recap .input-with-btn input,
@@ -9388,6 +9389,7 @@ html[data-theme="dark"] #tab-recap .recap-steps-nav-item.is-done {
     color: #34D399;
     background: rgba(16, 185, 129, 0.18);
 }
+html[data-theme="dark"] #tab-recap .recap-steps-nav-item[aria-disabled="true"]{color:#64748B;background:rgba(15,23,42,.35);border-color:rgba(148,163,184,.25)}
 html[data-theme="dark"] #tab-recap .vcp-step2-sticky-preview {
     background: #111A2E;
 }
@@ -9594,6 +9596,7 @@ html[data-theme="dark"].lite #tab-recap .recap-dock-section {
     color: var(--vcp-text-secondary, #2F435E);
     font-size: 12px;
     font-weight: 700;
+    display:inline-flex;align-items:center;gap:4px;line-height:1.5;pointer-events:none;cursor:default;user-select:none;
 }
 #tab-voice .vcp-clone-step.is-active {
     background: linear-gradient(135deg, #2563EB 0%, #0EA5E9 100%);
@@ -9606,6 +9609,9 @@ html[data-theme="dark"].lite #tab-recap .recap-dock-section {
     border-color: rgba(16, 185, 129, 0.36);
     color: #047857;
 }
+#tab-voice .vcp-clone-step.is-done::before{content:"✓";font-weight:800}
+#tab-voice .vcp-clone-step.is-locked{border-style:dashed;color:#64748B;opacity:.55}
+#tab-voice .vcp-clone-step.is-locked::before{content:"🔒";font-size:10px}
 #tab-voice .vcp-clone-req-box {
     background: rgba(239, 246, 255, 0.90);
     border: 1px solid rgba(37, 99, 235, 0.22);
@@ -9843,6 +9849,7 @@ html[data-theme="dark"] #tab-voice .vcp-clone-step.is-done {
     border-color: rgba(52, 211, 153, 0.42);
     color: #6EE7B7;
 }
+html[data-theme="dark"] #tab-voice .vcp-clone-step.is-locked{color:#64748B;opacity:.52}
 html[data-theme="dark"] #tab-voice .vcp-clone-req-box {
     background: rgba(15, 23, 42, 0.90);
     border-color: rgba(96, 165, 250, 0.28);

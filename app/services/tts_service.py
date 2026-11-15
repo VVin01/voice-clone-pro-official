@@ -46,16 +46,21 @@ from app.services.ledger import (
     tts_referral_net_draw,
 )
 from app.services.queue import MEASURED_CHARS_PER_SECOND, PRE_CHECK_SAFETY_MARGIN
+from app.services.speed import (
+    DEFAULT_SPEED,
+    SPEED_OPTIONS,
+    normalize_api_speed,
+    resolve_speed_tempo,
+)
 
 logger = logging.getLogger(__name__)
 
 TTS_ENGINES = ("gemini", "edge")
 # Batch BW: the old flat TTS_MAX_CHARS = 5000 is gone — the per-tier
 # cap lives in tts_character_limit() below.
-# One pill row drives both engines — the recap flow's rate values
-# (Edge: rate=..., Gemini: rate=...), per spec AW-5.
-TTS_SPEED_RATES = ("+0%", "+8%", "+12%", "+18%", "+22%")
-TTS_DEFAULT_SPEED = "+12%"
+# One capsule row drives all three surfaces with unified speed values.
+TTS_SPEED_RATES = SPEED_OPTIONS
+TTS_DEFAULT_SPEED = DEFAULT_SPEED
 EDGE_TTS_VOICES = {
     "thiha": "my-MM-ThihaNeural",
     "nilar": "my-MM-NilarNeural",
@@ -67,11 +72,7 @@ TTS_CHUNK_CHARS = 400
 
 
 def _speed_factor(rate: str) -> float:
-    try:
-        pct = float(str(rate or "+0%").strip().rstrip("%"))
-    except ValueError:
-        pct = 0.0
-    return max(0.5, 1.0 + pct / 100.0)
+    return resolve_speed_tempo(rate)
 
 
 def estimate_tts_seconds(text: str, rate: str = TTS_DEFAULT_SPEED) -> float:
@@ -209,9 +210,10 @@ async def create_tts_job(
     else:
         if voice not in EDGE_TTS_VOICES:
             return None, "INVALID_VOICE"
-    speed_rate = str(speed_rate or TTS_DEFAULT_SPEED).strip()
-    if speed_rate not in TTS_SPEED_RATES:
+    norm_speed = normalize_api_speed(speed_rate)
+    if norm_speed is None:
         return None, "INVALID_SPEED"
+    speed_rate = norm_speed
 
     user, _ = await get_or_create_user(session, user_id)
     if user.status == UserStatus.BLOCKED:

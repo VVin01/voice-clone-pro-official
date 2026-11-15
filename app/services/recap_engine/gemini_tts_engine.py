@@ -543,9 +543,13 @@ class GeminiTTSEngine:
                  direction: str = "", log: LogFn = print, record_usage: bool = True, **_ignored: Any) -> None:
         self.ffmpeg, self.work_dir, self.log = ffmpeg, Path(work_dir), log
         try:
-            self.rate = int(str(rate or "+0%").strip().rstrip("%"))
-        except ValueError:
-            self.rate = 0
+            from app.services.speed import resolve_speed
+            self.rate = resolve_speed(rate if str(rate or "").strip() else "+0%").pct
+        except ImportError:
+            try:
+                self.rate = int(str(rate or "+0%").strip().rstrip("%"))
+            except ValueError:
+                self.rate = 0
         self.direction = str(direction or "").strip()
         self.keys = list(keys) if keys is not None else collect_gemini_keys()
         if not self.keys:

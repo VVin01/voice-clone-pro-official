@@ -30,6 +30,7 @@ from app.models.schema import (
 logger = logging.getLogger(__name__)
 
 WELCOME_BONUS_SECONDS = 300       # 5 minutes
+DEFAULT_SIGNUP_RECAP_CREDITS = 3  # Default recap credits granted at user signup
 # Batch AW (owner decision 2026-11-05 23:57): the referral reward is
 # now 2 minutes of TTS-only time per rewarded referral (was 30s of
 # clone-spendable time). New rewards only — existing balances keep
@@ -123,13 +124,26 @@ async def get_or_create_user(
                     first_name=first_name,
                     language_code=language_code or "my",
                     account_category=AccountCategory.FREE.value,
+                    recap_credits=DEFAULT_SIGNUP_RECAP_CREDITS,
                     referral_code=gen_code,
                 )
                 session.add(user)
 
-                # Initialize empty balance
+                # Initialize empty balance and flush User+MinuteBalance before FK-dependent ledger row
                 balance = MinuteBalance(user_id=telegram_id)
                 session.add(balance)
+                await session.flush()
+
+                # Record the default signup recap-credit grant in the same transaction
+                # (inside the savepoint so concurrent registration rollbacks drop it too).
+                await record_recap_credit_event(
+                    session,
+                    user_id=telegram_id,
+                    direction=LedgerDirection.CREDIT.value,
+                    credits=DEFAULT_SIGNUP_RECAP_CREDITS,
+                    reference_id=f"SIGNUP:{telegram_id}",
+                    note=f"Signup grant ({DEFAULT_SIGNUP_RECAP_CREDITS} recap credits)",
+                )
                 await session.flush()
 
             # Insert succeeded!
@@ -715,6 +729,7 @@ async def refund_job_seconds(
 
     balance = await get_minute_balance(session, user_id)
 
+    refunded_now = 0
     for source, seconds in refundable.items():
         if source == LedgerSource.MONTHLY_FREE.value:
             balance.monthly_free_seconds += seconds
@@ -727,6 +742,7 @@ async def refund_job_seconds(
             if user:
                 user.account_category = AccountCategory.PURCHASED.value
 
+        refunded_now += seconds
         session.add(
             MinuteLedgerEvent(
                 user_id=user_id,
@@ -736,6 +752,15 @@ async def refund_job_seconds(
                 reference_id=refund_ref,
                 note=note or f"Refund for failed job {job_id} ({source})",
             )
+        )
+
+    # Mirror settle_recap_voice_seconds under-run semantics: consumed_seconds
+    # is NET of refunds everywhere (/menu, /balance, Admin user detail).
+    # Only the seconds actually refunded in this call are subtracted (replayed
+    # calls return above with empty `refundable`, decrementing 0), floored at 0.
+    if refunded_now > 0:
+        balance.consumed_seconds = max(
+            0, int(balance.consumed_seconds or 0) - refunded_now
         )
 
     balance.updated_at = utc_now()
@@ -1113,6 +1138,10 @@ async def refund_tts_referral_seconds(
         return 0
     balance = await get_minute_balance(session, user_id)
     balance.referral_seconds += give_back
+    # Note (Part C follow-up): TTS referral draws do NOT increment
+    # MinuteBalance.consumed_seconds (draw_tts_referral_seconds touches only
+    # referral_seconds; TTS usage is tracked separately by tts_cap_consumed_seconds),
+    # so refund_tts_referral_seconds must NOT decrement consumed_seconds either.
     balance.updated_at = utc_now()
     session.add(
         MinuteLedgerEvent(
@@ -1246,6 +1275,126 @@ async def recap_refund_event_exists(
         )
     ).first()
     return existing is not None
+
+
+async def backfill_recap_credit_opening_balances(
+    session: AsyncSession,
+    *,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Idempotently backfill opening CREDIT rows on RecapCreditLedgerEvent.
+
+    For every user whose current ``User.recap_credits`` exceeds
+    ``SUM(CREDIT) - SUM(DEBIT)`` over ``RecapCreditLedgerEvent``, writes ONE
+    CREDIT row equal to the shortfall with ``note="opening balance backfill 2026-11"``.
+    Every run re-derives the shortfall from live ledger events (and re-verifies
+    under a per-user ``FOR UPDATE`` lock before writing), so repeated runs write
+    nothing and never double-count.
+    """
+    users = (
+        await session.execute(select(User.id, User.recap_credits).order_by(User.id))
+    ).all()
+    events = (
+        await session.execute(
+            select(
+                RecapCreditLedgerEvent.user_id,
+                RecapCreditLedgerEvent.direction,
+                RecapCreditLedgerEvent.credits,
+            )
+        )
+    ).all()
+
+    net_by_user: dict[int, int] = {}
+    for uid, direction, credits in events:
+        delta = int(credits or 0)
+        if direction == LedgerDirection.CREDIT.value:
+            net_by_user[uid] = net_by_user.get(uid, 0) + delta
+        elif direction == LedgerDirection.DEBIT.value:
+            net_by_user[uid] = net_by_user.get(uid, 0) - delta
+
+    candidate_ids: list[int] = []
+    already_balanced = 0
+    needing_backfill = 0
+    total_shortfall = 0
+    negative_shortfall = 0
+
+    for uid, raw_balance in users:
+        balance = int(raw_balance or 0)
+        shortfall = balance - net_by_user.get(uid, 0)
+        if shortfall == 0:
+            already_balanced += 1
+        elif shortfall > 0:
+            needing_backfill += 1
+            total_shortfall += shortfall
+            candidate_ids.append(uid)
+        else:
+            negative_shortfall += 1
+            logger.warning(
+                "Recap credit backfill: user %s has negative shortfall (%s; balance=%s, events_net=%s); skipping",
+                uid,
+                shortfall,
+                balance,
+                net_by_user.get(uid, 0),
+            )
+
+    summary = {
+        "users_scanned": len(users),
+        "users_already_balanced": already_balanced,
+        "users_needing_backfill": needing_backfill,
+        "total_shortfall_credits": total_shortfall,
+        "negative_shortfall_users": negative_shortfall,
+        "users_backfilled": 0,
+        "credits_written": 0,
+    }
+    if dry_run or not candidate_ids:
+        return summary
+
+    users_backfilled = 0
+    credits_written = 0
+    for uid in candidate_ids:
+        locked_user = (
+            await session.execute(
+                select(User).where(User.id == uid).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_user is None:
+            continue
+
+        user_events = (
+            await session.execute(
+                select(
+                    RecapCreditLedgerEvent.direction,
+                    RecapCreditLedgerEvent.credits,
+                ).where(RecapCreditLedgerEvent.user_id == uid)
+            )
+        ).all()
+        user_net = 0
+        for direction, credits in user_events:
+            delta = int(credits or 0)
+            if direction == LedgerDirection.CREDIT.value:
+                user_net += delta
+            elif direction == LedgerDirection.DEBIT.value:
+                user_net -= delta
+
+        shortfall = int(locked_user.recap_credits or 0) - user_net
+        if shortfall <= 0:
+            continue
+
+        await record_recap_credit_event(
+            session,
+            user_id=uid,
+            direction=LedgerDirection.CREDIT.value,
+            credits=shortfall,
+            reference_id=f"BACKFILL:2026-11:{uid}",
+            note="opening balance backfill 2026-11",
+        )
+        users_backfilled += 1
+        credits_written += shortfall
+
+    await session.flush()
+    summary["users_backfilled"] = users_backfilled
+    summary["credits_written"] = credits_written
+    return summary
 
 
 async def admin_adjust_balance(

@@ -10,6 +10,7 @@ import wave
 import edge_tts
 
 from app.config import settings
+from app.services.speed import DEFAULT_SPEED, SPEED_RATES, resolve_speed_rate
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,7 @@ CURATED_TTS_VOICES = {
     "en-US-AriaNeural": {"name": "Aria (English)", "gender": "female", "lang": "en"},
 }
 
-SPEED_RATES = {
-    "slow": "-15%",
-    "normal": "+0%",
-    "fast": "+15%",
-}
+# Legacy label map (SPEED_RATES) is imported and re-exported from app.services.speed.
 
 GENDER_PITCH_MAP = {
     "m2m": 0,
@@ -111,13 +108,13 @@ async def generate_edge_tts(
     text: str,
     out_path: Path,
     voice: str = "my-MM-ThihaNeural",
-    speed: str = "normal",
+    speed: str = DEFAULT_SPEED,
 ) -> Path:
     """Synthesize text using Edge TTS."""
     if voice not in CURATED_TTS_VOICES:
         voice = "my-MM-ThihaNeural"
 
-    rate_str = SPEED_RATES.get(speed, "+0%")
+    rate_str = resolve_speed_rate(speed)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     communicate = edge_tts.Communicate(text, voice, rate=rate_str)

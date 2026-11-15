@@ -65,7 +65,7 @@ def _i18n_values(key: str) -> list[str]:
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_bb_cache_token_is_r79():
-    assert HTML.count("20261115_r151") == 4
+    assert HTML.count("20261115_r153") == 4
     assert "20261104_r74" not in HTML
 
 
@@ -227,27 +227,25 @@ def test_bb2_all_three_selectors_are_capsules():
 
 def test_bb2_voice_capsule_values_defaults_and_labels():
     block = _capsule("speed-selector")
-    assert re.findall(r'data-speed="([^"]+)"', block) == ["slow", "normal", "fast"]
-    assert '<button class="speed-seg active" data-speed="normal">' in block
-    for key in ("speed_slow", "speed_normal", "speed_fast"):
+    assert re.findall(r'data-speed="([^"]+)"', block) == ["-6%", "+0%", "+12%", "+20%", "+25%"]
+    assert '<button class="speed-seg active" data-speed="+12%">' in block
+    for key in ("speed_m6", "speed_0", "speed_12_capsule", "speed_20", "speed_25"):
         assert f'data-i18n="{key}"' in block
-    for short in ("-20%", "+0%", "+20%"):  # Batch BX Item 7: % labels
+    for short in ("-6%", "+0%", "+12%", "+20%", "+25%"):
         assert f'<span class="seg-short">{short}</span>' in block
 
 
 def test_bb2_five_option_capsules_values_defaults_and_labels():
-    for cid, attr in (("tts-speed-picker", "data-tts-speed"),
+    for cid, attr in (("speed-selector", "data-speed"),
+                      ("tts-speed-picker", "data-tts-speed"),
                       ("recap-speed-picker", "data-speed")):
         block = _capsule(cid)
-        assert re.findall(rf'{attr}="([^"]+)"', block) == ["+0%", "+8%", "+12%", "+18%", "+22%"]
+        assert re.findall(rf'{attr}="([^"]+)"', block) == ["-6%", "+0%", "+12%", "+20%", "+25%"]
         assert f'<button type="button" class="speed-seg active" {attr}="+12%">' in block \
             or f'<button class="speed-seg active" {attr}="+12%">' in block
-        # TTS previously had NO word labels at all; both capsules now
-        # ride the recap word-label keys (+12% via the capsule key —
-        # see the measurement test).
-        for key in ("speed_0", "speed_8", "speed_12_capsule", "speed_18", "speed_22"):
+        for key in ("speed_m6", "speed_0", "speed_12_capsule", "speed_20", "speed_25"):
             assert f'data-i18n="{key}"' in block, (cid, key)
-        for short in ("+0%", "+8%", "+12%", "+18%", "+22%"):
+        for short in ("-6%", "+0%", "+12%", "+20%", "+25%"):
             assert f'<span class="seg-short">{short}</span>' in block
 
 
@@ -277,7 +275,7 @@ def test_bb2_js_wiring_and_state_paths_unchanged():
     assert '"#tts-speed-picker .pill-btn"' not in APP_JS
     assert '"#recap-speed-picker .pill-btn"' not in APP_JS
     # The state write paths are byte-identical to the pill era.
-    assert 'state.speed = pill.getAttribute("data-speed");' in APP_JS
+    assert 'state.speed = pill.getAttribute("data-speed") || "+12%";' in APP_JS
     assert 'ttsState.speed = btn.getAttribute("data-tts-speed") || "+12%";' in APP_JS
     assert 'state.recapSpeed = btn.getAttribute("data-speed") || "+12%";' in APP_JS
     # The mover exists and is re-run on tab show / resize / language.
@@ -297,15 +295,11 @@ def test_bb2_labels_fit_the_360px_capsule_budget():
 
     font = ImageFont.truetype(str(ROOT / "app/webapp/static/fonts/Padauk-Bold.ttf"), 13)
     active5 = 268 * 2.4 / 6.4 - 6 - 2
-    active3 = 276 * 2.4 / 4.4 - 6 - 2
     inactive5 = 268 / 6.4 - 6 - 2
-    for key in ("speed_0", "speed_8", "speed_12_capsule", "speed_18", "speed_22"):
+    for key in ("speed_m6", "speed_0", "speed_12_capsule", "speed_20", "speed_25"):
         for value in _i18n_values(key):
             assert font.getlength(value) <= active5, (key, value)
-    for key in ("speed_slow", "speed_normal", "speed_fast"):
-        for value in _i18n_values(key):
-            assert font.getlength(value) <= active3, (key, value)
-    for short in ("+0%", "+8%", "+12%", "+18%", "+22%"):
+    for short in ("-6%", "+0%", "+12%", "+20%", "+25%"):
         assert font.getlength(short) <= inactive5, short
     # The reason speed_12_capsule exists: the stock EN label cannot fit.
     assert font.getlength(_i18n_values("speed_12")[1]) > active5
