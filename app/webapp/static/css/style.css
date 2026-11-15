@@ -10940,3 +10940,33 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
     margin-right: 4px;
     vertical-align: middle;
 }
+/* ── Part B0: Admin stage timings card ───────────────────────── */
+.adm-stage-total-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px 12px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    border-radius: 10px;
+    background: var(--glass-soft, rgba(148, 163, 184, 0.12));
+    font-size: 12.5px;
+}
+.adm-stage-total-lbl { font-weight: 700; }
+.adm-stage-total-vals { font-variant-numeric: tabular-nums; }
+.adm-stage-table-wrap { width: 100%; overflow-x: auto; }
+.adm-stage-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.adm-stage-table th,
+.adm-stage-table td {
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--divider);
+    text-align: left;
+}
+.adm-stage-table tbody tr:last-child td { border-bottom: none; }
+.adm-stage-table .adm-num { text-align: right; white-space: nowrap; }

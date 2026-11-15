@@ -304,6 +304,30 @@ async def init_db() -> None:
             import logging
             logging.getLogger(__name__).warning("Could not auto-register VoxCPM model: %s", e_vox_init)
 
+    # Part C follow-up: idempotently backfill opening CREDIT rows on
+    # recap_credit_ledger_events for any pre-existing user whose
+    # User.recap_credits is not yet derivable from ledger events.
+    try:
+        from app.services.ledger import backfill_recap_credit_opening_balances
+
+        async with AsyncSessionLocal() as backfill_session:
+            summary = await backfill_recap_credit_opening_balances(
+                backfill_session, dry_run=False
+            )
+            if summary["users_backfilled"] > 0:
+                await backfill_session.commit()
+                import logging
+
+                logging.getLogger(__name__).info(
+                    "Recap credit opening balance backfill applied: %s", summary
+                )
+    except Exception as e_recap_backfill:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Recap credit opening balance backfill skipped: %s", e_recap_backfill
+        )
+
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:

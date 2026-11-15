@@ -30,6 +30,7 @@ from app.services.ledger import (
     get_minute_balance,
     get_or_create_user,
     net_job_seconds_held,
+    record_recap_credit_event,
     settle_recap_voice_seconds,
 )
 from app.webapp import api as api_mod
@@ -63,8 +64,18 @@ async def _seed_user(
     referral: int = 0,
 ):
     async with maker() as s:
-        user, _ = await get_or_create_user(s, user_id)
+        user, is_new = await get_or_create_user(s, user_id)
         user.account_category = category
+        if is_new and recap_credits != 3:
+            delta = int(recap_credits) - 3
+            await record_recap_credit_event(
+                s,
+                user_id=user.id,
+                direction=LedgerDirection.CREDIT.value if delta > 0 else LedgerDirection.DEBIT.value,
+                credits=abs(delta),
+                reference_id=f"SEED:{user.id}",
+                note="Test seed recap credits delta",
+            )
         user.recap_credits = recap_credits
         bal = await get_minute_balance(s, user.id)
         bal.monthly_free_seconds = monthly_free
@@ -218,7 +229,11 @@ async def test_p5_precheck_rejects_before_any_charge_including_referral_only(tmp
         assert bal.referral_seconds == 600
         assert (await s.execute(select(Job).where(Job.user_id == uid))).scalars().all() == []
         assert (await s.execute(select(MinuteLedgerEvent).where(MinuteLedgerEvent.user_id == uid))).scalars().all() == []
-        assert (await s.execute(select(RecapCreditLedgerEvent).where(RecapCreditLedgerEvent.user_id == uid))).scalars().all() == []
+        r_events = (await s.execute(select(RecapCreditLedgerEvent).where(RecapCreditLedgerEvent.user_id == uid))).scalars().all()
+        assert len(r_events) == 1
+        assert r_events[0].direction == LedgerDirection.CREDIT.value
+        assert r_events[0].credits == 3
+        assert r_events[0].reference_id == f"SIGNUP:{uid}"
 
     await engine.dispose()
 
@@ -739,7 +754,8 @@ async def _derive_and_assert_recap_and_voice_ledgers(
         for e in m_events
         if e.source in ("MONTHLY_FREE", "WELCOME", "PURCHASE")
     )
-    assert int(user.recap_credits) == initial_recap_credits + r_delta
+    _ = initial_recap_credits
+    assert int(user.recap_credits) == r_delta
     assert int(bal.clone_spendable_seconds) == (
         initial_purchased_seconds + initial_welcome_seconds + m_delta
     )

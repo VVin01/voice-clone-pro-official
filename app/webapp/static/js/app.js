@@ -3020,6 +3020,27 @@ function markPaneEnter(pane) {
 }
 window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
 
+function syncTabAdminLifecycle(tabId) {
+    if (tabId === "tab-admin") {
+        loadAdminData();
+        loadAdminQueue();
+        loadAdminSettings();
+        if (window.adminQueueInterval) clearInterval(window.adminQueueInterval);
+        window.adminQueueInterval = setInterval(() => {
+            if (document.hidden) return; // audit fix: no re-fetch/re-render while hidden
+            const adminPane = document.getElementById("tab-admin");
+            if (adminPane && adminPane.classList.contains("active")) {
+                loadAdminQueue(true);
+            } else {
+                clearInterval(window.adminQueueInterval);
+            }
+        }, 4000);
+    } else if (window.adminQueueInterval) {
+        clearInterval(window.adminQueueInterval);
+        window.adminQueueInterval = null;
+    }
+}
+
 function switchTab(tabId) {
     const navButtons = document.querySelectorAll(".nav-item");
     const targetBtn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
@@ -3060,6 +3081,7 @@ function switchTab(tabId) {
     if (tabId === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
         window.maybePrefillTtsSample();
     }
+    syncTabAdminLifecycle(tabId);
     syncTelegramBackButton();
 }
 window.switchTab = switchTab;
@@ -3141,26 +3163,7 @@ function setupTabs() {
                 window.maybePrefillTtsSample();
             }
 
-            if (targetTab === "tab-admin") {
-                loadAdminData();
-                loadAdminQueue();
-                loadAdminSettings();
-                if (window.adminQueueInterval) clearInterval(window.adminQueueInterval);
-                window.adminQueueInterval = setInterval(() => {
-                    if (document.hidden) return; // audit fix: no re-fetch/re-render while hidden
-                    const adminPane = document.getElementById("tab-admin");
-                    if (adminPane && adminPane.classList.contains("active")) {
-                        loadAdminQueue(true);
-                    } else {
-                        clearInterval(window.adminQueueInterval);
-                    }
-                }, 4000);
-            } else {
-                if (window.adminQueueInterval) {
-                    clearInterval(window.adminQueueInterval);
-                    window.adminQueueInterval = null;
-                }
-            }
+            syncTabAdminLifecycle(targetTab);
             syncTelegramBackButton();
         });
     });
@@ -12258,6 +12261,7 @@ function showAdminSection(name) {
     window.scrollTo({ top: 0, behavior: "smooth" });
 
     // Lazy-load each screen the first time it is opened.
+    if (name === "overview" && !admStageTimingsData) loadAdminStageTimings(false);
     if (name === "payments" && !admLoadedSections.payments) { loadAdminData(); admLoadedSections.payments = true; }
     if (name === "jobs") loadAdminQueue();
     if (name === "users" && !admLoadedSections.users) { loadAdminUsersRecent(); admLoadedSections.users = true; }
@@ -12492,6 +12496,100 @@ function renderAdminOverview(stats) {
     }
 }
 window.renderAdminOverview = renderAdminOverview;
+let admStageTimingsData = null;
+let admStageTimingsInFlight = false;
+
+function admFmtStageDuration(sec) {
+    if (typeof sec !== "number" || !Number.isFinite(sec) || sec < 0) return "—";
+    if (sec >= 60) {
+        const m = Math.floor(sec / 60);
+        const s = Math.round(sec - m * 60);
+        return `${m}m ${s}s`;
+    }
+    return `${sec.toFixed(sec >= 10 ? 1 : 2)}s`;
+}
+
+async function loadAdminStageTimings(force) {
+    if (!state.user?.is_admin) return;
+    if (admStageTimingsInFlight && !force) return;
+    admStageTimingsInFlight = true;
+    const body = document.getElementById("adm-stage-timings-body");
+    const btn = document.getElementById("adm-stage-timings-refresh-btn");
+    if (force && btn) btn.disabled = true;
+    else if (!admStageTimingsData && body) admStateLoading(body);
+    try {
+        const res = await fetchWithTimeout(
+            "/api/admin/stage-timings" + (force ? "?refresh=1" : ""),
+            { headers: getAuthHeaders() }
+        );
+        if (!res.ok) throw new Error("stage-timings " + res.status);
+        admStageTimingsData = await res.json();
+        renderAdminStageTimings();
+    } catch (e) {
+        if (body) admStateError(body, "loadAdminStageTimings(true)");
+    } finally {
+        admStageTimingsInFlight = false;
+        if (btn) btn.disabled = false;
+    }
+}
+window.loadAdminStageTimings = loadAdminStageTimings;
+
+function renderAdminStageTimings() {
+    const data = admStageTimingsData;
+    const meta = document.getElementById("adm-stage-timings-meta");
+    const body = document.getElementById("adm-stage-timings-body");
+    if (!data || !body) return;
+    if (meta) {
+        const metaTxt = tf("adm_stage_timings_meta", {
+            timed: data.jobs_with_timings ?? 0,
+            scanned: data.jobs_scanned ?? 0,
+            limit: data.sample_limit ?? 100,
+        });
+        const tsTxt = data.generated_at ? ` · ${admFmtDate(data.generated_at)}` : "";
+        const cachedTxt = data.cached ? ` (${t("adm_stage_timings_cached")})` : "";
+        meta.innerText = metaTxt + tsTxt + cachedTxt;
+    }
+    const tot = data.total || {};
+    const stages = data.stages || {};
+    const stageOrder = ["download", "transcribe", "translate", "tts", "sync", "png", "overlay", "mux"];
+    const hasAnySample = (data.jobs_with_timings || 0) > 0 || (tot.count || 0) > 0;
+    if (!hasAnySample) {
+        admStateEmpty(body, "adm_stage_timings_empty");
+        return;
+    }
+    const totStrip = `
+        <div class="adm-stage-total-row">
+            <span class="adm-stage-total-lbl">${escapeHtml(t("adm_stage_timings_total"))}</span>
+            <span class="adm-stage-total-vals">${escapeHtml(t("adm_stage_timings_col_p50"))}: <b>${escapeHtml(admFmtStageDuration(tot.p50))}</b> · ${escapeHtml(t("adm_stage_timings_col_p95"))}: <b>${escapeHtml(admFmtStageDuration(tot.p95))}</b></span>
+        </div>`;
+    const rowsHtml = stageOrder.map(key => {
+        const s = stages[key] || {};
+        const lbl = t("adm_stage_lbl_" + key);
+        const cntBadge = s.count ? ` <span class="text-muted">(${s.count})</span>` : "";
+        return `
+            <tr>
+                <td>${escapeHtml(lbl)}${cntBadge}</td>
+                <td class="adm-num">${escapeHtml(admFmtStageDuration(s.p50))}</td>
+                <td class="adm-num">${escapeHtml(admFmtStageDuration(s.p95))}</td>
+                <td class="adm-num">${escapeHtml(admFmtStageDuration(s.max))}</td>
+            </tr>`;
+    }).join("");
+    body.innerHTML = `${totStrip}
+        <div class="adm-stage-table-wrap">
+            <table class="adm-stage-table">
+                <thead>
+                    <tr>
+                        <th>${escapeHtml(t("adm_stage_timings_col_stage"))}</th>
+                        <th class="adm-num">${escapeHtml(t("adm_stage_timings_col_p50"))}</th>
+                        <th class="adm-num">${escapeHtml(t("adm_stage_timings_col_p95"))}</th>
+                        <th class="adm-num">${escapeHtml(t("adm_stage_timings_col_max"))}</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>`;
+}
+window.renderAdminStageTimings = renderAdminStageTimings;
 
 async function loadAdminData() {
     if (!state.user?.is_admin) return;
@@ -12508,6 +12606,8 @@ async function loadAdminData() {
         const host = document.getElementById("adm-overview-error");
         if (host) host.innerHTML = "";
     };
+    // B0: cached stage timings card on Overview (parallel, non-blocking).
+    loadAdminStageTimings(false);
     try {
         const resStats = await fetchWithTimeout("/api/admin/overview", { headers: getAuthHeaders() });
         if (resStats.ok) {

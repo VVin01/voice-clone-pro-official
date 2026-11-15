@@ -9,9 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.enums import AccountCategory, PaymentStatus
+from app.models.enums import AccountCategory, LedgerDirection, PaymentStatus
 from app.models.schema import AuditLog, BotSetting, PaymentIntent, PaymentRequest, PricingPlan, User, utc_now
-from app.services.ledger import credit_purchased_minutes, get_or_create_user
+from app.services.ledger import credit_purchased_minutes, get_or_create_user, record_recap_credit_event
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +431,7 @@ async def approve_payment_request(
         if _edited_recap is not None
         else (cat["recap_credits"] if cat else 0)
     )
-    if _recap_to_credit:
+    if _recap_to_credit > 0:
         # Atomic increment (hunt F5): a conditional UPDATE instead of
         # read-modify-write, so a concurrent charge/refund on the same
         # user can no longer be silently overwritten by this approval.
@@ -446,6 +446,17 @@ async def approve_payment_request(
             )
         )
         if result.rowcount:
+            await record_recap_credit_event(
+                session,
+                user_id=payment.user_id,
+                direction=LedgerDirection.CREDIT.value,
+                credits=_recap_to_credit,
+                reference_id=str(payment.id),
+                note=(
+                    f"Approved by admin {admin_id}: {_recap_to_credit} "
+                    f"recap credits ({payment.package_code})"
+                ),
+            )
             target = await session.get(User, payment.user_id)
             if target is not None:
                 # Keep the in-session copy consistent with the UPDATE.
