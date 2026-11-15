@@ -33,8 +33,23 @@ def _renderer(tmp_path):
     return pq.PngSubtitleRenderer(tmp_path / "cx_cache")
 
 
+# These two files pin splitting BOUNDARIES at their calibrated legacy sizes
+# per the owner decision 2026-11-15; the S3 production sizes are covered by
+# test_subtitle_premium_pass.py.
+_LEGACY_FONT_PX = {
+    (13, 1): 61,
+    (16, 1): 77,
+    (19, 1): 92,
+    (22, 1): 108,
+    (13, 2): 77,
+    (16, 2): 96,
+    (19, 2): 115,
+    (22, 2): 134,
+}
+
+
 def _font_px(size_pt, sub_lines=1):
-    return core.subtitle_font_px(CW, CH, size_pt, sub_lines, LB)
+    return _LEGACY_FONT_PX[(int(size_pt), 1 if int(sub_lines or 1) == 1 else 2)]
 
 
 def _visuals(font_px, preset="yellow"):
