@@ -51,4 +51,4 @@ def test_style_counts_dropped():
 
 
 def test_cache_token_r114():
-    assert INDEX.count("20261116_r157") == 4
+    assert INDEX.count("20261116_r158") == 4
