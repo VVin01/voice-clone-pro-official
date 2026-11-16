@@ -482,3 +482,33 @@ def test_frontend_and_cache_token_wiring():
     assert "generateRecapAiThumbnail" in app_js
     assert "saveAiThumbnailSettings" in app_js
     assert THUMBNAIL_MONTHLY_CAP_MESSAGE_MY in i18n_js
+
+
+def test_send_recap_thumbnail_telegram_parsemode_html(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.webapp.api import _send_recap_thumbnail_telegram
+
+    monkeypatch.setattr(settings, "bot_token", "test_bot_token_123")
+    fake_photo = tmp_path / "thumb.jpg"
+    fake_photo.write_bytes(b"dummy_jpeg_bytes")
+
+    sent_kwargs = {}
+    mock_bot = MagicMock()
+    mock_bot.send_photo = AsyncMock(side_effect=lambda **kw: sent_kwargs.update(kw))
+    mock_bot.session = MagicMock()
+    mock_bot.session.close = AsyncMock()
+
+    with patch("aiogram.Bot", return_value=mock_bot):
+        ok = _run(
+            _send_recap_thumbnail_telegram(
+                chat_id=12345,
+                photo_path=fake_photo,
+                title="Test Movie",
+                lang="en",
+            )
+        )
+        assert ok is True
+        assert sent_kwargs.get("parse_mode") == "HTML"
+        assert "<b>AI Thumbnail Ready</b>" in sent_kwargs.get("caption", "")
+
+

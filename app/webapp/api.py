@@ -10958,6 +10958,7 @@ async def _send_recap_thumbnail_telegram(
             chat_id=chat_id,
             photo=FSInputFile(str(photo_path), filename="VoiceClonePro_Thumbnail.jpg"),
             caption=caption,
+            parse_mode="HTML",
         )
         return True
     except Exception as exc:
