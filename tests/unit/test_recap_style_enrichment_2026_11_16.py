@@ -63,7 +63,8 @@ def _audit_prompt(monkeypatch, style):
     ]
 
     def fake_gemini_json(ai, prompt, retries=1, log=None, rotation_tier=None):
-        captured["prompt"] = prompt
+        if "AUDITOR" in prompt:
+            captured["prompt"] = prompt
         return {"checks": [{"id": r["id"], "status": "pass"} for r in rows]}
 
     monkeypatch.setattr(planner, "_gemini_json", fake_gemini_json)
@@ -275,6 +276,6 @@ def test_internal_style_ids_unchanged():
         assert old not in I18N_JS and old not in INDEX_HTML
 
 
-def test_cache_token_bumped_to_r155():
-    assert INDEX_HTML.count("?v=20261116_r155") == 4
-    assert "r154" not in INDEX_HTML
+def test_cache_token_bumped_to_r156():
+    assert INDEX_HTML.count("?v=20261116_r156") == 4
+    assert "r155" not in INDEX_HTML
