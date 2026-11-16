@@ -374,12 +374,27 @@ async def claim_job_for_running(session: AsyncSession, job_id: str) -> bool:
     return res.rowcount == 1
 
 
-async def claim_next_queued_job(session: AsyncSession, engine_filter: str | None = None) -> Job | None:
+async def claim_next_queued_job(
+    session: AsyncSession,
+    engine_filter: str | None = None,
+    *,
+    skip_local_source: bool | None = None,
+) -> Job | None:
     """Find the oldest QUEUED job matching engine_filter and atomically transition it to RUNNING.
 
     Guarantees exactly ONE competing worker claims and executes the job.
+
+    When ``skip_local_source`` is True (or unset and settings.worker_claim_local_files
+    is False, e.g. WORKER_CLAIM_LOCAL_FILES=0 on a VPS second worker), jobs
+    whose ``source_audio_path`` is a local filesystem path are skipped so
+    the primary instance (holding the file) claims them. URL-sourced and
+    preset-voice jobs (source_audio_path is NULL or empty) are portable and
+    claimable by any worker.
     """
-    query = select(Job.id).where(
+    if skip_local_source is None:
+        skip_local_source = not getattr(settings, "worker_claim_local_files", True)
+
+    query = select(Job.id, Job.source_audio_path).where(
         Job.status == JobStatus.QUEUED.value,
         Job.job_type != JobType.RECAP.value,
         # Batch AW: TTS jobs execute in the webapp process (their own
@@ -392,14 +407,46 @@ async def claim_next_queued_job(session: AsyncSession, engine_filter: str | None
     if engine_filter:
         query = query.where(Job.engine == engine_filter)
 
-    candidate_stmt = query.order_by(Job.created_at).limit(1)
-    candidate_id = (await session.execute(candidate_stmt)).scalar_one_or_none()
-    if not candidate_id:
+    if skip_local_source:
+        query = query.where(
+            (Job.source_audio_path.is_(None))
+            | (Job.source_audio_path == "")
+            | (Job.source_audio_path.startswith("http://"))
+            | (Job.source_audio_path.startswith("https://"))
+        )
+
+    candidate_stmt = query.order_by(Job.created_at).limit(10)
+    rows = (await session.execute(candidate_stmt)).all()
+    if not rows:
         return None
 
-    claimed = await claim_job_for_running(session, candidate_id)
-    if not claimed:
-        return None
+    for row in rows:
+        candidate_id, src_path = row[0], row[1]
+        if skip_local_source and _is_local_source(src_path):
+            logger.debug(
+                "Skipping job %s: source_audio_path is a local file "
+                "and this instance has skip_local_source=True",
+                candidate_id,
+            )
+            continue
+        claimed = await claim_job_for_running(session, candidate_id)
+        if not claimed:
+            continue
+        return await session.get(Job, candidate_id)
 
-    return await session.get(Job, candidate_id)
+    return None
+
+
+def _is_local_source(path: str | None) -> bool:
+    """Return True when *path* looks like a local filesystem path
+    (not a URL and not empty/None).  URL-sourced and preset-voice
+    jobs store NULL or a URL string and are portable across instances.
+    """
+    if not path or not path.strip():
+        return False
+    p = path.strip()
+    # URLs are portable
+    if p.startswith("http://") or p.startswith("https://"):
+        return False
+    return True
 

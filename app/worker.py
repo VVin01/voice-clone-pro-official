@@ -434,6 +434,13 @@ async def process_single_job(
                     ref_wav = Path(job.source_audio_path)
                 elif getattr(model, "sample_audio_path", None) and Path(model.sample_audio_path).is_file():
                     ref_wav = Path(model.sample_audio_path)
+                elif (
+                    getattr(job, "source_audio_path", None)
+                    and not getattr(job, "preset_voice", None)
+                ):
+                    raise FileNotFoundError(
+                        f"Reference audio file not found on worker disk: {job.source_audio_path}"
+                    )
 
                 control_instruction = None
                 if getattr(job, "preset_voice", None):
@@ -985,6 +992,7 @@ async def claim_and_process_next_job(
     session: AsyncSession | None = None,
     bot: Bot | None = None,
     engine_filter: str | None = "voxcpm",
+    skip_local_source: bool | None = None,
 ) -> bool:
     """Atomically claim the oldest QUEUED job matching engine_filter and process it.
 
@@ -999,7 +1007,9 @@ async def claim_and_process_next_job(
     from app.services.queue import claim_next_queued_job
 
     if session is not None:
-        job = await claim_next_queued_job(session, engine_filter=engine_filter)
+        job = await claim_next_queued_job(
+            session, engine_filter=engine_filter, skip_local_source=skip_local_source
+        )
         if not job:
             return False
         try:
@@ -1013,7 +1023,9 @@ async def claim_and_process_next_job(
             return False
 
     async with AsyncSessionLocal() as claim_session:
-        job = await claim_next_queued_job(claim_session, engine_filter=engine_filter)
+        job = await claim_next_queued_job(
+            claim_session, engine_filter=engine_filter, skip_local_source=skip_local_source
+        )
         if not job:
             return False
         job_id = job.id
@@ -1056,19 +1068,25 @@ def _boot_cutoff_sweep_due(
     )
 
 
-async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, engine_filter: str = "voxcpm") -> None:
+async def run_worker_loop(
+    bot: Bot | None = None,
+    poll_interval: float = 2.0,
+    engine_filter: str = "voxcpm",
+    skip_local_source: bool | None = None,
+) -> None:
     """Continuously poll for QUEUED jobs (defaulting to VoxCPM cloud engine) and process them."""
     logger.info("Starting background audio processing worker loop (engine_filter=%s)...", engine_filter)
 
-    # Startup recovery: sweep orphaned RUNNING jobs before starting polling
-    from app.services.recovery import recover_stale_running_jobs
-    try:
-        async with AsyncSessionLocal() as session:
-            recovered = await recover_stale_running_jobs(session=session, bot=bot)
-            if recovered:
-                logger.info("Recovered %d orphaned stale jobs on worker startup: %s", len(recovered), recovered)
-    except Exception as e:
-        logger.warning("Error during initial stale job recovery sweep: %s", e)
+    # Startup recovery: sweep orphaned RUNNING jobs before starting polling (primary only)
+    if settings.instance_primary:
+        from app.services.recovery import recover_stale_running_jobs
+        try:
+            async with AsyncSessionLocal() as session:
+                recovered = await recover_stale_running_jobs(session=session, bot=bot)
+                if recovered:
+                    logger.info("Recovered %d orphaned stale jobs on worker startup: %s", len(recovered), recovered)
+        except Exception as e:
+            logger.warning("Error during initial stale job recovery sweep: %s", e)
 
     # Periodic orphan sweep (hunt #7): the startup sweep alone uses
     # the fixed stale timeout, so a job that was mid-flight when the
@@ -1079,6 +1097,8 @@ async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, en
     # recovery with a boot-relative timeout, whose cutoff is this
     # loop's own start: rows started before it are orphaned, rows
     # this loop claimed have a later started_at and are untouched.
+    # Primary-only (Phase 1): secondary workers skip this to avoid
+    # killing jobs actively rendering on the primary.
     import time as _time
 
     _loop_started = _time.monotonic()
@@ -1087,7 +1107,7 @@ async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, en
     while True:
         try:
             _now_m = _time.monotonic()
-            if _boot_cutoff_sweep_due(_loop_started, _last_stale_sweep, _now_m):
+            if settings.instance_primary and _boot_cutoff_sweep_due(_loop_started, _last_stale_sweep, _now_m):
                 _last_stale_sweep = _now_m
                 try:
                     async with AsyncSessionLocal() as session:
@@ -1103,7 +1123,9 @@ async def run_worker_loop(bot: Bot | None = None, poll_interval: float = 2.0, en
             # No loop-owned session (audit fix 2026-11-03):
             # claim_and_process_next_job scopes its own short-lived
             # claim session and a fresh processing session.
-            processed = await claim_and_process_next_job(bot=bot, engine_filter=engine_filter)
+            processed = await claim_and_process_next_job(
+                bot=bot, engine_filter=engine_filter, skip_local_source=skip_local_source
+            )
             if not processed:
                 await asyncio.sleep(poll_interval)
         except asyncio.CancelledError:
