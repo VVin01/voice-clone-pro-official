@@ -415,7 +415,7 @@ def _mock_payloads() -> dict:
 
 
 def test_cache_bust_token_is_r150():
-    assert INDEX_HTML.count("20261116_r156") == 4
+    assert INDEX_HTML.count("20261116_r157") == 4
     assert "20261114_r149" not in INDEX_HTML
 
 
