@@ -15668,6 +15668,9 @@ async function generateRecapAiThumbnail(jobIdArg, headlineInputId) {
         if (data.pool_usage && data.pool_usage.cap_reached) {
             state.aiThumbnailCapReached = true;
         }
+        if (inputEl && !headlineText && data.headline_text) {
+            inputEl.value = data.headline_text;
+        }
         if (!jobIdArg || targetJobId === state.recapJobId) {
             syncRecapAiThumbnailUI(
                 {

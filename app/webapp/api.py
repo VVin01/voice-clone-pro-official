@@ -10990,6 +10990,7 @@ async def create_recap_ai_thumbnail(
         ThumbnailTierError,
         generate_recap_ai_thumbnail,
         is_user_eligible_for_thumbnail,
+        load_recap_narration_script,
     )
 
     lang = user.language_code or "my"
@@ -11027,15 +11028,16 @@ async def create_recap_ai_thumbnail(
         entry_dict.get("title") or persisted_cfg.get("title"),
         db_job.input_text if db_job else None,
     )
-    default_headline = "" if clean_title == "Movie Recap Video" else clean_title
+    # If user provided explicit headline, use theirs; otherwise empty lets the AI generate
     if req is not None and req.headline_text is not None:
-        headline_text = req.headline_text
+        user_headline = req.headline_text
     else:
-        headline_text = default_headline
+        user_headline = ""
 
     story_style = entry_dict.get("story_style") or persisted_cfg.get("story_style") or ""
     job_dir = settings.storage_root / "recap_output" / job_id
     out_path = job_dir / "ai_thumbnail.jpg"
+    narration_script = load_recap_narration_script(job_id, job_dir=job_dir)
 
     try:
         res = await generate_recap_ai_thumbnail(
@@ -11043,9 +11045,10 @@ async def create_recap_ai_thumbnail(
             user=user,
             job_id=job_id,
             recap_title=clean_title,
-            headline_text=headline_text,
+            headline_text=user_headline,
             genre=story_style,
             output_path=out_path,
+            narration_script=narration_script,
         )
     except ThumbnailTierError:
         raise HTTPException(status_code=403, detail=t("recap_thumb_vip_only", lang))
@@ -11078,6 +11081,7 @@ async def create_recap_ai_thumbnail(
         "thumbnail_url": signed.get("thumbnail"),
         "thumbnail_stream_url": signed.get("thumbnail_stream_url"),
         "headline_text": res["headline_text"],
+        "palette_family": res.get("palette_family", "warm"),
         "logo_only": res["logo_only"],
         "telegram_sent": tg_sent,
         "pool_usage": res["pool_usage"],

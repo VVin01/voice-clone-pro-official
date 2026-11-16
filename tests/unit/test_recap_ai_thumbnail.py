@@ -512,3 +512,248 @@ def test_send_recap_thumbnail_telegram_parsemode_html(tmp_path, monkeypatch):
         assert "<b>AI Thumbnail Ready</b>" in sent_kwargs.get("caption", "")
 
 
+def test_sanitize_title_for_brain_strips_channels_and_tags():
+    from app.services.recap_thumbnail import sanitize_title_for_brain
+
+    assert sanitize_title_for_brain("Mere Paas Tum Ho - Episode 1 | ARY Digital [Eng Sub]") == "Mere Paas Tum Ho"
+    assert sanitize_title_for_brain("ARY Digital - Besharam Official Full Episode 12") == "Besharam"
+    assert sanitize_title_for_brain("Money Heist (Official Trailer) - Netflix") == "Money Heist"
+    assert sanitize_title_for_brain("https://youtube.com/watch?v=12345 Movie Recap Video") == "dramatic cinematic story"
+    assert sanitize_title_for_brain("Inception") == "Inception"
+
+
+def test_validate_brain_response_headline_rules():
+    from app.services.recap_thumbnail import BRAIN_REQUIRED_SUFFIX, validate_brain_response
+
+    # 1. Approved 2-line dramatic Burmese headline
+    approved = {
+        "headline_my": "မိန်းမရဲ့ လျှို့ဝှက်ချက်\nပေါ်သွားပြီ",
+        "image_prompt_en": "Cinematic vertical 9:16 poster of a shocked woman uncovering a hidden dark secret",
+    }
+    validated = validate_brain_response(approved, source_title="Besharam")
+    assert validated is not None
+    assert validated["headline_my"] == "မိန်းမရဲ့ လျှို့ဝှက်ချက်\nပေါ်သွားပြီ"
+    assert BRAIN_REQUIRED_SUFFIX in validated["image_prompt_en"]
+
+    # 2. Rejection: contains digits (ASCII or Myanmar)
+    bad_ascii_digit = {
+        "headline_my": "မိန်းမရဲ့ လျှို့ဝှက်ချက် 1\nပေါ်သွားပြီ",
+        "image_prompt_en": "Cinematic vertical 9:16 poster",
+    }
+    assert validate_brain_response(bad_ascii_digit) is None
+
+    bad_mm_digit = {
+        "headline_my": "မိန်းမရဲ့ လျှို့ဝှက်ချက် ၁\nပေါ်သွားပြီ",
+        "image_prompt_en": "Cinematic vertical 9:16 poster",
+    }
+    assert validate_brain_response(bad_mm_digit) is None
+
+    # 3. Rejection: abstract noun slash pairs
+    bad_slash_pair = {
+        "headline_my": "ကင်ဆာလျှို့ဝှက် / ဖောက်ပြန်မှု",
+        "image_prompt_en": "Cinematic vertical 9:16 poster",
+    }
+    assert validate_brain_response(bad_slash_pair) is None
+
+    # 4. Rejection: channel names in headline
+    bad_channel = {
+        "headline_my": "ARY Digital ဇာတ်လမ်း\nပေါ်သွားပြီ",
+        "image_prompt_en": "Cinematic vertical 9:16 poster",
+    }
+    assert validate_brain_response(bad_channel) is None
+
+    # 5. Rejection: single line or 3 lines
+    bad_single_line = {
+        "headline_my": "တစ်ခုတည်းသောခေါင်းစဉ်အရှည်ကြီး",
+        "image_prompt_en": "Cinematic vertical 9:16 poster",
+    }
+    assert validate_brain_response(bad_single_line) is None
+
+    bad_three_lines = {
+        "headline_my": "လိုင်း ၁\nလိုင်း ၂\nလိုင်း ၃",
+        "image_prompt_en": "Cinematic vertical 9:16 poster",
+    }
+    assert validate_brain_response(bad_three_lines) is None
+
+    # 6. Rejection: source title copied directly
+    bad_title_copied = {
+        "headline_my": "Besharam\nBesharam",
+        "image_prompt_en": "Cinematic vertical 9:16 poster",
+    }
+    assert validate_brain_response(bad_title_copied, source_title="Besharam") is None
+
+
+def test_call_brain_for_thumbnail_fallback_on_error_or_bad_json():
+    from app.services.recap_thumbnail import call_brain_for_thumbnail
+
+    # 1. Invalid JSON string
+    def fake_bad_json(prompt: str):
+        return "Not a valid JSON response from Gemini"
+
+    res_bad = call_brain_for_thumbnail("ဇာတ်လမ်းအကျဉ်း", "Besharam", gemini_call=fake_bad_json)
+    assert res_bad is None
+
+    # 2. Exception raised during Gemini call
+    def fake_error(prompt: str):
+        raise ConnectionResetError("Gemini network timeout")
+
+    res_err = call_brain_for_thumbnail("ဇာတ်လမ်းအကျဉ်း", "Besharam", gemini_call=fake_error)
+    assert res_err is None
+
+    # 3. Valid JSON string parsed correctly
+    def fake_good(prompt: str):
+        return '{"headline_my": "မိန်းမရဲ့ လျှို့ဝှက်ချက်\\nပေါ်သွားပြီ", "image_prompt_en": "Cinematic vertical 9:16 poster of a shocked woman"}'
+
+    res_good = call_brain_for_thumbnail("ဇာတ်လမ်းအကျဉ်း", "Besharam", gemini_call=fake_good)
+    assert res_good is not None
+    assert res_good["headline_my"] == "မိန်းမရဲ့ လျှို့ဝှက်ချက်\nပေါ်သွားပြီ"
+
+
+def test_generate_thumbnail_brain_headline_and_user_override(tmp_path, monkeypatch):
+    _restore_thumbnail_settings(monkeypatch)
+
+    async def _scenario():
+        engine, Session = await _make_session_factory(tmp_path)
+        try:
+            async with Session() as session:
+                paid_user = User(
+                    id=5001,
+                    username="paid_v2",
+                    account_category=AccountCategory.PURCHASED.value,
+                    recap_credits=10,
+                )
+                session.add(paid_user)
+                await session.commit()
+
+                def fake_brain(prompt: str):
+                    return {
+                        "headline_my": "မိန်းမရဲ့ လျှို့ဝှက်ချက်\nပေါ်သွားပြီ",
+                        "image_prompt_en": "Dramatic scene of a shocked woman in vertical 9:16 poster",
+                    }
+
+                hf_prompts = []
+
+                def fake_hf(prompt: str, *, model_name: str | None = None):
+                    hf_prompts.append(prompt)
+                    return Image.new("RGB", (720, 1280), (180, 50, 30))  # Warm base
+
+                # Case 1: Empty user headline -> uses brain headline + brain image prompt
+                res1 = await generate_recap_ai_thumbnail(
+                    session,
+                    user=paid_user,
+                    job_id="rc_brain_1",
+                    recap_title="Besharam - Episode 1 | ARY Digital",
+                    headline_text="",
+                    output_path=tmp_path / "brain1.jpg",
+                    hf_call=fake_hf,
+                    gemini_call=fake_brain,
+                )
+                assert res1["headline_text"] == "မိန်းမရဲ့ လျှို့ဝှက်ချက်\nပေါ်သွားပြီ"
+                assert "Dramatic scene of a shocked woman" in res1["prompt"]
+                assert res1["palette_family"] == "warm"
+
+                # Case 2: User provides explicit headline -> overrides brain headline
+                res2 = await generate_recap_ai_thumbnail(
+                    session,
+                    user=paid_user,
+                    job_id="rc_brain_2",
+                    recap_title="Besharam - Episode 1 | ARY Digital",
+                    headline_text="အသုံးပြုသူ စိတ်ကြိုက်\nခေါင်းစဉ်",
+                    output_path=tmp_path / "brain2.jpg",
+                    hf_call=fake_hf,
+                    gemini_call=fake_brain,
+                )
+                assert res2["headline_text"] == "အသုံးပြုသူ စိတ်ကြိုက်\nခေါင်းစဉ်"
+
+                # Case 3: Brain call fails -> falls back to v1 prompt template and logo-only / user headline
+                def failing_brain(prompt: str):
+                    raise RuntimeError("Brain 503 unavailable")
+
+                res3 = await generate_recap_ai_thumbnail(
+                    session,
+                    user=paid_user,
+                    job_id="rc_brain_3",
+                    recap_title="Fallback Movie",
+                    headline_text="",
+                    output_path=tmp_path / "brain3.jpg",
+                    hf_call=fake_hf,
+                    gemini_call=failing_brain,
+                )
+                assert res3["headline_text"] == ""
+                assert res3["logo_only"] is True
+                assert "Cinematic vertical 9:16 movie poster artwork inspired by Fallback Movie" in res3["prompt"]
+        finally:
+            await engine.dispose()
+
+    _run(_scenario())
+
+
+def test_palette_analysis_on_synthetic_swatches_and_contrast_rule():
+    from app.services.recap_thumbnail import analyze_palette
+
+    # 1. Warm swatch (red/orange)
+    warm_img = Image.new("RGB", (720, 1280), (180, 50, 20))
+    p_warm = analyze_palette(warm_img)
+    assert p_warm["family"] == "warm"
+    assert p_warm["deepen_contrast"] is False
+
+    # 2. Cold swatch (blue/cyan)
+    cold_img = Image.new("RGB", (720, 1280), (20, 60, 180))
+    p_cold = analyze_palette(cold_img)
+    assert p_cold["family"] == "cold"
+    assert p_cold["deepen_contrast"] is False
+
+    # 3. Green swatch
+    green_img = Image.new("RGB", (720, 1280), (20, 150, 50))
+    p_green = analyze_palette(green_img)
+    assert p_green["family"] == "green"
+    assert p_green["deepen_contrast"] is False
+
+    # 4. Dark / neutral swatch
+    dark_img = Image.new("RGB", (720, 1280), (15, 15, 15))
+    p_dark = analyze_palette(dark_img)
+    assert p_dark["family"] == "dark_neutral"
+    assert p_dark["deepen_contrast"] is False
+
+    # 5. High luminance swatch (> 150 mean luminance) -> deepen_contrast must be True
+    bright_img = Image.new("RGB", (720, 1280), (230, 230, 230))
+    p_bright = analyze_palette(bright_img)
+    assert p_bright["mean_luminance"] > 150.0
+    assert p_bright["deepen_contrast"] is True
+
+
+def test_composite_noto_serif_black_compact_shaping_and_autofit(tmp_path):
+    from app.services.recap_thumbnail import (
+        _fit_line_font,
+        _resolve_noto_serif_black_path,
+        composite_recap_thumbnail,
+    )
+
+    # 1. Font file is NotoSerifMyanmar-Black
+    font_path = _resolve_noto_serif_black_path()
+    assert font_path.is_file()
+    assert "NotoSerifMyanmar-Black" in font_path.name
+
+    # 2. Auto-fit test: punch line renders larger font size than setup line
+    line_setup = "မိန်းမရဲ့ လျှို့ဝှက်ချက်"
+    line_punch = "ပေါ်သွားပြီ"
+    _f1, s1 = _fit_line_font(line_setup)
+    _f2, s2 = _fit_line_font(line_punch)
+    assert s2 >= s1  # Shorter punch line renders at >= font size of setup line
+
+    # 3. Syllable test: render words containing ု/ူ syllables ("သူ", "ပြု")
+    base = Image.new("RGB", (720, 1280), (30, 40, 60))
+    out_img = composite_recap_thumbnail(
+        base,
+        headline_text="သူရဲကောင်း၏\nပြုပြင်မှု",
+        output_path=tmp_path / "shaping_test.jpg",
+    )
+    assert out_img.size == (1080, 1920)
+    arr = np.asarray(out_img, dtype=np.int16)
+    # The headline area (lower third, 1400:1850) must have rendered text pixels differing from base
+    base_1080 = np.full((1920, 1080, 3), (30, 40, 60), dtype=np.int16)
+    diff = np.abs(arr[1400:1850, 100:980] - base_1080[1400:1850, 100:980]).mean()
+    assert diff > 15.0
+
+
+
