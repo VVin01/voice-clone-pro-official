@@ -156,6 +156,7 @@ def test_history_js_duration_and_22h_display_only_expires_soon_node_vm():
     ]
     helper_stubs = """
     const window = {};
+    const state = { canUseAiThumbnail: false, aiThumbnailCapReached: false, user: null };
     function escapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}
     function brandedDlName(a,b,c,d){return a+'_'+d+'.'+b;}
     let hubOpenDetailId = null;
@@ -295,4 +296,4 @@ def test_phase6_i18n_parity_and_cache_token():
     for key in required:
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
-    assert INDEX_HTML.count("20261116_r156") == 4
+    assert INDEX_HTML.count("20261116_r157") == 4

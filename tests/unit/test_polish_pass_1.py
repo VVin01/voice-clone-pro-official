@@ -27,7 +27,7 @@ def _extract_fn(src: str, name: str) -> str:
 
 
 def test_r148_cache_token_and_budgets():
-    assert INDEX_HTML.count("?v=20261116_r156") == 4
+    assert INDEX_HTML.count("?v=20261116_r157") == 4
     assert "r147" not in INDEX_HTML
 
     total_lf = sum(
@@ -194,7 +194,7 @@ def test_1d_tts_balance_line_and_history_retention_via_node():
 const fs = require('fs');
 const vm = require('vm');
 const i18nSrc = fs.readFileSync({json.dumps(str(REPO / 'app' / 'webapp' / 'static' / 'js' / 'i18n.js'))}, 'utf8');
-const ctx = {{ window: {{}}, document: {{}}, localStorage: {{ getItem: () => 'my', setItem: () => {{}} }}, escapeHtml: (s)=>String(s||''), hubOpenDetailId: null }};
+const ctx = {{ window: {{}}, document: {{}}, localStorage: {{ getItem: () => 'my', setItem: () => {{}} }}, escapeHtml: (s)=>String(s||''), hubOpenDetailId: null, state: {{ canUseAiThumbnail: false, aiThumbnailCapReached: false, user: null }} }};
 vm.runInNewContext(i18nSrc + '; globalThis.__tr = translations;', ctx);
 ctx.t = (k) => (ctx.__tr.my && ctx.__tr.my[k]) || k;
 ctx.tf = (k, p={{}}) => {{ let s = ctx.t(k); for (const [a,b] of Object.entries(p)) s = s.replace('{{'+a+'}}', b); return s; }};

@@ -647,5 +647,5 @@ def test_batch_ao_wiring_contracts():
     assert "{duration}" in i18n_js and "{credits}" in i18n_js
 
     # Cache token bumped for the static changes.
-    assert "20261116_r156" in html
+    assert "20261116_r157" in html
     assert "20261104_r64" not in html

@@ -521,5 +521,9 @@
   "dp_choice_not_parked": "This job is no longer waiting for a choice",
   "dp_park_expired_error": "The job was stopped because voice quota did not return in time. Your payment has been refunded.",
   "dp_parked_label": "Waiting for your voice choice",
-  "live_job_status_waiting_choice": "⏸️ Waiting for your voice choice in Bot"
+  "live_job_status_waiting_choice": "⏸️ Waiting for your voice choice in Bot",
+  "recap_thumb_cap_reached": "This month's AI Thumbnail pool has been reached",
+  "recap_thumb_vip_only": "👑 AI Thumbnail generation is a VIP-only perk — upgrade to a VIP Plan to unlock it for free.",
+  "recap_thumb_failed": "AI Thumbnail generation failed — please try again shortly (no credits deducted).",
+  "recap_thumb_telegram_caption": "🖼️ <b>AI Thumbnail Ready</b>\n🎬 {title}\n✨ <i>VoiceClonePro VIP Perk (Free)</i>"
 }

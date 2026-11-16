@@ -10997,3 +10997,37 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
 .slider-ticks span:nth-child(3) { left: 56.25%; }
 .slider-ticks span:nth-child(4) { left: 75%; }
 .adm-stage-table .adm-num { text-align: right; white-space: nowrap; }
+
+/* Recap AI Thumbnail Panel (feat/recap-ai-thumbnail) */
+.recap-ai-thumb-panel {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 215, 0, 0.05);
+    border: 1px solid rgba(255, 215, 0, 0.22);
+}
+.recap-thumb-preview {
+    display: block;
+    width: 100%;
+    max-width: 240px;
+    aspect-ratio: 9 / 16;
+    object-fit: cover;
+    border-radius: 10px;
+    margin: 8px auto 0;
+    border: 1px solid rgba(255, 215, 0, 0.35);
+}
+.recap-hist-thumb-box {
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 215, 0, 0.18);
+}
+.recap-hist-thumb-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.recap-hist-thumb-row .studio-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+

@@ -3269,6 +3269,9 @@ async function loadUserProfile() {
 
         updateGateBanner(data);
         refreshWelcomeStrip();
+        state.canUseAiThumbnail = !!(data.can_use_ai_thumbnail || data.is_vip || data.is_admin);
+        state.aiThumbnailCapReached = !!data.ai_thumbnail_cap_reached;
+        syncRecapAiThumbnailUI();
         const freeTermsNote = document.getElementById("recap-free-terms-note");
         if (freeTermsNote) {
             // Up-front free terms under the Recap source input
@@ -10376,6 +10379,7 @@ function startRecapJobPolling(jobId) {
                     btnScript.setAttribute("data-dl-url", data.download_urls.script);
                     btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, jobId));
                 }
+                syncRecapAiThumbnailUI(data, jobId);
 
                 // Split parts (optional Video Splitter deliverables)
                 const partsWrap = document.getElementById("recap-parts-wrap");
@@ -14598,6 +14602,41 @@ async function loadAdminSettings() {
         const elWmSizeVal = document.getElementById("adm-wm-size-val");
         if (elWmSizeVal && elWmSize) elWmSizeVal.textContent = `${elWmSize.value || 16}%`;
 
+        const elThumbCap = document.getElementById("adm-set-thumb-cap");
+        const elThumbModel = document.getElementById("adm-set-thumb-model");
+        const elThumbPrompt = document.getElementById("adm-set-thumb-prompt");
+        if (s.recap_thumbnail_monthly_cap_usd != null) {
+            _admPaintValue(elThumbCap, Number(s.recap_thumbnail_monthly_cap_usd).toFixed(2));
+        }
+        if (s.recap_thumbnail_model != null) {
+            _admPaintValue(elThumbModel, s.recap_thumbnail_model);
+        }
+        if (s.recap_thumbnail_prompt_template != null) {
+            _admPaintValue(elThumbPrompt, s.recap_thumbnail_prompt_template);
+        }
+        const elThumbUsageTitle = document.getElementById("adm-thumb-usage-title");
+        const elThumbUsageStats = document.getElementById("adm-thumb-usage-stats");
+        const elThumbStatusBadge = document.getElementById("adm-thumb-status-badge");
+        if (elThumbUsageTitle) {
+            elThumbUsageTitle.textContent = tf("adm_thumb_usage_title", {
+                period: s.recap_thumbnail_month_period || "—",
+            });
+        }
+        if (elThumbUsageStats) {
+            const cnt = Number(s.recap_thumbnail_month_count || 0);
+            const sp = Number(s.recap_thumbnail_month_spend_usd || 0).toFixed(3);
+            const cp = Number(s.recap_thumbnail_monthly_cap_usd ?? 1.8).toFixed(2);
+            elThumbUsageStats.textContent = tf("adm_thumb_usage_stats", {
+                count: cnt,
+                spend: sp,
+                cap: cp,
+            });
+        }
+        if (elThumbStatusBadge) {
+            const capped = !!s.recap_thumbnail_cap_reached;
+            elThumbStatusBadge.textContent = capped ? t("adm_thumb_status_capped") : t("adm_thumb_status_ok");
+        }
+
         updateTutorialUI(s);
     } catch (e) {
         console.warn("Could not load dynamic settings:", e);
@@ -14760,6 +14799,10 @@ async function saveAdminSettings() {
     for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
         tutExtraLinks[settingKey] = document.getElementById(elId)?.value?.trim() || "";
     }
+    const thumbCapRaw = document.getElementById("adm-set-thumb-cap")?.value?.trim();
+    const thumbCap = thumbCapRaw === "" || thumbCapRaw == null ? null : parseFloat(thumbCapRaw);
+    const thumbModel = document.getElementById("adm-set-thumb-model")?.value?.trim();
+    const thumbPrompt = document.getElementById("adm-set-thumb-prompt")?.value?.trim();
 
     const payload = {
         payment_kpay_number: kpayNum,
@@ -14806,6 +14849,9 @@ async function saveAdminSettings() {
         ...(channelInvite ? { channel_invite_link: channelInvite } : {}),
         ...(groupInvite ? { group_invite_link: groupInvite } : {}),
         ..._collectWatermarkPayload(),
+        ...(Number.isFinite(thumbCap) ? { recap_thumbnail_monthly_cap_usd: thumbCap } : {}),
+        ...(thumbModel ? { recap_thumbnail_model: thumbModel } : {}),
+        ...(thumbPrompt ? { recap_thumbnail_prompt_template: thumbPrompt } : {}),
     };
     updateTutorialUI(payload);
 
@@ -14922,6 +14968,39 @@ async function saveWatermarkSettings() {
     }
 }
 window.saveWatermarkSettings = saveWatermarkSettings;
+
+async function saveAiThumbnailSettings() {
+    haptic("medium");
+    const capRaw = document.getElementById("adm-set-thumb-cap")?.value?.trim();
+    const capVal = capRaw === "" || capRaw == null ? 1.80 : parseFloat(capRaw);
+    const modelVal = document.getElementById("adm-set-thumb-model")?.value?.trim() || "black-forest-labs/FLUX.1-schnell";
+    const promptVal = document.getElementById("adm-set-thumb-prompt")?.value?.trim() || "";
+
+    const payload = {
+        ...(Number.isFinite(capVal) ? { recap_thumbnail_monthly_cap_usd: capVal } : {}),
+        recap_thumbnail_model: modelVal,
+        ...(promptVal ? { recap_thumbnail_prompt_template: promptVal } : {}),
+    };
+
+    try {
+        const res = await fetch("/api/admin/settings", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        ["adm-set-thumb-cap", "adm-set-thumb-model", "adm-set-thumb-prompt"].forEach(id => adminSettingsDirty.delete(id));
+        showStudioToast(t("adm_thumb_saved_toast"), "success");
+        loadAdminSettings();
+    } catch (e) {
+        showStudioToast(adminErrorText("admin_settings_save_err", e.message), "error");
+    }
+}
+window.saveAiThumbnailSettings = saveAiThumbnailSettings;
 
 // ── Dedicated History Hub ────────────────────────────────────────────────
 // One unified, newest-first list of ALL the user's jobs (voice + recap),
@@ -15156,6 +15235,22 @@ function hubHistoryDetailHtml(j) {
         if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_audio"))}</a>`;
         if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_srt"))}</a>`;
         if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_txt"))}</a>`;
+        if (j.deliverables?.thumbnail) actions += ` <a href="#" data-dl-url="${j.deliverables.thumbnail}" data-dl-name="${brandedDlName("Thumbnail", "jpg", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_thumbnail"))}</a>`;
+        const canThumb = !!(state.canUseAiThumbnail || state.user?.is_vip || state.user?.is_admin);
+        const capFull = !!state.aiThumbnailCapReached;
+        const prefillHeadline = escapeHtml(j.input_snippet || "");
+        const thumbNote = !canThumb
+            ? escapeHtml(t("recap_thumb_vip_locked_note"))
+            : (capFull ? escapeHtml(t("recap_thumb_cap_reached")) : escapeHtml(t("recap_thumb_free_perk_note")));
+        inner += `
+        <div class="history-item-body recap-hist-thumb-box mt-2">
+            <label class="text-xs" for="hist-thumb-headline-${j.id}">${escapeHtml(t("recap_thumb_headline_lbl"))}</label>
+            <div class="recap-hist-thumb-row mt-1">
+                <input type="text" id="hist-thumb-headline-${j.id}" class="studio-input vcp-input" maxlength="120" value="${prefillHeadline}" placeholder="${escapeHtml(t("recap_thumb_headline_ph"))}" ${(!canThumb || capFull) ? "disabled" : ""}>
+                <button type="button" id="btn-hist-thumb-${j.id}" class="history-dl-link" onclick="generateRecapAiThumbnail('${j.id}', 'hist-thumb-headline-${j.id}')" ${capFull ? "disabled" : ""}>${escapeHtml(t("btn_recap_ai_thumbnail"))}</button>
+            </div>
+            <div class="text-xs text-muted mt-1">${thumbNote}</div>
+        </div>`;
     } else if (j.download_url) {
         actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_voice"))}</a>`;
         if (j.telegram_sendable !== false) {
@@ -15432,6 +15527,7 @@ async function openRecapInPlayer(recapJobId) {
                 btnScript.setAttribute("data-dl-url", data.download_urls.script);
                 btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, recapJobId));
             }
+            syncRecapAiThumbnailUI(data, recapJobId);
             if (btnTg) {
                 btnTg.disabled = false;
                 btnTg.classList.remove("sent");
@@ -15447,6 +15543,162 @@ async function openRecapInPlayer(recapJobId) {
     }
 }
 window.openRecapInPlayer = openRecapInPlayer;
+
+function syncRecapAiThumbnailUI(statusData, jobId) {
+    const inputEl = document.getElementById("recap-thumb-headline-input");
+    const btnGen = document.getElementById("btn-recap-ai-thumbnail");
+    const btnDl = document.getElementById("btn-recap-dl-thumbnail");
+    const noteEl = document.getElementById("recap-thumb-status-note");
+    const previewImg = document.getElementById("recap-thumb-preview-img");
+
+    const canUse = !!(state.canUseAiThumbnail || state.user?.is_vip || state.user?.is_admin || state.user?.account_category === "PURCHASED");
+    const capReached = !!state.aiThumbnailCapReached;
+
+    if (inputEl && statusData) {
+        const defaultTitle = statusData.title || document.getElementById("recap-video-title")?.value?.trim() || "";
+        if (!inputEl.dataset.userEdited || inputEl.dataset.forJobId !== String(jobId || "")) {
+            inputEl.value = defaultTitle;
+            inputEl.dataset.forJobId = String(jobId || "");
+            delete inputEl.dataset.userEdited;
+        }
+        if (!inputEl.dataset.boundEditListener) {
+            inputEl.addEventListener("input", () => {
+                inputEl.dataset.userEdited = "1";
+            });
+            inputEl.dataset.boundEditListener = "1";
+        }
+    }
+    if (inputEl) {
+        inputEl.disabled = !canUse || capReached;
+    }
+    if (btnGen) {
+        btnGen.disabled = capReached;
+        btnGen.innerHTML = `<span data-i18n="btn_recap_ai_thumbnail">${escapeHtml(t("btn_recap_ai_thumbnail"))}</span>`;
+    }
+    if (noteEl) {
+        if (!canUse) {
+            noteEl.textContent = t("recap_thumb_vip_locked_note");
+        } else if (capReached) {
+            noteEl.textContent = t("recap_thumb_cap_reached");
+        } else {
+            noteEl.textContent = t("recap_thumb_free_perk_note");
+        }
+    }
+    if (statusData) {
+        const thumbDlUrl = statusData.download_urls?.thumbnail;
+        const thumbStreamUrl = statusData.download_urls?.thumbnail_stream_url || thumbDlUrl;
+        if (btnDl) {
+            if (thumbDlUrl) {
+                btnDl.setAttribute("data-dl-url", thumbDlUrl);
+                btnDl.setAttribute("data-dl-name", brandedDlName("Thumbnail", "jpg", statusData.title || null, jobId || state.recapJobId));
+                btnDl.classList.remove("hidden");
+            } else {
+                btnDl.classList.add("hidden");
+            }
+        }
+        if (previewImg) {
+            if (thumbStreamUrl) {
+                previewImg.src = thumbStreamUrl;
+                previewImg.classList.remove("hidden");
+            } else {
+                previewImg.removeAttribute("src");
+                previewImg.classList.add("hidden");
+            }
+        }
+    }
+}
+window.syncRecapAiThumbnailUI = syncRecapAiThumbnailUI;
+
+async function generateRecapAiThumbnail(jobIdArg, headlineInputId) {
+    haptic("medium");
+    const canUse = !!(state.canUseAiThumbnail || state.user?.is_vip || state.user?.is_admin || state.user?.account_category === "PURCHASED");
+    if (!canUse) {
+        showStudioToast(t("recap_thumb_vip_locked_note"), "info", 5000);
+        const noteEl = document.getElementById("recap-thumb-status-note");
+        if (noteEl) noteEl.textContent = t("recap_thumb_vip_locked_note");
+        return;
+    }
+    if (state.aiThumbnailCapReached) {
+        showStudioToast(t("recap_thumb_cap_reached"), "warning", 5000);
+        syncRecapAiThumbnailUI();
+        return;
+    }
+
+    const targetJobId = jobIdArg || state.recapJobId;
+    if (!targetJobId) return;
+
+    const inputEl = document.getElementById(headlineInputId || "recap-thumb-headline-input");
+    const headlineText = inputEl ? String(inputEl.value ?? "") : "";
+    const btnEl = jobIdArg
+        ? document.getElementById(`btn-hist-thumb-${jobIdArg}`)
+        : document.getElementById("btn-recap-ai-thumbnail");
+
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = t("btn_recap_ai_thumbnail_generating");
+    }
+
+    try {
+        const res = await fetch(`/api/recap/${targetJobId}/thumbnail`, {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ headline_text: headlineText }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 403) {
+            showStudioToast(t("recap_thumb_vip_locked_note"), "info", 5000);
+            return;
+        }
+        if (res.status === 429) {
+            state.aiThumbnailCapReached = true;
+            syncRecapAiThumbnailUI();
+            if (typeof renderHistoryHub === "function" && Array.isArray(hubHistoryCache)) {
+                renderHistoryHub();
+            }
+            showStudioToast(t("recap_thumb_cap_reached"), "warning", 6000);
+            return;
+        }
+        if (!res.ok) {
+            throw new Error(data.detail || t("recap_thumb_failed"));
+        }
+
+        if (data.pool_usage && data.pool_usage.cap_reached) {
+            state.aiThumbnailCapReached = true;
+        }
+        if (!jobIdArg || targetJobId === state.recapJobId) {
+            syncRecapAiThumbnailUI(
+                {
+                    title: data.headline_text || headlineText,
+                    download_urls: {
+                        thumbnail: data.thumbnail_url,
+                        thumbnail_stream_url: data.thumbnail_stream_url || data.thumbnail_url,
+                    },
+                },
+                targetJobId
+            );
+        }
+        if (Array.isArray(hubHistoryCache)) {
+            const item = hubHistoryCache.find(h => h.id === targetJobId);
+            if (item) {
+                item.deliverables = item.deliverables || {};
+                item.deliverables.thumbnail = data.thumbnail_url;
+                renderHistoryHub();
+            }
+        }
+        showStudioToast(t("recap_thumb_ready_toast"), "success", 5000);
+    } catch (err) {
+        showStudioToast(t("recap_thumb_failed"), "error", 5000);
+    } finally {
+        if (btnEl && !state.aiThumbnailCapReached) {
+            btnEl.disabled = false;
+            btnEl.textContent = t("btn_recap_ai_thumbnail");
+        }
+    }
+}
+window.generateRecapAiThumbnail = generateRecapAiThumbnail;
 
 // ── Deep Link Handling (Telegram WebApp & URL Query) ──────────────────────
 async function checkStartupDeepLinks() {
@@ -15565,6 +15817,7 @@ async function checkStartupDeepLinks() {
                         btnScript.setAttribute("data-dl-url", data.download_urls.script);
                         btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, recapJobId));
                     }
+                    syncRecapAiThumbnailUI(data, recapJobId);
                     if (btnTg) {
                         btnTg.disabled = false;
                         btnTg.classList.remove("sent");

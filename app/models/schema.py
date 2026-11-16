@@ -933,3 +933,24 @@ class MonthlyFreeAllowanceGrant(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "period", name="uq_user_monthly_grant_period"),
     )
+
+
+class RecapThumbnailPoolUsage(Base):
+    """Per-calendar-month (UTC 'YYYY-MM') counter for AI Thumbnail generations.
+
+    Tracks total billed generations, estimated USD spend, and whether HF
+    returned an insufficient-credit / quota error for that month so the
+    feature hard-stops until the 1st of next month. Created via
+    Base.metadata.create_all (Batch H pattern).
+    """
+
+    __tablename__ = "recap_thumbnail_pool_usage"
+
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)  # Format: "YYYY-MM"
+    generations_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_spend_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    exhausted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now()
+    )
+

@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261116_r156">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261116_r157">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261116_r156" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261116_r157" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1912,6 +1912,18 @@
             <a id="btn-recap-dl-srt" href="#" download="subtitles.srt" class="btn mini-btn secondary-btn" data-i18n="btn_dl_recap_srt">📝 Subtitles (SRT)</a>
             <a id="btn-recap-dl-script" href="#" download="script.txt" class="btn mini-btn secondary-btn" data-i18n="btn_dl_recap_script">📜 Script (TXT)</a>
         </div>
+        <div class="recap-ai-thumb-panel mt-3" id="recap-ai-thumbnail-box">
+            <label class="input-label text-xs" for="recap-thumb-headline-input" data-i18n="recap_thumb_headline_lbl">✏️ Thumbnail ပေါ်တွင် ထည့်မည့် မြန်မာ ခေါင်းစဉ် (အလွတ်ထားပါက Logo သီးသန့်):</label>
+            <input type="text" id="recap-thumb-headline-input" class="studio-input vcp-input mt-1" maxlength="120" data-i18n-ph="recap_thumb_headline_ph" placeholder="မြန်မာ ခေါင်းစဉ် ရေးပါ (သို့) အလွတ်ထားပါ…">
+            <div class="dl-sub-buttons mt-2">
+                <button type="button" id="btn-recap-ai-thumbnail" class="btn mini-btn gold-gradient-btn" onclick="generateRecapAiThumbnail()">
+                    <span data-i18n="btn_recap_ai_thumbnail">🖼️ AI Thumbnail</span>
+                </button>
+                <a id="btn-recap-dl-thumbnail" href="#" download="thumbnail.jpg" class="btn mini-btn secondary-btn hidden" data-i18n="btn_recap_dl_thumbnail">🖼️ Thumbnail ဒေါင်းမည်</a>
+            </div>
+            <p id="recap-thumb-status-note" class="text-xs text-muted mt-1" data-i18n="recap_thumb_free_perk_note">✨ VIP အသုံးပြုသူများအတွက် အခမဲ့ လက်ဆောင် (Credit နှင့် မိနစ် လုံးဝ မကုန်ပါ)</p>
+            <img id="recap-thumb-preview-img" class="recap-thumb-preview hidden mt-2" alt="AI Thumbnail">
+        </div>
         <div id="recap-parts-wrap" class="hidden mt-3">
             <div class="card-label" data-i18n="recap_parts_title">✂️ ခွဲထားသော အပိုင်းများ</div>
             <div class="dl-sub-buttons mt-2" id="recap-parts-list"></div>
@@ -3324,6 +3336,44 @@
                             </button>
                         </div>
                     </details>
+
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-ai-thumbnail-card">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title">
+                                <span data-i18n="adm_sec_ai_thumbnail">🖼️ AI Thumbnail (HF PRO Pool)</span>
+                                <span class="adm-acc-sub" data-i18n="adm_sec_ai_thumbnail_sub">လစဉ် ကုန်ကျစရိတ် ကန့်သတ်ချက် · Model · Prompt Template</span>
+                            </span>
+                            <span class="adm-acc-meta"><span class="badge-studio gold" id="adm-thumb-status-badge" data-i18n="adm_thumb_status_ok">✅ သုံးစွဲနိုင်သည်</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body">
+                            <div class="vcp-card vcp-card--compact mt-1" id="adm-thumb-usage-box">
+                                <div class="text-xs font-bold" id="adm-thumb-usage-title" data-i18n="adm_thumb_usage_title">📊 ယခုလ AI Thumbnail သုံးစွဲမှု ({period})</div>
+                                <div class="text-xs text-muted mt-1" id="adm-thumb-usage-stats" data-i18n="adm_thumb_usage_stats">ထုတ်ယူပြီး {count} ပုံ • ခန့်မှန်း ${spend} / ${cap} ကန့်သတ်ချက်</div>
+                            </div>
+                            <div class="mt-3">
+                                <label class="input-label" for="adm-set-thumb-cap" data-i18n="adm_thumb_cap_lbl">လစဉ် အများဆုံး ကုန်ကျစရိတ် ကန့်သတ်ချက် (USD $)</label>
+                                <input type="number" id="adm-set-thumb-cap" class="studio-input vcp-input mt-1" min="0" max="50" step="0.05" placeholder="1.80">
+                                <p class="text-muted text-xs mt-1" data-i18n="adm_thumb_cap_hint">HF PRO လစဉ် $2.00 Credit အတွင်း ဘေးကင်းစေရန် မူလ $1.80 ဖြင့် ကန့်သတ်ထားပါသည်</p>
+                            </div>
+                            <div class="mt-3">
+                                <label class="input-label" for="adm-set-thumb-model" data-i18n="adm_thumb_model_lbl">HF Inference Image Model အမည်</label>
+                                <input type="text" id="adm-set-thumb-model" class="studio-input vcp-input mt-1" maxlength="200" placeholder="black-forest-labs/FLUX.1-schnell">
+                                <p class="text-muted text-xs mt-1" data-i18n="adm_thumb_model_hint">မူလ: black-forest-labs/FLUX.1-schnell ($0.003 / ပုံ)</p>
+                            </div>
+                            <div class="mt-3">
+                                <label class="input-label" for="adm-set-thumb-prompt" data-i18n="adm_thumb_prompt_lbl">Generation Prompt Template ({title} ထည့်သုံးနိုင်သည်)</label>
+                                <textarea id="adm-set-thumb-prompt" class="studio-input vcp-input mt-1" rows="3" maxlength="1000" placeholder="Cinematic vertical 9:16 movie poster artwork inspired by {title}"></textarea>
+                                <p class="text-muted text-xs mt-1" data-i18n="adm_thumb_prompt_hint">ပုံမော်ဒယ်က စာလုံးမဆွဲစေရန် text-free စည်းမျဉ်း အလိုအလျောက် ပါဝင်ပြီး ဖြစ်ပါသည်</p>
+                            </div>
+                            <button type="button" class="btn gold-gradient-btn vcp-btn mt-3" id="btn-save-ai-thumbnail-settings" onclick="saveAiThumbnailSettings()">
+                                <span class="btn-icon">🖼️</span>
+                                <span data-i18n="adm_thumb_save_btn">AI Thumbnail ဆက်တင် သိမ်းမည်</span>
+                            </button>
+                        </div>
+                    </details>
+                            </button>
+                        </div>
+                    </details>
                     <div class="adm-settings-save-bar mt-3">
                         <button class="btn gold-gradient-btn w-100" id="btn-save-admin-settings" onclick="saveAdminSettings()">
                             <span class="btn-icon">💾</span>
@@ -3552,7 +3602,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261116_r156"></script>
-    <script src="/static/js/app.js?v=20261116_r156"></script>
+    <script src="/static/js/i18n.js?v=20261116_r157"></script>
+    <script src="/static/js/app.js?v=20261116_r157"></script>
 </body>
 </html>

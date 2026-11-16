@@ -245,7 +245,7 @@ def _with_stream_url(urls: Dict[str, Any], job_id: str, user_id: int) -> Dict[st
     wins. Stored registry URLs are never mutated — parts entries are
     copied before signing."""
     out = dict(urls or {})
-    for key in ("video", "audio", "srt", "script"):
+    for key in ("video", "audio", "srt", "script", "thumbnail"):
         if out.get(key):
             out[key] = _append_stream_token(
                 out[key], _make_stream_token(job_id, user_id, key)
@@ -266,6 +266,10 @@ def _with_stream_url(urls: Dict[str, Any], job_id: str, user_id: int) -> Dict[st
         token = _make_stream_token(job_id, user_id, "video")
         if token:
             out["stream_url"] = f"/api/recap/stream/{job_id}/video?t={token}"
+    if out.get("thumbnail"):
+        t_tok = _make_stream_token(job_id, user_id, "thumbnail")
+        if t_tok:
+            out["thumbnail_stream_url"] = f"/api/recap/stream/{job_id}/thumbnail?t={t_tok}"
     return out
 
 
@@ -1048,6 +1052,32 @@ def _logo_state_payload(user: User) -> Dict[str, Any]:
         "has_logo": found is not None,
         "logo_url": logo_url,
     }
+
+
+async def _safe_get_monthly_thumbnail_usage(db: AsyncSession) -> Dict[str, Any]:
+    try:
+        from app.services.recap_thumbnail import get_monthly_thumbnail_usage
+
+        return await get_monthly_thumbnail_usage(db)
+    except Exception:
+        from app.services.recap_thumbnail import (
+            DEFAULT_THUMBNAIL_COST_PER_IMAGE_USD,
+            get_thumbnail_model,
+            get_thumbnail_monthly_cap_usd,
+            get_thumbnail_prompt_template,
+        )
+
+        return {
+            "period": datetime.now(timezone.utc).strftime("%Y-%m"),
+            "generations_count": 0,
+            "estimated_spend_usd": 0.0,
+            "monthly_cap_usd": get_thumbnail_monthly_cap_usd(),
+            "exhausted": False,
+            "cap_reached": False,
+            "model": get_thumbnail_model(),
+            "prompt_template": get_thumbnail_prompt_template(),
+            "cost_per_image_usd": DEFAULT_THUMBNAIL_COST_PER_IMAGE_USD,
+        }
 
 
 async def _recap_active_job_count(db, user_id: int) -> int:
@@ -3691,6 +3721,10 @@ async def get_user_profile(
         # Custom channel logo (owner decision 2026-11-02): paid-only,
         # the user's own upload — see /api/user/logo endpoints.
         "can_use_logo": bool(is_vip),
+        "can_use_ai_thumbnail": bool(is_vip),
+        "ai_thumbnail_cap_reached": bool(
+            (await _safe_get_monthly_thumbnail_usage(db)).get("cap_reached")
+        ),
         "has_custom_logo": _find_user_logo(user.id) is not None,
         "active_recap_job_id": active_recap_job_id,
         "active_voice_job_id": active_voice_job_id,
@@ -6509,6 +6543,16 @@ def resolve_recap_deliverable_path(
             txts = [c for c in job_dir.rglob("*.txt") if c.is_file()]
             if txts:
                 return str(txts[0])
+        return None
+
+    if file_type == "thumbnail":
+        explicit_thumbs = [
+            job_dir / "ai_thumbnail.jpg",
+            job_dir / "ai_thumbnail.png",
+        ]
+        for cand in explicit_thumbs:
+            if cand.is_file() and cand.stat().st_size > 500:
+                return str(cand)
         return None
 
     return None
@@ -10206,9 +10250,15 @@ async def get_recap_status(
                 )
             except Exception:
                 _e_can_retry = None
+        _e_dl_urls = dict(entry.get("download_urls") or {})
+        if entry.get("status") == "SUCCESS" and not _e_dl_urls.get("thumbnail"):
+            if resolve_recap_deliverable_path(job_id, "thumbnail"):
+                _e_dl_urls["thumbnail"] = f"/api/recap/download/{job_id}/thumbnail"
+        _e_title = _clean_recap_display_title(entry.get("title"))
         return {
             "id": job_id,
             "status": entry.get("status", "PENDING"),
+            "title": _e_title if _e_title != "Movie Recap Video" else "",
             "queue_position": _e_position,
             "eta_seconds": _e_eta_payload["eta_seconds"],
             "eta_range_seconds": _e_eta_payload["eta_range_seconds"],
@@ -10227,7 +10277,7 @@ async def get_recap_status(
             "warnings": list(entry.get("warnings") or []),
             "output_size_bytes": _e_size,
             "telegram_sendable": _e_sendable,
-            "download_urls": _with_stream_url(entry.get("download_urls", {}), job_id, user.id),
+            "download_urls": _with_stream_url(_e_dl_urls, job_id, user.id),
             "script_review": bool(entry.get("script_review")),
             "segments_count": entry.get("segments_count"),
             "parts": entry.get("parts", []),
@@ -10314,9 +10364,17 @@ async def get_recap_status(
             "eta_range_seconds": None,
             "eta_overrun": False,
         }
+    _db_thumb_exists = bool(
+        is_success and resolve_recap_deliverable_path(job_id, "thumbnail")
+    )
+    _db_title = _clean_recap_display_title(
+        ((_db_state.get("config") or {}).get("title")),
+        getattr(job, "input_text", None),
+    )
     return {
         "id": job_id,
         "status": job.status,
+        "title": _db_title if _db_title != "Movie Recap Video" else "",
         "queue_position": _d_position,
         "eta_seconds": _d_eta_payload["eta_seconds"],
         "eta_range_seconds": _d_eta_payload["eta_range_seconds"],
@@ -10369,6 +10427,7 @@ async def get_recap_status(
             "audio": f"/api/recap/download/{job_id}/audio" if media_available else None,
             "srt": f"/api/recap/download/{job_id}/srt" if media_available else None,
             "script": f"/api/recap/download/{job_id}/script" if media_available else None,
+            "thumbnail": f"/api/recap/download/{job_id}/thumbnail" if _db_thumb_exists else None,
             "parts": _db_parts,
         }, job_id, user.id),
     }
@@ -10775,6 +10834,7 @@ async def download_recap_file(
         "audio": (audio_mime, branded_download_filename("RecapAudio", audio_ext.lstrip("."), title=_dl_title, job_id=job_id)),
         "srt": ("text/plain; charset=utf-8", branded_download_filename("Subtitles", "srt", title=_dl_title, job_id=job_id)),
         "script": ("text/plain; charset=utf-8", branded_download_filename("Script", "txt", title=_dl_title, job_id=job_id)),
+        "thumbnail": ("image/jpeg", branded_download_filename("Thumbnail", "jpg", title=_dl_title, job_id=job_id)),
     }
     _part_dl = re.fullmatch(r"part([1-9][0-9]?)", file_type or "")
     if _part_dl:
@@ -10872,6 +10932,155 @@ async def send_recap_to_telegram(
         )
         raise HTTPException(status_code=502, detail="telegram_delivery_failed")
     return {"success": True, "message": "Telegram သို့ ဗီဒီယို ပို့ပြီးပါပြီခင်ဗျာ!"}
+
+
+class RecapThumbnailRequest(BaseModel):
+    headline_text: Optional[str] = None
+
+
+async def _send_recap_thumbnail_telegram(
+    *,
+    chat_id: int,
+    photo_path: str | Path,
+    title: str,
+    lang: str = "my",
+) -> bool:
+    """Deliver the generated 9:16 AI Thumbnail to the user's Telegram chat."""
+    if not settings.bot_token:
+        return False
+    from aiogram import Bot
+    from aiogram.types import FSInputFile
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        caption = t("recap_thumb_telegram_caption", lang, title=title or "Movie Recap")
+        await bot.send_photo(
+            chat_id=chat_id,
+            photo=FSInputFile(str(photo_path), filename="VoiceClonePro_Thumbnail.jpg"),
+            caption=caption,
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Could not send AI thumbnail to Telegram chat %s: %s", chat_id, exc)
+        return False
+    finally:
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+
+
+@api_router.post("/recap/{job_id}/thumbnail")
+async def create_recap_ai_thumbnail(
+    job_id: str,
+    req: Optional[RecapThumbnailRequest] = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Generate a 9:16 vertical AI Thumbnail for a completed recap job (PAID + Admin only).
+
+    Uses the HF PRO account's included monthly compute credits with a hard
+    server-side monthly USD cap (default $1.80). Never deducts recap credits,
+    voice minutes, or any user balance.
+    """
+    from app.services.recap_thumbnail import (
+        ThumbnailCapReachedError,
+        ThumbnailGenerationError,
+        ThumbnailTierError,
+        generate_recap_ai_thumbnail,
+        is_user_eligible_for_thumbnail,
+    )
+
+    lang = user.language_code or "my"
+
+    # 1. Tier gate first: FREE accounts never trigger a generation
+    if not is_user_eligible_for_thumbnail(user):
+        raise HTTPException(
+            status_code=403,
+            detail=t("recap_thumb_vip_only", lang),
+        )
+
+    # 2. Verify job ownership and completion
+    db_job = await db.get(Job, job_id)
+    if not _recap_registry_owner_ok(job_id, user):
+        raise HTTPException(status_code=404, detail="Recap job not found")
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if entry is None:
+        if not db_job or (db_job.user_id != user.id and not settings.is_admin(user.id)):
+            raise HTTPException(status_code=404, detail="Recap job not found")
+        if db_job.status != JobStatus.SUCCESS.value:
+            raise HTTPException(status_code=409, detail="Recap job is not completed yet")
+    else:
+        if entry.get("status") != "SUCCESS" and (
+            not db_job or db_job.status != JobStatus.SUCCESS.value
+        ):
+            raise HTTPException(status_code=409, detail="Recap job is not completed yet")
+
+    entry_dict = entry or {}
+    persisted_cfg = (
+        (_load_persisted_recap_state(db_job) or {}).get("config", {})
+        if db_job is not None
+        else {}
+    )
+    clean_title = _clean_recap_display_title(
+        entry_dict.get("title") or persisted_cfg.get("title"),
+        db_job.input_text if db_job else None,
+    )
+    default_headline = "" if clean_title == "Movie Recap Video" else clean_title
+    if req is not None and req.headline_text is not None:
+        headline_text = req.headline_text
+    else:
+        headline_text = default_headline
+
+    story_style = entry_dict.get("story_style") or persisted_cfg.get("story_style") or ""
+    job_dir = settings.storage_root / "recap_output" / job_id
+    out_path = job_dir / "ai_thumbnail.jpg"
+
+    try:
+        res = await generate_recap_ai_thumbnail(
+            db,
+            user=user,
+            job_id=job_id,
+            recap_title=clean_title,
+            headline_text=headline_text,
+            genre=story_style,
+            output_path=out_path,
+        )
+    except ThumbnailTierError:
+        raise HTTPException(status_code=403, detail=t("recap_thumb_vip_only", lang))
+    except ThumbnailCapReachedError:
+        raise HTTPException(status_code=429, detail=t("recap_thumb_cap_reached", lang))
+    except ThumbnailGenerationError:
+        raise HTTPException(status_code=502, detail=t("recap_thumb_failed", lang))
+
+    if entry is not None:
+        entry["thumbnail_path"] = str(out_path)
+        entry.setdefault("download_urls", {})["thumbnail"] = (
+            f"/api/recap/download/{job_id}/thumbnail"
+        )
+
+    tg_sent = await _send_recap_thumbnail_telegram(
+        chat_id=user.id,
+        photo_path=out_path,
+        title=res["headline_text"] or clean_title,
+        lang=lang,
+    )
+
+    signed = _with_stream_url(
+        {"thumbnail": f"/api/recap/download/{job_id}/thumbnail"},
+        job_id,
+        user.id,
+    )
+    return {
+        "success": True,
+        "job_id": job_id,
+        "thumbnail_url": signed.get("thumbnail"),
+        "thumbnail_stream_url": signed.get("thumbnail_stream_url"),
+        "headline_text": res["headline_text"],
+        "logo_only": res["logo_only"],
+        "telegram_sent": tg_sent,
+        "pool_usage": res["pool_usage"],
+    }
 
 
 # ── 5.05. Batch AW: standalone TTS tab ─────────────────────────────────
@@ -11196,12 +11405,15 @@ def _job_deliverables(job, is_recap: bool, file_exists: bool):
         return None, {}
     if is_recap:
         download_url = f"/api/recap/stream/{job.id}/video"
-        return download_url, {
+        deliv = {
             "video": f"/api/recap/stream/{job.id}/video",
             "audio": f"/api/recap/stream/{job.id}/audio",
             "srt": f"/api/recap/download/{job.id}/srt",
             "script": f"/api/recap/download/{job.id}/script",
         }
+        if resolve_recap_deliverable_path(job.id, "thumbnail"):
+            deliv["thumbnail"] = f"/api/recap/download/{job.id}/thumbnail"
+        return download_url, deliv
     download_url = f"/api/audio/stream/{job.id}"
     return download_url, {
         "audio": f"/api/audio/stream/{job.id}",
@@ -11372,7 +11584,9 @@ async def get_user_history(
             # (e.g. segmented parts); prefer them when present.
             recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
             if recap_entry and recap_entry.get("download_urls"):
-                deliverables = recap_entry["download_urls"]
+                deliverables = dict(recap_entry["download_urls"])
+                if not deliverables.get("thumbnail") and resolve_recap_deliverable_path(j.id, "thumbnail"):
+                    deliverables["thumbnail"] = f"/api/recap/download/{j.id}/thumbnail"
                 download_url = deliverables.get("video") or download_url
         if is_recap and deliverables:
             # Sign the recap URLs for their owner: a history download
@@ -14001,6 +14215,9 @@ class AdminSettingsPayload(BaseModel):
     watermark_position: Optional[str] = None
     watermark_opacity: Optional[int] = None
     watermark_size: Optional[int] = None
+    recap_thumbnail_monthly_cap_usd: Optional[float] = None
+    recap_thumbnail_model: Optional[str] = None
+    recap_thumbnail_prompt_template: Optional[str] = None
 
 
 @api_router.get("/admin/settings")
@@ -14013,6 +14230,7 @@ async def get_admin_settings(
     from app.services.dynamic_settings import load_dynamic_settings
     await load_dynamic_settings(db)
     wm_cfg = get_watermark_config(False)
+    thumb_usage = await _safe_get_monthly_thumbnail_usage(db)
     return {
         "payment_kpay_number": getattr(settings, "payment_kpay_number", ""),
         "payment_kpay_name": getattr(settings, "payment_kpay_name", ""),
@@ -14080,6 +14298,15 @@ async def get_admin_settings(
         "watermark_position": str(wm_cfg["watermark_position"]),
         "watermark_opacity": int(wm_cfg["watermark_opacity"]),
         "watermark_size": int(wm_cfg["watermark_size"]),
+        "recap_thumbnail_monthly_cap_usd": thumb_usage["monthly_cap_usd"],
+        "recap_thumbnail_model": thumb_usage["model"],
+        "recap_thumbnail_prompt_template": thumb_usage["prompt_template"],
+        "recap_thumbnail_month_period": thumb_usage["period"],
+        "recap_thumbnail_month_count": thumb_usage["generations_count"],
+        "recap_thumbnail_month_spend_usd": thumb_usage["estimated_spend_usd"],
+        "recap_thumbnail_month_exhausted": thumb_usage["exhausted"],
+        "recap_thumbnail_cap_reached": thumb_usage["cap_reached"],
+        "recap_thumbnail_cost_per_image_usd": thumb_usage["cost_per_image_usd"],
     }
 
 
@@ -14238,6 +14465,49 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = model
+        elif key == "recap_thumbnail_monthly_cap_usd":
+            try:
+                cap_val = round(float(value), 2)
+            except (TypeError, ValueError):
+                cap_val = -1.0
+            if cap_val < 0.0 or cap_val > 50.0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "AI Thumbnail လစဉ် ကန့်သတ်ချက် (recap_thumbnail_monthly_cap_usd) သည် "
+                        "$0.00 မှ $50.00 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = cap_val
+        elif key == "recap_thumbnail_model":
+            from app.services.recap_thumbnail import DEFAULT_THUMBNAIL_MODEL
+
+            model = str(value).strip() or DEFAULT_THUMBNAIL_MODEL
+            if len(model) > 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "AI Thumbnail Model (recap_thumbnail_model) သည် "
+                        "စာလုံး 200 ထက် မရှည်ရပါ။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = model
+        elif key == "recap_thumbnail_prompt_template":
+            from app.services.recap_thumbnail import DEFAULT_THUMBNAIL_PROMPT_TEMPLATE
+
+            tpl = str(value).strip() or DEFAULT_THUMBNAIL_PROMPT_TEMPLATE
+            if len(tpl) > 1000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "AI Thumbnail Prompt Template (recap_thumbnail_prompt_template) သည် "
+                        "စာလုံး 1000 ထက် မရှည်ရပါ။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = tpl
         elif key in (
             "gemini_tts_primary_model",
             "gemini_tts_fallback_1",
