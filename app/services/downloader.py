@@ -154,8 +154,24 @@ def probe_local_media(file_path: str) -> Dict[str, Any]:
             audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
             if video_stream:
                 info["has_video"] = True
-                info["width"] = video_stream.get("width")
-                info["height"] = video_stream.get("height")
+                w = video_stream.get("width")
+                h = video_stream.get("height")
+                rotation = 0
+                for side in video_stream.get("side_data_list") or []:
+                    if "rotation" in side:
+                        try:
+                            rotation = int(round(float(side["rotation"])))
+                        except (TypeError, ValueError):
+                            pass
+                if not rotation:
+                    try:
+                        rotation = int(round(float((video_stream.get("tags") or {}).get("rotate", 0) or 0)))
+                    except (TypeError, ValueError):
+                        rotation = 0
+                if abs(rotation) % 180 == 90 and w and h:
+                    w, h = h, w
+                info["width"] = w
+                info["height"] = h
                 info["vcodec"] = video_stream.get("codec_name")
                 if not info["duration"] and "duration" in video_stream:
                     try:
@@ -766,6 +782,60 @@ def _is_rotation_worthy_error(err_msg: str) -> bool:
     no formats, format unavailable, network) are worth another client."""
     low = str(err_msg or "").lower()
     return not any(n in low for n in _NON_ROTATABLE_NEEDLES)
+
+
+def _build_video_format_spec(max_height: Optional[int]) -> str:
+    """Build an orientation-aware yt-dlp format selector string.
+
+    ``max_height`` caps the short ("p") side of the frame:
+    - Portrait sources (``aspect_ratio < 1``): ``width <= max_height``.
+    - Landscape / square sources: ``height <= max_height``.
+    Preserves the H.264 MP4 + M4A preference and existing fallback ladder.
+    """
+    if not max_height or max_height <= 0:
+        return (
+            "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo+bestaudio/"
+            "best"
+        )
+    return (
+        f"bestvideo[aspect_ratio<1][width<={max_height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
+        f"bestvideo[aspect_ratio<1][width<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo[aspect_ratio<1][width<={max_height}]+bestaudio/"
+        f"best[aspect_ratio<1][width<={max_height}]/"
+        f"bestvideo[height<={max_height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo[width<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={max_height}]+bestaudio/"
+        f"bestvideo[width<={max_height}]+bestaudio/"
+        f"best[height<={max_height}]/"
+        f"best[width<={max_height}]/"
+        "bestvideo+bestaudio/"
+        "best"
+    )
+
+
+def _local_video_scale_filter(
+    width: Optional[int], height: Optional[int], max_height: Optional[int]
+) -> Optional[str]:
+    """Return an orientation-aware ffmpeg scale filter, or None if under cap.
+
+    ``max_height`` caps the short ("p") side: width for portrait videos
+    (``height > width > 0``) and height for landscape/square videos,
+    never upscaling.
+    """
+    if not max_height or max_height <= 0:
+        return None
+    w = int(width or 0)
+    h = int(height or 0)
+    is_portrait = bool(w > 0 and h > w)
+    limiting_dim = w if is_portrait else h
+    if limiting_dim <= max_height:
+        return None
+    if is_portrait:
+        return f"scale='min({max_height},iw)':-2"
+    return f"scale=-2:'min({max_height},ih)'"
 
 
 def _best_format_height(info: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -1598,6 +1668,8 @@ class MediaDownloader:
         Download video in MP4 (H.264/AAC for best Telegram compatibility).
         Returns (file_path, info_dict).
         Supports both Online URLs and Local/Uploaded files.
+        When ``max_height`` is set, it caps the short ("p") side
+        orientation-aware (height for landscape/square, width for portrait).
         """
         if is_local_media(url):
             return self.process_local_video(url, target_dir=target_dir, max_height=max_height)
@@ -1612,25 +1684,7 @@ class MediaDownloader:
         # Select compatible format: MP4 with H.264 video and AAC audio if available,
         # otherwise gracefully accept ANY video+audio stream (including vertical Shorts, WebM, VP9, AV01)
         # and let FFmpeg convert it to pristine MP4.
-        if max_height:
-            fmt = (
-                f"bestvideo[height<={max_height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
-                f"bestvideo[height<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
-                f"bestvideo[width<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
-                f"bestvideo[height<={max_height}]+bestaudio/"
-                f"bestvideo[width<={max_height}]+bestaudio/"
-                f"best[height<={max_height}]/"
-                f"best[width<={max_height}]/"
-                "bestvideo+bestaudio/"
-                "best"
-            )
-        else:
-            fmt = (
-                "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
-                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-                "bestvideo+bestaudio/"
-                "best"
-            )
+        fmt = _build_video_format_spec(max_height)
 
         opts = self._get_base_opts(expanded_url)
         opts.update({
@@ -2004,15 +2058,19 @@ class MediaDownloader:
         target_dir: Optional[str] = None,
         max_height: Optional[int] = None
     ) -> Tuple[str, Dict[str, Any]]:
-        """Ensure local video is standard H.264/AAC MP4 compatible with Telegram and players."""
+        """Ensure local video is standard H.264/AAC MP4 compatible with Telegram and players.
+
+        When ``max_height`` is set, it caps the short ("p") side
+        orientation-aware (height for landscape/square, width for portrait).
+        """
         file_path = os.path.abspath(str(file_path).strip('\'"'))
         dest_dir = target_dir or self.download_dir
         os.makedirs(dest_dir, exist_ok=True)
         info = self.get_local_info(file_path)
 
         meta = probe_local_media(file_path)
-        cur_height = meta.get("height") or 0
-        needs_scale = bool(max_height and cur_height > max_height)
+        scale_filter = _local_video_scale_filter(meta.get("width"), meta.get("height"), max_height)
+        needs_scale = scale_filter is not None
         is_mp4 = file_path.lower().endswith(".mp4") and meta.get("vcodec") in {"h264", "avc1"}
 
         safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', info.get("title", "video"))[:50]
@@ -2024,9 +2082,7 @@ class MediaDownloader:
                 shutil.copy2(file_path, out_mp4)
             return out_mp4, info
 
-        vf_args = []
-        if needs_scale:
-            vf_args = ["-vf", f"scale=-2:'min({max_height},ih)'"]
+        vf_args = ["-vf", scale_filter] if scale_filter else []
 
         cmd = [
             "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
