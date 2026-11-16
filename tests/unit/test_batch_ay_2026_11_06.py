@@ -223,5 +223,5 @@ def test_ay_welcome_strip_restyled_scoped():
 
 
 def test_ay_cache_token_r79():
-    assert INDEX_HTML.count("20261115_r155") == 4
+    assert INDEX_HTML.count("20261116_r156") == 4
     assert "20261104_r70" not in INDEX_HTML

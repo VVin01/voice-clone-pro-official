@@ -12023,7 +12023,7 @@ async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession
                 "features": [
                     "Recap Credit ၂၅ ခု — ဗီဒီယို ၃ မိနစ်ကို ၁ credit နှုန်း (၁၀ မိနစ်ဆို ၄ credit၊ တစ်ကားချင်း အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Recap Credits — 1 credit per 3 minutes of video (a 10-minute video = 4 credits; max 10 mins/video)",
                     "🎬 Smart Video Transform (Smart Blur, Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Mirror & Zoom)",
-                    "ဇာတ်လမ်းစတိုင် အမျိုးမျိုး (Viral Hook, Drama, Comedy စသဖြင့်) & စာတန်းစတိုင် အမျိုးမျိုး" if is_my else "Multiple narration styles (Viral Hook, Drama, Comedy & more) & subtitle styles",
+                    "ဇာတ်လမ်းစတိုင် အမျိုးမျိုး (ချက်ချင်းစွဲဆောင်၊ ဒရာမာ ပရိုင်း၊ ပေါ့ပါးဟာသ စသဖြင့်) & စာတန်းစတိုင် အမျိုးမျိုး" if is_my else "Multiple narration styles (Instant Hook, Drama Prime, Light Comedy & more) & subtitle styles",
                     "Watermark လုံးဝမပါ & Channel Logo သီးသန့်ထည့်ခွင့်" if is_my else "Zero Watermark & Custom Channel Logo Branding",
                     "ရှည်လျားသော ဗီဒီယိုများ အပိုင်းခွဲ ထုတ်နိုင်ခြင်း (Split)" if is_my else "Split long videos into parts",
                 ],

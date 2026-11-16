@@ -1706,12 +1706,14 @@ def translate_batch(
             intro_rule = (
                 f"- PART {part_idx_val}/{total_parts_val} SEAMLESS CONTINUATION (NO INTRO CLICHÉS): Do NOT say "
                 "'ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', or restart from Episode 1 — pick up directly from "
-                "the previous part's momentum and open IDs 1–2 with a punchy immediate hook for THIS part's turn."
+                "the previous part's momentum and open IDs 1–2 with a punchy immediate hook for THIS part's turn.\n"
+                "- OPENING NUMBERS: If THIS part turns on a striking quantity (money, years, counts), surface that number inside the opening hook or this part's first scene, written as Burmese words (e.g. 'သိန်း ငါးရာ', 'အနှစ် နှစ်ဆယ်') — never ASCII digits, never an invented number."
             )
         else:
             intro_rule = (
                 "- For ID 1 ONLY (the opening line of the video), you may open with a brief, punchy hook introducing the situation, then immediately narrate ID 1's actual scene event. The hook must establish the story's premise concretely from the source itself — where we are, who matters, and what is going wrong — and it must AGREE with the opening scene: never tease a moment and then restart the story from a different place or contradict the first scene.\n"
-                "- MANDATORY 3-SECOND HOOK (IDs 1–2 FOR EVERY STYLE): Open IDs 1–2 within the first ~3 seconds with ONE sharp, concrete curiosity loop or tension trigger from the real story (never spoilers, never generic clichés), then glide straight into the scene."
+                "- MANDATORY 3-SECOND HOOK (IDs 1–2 FOR EVERY STYLE): Open IDs 1–2 within the first ~3 seconds with ONE sharp, concrete curiosity loop or tension trigger from the real story (never spoilers, never generic clichés), then glide straight into the scene. When the presentation style below defines its own hook formula (a premise hook across IDs 1–3), that formula IS this hook — follow it, keep every ID carrying its own source meaning, and continue chronologically without restarting the story.\n"
+                "- OPENING NUMBERS: If the story turns on a striking quantity (money, years, counts), surface that number inside the opening hook or the first scene, written as Burmese words (e.g. 'သိန်း ငါးရာ', 'အနှစ် နှစ်ဆယ်') — never ASCII digits, never an invented number."
             )
     else:
         intro_rule = "- DO NOT use opening intro phrases ('ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', 'ပရိသတ်ကြီးတို့ရေ...') anywhere in this batch because the story is already in progress!"
@@ -1723,62 +1725,79 @@ def translate_batch(
         else "- VOICE GENDER RULE (MALE VOICE): The selected narrator voice is MALE. Avoid overusing 'ဗျာ' on every line; end sentences naturally with 'တယ်'၊ 'ပါတယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'လိုက်ပါတယ်'။"
     )
     if style == "viral":
-        style_prompt = f"""PRESENTATION STYLE: VIRAL MOVIE RECAP STORYTELLER (🔥 ဆွဲဆောင်မှုရှိပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင်)
+        style_prompt = f"""PRESENTATION STYLE: INSTANT HOOK — VIRAL MOVIE RECAP STORYTELLER (🔥 ချက်ချင်းစွဲဆောင် — ဆွဲဆောင်မှုရှိပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင်)
 - DISTINCT IDENTITY: Fast-paced, high-retention social recap energy — snap straight to the turning point, heighten stakes cleanly with urgent spoken connectives ('အဲဒီမှာတင်...', 'မထင်ထားတဲ့ အချိုးအကွေ့က...', 'တကယ်တော့...'), and keep every beat kinetic.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the listener clearly understands WHO is doing WHAT, TO WHOM, and WHY (ဇာတ်လမ်း အချိတ်အဆက် မိပြီး အဓိပ္ပာယ်ပြည့်စုံရမည်).
 {intro_rule}
 {gender_rule}
 - NEVER insert random generic filler phrases ('ကြည့်ပါဦးဗျာ...', 'အဆုံးသတ်မှာ ဘာဆက်ဖြစ်မလဲ...', 'မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့တယ်...') that disconnect consecutive sentences or replace actual plot meaning.
 - Turn short or fragmented source dialogues into clear, connected third-person Burmese recap storytelling using natural transition words ('အဲဒီအခါမှာတော့...', 'ဒါကိုမြင်တော့...', 'ဒါကြောင့် သူက...', 'အဲဒီနောက်မှာတော့...').
-- OPENING HOOK (ID 1 ONLY): The very first line must open a curiosity loop — tease the single most shocking/reversal moment of the story in ONE short punchy clause (e.g. the betrayal, the twist, the impossible choice) WITHOUT explaining how it ends, then flow straight into ID 1's actual scene. Never spoil the ending and never invent a moment that is not in the story.
+- PREMISE-DUMP OPENING HOOK (IDs 1–3, PRIMARY FORMULA — single video or Part 1 only; a later series part follows the SEAMLESS CONTINUATION rule instead): Across IDs 1–3, compress the story's strange premise into 1–4 concrete sentences — WHO the protagonist is + the ABNORMAL situation they are in + the TURN ('ဒါပေမဲ့ တစ်ရက်မှာတော့…'). Include backstory when the backstory IS the premise. Every one of IDs 1–3 still carries its own source meaning alongside the premise. Then continue CHRONOLOGICALLY from there — NEVER restart the story at scene 1 after the hook, and never invent a premise detail the source does not establish.
+- SECONDARY HOOK — SHOCK TEASE (only when the premise itself is ordinary and the story's power is an exceptional mid-story twist): tease that twist in ONE short clause WITHOUT explaining how it ends, then deliver the premise and flow on chronologically from ID 1's actual scene. Never spoil the ending and never invent a moment that is not in the story.
+- TURN CADENCE: Land a genuine story turn or reveal roughly every 15–20 seconds of narration, taken from the source's own events — never manufactured by filler.
+- DRAMATIC IRONY TOOL: When the source supports it, the narrator may tell the audience what a character does not know ('ဒါပေမဲ့ သူမသိခဲ့တာက…') — only facts the source itself establishes.
 - SCENE-BOUNDARY PULL: At a genuine scene change or reveal, you MAY end the segment on the real plot's own unanswered question (what the character is about to do/discover) so viewers keep watching — the pull must come from the actual events, never from generic teaser filler (see the prohibition above).
 - VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
 - Tone: Engaging, clear, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်).
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     elif style == "funny":
-        style_prompt = f"""PRESENTATION STYLE: HUMOROUS & WITTY MOVIE RECAP (😂 ပေါ့ပါးသွက်လက်ပြီး အချိတ်အဆက်မိသော ဟာသဇာတ်လမ်းပြော စတိုင်)
-- DISTINCT IDENTITY: Light-hearted, sharp comic commentary — deliver the plot cleanly while adding relatable Burmese colloquial irony, dry understatement, or amused timing ('ဟုတ်ကဲ့ပါ တကယ်ကြီး...', 'အလွဲကြီး လွဲတော့တာပဲ', 'ဒီအခြေအနေကြီးကတော့ ရယ်ရခက် ငိုရခက်'). Never stiff or melodramatic on comic scenes.
+        style_prompt = f"""PRESENTATION STYLE: LIGHT COMEDY — WARM SITUATIONAL RECAP (😂 ပေါ့ပါးဟာသ — နွေးထွေးပေါ့ပါးပြီး အချိတ်အဆက်မိသော ဇာတ်လမ်းပြော စတိုင်)
+- DISTINCT IDENTITY: Warm situational lightness, NOT stand-up commentary — the humour lives in the misunderstanding or absurd situation itself, told in the narrator's amused, affectionate tone (amused asides such as 'ဖြစ်ချင်တော့...', 'ကံဆိုးချင်တော့...', 'ဒီလူလေးကတော့ အခုထိ ဘာမှ မရိပ်မိသေးပါဘူး'). Never snarky, never sarcastic toward the characters, never stiff or melodramatic on comic scenes.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the plot is 100% coherent and easy to follow.
 {intro_rule}
 {gender_rule}
-- Keep 100% of the real plot and cause-and-effect intact while narrating characters' actions and reactions in a lively, witty, entertaining spoken Burmese tone.
-- HUMOR SOURCE RULE: The comedy must come from the story itself — a character's over-the-top reaction, an absurd situation, an ironic contrast — sharpened with a light comparison or a playful aside. Maximum ONE light beat per segment; the plot sentence always comes first.
+- Keep 100% of the real plot and cause-and-effect intact while narrating characters' actions and reactions in a lively, warm, entertaining spoken Burmese tone.
+- HUMOR SOURCE RULE: The comedy must come from the story itself — a misunderstanding, an absurd situation, a character's over-the-top reaction, an ironic contrast. The light, amused TONE may run continuously through the narration; a JOKE (a light comparison or an amused aside) is still Maximum ONE per segment, and the plot sentence always comes first.
+- INNER-THOUGHT DEVICE: For comic beats, quote the protagonist's thought in first person inside the narration ('သူ့စိတ်ထဲမှာတော့ \'…\' လို့ တွေးလိုက်ပါတယ်'), clearly attributed and consistent with what the source shows — never a thought that contradicts the character.
 - TASTE RULE (အလွန်အရေးကြီး): When the scene is genuinely tragic (death, serious injury, grief, abuse), drop the comedy completely for that segment and narrate it straight and respectfully — never joke over a character's real suffering.
 - NEVER replace actual story events with disconnected generic jokes or repetitive filler phrases.
 - STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်ပါတယ်'။"""
     elif style == "pov":
-        style_prompt = f"""PRESENTATION STYLE: FIRST-PERSON PROTAGONIST POV (👁️ အဓိကဇာတ်ကောင် '{pov_pronoun}' ရှုထောင့်မှ ကိုယ်တိုင်ကြုံတွေ့ရသလို အချိတ်အဆက်မိမိ ပြောပြသော စတိုင်)
+        style_prompt = f"""PRESENTATION STYLE: FIRST-PERSON POV (👁️ ကိုယ်တွေ့ ရှုထောင့် — အဓိကဇာတ်ကောင် '{pov_pronoun}' ရှုထောင့်မှ ကိုယ်တိုင်ကြုံတွေ့ရသလို အချိတ်အဆက်မိမိ ပြောပြသော စတိုင်)
 - DISTINCT IDENTITY: Confessional, intimate inner monologue — the listener is inside '{pov_pronoun}'s head feeling every shock, suspicion, and split-second decision directly from the heart, never sounding like an external YouTube commentator.
 - SEAMLESS FIRST-PERSON POV CONTINUITY IS PRIORITY #1: Narrate the entire story consistently from the main character's own first-person perspective using '{pov_pronoun}' ('{pov_possessive}').
 - PRONOUN & SPEAKER CLARITY RULE (အလွန်အရေးကြီး):
   1. Always refer to yourself (the protagonist narrator) as '{pov_pronoun}' — NEVER use crude 'ငါ' for narration and NEVER switch to third-person narrator commentary ('သူတို့...', 'ကောင်မလေးက...', '...ကြပါတော့တယ်ဗျာ') in later scenes!
   2. When other characters (antagonists, bosses, coworkers, family) speak or act, ALWAYS frame their words in clear reported/indirect speech or explicitly name the speaker (e.g., 'မန်နေဂျာက {pov_pronoun}ကို ... လို့ မောက်မာစွာ ပြောလာတယ်', 'သူက သူ့အနေနဲ့ ... ဆိုပြီး ခြိမ်းခြောက်လိုက်တယ်') so the listener NEVER confuses another character's 'I/me' with '{pov_pronoun}'!
   3. NATURAL SPOKEN RHYTHM: In POV mode, vary sentence length naturally. Mix short punchy sentences ("ကျွန်တော် ကြောက်သွားတယ်") with slightly longer connecting ones ("ဒါပေမဲ့ ကျွန်တော် ပြန်မပြောဘဲ လှည့်ထွက်ခဲ့တယ်"). Avoid repetitive sentence structures starting every line the same way.
+  4. SHORT-SENTENCE MOMENTUM IN ACTION: In action stretches (a chase, a fight, an escape), switch to short first-person sentences carrying one action each ('{pov_pronoun} ပြေးတယ်။ တံခါးကို ဆွဲဖွင့်လိုက်တယ်။') so the momentum never stalls; return to the natural mix once the action ends.
 {intro_rule}
+- POV OPENING HOOK (IDs 1–3 — single video or Part 1 only): Open with up to THREE short premise beats, in whatever order the story supports — DANGER (what everyone fears), REWARD (the concrete quantity at stake, written as Burmese words), MYSTERY (the one warning or rule that will matter later) — told in first person, then start the action. Use only beats the source actually contains; skip any it lacks.
+- CHEKHOV-GUN RULE: Any warning, object or rule planted in the opening must be paid off when the story reaches it — name it again at that moment so the listener connects the two. Never invent a payoff the source lacks.
 - LIMITED-KNOWLEDGE RULE: You may only narrate what the protagonist personally sees, hears, or feels in that moment. NEVER state another character's hidden motive or off-screen action as fact — frame it as the protagonist's own guess or later realization ('အဲဒီတုန်းက {pov_pronoun} မသိခဲ့တာက...', 'နောက်မှ {pov_pronoun} သိလိုက်ရတာက...').
 - SCENE ANCHORING IN POV (မြင်ကွင်းပြောင်းတိုင်း အခြေချရန်): Whenever the scene changes (new place, new time, new people around you), open the new scene by grounding it through your own eyes — where {pov_pronoun} is now, who is there with {pov_pronoun}, and what is at stake for {pov_pronoun} — so a listener joining mid-story can follow without rewinding. Anchor in first person only; never switch to an outside narrator's summary to set the scene.
 - VOICE & PARTICLE RULE: In POV mode you are the main character telling your own story — NEVER use commentator particles like 'ဗျာ' or 'ခင်ဗျာ' or 'ပရိသတ်ကြီးတို့ရေ'. End sentences naturally with 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'၊ 'ရတယ်'။
 - STRICTLY PROHIBITED: Dry, bookish literary writing ('သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်')."""
     elif style == "dramatic":
-        style_prompt = f"""PRESENTATION STYLE: SUSPENSE / THRILLER DRAMATIC RECAP (🎭 သည်းထိတ်ရင်ဖို ဒရာမာ ဇာတ်လမ်းပြော စတိုင်)
-- DISTINCT IDENTITY: Dark, atmospheric thriller tension — build suspense through sensory details, ominous silence, and sharp staccato peril beats; never use bubbly slang, casual giggles, or hype filler.
+        style_prompt = f"""PRESENTATION STYLE: DRAMA PRIME — EMOTIONAL MELODRAMA RECAP (🎭 ဒရာမာ ပရိုင်း — ခံစားချက်ပြည့်ဝပြီး ရင်ခုန်ဖွယ် ဒရာမာ ဇာတ်လမ်းပြော စတိုင်)
+- DISTINCT IDENTITY: DEFAULT VOICE = MELODRAMA REGISTER — an emotionally invested storyteller who feels WITH the characters, names the heartbreak, humiliation, injustice and longing in plain words, and lets the audience feel who is wronged. Never bubbly slang, casual giggles, or hype filler.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment, clearly explaining the cause-and-effect of every tense moment.
 {intro_rule}
 {gender_rule}
 - Convey the true emotional stakes, motives, and actions of the characters in smooth, gripping spoken Burmese without inserting generic filler hooks.
-- PACING & RHYTHM RULE: Match sentence length to tension — at peak danger or shock, switch to SHORT, punchy, rapid sentences (one action per sentence) so the voice sounds breathless; in the calm aftermath, let sentences run slightly longer and slower. Build dread by stating small concrete details (a sound, a look, a silence) instead of announcing 'ကြောက်စရာကြီး' in the abstract.
-- WITHHOLD, DON'T EXPLAIN: When the source scene hides a motive or identity, narrate only what is visible and let the question hang — never explain the twist before the story itself reveals it.
+- MELODRAMA REGISTER (THE DEFAULT for family, romance, revenge, social and everyday-life sources):
+  1. EVALUATE & SIDE: The narrator may judge and take sides — label emotions and moral stakes in plain words ('သူမရဲ့ ရင်ထဲမှာတော့ ကြေကွဲမှုတွေ ပြည့်နေပါပြီ', 'ဒါဟာ တကယ့်ကို မတရားတဲ့ စွပ်စွဲမှုပါပဲ').
+  2. DRAMATIC IRONY: Tell the audience the truth a character is missing ('ဒါပေမဲ့ သူမသိခဲ့တာက…') whenever the source has already established that truth.
+  3. SENTENCE LENGTH: Longer, flowing sentences are allowed in emotional scenes; short staccato sentences are reserved for physical-danger peaks only.
+  4. DIALOGUE-FORWARD CONFRONTATIONS: In a confrontation scene, 2–4 consecutive segments may carry near-verbatim key dialogue lines (each clearly attributed to its speaker) instead of paraphrase; paraphrase resumes for the connective tissue. Outside confrontation scenes, shared rule C (dialogue becomes narration) applies as written.
+  5. RHETORICAL QUESTIONS: Allowed at climax beats only.
+- NOIR / THRILLER SUB-MODE (crime, horror, thriller and mystery sources only): Switch to dark, atmospheric thriller tension — build suspense through sensory details, ominous silence, and sharp staccato peril beats.
+- PACING & RHYTHM RULE (NOIR / THRILLER SUB-MODE): Match sentence length to tension — at peak danger or shock, switch to SHORT, punchy, rapid sentences (one action per sentence) so the voice sounds breathless; in the calm aftermath, let sentences run slightly longer and slower. Build dread by stating small concrete details (a sound, a look, a silence) instead of announcing 'ကြောက်စရာကြီး' in the abstract.
+- WITHHOLD, DON'T EXPLAIN — PLOT FACTS ONLY: When the source scene hides a motive or identity, narrate only what is visible and let the question hang — never explain a plot twist (identity or motive reveal) before the story itself reveals it. This applies to PLOT FACTS only, NEVER to emotions: always say plainly what the characters feel.
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     else:  # standard / narrator
-        style_prompt = f"""PRESENTATION STYLE: CINEMATIC MOVIE RECAP NARRATOR (📖 သဘာဝကျပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
+        style_prompt = f"""PRESENTATION STYLE: CINEMATIC STORYTELLER — CINEMATIC MOVIE RECAP NARRATOR (📖 ရုပ်ရှင်ဟန် ဇာတ်လမ်းပြော — သဘာဝကျပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
 - DISTINCT IDENTITY: Classic cinema-grade storyteller — warm, lucid, emotionally grounded chronological flow that lets drama breathe naturally without hyper viral hype or comedy riffs.
 - SEAMLESS STORY CONTINUITY & CAUSE-AND-EFFECT IS PRIORITY #1: Every segment MUST connect logically from the previous segment into the next segment so the entire video sounds like ONE continuous, coherent story.
 {intro_rule}
 {gender_rule}
 - Clearly state who is speaking or acting, to whom, and why, using natural Burmese narrative connectives ('အဲဒီနောက်...', 'ဒါကိုကြားတော့...', 'ဒါပေမဲ့လည်း...').
+- EMBEDDED-DIALOGUE RULE: Default to reported speech folded into the narration ('…လို့ ပြောပါတယ်', '…လို့ မေးလိုက်ပါတယ်', '…လို့ လျှောက်ထားပါတယ်'). A verbatim quote is reserved for at most the single most important line of a scene.
+- SENTENCE PERMISSION: Long, flowing sentences (up to ~110 characters) are welcome in calm scenes, and mid-sentence literary connectors are fine. The anti-bookish ban below targets SENTENCE ENDINGS ('သည်' / 'သဖြင့်') only — never sentence length.
+- EPISODIC BEAT PACING: Each scene resolves into ONE clear beat — a small turn, a moment of wonder, or a decision — before the narration moves on to the next scene.
 - VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
 - Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.
-- STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
+- STRICTLY PROHIBITED: Bookish SENTENCE ENDINGS. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
 
     task_rules = f"""
 You are an AWARD-WINNING CONTEXT-AWARE BURMESE MOVIE RECAP NARRATOR & STORYTELLING TRANSLATOR.
@@ -1791,6 +1810,7 @@ CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်�
 2. Always read STORY CONTEXT MEMORY, PREVIOUS CONTEXT, CURRENT ITEMS, and NEXT CONTEXT together to understand the full scene: WHO is the subject, WHO are they talking to, WHAT just happened in the previous line, and WHY are they saying/doing this.
 3. Weave each CURRENT item into a smooth, meaningful Burmese recap sentence that flows naturally from the preceding ID into the next ID.
 4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 14 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!
+   DENSITY TARGET (EVERY STYLE): Write to the TOP of that band (~14 syllables per second of window) so the delivered narration runs ≈19–22 characters per second with no dead air. Reach that density with real story content only — repeating an already-narrated fact as filler is FORBIDDEN — and never go past the top of the band: the spoken-duration budget always wins over density.
 5. CAUSE-AND-EFFECT CONTINUITY (အဆက်မပြတ် ကြောင်းကျိုးဆက် စပ်ပြောင်းမှု): Read the PREVIOUS context, determine exactly WHO is currently acting, WHAT they just did in the preceding sentence, and WHY the current action logically follows — then narrate the CURRENT item as the natural next step in the story chain. NEVER begin a new scene idea mid-segment without connecting it to the previous segment's outcome.
 6. MYANMAR SPELLING & ORTHOGRAPHY RULES (အလွန်အရေးကြီးသော စာလုံးပေါင်းသတ်ပုံ စည်းမျဉ်းများ):
    - ALWAYS use correct standard Myanmar Unicode spelling according to the Myanmar Language Commission (မြန်မာစာအဖွဲ့ သတ်ပုံကျမ်းစံနှုန်း):
@@ -1849,7 +1869,7 @@ HARD RULES:
         if part_idx_val > 1 and str(prev_part_summary or "").strip():
             part_block += f"\nPREVIOUS PART RECAP SUMMARY (continue seamlessly from here with identical names): {str(prev_part_summary).strip()}"
         if part_idx_val < total_parts_val:
-            part_block += f"\nPART-END CLIFFHANGER: On the very final segment of Part {part_idx_val}, end on a tense open beat teasing what comes next in Part {part_idx_val + 1} without concluding the overall story."
+            part_block += f"\nPART-END CLIFFHANGER: On the very final segment of Part {part_idx_val}, end ON the tension peak — the real open beat teasing what comes next in Part {part_idx_val + 1} — without concluding the overall story. No summary, no moral, no closing greeting."
         part_block += "\n"
     # Batch AL-P: parallel batches (all but the first pending one) are
     # translated before their predecessor's translation exists, so
@@ -2385,11 +2405,11 @@ def audit_and_repair_batch(
     pov_pronoun = "ကျွန်မ" if is_female else "ကျွန်တော်"
     target_name = f"Burmese movie recap narration ({style.upper()} style)"
     style_drift_checklist = {
-        "viral": "- STYLE CHECK (VIRAL): Needs kinetic pace, sharp curiosity hooks on scene turns, and punchy transitions — repair flat slow documentary phrasing.",
-        "funny": "- STYLE CHECK (FUNNY): Needs crisp comedic timing, playful colloquial irony, or amused contrast on light beats (while staying respectful in tragedy) — repair humorless dry phrasing.",
+        "viral": "- STYLE CHECK (VIRAL): Needs kinetic pace, sharp curiosity hooks on scene turns, and punchy transitions; when IDs 1–3 of the video are in this batch, the premise hook must be present in IDs 1–3 (who + abnormal situation + the turn) with no generic teaser — repair flat slow documentary phrasing.",
+        "funny": "- STYLE CHECK (FUNNY): Needs warm situational lightness; inner-thought or amused aside allowed; no stand-up commentary (while staying respectful in tragedy) — repair humorless dry phrasing.",
         "pov": f"- STRICT POV CONSISTENCY: Every row MUST stay in intimate first-person protagonist POV using '{pov_pronoun}'. NEVER use crude 'ငါ' for the narrator, NEVER let another character's direct quote use 'ငါ' without clear reported-speech framing, and NEVER drift into third-person commentator voice or 'ဗျာ'/'ခင်ဗျာ'!",
-        "dramatic": "- STYLE CHECK (DRAMATIC): Needs tense noir dread, sensory details, and short breathless danger beats vs lingering calm beats — repair cheerful slang or flat casual summary.",
-        "narrator": "- STYLE CHECK (NARRATOR): Needs warm, grounded cinema storytelling clarity — repair hyped viral slang, random jokes, or stiff bookish phrasing.",
+        "dramatic": "- STYLE CHECK (DRAMATIC): Needs the melodrama register by default — emotions labelled in plain words, dramatic irony used where the source allows, feelings explained even when plot facts are withheld; tense noir dread, sensory details and short breathless danger beats belong to crime/horror/thriller sources — repair cheerful slang, flat casual summary, or emotionally withheld narration.",
+        "narrator": "- STYLE CHECK (NARRATOR): Needs warm, grounded cinema storytelling clarity — repair hyped viral slang, random jokes, or bookish sentence ENDINGS (သည်/သဖြင့်).",
     }
     style_check_line = style_drift_checklist.get(style, style_drift_checklist["narrator"])
     gender_check_line = (

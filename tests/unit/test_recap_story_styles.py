@@ -137,7 +137,11 @@ def test_opening_hook_must_establish_premise(monkeypatch):
 
 def test_viral_prompt_has_hook_and_retention_rules(monkeypatch):
     prompt = _capture_prompt(monkeypatch, "viral")
-    assert "OPENING HOOK (ID 1 ONLY)" in prompt
+    # Style enrichment (2026-11-16): the premise dump is the primary hook;
+    # the shock tease survives only as the secondary option.
+    assert "PREMISE-DUMP OPENING HOOK (IDs 1–3, PRIMARY FORMULA" in prompt
+    assert "SECONDARY HOOK — SHOCK TEASE" in prompt
+    assert "OPENING HOOK (ID 1 ONLY)" not in prompt
     assert "SCENE-BOUNDARY PULL" in prompt
     assert "VARY SENTENCE OPENINGS" in prompt
     # The anti-filler rule must stay — hooks come from the plot, not teasers.
@@ -150,7 +154,10 @@ def test_funny_prompt_has_humor_source_and_taste_rules(monkeypatch):
     prompt = _capture_prompt(monkeypatch, "funny")
     assert "HUMOR SOURCE RULE" in prompt
     assert "TASTE RULE" in prompt
-    assert "Maximum ONE light beat per segment" in prompt
+    # Style enrichment (2026-11-16): the light TONE may run continuously,
+    # but a JOKE is still capped at one per segment, plot sentence first.
+    assert "a JOKE (a light comparison or an amused aside) is still Maximum ONE per segment" in prompt
+    assert "the plot sentence always comes first" in prompt
 
 
 def test_pov_prompt_has_limited_knowledge_rule(monkeypatch):
@@ -164,7 +171,7 @@ def test_pov_prompt_has_limited_knowledge_rule(monkeypatch):
 def test_dramatic_prompt_has_pacing_rules(monkeypatch):
     prompt = _capture_prompt(monkeypatch, "dramatic")
     assert "PACING & RHYTHM RULE" in prompt
-    assert "WITHHOLD, DON'T EXPLAIN" in prompt
+    assert "WITHHOLD, DON'T EXPLAIN — PLOT FACTS ONLY" in prompt
 
 
 def test_standard_prompt_has_variety_rule(monkeypatch):

@@ -179,12 +179,17 @@ def test_capsule_width_budgets():
         assert _width(font, _label(key, 0)) <= active3, key
     for glyph in ("🎙️", "✨", "🎧"):
         assert _width(font, glyph) <= inactive3, glyph
-    # Story: EVERY Burmese full label exceeds the one-row 5-segment
-    # active budget — the wrapped geometry is mathematically
-    # required (shortening copy was the only alternative).
+    # Story: the wrapped geometry is mathematically required whenever
+    # ANY Burmese full label exceeds the one-row 5-segment active
+    # budget (shortening copy was the only alternative). After the
+    # premium renames (2026-11-16) the shorter Instant Hook / Drama
+    # Prime / Light Comedy labels fit one row; First-Person POV measures
+    # exactly 92px on Linux (Padauk-Bold + libraqm vs >92.5px budget,
+    # passing only on Windows font metrics), but Cinematic Storyteller
+    # still exceeds it — so wrapping stays.
     strip5 = 360 - 32 - 32 - 12 - 4 * 4            # 268
     active5 = strip5 * 2.4 / (2.4 + 4) - 6 - 2     # 92.5 inner
-    for key in ("style_viral", "style_dramatic", "style_funny", "style_pov", "style_standard"):
+    for key in ("style_standard",):
         assert _width(font, _label(key, 0)) > active5, key
 
 
@@ -305,5 +310,5 @@ def test_bg_persona_work_intact_and_not_restyled():
 
 
 def test_token_r80():
-    assert INDEX_HTML.count("20261115_r155") == 4
+    assert INDEX_HTML.count("20261116_r156") == 4
     assert "20261104_r79" not in INDEX_HTML
