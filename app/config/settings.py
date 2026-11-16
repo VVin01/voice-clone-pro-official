@@ -45,6 +45,17 @@ class Settings(BaseSettings):
     worker_token: str = Field(default="", alias="WORKER_TOKEN")
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
 
+    # Instance role & locality configuration (Multi-instance / VPS second worker)
+    # INSTANCE_PRIMARY: True by default (Render primary instance). When False
+    # (e.g. VPS second worker), singleton duties (orphan boot sweeps, park-and-ask
+    # resumer, retention cleanup) are skipped to prevent duplicate sweeps/messages.
+    instance_primary: bool = Field(default=True, alias="INSTANCE_PRIMARY")
+    # WORKER_CLAIM_LOCAL_FILES: True by default (Render primary). When False / 0
+    # (e.g. VPS second worker with isolated disk), the worker skips queued jobs
+    # whose source_audio_path is a local path; the primary (which holds the file)
+    # claims them instead, preventing missing-reference execution.
+    worker_claim_local_files: bool = Field(default=True, alias="WORKER_CLAIM_LOCAL_FILES")
+
     # Telegram update intake mode & webhook configuration
     # BOT_MODE: "polling" (default, existing behaviour) or "webhook".
     # In webhook mode, long polling is disabled and updates arrive via

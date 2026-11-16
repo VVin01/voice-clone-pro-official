@@ -44,16 +44,19 @@ async def run_bot_and_worker(mode: str) -> None:
     tasks = []
 
     if mode in ("all", "worker"):
-        logger.info("Checking for orphaned stale jobs before launching worker...")
-        from app.db.session import AsyncSessionLocal
-        from app.services.recovery import recover_stale_running_jobs
-        try:
-            async with AsyncSessionLocal() as session:
-                recovered = await recover_stale_running_jobs(session=session, bot=bot)
-                if recovered:
-                    logger.info("Recovered %d orphaned stale jobs on service boot: %s", len(recovered), recovered)
-        except Exception as e:
-            logger.warning("Error during boot stale job recovery sweep: %s", e)
+        if settings.instance_primary:
+            logger.info("Checking for orphaned stale jobs before launching worker...")
+            from app.db.session import AsyncSessionLocal
+            from app.services.recovery import recover_stale_running_jobs
+            try:
+                async with AsyncSessionLocal() as session:
+                    recovered = await recover_stale_running_jobs(session=session, bot=bot)
+                    if recovered:
+                        logger.info("Recovered %d orphaned stale jobs on service boot: %s", len(recovered), recovered)
+            except Exception as e:
+                logger.warning("Error during boot stale job recovery sweep: %s", e)
+        else:
+            logger.info("Secondary instance (INSTANCE_PRIMARY=0): skipping boot stale job recovery sweep.")
 
         logger.info("Starting background audio worker task...")
         worker_task = asyncio.create_task(run_worker_loop(bot=bot))

@@ -558,6 +558,10 @@ async def lifespan(app: FastAPI):
         from app.services import voice_choice as _vc
 
         _log = logging.getLogger("VoiceChoiceResumer")
+        if not getattr(_dp_settings, "instance_primary", True):
+            _log.info("Secondary instance (INSTANCE_PRIMARY=0): voice-choice resumer disabled.")
+            return
+
         while True:
             try:
                 _bot = None
