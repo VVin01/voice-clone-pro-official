@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261116_r158">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261116_r159">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261116_r158" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261116_r159" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -2894,6 +2894,121 @@
                             </div>
                         </div>
                     </details>
+                    <details class="card glass vcp-card adm-accordion mt-3" id="adm-group-ai-card">
+                        <summary class="adm-acc-head">
+                            <span class="adm-acc-title" data-i18n="adm_group_ai_title">👥 Group AI Console (လေ့ကျင့် &amp; စီမံ)</span>
+                            <span class="adm-acc-meta"><span class="adm-acc-pill" data-i18n="adm_group_ai_pill">Knowledge · Moderation · Voice</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
+                        </summary>
+                        <div class="adm-acc-body admin-settings-form">
+                            <!-- Teach Section: Knowledge Sheet Editor -->
+                            <div class="adm-section-subhead">
+                                <span class="font-semibold" data-i18n="adm_group_ai_sheet_title">Knowledge Sheet</span>
+                                <span class="text-xs text-muted" id="adm-group-ai-sheet-meta" data-i18n="adm_group_ai_sheet_default">မူလ Sheet (Batch DL Ground Truth)</span>
+                            </div>
+                            <p class="text-xs text-muted mb-2" data-i18n="adm_group_ai_sheet_desc">Group AI အသုံးပြုသည့် အချက်အလက်များကို တိုက်ရိုက် ပြင်ဆင်နိုင်ပါသည်။ အသစ် သိမ်းဆည်းလိုက်သည်နှင့် နောက်လာမည့် မက်ဆေ့ခ်ျများတွင် ချက်ချင်း အကျိုးသက်ရောက်မည် ဖြစ်ပါသည်။</p>
+                            <textarea id="adm-group-ai-sheet" class="studio-input w-full font-mono text-xs" rows="10" maxlength="8000" placeholder="Knowledge sheet content..." oninput="document.getElementById('adm-group-ai-sheet-chars').textContent = this.value.length"></textarea>
+                            <div class="flex-between mt-1 mb-2 text-xs text-muted">
+                                <span><span id="adm-group-ai-sheet-chars">0</span> / 8000</span>
+                                <div class="btn-group-sm">
+                                    <button type="button" id="adm-group-ai-sheet-reset" class="btn btn-secondary btn-sm" onclick="resetGroupAiKnowledgeSheet()" data-i18n="adm_group_ai_reset_sheet">မူလအတိုင်း ပြန်ထားမည်</button>
+                                    <button type="button" id="adm-group-ai-sheet-save" class="btn btn-primary btn-sm" onclick="saveGroupAiKnowledgeSheet()" data-i18n="adm_group_ai_save_sheet">Sheet သိမ်းဆည်းမည်</button>
+                                </div>
+                            </div>
+                            <p class="text-xs text-warning mb-4" data-i18n="adm_group_ai_precedence_note">⚠️ သတိပြုရန်: စနစ်၏ အခြေခံ လုံခြုံရေး စည်းမျဉ်းများ (မြန်မာဘာသာ သီးသန့်၊ Emoji မသုံးခြင်း၊ ငွေလွှဲ/အကောင့် ကိစ္စများ Admin ထံ လွှဲပြောင်းခြင်းနှင့် ဝယ်ယူထားသော မိနစ်/Credit များ သက်တမ်းမကုန်ခြင်း) သည် Knowledge Sheet စာသားထက် အမြဲ ဦးစားပေး အကျုံးဝင်ပါသည်။</p>
+
+                            <hr class="border-glass mb-3">
+
+                            <!-- Manage Controls Section -->
+                            <div class="form-row-2">
+                                <div class="toggle-control-col">
+                                    <label class="input-label" data-i18n="adm_group_ai_master_toggle">Group AI Master ဖွင့်/ပိတ်</label>
+                                    <label class="switch-luxury">
+                                        <input type="checkbox" id="adm-group-ai-master-toggle">
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <p class="text-xs text-muted" data-i18n="adm_group_ai_master_toggle_hint">Community Group အတွက် Group AI အလိုအလျောက် ဖြေကြားမှု အားလုံးကို ဖွင့်/ပိတ် ထိန်းချုပ်သည်</p>
+                                </div>
+                                <div class="toggle-control-col">
+                                    <label class="input-label" data-i18n="adm_group_ai_mod_toggle">Moderation စနစ် ဖွင့်/ပိတ်</label>
+                                    <label class="switch-luxury">
+                                        <input type="checkbox" id="adm-group-ai-moderation-toggle" checked>
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <p class="text-xs text-muted" data-i18n="adm_group_ai_mod_toggle_hint">အရောင်းအဝယ်၊ တိုက်ခိုက်မှုနှင့် ထိခိုက်စေသော စာများကို Strike 1 (သတိပေး)၊ Strike 2 (၁ နာရီ Mute)၊ Strike 3 (၂၄ နာရီ Mute + Admin Ban) အဆင့်လိုက် ထိန်းသိမ်းသည်</p>
+                                </div>
+                            </div>
+
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="adm_group_ai_mod_threshold">AI Moderation Confidence သတ်မှတ်ချက်</label>
+                                    <input type="number" id="adm-group-ai-mod-threshold" class="studio-input" min="0.1" max="1.0" step="0.05" value="0.8">
+                                    <p class="text-xs text-muted" data-i18n="adm_group_ai_mod_threshold_hint">သတ်မှတ်ချက်ထက် လျော့နည်းသော သံသယဖြစ်ဖွယ် စာများကို အရေးမယူဘဲ လျစ်လျူရှုပါမည် (မူလ: 0.8)</p>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="adm_group_ai_mute_s2">Strike 2 Mute ကြာချိန် (စက္ကန့်)</label>
+                                    <input type="number" id="adm-group-ai-mute-s2" class="studio-input" min="60" max="604800" step="60" value="3600">
+                                </div>
+                            </div>
+
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label" data-i18n="adm_group_ai_mute_s3">Strike 3 Mute ကြာချိန် (စက္ကန့်)</label>
+                                    <input type="number" id="adm-group-ai-mute-s3" class="studio-input" min="3600" max="2592000" step="3600" value="86400">
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="adm_group_ai_whitelist">Moderation Whitelist (တစ်ကြောင်းလျှင် ID တစ်ခု)</label>
+                                    <textarea id="adm-group-ai-whitelist" class="studio-input w-full font-mono text-xs" rows="2" placeholder="123456789&#10;987654321"></textarea>
+                                </div>
+                            </div>
+
+                            <hr class="border-glass my-3">
+
+                            <div class="form-row-2">
+                                <div class="toggle-control-col">
+                                    <label class="input-label" data-i18n="adm_group_ai_voice_toggle">Voice မက်ဆေ့ခ်ျ လက်ခံမှု ဖွင့်/ပိတ်</label>
+                                    <label class="switch-luxury">
+                                        <input type="checkbox" id="adm-group-ai-voice-toggle" checked>
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="input-label" data-i18n="adm_group_ai_voice_cap">တစ်နေ့တာ Voice Transcription Cap</label>
+                                    <input type="number" id="adm-group-ai-voice-cap" class="studio-input" min="1" max="1000" step="5" value="60">
+                                </div>
+                            </div>
+
+                            <hr class="border-glass my-3">
+
+                            <!-- Budgets at a Glance -->
+                            <div>
+                                <label class="input-label" data-i18n="adm_group_ai_budgets_title">📊 လက်ရှိ အသုံးပြုမှု အခြေအနေ (Budgets at a glance)</label>
+                                <div class="grid grid-cols-3 gap-2 mt-1">
+                                    <div class="metric-card-sm text-center p-2 rounded glass">
+                                        <div class="text-xs text-muted" data-i18n="adm_group_ai_col_today_replies">Today's Replies</div>
+                                        <div class="font-bold text-sm" id="adm-group-ai-budget-replies">0 / 300</div>
+                                    </div>
+                                    <div class="metric-card-sm text-center p-2 rounded glass">
+                                        <div class="text-xs text-muted" data-i18n="adm_group_ai_col_hourly_replies">Hourly Replies</div>
+                                        <div class="font-bold text-sm" id="adm-group-ai-budget-hourly">0 / 40</div>
+                                    </div>
+                                    <div class="metric-card-sm text-center p-2 rounded glass">
+                                        <div class="text-xs text-muted" data-i18n="adm_group_ai_col_voice_today">Today's Voice</div>
+                                        <div class="font-bold text-sm" id="adm-group-ai-budget-voice">0 / 60</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr class="border-glass my-3">
+
+                            <!-- Recent Moderation Actions -->
+                            <div>
+                                <label class="input-label" data-i18n="adm_group_ai_recent_actions_title">📋 လတ်တလော Moderation ဆောင်ရွက်ချက်များ (နောက်ဆုံး ၁၀ ခု)</label>
+                                <div id="adm-group-ai-recent-actions" class="mt-2 text-xs overflow-x-auto">
+                                    <p class="text-muted" data-i18n="adm_group_ai_no_actions">လတ်တလော Moderation ဆောင်ရွက်ချက် မရှိသေးပါ</p>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
                     <details class="card glass vcp-card adm-accordion mt-3" id="adm-acc-quotas-gates">
                         <summary class="adm-acc-head">
                             <span class="adm-acc-title" data-i18n="adm_set_grp_quotas_gates">🎚️ ကန့်သတ်ချက်များ &amp; Channel Gates</span>
@@ -3602,7 +3717,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261116_r158"></script>
-    <script src="/static/js/app.js?v=20261116_r158"></script>
+    <script src="/static/js/i18n.js?v=20261116_r159"></script>
+    <script src="/static/js/app.js?v=20261116_r159"></script>
 </body>
 </html>

@@ -14167,6 +14167,14 @@ class AdminSettingsPayload(BaseModel):
     group_ai_user_cooldown_seconds: Optional[int] = None
     group_ai_hourly_budget: Optional[int] = None
     group_ai_daily_budget: Optional[int] = None
+    # Group AI moderation ladder + voice controls (2026-11-16)
+    group_ai_moderation_enabled: Optional[bool] = None
+    group_ai_moderation_confidence_threshold: Optional[float] = None
+    group_ai_moderation_mute_duration_strike2_seconds: Optional[int] = None
+    group_ai_moderation_mute_duration_strike3_seconds: Optional[int] = None
+    group_ai_moderation_whitelist: Optional[str] = None
+    group_ai_voice_enabled: Optional[bool] = None
+    group_ai_voice_daily_cap: Optional[int] = None
     # Batch BX: the bot private-chat AI joins the payload beside its
     # group sibling (registered dynamic settings read per message).
     private_ai_enabled: Optional[bool] = None
@@ -14255,6 +14263,13 @@ async def get_admin_settings(
         "group_ai_user_cooldown_seconds": int(getattr(settings, "group_ai_user_cooldown_seconds", 60) or 0),
         "group_ai_hourly_budget": int(getattr(settings, "group_ai_hourly_budget", 40) or 40),
         "group_ai_daily_budget": int(getattr(settings, "group_ai_daily_budget", 300) or 300),
+        "group_ai_moderation_enabled": bool(getattr(settings, "group_ai_moderation_enabled", True)),
+        "group_ai_moderation_confidence_threshold": float(getattr(settings, "group_ai_moderation_confidence_threshold", 0.8)),
+        "group_ai_moderation_mute_duration_strike2_seconds": int(getattr(settings, "group_ai_moderation_mute_duration_strike2_seconds", 3600)),
+        "group_ai_moderation_mute_duration_strike3_seconds": int(getattr(settings, "group_ai_moderation_mute_duration_strike3_seconds", 86400)),
+        "group_ai_moderation_whitelist": str(getattr(settings, "group_ai_moderation_whitelist", "") or ""),
+        "group_ai_voice_enabled": bool(getattr(settings, "group_ai_voice_enabled", True)),
+        "group_ai_voice_daily_cap": int(getattr(settings, "group_ai_voice_daily_cap", 60)),
         # Batch BX: private-chat AI — the toggle defaults ON (owner
         # order), so the getattr default here is True, not False.
         "private_ai_enabled": bool(getattr(settings, "private_ai_enabled", True)),
@@ -14414,6 +14429,36 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = limit_val
+        elif key == "group_ai_moderation_confidence_threshold":
+            try:
+                conf_val = float(value)
+            except (TypeError, ValueError):
+                conf_val = -1.0
+            if conf_val < 0.0 or conf_val > 1.0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Group AI Moderation Confidence Threshold (group_ai_moderation_confidence_threshold) သည် "
+                        "0.0 မှ 1.0 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = conf_val
+        elif key in (
+            "group_ai_moderation_mute_duration_strike2_seconds",
+            "group_ai_moderation_mute_duration_strike3_seconds",
+            "group_ai_voice_daily_cap",
+        ):
+            try:
+                int_val = int(value)
+            except (TypeError, ValueError):
+                int_val = -1
+            if int_val < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Field {key} must be a non-negative integer.",
+                )
+            cleaned[key] = int_val
         elif key == "private_ai_user_cooldown_seconds":
             # Batch BX: same bounds discipline as the group sibling —
             # 0 is a real choice (no per-user cooldown); the cap keeps
@@ -14685,6 +14730,153 @@ async def update_admin_settings(
             await set_dynamic_setting(db, k, v, admin_id=admin.id)
     await db.commit()
     return {"success": True, "message": "ဆက်တင်များ အောင်မြင်စွာ သိမ်းပြီးပါပြီ", "updated": updates}
+
+
+class GroupAiKnowledgeSheetPayload(BaseModel):
+    sheet: str
+
+
+@api_router.get("/admin/group-ai")
+async def get_admin_group_ai_console(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return Group AI console status: current knowledge sheet, budgets, and recent actions."""
+    from app.services import group_ai_admin as gai
+    from app.services.dynamic_settings import load_dynamic_settings
+
+    await load_dynamic_settings(db)
+    custom_sheet = str(getattr(settings, "group_ai_knowledge_sheet", "") or "").strip()
+    is_custom = bool(custom_sheet)
+    effective_sheet = custom_sheet if is_custom else gai.get_built_in_fact_sheet()
+    last_saved_at = str(getattr(settings, "group_ai_knowledge_sheet_saved_at", "") or "")
+    last_saved_by = str(getattr(settings, "group_ai_knowledge_sheet_saved_by", "") or "")
+
+    daily_cap = int(getattr(settings, "group_ai_daily_budget", 300) or 300)
+    hourly_budget = int(getattr(settings, "group_ai_hourly_budget", 40) or 40)
+    voice_cap = int(getattr(settings, "group_ai_voice_daily_cap", 60) or 60)
+
+    budgets = {
+        "today_replies": gai.rate_limiter.daily_used(),
+        "daily_reply_cap": daily_cap,
+        "hourly_replies": gai.rate_limiter.hourly_used(),
+        "hourly_budget": hourly_budget,
+        "today_voice": gai.rate_limiter.voice_daily_used(),
+        "daily_voice_cap": voice_cap,
+    }
+
+    recent_actions = await gai.get_recent_moderation_actions(db, limit=10)
+
+    return {
+        "knowledge_sheet": effective_sheet,
+        "is_custom": is_custom,
+        "built_in_sheet": gai.get_built_in_fact_sheet(),
+        "last_saved_at": last_saved_at,
+        "last_saved_by": last_saved_by,
+        "char_count": len(effective_sheet),
+        "char_limit": 8000,
+        "budgets": budgets,
+        "recent_actions": recent_actions,
+    }
+
+
+@api_router.post("/admin/group-ai/knowledge-sheet")
+async def update_group_ai_knowledge_sheet(
+    payload: GroupAiKnowledgeSheetPayload,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Save an edited knowledge sheet for the Group AI (hard cap 8,000 chars)."""
+    sheet = str(payload.sheet or "").strip()
+    if not sheet:
+        raise HTTPException(
+            status_code=400,
+            detail="Knowledge sheet cannot be empty. Use reset to restore default.",
+        )
+    if len(sheet) > 8000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Knowledge sheet exceeds 8,000 character limit (length: {len(sheet)}).",
+        )
+
+    now_iso = utc_now().isoformat()
+    saved_by = admin.username or str(admin.id)
+
+    from app.services.dynamic_settings import set_dynamic_setting
+
+    await set_dynamic_setting(db, "group_ai_knowledge_sheet", sheet, admin_id=admin.id)
+    await set_dynamic_setting(db, "group_ai_knowledge_sheet_saved_at", now_iso, admin_id=admin.id)
+    await set_dynamic_setting(db, "group_ai_knowledge_sheet_saved_by", saved_by, admin_id=admin.id)
+
+    setattr(settings, "group_ai_knowledge_sheet", sheet)
+    setattr(settings, "group_ai_knowledge_sheet_saved_at", now_iso)
+    setattr(settings, "group_ai_knowledge_sheet_saved_by", saved_by)
+
+    from app.models.schema import AuditLog
+
+    db.add(
+        AuditLog(
+            admin_id=admin.id,
+            action="group_ai_knowledge_sheet_update",
+            target_type="group_ai_setting",
+            target_id="group_ai_knowledge_sheet",
+            details_json=json.dumps({"char_count": len(sheet)}),
+            created_at=utc_now(),
+        )
+    )
+    await db.commit()
+
+    return {
+        "success": True,
+        "char_count": len(sheet),
+        "char_limit": 8000,
+        "last_saved_at": now_iso,
+        "last_saved_by": saved_by,
+        "is_custom": True,
+    }
+
+
+@api_router.post("/admin/group-ai/knowledge-sheet/reset")
+async def reset_group_ai_knowledge_sheet(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Reset knowledge sheet to the built-in Ground Truth sheet."""
+    from app.services import group_ai_admin as gai
+    from app.services.dynamic_settings import set_dynamic_setting
+
+    await set_dynamic_setting(db, "group_ai_knowledge_sheet", "", admin_id=admin.id)
+    await set_dynamic_setting(db, "group_ai_knowledge_sheet_saved_at", "", admin_id=admin.id)
+    await set_dynamic_setting(db, "group_ai_knowledge_sheet_saved_by", "", admin_id=admin.id)
+
+    setattr(settings, "group_ai_knowledge_sheet", "")
+    setattr(settings, "group_ai_knowledge_sheet_saved_at", "")
+    setattr(settings, "group_ai_knowledge_sheet_saved_by", "")
+
+    from app.models.schema import AuditLog
+
+    db.add(
+        AuditLog(
+            admin_id=admin.id,
+            action="group_ai_knowledge_sheet_reset",
+            target_type="group_ai_setting",
+            target_id="group_ai_knowledge_sheet",
+            details_json=json.dumps({"reset": True}),
+            created_at=utc_now(),
+        )
+    )
+    await db.commit()
+
+    built_in = gai.get_built_in_fact_sheet()
+    return {
+        "success": True,
+        "knowledge_sheet": built_in,
+        "char_count": len(built_in),
+        "char_limit": 8000,
+        "is_custom": False,
+        "last_saved_at": "",
+        "last_saved_by": "",
+    }
 
 
 @api_router.get("/admin/pricing")
