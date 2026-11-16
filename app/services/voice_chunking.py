@@ -31,6 +31,8 @@ input under the real 2,096 cap).
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
 
 # Conservative per-call budget for the ESTIMATED total input, against
 # the model's real 2,096-token cap.
@@ -47,6 +49,20 @@ MIN_CHUNK_CHARS = 120
 
 _SENTENCE_ENDINGS = "။?!\n"
 _CLAUSE_MARK = "၊"
+
+# Burmese syllable break pattern (matches boundary before a base consonant / independent vowel):
+# Does not break after a virama stacker (္), and only matches before an onset letter not followed by asat.
+BURMESE_SYLLABLE_BREAK = re.compile(
+    r'(?<![္])(?=[က-အ\u1023-\u102A\u104E](?![\u1037\u1038]?[်္]))'
+)
+
+
+def _is_combining_or_stack(ch: str) -> bool:
+    """True if character is a Myanmar combining mark, vowel sign, tone, asat, or virama."""
+    if unicodedata.combining(ch) > 0:
+        return True
+    return ch in "\u1039\u103A\u1037\u1038\u102B\u102C\u102D\u102E\u102F\u1030\u1031\u1032\u1036\u103B\u103C\u103D\u103E"
+
 
 
 def estimate_tokens(text: str | None) -> int:
@@ -132,21 +148,54 @@ def split_sentences(text: str) -> list[str]:
 
 
 def _hard_split(sentence: str, budget_chars: int) -> list[str]:
-    """Split one over-budget sentence at clause marks ("၊") where
-    possible, then by raw length. Every piece is <= budget_chars."""
+    """Split one over-budget sentence at safe boundaries:
+    1. Clause marks ("၊")
+    2. Phrase spaces (" ")
+    3. Burmese syllable boundaries (never inside a syllable cluster)
+    4. Safe character boundary avoiding combining mark splits.
+    Every piece is <= budget_chars."""
     if len(sentence) <= budget_chars:
         return [sentence]
+    has_spaces = " " in sentence
     pieces: list[str] = []
-    rest = sentence.strip()
+    rest = sentence.strip() if has_spaces else sentence
     while len(rest) > budget_chars:
-        cut = rest.rfind(_CLAUSE_MARK, 0, budget_chars)
-        if cut >= budget_chars // 3:
-            # Split just after the clause mark.
-            piece, rest = rest[: cut + 1], rest[cut + 1 :].strip()
+        # 1. Clause mark "၊"
+        c_mark = rest.rfind(_CLAUSE_MARK, 0, budget_chars)
+        if c_mark >= budget_chars // 3:
+            cut = c_mark + 1
+            piece = rest[:cut].strip()
+            rest = rest[cut:].strip()
         else:
-            piece, rest = rest[:budget_chars], rest[budget_chars:].strip()
-        if piece.strip():
-            pieces.append(piece.strip())
+            # 2. Phrase space " "
+            s_mark = rest.rfind(" ", 0, budget_chars)
+            if s_mark >= budget_chars // 3:
+                cut = s_mark
+                piece = rest[:cut].strip()
+                rest = rest[cut:].strip()
+            else:
+                # 3. Syllable boundary
+                syl_cuts = [m.start() for m in BURMESE_SYLLABLE_BREAK.finditer(rest[:budget_chars])]
+                valid_syl_cuts = [c for c in syl_cuts if c >= budget_chars // 3]
+                if valid_syl_cuts:
+                    cut = valid_syl_cuts[-1]
+                    piece = rest[:cut]
+                    rest = rest[cut:]
+                    if has_spaces:
+                        piece = piece.strip()
+                        rest = rest.strip()
+                else:
+                    # 4. Safe fallback: don't break combining marks
+                    cut = budget_chars
+                    while cut > 1 and cut < len(rest) and _is_combining_or_stack(rest[cut]):
+                        cut -= 1
+                    piece = rest[:cut]
+                    rest = rest[cut:]
+                    if has_spaces:
+                        piece = piece.strip()
+                        rest = rest.strip()
+        if piece:
+            pieces.append(piece)
     if rest:
         pieces.append(rest)
     return [p for p in pieces if p]
