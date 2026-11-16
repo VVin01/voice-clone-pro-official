@@ -1847,6 +1847,7 @@ G. ENDINGS MUST MATCH THE SOURCE'S ARC: Never announce the whole story's conclus
 H. VARY SENTENCE OPENINGS (ဝါကျအစပုံစံ မထပ်စေရန်): Do not start consecutive segments with the same connective or the same subject name. Alternate naturally among connectives ('အဲဒီအခါမှာတော့', 'ဒါကိုမြင်တော့', 'ဒါကြောင့်', 'အဲဒီနောက်မှာတော့'), name mentions, and pronouns so the narration never sounds mechanical — this applies in EVERY presentation style.
 I. CALL THINGS WHAT THEY ARE (အရာဝတ္ထုကို သူ့အမှန် အမည်နဲ့ ခေါ်ရန်): Name every thing by what it truly is in the source. A machine or robot is 'စက်ရုပ်' — NEVER call it 'သရဲ' or 'ဘီလူး' unless the source itself is genuinely supernatural. Use natural Burmese constructions, never broken invented ones: 'အန္တရာယ်ထဲကို ရောက်သွားတယ်' (NEVER 'အန္တရာယ်ကြားဆီ ရောက်သွားတယ်'), 'နင်းခြေခံရတော့မှာ' (NEVER the clumsy split 'နင်းခြေတာခံရတော့မှာ').
 J. VARY SENTENCE ENDINGS & RHYTHM — SOUND ALIVE, NOT MECHANICAL (အသက်ဝင်အောင် ဝါကျအဆုံး နဲ့ စည်းချက် ပြောင်းရန်): Do NOT let nearly every sentence end in '…ခဲ့ပါတယ်' — a script whose sentences all close the same way reads flat and mechanical no matter how good the voice is. Mix the endings the way a real storyteller does ('…တယ်', '…နေတယ်', '…လိုက်တယ်', '…သွားတယ်', '…ပါပဲ', a short bare punch ending, an occasional genuine question or exclamation where the story itself asks one) and mix SHORT punchy sentences at action and danger with longer flowing ones at calm moments. Liveliness starts here in the script: the voice reads exactly the rhythm written on this page.
+K. NO SOURCE-CHANNEL CREDITS OR SIGN-OFFS (ရင်းမြစ် ချန်နယ် credit/sign-off များ လုံးဝ မထည့်ရ): The narration script must NEVER include the source video's channel credits, sign-off lines, subscribe/end-card text, or "presented by/for <channel>" phrases — in ANY language. Source branding (e.g. "ARY Plus အတွက် စောင့်နေပါတယ်", "presented by XYZ", "subscribe to…", "brought to you by…", channel name credit lines) is NOT story content and must be silently omitted. The script's FINAL sentence must be a real story sentence that ends at or just after the last tension beat; if the source ends in resolution or credits, end on the last tension line before it — NEVER copy a source end-card into the script and NEVER invent new story events to replace dropped credits.
 
 HARD RULES:
 1. Do NOT omit meaningful plot events, characters, actions, or key dialogues. Every segment's true meaning must be faithfully narrated inside its own ID.
@@ -2473,6 +2474,7 @@ For EVERY CURRENT ID check:
 - BURMESE NUMERALS ONLY (font tofu guard): replace any ASCII digits '0–9' with Burmese numerals or words (e.g. '၁၀', '၂၀၂၆');
 - no shifted chain where a row narrates another row;
 - no adjacent duplicate/near-duplicate outputs for different sources;
+- no source-channel credits, sign-offs, subscribe/end-card text, or "presented by/for <channel>" in ANY language — source branding is not story content; the script's FINAL sentence must be a real story sentence, never a credit line;
 - consistent names/pronouns throughout the story.{budget_block}
 
 Return JSON ONLY with every CURRENT ID once and in the exact sequence above.
@@ -2652,6 +2654,57 @@ _AUDIT_TAGYI_RE = re.compile(r"\S+တကြီး")
 _AUDIT_AED_RE = re.compile(r"အဲ့ဒီ")
 _AUDIT_ASCII_DIGITS_RE = re.compile(r"[0-9]")
 
+# ── Credit / sign-off leak guard (2026-11-16) ──────────────────────
+# Production evidence: recap narrations ending with the SOURCE channel's
+# credit line ("ARY Plus အတွက် စောင့်နေပါတယ်", "presented by XYZ",
+# "subscribe to…"). These are NOT story content.
+_CREDIT_SIGNOFF_RE = re.compile(
+    r"(?i)"
+    # Burmese channel-credit patterns
+    r"(?:အတွက်\s*(?:စောင့်နေပါတယ်|တင်ဆက်ပေးခဲ့တာပါ|တင်ဆက်ပေးပါတယ်|တင်ဆက်ပါတယ်))"
+    r"|(?:(?:ချန်နယ်|channel)\s*(?:ကို\s*)?(?:subscribe|လုပ်|နှိပ်|ဖွင့်))"
+    r"|(?:(?:subscribe|like|bell|notification)\s*(?:လုပ်|နှိပ်|ဖွင့်|button))"
+    # English credit/sign-off patterns
+    r"|(?:(?:presented|brought\s+to\s+you|powered)\s+(?:by|for)\b)"
+    r"|(?:subscribe\s+(?:to|for|now|and|our|my)\b)"
+    r"|(?:(?:thanks?\s+for|thank\s+you\s+for)\s+(?:watching|viewing|listening|tuning))"
+    r"|(?:(?:don'?t\s+forget\s+to|make\s+sure\s+to|please)\s+(?:subscribe|like|share|hit|click))"
+    r"|(?:(?:see\s+you|catch\s+you|stay\s+tuned)\s+(?:in\s+the\s+next|next\s+time|soon))"
+    # Generic end-card / channel mention at sentence end
+    r"|(?:(?:(?:ari|ary|ARY)\s*(?:digital|plus|zindagi|news|qtv))\s*(?:အတွက်|for|on|channel)?)"
+)
+
+
+def is_credit_or_signoff(text: str) -> bool:
+    """Return True when *text* looks like a source-channel credit / sign-off line.
+
+    Used by the ending-credit auditor to flag the LAST sentence of a
+    recap script that accidentally copied the source's end-card.
+    """
+    cleaned = _clean(text)
+    if not cleaned:
+        return False
+    return bool(_CREDIT_SIGNOFF_RE.search(cleaned))
+
+
+def audit_script_ending_credit(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop a credit/sign-off LAST sentence — repair by removal only.
+
+    If the final row's translation is a credit/sign-off, drop that
+    sentence only (earlier rows are byte-identical).  Returns a NEW
+    list; the caller must not assume in-place mutation.
+    """
+    if not rows:
+        return list(rows)
+    last = rows[-1]
+    text = _clean(last.get("translation") or last.get("narration") or "")
+    if not is_credit_or_signoff(text):
+        return list(rows)
+    # Drop the credit line — use the penultimate row as the new ending.
+    return list(rows[:-1])
+
 
 def _batch_audit_flags(
     translated: list[dict[str, Any]],
@@ -2690,6 +2743,12 @@ def _batch_audit_flags(
         flags.append("near-duplicate seam line")
     if _slid_runs(translated, next_units[0].get("source_text") if next_units else None):
         flags.append("slid translation run")
+    # Credit / sign-off leak guard (2026-11-16): flag when the LAST
+    # sentence of the batch is a source-channel credit line.
+    if translated and is_credit_or_signoff(
+        str(translated[-1].get("translation") or "")
+    ):
+        flags.append(f"credit/sign-off ending (ID {int(translated[-1]['id'])})")
     return flags
 
 
