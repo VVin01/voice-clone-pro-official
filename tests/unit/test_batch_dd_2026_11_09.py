@@ -487,7 +487,7 @@ def test_submit_and_composite_share_dd_payload_fields():
 def test_cache_token_is_r140():
     assert INDEX_HTML.count("20261115_r155") == 4
     assert "r125" not in INDEX_HTML
-    assert INDEX_HTML.count("r154") == 4
+    assert INDEX_HTML.count("r155") == 4
 
 
 def test_dd_sig_declarations_precede_first_use():
