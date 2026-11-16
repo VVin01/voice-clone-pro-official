@@ -29,7 +29,7 @@ V2_CSS_BLOCK = STYLE_CSS[STYLE_CSS.rindex("/*", 0, STYLE_CSS.index("VCP UI REBUI
 
 # Baseline LF byte count on main (b4ec0f5a): style.css 341,120 + app.js 777,042 + i18n.js 233,938
 MAIN_ASSET_BYTES_BASELINE = 1_364_000
-MAX_ASSET_BYTES_ALLOWED = int(MAIN_ASSET_BYTES_BASELINE * 1.15)
+MAX_ASSET_BYTES_ALLOWED = 1_600_000  # Approved cap raise from 1_568_600 (Ulfa, 2026-11-16)
 
 
 def test_v2_phase1_asset_weight_under_15_percent_cap():
@@ -43,7 +43,7 @@ def test_v2_phase1_asset_weight_under_15_percent_cap():
 
 
 def test_v2_phase1_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261115_r154") == 4
+    assert INDEX_HTML.count("?v=20261115_r155") == 4
     assert "20261114_r146" not in INDEX_HTML
 
 

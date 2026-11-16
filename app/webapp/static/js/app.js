@@ -14580,6 +14580,24 @@ async function loadAdminSettings() {
         const elGroqWhisper = document.getElementById("adm-groq-whisper-model");
         _admPaintValue(elGroqWhisper, s.groq_whisper_model || "");
 
+        // Admin Watermark Controls
+        const elWmFree = document.getElementById("adm-wm-free-enabled");
+        const elWmPaid = document.getElementById("adm-wm-paid-enabled");
+        const elWmStyle = document.getElementById("adm-wm-style");
+        const elWmPos = document.getElementById("adm-wm-position");
+        const elWmOpacity = document.getElementById("adm-wm-opacity");
+        const elWmSize = document.getElementById("adm-wm-size");
+        _admPaintChecked(elWmFree, s.watermark_free_enabled === undefined || s.watermark_free_enabled === null ? true : !!s.watermark_free_enabled);
+        _admPaintChecked(elWmPaid, !!s.watermark_paid_enabled);
+        _admPaintValue(elWmStyle, s.watermark_style || "tiled");
+        _admPaintValue(elWmPos, s.watermark_position || "bottom-right");
+        if (s.watermark_opacity != null) _admPaintValue(elWmOpacity, s.watermark_opacity);
+        if (s.watermark_size != null) _admPaintValue(elWmSize, s.watermark_size);
+        const elWmOpacityVal = document.getElementById("adm-wm-opacity-val");
+        if (elWmOpacityVal && elWmOpacity) elWmOpacityVal.textContent = `${elWmOpacity.value || 20}%`;
+        const elWmSizeVal = document.getElementById("adm-wm-size-val");
+        if (elWmSizeVal && elWmSize) elWmSizeVal.textContent = `${elWmSize.value || 16}%`;
+
         updateTutorialUI(s);
     } catch (e) {
         console.warn("Could not load dynamic settings:", e);
@@ -14787,6 +14805,7 @@ async function saveAdminSettings() {
         ...(reqGroupId ? { required_group_id: reqGroupId } : {}),
         ...(channelInvite ? { channel_invite_link: channelInvite } : {}),
         ...(groupInvite ? { group_invite_link: groupInvite } : {}),
+        ..._collectWatermarkPayload(),
     };
     updateTutorialUI(payload);
 
@@ -14850,6 +14869,59 @@ async function saveGeminiTtsModelSettings() {
     }
 }
 window.saveGeminiTtsModelSettings = saveGeminiTtsModelSettings;
+
+function _collectWatermarkPayload() {
+    const elWmFree = document.getElementById("adm-wm-free-enabled");
+    const elWmPaid = document.getElementById("adm-wm-paid-enabled");
+    const elWmStyle = document.getElementById("adm-wm-style");
+    const elWmPos = document.getElementById("adm-wm-position");
+    const elWmOpacity = document.getElementById("adm-wm-opacity");
+    const elWmSize = document.getElementById("adm-wm-size");
+    const out = {};
+    if (elWmFree) out.watermark_free_enabled = !!elWmFree.checked;
+    if (elWmPaid) out.watermark_paid_enabled = !!elWmPaid.checked;
+    if (elWmStyle && elWmStyle.value) out.watermark_style = elWmStyle.value.trim().toLowerCase();
+    if (elWmPos && elWmPos.value) out.watermark_position = elWmPos.value.trim().toLowerCase();
+    if (elWmOpacity) {
+        const op = parseInt(elWmOpacity.value, 10);
+        if (Number.isFinite(op)) out.watermark_opacity = op;
+    }
+    if (elWmSize) {
+        const sz = parseInt(elWmSize.value, 10);
+        if (Number.isFinite(sz)) out.watermark_size = sz;
+    }
+    return out;
+}
+
+async function saveWatermarkSettings() {
+    haptic("medium");
+    const payload = _collectWatermarkPayload();
+    try {
+        const res = await fetch("/api/admin/settings", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        [
+            "adm-wm-free-enabled",
+            "adm-wm-paid-enabled",
+            "adm-wm-style",
+            "adm-wm-position",
+            "adm-wm-opacity",
+            "adm-wm-size",
+        ].forEach(id => adminSettingsDirty.delete(id));
+        showStudioToast(t("adm_wm_saved"), "success");
+        loadAdminSettings();
+    } catch (e) {
+        showStudioToast(adminErrorText("adm_wm_save_err", e.message), "error");
+    }
+}
+window.saveWatermarkSettings = saveWatermarkSettings;
 
 // ── Dedicated History Hub ────────────────────────────────────────────────
 // One unified, newest-first list of ALL the user's jobs (voice + recap),

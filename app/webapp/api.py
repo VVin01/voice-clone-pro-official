@@ -37,6 +37,7 @@ from sqlalchemy import case, delete, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.config.settings import get_watermark_config
 from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
 from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, RecapCreditLedgerEvent, PaymentRequest, AuditLog, UserPreference, utc_now
@@ -3685,7 +3686,8 @@ async def get_user_profile(
         # Batch AO: the Mini App's recap quote display follows the
         # tiered-pricing switch (off = the legacy per-part estimate).
         "tiered_pricing_enabled": _tiered_recap_pricing_enabled(),
-        "has_recap_watermark": not is_vip,
+        "has_recap_watermark": bool(get_watermark_config(is_vip)["watermark"]),
+        "watermark_config": get_watermark_config(is_vip),
         # Custom channel logo (owner decision 2026-11-02): paid-only,
         # the user's own upload — see /api/user/logo endpoints.
         "can_use_logo": bool(is_vip),
@@ -7917,10 +7919,9 @@ async def _execute_recap_background_job(
 
                 validate_public_url(canonical_source_url)
 
-        # Free tier watermark branding vs VIP clean output
-        watermark_text = None
-        if not is_vip:
-            watermark_text = "Voice Clone Pro ဖြင့် ပြုလုပ်သည်"
+        # Admin Watermark Controls: read active per-tier toggle at render time
+        wm_cfg = get_watermark_config(is_vip)
+        watermark_text = "VoiceClonePro" if wm_cfg["watermark"] else None
 
         # Admin exemption: settings.is_admin is the same identity check
         # /api/user/me uses; admins are exempt from the 10-minute cap.
@@ -13994,6 +13995,12 @@ class AdminSettingsPayload(BaseModel):
     # setting could never take effect. Wired end to end in BS: this
     # payload + the GET prefill below + get_groq_whisper_model().
     groq_whisper_model: Optional[str] = None
+    watermark_free_enabled: Optional[bool] = None
+    watermark_paid_enabled: Optional[bool] = None
+    watermark_style: Optional[str] = None
+    watermark_position: Optional[str] = None
+    watermark_opacity: Optional[int] = None
+    watermark_size: Optional[int] = None
 
 
 @api_router.get("/admin/settings")
@@ -14002,9 +14009,10 @@ async def get_admin_settings(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Get all dynamic platform settings."""
-    from app.config.settings import get_groq_whisper_model
+    from app.config.settings import get_groq_whisper_model, get_watermark_config
     from app.services.dynamic_settings import load_dynamic_settings
     await load_dynamic_settings(db)
+    wm_cfg = get_watermark_config(False)
     return {
         "payment_kpay_number": getattr(settings, "payment_kpay_number", ""),
         "payment_kpay_name": getattr(settings, "payment_kpay_name", ""),
@@ -14066,6 +14074,12 @@ async def get_admin_settings(
         # the transcribers use) so the field shows what transcription
         # will actually run with.
         "groq_whisper_model": get_groq_whisper_model(),
+        "watermark_free_enabled": bool(wm_cfg["watermark_free_enabled"]),
+        "watermark_paid_enabled": bool(wm_cfg["watermark_paid_enabled"]),
+        "watermark_style": str(wm_cfg["watermark_style"]),
+        "watermark_position": str(wm_cfg["watermark_position"]),
+        "watermark_opacity": int(wm_cfg["watermark_opacity"]),
+        "watermark_size": int(wm_cfg["watermark_size"]),
     }
 
 
@@ -14328,6 +14342,60 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = limit_val
+        elif key == "watermark_style":
+            style = str(value).strip().lower()
+            if style not in ("tiled", "logo", "text"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Watermark style (watermark_style) သည် tiled, logo သို့မဟုတ် text ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = style
+        elif key == "watermark_position":
+            pos = str(value).strip().lower()
+            if pos == "center":
+                pos = "centre"
+            if pos not in ("bottom-right", "bottom-left", "top-right", "top-left", "centre"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Watermark position (watermark_position) မမှန်ကန်ပါ။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = pos
+        elif key == "watermark_opacity":
+            try:
+                op_val = int(value)
+            except (TypeError, ValueError):
+                op_val = -1
+            if op_val < 20 or op_val > 100:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Watermark opacity (watermark_opacity) သည် 20 မှ 100 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = op_val
+        elif key == "watermark_size":
+            try:
+                sz_val = int(value)
+            except (TypeError, ValueError):
+                sz_val = -1
+            if sz_val < 5 or sz_val > 40:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Watermark size (watermark_size) သည် 5 မှ 40 အတွင်း ဖြစ်ရပါမည်။ "
+                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
+                    ),
+                )
+            cleaned[key] = sz_val
+        elif key in ("watermark_free_enabled", "watermark_paid_enabled"):
+            cleaned[key] = bool(value)
     return cleaned
 
 

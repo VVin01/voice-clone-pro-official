@@ -645,19 +645,23 @@ def run_recap_pipeline(
         overlays["logo_width_fraction"] = float(logo_scale or 0.16)
         overlays["logo_opacity"] = float(logo_opacity or 0.70)
 
-    if extra_text and str(extra_text).strip():
-        overlays["extra_text"] = str(extra_text).strip()
-        # Free-tier brand watermark v3 (2026-10-30): the only production
-        # caller passes extra_text for free-tier branding (webapp/api.py,
-        # non-VIP jobs). core.apply_production_overlays renders
-        # overlays["watermark"] as a full-frame diagonal tiled pattern of
-        # the bot username "@voiceclonepro_bot" (crop-resistant — the v1
-        # corner-only mark could simply be cropped away, and the v2
-        # corner lockup looked cheap; both were rejected by the owner),
-        # instead of the old centered title panel at [0.50, 0.68] / 0.88
-        # opacity. See watermark-v3-2026-10-30.md.
+    from app.config.settings import get_watermark_config
+
+    wm_cfg = get_watermark_config(bool(paid_tier))
+    has_extra = bool(extra_text and str(extra_text).strip())
+    wm_should_apply = bool(wm_cfg["watermark"]) and (has_extra or bool(paid_tier))
+    if wm_should_apply:
+        overlays["extra_text"] = str(extra_text).strip() if has_extra else "VoiceClonePro"
         overlays["watermark"] = True
-        overlays["watermark_pattern_opacity"] = 0.19
+        overlays["watermark_style"] = str(wm_cfg["watermark_style"])
+        overlays["watermark_position"] = str(wm_cfg["watermark_position"])
+        overlays["watermark_opacity"] = int(wm_cfg["watermark_opacity"])
+        overlays["watermark_size"] = int(wm_cfg["watermark_size"])
+        overlays["watermark_pattern_opacity"] = (
+            0.19
+            if wm_cfg["watermark_style"] == "tiled" and int(wm_cfg["watermark_opacity"]) == 20
+            else round(int(wm_cfg["watermark_opacity"]) / 100.0, 4)
+        )
 
     overlays["burn_subtitles"] = bool(burn_subtitles)
     if sub_y is not None:
@@ -924,6 +928,8 @@ def generate_recap_preview(
     logo_position: Optional[list[float]] = None,
     logo_scale: float = 0.16,
     logo_opacity: float = 0.70,
+    is_vip: Optional[bool] = None,
+    watermark: Optional[bool] = None,
     ffmpeg_path: Optional[str] = None,
     ffprobe_path: Optional[str] = None,
 ) -> str:
@@ -1085,6 +1091,29 @@ def generate_recap_preview(
         overlays["logo_position"] = logo_position or [0.80, 0.05]
         overlays["logo_width_fraction"] = float(logo_scale or 0.16)
         overlays["logo_opacity"] = float(logo_opacity or 0.70)
+
+    wm_on = False
+    if watermark is not None:
+        wm_on = bool(watermark)
+    elif is_vip is not None:
+        from app.config.settings import get_watermark_config
+
+        wm_on = bool(get_watermark_config(bool(is_vip))["watermark"])
+
+    if wm_on:
+        from app.config.settings import get_watermark_config
+
+        wm_cfg = get_watermark_config(bool(is_vip))
+        overlays["watermark"] = True
+        overlays["watermark_style"] = str(wm_cfg["watermark_style"])
+        overlays["watermark_position"] = str(wm_cfg["watermark_position"])
+        overlays["watermark_opacity"] = int(wm_cfg["watermark_opacity"])
+        overlays["watermark_size"] = int(wm_cfg["watermark_size"])
+        overlays["watermark_pattern_opacity"] = (
+            0.19
+            if wm_cfg["watermark_style"] == "tiled" and int(wm_cfg["watermark_opacity"]) == 20
+            else round(int(wm_cfg["watermark_opacity"]) / 100.0, 4)
+        )
 
     res = extract_preview_with_overlays(
         ffmpeg=ffmpeg_bin,

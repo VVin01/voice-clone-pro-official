@@ -2537,9 +2537,13 @@ def _render_extra_text_png(
 BRAND_PATTERN_TEXT = "@voiceclonepro_bot"
 BRAND_PATTERN_ANGLE = 24.0  # PIL rotate(): CCW — text lines rise to the right
 BRAND_PATTERN_OPACITY = 0.19  # tuned on frames; watchable but unmistakable
+BRAND_WATERMARK_TEXT = "VoiceClonePro"
+WATERMARK_STYLES = ("tiled", "logo", "text")
+WATERMARK_POSITIONS = ("bottom-right", "bottom-left", "top-right", "top-left", "centre")
+_BRAND_LOGO_CACHE: Any = None
 
 
-def _brand_text_sprite(font_file: Path, font_size: int, alpha: int) -> Any:
+def _brand_text_sprite(font_file: Path, font_size: int, alpha: int, text: str = BRAND_PATTERN_TEXT) -> Any:
     """One '@voiceclonepro_bot' wordmark as a transparent sprite.
 
     Generous letter tracking (drawn glyph-by-glyph), rendered at 3x and
@@ -2552,20 +2556,227 @@ def _brand_text_sprite(font_file: Path, font_size: int, alpha: int) -> Any:
     font = ImageFont.truetype(str(font_file), max(12, font_size) * ss)
     tracking = int(round(font_size * 0.30)) * ss
     probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
-    advances = [probe.textlength(ch, font=font) for ch in BRAND_PATTERN_TEXT]
+    advances = [probe.textlength(ch, font=font) for ch in text]
     asc, desc = font.getmetrics()
-    top = probe.textbbox((0, 0), BRAND_PATTERN_TEXT, font=font)[1]
-    width = int(sum(advances) + tracking * (len(BRAND_PATTERN_TEXT) - 1)) + 2 * ss
+    top = probe.textbbox((0, 0), text, font=font)[1]
+    width = int(sum(advances) + tracking * (len(text) - 1)) + 2 * ss
     height = asc + desc + 2 * ss
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     shadow_alpha = max(0, min(255, int(alpha * 0.55)))
     for dx, dy, fill in ((ss, ss, (0, 0, 0, shadow_alpha)), (0, 0, (255, 255, 255, alpha))):
         x = float(ss + dx)
-        for ch, adv in zip(BRAND_PATTERN_TEXT, advances):
+        for ch, adv in zip(text, advances):
             d.text((x, ss + dy - top), ch, font=font, fill=fill)
             x += adv + tracking
     return img.resize((max(1, width // ss), max(1, height // ss)), Image.LANCZOS)
+
+
+def _load_brand_logo_rgba() -> Any:
+    """Decode the embedded VoiceClonePro brand logo from app/webapp/static/img/brand-logo.svg."""
+    global _BRAND_LOGO_CACHE
+    from PIL import Image, ImageDraw
+
+    if _BRAND_LOGO_CACHE is not None:
+        return _BRAND_LOGO_CACHE.copy()
+
+    svg_path = Path(__file__).resolve().parent.parent.parent / "webapp" / "static" / "img" / "brand-logo.svg"
+    if svg_path.is_file():
+        try:
+            import base64
+            import io
+
+            raw_svg = svg_path.read_text(encoding="utf-8", errors="ignore")
+            m = re.search(r"data:image/[a-zA-Z0-9+.-]+;base64,([A-Za-z0-9+/=\s]+)", raw_svg)
+            if m:
+                b64_bytes = base64.b64decode(re.sub(r"\s+", "", m.group(1)))
+                with Image.open(io.BytesIO(b64_bytes)) as im:
+                    _BRAND_LOGO_CACHE = im.convert("RGBA")
+                    return _BRAND_LOGO_CACHE.copy()
+        except Exception:
+            pass
+
+    fallback = Image.new("RGBA", (192, 192), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(fallback)
+    draw.rounded_rectangle([8, 8, 184, 184], radius=40, fill=(24, 24, 38, 240), outline=(255, 215, 0, 255), width=6)
+    _BRAND_LOGO_CACHE = fallback
+    return fallback.copy()
+
+
+def _watermark_placement_coords(
+    fw: int,
+    fh: int,
+    sw: int,
+    sh: int,
+    position: str,
+) -> tuple[int, int]:
+    """Compute top-left (x, y) inside (fw, fh) for a sprite of size (sw, sh)."""
+    pos = str(position or "bottom-right").strip().lower()
+    if pos == "center":
+        pos = "centre"
+    margin_x = max(12, int(round(fw * 0.035)))
+    margin_y = max(12, int(round(fh * 0.035)))
+    if pos == "top-left":
+        x, y = margin_x, margin_y
+    elif pos == "top-right":
+        x, y = fw - margin_x - sw, margin_y
+    elif pos == "bottom-left":
+        x, y = margin_x, fh - margin_y - sh
+    elif pos == "centre":
+        x, y = (fw - sw) // 2, (fh - sh) // 2
+    else:  # bottom-right (default)
+        x, y = fw - margin_x - sw, fh - margin_y - sh
+    return max(0, min(max(0, fw - sw), x)), max(0, min(max(0, fh - sh), y))
+
+
+def _render_logo_watermark_png(
+    output: Path,
+    *,
+    fw: int,
+    fh: int,
+    opacity: float,
+    position: str,
+    size_pct: int,
+) -> Path:
+    from PIL import Image, ImageDraw
+
+    logo = _load_brand_logo_rgba()
+    pct = max(5, min(40, int(size_pct or 16)))
+    logo_w = max(24, int(round(fw * (pct / 100.0))))
+    resized = logo.resize((logo_w, logo_w), Image.LANCZOS)
+
+    radius = max(4, int(round(logo_w * 0.22)))
+    mask = Image.new("L", (logo_w, logo_w), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, logo_w - 1, logo_w - 1], radius=radius, fill=255)
+
+    badge = Image.new("RGBA", (logo_w, logo_w), (0, 0, 0, 0))
+    badge.paste(resized, (0, 0), mask)
+    ImageDraw.Draw(badge).rounded_rectangle(
+        [0, 0, logo_w - 1, logo_w - 1],
+        radius=radius,
+        outline=(255, 215, 0, 215),
+        width=max(2, int(round(logo_w * 0.025))),
+    )
+
+    op = max(0.08, min(1.0, float(opacity)))
+    if op < 0.999:
+        r, g, b, a = badge.split()
+        a = a.point(lambda p: int(round(p * op)))
+        badge = Image.merge("RGBA", (r, g, b, a))
+
+    canvas = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+    dest_x, dest_y = _watermark_placement_coords(fw, fh, logo_w, logo_w, position)
+    canvas.alpha_composite(badge, (dest_x, dest_y))
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output)
+    return output
+
+
+def _render_text_watermark_png(
+    output: Path,
+    *,
+    fw: int,
+    fh: int,
+    opacity: float,
+    position: str,
+    size_pct: int,
+) -> Path:
+    from PIL import Image, ImageDraw, ImageFont
+
+    pct = max(5, min(40, int(size_pct or 16)))
+    target_w = max(48, int(round(fw * (pct / 100.0))))
+    font_file = bundled_fonts_dir() / "Padauk-Bold.ttf"
+    if not font_file.is_file():
+        font_file = bundled_fonts_dir() / "Padauk-Regular.ttf"
+
+    # Estimate font_px to hit target_w for BRAND_WATERMARK_TEXT ("VoiceClonePro")
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (16, 16)))
+    test_font = ImageFont.truetype(str(font_file), 64)
+    test_w = max(1.0, float(probe_draw.textlength(BRAND_WATERMARK_TEXT, font=test_font)))
+    font_px = max(14, min(180, int(round(64.0 * (target_w / test_w)))))
+
+    font = ImageFont.truetype(str(font_file), font_px)
+    stroke_w = max(2, int(round(font_px * 0.08)))
+    bbox = probe_draw.textbbox((0, 0), BRAND_WATERMARK_TEXT, font=font, stroke_width=stroke_w)
+    pad = max(6, stroke_w * 2)
+    sw = max(1, (bbox[2] - bbox[0]) + pad * 2)
+    sh = max(1, (bbox[3] - bbox[1]) + pad * 2)
+
+    sprite = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(sprite)
+    tx = pad - bbox[0]
+    ty = pad - bbox[1]
+    # Soft drop shadow + crisp white glyphs with dark outline
+    d.text(
+        (tx + max(1, stroke_w // 2), ty + max(1, stroke_w // 2)),
+        BRAND_WATERMARK_TEXT,
+        font=font,
+        fill=(0, 0, 0, 160),
+    )
+    d.text(
+        (tx, ty),
+        BRAND_WATERMARK_TEXT,
+        font=font,
+        fill=(255, 255, 255, 255),
+        stroke_width=stroke_w,
+        stroke_fill=(0, 0, 0, 210),
+    )
+
+    op = max(0.08, min(1.0, float(opacity)))
+    if op < 0.999:
+        r, g, b, a = sprite.split()
+        a = a.point(lambda p: int(round(p * op)))
+        sprite = Image.merge("RGBA", (r, g, b, a))
+
+    canvas = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+    dest_x, dest_y = _watermark_placement_coords(fw, fh, sw, sh, position)
+    canvas.alpha_composite(sprite, (dest_x, dest_y))
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output)
+    return output
+
+
+def resolve_watermark_overlay_options(overlays: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve effective watermark style, position, opacity, and size from overlays + admin settings."""
+    from app.config.settings import get_watermark_config
+
+    ov = overlays or {}
+    cfg = get_watermark_config(bool(ov.get("is_vip", False)))
+
+    raw_style = str(ov.get("watermark_style") or cfg["watermark_style"] or "tiled").strip().lower()
+    style = raw_style if raw_style in WATERMARK_STYLES else "tiled"
+
+    raw_pos = str(ov.get("watermark_position") or cfg["watermark_position"] or "bottom-right").strip().lower()
+    if raw_pos == "center":
+        raw_pos = "centre"
+    position = raw_pos if raw_pos in WATERMARK_POSITIONS else "bottom-right"
+
+    try:
+        size_pct = max(5, min(40, int(ov.get("watermark_size") if ov.get("watermark_size") is not None else cfg["watermark_size"])))
+    except (TypeError, ValueError):
+        size_pct = 16
+
+    if ov.get("watermark_opacity") is not None:
+        try:
+            op_pct = max(20, min(100, int(ov["watermark_opacity"])))
+        except (TypeError, ValueError):
+            op_pct = int(cfg["watermark_opacity"])
+        opacity = BRAND_PATTERN_OPACITY if (style == "tiled" and op_pct == 20 and ov.get("watermark_pattern_opacity") in (None, BRAND_PATTERN_OPACITY)) else (op_pct / 100.0)
+    elif int(cfg["watermark_opacity"]) != 20:
+        opacity = max(20, min(100, int(cfg["watermark_opacity"]))) / 100.0
+    elif ov.get("watermark_pattern_opacity") is not None:
+        opacity = float(ov["watermark_pattern_opacity"])
+    else:
+        opacity = BRAND_PATTERN_OPACITY if style == "tiled" else (int(cfg["watermark_opacity"]) / 100.0)
+
+    return {
+        "style": style,
+        "position": position,
+        "opacity": float(opacity),
+        "size_pct": int(size_pct),
+    }
 
 
 def render_brand_pattern_png(
@@ -2574,14 +2785,16 @@ def render_brand_pattern_png(
     frame_width: int,
     frame_height: int,
     opacity: float = BRAND_PATTERN_OPACITY,
+    style: str = "tiled",
+    position: str = "bottom-right",
+    size_pct: int = 16,
 ) -> Path:
-    """Render the full-frame diagonal tiled brand pattern as a PNG.
+    """Render the recap brand watermark overlay as a frame_width x frame_height RGBA PNG.
 
-    The returned PNG is exactly frame_width x frame_height, transparent
-    except for the repeated wordmark. The grid is drawn on an oversized
-    layer, rotated, then centre-cropped, so tiles cover the corners and
-    edges as densely as the centre — cropping any part of the frame still
-    leaves the mark in shot.
+    Supports three admin-selectable styles:
+    - 'tiled' (default): full-frame diagonal tiled '@voiceclonepro_bot' pattern.
+    - 'logo': VoiceClonePro brand logo placed at `position`.
+    - 'text': fixed 'VoiceClonePro' wordmark placed at `position`.
     """
     import math
 
@@ -2589,10 +2802,32 @@ def render_brand_pattern_png(
 
     fw = max(64, int(frame_width))
     fh = max(64, int(frame_height))
-    opacity = max(0.08, min(0.35, float(opacity)))
+    norm_style = str(style or "tiled").strip().lower()
+    if norm_style == "logo":
+        return _render_logo_watermark_png(
+            output,
+            fw=fw,
+            fh=fh,
+            opacity=opacity,
+            position=position,
+            size_pct=size_pct,
+        )
+    if norm_style == "text":
+        return _render_text_watermark_png(
+            output,
+            fw=fw,
+            fh=fh,
+            opacity=opacity,
+            position=position,
+            size_pct=size_pct,
+        )
+
+    opacity = max(0.08, min(1.0, float(opacity)))
     alpha = int(round(255 * opacity))
     font_file = bundled_fonts_dir() / "Padauk-Regular.ttf"
-    font_size = max(15, int(round(min(fw, fh) * 0.046)))
+    pct = max(5, min(40, int(size_pct or 16)))
+    size_scale = (pct / 16.0) if pct != 16 else 1.0
+    font_size = max(12 if pct != 16 else 15, int(round(min(fw, fh) * 0.046 * size_scale)))
     sprite = _brand_text_sprite(font_file, font_size, alpha)
 
     step_x = int(sprite.width * 1.15)
@@ -5339,12 +5574,15 @@ def apply_production_overlays(
     # mirrored.
     pattern_file: Path | None = None
     if watermark_mode:
-        pattern_opacity = float(overlays.get("watermark_pattern_opacity", BRAND_PATTERN_OPACITY))
+        wm_opts = resolve_watermark_overlay_options(overlays)
         pattern_file = render_brand_pattern_png(
             work_dir / "brand_pattern.png",
             frame_width=pw,
             frame_height=ph,
-            opacity=pattern_opacity,
+            opacity=wm_opts["opacity"],
+            style=wm_opts["style"],
+            position=wm_opts["position"],
+            size_pct=wm_opts["size_pct"],
         )
 
     # Step 1's filter graph: ONLY the blur-box chains, exactly as
@@ -5972,6 +6210,27 @@ def extract_preview_with_overlays(
             out = "vsub"
             graph.append(f"{current}[{sub_idx}:v]overlay=x='{_subtitle_overlay_x_expr(cw, ch, layout, overlays.get('sub_x'))}':y={top}[{out}]")
             current = f"[{out}]"
+
+    # Admin Watermark Controls: preview composite renders the watermark
+    # identically to the delivered video (same style, position, opacity,
+    # size for the viewing account's tier).
+    if bool(overlays.get("watermark")):
+        wm_opts = resolve_watermark_overlay_options(overlays)
+        wm_png = render_brand_pattern_png(
+            temp_dir / "preview_watermark.png",
+            frame_width=pw,
+            frame_height=ph,
+            opacity=wm_opts["opacity"],
+            style=wm_opts["style"],
+            position=wm_opts["position"],
+            size_pct=wm_opts["size_pct"],
+        )
+        wm_idx = _next_idx
+        _next_idx += 1
+        cmd_inputs += ["-i", str(wm_png)]
+        out = "vwm"
+        graph.append(f"{current}[{wm_idx}:v]overlay=x='{ox}':y='{oy}'[{out}]")
+        current = f"[{out}]"
 
     graph.append(f"{current}format=yuv420p[vout]")
 
