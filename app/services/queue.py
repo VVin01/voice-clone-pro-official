@@ -379,6 +379,7 @@ async def claim_next_queued_job(
     engine_filter: str | None = None,
     *,
     skip_local_source: bool | None = None,
+    allow_recap: bool | None = None,
 ) -> Job | None:
     """Find the oldest QUEUED job matching engine_filter and atomically transition it to RUNNING.
 
@@ -386,25 +387,43 @@ async def claim_next_queued_job(
 
     When ``skip_local_source`` is True (or unset and settings.worker_claim_local_files
     is False, e.g. WORKER_CLAIM_LOCAL_FILES=0 on a VPS second worker), jobs
-    whose ``source_audio_path`` is a local filesystem path are skipped so
-    the primary instance (holding the file) claims them. URL-sourced and
-    preset-voice jobs (source_audio_path is NULL or empty) are portable and
-    claimable by any worker.
+    whose ``source_audio_path`` is a local filesystem path (or recap jobs with
+    local source / own-voice reference audio) are skipped so the primary instance
+    claims them. URL-sourced recaps using persona narration and portable voice jobs
+    are claimable by any worker.
     """
     if skip_local_source is None:
         skip_local_source = not getattr(settings, "worker_claim_local_files", True)
+    if allow_recap is None:
+        allow_recap = getattr(settings, "recap_on_queue", False)
 
-    query = select(Job.id, Job.source_audio_path).where(
+    query = select(
+        Job.id,
+        Job.source_audio_path,
+        Job.job_type,
+        Job.engine,
+        Job.recap_ref_audio_path,
+    ).where(
         Job.status == JobStatus.QUEUED.value,
-        Job.job_type != JobType.RECAP.value,
         # Batch AW: TTS jobs execute in the webapp process (their own
         # background runner), never in the voice-clone worker — keep
         # them out of this queue even for an engine_filter=None caller.
         Job.job_type != JobType.TTS.value,
-        Job.engine != "recap",
-        ~Job.id.startswith("rc_"),
     )
-    if engine_filter:
+    if not allow_recap:
+        query = query.where(
+            Job.job_type != JobType.RECAP.value,
+            Job.engine != "recap",
+            ~Job.id.startswith("rc_"),
+        )
+    elif engine_filter:
+        query = query.where(
+            (Job.engine == engine_filter)
+            | (Job.job_type == JobType.RECAP.value)
+            | (Job.engine == "recap")
+            | (Job.id.startswith("rc_"))
+        )
+    elif not allow_recap and engine_filter:
         query = query.where(Job.engine == engine_filter)
 
     if skip_local_source:
@@ -421,20 +440,46 @@ async def claim_next_queued_job(
         return None
 
     for row in rows:
-        candidate_id, src_path = row[0], row[1]
-        if skip_local_source and _is_local_source(src_path):
-            logger.debug(
-                "Skipping job %s: source_audio_path is a local file "
-                "and this instance has skip_local_source=True",
-                candidate_id,
-            )
-            continue
+        candidate_id, src_path, j_type, eng, ref_path = row[0], row[1], row[2], row[3], row[4]
+        is_recap = (
+            j_type == JobType.RECAP.value
+            or eng == "recap"
+            or str(candidate_id).startswith("rc_")
+        )
+        if is_recap:
+            if skip_local_source and not _is_recap_portable(src_path, ref_path):
+                logger.debug(
+                    "Skipping recap job %s: not portable for clean-disk worker",
+                    candidate_id,
+                )
+                continue
+        else:
+            if skip_local_source and _is_local_source(src_path):
+                logger.debug(
+                    "Skipping job %s: source_audio_path is a local file "
+                    "and this instance has skip_local_source=True",
+                    candidate_id,
+                )
+                continue
         claimed = await claim_job_for_running(session, candidate_id)
         if not claimed:
             continue
         return await session.get(Job, candidate_id)
 
     return None
+
+
+def _is_recap_portable(source_path: str | None, ref_path: str | None) -> bool:
+    """Return True if a recap job is portable to a remote/clean-disk worker.
+
+    A recap is portable when its source is a URL (http/https) AND its narration
+    voice needs no local reference file (ref_path is None or empty, e.g. persona voice).
+    """
+    if not source_path or not (source_path.startswith("http://") or source_path.startswith("https://")):
+        return False
+    if ref_path and str(ref_path).strip():
+        return False
+    return True
 
 
 def _is_local_source(path: str | None) -> bool:

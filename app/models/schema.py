@@ -617,6 +617,10 @@ class Job(Base):
     # park timestamp. The DB column is the resumer's one source of
     # truth; NULL for every job that never parked.
     voice_choice_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Second Worker Phase 2 (2026-11-16): final narration script text
+    # persisted on the job row upon completion so AI Thumbnail v2 and support
+    # lookups can read it regardless of which worker executed the render.
+    final_script: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

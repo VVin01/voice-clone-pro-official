@@ -24,6 +24,7 @@ async def recover_stale_running_jobs(
     session: AsyncSession,
     stale_timeout_seconds: int | None = None,
     bot: Bot | None = None,
+    recap_stale_timeout_seconds: int | None = None,
 ) -> list[str]:
     """Recover orphaned RUNNING jobs left behind by an abrupt worker crash.
 
@@ -68,9 +69,6 @@ async def recover_stale_running_jobs(
     )
     res = await session.execute(candidate_stmt)
     candidate_ids: Sequence[str] = res.scalars().all()
-
-    if not candidate_ids:
-        return []
 
     recovered_ids: list[str] = []
 
@@ -167,6 +165,76 @@ async def recover_stale_running_jobs(
         logger.warning(
             "Safely recovered orphaned stale job %s (user=%s, was_charged=%s, refunded=%ss)",
             job.id, job.user_id, was_charged, refunded_seconds
+        )
+
+    # ── Recap Stale Recovery (Second Worker Phase 2, 2026-11-16) ──
+    # Stale RUNNING recaps (beyond recap_stale_job_timeout_seconds, default 2700s)
+    # are failed + auto-refunded via existing failure/refund rules.
+    r_timeout = (
+        recap_stale_timeout_seconds
+        if recap_stale_timeout_seconds is not None
+        else getattr(settings, "recap_stale_job_timeout_seconds", 2700)
+    )
+    r_cutoff = utc_now() - timedelta(seconds=r_timeout)
+
+    r_candidate_stmt = (
+        select(Job.id)
+        .where(
+            Job.status == JobStatus.RUNNING.value,
+            Job.started_at <= r_cutoff,
+            (Job.job_type == JobType.RECAP.value) | (Job.engine == "recap") | (Job.id.startswith("rc_")),
+        )
+        .order_by(Job.started_at)
+    )
+    r_res = await session.execute(r_candidate_stmt)
+    r_candidate_ids: Sequence[str] = r_res.scalars().all()
+
+    for r_job_id in r_candidate_ids:
+        r_claim_stmt = (
+            update(Job)
+            .where(
+                Job.id == r_job_id,
+                Job.status == JobStatus.RUNNING.value,
+                Job.started_at <= r_cutoff,
+            )
+            .values(
+                status=JobStatus.FAILED.value,
+                error_message="Worker process interrupted or terminated unexpectedly (stale recap job recovered)",
+                finished_at=utc_now(),
+            )
+        )
+        r_update_res = await session.execute(r_claim_stmt)
+        if r_update_res.rowcount != 1:
+            continue
+
+        r_job = await session.get(Job, r_job_id)
+        if not r_job:
+            continue
+        await session.refresh(r_job)
+
+        from app.webapp.api import _load_persisted_recap_state, _fail_stranded_recap_job
+        r_state = _load_persisted_recap_state(r_job) or {}
+        await _fail_stranded_recap_job(str(r_job.id), r_job.user_id, r_state)
+
+        session.add(
+            AuditLog(
+                admin_id=0,
+                action="recap.stale_recovery",
+                target_type="job",
+                target_id=str(r_job.id),
+                details_json=json.dumps({
+                    "user_id": r_job.user_id,
+                    "started_at": r_job.started_at.isoformat() if r_job.started_at else None,
+                    "cutoff": r_cutoff.isoformat(),
+                    "timeout_seconds": r_timeout,
+                }),
+            )
+        )
+        await session.commit()
+        recovered_ids.append(str(r_job.id))
+        logger.warning(
+            "Safely recovered orphaned stale recap job %s (user=%s)",
+            r_job.id, r_job.user_id,
         )
 
     return recovered_ids

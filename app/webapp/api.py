@@ -2866,6 +2866,9 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
         voice_refunded = False
         voice_seconds_refunded = 0
 
+    if getattr(job, "recap_ref_audio_path", None) and not getattr(cfg, "voice_ref_path", None):
+        cfg.voice_ref_path = job.recap_ref_audio_path
+
     entry = {
         "id": job.id,
         "user_id": job.user_id,
@@ -7675,6 +7678,8 @@ def _recap_deadline_exceeded(created_at, *, now_ts: Optional[float] = None) -> b
     if created_at is None:
         return False
     try:
+        if getattr(created_at, "tzinfo", None) is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
         created_ts = created_at.timestamp()
     except Exception:
         return False
@@ -7807,6 +7812,7 @@ async def _execute_recap_background_job(
     entry["progress_step"] = "1/4"
     _recap_set_entry_label(entry, "📥 Downloading source video from URL...", stage="download")
 
+    job_dir = settings.storage_root / "recap_output" / job_id
     try:
         from app.services.downloader import MediaDownloader
         from app.db.session import AsyncSessionLocal
@@ -7892,13 +7898,19 @@ async def _execute_recap_background_job(
         # with a log line — never a hard failure of a paid job. The
         # ref only ever drives the clone engine: on gemini/edge it
         # stays unset so the intent is exact.
-        if req.tts_engine == "voxcpm" and getattr(req, "voice_ref_path", None):
+        if getattr(req, "voice_ref_path", None):
             if Path(req.voice_ref_path).is_file():
                 voxcpm_ref_audio = req.voice_ref_path
             else:
+                # Second Worker Phase 2 (2026-11-16): Honest-fail rule —
+                # if an own-voice recap is executed where the reference audio is missing on disk,
+                # fail honestly + refund, never synthesise a substitute voice and bill for it.
                 logger.warning(
                     f"Recap job {job_id}: own-voice reference missing at execution "
-                    f"({req.voice_ref_path}) — persona narration"
+                    f"({req.voice_ref_path}) — failing honestly"
+                )
+                raise FileNotFoundError(
+                    f"Own-voice reference audio missing on disk: {req.voice_ref_path}"
                 )
 
         # Gemini TTS option (production-grade programme): the persona
@@ -8352,7 +8364,7 @@ async def _execute_recap_background_job(
             if recap_res.get("gemini_route"):
                 _cg_outcomes.append(recap_res["gemini_route"])
 
-        video_path = recap_res.get("final_video") or recap_res.get("final_video_path")
+        video_path = recap_res.get("final_video") or recap_res.get("final_video_path") or recap_res.get("final")
         if segmented_mode and first_part_dest:
             video_path = first_part_dest
         audio_path = recap_res.get("audio") or recap_res.get("final_audio_path")
@@ -8540,6 +8552,14 @@ async def _execute_recap_background_job(
 
         # Update Job in database
         _succ_written = False
+        final_script_text = None
+        if script_path and Path(script_path).is_file():
+            try:
+                final_script_text = Path(script_path).read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Could not read final script from {script_path}: {e}")
+        entry["final_script"] = final_script_text
+
         try:
             # R40 item 15c: record the REAL output duration so history
             # rows show actual seconds instead of the creation estimate.
@@ -8551,6 +8571,32 @@ async def _execute_recap_background_job(
             except Exception:
                 _real_seconds = 0
             async with AsyncSessionLocal() as session:
+                # Second Worker Phase 2 (2026-11-16): persist final script and stage timings
+                # into recap_config so support lookups and AI Thumbnail v2 can inspect them
+                db_job = await session.get(Job, job_id)
+                recap_cfg_dict = {}
+                if db_job and db_job.recap_config:
+                    try:
+                        recap_cfg_dict = json.loads(db_job.recap_config)
+                    except Exception:
+                        recap_cfg_dict = {}
+                if final_script_text:
+                    recap_cfg_dict["final_script"] = final_script_text
+                if entry.get("stage_timings"):
+                    recap_cfg_dict["stage_timings"] = entry["stage_timings"]
+                new_recap_cfg_json = json.dumps(recap_cfg_dict, ensure_ascii=False) if recap_cfg_dict else None
+
+                _succ_values = {
+                    "status": JobStatus.SUCCESS.value,
+                    "result_path": video_path,
+                    "finished_at": func.now(),
+                    "final_script": final_script_text,
+                }
+                if new_recap_cfg_json is not None:
+                    _succ_values["recap_config"] = new_recap_cfg_json
+                if _real_seconds > 0:
+                    _succ_values["seconds_consumed"] = _real_seconds
+
                 # Batch AJ H5: the SUCCESS write is conditioned on the
                 # row still being active — a cancel landing between
                 # the check above and this write flips the row to a
@@ -8560,12 +8606,7 @@ async def _execute_recap_background_job(
                     update(Job).where(
                         Job.id == job_id,
                         Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
-                    ).values(
-                        status=JobStatus.SUCCESS.value,
-                        result_path=video_path,
-                        finished_at=func.now(),
-                        **({"seconds_consumed": _real_seconds} if _real_seconds > 0 else {}),
-                    )
+                    ).values(**_succ_values)
                 )
                 await session.commit()
                 _succ_written = bool(_succ_res.rowcount)
@@ -8652,8 +8693,12 @@ async def _execute_recap_background_job(
         await _persist_recap_warnings(entry)
 
         # Deliverables are stored and ready in Mini App
-        # Send Telegram notification alert to user even if they closed the Mini App
-        if settings.bot_token and chat_id:
+        # Send Telegram notification alert to user with delivery dedup (Phase 2)
+        _already_delivered = bool(entry.get("delivery_notified"))
+        if entry:
+            entry["delivery_notified"] = True
+
+        if not _already_delivered and settings.bot_token and chat_id:
             _recap_notify_lang = "my"
             try:
                 from app.db.session import AsyncSessionLocal as _AL
@@ -8936,7 +8981,8 @@ async def _execute_recap_background_job(
         # exactly like a failed one's — strip it now (see the generic
         # failure handler below) instead of at the retention sweep.
         try:
-            _strip_failed_recap_job_media(job_dir)
+            if "job_dir" in locals() and job_dir and job_dir.exists():
+                _strip_failed_recap_job_media(job_dir)
         except Exception as strip_err:
             logger.warning(f"Recap job {job_id}: cancelled-job media strip failed: {strip_err}")
         raise
@@ -9021,7 +9067,8 @@ async def _execute_recap_background_job(
         # (plans, checkpoints, fallback markers) stays for inspection;
         # the record sweep removes the rest with the row at the window.
         try:
-            _strip_failed_recap_job_media(job_dir)
+            if "job_dir" in locals() and job_dir and job_dir.exists():
+                _strip_failed_recap_job_media(job_dir)
         except Exception as strip_err:
             logger.warning(f"Recap job {job_id}: failed-job media strip failed: {strip_err}")
 
@@ -10549,6 +10596,10 @@ async def render_recap_job(
     return {"success": True, "status": "RUNNING"}
 
 
+_RECAP_RETRY_LOCK = asyncio.Lock()
+_RECAP_RETRY_IN_FLIGHT: set[str] = set()
+
+
 @api_router.post("/recap/{job_id}/retry")
 async def retry_recap_job(
     job_id: str,
@@ -10578,37 +10629,49 @@ async def retry_recap_job(
     retry is refused with the honest re-upload explanation instead of
     charging for a job that cannot run.
     """
-    job = await _require_job_owner(db, job_id, user)
-    if job.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Recap job not found")
-    if not (
-        job.job_type == JobType.RECAP.value
-        or job.id.startswith("rc_")
-        or job.engine == "recap"
-    ):
-        raise HTTPException(status_code=404, detail="Recap job not found")
-    if job.status != JobStatus.FAILED.value:
-        raise HTTPException(
-            status_code=409,
-            detail="မအောင်မြင်တဲ့ Recap အလုပ်ကိုသာ ပြန်စမ်းနိုင်ပါတယ်။",
-        )
-    cfg = _recap_job_config(job)
-    if cfg is None:
-        raise HTTPException(
-            status_code=409,
-            detail="ဒီ အလုပ်ရဲ့ ဆက်တင်များကို ပြန်ရှာမရပါ — Recap အသစ် ပြန်ဖန်တီးပေးပါ။",
-        )
-    if not _recap_source_available(cfg.url):
-        raise HTTPException(
-            status_code=409,
-            detail="မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
-        )
-    result = await create_recap_job(cfg, user=user, db=db, _gate=user)
-    # Batch AB: the retried-from job is terminal; clear any stranded
-    # count it accumulated (the NEW job starts from a fresh blob).
-    await _clear_recap_stranded_reset_count(job_id)
-    result["retried_from"] = job_id
-    return result
+    async with _RECAP_RETRY_LOCK:
+        if job_id in _RECAP_RETRY_IN_FLIGHT:
+            raise HTTPException(
+                status_code=409,
+                detail="Recap retry already in flight for this job.",
+            )
+        _RECAP_RETRY_IN_FLIGHT.add(job_id)
+
+    try:
+        job = await _require_job_owner(db, job_id, user)
+        if job.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Recap job not found")
+        if not (
+            job.job_type == JobType.RECAP.value
+            or job.id.startswith("rc_")
+            or job.engine == "recap"
+        ):
+            raise HTTPException(status_code=404, detail="Recap job not found")
+        if job.status != JobStatus.FAILED.value:
+            raise HTTPException(
+                status_code=409,
+                detail="မအောင်မြင်တဲ့ Recap အလုပ်ကိုသာ ပြန်စမ်းနိုင်ပါတယ်။",
+            )
+        cfg = _recap_job_config(job)
+        if cfg is None:
+            raise HTTPException(
+                status_code=409,
+                detail="ဒီ အလုပ်ရဲ့ ဆက်တင်များကို ပြန်ရှာမရပါ — Recap အသစ် ပြန်ဖန်တီးပေးပါ။",
+            )
+        if not _recap_source_available(cfg.url):
+            raise HTTPException(
+                status_code=409,
+                detail="မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
+            )
+        result = await create_recap_job(cfg, user=user, db=db, _gate=user)
+        # Batch AB: the retried-from job is terminal; clear any stranded
+        # count it accumulated (the NEW job starts from a fresh blob).
+        await _clear_recap_stranded_reset_count(job_id)
+        result["retried_from"] = job_id
+        return result
+    finally:
+        async with _RECAP_RETRY_LOCK:
+            _RECAP_RETRY_IN_FLIGHT.discard(job_id)
 
 
 @api_router.post("/recap/{job_id}/cancel")
@@ -10958,6 +11021,7 @@ async def _send_recap_thumbnail_telegram(
             chat_id=chat_id,
             photo=FSInputFile(str(photo_path), filename="VoiceClonePro_Thumbnail.jpg"),
             caption=caption,
+            parse_mode="HTML",
         )
         return True
     except Exception as exc:
@@ -11540,7 +11604,11 @@ async def get_user_history(
     cutoff = datetime.now(timezone.utc) - timedelta(days=_media_retention_days())
     stmt = (
         select(Job)
-        .where(Job.user_id == user.id, Job.created_at >= cutoff)
+        .where(
+            Job.user_id == user.id,
+            Job.created_at >= cutoff,
+            Job.status.in_([JobStatus.SUCCESS.value, JobStatus.FAILED.value]),
+        )
         .order_by(Job.created_at.desc())
         .limit(60)
     )
@@ -14307,6 +14375,9 @@ async def get_admin_settings(
         "recap_thumbnail_month_exhausted": thumb_usage["exhausted"],
         "recap_thumbnail_cap_reached": thumb_usage["cap_reached"],
         "recap_thumbnail_cost_per_image_usd": thumb_usage["cost_per_image_usd"],
+        "recap_on_queue": bool(getattr(settings, "recap_on_queue", False)),
+        "recap_stale_job_timeout_seconds": int(getattr(settings, "recap_stale_job_timeout_seconds", 2700) or 2700),
+        "recap_worker_concurrency": int(getattr(settings, "recap_worker_concurrency", 1) or 1),
     }
 
 
@@ -14666,6 +14737,36 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             cleaned[key] = sz_val
         elif key in ("watermark_free_enabled", "watermark_paid_enabled"):
             cleaned[key] = bool(value)
+        elif key == "recap_on_queue":
+            cleaned[key] = bool(value)
+        elif key == "recap_stale_job_timeout_seconds":
+            try:
+                t_val = int(value)
+            except (TypeError, ValueError):
+                t_val = -1
+            if t_val < 60 or t_val > 86400:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Recap Stale Job Timeout (recap_stale_job_timeout_seconds) သည် "
+                        "60 မှ 86400 စက္ကန့်အတွင်း ဖြစ်ရပါမည်။"
+                    ),
+                )
+            cleaned[key] = t_val
+        elif key == "recap_worker_concurrency":
+            try:
+                c_val = int(value)
+            except (TypeError, ValueError):
+                c_val = -1
+            if c_val < 1 or c_val > 10:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Recap Worker Concurrency (recap_worker_concurrency) သည် "
+                        "1 မှ 10 အတွင်း ဖြစ်ရပါမည်။"
+                    ),
+                )
+            cleaned[key] = c_val
     return cleaned
 
 
