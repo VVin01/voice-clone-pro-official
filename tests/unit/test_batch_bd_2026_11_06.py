@@ -183,11 +183,13 @@ def test_capsule_width_budgets():
     # ANY Burmese full label exceeds the one-row 5-segment active
     # budget (shortening copy was the only alternative). After the
     # premium renames (2026-11-16) the shorter Instant Hook / Drama
-    # Prime / Light Comedy labels fit one row, but First-Person POV
-    # and Cinematic Storyteller still exceed it — so wrapping stays.
+    # Prime / Light Comedy labels fit one row; First-Person POV measures
+    # exactly 92px on Linux (Padauk-Bold + libraqm vs >92.5px budget,
+    # passing only on Windows font metrics), but Cinematic Storyteller
+    # still exceeds it — so wrapping stays.
     strip5 = 360 - 32 - 32 - 12 - 4 * 4            # 268
     active5 = strip5 * 2.4 / (2.4 + 4) - 6 - 2     # 92.5 inner
-    for key in ("style_pov", "style_standard"):
+    for key in ("style_standard",):
         assert _width(font, _label(key, 0)) > active5, key
 
 
