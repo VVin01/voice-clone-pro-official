@@ -22,6 +22,7 @@ from app.services.audio import (
     generate_edge_tts,
     get_output_filename,
     get_wav_duration_seconds,
+    is_wav_edge_clipped,
     normalize_audio_to_wav,
 )
 from app.services.download_names import branded_download_filename
@@ -31,6 +32,7 @@ from app.services.models import get_authorized_model
 from app.services.progress import JobProgressTracker, render_stepper_progress, safe_edit_status
 from app.services import voice_choice as _vc
 from app.services.speed import DEFAULT_SPEED, DEFAULT_TEMPO, resolve_speed_tempo
+from app.services.voice_chunking import plan_text_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -194,8 +196,6 @@ def _synthesize_voxcpm_voice_job(
     the job, never as silently-switched persona audio). Free jobs
     keep the defaults and are byte-identical to before.
     """
-    from app.services.voice_chunking import plan_text_chunks
-
     # Only non-default tier/fallback values are passed through: a
     # default (free) job's engine call stays byte-identical to the
     # pre-DP shape (Batch CH pins the single call's argument set).
@@ -212,7 +212,7 @@ def _synthesize_voxcpm_voice_job(
         reference_seconds=reference_seconds,
     )
     if len(chunks) <= 1:
-        return engine.synthesize(
+        engine.synthesize(
             text=text,
             output_wav=output_wav,
             reference_wav=reference_wav,
@@ -222,6 +222,28 @@ def _synthesize_voxcpm_voice_job(
             progress_cb=progress_cb,
             **_dp_kwargs,
         )
+        if is_wav_edge_clipped(output_wav):
+            logger.warning(
+                "VoxCPM single-call output clipped at edge for job %s; regenerating once",
+                job_id,
+            )
+            try:
+                engine.synthesize(
+                    text=text,
+                    output_wav=output_wav,
+                    reference_wav=reference_wav,
+                    control_instruction=control_instruction,
+                    preset_voice=preset_voice,
+                    speed=speed,
+                    progress_cb=progress_cb,
+                    **_dp_kwargs,
+                )
+            except Exception as e_regen:
+                logger.warning(
+                    "VoxCPM single-call retry failed (%s); keeping existing output",
+                    e_regen,
+                )
+        return output_wav
 
     logger.info(
         "Voice clone chunked synthesis: job=%s chunks=%d", job_id, len(chunks)
@@ -241,6 +263,31 @@ def _synthesize_voxcpm_voice_job(
                 allow_fallback=False,
                 **({"tier": tier} if tier != "free" else {}),
             )
+            if is_wav_edge_clipped(part):
+                logger.warning(
+                    "VoxCPM segment %d/%d output clipped at edge for job %s; regenerating once",
+                    idx,
+                    len(chunks),
+                    job_id,
+                )
+                try:
+                    engine.synthesize(
+                        text=chunk,
+                        output_wav=part,
+                        reference_wav=reference_wav,
+                        control_instruction=control_instruction,
+                        preset_voice=preset_voice,
+                        speed=speed,
+                        progress_cb=progress_cb,
+                        allow_fallback=False,
+                        **({"tier": tier} if tier != "free" else {}),
+                    )
+                except Exception as e_regen:
+                    logger.warning(
+                        "VoxCPM segment %d retry failed (%s); keeping existing part",
+                        idx,
+                        e_regen,
+                    )
             parts.append(part)
         concat_wav_files(parts, output_wav)
     finally:

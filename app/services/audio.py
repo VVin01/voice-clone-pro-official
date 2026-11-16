@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import wave
 import edge_tts
@@ -170,13 +172,61 @@ async def normalize_audio_to_wav(
     return out_wav
 
 
-def concat_wav_files(parts: list[Path], output_wav: Path) -> Path:
+def is_wav_edge_clipped(
+    wav_path: Path,
+    edge_ms: float = 20.0,
+    peak_threshold: float = 0.20,
+    rms_threshold: float = 0.06,
+) -> bool:
+    """Returns True if the WAV starts or ends mid-energy with no natural decay."""
+    try:
+        p = Path(wav_path)
+        if not p.is_file() or p.stat().st_size == 0:
+            return False
+        with wave.open(str(p), "rb") as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            framerate = wf.getframerate()
+            n_frames = wf.getnframes()
+            if n_frames == 0 or sampwidth != 2:
+                return False
+
+            edge_frames = min(int(framerate * (edge_ms / 1000.0)), n_frames // 4)
+            if edge_frames <= 0:
+                return False
+
+            boundary_frames = min(int(framerate * 0.005), edge_frames)
+            if boundary_frames <= 0:
+                return False
+
+            wf.setpos(0)
+            start_raw = wf.readframes(boundary_frames)
+            wf.setpos(max(0, n_frames - boundary_frames))
+            end_raw = wf.readframes(boundary_frames)
+
+            def check_energy(raw_bytes: bytes) -> bool:
+                count = len(raw_bytes) // 2
+                if count == 0:
+                    return False
+                samples = struct.unpack(f"<{count}h", raw_bytes)
+                peak = max(abs(s) for s in samples) / 32768.0
+                rms = math.sqrt(sum(s * s for s in samples) / count) / 32768.0
+                return peak > peak_threshold or rms > rms_threshold
+
+            return check_energy(start_raw) or check_energy(end_raw)
+    except Exception:
+        return False
+
+
+def concat_wav_files(
+    parts: list[Path], output_wav: Path, crossfade_sec: float = 0.04
+) -> Path:
     """Batch CH: join WAV parts into one file, in order.
 
-    Same ffmpeg concat-demuxer pattern as the recap engine's
-    concat_audio, but the voice path stays MONO and keeps the first
-    part's sample rate, so a chunked voice job's output format matches
-    what a single-call job from the same Space would have produced.
+    Joins with a short crossfade (acrossfade) when multiple parts exist,
+    preventing edge seam clicks/glitches, and falls back to the concat-demuxer.
+    Keeps MONO and the first part's sample rate, so a chunked voice job's
+    output format matches what a single-call job from the same Space would have produced.
     Synchronous: callers run it inside an executor.
     """
     part_paths = [Path(p) for p in parts]
@@ -190,10 +240,58 @@ def concat_wav_files(parts: list[Path], output_wav: Path) -> Path:
     rate = 48000
     try:
         with wave.open(str(part_paths[0]), "rb") as wf:
-            rate = wf.getframerate() or rate
+            rate = wf.getframerate() or 48000
     except Exception:
         pass
 
+    min_dur = 9999.0
+    for p in part_paths:
+        try:
+            with wave.open(str(p), "rb") as wf:
+                r = wf.getframerate() or 48000
+                dur = wf.getnframes() / float(r)
+                if dur < min_dur:
+                    min_dur = dur
+        except Exception:
+            pass
+
+    # Try acrossfade join when crossfade_sec > 0
+    actual_xfade = min(crossfade_sec, min_dur / 2.0) if min_dur > 0.02 else 0.0
+    if actual_xfade >= 0.005:
+        filter_chains = []
+        prev_label = "[0:a]"
+        for idx in range(1, len(part_paths)):
+            next_label = f"[{idx}:a]"
+            out_label = "[out]" if idx == len(part_paths) - 1 else f"[a{idx}]"
+            filter_chains.append(
+                f"{prev_label}{next_label}acrossfade=d={actual_xfade:.3f}:c1=tri:c2=tri{out_label}"
+            )
+            prev_label = out_label
+        filter_complex = ";".join(filter_chains)
+
+        cmd = [
+            "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
+            "-hide_banner", "-loglevel", "error",
+        ]
+        for p in part_paths:
+            cmd.extend(["-i", str(p.resolve())])
+        cmd.extend([
+            "-filter_complex", filter_complex,
+            "-map", "[out]",
+            "-ar", str(rate), "-ac", "1", "-c:a", "pcm_s16le",
+            str(output_wav),
+        ])
+        try:
+            res = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=NORMALIZE_TIMEOUT_SECONDS,
+            )
+            if res.returncode == 0 and output_wav.is_file() and output_wav.stat().st_size > 0:
+                return output_wav
+        except Exception:
+            pass
+
+    # Fallback to concat demuxer
     list_file = output_wav.parent / f"{output_wav.stem}.parts.txt"
     lines = []
     for p in part_paths:
