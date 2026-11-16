@@ -515,5 +515,5 @@ console.log(JSON.stringify({ dl: dlCalls, open: openCalls }));
 # ── Release pin: cache token r108 ───────────────────────────────────
 
 def test_ck_cache_token_is_r108():
-    assert INDEX_HTML.count("20261116_r158") == 4
+    assert INDEX_HTML.count("20261117_r159") == 4
     assert ("20261104_r" + "107") not in INDEX_HTML

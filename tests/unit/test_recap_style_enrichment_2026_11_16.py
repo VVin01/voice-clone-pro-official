@@ -276,6 +276,6 @@ def test_internal_style_ids_unchanged():
         assert old not in I18N_JS and old not in INDEX_HTML
 
 
-def test_cache_token_bumped_to_r158():
-    assert INDEX_HTML.count("?v=20261116_r158") == 4
-    assert "r157" not in INDEX_HTML
+def test_cache_token_bumped_to_r159():
+    assert INDEX_HTML.count("?v=20261117_r159") == 4
+    assert "r158" not in INDEX_HTML

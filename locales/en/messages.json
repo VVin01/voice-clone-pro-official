@@ -383,6 +383,8 @@
   "recap_failed_title": "❌ Recap failed",
   "recap_retry_charge_note": "♻️ Retrying creates a new job and charges the normal credit again — the failed job was already refunded.",
   "recap_retry_confirm": "Retry this recap? The normal credit price will be charged again.",
+  "recap_retry_confirm_cost": "Retry this recap? ({credits} credit(s) will be charged)",
+  "recap_retry_confirm_admin": "Retry this recap? (Free for Admin)",
   "recap_retry_upload_missing": "📁 The original uploaded file is no longer available — upload it again to retry.",
   "recap_retry_started_toast": "🔄 New recap started",
   "btn_rerun_recap": "♻️ Re-run with these settings",

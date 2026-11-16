@@ -10549,6 +10549,10 @@ async def render_recap_job(
     return {"success": True, "status": "RUNNING"}
 
 
+_RECAP_RETRY_LOCK = asyncio.Lock()
+_RECAP_RETRY_IN_FLIGHT: set[str] = set()
+
+
 @api_router.post("/recap/{job_id}/retry")
 async def retry_recap_job(
     job_id: str,
@@ -10578,37 +10582,49 @@ async def retry_recap_job(
     retry is refused with the honest re-upload explanation instead of
     charging for a job that cannot run.
     """
-    job = await _require_job_owner(db, job_id, user)
-    if job.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Recap job not found")
-    if not (
-        job.job_type == JobType.RECAP.value
-        or job.id.startswith("rc_")
-        or job.engine == "recap"
-    ):
-        raise HTTPException(status_code=404, detail="Recap job not found")
-    if job.status != JobStatus.FAILED.value:
-        raise HTTPException(
-            status_code=409,
-            detail="မအောင်မြင်တဲ့ Recap အလုပ်ကိုသာ ပြန်စမ်းနိုင်ပါတယ်။",
-        )
-    cfg = _recap_job_config(job)
-    if cfg is None:
-        raise HTTPException(
-            status_code=409,
-            detail="ဒီ အလုပ်ရဲ့ ဆက်တင်များကို ပြန်ရှာမရပါ — Recap အသစ် ပြန်ဖန်တီးပေးပါ။",
-        )
-    if not _recap_source_available(cfg.url):
-        raise HTTPException(
-            status_code=409,
-            detail="မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
-        )
-    result = await create_recap_job(cfg, user=user, db=db, _gate=user)
-    # Batch AB: the retried-from job is terminal; clear any stranded
-    # count it accumulated (the NEW job starts from a fresh blob).
-    await _clear_recap_stranded_reset_count(job_id)
-    result["retried_from"] = job_id
-    return result
+    async with _RECAP_RETRY_LOCK:
+        if job_id in _RECAP_RETRY_IN_FLIGHT:
+            raise HTTPException(
+                status_code=409,
+                detail="Recap retry already in flight for this job.",
+            )
+        _RECAP_RETRY_IN_FLIGHT.add(job_id)
+
+    try:
+        job = await _require_job_owner(db, job_id, user)
+        if job.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Recap job not found")
+        if not (
+            job.job_type == JobType.RECAP.value
+            or job.id.startswith("rc_")
+            or job.engine == "recap"
+        ):
+            raise HTTPException(status_code=404, detail="Recap job not found")
+        if job.status != JobStatus.FAILED.value:
+            raise HTTPException(
+                status_code=409,
+                detail="မအောင်မြင်တဲ့ Recap အလုပ်ကိုသာ ပြန်စမ်းနိုင်ပါတယ်။",
+            )
+        cfg = _recap_job_config(job)
+        if cfg is None:
+            raise HTTPException(
+                status_code=409,
+                detail="ဒီ အလုပ်ရဲ့ ဆက်တင်များကို ပြန်ရှာမရပါ — Recap အသစ် ပြန်ဖန်တီးပေးပါ။",
+            )
+        if not _recap_source_available(cfg.url):
+            raise HTTPException(
+                status_code=409,
+                detail="မူရင်း ဗီဒီယိုဖိုင်ကို မတွေ့တော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
+            )
+        result = await create_recap_job(cfg, user=user, db=db, _gate=user)
+        # Batch AB: the retried-from job is terminal; clear any stranded
+        # count it accumulated (the NEW job starts from a fresh blob).
+        await _clear_recap_stranded_reset_count(job_id)
+        result["retried_from"] = job_id
+        return result
+    finally:
+        async with _RECAP_RETRY_LOCK:
+            _RECAP_RETRY_IN_FLIGHT.discard(job_id)
 
 
 @api_router.post("/recap/{job_id}/cancel")
@@ -11541,7 +11557,11 @@ async def get_user_history(
     cutoff = datetime.now(timezone.utc) - timedelta(days=_media_retention_days())
     stmt = (
         select(Job)
-        .where(Job.user_id == user.id, Job.created_at >= cutoff)
+        .where(
+            Job.user_id == user.id,
+            Job.created_at >= cutoff,
+            Job.status.in_([JobStatus.SUCCESS.value, JobStatus.FAILED.value]),
+        )
         .order_by(Job.created_at.desc())
         .limit(60)
     )
