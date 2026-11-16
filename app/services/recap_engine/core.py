@@ -582,6 +582,14 @@ def normalize_segments(plan: dict[str, Any]) -> list[dict[str, Any]]:
         })
     if not out:
         raise ValueError("အသုံးပြုလို့ရတဲ့ narration + timestamp segments မရှိပါ။")
+    # Wire ending-credit audit repair before synthesis: drop credit ending only
+    try:
+        from app.services.recap_engine.recap_planner import audit_script_ending_credit
+        out = audit_script_ending_credit(out)
+    except Exception:
+        pass
+    if not out:
+        raise ValueError("အသုံးပြုလို့ရတဲ့ narration + timestamp segments မရှိပါ။")
     out.sort(key=lambda x: (x["video_start"], x["video_end"]))
     for i, seg in enumerate(out, 1):
         seg["segment_id"] = i

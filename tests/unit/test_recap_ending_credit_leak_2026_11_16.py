@@ -220,6 +220,66 @@ def test_batch_audit_flags_clean_ending():
     assert not credit_flags
 
 
+# ── Integration tests: ending-credit repair wiring before synthesis ─
+
+def test_integration_credit_ending_script_loses_exactly_last_sentence(monkeypatch):
+    """Integration test proving a credit-ending script loses exactly its last sentence
+    in the audit/repair stage before synthesis without rewriting earlier sentences."""
+    rows = [
+        {"id": 1, "timestamp": "00:00:01,000 --> 00:00:04,000", "source_text": "He enters the room.", "translation": "သူ အခန်းထဲကို ဝင်လာခဲ့တယ်"},
+        {"id": 2, "timestamp": "00:00:04,000 --> 00:00:07,000", "source_text": "He finds the secret document.", "translation": "လျှို့ဝှက်စာရွက်စာတမ်းကို သူ တွေ့ရှိသွားခဲ့တယ်"},
+        {"id": 3, "timestamp": "00:00:07,000 --> 00:00:10,000", "source_text": "Presented for ARY Plus.", "translation": EVIDENCE_POV},
+    ]
+
+    llm_calls = []
+
+    def fake_gemini_json(ai, prompt, retries=1, log=None, rotation_tier=None):
+        llm_calls.append(prompt)
+        return {"checks": [{"id": r["id"], "status": "pass"} for r in rows[:2]]}
+
+    monkeypatch.setattr(planner, "_gemini_json", fake_gemini_json)
+
+    logs = []
+    result = planner._finalize_batch_translation(
+        ai=None,
+        translated=list(rows),
+        bi=0,
+        total_batches=1,
+        story_context={"title": "Test Story"},
+        prev_committed=[],
+        nxt=[],
+        log=logs.append,
+        translation_audit=True,
+        narrative_style="pov",
+        is_female=False,
+    )
+
+    # Must lose EXACTLY its last sentence (length 3 -> 2)
+    assert len(result) == 2
+    assert result[0]["id"] == 1 and result[0]["translation"] == rows[0]["translation"]
+    assert result[1]["id"] == 2 and result[1]["translation"] == rows[1]["translation"]
+    # The credit line was dropped, never rewritten
+    assert not any(r["id"] == 3 for r in result)
+    assert not any(EVIDENCE_POV in r["translation"] for r in result)
+
+
+def test_integration_core_normalize_segments_drops_credit_ending():
+    """normalize_segments must drop the credit-ending sentence before audio synthesis."""
+    from app.services.recap_engine import core
+
+    plan = {
+        "segments": [
+            {"video_start": 0.0, "video_end": 5.0, "narration": "သူ အိမ်ထဲသို့ ဝင်လာခဲ့သည်"},
+            {"video_start": 5.0, "video_end": 10.0, "narration": EVIDENCE_DRAMATIC},
+        ]
+    }
+    segs = core.normalize_segments(plan)
+    assert len(segs) == 1
+    assert segs[0]["narration"] == "သူ အိမ်ထဲသို့ ဝင်လာခဲ့သည်"
+    assert EVIDENCE_DRAMATIC not in segs[0]["narration"]
+
+
+
 # ── Cache token pin ────────────────────────────────────────────────
 
 _INDEX_HTML = Path(__file__).resolve().parents[2] / "app" / "webapp" / "static" / "index.html"
