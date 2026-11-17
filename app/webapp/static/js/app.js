@@ -12441,7 +12441,12 @@ function showAdminJobsTab(tab) {
     if (hist) hist.classList.toggle("hidden", tab !== "history");
     if (bLive) bLive.classList.toggle("active", tab === "live");
     if (bHist) bHist.classList.toggle("active", tab === "history");
-    if (tab === "history") loadAdminHistory(); else loadAdminQueue();
+    if (tab === "history") {
+        loadAdminHistory();
+    } else {
+        loadAdminQueue();
+        if (typeof loadAdminFleetStatus === "function") loadAdminFleetStatus();
+    }
 }
 window.showAdminJobsTab = showAdminJobsTab;
 

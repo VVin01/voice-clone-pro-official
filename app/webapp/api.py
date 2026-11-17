@@ -12640,7 +12640,8 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
     eng_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_engine"))).scalar_one_or_none()
     host_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_host"))).scalar_one_or_none()
     stat_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_status"))).scalar_one_or_none()
-    recap_queue_enabled = bool(getattr(settings, "recap_on_queue", False))
+    rq_row = (await db.execute(select(BotSetting).where(BotSetting.key == "recap_on_queue"))).scalar_one_or_none()
+    recap_queue_enabled = bool(rq_row.value.lower() in ("true", "1", "yes")) if rq_row and rq_row.value else bool(getattr(settings, "recap_on_queue", False))
 
     if not hb_row or not hb_row.value:
         return {

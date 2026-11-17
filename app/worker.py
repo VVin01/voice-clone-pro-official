@@ -1304,11 +1304,21 @@ async def run_worker_loop(
     _loop_started = _time.monotonic()
     _last_stale_sweep = 0.0
     _last_heartbeat = 0.0
+    _last_settings_refresh = 0.0
     _active_recap_tasks: set[asyncio.Task] = set()
 
     while True:
         try:
             _now_m = _time.monotonic()
+            if _now_m - _last_settings_refresh >= 5.0:
+                _last_settings_refresh = _now_m
+                try:
+                    from app.services.dynamic_settings import load_dynamic_settings
+                    async with AsyncSessionLocal() as ds_session:
+                        await load_dynamic_settings(ds_session)
+                except Exception as ds_exc:
+                    logger.debug("Failed to refresh dynamic settings in worker: %s", ds_exc)
+
             if _now_m - _last_heartbeat >= 15.0:
                 _last_heartbeat = _now_m
                 try:
