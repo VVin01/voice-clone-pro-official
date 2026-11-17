@@ -305,9 +305,134 @@ def _log_decision(message: Message, user_id: int | None, decision: str, reason: 
     )
 
 
+async def _execute_moderation(
+    message: Message,
+    bot: Bot | None,
+    *,
+    session: AsyncSession | None,
+    user: Any,
+    category: str,
+    text: str,
+) -> None:
+    """Execute the Part 1 moderation action ladder (strikes in rolling 7 days).
+
+    Strike 1: public warning reply (Burmese, polite, no emoji), message left in place.
+    Strike 2: warning reply + mute 1h (restrict_chat_member, can_send_messages=False, until_date +1h).
+    Strike 3: mute 24h + escalation DM to all admins with a Ban button (ban_chat_member).
+    """
+    import time
+
+    sender = bot or message.bot
+    async with _session_or_new(session) as s:
+        previous_strikes = await gai.get_user_strikes_in_window(s, user.id)
+        strike_num = len(previous_strikes) + 1
+        s2_duration, s3_duration = await gai.get_moderation_mute_durations(s)
+
+        if strike_num == 1:
+            action = "warn"
+            warning = gai.WARNING_TEXT_STRIKE_1
+            try:
+                await message.reply(warning)
+            except Exception as exc:
+                logger.warning("group_ai_admin: strike 1 warning failed: %s", exc)
+
+            strike = await gai.record_moderation_strike(
+                s,
+                user_id=user.id,
+                category=category,
+                message_id=message.message_id,
+                chat_id=message.chat.id,
+                action=action,
+            )
+            _log_decision(message, user.id, "moderation", f"strike_1:{category}:warn")
+
+        elif strike_num == 2:
+            action = "mute_1h"
+            warning = gai.WARNING_TEXT_STRIKE_2
+            until_date = int(time.time() + s2_duration)
+            try:
+                from aiogram.types import ChatPermissions
+
+                await sender.restrict_chat_member(
+                    chat_id=message.chat.id,
+                    user_id=user.id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=until_date,
+                )
+            except Exception as exc:
+                logger.warning("group_ai_admin: strike 2 restrict failed: %s", exc)
+
+            try:
+                await message.reply(warning)
+            except Exception as exc:
+                logger.warning("group_ai_admin: strike 2 warning failed: %s", exc)
+
+            strike = await gai.record_moderation_strike(
+                s,
+                user_id=user.id,
+                category=category,
+                message_id=message.message_id,
+                chat_id=message.chat.id,
+                action=action,
+            )
+            _log_decision(message, user.id, "moderation", f"strike_2:{category}:mute_1h")
+
+        else:
+            action = "mute_24h"
+            warning = gai.WARNING_TEXT_STRIKE_3
+            until_date = int(time.time() + s3_duration)
+            try:
+                from aiogram.types import ChatPermissions
+
+                await sender.restrict_chat_member(
+                    chat_id=message.chat.id,
+                    user_id=user.id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=until_date,
+                )
+            except Exception as exc:
+                logger.warning("group_ai_admin: strike 3 restrict failed: %s", exc)
+
+            try:
+                await message.reply(warning)
+            except Exception as exc:
+                logger.warning("group_ai_admin: strike 3 warning failed: %s", exc)
+
+            strike = await gai.record_moderation_strike(
+                s,
+                user_id=user.id,
+                category=category,
+                message_id=message.message_id,
+                chat_id=message.chat.id,
+                action=action,
+            )
+            _log_decision(message, user.id, "moderation", f"strike_3:{category}:mute_24h_escalated")
+
+            # Escalation DM to all admins carrying live copy of offending message
+            dm_text = gai.build_moderation_escalation_dm(
+                author_name=user.first_name or "",
+                author_username=user.username,
+                author_id=user.id,
+                text=text,
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                category=category,
+                strike_count=strike_num,
+                previous_strikes=previous_strikes,
+            )
+            keyboard = gai.build_moderation_keyboard(strike.id, message.chat.id, user.id)
+            for admin_id in settings.admin_ids:
+                try:
+                    await sender.send_message(
+                        admin_id, dm_text, parse_mode="HTML", reply_markup=keyboard
+                    )
+                except Exception as exc:
+                    logger.warning("group_ai_admin: moderation escalation DM to %s failed: %s", admin_id, exc)
+
+
 @group_admin_router.message(
     F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}),
-    F.text,
+    F.text | F.voice,
 )
 async def handle_group_message(
     message: Message,
@@ -326,10 +451,46 @@ async def handle_group_message(
 
         user = message.from_user
         chat_type = getattr(message.chat.type, "value", str(message.chat.type))
+        sender = bot or message.bot
+
+        # Voice understanding (Part 2)
+        msg_voice = getattr(message, "voice", None)
+        if msg_voice is not None:
+            if not await gai.is_voice_enabled(session):
+                return
+            duration = getattr(msg_voice, "duration", 0) or 0
+            file_size = getattr(msg_voice, "file_size", 0) or 0
+            if duration > gai.VOICE_MAX_DURATION_SECONDS or file_size > gai.VOICE_MAX_FILE_SIZE_BYTES:
+                _log_decision(message, user.id if user else None, "voice_ignored", "duration_or_size_cap")
+                return
+            daily_voice_cap = await gai.get_voice_daily_cap(session)
+            if not gai.rate_limiter.can_transcribe_voice(daily_voice_cap):
+                _log_decision(message, user.id if user else None, "voice_ignored", "daily_voice_cap_exhausted")
+                return
+            try:
+                file_info = await sender.get_file(msg_voice.file_id)
+                file_bytes_io = await sender.download_file(file_info.file_path)
+                voice_bytes = file_bytes_io.read()
+            except Exception as exc:
+                logger.warning("group_ai_admin: failed to download voice file: %s", exc)
+                _log_decision(message, user.id if user else None, "voice_failed", "download_error")
+                return
+            transcript = await gai.transcribe_voice_gemini(
+                voice_bytes,
+                mime_type=getattr(msg_voice, "mime_type", "audio/ogg") or "audio/ogg",
+            )
+            if not transcript or not transcript.strip():
+                _log_decision(message, user.id if user else None, "voice_failed", "empty_transcript")
+                return
+            gai.rate_limiter.record_voice_transcription()
+            message_text = transcript.strip()
+        else:
+            message_text = getattr(message, "text", "") or ""
+
         reason = gai.prefilter_reason(
             chat_id=message.chat.id,
             chat_type=chat_type,
-            text=message.text,
+            text=message_text,
             from_user_id=user.id if user else None,
             from_user_is_bot=bool(user.is_bot) if user else True,
             sender_chat_id=message.sender_chat.id if message.sender_chat else None,
@@ -344,8 +505,8 @@ async def handle_group_message(
         await _refresh_limits(session)
 
         # Hard rule first: payment/refund/account topics never reach
-        # the AI — defer in the group and hand the question to a human.
-        if gai.detect_sensitive_topic(message.text):
+        # the AI and NEVER enter moderation — defer in the group and hand the question to a human.
+        if gai.detect_sensitive_topic(message_text):
             _log_decision(message, user.id if user else None, "escalate", "sensitive")
             await _escalate(
                 message,
@@ -356,6 +517,26 @@ async def handle_group_message(
             )
             return
 
+        # Moderation Layer (a): Deterministic rules check
+        is_admin = settings.is_admin(user.id) if user else True
+        is_bot = bool(user.is_bot) if user else True
+        whitelist = await gai.get_moderation_whitelist(session)
+        user_exempt = is_admin or is_bot or gai.is_user_whitelisted(user.id, whitelist)
+        mod_enabled = await gai.is_moderation_enabled(session)
+
+        if mod_enabled and not user_exempt:
+            det_category, det_conf = gai.detect_moderation_violation(message_text)
+            if det_category is not None:
+                await _execute_moderation(
+                    message,
+                    bot,
+                    session=session,
+                    user=user,
+                    category=det_category,
+                    text=message_text or "",
+                )
+                return
+
         if not gai.rate_limiter.can_reply(user.id, message.message_id):
             return
 
@@ -364,7 +545,7 @@ async def handle_group_message(
         # shows the conversation that led here; the current message
         # then joins the buffer for the next candidate.
         context_lines = gai.context_buffer.snapshot(message.chat.id)
-        gai.context_buffer.push(message.chat.id, user.first_name or "", message.text or "")
+        gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
 
         reply_to = message.reply_to_message
         replied_to_text = (getattr(reply_to, "text", None) or None) if reply_to else None
@@ -382,14 +563,14 @@ async def handle_group_message(
         # budget, and never fires when maintenance is off.
         fast_path_text = None
         fast_path_kind = None
-        if gai.is_greeting_only(message.text):
+        if gai.is_greeting_only(message_text):
             fast_path_text = gai.WELCOME_TEXT
             fast_path_kind = "greeting"
-        elif gai.is_starter_fragment(message.text):
+        elif gai.is_starter_fragment(message_text):
             fast_path_text = gai.STARTER_POINTER_TEXT
             fast_path_kind = "starter"
         elif gai.maintenance_mode_on() and gai.is_service_availability_question(
-            message.text,
+            message_text,
             context_lines=context_lines,
             replied_to_text=replied_to_text,
         ):
@@ -406,7 +587,7 @@ async def handle_group_message(
             and reply_to.from_user
             and (reply_to.from_user.username or "").lower() == gai.BOT_USERNAME
         )
-        bot_mentioned = f"@{gai.BOT_USERNAME}" in (message.text or "").lower()
+        bot_mentioned = f"@{gai.BOT_USERNAME}" in (message_text or "").lower()
 
         # FAQ cache (admin-approved answers only): a near-identical
         # repeat question is answered from the cache — no AI call, no
@@ -414,7 +595,7 @@ async def handle_group_message(
         # by the can_reply check above, so cached answers cannot be
         # used to spam either.
         async with _session_or_new(session) as s:
-            faq_hit = await gai.find_faq_answer(s, message.text or "")
+            faq_hit = await gai.find_faq_answer(s, message_text or "")
             if faq_hit is not None:
                 faq_id, faq_answer = faq_hit
                 answer_text = gai.strip_emoji(faq_answer)
@@ -433,14 +614,39 @@ async def handle_group_message(
             return
         gai.rate_limiter.record_ai_call()
 
-        decision, reply_text = await gai.ask_group_admin_ai(
-            text=message.text or "",
+        decision_res = await gai.ask_group_admin_ai(
+            text=message_text or "",
             author_name=user.first_name or "",
             bot_mentioned=bot_mentioned,
             is_reply_to_bot=is_reply_to_bot,
             context_lines=context_lines,
             replied_to_text=replied_to_text,
         )
+
+        decision = decision_res[0]
+        reply_text = decision_res[1]
+        mod_verdict = getattr(decision_res, "moderation", None) or {"category": "none", "confidence": 0.0}
+
+        # Moderation Layer (b): Gemini verdict check
+        if mod_enabled and not user_exempt:
+            ai_category = mod_verdict.get("category", "none")
+            ai_conf = float(mod_verdict.get("confidence", 0.0))
+            if ai_category in gai.MODERATION_CATEGORIES:
+                threshold = await gai.get_moderation_threshold(session)
+                if ai_conf >= threshold:
+                    await _execute_moderation(
+                        message,
+                        bot,
+                        session=session,
+                        user=user,
+                        category=ai_category,
+                        text=message_text or "",
+                    )
+                    return
+                else:
+                    # Below threshold -> ignore completely (no reply, no strike)
+                    _log_decision(message, user.id, "moderation_ignored", f"{ai_category}:{ai_conf:.2f}_below_threshold")
+                    return
 
         if decision == gai.DECISION_AI_FAILED:
             # Batch AQ: the call failed (timeout / pool exhausted) —
@@ -485,6 +691,67 @@ async def handle_group_message(
         # Batch AJ (M12): persist any limiter changes from this
         # message (debounced + dirty-checked; never raises).
         await _flush_limiter(session)
+
+
+@group_admin_router.callback_query(F.data.startswith("gai_ban:"))
+async def handle_moderation_ban_callback(
+    callback_query: CallbackQuery,
+    bot: Bot | None = None,
+    session: AsyncSession | None = None,
+) -> None:
+    """Execute permanent ban on admin button tap from Strike 3 escalation DM."""
+    admin_user = callback_query.from_user
+    if not settings.is_admin(admin_user.id):
+        await callback_query.answer("Admin များသာ ban ပြုလုပ်နိုင်ပါသည်။", show_alert=True)
+        return
+
+    parts = (callback_query.data or "").split(":")
+    if len(parts) != 4:
+        await callback_query.answer("Invalid callback data", show_alert=True)
+        return
+
+    try:
+        strike_id = int(parts[1])
+        chat_id = int(parts[2])
+        target_user_id = int(parts[3])
+    except (ValueError, IndexError):
+        await callback_query.answer("Invalid ID parameters", show_alert=True)
+        return
+
+    sender = bot or callback_query.bot
+    try:
+        await sender.ban_chat_member(chat_id=chat_id, user_id=target_user_id)
+    except Exception as exc:
+        logger.warning("group_ai_admin: ban_chat_member failed: %s", exc)
+        await callback_query.answer(f"Ban မအောင်မြင်ပါ: {exc}", show_alert=True)
+        return
+
+    # Update DB strike row
+    async with _session_or_new(session) as s:
+        from sqlalchemy import select
+        from app.models.schema import GroupAiModerationStrike, utc_now
+
+        strike = (
+            await s.execute(
+                select(GroupAiModerationStrike).where(GroupAiModerationStrike.id == strike_id)
+            )
+        ).scalar_one_or_none()
+        if strike is not None:
+            strike.banned_by = admin_user.id
+            strike.banned_at = utc_now()
+            await s.commit()
+
+    # Update the escalation DM
+    if callback_query.message:
+        try:
+            admin_label = admin_user.username or str(admin_user.id)
+            current_text = getattr(callback_query.message, "html_text", None) or callback_query.message.text or ""
+            updated_text = f"{current_text}\n\n🔨 <b>Banned by @{admin_label}</b>"
+            await callback_query.message.edit_text(updated_text, parse_mode="HTML")
+        except Exception as exc:
+            logger.debug("group_ai_admin: failed to edit escalation DM after ban: %s", exc)
+
+    await callback_query.answer("အသုံးပြုသူကို Group မှ အပြီး ပိတ်သိမ်း (Ban) လိုက်ပါပြီ")
 
 
 # ---------------------------------------------------------------------------

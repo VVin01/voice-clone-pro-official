@@ -13,7 +13,7 @@ PASS_CSS = STYLE_CSS.split(PASS_MARKER, 1)[1].split("VCP UI REBUILD V2", 1)[0]
 
 
 def test_cache_token_bumped_to_r142():
-    assert INDEX_HTML.count("?v=20261116_r158") == 4
+    assert INDEX_HTML.count("?v=20261116_r159") == 4
     assert "_r141" not in INDEX_HTML
 
 

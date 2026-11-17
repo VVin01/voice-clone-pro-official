@@ -821,6 +821,31 @@ class GroupAiFaq(Base):
     )
 
 
+class GroupAiModerationStrike(Base):
+    """A moderation strike recorded against a user in the community group.
+
+    Standing owner rule: group message TEXT is never stored.
+    Strike rows store only user_id, category, message_id, chat_id, action,
+    and timestamps. The escalation DM carries the offending message copy
+    in real time to admins. Created via Base.metadata.create_all (Batch H pattern).
+    """
+
+    __tablename__ = "group_ai_moderation_strikes"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)  # warn, mute_1h, mute_24h
+    banned_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    banned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now(), index=True
+    )
+
+
 class PrivateAiMessage(Base):
     """One recorded private-chat AI exchange row (Batch CD, 2026-11-07).
 

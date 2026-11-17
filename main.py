@@ -70,6 +70,12 @@ async def run_bot_and_worker(mode: str) -> None:
         else:
             logger.info("Registering Telegram bot commands menu...")
             await setup_bot_commands(bot)
+            # Group AI moderation permissions self-check (Part 1 startup self-check)
+            try:
+                from app.services.group_ai_admin import check_bot_group_moderation_permissions
+                await check_bot_group_moderation_permissions(bot)
+            except Exception as e_check:
+                logger.warning("Group AI moderation startup self-check failed: %s", e_check)
             dp = Dispatcher()
             setup_handlers(dp)
             from app.webapp.telegram_webhook import (

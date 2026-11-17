@@ -195,6 +195,18 @@ class Settings(BaseSettings):
     group_ai_user_cooldown_seconds: int = Field(default=60, alias="GROUP_AI_USER_COOLDOWN_SECONDS")
     group_ai_hourly_budget: int = Field(default=40, alias="GROUP_AI_HOURLY_BUDGET")
     group_ai_daily_budget: int = Field(default=300, alias="GROUP_AI_DAILY_BUDGET")
+
+    # Group-AI moderation ladder + voice + knowledge sheet (BotSetting-backed)
+    group_ai_moderation_enabled: bool = Field(default=True, alias="GROUP_AI_MODERATION_ENABLED")
+    group_ai_moderation_confidence_threshold: float = Field(default=0.8, alias="GROUP_AI_MODERATION_CONFIDENCE_THRESHOLD")
+    group_ai_moderation_mute_duration_strike2_seconds: int = Field(default=3600, alias="GROUP_AI_MODERATION_MUTE_DURATION_STRIKE2_SECONDS")
+    group_ai_moderation_mute_duration_strike3_seconds: int = Field(default=86400, alias="GROUP_AI_MODERATION_MUTE_DURATION_STRIKE3_SECONDS")
+    group_ai_moderation_whitelist: str = Field(default="", alias="GROUP_AI_MODERATION_WHITELIST")
+    group_ai_voice_enabled: bool = Field(default=True, alias="GROUP_AI_VOICE_ENABLED")
+    group_ai_voice_daily_cap: int = Field(default=60, alias="GROUP_AI_VOICE_DAILY_CAP")
+    group_ai_knowledge_sheet: str = Field(default="", alias="GROUP_AI_KNOWLEDGE_SHEET")
+    group_ai_knowledge_sheet_saved_at: str = Field(default="", alias="GROUP_AI_KNOWLEDGE_SHEET_SAVED_AT")
+    group_ai_knowledge_sheet_saved_by: str = Field(default="", alias="GROUP_AI_KNOWLEDGE_SHEET_SAVED_BY")
     # Batch BX: bot PRIVATE-chat AI auto-reply kill switch (owner
     # order 2026-11-07 — plain-text private messages must be answered,
     # not met with silence). BotSetting-backed like the group switch;

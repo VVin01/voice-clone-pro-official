@@ -14515,6 +14515,31 @@ async function loadAdminSettings() {
         _admPaintChecked(elMaint, !!s.maintenance_mode);
         _admPaintValue(elMaintNote, s.maintenance_note || "");
         _admPaintChecked(elGroupAi, !!s.group_ai_admin_enabled);
+        const elGroupMaster = document.getElementById("adm-group-ai-master-toggle");
+        _admPaintChecked(elGroupMaster, !!s.group_ai_admin_enabled);
+        if (elGroupAi && elGroupMaster && !elGroupMaster._synced) {
+            elGroupMaster._synced = true;
+            elGroupMaster.addEventListener("change", () => {
+                elGroupAi.checked = elGroupMaster.checked;
+            });
+            elGroupAi.addEventListener("change", () => {
+                elGroupMaster.checked = elGroupAi.checked;
+            });
+        }
+        const elModToggle = document.getElementById("adm-group-ai-moderation-toggle");
+        _admPaintChecked(elModToggle, s.group_ai_moderation_enabled === undefined || s.group_ai_moderation_enabled === null ? true : !!s.group_ai_moderation_enabled);
+        const elModThreshold = document.getElementById("adm-group-ai-mod-threshold");
+        if (s.group_ai_moderation_confidence_threshold != null) _admPaintValue(elModThreshold, s.group_ai_moderation_confidence_threshold);
+        const elMuteS2 = document.getElementById("adm-group-ai-mute-s2");
+        if (s.group_ai_moderation_mute_duration_strike2_seconds != null) _admPaintValue(elMuteS2, s.group_ai_moderation_mute_duration_strike2_seconds);
+        const elMuteS3 = document.getElementById("adm-group-ai-mute-s3");
+        if (s.group_ai_moderation_mute_duration_strike3_seconds != null) _admPaintValue(elMuteS3, s.group_ai_moderation_mute_duration_strike3_seconds);
+        const elWhitelist = document.getElementById("adm-group-ai-whitelist");
+        if (s.group_ai_moderation_whitelist != null) _admPaintValue(elWhitelist, s.group_ai_moderation_whitelist);
+        const elVoiceToggle = document.getElementById("adm-group-ai-voice-toggle");
+        _admPaintChecked(elVoiceToggle, s.group_ai_voice_enabled === undefined || s.group_ai_voice_enabled === null ? true : !!s.group_ai_voice_enabled);
+        const elVoiceCap = document.getElementById("adm-group-ai-voice-cap");
+        if (s.group_ai_voice_daily_cap != null) _admPaintValue(elVoiceCap, s.group_ai_voice_daily_cap);
         const elGroupAiCooldown = document.getElementById("adm-set-group-ai-cooldown");
         const elGroupAiHourly = document.getElementById("adm-set-group-ai-hourly");
         const elGroupAiDaily = document.getElementById("adm-set-group-ai-daily");
@@ -14638,6 +14663,7 @@ async function loadAdminSettings() {
         }
 
         updateTutorialUI(s);
+        await loadAdminGroupAiConsole();
     } catch (e) {
         console.warn("Could not load dynamic settings:", e);
     }
@@ -14738,13 +14764,26 @@ async function saveAdminSettings() {
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
     const maintNote = document.getElementById("adm-set-maintenance-note")?.value?.trim() || "";
-    const groupAi = !!document.getElementById("adm-set-group-ai")?.checked;
+    const groupAi = !!(document.getElementById("adm-group-ai-master-toggle")?.checked ?? document.getElementById("adm-set-group-ai")?.checked);
     const groupAiCooldownRaw = document.getElementById("adm-set-group-ai-cooldown")?.value?.trim();
     const groupAiCooldown = groupAiCooldownRaw === "" || groupAiCooldownRaw == null ? null : parseInt(groupAiCooldownRaw, 10);
     const groupAiHourlyRaw = document.getElementById("adm-set-group-ai-hourly")?.value?.trim();
     const groupAiHourly = groupAiHourlyRaw === "" || groupAiHourlyRaw == null ? null : parseInt(groupAiHourlyRaw, 10);
     const groupAiDailyRaw = document.getElementById("adm-set-group-ai-daily")?.value?.trim();
     const groupAiDaily = groupAiDailyRaw === "" || groupAiDailyRaw == null ? null : parseInt(groupAiDailyRaw, 10);
+    const groupAiModToggle = document.getElementById("adm-group-ai-moderation-toggle");
+    const groupAiModEnabled = groupAiModToggle ? !!groupAiModToggle.checked : true;
+    const groupAiModThresholdRaw = document.getElementById("adm-group-ai-mod-threshold")?.value?.trim();
+    const groupAiModThreshold = groupAiModThresholdRaw === "" || groupAiModThresholdRaw == null ? null : parseFloat(groupAiModThresholdRaw);
+    const groupAiMuteS2Raw = document.getElementById("adm-group-ai-mute-s2")?.value?.trim();
+    const groupAiMuteS2 = groupAiMuteS2Raw === "" || groupAiMuteS2Raw == null ? null : parseInt(groupAiMuteS2Raw, 10);
+    const groupAiMuteS3Raw = document.getElementById("adm-group-ai-mute-s3")?.value?.trim();
+    const groupAiMuteS3 = groupAiMuteS3Raw === "" || groupAiMuteS3Raw == null ? null : parseInt(groupAiMuteS3Raw, 10);
+    const groupAiWhitelist = (document.getElementById("adm-group-ai-whitelist")?.value || "").trim();
+    const groupAiVoiceToggle = document.getElementById("adm-group-ai-voice-toggle");
+    const groupAiVoiceEnabled = groupAiVoiceToggle ? !!groupAiVoiceToggle.checked : true;
+    const groupAiVoiceCapRaw = document.getElementById("adm-group-ai-voice-cap")?.value?.trim();
+    const groupAiVoiceCap = groupAiVoiceCapRaw === "" || groupAiVoiceCapRaw == null ? null : parseInt(groupAiVoiceCapRaw, 10);
     const privateAi = !!document.getElementById("adm-set-private-ai")?.checked;
     const privateAiCooldownRaw = document.getElementById("adm-set-private-ai-cooldown")?.value?.trim();
     const privateAiCooldown = privateAiCooldownRaw === "" || privateAiCooldownRaw == null ? null : parseInt(privateAiCooldownRaw, 10);
@@ -14825,6 +14864,13 @@ async function saveAdminSettings() {
         ...(Number.isFinite(groupAiCooldown) ? { group_ai_user_cooldown_seconds: groupAiCooldown } : {}),
         ...(Number.isFinite(groupAiHourly) ? { group_ai_hourly_budget: groupAiHourly } : {}),
         ...(Number.isFinite(groupAiDaily) ? { group_ai_daily_budget: groupAiDaily } : {}),
+        group_ai_moderation_enabled: groupAiModEnabled,
+        ...(Number.isFinite(groupAiModThreshold) ? { group_ai_moderation_confidence_threshold: groupAiModThreshold } : {}),
+        ...(Number.isFinite(groupAiMuteS2) ? { group_ai_moderation_mute_duration_strike2_seconds: groupAiMuteS2 } : {}),
+        ...(Number.isFinite(groupAiMuteS3) ? { group_ai_moderation_mute_duration_strike3_seconds: groupAiMuteS3 } : {}),
+        group_ai_moderation_whitelist: groupAiWhitelist,
+        group_ai_voice_enabled: groupAiVoiceEnabled,
+        ...(Number.isFinite(groupAiVoiceCap) ? { group_ai_voice_daily_cap: groupAiVoiceCap } : {}),
         private_ai_enabled: privateAi,
         ...(Number.isFinite(privateAiCooldown) ? { private_ai_user_cooldown_seconds: privateAiCooldown } : {}),
         ...(Number.isFinite(privateAiHourly) ? { private_ai_hourly_budget: privateAiHourly } : {}),
@@ -15001,6 +15047,151 @@ async function saveAiThumbnailSettings() {
     }
 }
 window.saveAiThumbnailSettings = saveAiThumbnailSettings;
+
+function formatIsoTime(isoStr) {
+    if (!isoStr) return "";
+    try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr;
+        return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (e) {
+        return isoStr;
+    }
+}
+
+async function loadAdminGroupAiConsole() {
+    try {
+        const res = await fetch("/api/admin/group-ai", {
+            headers: getAuthHeaders(),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const sheetEl = document.getElementById("adm-group-ai-sheet");
+        const charsEl = document.getElementById("adm-group-ai-sheet-chars");
+        if (sheetEl) {
+            sheetEl.value = data.knowledge_sheet || "";
+            if (charsEl) charsEl.textContent = String(sheetEl.value.length);
+        }
+
+        const metaEl = document.getElementById("adm-group-ai-sheet-meta");
+        if (metaEl) {
+            if (data.is_custom && data.last_saved_at) {
+                const timeStr = formatIsoTime(data.last_saved_at);
+                metaEl.textContent = tf("adm_group_ai_sheet_last_saved", {
+                    time: timeStr,
+                    user: escapeHtml(data.last_saved_by || "Admin"),
+                });
+            } else {
+                metaEl.textContent = t("adm_group_ai_sheet_default");
+            }
+        }
+
+        const b = data.budgets || {};
+        const bReplies = document.getElementById("adm-group-ai-budget-replies");
+        if (bReplies) bReplies.textContent = `${b.today_replies ?? 0} / ${b.daily_reply_cap ?? 300}`;
+        const bHourly = document.getElementById("adm-group-ai-budget-hourly");
+        if (bHourly) bHourly.textContent = `${b.hourly_replies ?? 0} / ${b.hourly_budget ?? 40}`;
+        const bVoice = document.getElementById("adm-group-ai-budget-voice");
+        if (bVoice) bVoice.textContent = `${b.today_voice ?? 0} / ${b.daily_voice_cap ?? 60}`;
+
+        const recentEl = document.getElementById("adm-group-ai-recent-actions");
+        if (recentEl) {
+            const actions = data.recent_actions || [];
+            if (actions.length === 0) {
+                recentEl.innerHTML = `<p class="text-muted text-xs p-2">${escapeHtml(t("adm_group_ai_no_actions"))}</p>`;
+            } else {
+                let html = '<div class="table-responsive"><table class="table-glass text-xs w-full">';
+                html += `<thead><tr>
+                    <th>${escapeHtml(t("adm_group_ai_col_user"))}</th>
+                    <th>${escapeHtml(t("adm_group_ai_col_category"))}</th>
+                    <th>${escapeHtml(t("adm_group_ai_col_action"))}</th>
+                    <th>${escapeHtml(t("adm_group_ai_col_time"))}</th>
+                </tr></thead><tbody>`;
+                for (const act of actions) {
+                    const actionBadge = act.action === "warn"
+                        ? '<span class="vcp-badge vcp-badge-info">Strike 1 (warn)</span>'
+                        : act.action === "mute_1h"
+                        ? '<span class="vcp-badge vcp-badge-warning">Strike 2 (mute 1h)</span>'
+                        : act.action === "mute_24h"
+                        ? '<span class="vcp-badge vcp-badge-danger">Strike 3 (mute 24h)</span>'
+                        : `<span class="vcp-badge">${escapeHtml(act.action)}</span>`;
+                    const banBadge = act.banned ? ' <span class="vcp-badge vcp-badge-danger">BANNED</span>' : "";
+                    const timeStr = formatIsoTime(act.created_at);
+                    html += `<tr>
+                        <td><code>${escapeHtml(String(act.user_id))}</code></td>
+                        <td>${escapeHtml(act.category)}</td>
+                        <td>${actionBadge}${banBadge}</td>
+                        <td class="text-muted">${escapeHtml(timeStr)}</td>
+                    </tr>`;
+                }
+                html += "</tbody></table></div>";
+                recentEl.innerHTML = html;
+            }
+        }
+    } catch (err) {
+        console.warn("Could not load group ai console:", err);
+    }
+}
+
+async function saveGroupAiKnowledgeSheet() {
+    haptic("medium");
+    const sheetEl = document.getElementById("adm-group-ai-sheet");
+    if (!sheetEl) return;
+    const sheet = sheetEl.value.trim();
+    if (!sheet) {
+        showStudioToast(t("err_generic"), "error");
+        return;
+    }
+    if (sheet.length > 8000) {
+        showStudioToast("Knowledge sheet exceeds 8,000 characters", "error");
+        return;
+    }
+    try {
+        const res = await fetch("/api/admin/group-ai/knowledge-sheet", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ sheet }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            showStudioToast(data.detail || t("err_generic"), "error");
+            return;
+        }
+        showStudioToast(t("adm_group_ai_sheet_saved"), "success");
+        await loadAdminGroupAiConsole();
+    } catch (err) {
+        showStudioToast((err && err.message) ? err.message : t("err_generic"), "error");
+    }
+}
+
+async function resetGroupAiKnowledgeSheet() {
+    haptic("medium");
+    showStudioConfirm(t("adm_group_ai_reset_sheet") + "?", async () => {
+        try {
+            const res = await fetch("/api/admin/group-ai/knowledge-sheet/reset", {
+                method: "POST",
+                headers: getAuthHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                showStudioToast(data.detail || t("err_generic"), "error");
+                return;
+            }
+            showStudioToast(t("adm_group_ai_sheet_reset"), "success");
+            await loadAdminGroupAiConsole();
+        } catch (err) {
+            showStudioToast((err && err.message) ? err.message : t("err_generic"), "error");
+        }
+    });
+}
+
+window.loadAdminGroupAiConsole = loadAdminGroupAiConsole;
+window.saveGroupAiKnowledgeSheet = saveGroupAiKnowledgeSheet;
+window.resetGroupAiKnowledgeSheet = resetGroupAiKnowledgeSheet;
 
 // ── Dedicated History Hub ────────────────────────────────────────────────
 // One unified, newest-first list of ALL the user's jobs (voice + recap),

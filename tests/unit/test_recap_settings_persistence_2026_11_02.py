@@ -88,5 +88,5 @@ def test_snapshot_covers_payload_fields():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261116_r158") == 4
+    assert INDEX_HTML.count("?v=20261116_r159") == 4
     assert "?v=20261102_rs1" not in INDEX_HTML
