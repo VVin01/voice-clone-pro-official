@@ -12,6 +12,7 @@ survives ONLY for a single unbreakable token wider than the canvas.
 import shutil
 import subprocess
 
+from PIL import features
 import pytest
 
 import app.services.recap_engine.core as core
@@ -21,6 +22,7 @@ CW, CH = 1080, 1920
 LB = core.frame_layout("9:16", "blur", 1080, 1920)
 BOUND = int(0.92 * 1080)  # default sub_w on a 1080-wide picture
 FFMPEG_BIN = shutil.which("ffmpeg")
+raqm_missing = not bool(features.check("raqm"))
 
 LONG = "မြို့ကြီးဆီကို ထွက်ခွာပြီး သင်္ကြန်ပွဲတော်မှာ ကျောင်းသားတွေ လွှမ်းမိုးနေတဲ့ ပြဿနာကို ဆုံးဖြတ်ခဲ့ကြပါတယ်"
 MID = "မြို့ကြီးဆီကို ထွက်ခွာပြီး ပြဿနာကို ဆုံးဖြတ်ခဲ့ကြပါတယ်"
@@ -146,6 +148,7 @@ def test_cx_split_pieces_fit_and_partition_window(tmp_path, size_pt):
     assert _rejoin(pieces) == LONG.replace(" ", "")
 
 
+@pytest.mark.skipif(raqm_missing, reason="Requires libraqm for exact HarfBuzz Burmese text shaping")
 def test_cx_split_windows_proportional_to_text_share(tmp_path):
     r = _renderer(tmp_path)
     font_px = _font_px(16)
@@ -170,6 +173,7 @@ def test_cx_no_piece_flashes_too_short(tmp_path):
 
 # ── 3. Meaningful splits: phrase boundaries, never mid-word ────
 
+@pytest.mark.skipif(raqm_missing, reason="Requires libraqm for exact HarfBuzz Burmese text shaping")
 def test_cx_split_lands_on_meaningful_boundaries(tmp_path):
     # At 16pt the long cue splits into four pieces, each ending at
     # a phrase/clause boundary (particle or conjunction) — the

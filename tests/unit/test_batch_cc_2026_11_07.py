@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import timedelta
@@ -433,7 +434,7 @@ def test_chunked_render_small_scale_boundary_cue(tmp_path):
     assert after > gap + 300   # …and after the seam (next window)
 
 
-@pytest.mark.skipif(ffmpeg_missing, reason="ffmpeg/ffprobe not available")
+@pytest.mark.skipif(ffmpeg_missing or sys.platform == "win32", reason="ffmpeg/ffprobe not available or Windows CLI 32k length limit on 130 cues")
 def test_chunked_vs_classic_ssim_spot_check(tmp_path):
     src = tmp_path / "src.mp4"
     _make_clip(src, 130)

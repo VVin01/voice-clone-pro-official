@@ -73,7 +73,7 @@ def _media_deadline_progress_hook(*, started: float, budget_seconds: float,
     exceeds the budget, aborting the in-flight download.
     """
     def _hook(_status: Dict[str, Any]) -> None:
-        if clock() - started > budget_seconds:
+        if clock() - started >= budget_seconds:
             raise MediaDownloadTimeoutError(
                 f"Media download exceeded its total time budget of "
                 f"{int(budget_seconds)}s — aborting instead of holding "

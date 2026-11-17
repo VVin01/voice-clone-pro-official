@@ -14673,14 +14673,14 @@ function _bindAdminSettingsDirtyTracking() {
     const pane = document.getElementById("adm-screen-settings");
     if (!pane) return;
     _adminSettingsDirtyBound = true;
-    const onTouch = (e) => {
+    const mark = (e) => {
         if (e.target && e.target.id && !e.target.closest("#adm-settings-save-bar")) {
             adminSettingsDirty.add(e.target.id);
         }
         updateAdminSettingsSaveBar();
     };
-    pane.addEventListener("input", onTouch);
-    pane.addEventListener("change", onTouch);
+    pane.addEventListener("input", mark);
+    pane.addEventListener("change", mark);
 }
 
 function _admPaintValue(el, value) {

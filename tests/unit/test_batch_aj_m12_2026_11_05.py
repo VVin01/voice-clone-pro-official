@@ -158,6 +158,7 @@ def test_limiter_snapshot_restore_across_restart():
     assert set(state.keys()) <= {
         "v",
         "ai_calls_wall",
+        "voice_calls_wall",
         "last_reply_wall",
         "last_deferral_wall",
         "answered_ids",

@@ -21,6 +21,7 @@ All clients/bots are fakes — no network, synthetic tokens only.
 from __future__ import annotations
 
 import json
+import shutil
 import time
 import uuid
 import wave
@@ -690,7 +691,7 @@ def _runner(paid=False, mode=None):
     runner.voice = "voxcpm_testvoice"
     runner.paid_tier = paid
     runner.voice_choice_mode = mode
-    runner.ffprobe = "/usr/bin/ffprobe"
+    runner.ffprobe = shutil.which("ffprobe") or "/usr/bin/ffprobe"
     runner.max_video_speed = 1.25
     return runner
 

@@ -26,6 +26,7 @@ the single-unbreakable-token shrink path is untouched.
 """
 from pathlib import Path
 
+from PIL import features
 import pytest
 
 import app.services.recap_engine.core as core
@@ -37,6 +38,7 @@ INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 CW, CH = 1080, 1920
 LB = core.frame_layout("9:16", "blur", 1080, 1920)
 BOUND = int(0.92 * 1080)  # default sub_w on a 1080-wide picture
+raqm_missing = not bool(features.check("raqm"))
 
 # The REAL 15 cues from the live CX eyes-on job rc_1794200454_f2d514
 # (~/workspace/tg-shoot/cx-cz-eyes/VoiceClonePro_Recap_*.srt). The
@@ -176,6 +178,7 @@ def test_da_real_cues_never_break_a_word(tmp_path, size_pt):
             assert core._png_cue_fits(r, lines[0], px, font, vis, BOUND)
 
 
+@pytest.mark.skipif(raqm_missing, reason="Requires libraqm for exact HarfBuzz Burmese text shaping")
 def test_da_real_cues_19pt_only_the_known_stub_case_remains(tmp_path):
     # At the live 19pt geometry every real cue is clean EXCEPT
     # cue 4's second piece: its fitting span contains exactly one
@@ -195,6 +198,7 @@ def test_da_real_cues_19pt_only_the_known_stub_case_remains(tmp_path):
 
 # ── 3. Stub floor: no backtrack into a sliver piece ─────────────
 
+@pytest.mark.skipif(raqm_missing, reason="Requires libraqm for exact HarfBuzz Burmese text shaping")
 def test_da_stub_floor_keeps_the_overflow_cut(tmp_path):
     r = _renderer(tmp_path)
     font_px, font, visuals = _setup(19)

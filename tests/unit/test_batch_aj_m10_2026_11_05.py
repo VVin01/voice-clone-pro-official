@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import sys
 import time
 
 import pytest
@@ -101,6 +102,7 @@ def test_split_audio_levels_timeout_is_capped():
     assert vs.AUDIO_LEVELS_MAX_TIMEOUT_SECONDS <= 1800
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script mock requires Linux")
 def test_audio_levels_clamps_an_oversized_caller_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr(vs, "AUDIO_LEVELS_MAX_TIMEOUT_SECONDS", 0.5)
     fake_ffmpeg = tmp_path / "ffmpeg"

@@ -8587,7 +8587,6 @@ async def _execute_recap_background_job(
                 new_recap_cfg_json = json.dumps(recap_cfg_dict, ensure_ascii=False) if recap_cfg_dict else None
 
                 _succ_values = {
-                    "status": JobStatus.SUCCESS.value,
                     "result_path": video_path,
                     "finished_at": func.now(),
                     "final_script": final_script_text,
@@ -8606,7 +8605,7 @@ async def _execute_recap_background_job(
                     update(Job).where(
                         Job.id == job_id,
                         Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
-                    ).values(**_succ_values)
+                    ).values(status=JobStatus.SUCCESS.value, **_succ_values)
                 )
                 await session.commit()
                 _succ_written = bool(_succ_res.rowcount)

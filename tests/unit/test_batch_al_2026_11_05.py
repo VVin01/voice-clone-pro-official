@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import wave
@@ -592,6 +593,7 @@ def test_overlay_falls_back_to_two_step_when_probe_fails(tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="/proc VmHWM requires Linux")
 def test_overlay_probe_helper_measures_peak_rss(tmp_path):
     # Real helper against a real (tiny) ffmpeg encode: succeeds and
     # reports a plausible peak RSS.
