@@ -120,7 +120,7 @@ async def test_api_history_exposes_real_and_estimated_durations_with_24h_ttl(db_
     j_recap_queued = Job(
         id="rc_hist_dur_2",
         user_id=user.id,
-        status=JobStatus.QUEUED.value,
+        status=JobStatus.FAILED.value,
         job_type=JobType.RECAP.value,
         input_text="Recap queued test",
         engine="recap",
@@ -296,4 +296,4 @@ def test_phase6_i18n_parity_and_cache_token():
     for key in required:
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
-    assert INDEX_HTML.count("20261117_r160") == 4
+    assert INDEX_HTML.count("20261117_r161") == 4

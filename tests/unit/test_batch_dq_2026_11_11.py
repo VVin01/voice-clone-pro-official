@@ -56,7 +56,7 @@ def _reset_state():
 
 def test_dq_cache_token_is_r140():
     html = (REPO / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261117_r160") == 4
+    assert html.count("20261117_r161") == 4
     assert "r138" not in html
 
 

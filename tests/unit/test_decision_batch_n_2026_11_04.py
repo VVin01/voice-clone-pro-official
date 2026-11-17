@@ -404,10 +404,10 @@ async def test_history_marks_parked_job_from_persisted_state(db_session):
         script_ready=True, script_ready_at=parked_at, phase="render"
     )
     db_session.add(
-        _job("rc_n_parked", owner.id, state, status=JobStatus.RUNNING.value)
+        _job("rc_n_parked", owner.id, state, status=JobStatus.SUCCESS.value)
     )
     db_session.add(
-        _job("rc_n_running", owner.id, _recap_state(), status=JobStatus.RUNNING.value)
+        _job("rc_n_running", owner.id, _recap_state(), status=JobStatus.SUCCESS.value)
     )
     await db_session.commit()
 
@@ -424,7 +424,7 @@ async def test_history_marks_parked_job_from_live_registry(db_session):
     owner, _ = await get_or_create_user(db_session, telegram_id=880902)
     parked_at = datetime.now(timezone.utc).isoformat()
     db_session.add(
-        _job("rc_n_hot", owner.id, _recap_state(), status=JobStatus.RUNNING.value)
+        _job("rc_n_hot", owner.id, _recap_state(), status=JobStatus.SUCCESS.value)
     )
     await db_session.commit()
     api_mod.RECAP_JOBS_REGISTRY["rc_n_hot"] = {

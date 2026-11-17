@@ -154,7 +154,7 @@ def test_recap_step_text_placeholder_matches_neutral_value():
 # ── Release pin: cache token (split-literal, sweep-proof) ────────
 
 def test_cache_token_is_r100():
-    token = "20261116_" + "r158"
+    token = "20261117_" + "r161"
     stale = "20261104_r" + "99"
     assert INDEX_HTML.count(token) == 4
     assert stale not in INDEX_HTML

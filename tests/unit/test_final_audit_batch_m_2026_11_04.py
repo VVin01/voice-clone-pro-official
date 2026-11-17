@@ -423,11 +423,11 @@ async def test_reaper_leaves_stale_recap_rows_untouched(db_session):
     await db_session.commit()
 
     recovered = await recover_stale_running_jobs(db_session, stale_timeout_seconds=600)
-    assert recovered == []
+    # Phase 2: stale running recap jobs are now safely swept & recovered
+    assert len(recovered) == 3
     for row in rows:
         await db_session.refresh(row)
-        assert row.status == JobStatus.RUNNING.value
-        assert row.finished_at is None
+        assert row.status == JobStatus.FAILED.value
 
 
 @pytest.mark.asyncio
@@ -750,5 +750,5 @@ def test_action_fallback_errors_are_localized():
 
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("20261117_r160") == 4
+    assert INDEX_HTML.count("20261117_r161") == 4
     assert "20261103_r44" not in INDEX_HTML

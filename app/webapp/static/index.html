@@ -6,7 +6,7 @@
     <title>Voice Clone Pro</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261117_r160">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261117_r161">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +15,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261117_r160" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261117_r161" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -2466,6 +2466,77 @@
 
                     <!-- Live queue -->
                     <div id="adm-jobs-live">
+                        <!-- Fleet & Worker Node Control -->
+                        <div class="card glass mt-3" id="adm-fleet-card">
+                            <div class="card-header-row">
+                                <div class="card-label">
+                                    🖥️ <span data-i18n="adm_fleet_title">Infrastructure & Fleet (Render vs VPS)</span>
+                                </div>
+                                <button class="mini-chip" id="adm-fleet-refresh-btn" onclick="loadAdminFleetStatus()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                            </div>
+                            <p class="text-xs text-muted mt-1" data-i18n="adm_fleet_desc">
+                                Render Cloud နှင့် VPS Worker တို့၏ အလုပ်တာဝန်ခွဲဝေမှုနှင့် အခြေအနေ စစ်ဆေး/ထိန်းချုပ်မှု။
+                            </p>
+                            <div class="adm-fleet-grid mt-2">
+                                <div class="adm-fleet-node-card">
+                                    <div class="adm-fleet-node-head">
+                                        <div>
+                                            <strong>⚡ VPS Worker Node</strong>
+                                            <span class="text-xs text-muted" id="adm-vps-host-label">(212.28.177.252)</span>
+                                        </div>
+                                        <span class="badge-mini-gold" id="adm-vps-status-badge">Checking…</span>
+                                    </div>
+                                    <div class="adm-fleet-meta-row mt-1 text-xs">
+                                        <span>Engine: <b id="adm-vps-engine">VOXCPM</b></span> · 
+                                        <span>Pulsed: <span id="adm-vps-last-seen">—</span></span>
+                                    </div>
+                                    <div class="adm-fleet-workloads mt-2">
+                                        <div class="text-xs font-semibold text-gold" data-i18n="adm_vps_duties_title">📌 VPS Worker လုပ်ဆောင်သော အလုပ်များ:</div>
+                                        <ul class="text-xs text-muted mt-1 mb-2 pl-3">
+                                            <li>🎙️ <b>VoxCPM 2 AI Engine</b> (Cloud Voice Clone)</li>
+                                            <li>📝 <b>Faster-Whisper ASR</b> (Speech-to-Text)</li>
+                                            <li>🎬 <b>Movie Recap Engine</b> (FFmpeg + HarfBuzz + Padauk)</li>
+                                            <li>🛡️ <b>WARP Egress & POT Sidecar</b> (:4416)</li>
+                                        </ul>
+                                    </div>
+                                    <div class="adm-fleet-actions mt-2">
+                                        <button type="button" class="btn vcp-btn-secondary text-xs" id="adm-btn-toggle-vps" onclick="toggleVpsWorker()">
+                                            <span id="adm-vps-toggle-icon">⏸️</span> <span id="adm-vps-toggle-label" data-i18n="adm_vps_pause">ခေတ္တရပ်မည် (Pause)</span>
+                                        </button>
+                                        <button type="button" class="btn vcp-btn-secondary text-xs ml-2" id="adm-btn-toggle-recap-queue" onclick="toggleRecapQueueRouting()">
+                                            <span id="adm-recap-queue-icon">🎬</span> <span id="adm-recap-queue-label">Recap Queue: Checking…</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="adm-fleet-node-card">
+                                    <div class="adm-fleet-node-head">
+                                        <div>
+                                            <strong>☁️ Render Web Cloud</strong>
+                                            <span class="text-xs text-muted">(Web Service)</span>
+                                        </div>
+                                        <span class="badge-mini-gold text-green">Online 🟢</span>
+                                    </div>
+                                    <div class="adm-fleet-meta-row mt-1 text-xs">
+                                        <span>Platform: <b>Render Cloud (Singapore)</b></span> · 
+                                        <span>Role: <b>Master Web & API</b></span>
+                                    </div>
+                                    <div class="adm-fleet-workloads mt-2">
+                                        <div class="text-xs font-semibold text-cyan" data-i18n="adm_render_duties_title">📌 Render Web App လုပ်ဆောင်သော အလုပ်များ:</div>
+                                        <ul class="text-xs text-muted mt-1 mb-2 pl-3">
+                                            <li>🌐 <b>Fast HTTP API & Telegram Webhook</b></li>
+                                            <li>📱 <b>Mini App UI & Static CDN Assets</b></li>
+                                            <li>🗄️ <b>PostgreSQL DB Pool & User Ledger</b></li>
+                                            <li>⚡ <b>Edge-TTS Fallback Synthesis</b></li>
+                                        </ul>
+                                    </div>
+                                    <div class="adm-fleet-actions mt-2">
+                                        <span class="text-xs text-muted" data-i18n="adm_render_status_normal">✅ Web App ဝန်ဆောင်မှု ပုံမှန် လည်ပတ်နေပါသည်</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="card glass mt-3" id="admin-queue-card">
                             <div class="card-header-row">
                                 <div class="card-label" data-i18n="admin_queue_header">⚡ Live Queue</div>
@@ -3486,10 +3557,7 @@
                             </button>
                         </div>
                     </details>
-                            </button>
-                        </div>
-                    </details>
-                    <div class="adm-settings-save-bar mt-3">
+                    <div class="adm-settings-save-bar mt-3 hidden" id="adm-settings-save-bar">
                         <button class="btn gold-gradient-btn w-100" id="btn-save-admin-settings" onclick="saveAdminSettings()">
                             <span class="btn-icon">💾</span>
                             <span data-i18n="btn_save_settings">ဆက်တင်များ သိမ်းမည်</span>
@@ -3717,7 +3785,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261117_r160"></script>
-    <script src="/static/js/app.js?v=20261117_r160"></script>
+    <script src="/static/js/i18n.js?v=20261117_r161"></script>
+    <script src="/static/js/app.js?v=20261117_r161"></script>
 </body>
 </html>

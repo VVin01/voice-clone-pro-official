@@ -12401,6 +12401,9 @@ function showAdminSection(name) {
         const el = document.getElementById("adm-screen-" + s);
         if (el) el.classList.toggle("hidden", s !== name);
     });
+    if (typeof updateAdminSettingsSaveBar === "function") {
+        updateAdminSettingsSaveBar(name !== "settings");
+    }
     const pane = document.getElementById("tab-admin");
     if (pane) pane.scrollTop = 0;
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -12408,7 +12411,10 @@ function showAdminSection(name) {
     // Lazy-load each screen the first time it is opened.
     if (name === "overview" && !admStageTimingsData) loadAdminStageTimings(false);
     if (name === "payments" && !admLoadedSections.payments) { loadAdminData(); admLoadedSections.payments = true; }
-    if (name === "jobs") loadAdminQueue();
+    if (name === "jobs") {
+        loadAdminQueue();
+        if (typeof loadAdminFleetStatus === "function") loadAdminFleetStatus();
+    }
     if (name === "users" && !admLoadedSections.users) { loadAdminUsersRecent(); admLoadedSections.users = true; }
     if (name === "activity" && !admLoadedSections.activity) { loadAdminAudit(); admLoadedSections.activity = true; }
     if (name === "keys") loadAdminKeyHealth(false);
@@ -13798,6 +13804,9 @@ window.setQueueEngineFilter = setQueueEngineFilter;
 function renderAdminQueueData(data) {
     if (!data) return;
     window._lastAdminQueue = data;
+    if (data.worker && typeof renderAdminFleetUI === "function") {
+        renderAdminFleetUI({ vps_worker: data.worker });
+    }
     const container = document.getElementById("admin-queue-list");
     const bannerEl = document.getElementById("admin-queue-status-banner");
     if (!container) return;
@@ -13951,12 +13960,110 @@ async function loadAdminQueue(isSilent = false) {
             return;
         }
         renderAdminQueueData(await res.json());
+        loadAdminFleetStatus();
     } catch (e) {
         console.warn("Could not load admin queue:", e);
         if (!isSilent) admStateError(container, "loadAdminQueue()");
     }
 }
 window.loadAdminQueue = loadAdminQueue;
+
+let _adminFleetData = null;
+
+async function loadAdminFleetStatus() {
+    if (!state.user?.is_admin) return;
+    try {
+        const res = await fetch("/api/admin/fleet/status", { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        _adminFleetData = data;
+        renderAdminFleetUI(data);
+    } catch (e) {
+        console.warn("Could not load fleet status:", e);
+    }
+}
+
+function renderAdminFleetUI(data) {
+    if (!data) return;
+    const vps = data.vps_worker || {};
+    const badge = document.getElementById("adm-vps-status-badge");
+    const hostLbl = document.getElementById("adm-vps-host-label");
+    const engLbl = document.getElementById("adm-vps-engine");
+    const seenLbl = document.getElementById("adm-vps-last-seen");
+    const btnToggleIcon = document.getElementById("adm-vps-toggle-icon");
+    const btnToggleLabel = document.getElementById("adm-vps-toggle-label");
+    const recapQueueIcon = document.getElementById("adm-recap-queue-icon");
+    const recapQueueLabel = document.getElementById("adm-recap-queue-label");
+
+    if (badge) {
+        badge.textContent = vps.status_code || "OFFLINE";
+        badge.className = "badge-mini-gold";
+        if (vps.status_code === "ONLINE") badge.classList.add("text-green");
+        else if (vps.status_code === "PAUSED") badge.classList.add("text-gold");
+        else if (vps.status_code === "STANDBY") badge.classList.add("text-cyan");
+        else badge.classList.add("text-danger");
+    }
+    if (hostLbl) hostLbl.textContent = `(${vps.host || "212.28.177.252"})`;
+    if (engLbl) engLbl.textContent = vps.engine || "VOXCPM";
+    if (seenLbl) seenLbl.textContent = vps.last_seen_ago || "Never";
+
+    const isPaused = vps.status_code === "PAUSED";
+    if (btnToggleIcon) btnToggleIcon.textContent = isPaused ? "▶️" : "⏸️";
+    if (btnToggleLabel) btnToggleLabel.textContent = isPaused ? t("adm_vps_resume") : t("adm_vps_pause");
+
+    const recapOn = !!vps.recap_on_queue;
+    if (recapQueueIcon) recapQueueIcon.textContent = recapOn ? "🎬" : "⏸️";
+    if (recapQueueLabel) recapQueueLabel.textContent = recapOn ? t("adm_recap_queue_enabled") : t("adm_recap_queue_disabled");
+}
+
+async function toggleVpsWorker() {
+    haptic("medium");
+    try {
+        const currPaused = _adminFleetData?.vps_worker?.status_code === "PAUSED";
+        const nextStatus = currPaused ? "ONLINE" : "PAUSED";
+        const res = await fetch("/api/admin/fleet/worker-toggle", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ status: nextStatus }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        showStudioToast(nextStatus === "PAUSED" ? t("adm_vps_paused_toast") : t("adm_vps_resumed_toast"), "success");
+        await loadAdminFleetStatus();
+    } catch (e) {
+        showStudioToast(tf("adm_vps_toggle_failed", { error: e.message }), "error");
+    }
+}
+
+async function toggleRecapQueueRouting() {
+    haptic("medium");
+    try {
+        const currOn = !!_adminFleetData?.vps_worker?.recap_on_queue;
+        const nextOn = !currOn;
+        const res = await fetch("/api/admin/fleet/worker-toggle", {
+            method: "POST",
+            headers: {
+                ...getAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ recap_on_queue: nextOn }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed");
+        showStudioToast(nextOn ? t("adm_recap_queue_on_toast") : t("adm_recap_queue_off_toast"), "success");
+        await loadAdminFleetStatus();
+    } catch (e) {
+        showStudioToast(tf("adm_recap_queue_failed", { error: e.message }), "error");
+    }
+}
+
+window.loadAdminFleetStatus = loadAdminFleetStatus;
+window.renderAdminFleetUI = renderAdminFleetUI;
+window.toggleVpsWorker = toggleVpsWorker;
+window.toggleRecapQueueRouting = toggleRecapQueueRouting;
 
 async function adminCancelJob(jobId) {
     showStudioConfirm(t("admin_confirm_cancel_job"), async () => {
@@ -14516,15 +14623,64 @@ const ADMIN_TUTORIAL_LINK_FIELDS = [
 // painting itself never marks a field dirty.
 const adminSettingsDirty = new Set();
 let _adminSettingsDirtyBound = false;
+let _adminSettingsSavedSnapshot = {};
+
+function _snapshotAdminSettingsValues() {
+    const pane = document.getElementById("adm-screen-settings");
+    if (!pane) return;
+    const snap = {};
+    pane.querySelectorAll("input, select, textarea").forEach(el => {
+        if (!el.id || el.closest("#adm-settings-save-bar")) return;
+        if (el.type === "checkbox" || el.type === "radio") {
+            snap[el.id] = el.checked;
+        } else {
+            snap[el.id] = el.value;
+        }
+    });
+    _adminSettingsSavedSnapshot = snap;
+}
+
+function _checkAdminSettingsDirty() {
+    const pane = document.getElementById("adm-screen-settings");
+    if (!pane || !Object.keys(_adminSettingsSavedSnapshot).length) return false;
+    const els = pane.querySelectorAll("input, select, textarea");
+    for (const el of els) {
+        if (!el.id || el.closest("#adm-settings-save-bar")) continue;
+        if (!(el.id in _adminSettingsSavedSnapshot)) continue;
+        const saved = _adminSettingsSavedSnapshot[el.id];
+        if (el.type === "checkbox" || el.type === "radio") {
+            if (el.checked !== saved) return true;
+        } else {
+            if (el.value !== saved) return true;
+        }
+    }
+    return false;
+}
+
+function updateAdminSettingsSaveBar(forceHide = false) {
+    const bar = document.getElementById("adm-settings-save-bar");
+    if (!bar) return;
+    if (forceHide || (typeof admCurrentSection !== "undefined" && admCurrentSection !== "settings")) {
+        bar.classList.add("hidden");
+        return;
+    }
+    const isDirty = _checkAdminSettingsDirty();
+    bar.classList.toggle("hidden", !isDirty);
+}
 
 function _bindAdminSettingsDirtyTracking() {
     if (_adminSettingsDirtyBound) return;
     const pane = document.getElementById("adm-screen-settings");
     if (!pane) return;
     _adminSettingsDirtyBound = true;
-    const mark = (e) => { if (e.target && e.target.id) adminSettingsDirty.add(e.target.id); };
-    pane.addEventListener("input", mark);
-    pane.addEventListener("change", mark);
+    const onTouch = (e) => {
+        if (e.target && e.target.id && !e.target.closest("#adm-settings-save-bar")) {
+            adminSettingsDirty.add(e.target.id);
+        }
+        updateAdminSettingsSaveBar();
+    };
+    pane.addEventListener("input", onTouch);
+    pane.addEventListener("change", onTouch);
 }
 
 function _admPaintValue(el, value) {
@@ -14534,6 +14690,10 @@ function _admPaintValue(el, value) {
 function _admPaintChecked(el, checked) {
     if (el && !adminSettingsDirty.has(el.id)) el.checked = checked;
 }
+
+window._snapshotAdminSettingsValues = _snapshotAdminSettingsValues;
+window._checkAdminSettingsDirty = _checkAdminSettingsDirty;
+window.updateAdminSettingsSaveBar = updateAdminSettingsSaveBar;
 
 async function loadAdminSettings() {
     if (!state.user?.is_admin) return;
@@ -14735,6 +14895,8 @@ async function loadAdminSettings() {
 
         updateTutorialUI(s);
         await loadAdminGroupAiConsole();
+        _snapshotAdminSettingsValues();
+        updateAdminSettingsSaveBar(true);
     } catch (e) {
         console.warn("Could not load dynamic settings:", e);
     }
@@ -14987,6 +15149,8 @@ async function saveAdminSettings() {
         // so the post-save reload below paints fresh server truth
         // over every field again.
         adminSettingsDirty.clear();
+        _snapshotAdminSettingsValues();
+        updateAdminSettingsSaveBar(true);
         showStudioToast(data.message || t("admin_settings_saved"), 'success');
         loadAdminSettings();
     } catch (e) {
@@ -15641,7 +15805,7 @@ function hubHistoryRowHtml(j) {
                 <span class="hub-row-text">
                     <span class="hub-row-title">${title}</span>
                     <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
-                    ${(j.status === "FAILED" && j.error_message) ? `<span class="hub-row-error text-danger text-xs">${escapeHtml(j.error_message)}</span>` : ""}
+                    ${(j.status === "FAILED" && j.error_message) ? `<span class="hub-row-error text-danger text-xs">${escapeHtml(displayJobError(j.error_message))}</span>` : ""}
                 </span>
                 <span class="hub-chevron">${open ? "⌃" : "›"}</span>
             </span>

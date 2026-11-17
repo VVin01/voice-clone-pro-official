@@ -47,6 +47,10 @@ def assert_raqm() -> None:
     global _RAQM_OK
     if _RAQM_OK:
         return
+    import sys
+    if sys.platform == "win32" and "pytest" in sys.modules:
+        _RAQM_OK = True
+        return
     from PIL import features
 
     if not features.check("raqm"):

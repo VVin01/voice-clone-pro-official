@@ -184,6 +184,15 @@ def test_strip_failed_job_media_keeps_json_state_and_final(storage):
     assert used is True and segs == [1]
 
 
+def _symlink(src, dst):
+    try:
+        os.symlink(src, dst)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Creating symlinks requires administrator privileges on Windows")
+        raise
+
+
 def test_strip_never_follows_symlink_out_of_the_job_dir(storage, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -192,8 +201,8 @@ def test_strip_never_follows_symlink_out_of_the_job_dir(storage, tmp_path):
     job_dir = storage / "recap_output" / "rc_w_link"
     job_dir.mkdir(parents=True)
     (job_dir / "real.mp4").write_bytes(b"\x00" * 100)
-    os.symlink(outside, job_dir / "linked_dir")
-    os.symlink(secret, job_dir / "linked.mp4")
+    _symlink(outside, job_dir / "linked_dir")
+    _symlink(secret, job_dir / "linked.mp4")
     api_mod._strip_failed_recap_job_media(job_dir)
     assert secret.is_file()  # outside content untouched
     assert not (job_dir / "real.mp4").exists()
@@ -205,7 +214,7 @@ def test_strip_on_symlinked_job_dir_is_a_noop(storage, tmp_path):
     (real / "source.mp4").write_bytes(b"\x00" * 100)
     link = storage / "recap_output" / "rc_w_dirlink"
     link.parent.mkdir(parents=True)
-    os.symlink(real, link)
+    _symlink(real, link)
     assert api_mod._strip_failed_recap_job_media(link) == (0, 0)
     assert (real / "source.mp4").is_file()
 
@@ -346,7 +355,7 @@ async def test_sweep_never_removes_through_a_symlink(storage, sweep_db, tmp_path
     recap_root = storage / "recap_output"
     recap_root.mkdir(parents=True)
     link = recap_root / "rc_w_escape"
-    os.symlink(outside, link)
+    _symlink(outside, link)
 
     await api_mod.cleanup_expired_jobs()
 

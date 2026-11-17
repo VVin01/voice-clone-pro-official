@@ -337,6 +337,9 @@ async def _sync_imported_and_allowance(session: AsyncSession, user_id: int) -> N
         await session.flush()
 
 
+_welcome_bonus_lock = asyncio.Lock()
+
+
 async def award_welcome_bonus(
     session: AsyncSession,
     user_id: int,
@@ -346,54 +349,55 @@ async def award_welcome_bonus(
 
     Transactional and idempotent: repeated calls return (False, balance).
     """
-    bonus_sec = seconds if seconds is not None else WELCOME_BONUS_SECONDS
-    if bonus_sec <= 0:
+    async with _welcome_bonus_lock:
+        bonus_sec = seconds if seconds is not None else WELCOME_BONUS_SECONDS
+        if bonus_sec <= 0:
+            balance = await get_minute_balance(session, user_id)
+            return False, balance
+
+        stmt = select(User).where(User.id == user_id).with_for_update()
+        res = await session.execute(stmt)
+        user = res.scalar_one_or_none()
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+
         balance = await get_minute_balance(session, user_id)
-        return False, balance
 
-    stmt = select(User).where(User.id == user_id).with_for_update()
-    res = await session.execute(stmt)
-    user = res.scalar_one_or_none()
-    if not user:
-        raise ValueError(f"User {user_id} not found")
+        # Admins must not receive or require the welcome bonus
+        if settings.is_admin(user_id):
+            logger.info("User %s is an admin; skipping welcome bonus award.", user_id)
+            return False, balance
 
-    balance = await get_minute_balance(session, user_id)
+        if user.welcome_bonus_awarded:
+            return False, balance
 
-    # Admins must not receive or require the welcome bonus
-    if settings.is_admin(user_id):
-        logger.info("User %s is an admin; skipping welcome bonus award.", user_id)
-        return False, balance
+        # Insert WelcomeBonusAward row to enforce database-level primary-key uniqueness
+        award_record = WelcomeBonusAward(user_id=user_id, seconds=bonus_sec)
+        session.add(award_record)
+        try:
+            await session.flush()
+        except Exception:
+            # Concurrent insert occurred or already exists
+            return False, balance
 
-    if user.welcome_bonus_awarded:
-        return False, balance
+        # Transactionally mark awarded and credit balance
+        user.welcome_bonus_awarded = True
+        user.updated_at = utc_now()
+        balance.welcome_seconds += bonus_sec
+        balance.updated_at = utc_now()
 
-    # Insert WelcomeBonusAward row to enforce database-level primary-key uniqueness
-    award_record = WelcomeBonusAward(user_id=user_id, seconds=bonus_sec)
-    session.add(award_record)
-    try:
+        event = MinuteLedgerEvent(
+            user_id=user_id,
+            source=LedgerSource.WELCOME.value,
+            direction=LedgerDirection.CREDIT.value,
+            seconds=bonus_sec,
+            note=f"Welcome Bonus {bonus_sec // 60} Minutes (Once-per-account)",
+        )
+        session.add(event)
         await session.flush()
-    except Exception:
-        # Concurrent insert occurred or already exists
-        return False, balance
 
-    # Transactionally mark awarded and credit balance
-    user.welcome_bonus_awarded = True
-    user.updated_at = utc_now()
-    balance.welcome_seconds += bonus_sec
-    balance.updated_at = utc_now()
-
-    event = MinuteLedgerEvent(
-        user_id=user_id,
-        source=LedgerSource.WELCOME.value,
-        direction=LedgerDirection.CREDIT.value,
-        seconds=bonus_sec,
-        note=f"Welcome Bonus {bonus_sec // 60} Minutes (Once-per-account)",
-    )
-    session.add(event)
-    await session.flush()
-
-    logger.info("Awarded welcome bonus %ss to user %s", bonus_sec, user_id)
-    return True, balance
+        logger.info("Awarded welcome bonus %ss to user %s", bonus_sec, user_id)
+        return True, balance
 
 
 async def confirm_referral_and_reward(

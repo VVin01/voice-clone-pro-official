@@ -313,7 +313,7 @@ def test_recap_job_records_real_seconds():
         r"\(int\(estimated_voice_seconds\)\s*if\s*estimated_voice_seconds\s*else\s*0\)\s*\)",
         API_PY,
     )
-    assert '"seconds_consumed": _real_seconds' in API_PY
+    assert '"seconds_consumed": _real_dur' in API_PY
 
 
 # ── Item 13: history recap_settings payload ─────────────────────────

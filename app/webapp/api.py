@@ -11811,7 +11811,7 @@ async def get_user_history(
             # waits forever for a render that will never start.
             "script_ready": bool(
                 is_recap
-                and j.status == JobStatus.RUNNING.value
+                and j.status in (JobStatus.RUNNING.value, JobStatus.SUCCESS.value, JobStatus.WAITING_CHOICE.value)
                 and (
                     ((_hist_entry or {}).get("status") == "SCRIPT_READY")
                     or bool((_hist_state or {}).get("script_ready"))
@@ -12641,6 +12641,7 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
     eng_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_engine"))).scalar_one_or_none()
     host_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_host"))).scalar_one_or_none()
     stat_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_status"))).scalar_one_or_none()
+    recap_queue_enabled = bool(getattr(settings, "recap_on_queue", False))
 
     if not hb_row or not hb_row.value:
         return {
@@ -12650,6 +12651,7 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
             "engine": "ALL",
             "host": None,
             "last_seen_ago": "Never",
+            "recap_on_queue": recap_queue_enabled,
         }
 
     try:
@@ -12661,8 +12663,8 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
 
         last_seen_str = f"{int(diff_sec)}s ago" if diff_sec < 60 else f"{int(diff_sec // 60)}m ago"
         engine_mode = (eng_row.value if eng_row else "all").upper()
-        host_name = host_row.value if host_row else "Local Laptop"
-        explicit_status = stat_row.value if stat_row else "ONLINE"
+        host_name = host_row.value if host_row else "VPS Worker"
+        explicit_status = (stat_row.value if stat_row else "ONLINE").upper()
 
         if explicit_status == "OFFLINE" or diff_sec > 120:
             return {
@@ -12672,6 +12674,17 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
                 "engine": engine_mode,
                 "host": host_name,
                 "last_seen_ago": last_seen_str,
+                "recap_on_queue": recap_queue_enabled,
+            }
+        elif explicit_status == "PAUSED":
+            return {
+                "is_online": True,
+                "status_code": "PAUSED",
+                "status_text": f"Paused ⏸️ ({last_seen_str})",
+                "engine": engine_mode,
+                "host": host_name,
+                "last_seen_ago": last_seen_str,
+                "recap_on_queue": recap_queue_enabled,
             }
         elif diff_sec > 45:
             return {
@@ -12681,6 +12694,7 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
                 "engine": engine_mode,
                 "host": host_name,
                 "last_seen_ago": last_seen_str,
+                "recap_on_queue": recap_queue_enabled,
             }
         else:
             return {
@@ -12690,6 +12704,7 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
                 "engine": engine_mode,
                 "host": host_name,
                 "last_seen_ago": last_seen_str,
+                "recap_on_queue": recap_queue_enabled,
             }
     except Exception as e:
         return {
@@ -12699,6 +12714,7 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
             "engine": "ALL",
             "host": None,
             "last_seen_ago": "Unknown",
+            "recap_on_queue": recap_queue_enabled,
         }
 
 
@@ -13939,6 +13955,79 @@ async def get_admin_queue(
     }
 
 
+class FleetWorkerTogglePayload(BaseModel):
+    status: str | None = None
+    recap_on_queue: bool | None = None
+
+
+@api_router.get("/admin/fleet/status")
+async def get_admin_fleet_status(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Inspect VPS Worker Node status & Render Cloud services."""
+    worker = await _get_laptop_worker_status(db)
+    return {
+        "success": True,
+        "vps_worker": {
+            **worker,
+            "workloads": [
+                "Heavy Voice Synthesis (Cloud VoxCPM 2 Engine)",
+                "Faster-Whisper ASR (Speech-to-Text Transcription)",
+                "Movie Recap Video Rendering (FFmpeg + HarfBuzz)",
+                "Cloudflare WARP Egress & YouTube POT Sidecar (:4416)",
+            ],
+        },
+        "render_cloud": {
+            "is_online": True,
+            "status_code": "ONLINE",
+            "status_text": "Online 🟢 (Web Service)",
+            "host": "voice-clone-studio-teuq.onrender.com",
+            "workloads": [
+                "Fast Web HTTP API & Telegram Webhook (/telegram/webhook)",
+                "Mini App UI & Static Asset Delivery (CDN)",
+                "PostgreSQL / SQLite Database Session Pool",
+                "Edge-TTS Synthesis Fallback & Instant Bot Notifications",
+            ],
+        },
+    }
+
+
+@api_router.post("/admin/fleet/worker-toggle")
+async def toggle_admin_worker_status(
+    payload: FleetWorkerTogglePayload,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Control VPS Worker execution state (ONLINE vs PAUSED) and Recap queue routing."""
+    from app.services.dynamic_settings import set_dynamic_setting
+
+    updated = {}
+    if payload.status is not None:
+        st = payload.status.strip().upper()
+        if st not in ("ONLINE", "PAUSED", "OFFLINE"):
+            raise HTTPException(status_code=400, detail="Invalid worker status")
+        await set_dynamic_setting(db, "worker_laptop_status", st, admin_id=admin.id)
+        updated["worker_laptop_status"] = st
+    elif payload.recap_on_queue is None:
+        curr = getattr(settings, "worker_laptop_status", "ONLINE").upper()
+        new_st = "PAUSED" if curr == "ONLINE" else "ONLINE"
+        await set_dynamic_setting(db, "worker_laptop_status", new_st, admin_id=admin.id)
+        updated["worker_laptop_status"] = new_st
+
+    if payload.recap_on_queue is not None:
+        await set_dynamic_setting(db, "recap_on_queue", payload.recap_on_queue, admin_id=admin.id)
+        updated["recap_on_queue"] = payload.recap_on_queue
+
+    await db.commit()
+    worker = await _get_laptop_worker_status(db)
+    return {
+        "success": True,
+        "updated": updated,
+        "worker": worker,
+    }
+
+
 @api_router.post("/admin/queue/{job_id}/retry")
 async def retry_queued_job(
     job_id: str,
@@ -14784,6 +14873,10 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             cleaned[key] = bool(value)
         elif key == "recap_on_queue":
             cleaned[key] = bool(value)
+        elif key == "worker_laptop_status":
+            st_val = str(value).strip().upper()
+            if st_val in ("ONLINE", "PAUSED", "OFFLINE"):
+                cleaned[key] = st_val
         elif key == "recap_stale_job_timeout_seconds":
             try:
                 t_val = int(value)

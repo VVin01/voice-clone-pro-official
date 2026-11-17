@@ -1303,11 +1303,35 @@ async def run_worker_loop(
 
     _loop_started = _time.monotonic()
     _last_stale_sweep = 0.0
+    _last_heartbeat = 0.0
     _active_recap_tasks: set[asyncio.Task] = set()
 
     while True:
         try:
             _now_m = _time.monotonic()
+            if _now_m - _last_heartbeat >= 15.0:
+                _last_heartbeat = _now_m
+                try:
+                    from app.services.dynamic_settings import set_dynamic_setting
+                    async with AsyncSessionLocal() as hb_session:
+                        await set_dynamic_setting(
+                            hb_session, "worker_laptop_heartbeat", utc_now().isoformat()
+                        )
+                        await set_dynamic_setting(
+                            hb_session, "worker_laptop_engine", str(engine_filter or "all")
+                        )
+                        if not getattr(settings, "worker_laptop_host", ""):
+                            import socket
+                            host_str = socket.gethostname() or "212.28.177.252"
+                            await set_dynamic_setting(hb_session, "worker_laptop_host", host_str)
+                        await hb_session.commit()
+                except Exception as hb_exc:
+                    logger.debug("Failed to record worker heartbeat: %s", hb_exc)
+
+            if str(getattr(settings, "worker_laptop_status", "ONLINE")).upper() == "PAUSED":
+                await asyncio.sleep(poll_interval)
+                continue
+
             if settings.instance_primary and _boot_cutoff_sweep_due(_loop_started, _last_stale_sweep, _now_m):
                 _last_stale_sweep = _now_m
                 try:

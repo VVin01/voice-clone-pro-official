@@ -51,7 +51,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y ffmpeg fontconfig
+          sudo apt-get install -y ffmpeg fontconfig libraqm0 libraqm-dev libharfbuzz-dev libfribidi-dev
 
       - name: Install Python dependencies
         run: |

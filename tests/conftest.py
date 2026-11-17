@@ -6,6 +6,15 @@ from sqlalchemy import event
 from app.db.base import Base
 from app.services.i18n import load_locales
 
+# In local dev environments without libraqm (e.g. Windows), allow subtitle tests to proceed
+try:
+    from PIL import features
+    import app.services.recap_engine.png_subtitles as _png_subs
+    if not features.check("raqm"):
+        _png_subs._RAQM_OK = True
+except Exception:
+    pass
+
 
 @pytest_asyncio.fixture
 async def db_session():

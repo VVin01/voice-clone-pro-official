@@ -2558,6 +2558,10 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 #adm-jobs-history .form-row-2 { grid-template-columns: 1fr 1fr; }
 #adm-jobs-history .admin-action-row .studio-input { flex: 2 1 auto; }
 #adm-jobs-history .admin-action-row .btn { flex: 1 1 auto; }
+.adm-fleet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.adm-fleet-node-card { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 12px; }
+.adm-fleet-node-head { display: flex; justify-content: space-between; align-items: center; }
+.adm-fleet-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ── UI audit 2026-10-31 (wave2): Myanmar headings/titles/labels render
    Padauk-first. Noto Sans Myanmar's medial-ra glyph (medial_ra.w2) is a

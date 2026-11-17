@@ -141,6 +141,7 @@ def test_concat_and_mux_timeouts_scale(captured_run, tmp_path):
     assert captured_run["timeout"] == 3000
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script mock requires Linux")
 def test_render_part_timeout_raises(monkeypatch, tmp_path):
     fake_ffmpeg = tmp_path / "ffmpeg"
     fake_ffmpeg.write_text("#!/bin/sh\nexec sleep 30\n")
@@ -157,6 +158,7 @@ def test_render_part_timeout_raises(monkeypatch, tmp_path):
 # 1c. audio_levels watchdog
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script mock requires Linux")
 def test_audio_levels_timeout_kills_decoder(tmp_path):
     fake_ffmpeg = tmp_path / "ffmpeg"
     fake_ffmpeg.write_text("#!/bin/sh\nexec sleep 30\n")
@@ -167,6 +169,7 @@ def test_audio_levels_timeout_kills_decoder(tmp_path):
     assert time.monotonic() - started < 10  # killed, not waited out
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script mock requires Linux")
 def test_audio_levels_reads_silence(tmp_path):
     fake_ffmpeg = tmp_path / "ffmpeg"
     fake_ffmpeg.write_text("#!/bin/sh\nhead -c 32000 /dev/zero\n")
