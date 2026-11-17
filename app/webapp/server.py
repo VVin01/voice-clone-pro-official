@@ -228,6 +228,9 @@ async def _dispatch_oldest_queued_recap() -> bool:
 
     Returns True when a job was claimed and dispatched.
 
+    When RECAP_ON_QUEUE=1, the web process never renders recaps; execution
+    moves to the worker claim loop (primary or VPS) on the DB job queue.
+
     Ordering matters (hunt #5): the re-dispatch plan is built BEFORE
     the atomic DB claim. Plan building is a pure function of the row,
     but a corrupt persisted blob could make it raise -- claimed first,
@@ -236,6 +239,11 @@ async def _dispatch_oldest_queued_recap() -> bool:
     nobody was told. Now a raising plan is logged and the job stays
     QUEUED for the next poll.
     """
+    from app.config import settings
+
+    if getattr(settings, "recap_on_queue", False):
+        return False
+
     import logging
 
     from sqlalchemy import select

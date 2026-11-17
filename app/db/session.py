@@ -180,6 +180,7 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tts_route VARCHAR(24)"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS gemini_key_broken BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_ref_audio_path TEXT"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS final_script TEXT"))
                 connection.execute(text("ALTER TABLE voice_models ADD COLUMN IF NOT EXISTS sample_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS admin_notify_copies TEXT"))
@@ -227,6 +228,8 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN gemini_key_broken BOOLEAN DEFAULT 0"))
                 if "recap_ref_audio_path" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN recap_ref_audio_path TEXT"))
+                if "final_script" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN final_script TEXT"))
                 if "engine" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN engine VARCHAR(20) DEFAULT 'voxcpm'"))
                 if "preset_voice" not in cols_jobs:

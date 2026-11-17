@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
-from app.models.enums import AccountCategory, JobStatus
+from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import AuditLog, Job, User, VoiceModel, utc_now
 from app.services.audio import (
     GENDER_PITCH_MAP,
@@ -126,16 +126,19 @@ async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
     cloud_url = os.getenv("RENDER_EXTERNAL_URL", "").strip() or os.getenv("MINI_APP_URL", "").strip() or "https://voice-clone-studio-c1er.onrender.com"
     if not file_path or not file_path.is_file():
         return
+    is_mp4 = file_path.suffix.lower() == ".mp4"
+    mime_type = "video/mp4" if is_mp4 else "audio/wav"
+    upload_timeout = 300.0 if is_mp4 else 90.0
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=upload_timeout) as client:
             with open(file_path, "rb") as f:
-                files = {"file": (file_path.name, f, "audio/wav")}
+                files = {"file": (file_path.name, f, mime_type)}
                 headers = {"X-Worker-Token": worker_token}
                 url = f"{cloud_url}/api/internal/worker/upload-result/{job_id}"
                 resp = await client.post(url, files=files, headers=headers)
                 if resp.is_success:
-                    logger.info("✅ Audio result for job %s successfully uploaded to Render Cloud server!", job_id)
+                    logger.info("✅ Result for job %s successfully uploaded to Render Cloud server!", job_id)
                 else:
                     logger.warning("Cloud upload for job %s returned status %s: %s", job_id, resp.status_code, resp.text)
     except Exception as e:
@@ -299,6 +302,67 @@ def _synthesize_voxcpm_voice_job(
     return output_wav
 
 
+async def process_recap_job(
+    session: AsyncSession,
+    job: Job,
+    bot: Bot | None = None,
+) -> bool:
+    """Execute a claimed recap job on the worker (primary or VPS).
+
+    Invokes the full recap pipeline (source fetch -> planner -> narration -> render -> delivery)
+    using the persisted config and credit contract on the Job row.
+    """
+    from app.models.schema import User
+    from app.webapp.api import (
+        RECAP_JOBS_REGISTRY,
+        _execute_recap_background_job,
+        _load_persisted_recap_state,
+        _recap_redispatch_plan,
+        _restore_script_ready_from_db,
+    )
+
+    jid = str(job.id)
+    logger.info("Starting worker recap pipeline for job %s...", jid)
+
+    user = await session.get(User, job.user_id)
+    persisted_state = _load_persisted_recap_state(job)
+    if persisted_state is not None and persisted_state.get("script_ready"):
+        restored = _restore_script_ready_from_db(job)
+        if restored:
+            RECAP_JOBS_REGISTRY[jid] = restored
+            logger.info("Restored parked SCRIPT_READY recap job %s on worker (no re-run)", jid)
+            return True
+
+    try:
+        plan = _recap_redispatch_plan(job, user)
+    except Exception as plan_err:
+        logger.error("Could not build recap execution plan for job %s: %s", jid, plan_err, exc_info=True)
+        job.status = JobStatus.FAILED.value
+        job.error_message = f"Failed to build recap execution plan: {plan_err}"
+        await session.commit()
+        return False
+
+    RECAP_JOBS_REGISTRY[jid] = plan["entry"]
+
+    try:
+        await _execute_recap_background_job(
+            jid,
+            plan["cfg"],
+            job.user_id,
+            job.chat_id or job.user_id,
+            is_vip=plan["is_vip"],
+            credit_deducted=plan["credit_deducted"],
+            phase=plan["phase"],
+            voice_choice_mode=plan.get("voice_choice_mode"),
+            dp_resume=plan.get("dp_resume", False),
+        )
+    except Exception as exec_err:
+        logger.error("Recap execution error for job %s: %s", jid, exec_err, exc_info=True)
+
+    await session.refresh(job)
+    return job.status == JobStatus.SUCCESS.value
+
+
 async def process_single_job(
     session: AsyncSession,
     job: Job,
@@ -306,11 +370,19 @@ async def process_single_job(
     chat_id: int | None = None,
     status_msg_id: int | None = None,
 ) -> bool:
-    """Execute complete voice clone job lifecycle with safe temp cleanup and idempotency."""
+    """Execute complete voice clone or recap job lifecycle with safe temp cleanup and idempotency."""
     # Terminal state check: never re-run completed or failed jobs
     if job.status in (JobStatus.SUCCESS.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value):
         logger.warning("Job %s is already in terminal state %s; skipping.", job.id, job.status)
         return False
+
+    is_recap = (
+        job.job_type == JobType.RECAP.value
+        or job.engine == "recap"
+        or str(job.id).startswith("rc_")
+    )
+    if is_recap:
+        return await process_recap_job(session, job, bot=bot)
 
     temp_dir = settings.storage_root / "temp" / str(job.id)
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -1035,11 +1107,48 @@ async def _fail_timed_out_job(job_id: str) -> None:
         logger.warning("Could not fail timed-out job %s: %s", job_id, exc)
 
 
+async def _fail_timed_out_recap_job(job_id: str) -> None:
+    """Fail a recap job that exceeded its worker deadline and issue an auto-refund."""
+    try:
+        from app.webapp.api import _fail_stranded_recap_job, _load_persisted_recap_state
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            if job and job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+                state = _load_persisted_recap_state(job) or {}
+                await _fail_stranded_recap_job(job_id, job.user_id, state)
+    except Exception as exc:
+        logger.warning("Could not fail timed-out recap job %s: %s", job_id, exc)
+
+
+async def _run_recap_worker_task(job_id: str, bot: Bot | None = None) -> bool:
+    """Execute a claimed recap job in a background worker task with deadline protection."""
+    timeout_seconds = getattr(settings, "recap_stale_job_timeout_seconds", 2700)
+    try:
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            if not job:
+                return False
+            return await asyncio.wait_for(
+                process_single_job(session=session, job=job, bot=bot),
+                timeout=timeout_seconds,
+            )
+    except asyncio.TimeoutError:
+        logger.error("Background recap job %s exceeded %ss deadline; failing it.", job_id, timeout_seconds)
+        await _fail_timed_out_recap_job(job_id)
+        return False
+    except Exception as exc:
+        logger.error("Background recap task error for job %s: %s", job_id, exc, exc_info=True)
+        return False
+
+
 async def claim_and_process_next_job(
     session: AsyncSession | None = None,
     bot: Bot | None = None,
     engine_filter: str | None = "voxcpm",
     skip_local_source: bool | None = None,
+    allow_recap: bool | None = None,
+    background_recap: bool = False,
+    active_recap_tasks: set[asyncio.Task] | None = None,
 ) -> bool:
     """Atomically claim the oldest QUEUED job matching engine_filter and process it.
 
@@ -1053,30 +1162,69 @@ async def claim_and_process_next_job(
     """
     from app.services.queue import claim_next_queued_job
 
+    if allow_recap is None:
+        allow_recap = getattr(settings, "recap_on_queue", False)
+
     if session is not None:
         job = await claim_next_queued_job(
-            session, engine_filter=engine_filter, skip_local_source=skip_local_source
+            session,
+            engine_filter=engine_filter,
+            skip_local_source=skip_local_source,
+            allow_recap=allow_recap,
         )
         if not job:
             return False
+        is_recap = (
+            job.job_type == JobType.RECAP.value
+            or job.engine == "recap"
+            or str(job.id).startswith("rc_")
+        )
+        timeout_seconds = (
+            getattr(settings, "recap_stale_job_timeout_seconds", 2700)
+            if is_recap
+            else VOICE_JOB_DEADLINE_SECONDS
+        )
         try:
             return await asyncio.wait_for(
                 process_single_job(session=session, job=job, bot=bot),
-                timeout=VOICE_JOB_DEADLINE_SECONDS,
+                timeout=timeout_seconds,
             )
         except asyncio.TimeoutError:
-            logger.error("Voice job %s exceeded the %ss worker deadline; failing it.", job.id, VOICE_JOB_DEADLINE_SECONDS)
-            await _fail_timed_out_job(str(job.id))
+            if is_recap:
+                logger.error("Recap job %s exceeded the %ss worker deadline; failing it.", job.id, timeout_seconds)
+                await _fail_timed_out_recap_job(str(job.id))
+            else:
+                logger.error("Voice job %s exceeded the %ss worker deadline; failing it.", job.id, timeout_seconds)
+                await _fail_timed_out_job(str(job.id))
             return False
 
     async with AsyncSessionLocal() as claim_session:
         job = await claim_next_queued_job(
-            claim_session, engine_filter=engine_filter, skip_local_source=skip_local_source
+            claim_session,
+            engine_filter=engine_filter,
+            skip_local_source=skip_local_source,
+            allow_recap=allow_recap,
         )
         if not job:
             return False
-        job_id = job.id
+        job_id = str(job.id)
+        is_recap = (
+            job.job_type == JobType.RECAP.value
+            or job.engine == "recap"
+            or job_id.startswith("rc_")
+        )
 
+    if is_recap and background_recap:
+        task = asyncio.create_task(_run_recap_worker_task(job_id, bot=bot))
+        if active_recap_tasks is not None:
+            active_recap_tasks.add(task)
+        return True
+
+    timeout_seconds = (
+        getattr(settings, "recap_stale_job_timeout_seconds", 2700)
+        if is_recap
+        else VOICE_JOB_DEADLINE_SECONDS
+    )
     async with AsyncSessionLocal() as process_session:
         job = await process_session.get(Job, job_id)
         if job is None:
@@ -1084,11 +1232,15 @@ async def claim_and_process_next_job(
         try:
             return await asyncio.wait_for(
                 process_single_job(session=process_session, job=job, bot=bot),
-                timeout=VOICE_JOB_DEADLINE_SECONDS,
+                timeout=timeout_seconds,
             )
         except asyncio.TimeoutError:
-            logger.error("Voice job %s exceeded the %ss worker deadline; failing it.", job_id, VOICE_JOB_DEADLINE_SECONDS)
-            await _fail_timed_out_job(str(job_id))
+            if is_recap:
+                logger.error("Recap job %s exceeded the %ss worker deadline; failing it.", job_id, timeout_seconds)
+                await _fail_timed_out_recap_job(job_id)
+            else:
+                logger.error("Voice job %s exceeded the %ss worker deadline; failing it.", job_id, timeout_seconds)
+                await _fail_timed_out_job(job_id)
             return False
 
 
@@ -1120,6 +1272,7 @@ async def run_worker_loop(
     poll_interval: float = 2.0,
     engine_filter: str = "voxcpm",
     skip_local_source: bool | None = None,
+    allow_recap: bool | None = None,
 ) -> None:
     """Continuously poll for QUEUED jobs (defaulting to VoxCPM cloud engine) and process them."""
     logger.info("Starting background audio processing worker loop (engine_filter=%s)...", engine_filter)
@@ -1150,6 +1303,7 @@ async def run_worker_loop(
 
     _loop_started = _time.monotonic()
     _last_stale_sweep = 0.0
+    _active_recap_tasks: set[asyncio.Task] = set()
 
     while True:
         try:
@@ -1167,11 +1321,27 @@ async def run_worker_loop(
                             logger.info("Periodic sweep recovered %d stranded jobs: %s", len(recovered), recovered)
                 except Exception as e:
                     logger.warning("Error during periodic stale job recovery sweep: %s", e)
+
+            # Concurrency: maintain active recap task set (per-instance limit = RECAP_WORKER_CONCURRENCY)
+            _active_recap_tasks = {t for t in _active_recap_tasks if not t.done()}
+            recap_concurrency = getattr(settings, "recap_worker_concurrency", 1)
+            base_recap_allowed = (
+                allow_recap
+                if allow_recap is not None
+                else getattr(settings, "recap_on_queue", False)
+            )
+            can_claim_recap = base_recap_allowed and len(_active_recap_tasks) < recap_concurrency
+
             # No loop-owned session (audit fix 2026-11-03):
             # claim_and_process_next_job scopes its own short-lived
             # claim session and a fresh processing session.
             processed = await claim_and_process_next_job(
-                bot=bot, engine_filter=engine_filter, skip_local_source=skip_local_source
+                bot=bot,
+                engine_filter=engine_filter,
+                skip_local_source=skip_local_source,
+                allow_recap=can_claim_recap,
+                background_recap=True,
+                active_recap_tasks=_active_recap_tasks,
             )
             if not processed:
                 await asyncio.sleep(poll_interval)

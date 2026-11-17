@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     # claims them instead, preventing missing-reference execution.
     worker_claim_local_files: bool = Field(default=True, alias="WORKER_CLAIM_LOCAL_FILES")
 
+    # Recap on DB job queue (Second Worker Phase 2, 2026-11-16)
+    # RECAP_ON_QUEUE: False by default (in-process rendering on primary).
+    # When True, recaps move onto the DB job queue and are claimed by workers.
+    recap_on_queue: bool = Field(default=False, alias="RECAP_ON_QUEUE")
+    recap_stale_job_timeout_seconds: int = Field(default=2700, alias="RECAP_STALE_JOB_TIMEOUT_SECONDS")
+    recap_worker_concurrency: int = Field(default=1, alias="RECAP_WORKER_CONCURRENCY")
+
     # Telegram update intake mode & webhook configuration
     # BOT_MODE: "polling" (default, existing behaviour) or "webhook".
     # In webhook mode, long polling is disabled and updates arrive via
