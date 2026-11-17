@@ -1146,6 +1146,33 @@ function liveJobsMergeJob(prev, next) {
     return merged;
 }
 
+let liveJobsFailedPillJob = null;
+let liveJobsFailedPillTimer = null;
+
+function setLiveJobsFailedToast(job) {
+    if (!job) return;
+    liveJobsFailedPillJob = job;
+    if (liveJobsFailedPillTimer) {
+        clearTimeout(liveJobsFailedPillTimer);
+        liveJobsFailedPillTimer = null;
+    }
+    liveJobsFailedPillTimer = setTimeout(() => {
+        clearLiveJobsFailedToast();
+    }, 15000);
+    renderLiveJobsPill();
+}
+window.setLiveJobsFailedToast = setLiveJobsFailedToast;
+
+function clearLiveJobsFailedToast() {
+    if (liveJobsFailedPillTimer) {
+        clearTimeout(liveJobsFailedPillTimer);
+        liveJobsFailedPillTimer = null;
+    }
+    liveJobsFailedPillJob = null;
+    renderLiveJobsPill();
+}
+window.clearLiveJobsFailedToast = clearLiveJobsFailedToast;
+
 const LiveJobs = {
     jobs: new Map(),
     subscribers: [],
@@ -1175,8 +1202,15 @@ const LiveJobs = {
         if (!job || !job.id) return;
         const prev = LiveJobs.jobs.get(job.id);
         const merged = liveJobsMergeJob(prev, job);
+        const isNewTerminal = liveJobsIsTerminal(merged.status) && !(prev && prev._terminalRendered);
+        if (isNewTerminal) merged._terminalRendered = true;
         LiveJobs.jobs.set(job.id, merged);
-        LiveJobs.notify(merged, { terminal: liveJobsIsTerminal(merged.status) && !merged._terminalRendered });
+        if (isNewTerminal && merged.status === "FAILED") {
+            setLiveJobsFailedToast(merged);
+        } else if (isNewTerminal && merged.status === "SUCCESS") {
+            clearLiveJobsFailedToast();
+        }
+        LiveJobs.notify(merged, { terminal: isNewTerminal });
     },
     applySnapshot(list) {
         const seen = new Set();
@@ -1188,6 +1222,11 @@ const LiveJobs = {
             const isNewTerminal = liveJobsIsTerminal(merged.status) && !(prev && prev._terminalRendered);
             if (isNewTerminal) merged._terminalRendered = true;
             LiveJobs.jobs.set(raw.id, merged);
+            if (isNewTerminal && merged.status === "FAILED") {
+                setLiveJobsFailedToast(merged);
+            } else if (isNewTerminal && merged.status === "SUCCESS") {
+                clearLiveJobsFailedToast();
+            }
             LiveJobs.notify(merged, { terminal: isNewTerminal });
             if (isNewTerminal) applyLiveJobToHistory(merged);
         });
@@ -1298,6 +1337,7 @@ function liveJobsPillSignature(active) {
     return active.map(j => j.id).sort().join(",") + "|" + (lead ? (lead.progress_stage || lead.status || "") : "");
 }
 function dismissLiveJobsPill() {
+    clearLiveJobsFailedToast();
     liveJobsPillDismissedSig = liveJobsPillSignature(LiveJobs.activeJobs());
     const pill = document.getElementById("live-jobs-pill");
     if (pill) pill.classList.add("hidden");
@@ -1347,6 +1387,25 @@ function renderLiveJobsPill() {
     const active = LiveJobs.activeJobs();
     // The 1-Click CTA hide (Batch AK) tracks the same active set.
     if (typeof refreshStickyCtas === "function") refreshStickyCtas();
+
+    if (liveJobsFailedPillJob) {
+        pill.classList.remove("hidden");
+        pill.classList.add("is-failed");
+        const countEl = document.getElementById("live-jobs-pill-count");
+        const stageEl = document.getElementById("live-jobs-pill-stage");
+        const fillEl = document.getElementById("live-jobs-pill-fill");
+        if (countEl) countEl.innerText = "❌";
+        const title = liveJobsFailedPillJob.title || liveJobsFailedPillJob.input_snippet || (liveJobsFailedPillJob.kind === "recap" ? "Movie Recap" : "Voice Synthesis");
+        const failedText = t("live_job_status_failed") || "Failed";
+        if (stageEl) stageEl.innerText = `${title} · ${failedText}`;
+        if (fillEl) {
+            fillEl.classList.remove("indeterminate", "is-waiting");
+            fillEl.style.width = "0%";
+        }
+        return;
+    }
+
+    pill.classList.remove("is-failed");
     if (!active.length) {
         pill.classList.add("hidden");
         liveJobsPillDismissedSig = "";
@@ -10659,9 +10718,19 @@ window.cancelCurrentRecapJob = function() {
     cancelRecapJobById(state.recapScriptReadyJobId || state.recapJobId);
 };
 
+let recapRetryInFlight = false;
 async function retryRecapJobById(jobId) {
-    if (!jobId) return;
-    showStudioConfirm(t("recap_retry_confirm"), async () => {
+    if (!jobId || recapRetryInFlight) return;
+    const item = (hubHistoryCache || []).find(h => h.id === jobId);
+    const isAdmin = !!(state.user?.is_admin || state.user?.role === "admin");
+    const credits = (item && (item.parts_count || item.credits_charged)) || 1;
+    const confirmMsg = isAdmin
+        ? t("recap_retry_confirm_admin")
+        : tf("recap_retry_confirm_cost", { credits });
+
+    showStudioConfirm(confirmMsg, async () => {
+        if (recapRetryInFlight) return;
+        recapRetryInFlight = true;
         try {
             const res = await fetch(`/api/recap/${jobId}/retry`, {
                 method: "POST",
@@ -10680,6 +10749,8 @@ async function retryRecapJobById(jobId) {
             startRecapJobPolling(data.recap_id);
         } catch (err) {
             showStudioToast((err && err.message) ? err.message : t("err_recap_failed"), 'error');
+        } finally {
+            recapRetryInFlight = false;
         }
     });
 }
@@ -15342,6 +15413,9 @@ function hubHistoryDetailHtml(j) {
     if (isRecap && j.status === "FAILED" && j.credit_refunded) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_refunded_line", { credits: j.credits_refunded || j.credits_charged || 1 }))}</div>`;
     }
+    if (j.status === "FAILED") {
+        inner += `<div class="history-item-body hub-error-snippet text-danger">⚠️ ${escapeHtml(j.error_message || t("recap_failed_title"))}</div>`;
+    }
     if (isRecap && j.recap_settings) {
         // R40 item 13: compact settings summary from the persisted
         // recap_config (engine / voice / subtitle position / style /
@@ -15401,7 +15475,8 @@ function hubHistoryDetailHtml(j) {
             if (j.can_retry !== false) {
                 actions += ` <button type="button" onclick="retryRecapJob('${j.id}')" class="history-dl-link">${t("btn_retry_job")}</button>`;
             } else {
-                inner += `<div class="history-item-body">${escapeHtml(t("recap_retry_upload_missing"))}</div>`;
+                actions += ` <button type="button" class="history-dl-link is-disabled" disabled title="${escapeHtml(t("recap_retry_upload_missing"))}">${escapeHtml(t("btn_retry_job"))}</button>`;
+                inner += `<div class="history-item-body text-xs text-muted mt-1">${escapeHtml(t("recap_retry_upload_missing"))}</div>`;
             }
             if (j.recap_config) {
                 actions += ` <button type="button" onclick="rerunRecapFromHistory('${j.id}')" class="history-dl-link">${t("btn_rerun_recap")}</button>`;
@@ -15551,8 +15626,12 @@ function hubHistoryRowHtml(j) {
         } else if (!isRecap && j.download_url) {
             quickAction = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
         }
-    } else if (j.status === "FAILED" && isRecap && j.can_retry !== false) {
-        quickAction = `<button type="button" class="vcp-chip" onclick="retryRecapJob('${j.id}')">${escapeHtml(t("btn_retry_job"))}</button>`;
+    } else if (j.status === "FAILED" && isRecap) {
+        if (j.can_retry === false) {
+            quickAction = `<button type="button" class="vcp-chip is-disabled" disabled title="${escapeHtml(t("recap_retry_upload_missing"))}">${escapeHtml(t("btn_retry_job"))}</button>`;
+        } else {
+            quickAction = `<button type="button" class="vcp-chip" onclick="retryRecapJob('${j.id}')">${escapeHtml(t("btn_retry_job"))}</button>`;
+        }
     }
     return `
     <div class="hub-row vcp-card vcp-card--compact vcp-job-card ${hubStatusBorder(j.status)} ${exp.expiresSoon ? "is-expires-soon" : ""} ${open ? "open" : ""}" data-job-id="${j.id}">
@@ -15562,6 +15641,7 @@ function hubHistoryRowHtml(j) {
                 <span class="hub-row-text">
                     <span class="hub-row-title">${title}</span>
                     <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                    ${(j.status === "FAILED" && j.error_message) ? `<span class="hub-row-error text-danger text-xs">${escapeHtml(j.error_message)}</span>` : ""}
                 </span>
                 <span class="hub-chevron">${open ? "⌃" : "›"}</span>
             </span>
@@ -15858,6 +15938,9 @@ async function generateRecapAiThumbnail(jobIdArg, headlineInputId) {
 
         if (data.pool_usage && data.pool_usage.cap_reached) {
             state.aiThumbnailCapReached = true;
+        }
+        if (inputEl && !headlineText && data.headline_text) {
+            inputEl.value = data.headline_text;
         }
         if (!jobIdArg || targetJobId === state.recapJobId) {
             syncRecapAiThumbnailUI(
@@ -16291,6 +16374,7 @@ function playWelcomeTrySample() {
 window.playWelcomeTrySample = playWelcomeTrySample;
 
 function computeRetentionBadgeHtml(j) {
+    if (j.status !== "SUCCESS") return "";
     const exp = computeHistoryExpiryState(j);
     if (exp.expired) {
         return `<span class="vcp-badge vcp-badge-danger">${escapeHtml(t("hist_expired"))}</span>`;
@@ -16362,7 +16446,10 @@ function computeHomeRecentActionHtml(j) {
             return `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
         }
     }
-    if (j.status === "FAILED" && isRecap && j.can_retry !== false) {
+    if (j.status === "FAILED" && isRecap) {
+        if (j.can_retry === false) {
+            return `<button type="button" class="vcp-chip is-disabled" disabled title="${escapeHtml(t("recap_retry_upload_missing"))}">${escapeHtml(t("home_recent_action_retry"))}</button>`;
+        }
         return `<button type="button" class="vcp-chip" onclick="openRecentProjectAction('${safeId}','retry')">${escapeHtml(t("home_recent_action_retry"))}</button>`;
     }
     return `<button type="button" class="vcp-chip" onclick="openHistoryHub()" aria-label="${escapeHtml(t("home_recent_action_open_history"))}">›</button>`;

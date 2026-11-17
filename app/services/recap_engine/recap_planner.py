@@ -2397,6 +2397,18 @@ def audit_and_repair_batch(
     """
     if not translated:
         return []
+    # Ending credit repair: when the final sentence of the script is flagged as credit/sign-off,
+    # drop that sentence only (never rewrite), before synthesis.
+    if not next_context and translated:
+        last_text = _clean(translated[-1].get("translation") or translated[-1].get("narration") or "")
+        if is_credit_or_signoff(last_text):
+            repaired = audit_script_ending_credit(translated)
+            if len(repaired) < len(translated):
+                dropped_id = int(translated[-1]["id"])
+                log(f"✂️ Ending-credit audit repair: dropped final source-channel credit sentence (ID {dropped_id:05d}) without rewrite")
+                translated = repaired
+    if not translated:
+        return []
     eff_speed = DEFAULT_SPEED if voice_speed is None else voice_speed
     eff_slow = DEFAULT_MAX_VIDEO_SLOW if max_video_slow is None else max(1.0, float(max_video_slow))
     eff_tempo = _resolve_tempo(eff_speed)
@@ -2779,6 +2791,16 @@ def _finalize_batch_translation(
     )
     if translation_audit:
         flags = _batch_audit_flags(translated, prev_committed, nxt)
+        # Ending credit repair: when the audit flags the final sentence as a credit/sign-off,
+        # DROP that sentence only (never rewrite), before synthesis.
+        is_ending_batch = (not nxt) or (bi == total_batches - 1)
+        if is_ending_batch and any("credit/sign-off ending" in f for f in flags):
+            repaired = audit_script_ending_credit(translated)
+            if len(repaired) < len(translated):
+                dropped_id = int(translated[-1]["id"])
+                log(f"✂️ Ending-credit audit repair: dropped final source-channel credit sentence (ID {dropped_id:05d}) without rewrite")
+                translated = repaired
+                flags = _batch_audit_flags(translated, prev_committed, nxt)
         reasons = list(flags)
         if budget_over:
             reasons.append(f"duration_overbudget ({len(budget_over)} IDs)")
@@ -3536,8 +3558,20 @@ class RecapPlanBuilder:
                     _write_translations_checkpoint(translated_all)
 
 
-        if [int(x["id"]) for x in translated_all] != [int(x["id"]) for x in units]:
-            raise RuntimeError("Final translation ID sequence mismatch")
+        # Ending-credit audit repair: drop any trailing source-channel credit line before synthesis
+        repaired_translated = audit_script_ending_credit(translated_all)
+        if len(repaired_translated) < len(translated_all):
+            dropped_id = int(translated_all[-1]["id"])
+            self.log(f"✂️ Ending-credit audit repair: dropped final source-channel credit sentence (ID {dropped_id:05d}) before synthesis")
+            translated_all = repaired_translated
+
+        actual_ids = [int(x["id"]) for x in translated_all]
+        expected_ids = [int(x["id"]) for x in units]
+        if actual_ids != expected_ids:
+            if expected_ids and actual_ids == expected_ids[:len(actual_ids)]:
+                units = units[:len(actual_ids)]
+            else:
+                raise RuntimeError("Final translation ID sequence mismatch")
         stage_timings["translate"] = round(max(0.0, time.monotonic() - t_translate_start), 3)
 
         self.progress(3, 4, "Build Smart Sync plan")

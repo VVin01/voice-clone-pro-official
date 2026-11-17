@@ -383,6 +383,8 @@
   "recap_failed_title": "❌ Recap မအောင်မြင်ပါ",
   "recap_retry_charge_note": "♻️ ပြန်စမ်းခြင်းက အသစ် ဖန်တီးသလိုပဲ ပုံမှန် Credit ထပ် ကောက်ပါမယ် — မအောင်မြင်ခဲ့တဲ့ အလုပ်အတွက် Credit ပြန်အမ်းထားပြီး ဖြစ်ပါတယ်။",
   "recap_retry_confirm": "ဒီ Recap ကို ပြန်စမ်းမလား? ပုံမှန် Credit နှုန်း ထပ်ကောက်ပါမယ်။",
+  "recap_retry_confirm_cost": "ဒီ Recap ကို ပြန် run မလား? ({credits} Credit ကျသင့်ပါမည်)",
+  "recap_retry_confirm_admin": "ဒီ Recap ကို ပြန် run မလား? (Admin အနေဖြင့် အခမဲ့)",
   "recap_retry_upload_missing": "📁 မူရင်း တင်ထားတဲ့ ဗီဒီယိုဖိုင် မရှိတော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။",
   "recap_retry_started_toast": "🔄 Recap အသစ် စတင်နေပါပြီ",
   "btn_rerun_recap": "♻️ ဒီ ဆက်တင်နဲ့ ပြန်လုပ်မည်",
