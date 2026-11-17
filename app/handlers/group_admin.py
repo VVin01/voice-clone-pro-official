@@ -457,6 +457,7 @@ async def handle_group_message(
         msg_voice = getattr(message, "voice", None)
         if msg_voice is not None:
             if not await gai.is_voice_enabled(session):
+                _log_decision(message, user.id if user else None, "voice_ignored", "voice_disabled")
                 return
             duration = getattr(msg_voice, "duration", 0) or 0
             file_size = getattr(msg_voice, "file_size", 0) or 0
@@ -496,9 +497,11 @@ async def handle_group_message(
             sender_chat_id=message.sender_chat.id if message.sender_chat else None,
         )
         if reason is not None:
+            _log_decision(message, user.id if user else None, "prefiltered", reason)
             return
 
         if not await _kill_switch_on(session):
+            _log_decision(message, user.id if user else None, "disabled", "kill_switch_off")
             return
 
         # Owner-tuned anti-spam values (BotSettings, kill-switch style).

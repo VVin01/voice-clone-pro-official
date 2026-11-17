@@ -2912,6 +2912,7 @@ async def transcribe_voice_gemini(
         factory = client_factory or _default_client_factory
         pool = collect_gemini_key_pool()
         if not pool:
+            logger.warning("group_ai_admin: no Gemini API keys found in pool for voice transcription")
             return None
         models = gemini_model_chain()
         prompt = (
@@ -2939,6 +2940,12 @@ async def transcribe_voice_gemini(
                     if text:
                         return text
                 except Exception as exc:
+                    logger.warning(
+                        "group_ai_admin: Gemini voice transcription attempt failed for key %s model %s: %s",
+                        label,
+                        model,
+                        exc,
+                    )
                     low = str(exc).lower()
                     if any(
                         marker in low

@@ -14997,7 +14997,7 @@ async function saveAdminSettings() {
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
     const maintNote = document.getElementById("adm-set-maintenance-note")?.value?.trim() || "";
-    const groupAi = !!(document.getElementById("adm-group-ai-master-toggle")?.checked ?? document.getElementById("adm-set-group-ai")?.checked);
+    const groupAi = !!(document.getElementById("adm-group-ai-master-toggle")?.checked || document.getElementById("adm-set-group-ai")?.checked);
     const groupAiCooldownRaw = document.getElementById("adm-set-group-ai-cooldown")?.value?.trim();
     const groupAiCooldown = groupAiCooldownRaw === "" || groupAiCooldownRaw == null ? null : parseInt(groupAiCooldownRaw, 10);
     const groupAiHourlyRaw = document.getElementById("adm-set-group-ai-hourly")?.value?.trim();
