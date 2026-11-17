@@ -277,5 +277,5 @@ def test_internal_style_ids_unchanged():
 
 
 def test_cache_token_bumped_to_r158():
-    assert INDEX_HTML.count("?v=20261116_r159") == 4
+    assert INDEX_HTML.count("?v=20261117_r160") == 4
     assert "r157" not in INDEX_HTML
