@@ -182,10 +182,18 @@ async def test_settings_valid_payload_applies_all_shapes(db_session):
 
 # ── A6: slip amount comes from the catalogue ────────────────────────
 
+def _tiny_png_bytes(color=(255, 255, 255)) -> bytes:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), color=color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 class _FakeUpload:
-    def __init__(self, filename="slip.png", content=b"\x89PNG-fake-bytes"):
+    def __init__(self, filename="slip.png", content=None):
         self.filename = filename
-        self._content = content
+        self._content = _tiny_png_bytes() if content is None else content
         self._sent = False
 
     async def read(self, size=-1):

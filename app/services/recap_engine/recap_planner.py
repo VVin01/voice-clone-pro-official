@@ -64,6 +64,25 @@ except Exception:  # pragma: no cover - standalone load
         _speed_mod = None  # type: ignore[assignment]
 
 try:
+    from app.services.ai_prompt_registry import (
+        call_generate_content_compat as _call_generate_content_compat,
+        is_v2_prompts as _is_v2_prompts,
+    )
+except Exception:  # pragma: no cover - standalone load without app package
+    def _is_v2_prompts() -> bool:
+        return str(os.getenv("AI_PROMPT_PROFILE", "v2")).strip().lower() != "v1"
+
+    def _call_generate_content_compat(
+        gen_fn: Callable[..., Any],
+        *,
+        model: str,
+        contents: Any,
+        system_instruction: str | None = None,
+        config_kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        return gen_fn(model=model, contents=contents)
+
+try:
     from app.services.queue import MEASURED_CHARS_PER_SECOND as _MEASURED_CPS
 except Exception:  # pragma: no cover - standalone load without SQLAlchemy/FastAPI
     _MEASURED_CPS = 17.6
@@ -414,6 +433,15 @@ def _configure_gemini_key_pool(
     }
 
     def build_client(key: str) -> Any:
+        proxy_url = str(getattr(ai, "proxy", "") or "").strip()
+        if proxy_url:
+            req_http = dict(http_options)
+            req_http["client_args"] = {"proxy": proxy_url}
+            req_http["async_client_args"] = {"proxy": proxy_url}
+            try:
+                return client_factory(api_key=key, http_options=req_http)
+            except Exception:
+                pass
         ai._enable_proxy()
         try:
             return client_factory(api_key=key, http_options=http_options)
@@ -541,12 +569,9 @@ def _load_module(name: str, path: Path):
 
 @contextmanager
 def _pushd(path: Path):
-    old = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(old)
+    """Thread-safe no-op directory guard: avoid mutating process-wide CWD during concurrent recap runs."""
+    _ = path
+    yield
 
 
 def _probe_video_duration(ffprobe: str, source: Path) -> float:
@@ -980,11 +1005,39 @@ def _repeated_line_share(transcript: dict[str, Any]) -> tuple[float, int, list[t
     return repeated / len(lines), len(lines), top
 
 
+def _non_english_repeat_share(transcript: dict[str, Any]) -> tuple[float, int, list[tuple[str, int]]]:
+    """Check non-Latin script segments (zh/ko/ja/th) for pathological ASR chorus loops."""
+    lines: list[str] = []
+    for seg in transcript.get("segments") or []:
+        if not isinstance(seg, dict):
+            continue
+        raw = _clean(seg.get("text"))
+        norm = re.sub(r"[\s\W_]+", "", raw.lower(), flags=re.UNICODE)
+        if len(norm) >= 4:
+            lines.append(norm)
+    if not lines:
+        return 0.0, 0, []
+    repeated = sum(1 for i, text in enumerate(lines) if text in lines[max(0, i - 5):i])
+    counts: dict[str, int] = {}
+    for text in lines:
+        counts[text] = counts.get(text, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:3]
+    return repeated / len(lines), len(lines), top
+
+
 def _check_english_speech(transcript: dict[str, Any], transcript_name: str) -> None:
     """Stop before any Gemini request when Whisper clearly hallucinated repeating lines."""
     detected = str(transcript.get("language") or "").lower().strip()
     if detected and detected not in ("en", "english", "auto", ""):
-        # Legitimate non-English speech (e.g. Chinese zh, Korean ko, Japanese ja, Thai th, etc.)
+        # Catch extreme pathological chorus/music loops (>=80% repetition across >=12 lines)
+        # in CJK/Thai/Korean transcripts while allowing natural non-English dialogue.
+        ne_share, ne_count, ne_top = _non_english_repeat_share(transcript)
+        if ne_count >= 12 and ne_share >= 0.80:
+            examples = ", ".join(f'"{text}" ×{n}' for text, n in ne_top if n > 1)
+            raise RuntimeError(
+                f"Whisper transcript ({detected}) ထဲတွင် ထပ်ခါထပ်ခါ စာကြောင်း {ne_share:.0%} "
+                f"ဖြစ်နေပါသည် ({examples})။ နောက်ခံဆူညံသံ သို့မဟုတ် စကားသံမကြည်လင်ခြင်း ဖြစ်နိုင်ပါသည်။"
+            )
         return
     share, count, top = _repeated_line_share(transcript)
     if count < NOT_ENGLISH_MIN_LINES or share < NOT_ENGLISH_REPEAT_SHARE:
@@ -1405,7 +1458,17 @@ def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = 
         try:
             ai._enable_proxy()
             try:
-                response = ai.client.models.generate_content(model=ai.text_model, contents=prompt)
+                cfg_kwargs = (
+                    {"response_mime_type": "application/json", "temperature": 0.25}
+                    if _is_v2_prompts()
+                    else None
+                )
+                response = _call_generate_content_compat(
+                    ai.client.models.generate_content,
+                    model=ai.text_model,
+                    contents=prompt,
+                    config_kwargs=cfg_kwargs,
+                )
             finally:
                 ai._disable_proxy()
             # Batch DN: the request succeeded — count it against the
@@ -1680,6 +1743,52 @@ def _enforce_style_and_gender_particles(text: str, *, style: str, is_female: boo
     return _clean(cleaned)
 
 
+def _compact_story_context(story_context: dict[str, Any] | None, *, max_items_per_key: int = 12) -> dict[str, Any]:
+    """Return a prompt-safe compact view of ``story_context`` without mutating caller state.
+
+    Long movies accumulate large arrays in ``plot_state`` / ``characters`` /
+    ``terms``; keeping the most recent *max_items_per_key* entries per list saves
+    30–45% input tokens on late batches while preserving continuity.
+    """
+    if not isinstance(story_context, dict):
+        return {}
+    compacted: dict[str, Any] = {}
+    cap = max(4, int(max_items_per_key))
+    for key, val in story_context.items():
+        if isinstance(val, list) and len(val) > cap:
+            # Keep both early protagonists/terms and recent plot updates so late chapters never suffer amnesia.
+            head_n = min(4, cap // 3)
+            compacted[key] = list(val[:head_n]) + list(val[-(cap - head_n):])
+        else:
+            compacted[key] = val
+    return compacted
+
+
+def _row_window_seconds(row: dict[str, Any]) -> float:
+    """Estimate spoken time window (seconds) for one segment row."""
+    if not isinstance(row, dict):
+        return 0.0
+    for start_k, end_k in (("speech_start", "speech_end"), ("start", "end"), ("video_start", "video_end")):
+        if row.get(start_k) is not None and row.get(end_k) is not None:
+            try:
+                dur = float(row[end_k]) - float(row[start_k])
+                if dur > 0:
+                    return dur
+            except Exception:
+                pass
+    ts = str(row.get("timestamp") or "")
+    m = re.match(
+        r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})",
+        ts.strip(),
+    )
+    if m:
+        h1, m1, s1, ms1, h2, m2, s2, ms2 = (int(g) for g in m.groups())
+        t1 = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+        t2 = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+        return max(0.0, t2 - t1)
+    return 0.0
+
+
 def translate_batch(
     ai: Any,
     *,
@@ -1697,10 +1806,17 @@ def translate_batch(
     total_parts: int = 1,
     prev_part_summary: str = "",
 ) -> list[dict[str, Any]]:
+    v2 = _is_v2_prompts()
     style = str(narrative_style or "viral").lower().strip()
     is_very_first_batch = not previous_context and bool(current) and int(current[0].get("id", 0)) == 1
     part_idx_val = max(1, int(part_index or 1))
     total_parts_val = max(1, int(total_parts or 1))
+    first_seg_sec = _row_window_seconds(current[0]) if current else 0.0
+    short_id1_guard = (
+        "\n- SHORT ID-1 WINDOW GUARD (< 2.2s): Segment ID 1 is a brief clip, so plant ONLY the tight opening phrase inside ID 1's timing budget and spread the rest of the premise hook cleanly across IDs 2–3 without cramming."
+        if (v2 and is_very_first_batch and part_idx_val == 1 and 0.0 < first_seg_sec < 2.2)
+        else ""
+    )
     if is_very_first_batch:
         if part_idx_val > 1:
             intro_rule = (
@@ -1714,6 +1830,7 @@ def translate_batch(
                 "- For ID 1 ONLY (the opening line of the video), you may open with a brief, punchy hook introducing the situation, then immediately narrate ID 1's actual scene event. The hook must establish the story's premise concretely from the source itself — where we are, who matters, and what is going wrong — and it must AGREE with the opening scene: never tease a moment and then restart the story from a different place or contradict the first scene.\n"
                 "- MANDATORY 3-SECOND HOOK (IDs 1–2 FOR EVERY STYLE): Open IDs 1–2 within the first ~3 seconds with ONE sharp, concrete curiosity loop or tension trigger from the real story (never spoilers, never generic clichés), then glide straight into the scene. When the presentation style below defines its own hook formula (a premise hook across IDs 1–3), that formula IS this hook — follow it, keep every ID carrying its own source meaning, and continue chronologically without restarting the story.\n"
                 "- OPENING NUMBERS: If the story turns on a striking quantity (money, years, counts), surface that number inside the opening hook or the first scene, written as Burmese words (e.g. 'သိန်း ငါးရာ', 'အနှစ် နှစ်ဆယ်') — never ASCII digits, never an invented number."
+                f"{short_id1_guard}"
             )
     else:
         intro_rule = "- DO NOT use opening intro phrases ('ဒီနေ့မှာတော့...', 'ဒီဇာတ်လမ်းလေးမှာတော့...', 'ပရိသတ်ကြီးတို့ရေ...') anywhere in this batch because the story is already in progress!"
@@ -1724,6 +1841,14 @@ def translate_batch(
         if is_female
         else "- VOICE GENDER RULE (MALE VOICE): The selected narrator voice is MALE. Avoid overusing 'ဗျာ' on every line; end sentences naturally with 'တယ်'၊ 'ပါတယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'လိုက်ပါတယ်'။"
     )
+    style_v2_addons = {
+        "viral": "\n- MICRO-MOMENTUM & SENSORY VERBS (V2): Replace flat state verbs ('ရှိနေတယ်', 'ဖြစ်နေတယ်') with kinetic visual verbs showing immediate movement and stakes. Build causal momentum cleanly across turns without repeating identical final particles 3 times in a row.",
+        "funny": "\n- DEADPAN CONTRAST & TIMING (V2): Land lightness via understated expectation-vs-reality contrast and crisp everyday spoken phrasing; snap smoothly into respectful restraint on any danger or grief beat.",
+        "pov": f"\n- SENSORY IMMEDIACY & PRO-DROP FLOW (V2): Ground reactions in what {pov_pronoun} immediately sees or feels before realizations land. When consecutive clauses clearly share {pov_pronoun}, allow natural Burmese subject omission instead of starting every sentence identically with '{pov_pronoun}က…'.",
+        "dramatic": "\n- SUBTEXT & CONFRONTATION RHYTHM (V2): Pair short taut clauses during standoffs/peril with flowing emotional fallout clauses afterwards; let concrete physical gestures and pauses carry dread rather than vague adjectives.",
+        "narrator": "\n- CAUSAL SCENE BRIDGING (V2): Connect scene shifts with clear time/place/motive bridges ('မနက်ရောက်တော့', 'တစ်ဖက်မှာတော့', 'ဒီလိုနဲ့') rather than repetitive mechanical markers so motive and consequence stay crystal clear.",
+    }
+    style_addon = style_v2_addons.get(style, style_v2_addons["narrator"]) if v2 else ""
     if style == "viral":
         style_prompt = f"""PRESENTATION STYLE: INSTANT HOOK — VIRAL MOVIE RECAP STORYTELLER (🔥 ချက်ချင်းစွဲဆောင် — ဆွဲဆောင်မှုရှိပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင်)
 - DISTINCT IDENTITY: Fast-paced, high-retention social recap energy — snap straight to the turning point, heighten stakes cleanly with urgent spoken connectives ('အဲဒီမှာတင်...', 'မထင်ထားတဲ့ အချိုးအကွေ့က...', 'တကယ်တော့...'), and keep every beat kinetic.
@@ -1738,7 +1863,7 @@ def translate_batch(
 - DRAMATIC IRONY TOOL: When the source supports it, the narrator may tell the audience what a character does not know ('ဒါပေမဲ့ သူမသိခဲ့တာက…') — only facts the source itself establishes.
 - SCENE-BOUNDARY PULL: At a genuine scene change or reveal, you MAY end the segment on the real plot's own unanswered question (what the character is about to do/discover) so viewers keep watching — the pull must come from the actual events, never from generic teaser filler (see the prohibition above).
 - VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
-- Tone: Engaging, clear, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်).
+- Tone: Engaging, clear, dynamic colloquial spoken Burmese (ခေတ်မီဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းပြော စကားပြောဟန်).{style_addon}
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     elif style == "funny":
         style_prompt = f"""PRESENTATION STYLE: LIGHT COMEDY — WARM SITUATIONAL RECAP (😂 ပေါ့ပါးဟာသ — နွေးထွေးပေါ့ပါးပြီး အချိတ်အဆက်မိသော ဇာတ်လမ်းပြော စတိုင်)
@@ -1750,7 +1875,7 @@ def translate_batch(
 - HUMOR SOURCE RULE: The comedy must come from the story itself — a misunderstanding, an absurd situation, a character's over-the-top reaction, an ironic contrast. The light, amused TONE may run continuously through the narration; a JOKE (a light comparison or an amused aside) is still Maximum ONE per segment, and the plot sentence always comes first.
 - INNER-THOUGHT DEVICE: For comic beats, quote the protagonist's thought in first person inside the narration ('သူ့စိတ်ထဲမှာတော့ \'…\' လို့ တွေးလိုက်ပါတယ်'), clearly attributed and consistent with what the source shows — never a thought that contradicts the character.
 - TASTE RULE (အလွန်အရေးကြီး): When the scene is genuinely tragic (death, serious injury, grief, abuse), drop the comedy completely for that segment and narrate it straight and respectfully — never joke over a character's real suffering.
-- NEVER replace actual story events with disconnected generic jokes or repetitive filler phrases.
+- NEVER replace actual story events with disconnected generic jokes or repetitive filler phrases.{style_addon}
 - STRICTLY PROHIBITED: Formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်ပါတယ်'။"""
     elif style == "pov":
         style_prompt = f"""PRESENTATION STYLE: FIRST-PERSON POV (👁️ ကိုယ်တွေ့ ရှုထောင့် — အဓိကဇာတ်ကောင် '{pov_pronoun}' ရှုထောင့်မှ ကိုယ်တိုင်ကြုံတွေ့ရသလို အချိတ်အဆက်မိမိ ပြောပြသော စတိုင်)
@@ -1766,7 +1891,7 @@ def translate_batch(
 - CHEKHOV-GUN RULE: Any warning, object or rule planted in the opening must be paid off when the story reaches it — name it again at that moment so the listener connects the two. Never invent a payoff the source lacks.
 - LIMITED-KNOWLEDGE RULE: You may only narrate what the protagonist personally sees, hears, or feels in that moment. NEVER state another character's hidden motive or off-screen action as fact — frame it as the protagonist's own guess or later realization ('အဲဒီတုန်းက {pov_pronoun} မသိခဲ့တာက...', 'နောက်မှ {pov_pronoun} သိလိုက်ရတာက...').
 - SCENE ANCHORING IN POV (မြင်ကွင်းပြောင်းတိုင်း အခြေချရန်): Whenever the scene changes (new place, new time, new people around you), open the new scene by grounding it through your own eyes — where {pov_pronoun} is now, who is there with {pov_pronoun}, and what is at stake for {pov_pronoun} — so a listener joining mid-story can follow without rewinding. Anchor in first person only; never switch to an outside narrator's summary to set the scene.
-- VOICE & PARTICLE RULE: In POV mode you are the main character telling your own story — NEVER use commentator particles like 'ဗျာ' or 'ခင်ဗျာ' or 'ပရိသတ်ကြီးတို့ရေ'. End sentences naturally with 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'၊ 'ရတယ်'။
+- VOICE & PARTICLE RULE: In POV mode you are the main character telling your own story — NEVER use commentator particles like 'ဗျာ' or 'ခင်ဗျာ' or 'ပရိသတ်ကြီးတို့ရေ'. End sentences naturally with 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'ပါပဲ'၊ 'လိုက်တယ်'၊ 'ရတယ်'။{style_addon}
 - STRICTLY PROHIBITED: Dry, bookish literary writing ('သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်')."""
     elif style == "dramatic":
         style_prompt = f"""PRESENTATION STYLE: DRAMA PRIME — EMOTIONAL MELODRAMA RECAP (🎭 ဒရာမာ ပရိုင်း — ခံစားချက်ပြည့်ဝပြီး ရင်ခုန်ဖွယ် ဒရာမာ ဇာတ်လမ်းပြော စတိုင်)
@@ -1783,7 +1908,7 @@ def translate_batch(
   5. RHETORICAL QUESTIONS: Allowed at climax beats only.
 - NOIR / THRILLER SUB-MODE (crime, horror, thriller and mystery sources only): Switch to dark, atmospheric thriller tension — build suspense through sensory details, ominous silence, and sharp staccato peril beats.
 - PACING & RHYTHM RULE (NOIR / THRILLER SUB-MODE): Match sentence length to tension — at peak danger or shock, switch to SHORT, punchy, rapid sentences (one action per sentence) so the voice sounds breathless; in the calm aftermath, let sentences run slightly longer and slower. Build dread by stating small concrete details (a sound, a look, a silence) instead of announcing 'ကြောက်စရာကြီး' in the abstract.
-- WITHHOLD, DON'T EXPLAIN — PLOT FACTS ONLY: When the source scene hides a motive or identity, narrate only what is visible and let the question hang — never explain a plot twist (identity or motive reveal) before the story itself reveals it. This applies to PLOT FACTS only, NEVER to emotions: always say plainly what the characters feel.
+- WITHHOLD, DON'T EXPLAIN — PLOT FACTS ONLY: When the source scene hides a motive or identity, narrate only what is visible and let the question hang — never explain a plot twist (identity or motive reveal) before the story itself reveals it. This applies to PLOT FACTS only, NEVER to emotions: always say plainly what the characters feel.{style_addon}
 - STRICTLY PROHIBITED: Dry, bookish literary writing. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use conversational sentence endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
     else:  # standard / narrator
         style_prompt = f"""PRESENTATION STYLE: CINEMATIC STORYTELLER — CINEMATIC MOVIE RECAP NARRATOR (📖 ရုပ်ရှင်ဟန် ဇာတ်လမ်းပြော — သဘာဝကျပြီး အချိတ်အဆက်မိသော ရုပ်ရှင်ဇာတ်လမ်းပြော စတိုင် - RECOMMENDED)
@@ -1796,8 +1921,16 @@ def translate_batch(
 - SENTENCE PERMISSION: Long, flowing sentences (up to ~110 characters) are welcome in calm scenes, and mid-sentence literary connectors are fine. The anti-bookish ban below targets SENTENCE ENDINGS ('သည်' / 'သဖြင့်') only — never sentence length.
 - EPISODIC BEAT PACING: Each scene resolves into ONE clear beat — a small turn, a moment of wonder, or a decision — before the narration moves on to the next scene.
 - VARY SENTENCE OPENINGS: Do not start consecutive segments with the same connective or the same subject name; alternate connectives, pronouns and name mentions so the narration never sounds mechanical.
-- Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.
+- Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.{style_addon}
 - STRICTLY PROHIBITED: Bookish SENTENCE ENDINGS. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
+
+    density_rule = (
+        "4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 12.5 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!\n"
+        "   DENSITY TARGET (EVERY STYLE): Write cleanly inside that band (~11 to 12.5 Burmese syllables per second of window) so the delivered narration runs ≈16–18.5 characters per second (aligned with natural 17.6 chars/s speech) with no dead air and zero rushing. Reach that density with real story content only — repeating an already-narrated fact as filler is FORBIDDEN — and never go past the top of the band: the spoken-duration budget always wins over density."
+        if v2
+        else "4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 14 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!\n"
+        "   DENSITY TARGET (EVERY STYLE): Write to the TOP of that band (~14 syllables per second of window) so the delivered narration runs ≈19–22 characters per second with no dead air. Reach that density with real story content only — repeating an already-narrated fact as filler is FORBIDDEN — and never go past the top of the band: the spoken-duration budget always wins over density."
+    )
 
     task_rules = f"""
 You are an AWARD-WINNING CONTEXT-AWARE BURMESE MOVIE RECAP NARRATOR & STORYTELLING TRANSLATOR.
@@ -1809,8 +1942,7 @@ CORE PRINCIPLE — LOGICAL STORY COHERENCE & TIMING FIT (ဇာတ်လမ်�
 1. Source transcripts from movies/dramas often contain short dialogue lines or idiomatic expressions. NEVER translate them as isolated, disconnected, literal fragments that make no sense on their own!
 2. Always read STORY CONTEXT MEMORY, PREVIOUS CONTEXT, CURRENT ITEMS, and NEXT CONTEXT together to understand the full scene: WHO is the subject, WHO are they talking to, WHAT just happened in the previous line, and WHY are they saying/doing this.
 3. Weave each CURRENT item into a smooth, meaningful Burmese recap sentence that flows naturally from the preceding ID into the next ID.
-4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 14 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!
-   DENSITY TARGET (EVERY STYLE): Write to the TOP of that band (~14 syllables per second of window) so the delivered narration runs ≈19–22 characters per second with no dead air. Reach that density with real story content only — repeating an already-narrated fact as filler is FORBIDDEN — and never go past the top of the band: the spoken-duration budget always wins over density.
+{density_rule}
 5. CAUSE-AND-EFFECT CONTINUITY (အဆက်မပြတ် ကြောင်းကျိုးဆက် စပ်ပြောင်းမှု): Read the PREVIOUS context, determine exactly WHO is currently acting, WHAT they just did in the preceding sentence, and WHY the current action logically follows — then narrate the CURRENT item as the natural next step in the story chain. NEVER begin a new scene idea mid-segment without connecting it to the previous segment's outcome.
 6. MYANMAR SPELLING & ORTHOGRAPHY RULES (အလွန်အရေးကြီးသော စာလုံးပေါင်းသတ်ပုံ စည်းမျဉ်းများ):
    - ALWAYS use correct standard Myanmar Unicode spelling according to the Myanmar Language Commission (မြန်မာစာအဖွဲ့ သတ်ပုံကျမ်းစံနှုန်း):
@@ -1887,11 +2019,12 @@ HARD RULES:
     else:
         prev_header = "PREVIOUS CONTEXT (READ-ONLY):"
         prev_block = _translation_lines(previous_context) if previous_context else "(none)"
-    prompt = f"""
+    prompt_story_ctx = _compact_story_context(story_context) if v2 else story_context
+    base_prompt = f"""
 {task_rules}{title_block}{part_block}
 
 STORY CONTEXT MEMORY:
-{json.dumps(story_context, ensure_ascii=False)}
+{json.dumps(prompt_story_ctx, ensure_ascii=False)}
 
 {prev_header}
 {prev_block}
@@ -1909,6 +2042,7 @@ CRITICAL OUTPUT ID PROTOCOL:
 {json.dumps([int(x["id"]) for x in current], ensure_ascii=False)}
 - Before responding, verify that items[].id exactly equals that sequence.
 """
+    prompt = base_prompt
     last: Exception | None = None
     for attempt in range(1, 4):
         try:
@@ -1958,12 +2092,13 @@ CRITICAL OUTPUT ID PROTOCOL:
             last = exc
             log(f"⚠️ Translation validation attempt {attempt}/3 failed: {exc}")
             exact_ids = [int(x["id"]) for x in current]
-            prompt += (
+            correction_note = (
                 f"\n\nCORRECTION REQUIRED: Previous response was invalid because: {exc}. "
                 f"Return the full CURRENT batch again with exactly {len(exact_ids)} items. "
                 f"The exact items[].id sequence MUST be {json.dumps(exact_ids, ensure_ascii=False)}. "
                 "Do not omit the final ID, renumber rows, or merge adjacent IDs."
             )
+            prompt = (base_prompt + correction_note) if v2 else (prompt + correction_note)
 
     # V26 translation-ID resilience: V23's short local-sync segmentation creates many
     # more IDs per long video.  Some Gemini responses occasionally omit the last row
@@ -2208,6 +2343,9 @@ def _build_compression_prompt(
         if is_female
         else "Keep natural spoken Burmese narrator voice."
     )
+    if str(style or "").strip().lower() == "pov":
+        pov_pron = "ကျွန်မ" if is_female else "ကျွန်တော်"
+        gender_rule += f" POV style: strictly maintain first-person pronoun '{pov_pron}' and never switch to opposite-gender or third-person framing."
     return f"""You are an EXPERT BURMESE MOVIE RECAP EDITOR (Compression Round {round_idx}).
 Compress ONLY the listed over-budget CURRENT IDs into concise spoken Burmese ({style.upper()} style) so each segment fits its spoken-duration budget.
 
@@ -2415,13 +2553,19 @@ def audit_and_repair_batch(
     previous_context = list(previous_context or [])
     next_context = list(next_context or [])
     style = str(narrative_style or "narrator").lower().strip()
+    v2_audit = _is_v2_prompts()
     pov_pronoun = "ကျွန်မ" if is_female else "ကျွန်တော်"
     target_name = f"Burmese movie recap narration ({style.upper()} style)"
+    dramatic_confrontation_note = (
+        " (Confrontation carve-out: preserve 2–4 short attributed near-verbatim confrontation lines instead of flattening them.)"
+        if v2_audit
+        else ""
+    )
     style_drift_checklist = {
         "viral": "- STYLE CHECK (VIRAL): Needs kinetic pace, sharp curiosity hooks on scene turns, and punchy transitions; when IDs 1–3 of the video are in this batch, the premise hook must be present in IDs 1–3 (who + abnormal situation + the turn) with no generic teaser — repair flat slow documentary phrasing.",
         "funny": "- STYLE CHECK (FUNNY): Needs warm situational lightness; inner-thought or amused aside allowed; no stand-up commentary (while staying respectful in tragedy) — repair humorless dry phrasing.",
         "pov": f"- STRICT POV CONSISTENCY: Every row MUST stay in intimate first-person protagonist POV using '{pov_pronoun}'. NEVER use crude 'ငါ' for the narrator, NEVER let another character's direct quote use 'ငါ' without clear reported-speech framing, and NEVER drift into third-person commentator voice or 'ဗျာ'/'ခင်ဗျာ'!",
-        "dramatic": "- STYLE CHECK (DRAMATIC): Needs the melodrama register by default — emotions labelled in plain words, dramatic irony used where the source allows, feelings explained even when plot facts are withheld; tense noir dread, sensory details and short breathless danger beats belong to crime/horror/thriller sources — repair cheerful slang, flat casual summary, or emotionally withheld narration.",
+        "dramatic": f"- STYLE CHECK (DRAMATIC): Needs the melodrama register by default — emotions labelled in plain words, dramatic irony used where the source allows, feelings explained even when plot facts are withheld; tense noir dread, sensory details and short breathless danger beats belong to crime/horror/thriller sources — repair cheerful slang, flat casual summary, or emotionally withheld narration.{dramatic_confrontation_note}",
         "narrator": "- STYLE CHECK (NARRATOR): Needs warm, grounded cinema storytelling clarity — repair hyped viral slang, random jokes, or bookish sentence ENDINGS (သည်/သဖြင့်).",
     }
     style_check_line = style_drift_checklist.get(style, style_drift_checklist["narrator"])
@@ -2435,6 +2579,7 @@ def audit_and_repair_batch(
         if style != "pov"
         else style_check_line
     )
+    AUDIT_MAX_SPLIT_DEPTH = 3
 
     def _audit_window(
         current_rows: list[dict[str, Any]],
@@ -2462,6 +2607,12 @@ def audit_and_repair_batch(
             overbudget_before, tempo=eff_tempo, max_video_slow=eff_slow
         )
         budget_block = f"\n{budget_directive}" if budget_directive else ""
+        dialogue_audit_note = (
+            "dialogue is narrated as beats, never transcribed question-and-answer exchanges (except DRAMATIC confrontation scenes noted above)"
+            if (v2_audit and style == "dramatic")
+            else "dialogue is narrated as beats, never transcribed question-and-answer exchanges"
+        )
+        audit_story_ctx = _compact_story_context(story_context) if v2_audit else story_context
         base_prompt = f"""
 You are an EXPERT BURMESE MOVIE RECAP NARRATION AUDITOR.
 Audit the {target_name}. Every visual event, dialogue, and plot development must remain faithfully narrated inside its corresponding timing ID.
@@ -2480,7 +2631,7 @@ For EVERY CURRENT ID check:
 {audit_style_rule}
 - natural spoken colloquial style: strictly avoid formal literary 'သည်'/'သဖြင့်' bookish endings, no English/Latin words;
 - cinematic narrative flow: ensure natural, complete spoken sentences instead of awkward word-by-word literal translations or broken dialogue fragments;
-- scene anchoring & subject clarity: a row that opens a new scene re-names its actor, place and stake instead of floating a bare pronoun carried over from the previous scene; dialogue is narrated as beats, never transcribed question-and-answer exchanges; no vague invented filler replacing the source's concrete facts; complete standard words only (no truncated coined forms); named characters are called by the source's own names, never by vague coined role paraphrases; the standard form 'အဲဒီ' is used (never 'အဲ့ဒီ');
+- scene anchoring & subject clarity: a row that opens a new scene re-names its actor, place and stake instead of floating a bare pronoun carried over from the previous scene; {dialogue_audit_note}; no vague invented filler replacing the source's concrete facts; complete standard words only (no truncated coined forms); named characters are called by the source's own names, never by vague coined role paraphrases; the standard form 'အဲဒီ' is used (never 'အဲ့ဒီ');
 - spelling & word-choice discipline: standard spelling throughout — never the malformed 'တကြီး' adverb family ('အံ့ဩတကြီး', 'စိုးရိမ်တကြီး' — write 'အံ့ဩစွာ', 'စိုးရိမ်စွာ'); every foreign name keeps ONE consistent natural spelling across all rows (never stacked inventions like 'လို့စ်'); things are called by their true names (a robot is 'စက်ရုပ်', never 'သရဲ'); natural constructions only (never 'အန္တရာယ်ကြားဆီ' or 'နင်းခြေတာခံရတော့မှာ'); sentence endings are varied — a batch where nearly every row closes '…ခဲ့ပါတယ်' needs repair;
 - strictly standard Myanmar Unicode characters only (no homoglyphs from Ethiopic or Georgian scripts);
 - BURMESE NUMERALS ONLY (font tofu guard): replace any ASCII digits '0–9' with Burmese numerals or words (e.g. '၁၀', '၂၀၂၆');
@@ -2495,7 +2646,7 @@ Example shape using ACTUAL IDs from this batch:
 Use status=pass to preserve a good translation byte-for-byte. Use repair only when necessary.
 
 STORY CONTEXT:
-{json.dumps(story_context, ensure_ascii=False)}
+{json.dumps(audit_story_ctx, ensure_ascii=False)}
 
 PREVIOUS APPROVED CONTEXT (READ-ONLY):
 {_translation_lines(prev_rows) if prev_rows else '(none)'}
@@ -2582,7 +2733,7 @@ Your checks[].id list MUST equal exactly: {exact_ids_json}
         # If a large late batch still confuses Gemini's audit response, preserve the
         # already-validated translations and audit them in smaller windows instead of
         # aborting the whole multi-hour job.
-        if len(current_rows) > 6:
+        if len(current_rows) > 6 and depth < AUDIT_MAX_SPLIT_DEPTH:
             mid = len(current_rows) // 2
             left_rows = current_rows[:mid]
             right_rows = current_rows[mid:]
@@ -2702,20 +2853,24 @@ def is_credit_or_signoff(text: str) -> bool:
 def audit_script_ending_credit(
     rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Drop a credit/sign-off LAST sentence — repair by removal only.
+    """Drop trailing credit/sign-off lines — repair by removal only.
 
-    If the final row's translation is a credit/sign-off, drop that
-    sentence only (earlier rows are byte-identical).  Returns a NEW
-    list; the caller must not assume in-place mutation.
+    Walks backwards dropping consecutive trailing credit/sign-off rows (up
+    to 5 trailing lines while keeping at least row 0) so earlier story rows
+    remain byte-identical. Returns a NEW list without mutating *rows*.
     """
     if not rows:
         return list(rows)
-    last = rows[-1]
-    text = _clean(last.get("translation") or last.get("narration") or "")
-    if not is_credit_or_signoff(text):
-        return list(rows)
-    # Drop the credit line — use the penultimate row as the new ending.
-    return list(rows[:-1])
+    out = list(rows)
+    dropped = 0
+    while len(out) > 1 and dropped < 5:
+        last = out[-1]
+        text = _clean(last.get("translation") or last.get("narration") or "")
+        if not is_credit_or_signoff(text):
+            break
+        out.pop()
+        dropped += 1
+    return out
 
 
 def _batch_audit_flags(

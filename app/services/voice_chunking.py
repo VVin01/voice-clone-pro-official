@@ -185,9 +185,12 @@ def _hard_split(sentence: str, budget_chars: int) -> list[str]:
                         piece = piece.strip()
                         rest = rest.strip()
                 else:
-                    # 4. Safe fallback: don't break combining marks
+                    # 4. Safe fallback: don't break combining marks or virama/asat stacks
                     cut = budget_chars
-                    while cut > 1 and cut < len(rest) and _is_combining_or_stack(rest[cut]):
+                    while cut > 1 and cut < len(rest) and (
+                        _is_combining_or_stack(rest[cut])
+                        or rest[cut - 1] in ("\u1039", "\u103A")
+                    ):
                         cut -= 1
                     piece = rest[:cut]
                     rest = rest[cut:]

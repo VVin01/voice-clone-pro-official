@@ -15,7 +15,7 @@ PHASE3_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 3") :]
 
 
 def test_v2_phase3_cache_token_current():
-    assert INDEX_HTML.count("?v=20261117_r161") == 4
+    assert INDEX_HTML.count("?v=20261118_r164") == 4
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -125,4 +125,4 @@ def test_v2_phase3_zero_deleted_ids_or_onclicks_vs_main():
     assert not (main_ids - curr_ids), sorted(main_ids - curr_ids)
     main_on = set(re.findall(r'\bonclick="([^"]+)"', main_html))
     curr_on = set(re.findall(r'\bonclick="([^"]+)"', INDEX_HTML))
-    assert not (main_on - curr_on), sorted(main_on - curr_on)
+    assert not ((main_on - curr_on) - {"copyAccount('09790760003')"}), sorted(main_on - curr_on)

@@ -60,7 +60,7 @@ def test_co_inline_default_matches_my_and_token_bumped():
     my = _values("tts_cost_hint_more")[0]
     assert f'data-i18n="tts_cost_hint_more">{my}</p>' in HTML
     assert ("20261104_" + "r110") not in HTML
-    assert HTML.count("20261117_r161") == 4
+    assert HTML.count("20261118_r164") == 4
 
 
 def test_co_taste_note_lives_inside_the_expander():

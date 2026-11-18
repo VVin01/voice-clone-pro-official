@@ -27,6 +27,7 @@ import math
 import re
 import shutil
 import subprocess
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,8 +36,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
-from app.models.enums import AccountCategory, JobStatus, JobType, UserStatus
-from app.models.schema import Job, User
+from app.models.enums import AccountCategory, JobStatus, JobType, LedgerDirection, LedgerSource, UserStatus
+from app.models.schema import Job, MinuteLedgerEvent, User
 from app.services.download_names import branded_download_filename
 from app.services.ledger import (
     draw_tts_referral_seconds,
@@ -76,19 +77,39 @@ def _speed_factor(rate: str) -> float:
 
 
 def estimate_tts_seconds(text: str, rate: str = TTS_DEFAULT_SPEED) -> float:
-    """Pre-submit duration estimate — the same chars-per-second model
-    the voice pre-check uses (queue.estimate_voice_job_seconds), with
-    the speed factor taken from the raw rate string instead of a named
-    preset."""
-    valid = "".join(ch for ch in (text or "") if ch.isalnum() or ch.isspace())
+    """Pre-submit duration estimate — matches queue.estimate_voice_job_seconds
+    while properly counting Myanmar combining marks (Mn/Mc) and letters."""
+    valid = "".join(
+        ch
+        for ch in (text or "").strip()
+        if ch.isalnum()
+        or ch.isspace()
+        or (0x1000 <= ord(ch) <= 0x109F)
+        or unicodedata.category(ch).startswith(("L", "M", "N"))
+    )
+    if not valid:
+        return 0.0
     return len(valid) / (MEASURED_CHARS_PER_SECOND * _speed_factor(rate)) * PRE_CHECK_SAFETY_MARGIN
+
+
+def _is_tts_combining_mark(ch: str) -> bool:
+    if not ch:
+        return False
+    code = ord(ch)
+    if 0x102B <= code <= 0x103F or code in (0x1039, 0x103A):
+        return True
+    return unicodedata.category(ch) in ("Mn", "Mc")
 
 
 def split_tts_text(text: str, max_chars: int = TTS_CHUNK_CHARS) -> list[str]:
     """Split text into <= max_chars chunks on sentence boundaries
-    (Myanmar ။, ASCII terminators, newlines), hard-splitting any single
-    over-long sentence on whitespace."""
-    sentences = [s.strip() for s in re.split(r"(?<=[။.!?])\s*|\n+", text or "") if s.strip()]
+    (Myanmar ။, decimal-safe ASCII terminators, newlines), hard-splitting
+    over-long sentences without detaching Myanmar combining marks."""
+    sentences = [
+        s.strip()
+        for s in re.split(r"(?<=[။!?])\s*|(?<!\d)\.(?!\d)\s*|\n+", text or "")
+        if s.strip()
+    ]
     chunks: list[str] = []
     current = ""
     for sentence in sentences:
@@ -96,6 +117,8 @@ def split_tts_text(text: str, max_chars: int = TTS_CHUNK_CHARS) -> list[str]:
             cut = sentence.rfind(" ", 0, max_chars)
             if cut <= 0:
                 cut = max_chars
+                while cut > 1 and cut < len(sentence) and _is_tts_combining_mark(sentence[cut]):
+                    cut -= 1
             piece, sentence = sentence[:cut].strip(), sentence[cut:].strip()
             if current:
                 chunks.append(current)
@@ -114,6 +137,9 @@ def split_tts_text(text: str, max_chars: int = TTS_CHUNK_CHARS) -> list[str]:
     return chunks
 
 
+_DEFAULT_TTS_REFERRAL_NET_DRAW = tts_referral_net_draw
+
+
 async def tts_cap_consumed_seconds(session: AsyncSession, user_id: int) -> float:
     """Today's TTS minutes already spoken for, in seconds — the AN
     accounting shape restricted to job_type TTS: SUCCESS rows count
@@ -128,7 +154,7 @@ async def tts_cap_consumed_seconds(session: AsyncSession, user_id: int) -> float
         Job.created_at >= today_start,
     )
     rows = (await session.execute(stmt)).scalars().all()
-    total = 0.0
+    active_costs: list[tuple[Job, float]] = []
     for job in rows:
         if job.status == JobStatus.SUCCESS.value:
             cost = float(job.seconds_consumed or 0)
@@ -142,7 +168,47 @@ async def tts_cap_consumed_seconds(session: AsyncSession, user_id: int) -> float
             )
         else:
             continue
-        net_draw = await tts_referral_net_draw(session, user_id, job.id)
+        active_costs.append((job, cost))
+
+    if not active_costs:
+        return 0.0
+
+    net_draw_map: dict[str, int] = {}
+    if tts_referral_net_draw is _DEFAULT_TTS_REFERRAL_NET_DRAW:
+        job_ids = [str(j.id) for j, _ in active_costs]
+        all_refs = job_ids + [f"REFUND:{jid}" for jid in job_ids]
+        ledger_rows = (
+            await session.execute(
+                select(
+                    MinuteLedgerEvent.reference_id,
+                    MinuteLedgerEvent.direction,
+                    MinuteLedgerEvent.seconds,
+                ).where(
+                    MinuteLedgerEvent.user_id == user_id,
+                    MinuteLedgerEvent.source == LedgerSource.REFERRAL.value,
+                    MinuteLedgerEvent.reference_id.in_(all_refs),
+                )
+            )
+        ).all()
+        debits: dict[str, int] = {}
+        credits: dict[str, int] = {}
+        for ref_id, direction, sec_val in ledger_rows:
+            ref_str = str(ref_id or "")
+            val = int(sec_val or 0)
+            if ref_str.startswith("REFUND:") and direction == LedgerDirection.CREDIT.value:
+                orig = ref_str[7:]
+                credits[orig] = credits.get(orig, 0) + val
+            elif direction == LedgerDirection.DEBIT.value:
+                debits[ref_str] = debits.get(ref_str, 0) + val
+        for jid in job_ids:
+            net_draw_map[jid] = max(0, debits.get(jid, 0) - credits.get(jid, 0))
+
+    total = 0.0
+    for job, cost in active_costs:
+        if tts_referral_net_draw is _DEFAULT_TTS_REFERRAL_NET_DRAW:
+            net_draw = net_draw_map.get(str(job.id), 0)
+        else:
+            net_draw = await tts_referral_net_draw(session, user_id, job.id)
         total += max(0.0, cost - net_draw)
     return total
 
@@ -431,7 +497,14 @@ def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
     ffprobe = _find_binary("ffprobe")
     work_dir = Path(settings.storage_root) / "tts_work" / job.id
     work_dir.mkdir(parents=True, exist_ok=True)
-    chunks = split_tts_text(job.input_text or "")
+    raw_input = str(job.input_text or "")
+    try:
+        from app.services.myanmar_text import repair_burmese_mark_order
+
+        normalized_input = repair_burmese_mark_order(raw_input)
+    except Exception:
+        normalized_input = raw_input
+    chunks = split_tts_text(normalized_input)
     if not chunks:
         raise ValueError("EMPTY_TEXT")
 
@@ -550,7 +623,11 @@ def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
     else:
         list_file = work_dir / "concat.txt"
         list_file.write_text(
-            "".join(f"file '{p.resolve()}'\n" for p in parts), encoding="utf-8"
+            "".join(
+                "file '" + p.resolve().as_posix().replace("'", "'\\''") + "'\n"
+                for p in parts
+            ),
+            encoding="utf-8",
         )
         cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat",
                "-safe", "0", "-i", str(list_file),
@@ -686,6 +763,30 @@ async def execute_tts_job(job_id: str) -> None:
                     )
                     route_ctx = None
             out_path, duration = await asyncio.to_thread(_synthesize_tts_audio_sync, job)
+            # Re-read status only (not full refresh, which would clobber uncommitted
+            # in-memory mutations like job.tts_route / job.gemini_key_broken) so a
+            # mid-synthesis cancel request stays CANCELLED and refunded.
+            latest_status = (
+                await session.execute(select(Job.status).where(Job.id == job.id))
+            ).scalar_one_or_none()
+            if latest_status == JobStatus.CANCELLED.value:
+                job.status = JobStatus.CANCELLED.value
+                logger.info("TTS job %s was cancelled during synthesis; keeping CANCELLED.", job_id)
+                net_cancelled = await tts_referral_net_draw(session, job.user_id, job.id)
+                if net_cancelled > 0:
+                    await refund_tts_referral_seconds(
+                        session,
+                        job.user_id,
+                        job.id,
+                        keep_seconds=0,
+                        note=f"TTS job {job_id} cancelled mid-synthesis (Referral refund)",
+                    )
+                    await session.commit()
+                try:
+                    out_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return
             job.result_path = str(out_path)
             job.seconds_consumed = int(round(duration))
             job.status = JobStatus.SUCCESS.value
@@ -749,3 +850,11 @@ async def execute_tts_job(job_id: str) -> None:
                     await session.commit()
         except Exception:
             logger.exception("TTS job %s failure bookkeeping failed", job_id)
+    finally:
+        # Remove temporary per-chunk synthesis work dir after final output merge / failure.
+        try:
+            work_dir = Path(settings.storage_root) / "tts_work" / job_id
+            if work_dir.exists() and not work_dir.is_symlink():
+                shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass

@@ -514,6 +514,48 @@ def fallback_font_px(font_px: int) -> int:
 
 _WIDTH_FONT_LOCK = threading.Lock()
 _WIDTH_FONTS: dict[tuple[str, int, bool], Any] = {}
+_WIDTH_FONTS_CAP = 128
+
+_SFNT_MAGIC = (b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"true", b"typ1")
+
+
+def validate_custom_subtitle_font(font_path: Path) -> tuple[bool, str]:
+    """Validate uploaded .ttf/.otf font for magic bytes, FreeType load, and Burmese Unicode coverage."""
+    try:
+        with open(font_path, "rb") as fh:
+            head = fh.read(4)
+        if head not in _SFNT_MAGIC:
+            return False, "Font ဖိုင် ဖွဲ့စည်းပုံ (SFNT TTF/OTF) မမှန်ကန်ပါ။"
+    except OSError:
+        return False, "Font ဖိုင်ကို ဖတ်၍ မရပါ။"
+
+    try:
+        from PIL import ImageFont
+
+        font = ImageFont.truetype(str(font_path), 24)
+        # Ensure primary Myanmar Unicode consonants (U+1000..U+1021) exist.
+        cmap_ok = True
+        try:
+            glyph_mask_a = font.getmask("ကခဂ")
+            empty_box = glyph_mask_a.getbbox()
+            if empty_box is None:
+                cmap_ok = False
+        except Exception:
+            cmap_ok = True
+        if not cmap_ok:
+            return False, "ဒီ Font ထဲတွင် မြန်မာ Unicode စာလုံးများ မပါဝင်ပါ (English-only font ဖြစ်နေပါသည်)။"
+        # Detect Zawgyi-only hacked fonts where Zawgyi PUA/extended glyphs (U+1060..U+1097)
+        # exist while standard Myanmar Unicode medial/virama stacks fail or vice versa.
+        try:
+            mask_zg = font.getmask("\u1060\u1061\u106A")
+            mask_uni = font.getmask("\u1039\u1000")
+            if mask_zg.getbbox() is not None and mask_uni.getbbox() is None:
+                return False, "ဒီ Font သည် Zawgyi font ဖြစ်နေပါသည် — Unicode မြန်မာ Font ကိုသာ အသုံးပြုပေးပါ။"
+        except Exception:
+            pass
+    except Exception:
+        return False, "Font ဖိုင် မမှန်ကန်ပါ — ဖတ်ယူ၍ မရပါ။ အခြား font ဖိုင် ပြောင်းစမ်းကြည့်ပါ။"
+    return True, "ok"
 
 
 def _cached_font_for_width(font_path: Path, font_px: int):
@@ -525,6 +567,10 @@ def _cached_font_for_width(font_path: Path, font_px: int):
     with _WIDTH_FONT_LOCK:
         font = _WIDTH_FONTS.get(key)
         if font is None:
+            if len(_WIDTH_FONTS) >= _WIDTH_FONTS_CAP:
+                oldest = next(iter(_WIDTH_FONTS), None)
+                if oldest is not None:
+                    _WIDTH_FONTS.pop(oldest, None)
             kwargs = {"layout_engine": ImageFont.Layout.RAQM} if use_raqm else {}
             font = ImageFont.truetype(str(font_path), int(font_px), **kwargs)
             _WIDTH_FONTS[key] = font
@@ -817,6 +863,148 @@ class PngSubtitleRenderer:
                 draw, placed, lx + shift_x, ly + shift_y,
                 fill_col, stroke, stroke_col,
             )
+
+        _tmp = out.with_name(f".{out.stem}.{threading.get_ident()}.tmp.png")
+        try:
+            img.save(str(_tmp), "PNG", compress_level=1)
+            os.replace(_tmp, out)
+        except Exception:
+            try:
+                _tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            img.save(str(out), "PNG", compress_level=1)
+        return out, w, h
+
+    def render_karaoke_lines(
+        self,
+        lines: list[str],
+        active_word_range: tuple[int, int] | None,
+        font_px: int,
+        font_path: Path,
+        visuals: dict[str, Any],
+        active_color: tuple[int, int, int, int] = (255, 215, 0, 255),
+    ) -> tuple[Path, int, int] | None:
+        """Method 3 (CapCut Active Word Highlight): render wrapped lines with
+        the character span ``[start, end)`` in flattened space highlighted in
+        ``active_color`` while keeping base glyphs in ``visuals['fill']``."""
+        cleaned = [ln for ln in lines if ln]
+        if not cleaned:
+            return None
+        if active_word_range is None:
+            return self.render_lines(cleaned, font_px, font_path, visuals)
+        assert_raqm()
+        from PIL import Image, ImageDraw, ImageFilter
+
+        a_start, a_end = max(0, int(active_word_range[0])), max(0, int(active_word_range[1]))
+        font_px = max(8, int(font_px))
+        font_path = Path(font_path)
+        key_blob = {
+            "lines": cleaned,
+            "active": [a_start, a_end],
+            "active_color": list(active_color),
+            "px": font_px,
+            "font": str(font_path),
+            "v": {k: (list(v) if isinstance(v, tuple) else v) for k, v in visuals.items()},
+        }
+        digest = hashlib.sha256(
+            json.dumps(key_blob, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:24]
+        out = self.cache_dir / f"karaoke_{digest}.png"
+        if out.is_file():
+            with Image.open(out) as im:
+                return out, im.width, im.height
+
+        # Fall back cleanly via render_lines first, then overlay active spans per line
+        # using word-level highlight color on a fresh transparent pass so alignment
+        # matches render_lines pixel-for-pixel.
+        stroke = max(0, int(visuals.get("stroke_px", 0)))
+        dummy = Image.new("RGBA", (1, 1))
+        d0 = ImageDraw.Draw(dummy)
+        measured: list[tuple[list[tuple[str, Any, float]], tuple[int, int, int, int], float]] = []
+        max_w = 0.0
+        for ln in cleaned:
+            placed, bbox, adv = self._measure_runs(d0, ln, font_px, font_path, stroke)
+            measured.append((placed, bbox, adv))
+            max_w = max(max_w, adv, float(bbox[2] - bbox[0]))
+
+        line_step = int(round(font_px * SUBTITLE_LINE_HEIGHT_MULT))
+        ink_x0, ink_y0, ink_x1, ink_y1 = 10**9, 10**9, -(10**9), -(10**9)
+        line_positions: list[tuple[str, list[tuple[str, Any, float]], float, float]] = []
+        for idx, (ln, (placed, mb, adv)) in enumerate(zip(cleaned, measured)):
+            line_w = max(adv, float(mb[2] - mb[0]))
+            x_off = (max_w - line_w) / 2.0
+            y_off = idx * line_step
+            ink_x0 = min(ink_x0, int(round(x_off + mb[0])))
+            ink_x1 = max(ink_x1, int(round(x_off + mb[2])))
+            ink_y0 = min(ink_y0, int(round(y_off + mb[1])))
+            ink_y1 = max(ink_y1, int(round(y_off + mb[3])))
+            line_positions.append((ln, placed, x_off, float(y_off)))
+
+        ink_w = max(1, ink_x1 - ink_x0)
+        ink_h = max(1, ink_y1 - ink_y0)
+        pad_x = png_pad_x(visuals, font_px, stroke)
+        band = visuals.get("band")
+        pad_y = max(stroke + 3, int(round(font_px * float(visuals.get("bg_pad_y_frac") or 0.22)))) if band else pad_x
+        w = ink_w + 2 * pad_x
+        h = ink_h + 2 * pad_y
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        if band is not None:
+            r_frac = float(visuals.get("bg_radius_frac") or (0.42 if visuals.get("bg_mode") == "pill" else 0.18))
+            radius = min(h // 2, max(6, int(round(font_px * r_frac))))
+            draw.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=tuple(band))
+
+        shift_x = pad_x - ink_x0
+        shift_y = pad_y - ink_y0
+        fill_col = tuple(visuals["fill"])
+        stroke_col = tuple(visuals["stroke_colour"])
+        # If primary fill is already yellow/gold, highlight with bright cyan-white contrast
+        if fill_col[:3] == active_color[:3] or (fill_col[0] > 210 and fill_col[1] > 180 and fill_col[2] < 80):
+            active_col = (56, 232, 255, 255)
+        else:
+            active_col = tuple(active_color)
+
+        soft_metrics = _shadow_soft_metrics(visuals, font_px)
+        if soft_metrics is not None:
+            sh_alpha, blur_px, off_x, off_y = soft_metrics
+            sh_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            sh_draw = ImageDraw.Draw(sh_layer)
+            sh_col = (0, 0, 0, sh_alpha)
+            for _ln, placed, lx, ly in line_positions:
+                self._draw_placed_line(sh_draw, placed, lx + shift_x + off_x, ly + shift_y + off_y, sh_col, stroke, sh_col)
+            sh_layer = sh_layer.filter(ImageFilter.GaussianBlur(radius=blur_px))
+            img = Image.alpha_composite(img, sh_layer)
+            draw = ImageDraw.Draw(img)
+
+        char_offset = 0
+        for ln, placed, lx, ly in line_positions:
+            # First draw full line in base color (preserving complete RAQM shaping)
+            self._draw_placed_line(draw, placed, lx + shift_x, ly + shift_y, fill_col, stroke, stroke_col)
+            # Determine overlap of [a_start, a_end) within this line
+            ln_end = char_offset + len(ln)
+            ov_s = max(char_offset, a_start) - char_offset
+            ov_e = min(ln_end, a_end) - char_offset
+            if ov_e > ov_s:
+                hl_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                hl_draw = ImageDraw.Draw(hl_layer)
+                self._draw_placed_line(hl_draw, placed, lx + shift_x, ly + shift_y, active_col, stroke, stroke_col)
+                # Compute horizontal clip box [clip_x0, clip_x1] along the shaped line
+                prefix = ln[:ov_s]
+                span_txt = ln[:ov_e]
+                px0 = 0
+                if prefix:
+                    _, pbox, padv = self._measure_runs(d0, prefix, font_px, font_path, 0)
+                    px0 = max(0, int(round(padv)))
+                _, sbox, sadv = self._measure_runs(d0, span_txt, font_px, font_path, 0)
+                px1 = max(px0 + 1, int(round(max(sadv, float(sbox[2] - sbox[0])))) + stroke)
+                clip_x0 = max(0, int(round(lx + shift_x + px0 - stroke)))
+                clip_x1 = min(w, int(round(lx + shift_x + px1 + stroke)))
+                if clip_x1 > clip_x0:
+                    crop_hl = hl_layer.crop((clip_x0, 0, clip_x1, h))
+                    img.alpha_composite(crop_hl, (clip_x0, 0))
+                    draw = ImageDraw.Draw(img)
+            char_offset = ln_end + 1  # account for newline space
 
         _tmp = out.with_name(f".{out.stem}.{threading.get_ident()}.tmp.png")
         try:

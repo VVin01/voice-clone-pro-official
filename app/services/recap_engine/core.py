@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import json
 import logging
+import math
 import os
 import queue
 import shutil
@@ -390,6 +391,12 @@ class EdgeTTSEngine:
     @staticmethod
     def _clean_text(text: str) -> str:
         value = unicodedata.normalize("NFC", str(text or ""))
+        try:
+            from app.services.myanmar_text import repair_burmese_mark_order
+
+            value = repair_burmese_mark_order(value)
+        except Exception:
+            pass
         value = "".join(ch if ch in "\n\t" or ord(ch) >= 32 else " " for ch in value)
         value = re.sub(r"\s+", " ", value).strip()
         if not value:
@@ -652,9 +659,10 @@ def probe_duration(ffprobe: str, path: Path) -> float:
     return float(result.stdout.strip())
 
 
-def _concat_list_line(path: Path) -> str:
-    p = str(path.resolve()).replace("\\", "/")
-    p = p.replace("'", "'\\''")
+def _concat_list_line(path: Path, *, posix: bool = False) -> str:
+    resolved = path.resolve()
+    raw = resolved.as_posix() if posix else str(resolved)
+    p = raw.replace("'", "'\\''")
     return f"file '{p}'"
 
 
@@ -1197,13 +1205,23 @@ def subtitle_centre_px(cw: int, ch: int, layout: dict[str, Any] | None,
 # below accepts BOTH semantics so pre-AK jobs, stored configs and
 # the bot flow keep their historical centre placement untouched.
 
+def _subtitle_line_height_multiplier(sub_lines: int) -> float:
+    """Visual text-block height multiplier for 1, 2, or 3 subtitle lines."""
+    n = min(3, max(1, int(sub_lines or 1)))
+    if n == 1:
+        return 1.15
+    if n == 2:
+        return 2.30
+    return 3.65
+
+
 def _plate_height_px(font_px: int, sub_lines: int, ch: int) -> float:
     """The subtitle plate's fitted height in px for a resolved font
     size — the exact formula subtitle_plate_box has always used
     (wrapped text height + padding, clamped to [1%, 50%] of the
     canvas height). One implementation so the plate box, the PNG
     block top and the anchor resolver can never disagree."""
-    text_h = float(font_px) * (1.15 if int(sub_lines or 1) == 1 else 2.3)
+    text_h = float(font_px) * _subtitle_line_height_multiplier(sub_lines)
     pad = max(10.0, float(font_px) * 0.40)
     return max(0.01 * ch, min(0.50 * ch, text_h + 2.0 * pad))
 
@@ -1762,7 +1780,7 @@ def _subtitle_block_top_px(
     centre_px = subtitle_centre_px(cw, ch, layout, sub_y)
     if centre_px is not None:
         return int(round(centre_px - block_h / 2.0))
-    text_half_height = (font_px * (1.15 if int(sub_lines or 1) == 1 else 2.3)) / 2.0
+    text_half_height = (font_px * _subtitle_line_height_multiplier(sub_lines)) / 2.0
     if subtitles_margin_v is not None:
         mv_val = float(subtitles_margin_v)
         pixels_from_bottom = mv_val if mv_val > 100 else (mv_val / 288.0) * ch
@@ -1811,7 +1829,7 @@ def subtitle_plate_box(cw: int, ch: int, layout: dict[str, Any] | None = None, *
     cw = max(320, int(cw))
     ch = max(240, int(ch))
     font_px = subtitle_font_px(cw, ch, raw_font_size, sub_lines, layout)
-    text_h_px = font_px * (1.15 if sub_lines == 1 else 2.3)
+    text_h_px = font_px * _subtitle_line_height_multiplier(sub_lines)
     pad_px = max(10.0, font_px * 0.40)
     h_frac = (text_h_px + 2.0 * pad_px) / ch
     if min_h:
@@ -3773,6 +3791,30 @@ def _escape_ass_cue_text(text: str) -> str:
     return escaped
 
 
+def _karaoke_ass_line(c_text: str, dur_sec: float) -> str:
+    """Wrap space/word tokens in ASS progressive karaoke \\kf tags."""
+    tokens = [t for t in re.split(r"(\s+)", c_text) if t]
+    if not tokens:
+        return c_text
+    total_cs = max(10, int(round(max(0.1, float(dur_sec)) * 100.0)))
+    word_weights = [max(1, len(re.sub(r"\s+", "", tok))) if tok.strip() else 0 for tok in tokens]
+    w_sum = sum(word_weights) or 1
+    out: list[str] = []
+    spent = 0
+    last_word_idx = max((idx for idx, w in enumerate(word_weights) if w > 0), default=-1)
+    for idx, (tok, w) in enumerate(zip(tokens, word_weights)):
+        if w <= 0:
+            out.append(tok)
+            continue
+        if idx == last_word_idx:
+            cs = max(1, total_cs - spent)
+        else:
+            cs = max(1, int(round((w / w_sum) * total_cs)))
+            spent += cs
+        out.append(f"{{\\kf{cs}}}{tok}")
+    return "".join(out)
+
+
 def write_synced_ass_file(
     cues: list[tuple[float, float, str]],
     ass_path: Path,
@@ -3789,6 +3831,7 @@ def write_synced_ass_file(
     layout: dict[str, Any] | None = None,
     sub_margin: float | None = None,
     sub_visual_overrides: dict[str, Any] | None = None,
+    sub_effect: str = "none",
 ) -> Path:
     """Generate a pixel-accurate ASS subtitle file with complex Myanmar script text shaping."""
     cw = max(320, int(cw))
@@ -3806,7 +3849,7 @@ def write_synced_ass_file(
     # sy is the center of the subtitle line as a fraction from top (0.0 to 1.0).
     # ASS Alignment 2 (bottom-center) positions text baseline at margin_v.
     # To place the subtitle center exactly at sy*ch, subtract half the rendered text height:
-    text_half_height = (font_size * (1.15 if sub_lines == 1 else 2.3)) / 2.0
+    text_half_height = (font_size * _subtitle_line_height_multiplier(sub_lines)) / 2.0
     # Batch AK: sub_margin (bottom-edge anchor) wins over the legacy
     # centre when both ride the overlays dict.
     centre_px = (
@@ -3867,6 +3910,14 @@ def write_synced_ass_file(
     wrap_style = 2 if sub_lines == 1 else 0
     margin_h = max(20, int(round(cw * 0.04)))
 
+    eff_mode = str(sub_effect or "none").strip().lower()
+    sec_col = "&H00FFFFFF" if p_col.upper() != "&H00FFFFFF" else "&H00C8D4E0"
+    if eff_mode == "karaoke":
+        # Progressive karaoke fills from SecondaryColour -> PrimaryColour; keep Base crisp white and Highlight vivid gold/cyan.
+        sec_col = "&H00EAEAEA"
+        if p_col.upper() == "&H00FFFFFF":
+            p_col = "&H0000D7FF"
+
     header = f"""[Script Info]
 Title: Synced Myanmar Subtitles
 ScriptType: v4.00+
@@ -3878,11 +3929,17 @@ PlayResY: {ch}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{p_col},&H000000FF,{o_col},{b_col},-1,0,0,0,100,100,0,0,{b_style},{outl:.2f},{shad:.2f},2,{margin_h},{margin_h},{margin_v},1
+Style: Default,{font_name},{font_size},{p_col},{sec_col},{o_col},{b_col},-1,0,0,0,100,100,0,0,{b_style},{outl:.2f},{shad:.2f},2,{margin_h},{margin_h},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+    effect_tag = ""
+    if eff_mode == "fade":
+        effect_tag = r"{\fad(110,80)}"
+    elif eff_mode == "pop":
+        effect_tag = r"{\fad(80,60)\t(0,110,\fscx106\fscy106)\t(110,220,\fscx100\fscy100)}"
+
     dialogues = []
     for st_sec, en_sec, cue_text in cues:
         c_text = canonicalize_burmese_text(cue_text)
@@ -3892,13 +3949,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # so the \N breaks the writer itself inserts stay live while
         # the cue's own backslashes/braces are neutralised.
         c_text = _escape_ass_cue_text(c_text)
-        if sub_lines == 1:
+        if eff_mode == "karaoke":
+            lines_k = [c_text] if sub_lines == 1 else re.split(r"\r\n|\n", c_text)
+            ass_line_text = r"\N".join(
+                _karaoke_ass_line(ln.strip(), max(0.2, (en_sec - st_sec) / max(1, len(lines_k))))
+                for ln in lines_k if ln.strip()
+            )
+        elif sub_lines == 1:
             ass_line_text = re.sub(r'\s+', ' ', c_text.replace("\r\n", " ").replace("\n", " ")).strip()
         else:
             ass_line_text = c_text.replace("\r\n", r"\N").replace("\n", r"\N").strip()
         st_str = _fmt_ass_time(st_sec)
         en_str = _fmt_ass_time(en_sec)
-        dialogues.append(f"Dialogue: 0,{st_str},{en_str},Default,,0,0,0,,{pos_tag}{ass_line_text}")
+        dialogues.append(f"Dialogue: 0,{st_str},{en_str},Default,,0,0,0,,{pos_tag}{effect_tag}{ass_line_text}")
 
     ass_path.write_text(header + "\n".join(dialogues) + "\n", encoding="utf-8")
     return ass_path
@@ -4050,13 +4113,19 @@ def _subtitle_band_boxes(scores, log: LogFn = _noop) -> list[dict[str, float]]:
             # group that passed every other threshold and blurred a
             # strip across the middle of the finished movie.
             continue
+        core_mid_y = (top + bot) / 2.0
         # Pad: dialogue subs often have a second line ABOVE the persistent one,
-        # and the renderer's zoom shifts the band slightly — cover both.
-        top = max(0.0, top - 1.4 * core_h)
-        bot = min(1.0, bot + 0.6 * core_h)
-        if bot - top > 0.16:  # safety cap: never blur a huge slab on a guess
-            mid = (top + bot) / 2.0
-            top, bot = mid - 0.08, mid + 0.08
+        # and the renderer's zoom shifts the band slightly — cover both, while
+        # testing caption-zone membership against core geometry so mid-frame signs are not dragged down.
+        padded_top = max(0.0, top - 1.4 * core_h)
+        padded_bot = min(1.0, bot + 0.6 * core_h)
+        if padded_bot - padded_top > 0.16:  # safety cap: never blur a huge slab on a guess
+            mid = (padded_top + padded_bot) / 2.0
+            padded_top, padded_bot = mid - 0.08, mid + 0.08
+        if core_mid_y < 0.58 and padded_bot >= 0.58:
+            # Core lies outside the caption zone — reject before padding masks it.
+            continue
+        top, bot = padded_top, padded_bot
         box = {"x": 0.0, "y": round((top + bot) / 2.0, 4), "w": 1.0, "h": round(bot - top, 4)}
         dyn_ratio = float(dyn[peak_row]) / (float(agg_mean[peak_row]) + 1e-9)
         kept.append((box, dyn_ratio, float(agg[peak_row])))
@@ -4437,8 +4506,20 @@ def tokenize_burmese_words(text: str) -> list[str]:
     return tokens
 
 
-def _subtitle_max_clusters(font_size: int = 16, sub_w: float | None = None) -> int:
-    """S1 grapheme-cluster line budget (target 20–28 clusters/line at default 16pt)."""
+def _subtitle_max_clusters(
+    font_size: int = 16,
+    sub_w: float | None = None,
+    lines_per_cue: int = 1,
+    is_vert: bool = False,
+) -> int:
+    """Font-size- and width-adaptive S1 grapheme-cluster line budget.
+
+    - At default 16pt (1-line), returns 24 clusters/line (test-pinned target).
+    - Smaller font sizes (10..15pt) expand proportionally up to 44 clusters/line;
+      larger font sizes (17..26pt) shrink cleanly down to 10 clusters/line.
+    - Lines >= 2 apply the 1.25x multiline glyph factor used by subtitle_font_px.
+    - Explicit wrap width sub_w scales linearly relative to the 0.77 reference width.
+    """
     base = 24
     try:
         fs = int(font_size) if font_size is not None else 16
@@ -4447,14 +4528,31 @@ def _subtitle_max_clusters(font_size: int = 16, sub_w: float | None = None) -> i
     if fs != 16:
         ratio = _subtitle_font_fraction(16) / max(0.001, _subtitle_font_fraction(fs))
         base = int(round(base * ratio))
+    if int(lines_per_cue or 1) >= 2 and (fs != 16 or sub_w is not None or is_vert):
+        base = int(round(base / 1.18))
     if sub_w is not None:
         try:
             w = max(0.10, min(1.0, float(sub_w)))
         except (TypeError, ValueError):
             w = 0.92
-        if w < 0.77:
+        if abs(w - 0.77) > 0.01:
             base = int(round(base * (w / 0.77)))
-    return max(8, base)
+    return max(8, min(46, base))
+
+
+def recommended_subtitle_chars_per_line(
+    font_size: int = 16,
+    lines_per_cue: int = 1,
+    sub_w: float | None = None,
+    is_vert: bool = True,
+) -> int:
+    """User-facing character-per-line estimate matching _subtitle_max_clusters."""
+    return _subtitle_max_clusters(
+        font_size=font_size,
+        sub_w=sub_w,
+        lines_per_cue=lines_per_cue,
+        is_vert=is_vert,
+    )
 
 
 def _subtitle_fit_width_px(overlays: dict[str, Any] | None, picture_w: int) -> int:
@@ -5005,7 +5103,13 @@ def _allocate_cue_times(
 
     fracs = _word_boundary_boundary_fracs(units, word_timings)
     if fracs is None:
-        weights = [max(1, len(u)) for u in units]
+        # Pause-weighted Burmese timing for Gemini / VoxCPM / Curated voices
+        # when explicit WordBoundary timestamps are absent: comma (၊) adds ~0.25s
+        # pause weight and full stop (။) adds ~0.45s pause weight.
+        weights = [
+            max(1, len(u) + (u.count("၊") * 3) + (u.count("။") * 5))
+            for u in units
+        ]
         tot = float(sum(weights))
         cum = 0
         fracs = []
@@ -5239,10 +5343,10 @@ def split_burmese_subtitle_cues(
     # Multi-line cue mode (max lines_cnt lines per cue):
     # If text fits inside lines_cnt balanced lines where every line obeys S1 caps, keep 1 cue.
     flat = re.sub(r"\s+", " ", text.replace("\r\n", " ").replace("\n", " ")).strip()
-    if lines_cnt == 2:
+    if lines_cnt in (2, 3):
         balanced = _format_cue_lines(
             flat,
-            2,
+            lines_cnt,
             max_clusters=eff_clusters,
             max_width_px=eff_width_px,
             font_px=eff_font_px,
@@ -5250,7 +5354,7 @@ def split_burmese_subtitle_cues(
             stroke_px=stroke_px,
         )
         b_lines = [ln for ln in balanced.split("\n") if ln]
-        if len(b_lines) <= 2 and all(
+        if len(b_lines) <= lines_cnt and all(
             len(myanmar_grapheme_clusters(ln)) <= eff_clusters
             and _measure_text_width_px(ln, eff_font_px, font_path, stroke_px) <= eff_width_px
             for ln in b_lines
@@ -5455,9 +5559,7 @@ def _plan_overlay_chunks(
     return windows
 
 
-def _concat_list_line(path: Path) -> str:
-    """One ffmpeg concat-demuxer list line (single-quote escaped)."""
-    return "file '" + str(path).replace("'", "'\\''") + "'"
+# Duplicate _concat_list_line removed — single POSIX-safe definition lives near top of module.
 
 
 def _run_overlay_probe(cmd: list[str], *, timeout: float = 180.0) -> tuple[int, int, str]:
@@ -5503,6 +5605,201 @@ def _run_overlay_probe(cmd: list[str], *, timeout: float = 180.0) -> tuple[int, 
     return rc, peak, (stderr or b"").decode("utf-8", "ignore")[-500:]
 
 
+def _karaoke_cue_spans(
+    lines: list[str], cue_start: float, cue_end: float
+) -> list[tuple[tuple[int, int], float, float]]:
+    """Split one cue's duration across phrase/word highlight spans for Method 3."""
+    flat = "\n".join(lines)
+    dur = max(0.05, float(cue_end) - float(cue_start))
+    # Collect non-whitespace spans along the flat string
+    raw_tokens: list[tuple[int, int, str]] = []
+    pos = 0
+    for ln in lines:
+        for m in re.finditer(r"\S+", ln):
+            raw_tokens.append((pos + m.start(), pos + m.end(), m.group(0)))
+        pos += len(ln) + 1
+    if len(raw_tokens) <= 1 and lines:
+        # Unspaced Burmese cue: partition along tokenized Burmese words (~2..4 beats)
+        words = [w for w in tokenize_burmese_words(" ".join(lines)) if w.strip()]
+        if len(words) >= 2:
+            beats = min(4, len(words))
+            per = max(1, len(words) // beats)
+            spans_out: list[tuple[tuple[int, int], float, float]] = []
+            char_cursor = 0
+            beat_groups: list[tuple[int, int, int]] = []
+            for bi in range(0, len(words), per):
+                grp = words[bi : bi + per]
+                grp_txt = "".join(grp)
+                idx = flat.replace("\n", "").find(grp_txt, char_cursor)
+                start_idx = idx if idx >= 0 else char_cursor
+                end_idx = start_idx + len(grp_txt)
+                char_cursor = end_idx
+                beat_groups.append((start_idx, end_idx, max(1, len(grp_txt))))
+            w_tot = sum(w for _, _, w in beat_groups) or 1
+            cur_t = cue_start
+            for i, (s_i, e_i, w) in enumerate(beat_groups):
+                t_en = cue_end if i == len(beat_groups) - 1 else cur_t + dur * (w / w_tot)
+                spans_out.append(((s_i, e_i), round(cur_t, 3), round(t_en, 3)))
+                cur_t = t_en
+            return spans_out
+        return [((0, len(flat)), round(cue_start, 3), round(cue_end, 3))]
+
+    # Group adjacent short space-separated tokens up to 4 visual beats so frame count stays modest
+    groups: list[tuple[int, int, int]] = []
+    if len(raw_tokens) <= 5:
+        for s_i, e_i, txt in raw_tokens:
+            groups.append((s_i, e_i, max(1, len(txt))))
+    else:
+        step = max(2, math.ceil(len(raw_tokens) / 5))
+        for i in range(0, len(raw_tokens), step):
+            chunk = raw_tokens[i : i + step]
+            groups.append((chunk[0][0], chunk[-1][1], sum(max(1, len(c[2])) for c in chunk)))
+
+    w_tot = sum(w for _, _, w in groups) or 1
+    spans: list[tuple[tuple[int, int], float, float]] = []
+    cur_t = cue_start
+    for i, (s_i, e_i, w) in enumerate(groups):
+        t_en = cue_end if i == len(groups) - 1 else cur_t + dur * (w / w_tot)
+        spans.append(((s_i, e_i), round(cur_t, 3), round(t_en, 3)))
+        cur_t = t_en
+    return spans
+
+
+def build_png_timeline_concat(
+    cue_inputs: list[tuple[Path, int, str, float, float]],
+    work_dir: Path,
+    cw: int,
+    ch: int,
+    *,
+    layout: dict[str, Any] | None = None,
+    sub_x: float | None = None,
+    duration: float | None = None,
+) -> tuple[Path, int, int] | None:
+    """Method 1 (Single-Stream Timeline Overlay): pack all cue PNGs into a
+    single fixed-geometry RGBA strip ffconcat timeline so FFmpeg composites all
+    subtitles through ONE overlay filter node (~90% lower memory than multi-input).
+    Returns (concat_path, strip_top_px, strip_height_px).
+    """
+    if not cue_inputs:
+        return None
+    from PIL import Image
+
+    timeline_dir = work_dir / "subtitle_timeline"
+    timeline_dir.mkdir(parents=True, exist_ok=True)
+
+    sized: list[tuple[Path, int, int, int, float, float]] = []
+    strip_top = ch
+    strip_bot = 0
+    for png_path, top, _xe, cs, ce in sorted(cue_inputs, key=lambda x: (float(x[3]), float(x[4]))):
+        if ce <= cs:
+            continue
+        with Image.open(png_path) as im:
+            pw_png, ph_png = im.size
+        t_px = max(0, min(ch - ph_png, int(top)))
+        strip_top = min(strip_top, t_px)
+        strip_bot = max(strip_bot, t_px + ph_png)
+        sized.append((Path(png_path), pw_png, ph_png, t_px, float(cs), float(ce)))
+
+    if not sized:
+        return None
+    strip_top = max(0, strip_top - (strip_top % 2))
+    strip_h = max(2, strip_bot - strip_top)
+    if strip_h % 2 != 0:
+        strip_h += 1
+    strip_w = max(2, int(cw) - (int(cw) % 2))
+
+    blank_path = timeline_dir / "blank.png"
+    if not blank_path.is_file():
+        Image.new("RGBA", (strip_w, strip_h), (0, 0, 0, 0)).save(str(blank_path), "PNG", compress_level=1)
+
+    centre_x_px = subtitle_centre_x_px(cw, ch, layout, sub_x)
+    ffconcat_lines: list[str] = ["ffconcat version 1.0"]
+    cursor = 0.0
+    last_frame_path = blank_path
+    framed_cache: dict[tuple[str, int, int], Path] = {}
+
+    for idx, (png_path, pw_png, ph_png, t_px, cs, ce) in enumerate(sized):
+        if cs > cursor + 0.005:
+            ffconcat_lines.append(_concat_list_line(blank_path, posix=True))
+            ffconcat_lines.append(f"duration {cs - cursor:.3f}")
+            cursor = cs
+            last_frame_path = blank_path
+        cs_eff = max(cs, cursor)
+        if ce <= cs_eff + 0.005:
+            continue
+        if centre_x_px is not None:
+            x_px = max(12, min(strip_w - pw_png - 12, int(round(centre_x_px - pw_png / 2.0))))
+        else:
+            x_px = max(0, (strip_w - pw_png) // 2)
+        y_px = max(0, t_px - strip_top)
+        ck = (str(png_path), x_px, y_px)
+        framed = framed_cache.get(ck)
+        if framed is None:
+            framed = timeline_dir / f"tl_{len(framed_cache):04d}_{png_path.stem}.png"
+            if not framed.is_file():
+                canvas = Image.new("RGBA", (strip_w, strip_h), (0, 0, 0, 0))
+                with Image.open(png_path) as cue_im:
+                    canvas.paste(cue_im.convert("RGBA"), (x_px, y_px))
+                canvas.save(str(framed), "PNG", compress_level=1)
+            framed_cache[ck] = framed
+        ffconcat_lines.append(_concat_list_line(framed, posix=True))
+        ffconcat_lines.append(f"duration {ce - cs_eff:.3f}")
+        cursor = ce
+        last_frame_path = framed
+
+    if duration is not None and float(duration) > cursor + 0.005:
+        ffconcat_lines.append(_concat_list_line(blank_path, posix=True))
+        ffconcat_lines.append(f"duration {float(duration) - cursor:.3f}")
+        last_frame_path = blank_path
+
+    # FFmpeg concat demuxer requires repeating the final frame after its duration.
+    ffconcat_lines.append(_concat_list_line(last_frame_path, posix=True))
+    concat_file = timeline_dir / "subtitles_timeline.ffconcat"
+    concat_file.write_text("\n".join(ffconcat_lines) + "\n", encoding="utf-8")
+    return concat_file, strip_top, strip_h
+
+
+def mux_soft_subtitle_track(
+    ffmpeg: str,
+    video_path: Path,
+    srt_path: Path,
+    output_path: Path | None = None,
+) -> Path:
+    """Method 4 (Dual Soft Subtitles): stream-copy video/audio and embed
+    an ISO-compliant UTF-8 ``mov_text`` closed-caption track into the MP4 container
+    in <1s without re-encoding. Fails open back to ``video_path`` on error.
+    """
+    src = Path(video_path)
+    srt = Path(srt_path)
+    if not src.is_file() or not srt.is_file() or srt.stat().st_size == 0:
+        return src
+    target = Path(output_path) if output_path is not None else src
+    tmp_out = target.with_name(f".{target.stem}.softsub.mp4")
+    cmd = [
+        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(src),
+        "-sub_charenc", "UTF-8", "-i", str(srt),
+        "-map", "0:v", "-map", "0:a?", "-map", "1:0",
+        "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text",
+        "-metadata:s:s:0", "language=mya",
+        "-metadata:s:s:0", "title=Myanmar",
+        "-movflags", "+faststart",
+        str(tmp_out),
+    ]
+    res = _run_media(cmd, timeout=180.0, what="Soft subtitle mov_text mux")
+    if res.returncode == 0 and tmp_out.is_file() and tmp_out.stat().st_size > 1000:
+        if target == src:
+            os.replace(tmp_out, src)
+            return src
+        os.replace(tmp_out, target)
+        return target
+    try:
+        tmp_out.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return src
+
+
 def apply_production_overlays(
     ffmpeg: str,
     input_video: Path,
@@ -5546,13 +5843,19 @@ def apply_production_overlays(
     subtitles_file = str(overlays.get("subtitles_file") or "").strip()
     subtitles_path = Path(subtitles_file) if subtitles_file else None
     watermark_mode = bool(overlays.get("watermark"))
-    # Batch Q: subtitles burn as PNG overlays (png_subtitles), never
-    # libass — resolve the cue job up front so the no-op guard below
-    # still fires only when there is truly nothing to composite.
-    sub_job = _resolve_png_subtitle_job(
-        overlays, cw, ch, {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
-    )
-    if not boxes and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file()) and sub_job is None:
+    burn_subtitles_flag = bool(overlays.get("burn_subtitles", True))
+    sub_render_mode = str(overlays.get("sub_render_mode") or "png").strip().lower()
+    if sub_render_mode not in ("png", "timeline", "ass", "karaoke", "soft"):
+        sub_render_mode = "png"
+    if not burn_subtitles_flag or sub_render_mode == "soft":
+        sub_job = None
+    else:
+        # Batch Q: subtitles burn as PNG overlays (png_subtitles), or Method 1
+        # timeline / Method 2 ASS / Method 3 karaoke when selected.
+        sub_job = _resolve_png_subtitle_job(
+            overlays, cw, ch, {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
+        )
+    if not boxes and not extra_text and not watermark_mode and not (logo_file and logo_file.is_file()) and not (subtitles_path and subtitles_path.is_file() and burn_subtitles_flag and sub_render_mode != "soft") and sub_job is None:
         return input_video
 
     # Batch AB: the overlay pass runs as TWO sequential ffmpeg steps
@@ -5642,59 +5945,105 @@ def apply_production_overlays(
     # cue_end). Batch AG: the x expression comes from the one shared
     # horizontal resolver — centred verbatim by default.
     cue_inputs: list[tuple[Path, int, str, float, float]] = []
+    ass_burn_file: Path | None = None
+    timeline_spec: tuple[Path, int, int] | None = None
     if sub_job is not None:
         _t_png0 = time.monotonic()
-        renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
         lay_dict = {"pw": pw, "ph": ph, "ox": ox, "oy": oy}
-        x_expr = _subtitle_overlay_x_expr(cw, ch, lay_dict, overlays.get("sub_x"))
-        # Batch CX hard fit bound: no cue PNG may exceed sub_w of
-        # the picture width. Cues are ONE LINE at the LOCKED size —
-        # fit_png_cue_pieces splits an overflowing cue into
-        # sequential one-line pieces (its time window split with
-        # it); cues that already fit render exactly as before.
-        fit_max_w = min(int(round(_sub_w_fraction(overlays) * pw)), _subtitle_max_line_width_px(pw))
-
-        def _render_cue_item(cue_item):
-            cue_start, cue_end, cue_text = cue_item
-            pieces: list[tuple[Path, int, str, float, float]] = []
-            for fit_lines, fit_px, fit_visuals, piece_start, piece_end in fit_png_cue_pieces(
-                renderer,
-                cue_text,
-                sub_job["font_px"],
-                sub_job["font_path"],
-                sub_job["visuals"],
-                fit_max_w,
-                cue_start,
-                cue_end,
-                max_lines=sub_job["sub_lines"],
-            ):
-                if not fit_lines:
-                    continue
-                png_path, _png_w, png_h = renderer.render_lines(
-                    fit_lines, fit_px, sub_job["font_path"], fit_visuals
-                )
-                top = _subtitle_block_top_px(
-                    cw, ch, lay_dict,
-                    sub_y=overlays.get("sub_y"),
-                    subtitles_margin_v=overlays.get("subtitles_margin_v"),
-                    boxes=boxes,
-                    font_px=sub_job["font_px"],
-                    sub_lines=sub_job["sub_lines"],
-                    block_h=png_h,
-                    sub_margin=overlays.get("sub_margin"),
-                )
-                pieces.append((png_path, top, x_expr, float(piece_start), float(piece_end)))
-            return pieces
-
-        if progress_fn and sub_job["cues"]:
-            _emit_progress_stage(progress_fn, f"Rendering subtitle PNGs ({len(sub_job['cues'])} cues)")
-        if len(sub_job["cues"]) > 1:
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="recap-png") as _png_pool:
-                for _pieces in _png_pool.map(_render_cue_item, sub_job["cues"]):
-                    cue_inputs.extend(_pieces)
+        if sub_render_mode == "ass" and subtitles_path and subtitles_path.is_file() and subtitles_path.suffix.lower() == ".ass":
+            ass_burn_file = subtitles_path
+        elif sub_render_mode == "ass":
+            # Generate an on-the-fly ASS file with requested effect if only cues/.srt exist
+            ass_burn_file = write_synced_ass_file(
+                cues=sub_job["cues"],
+                ass_path=work_dir / "recap_inline_burn.ass",
+                cw=cw,
+                ch=ch,
+                font_name=str(overlays.get("subtitles_font") or overlays.get("sub_font") or ""),
+                raw_font_size=int(overlays.get("subtitles_font_size", 16)),
+                sub_style=str(overlays.get("sub_style") or overlays.get("subtitles_style") or "yellow"),
+                sub_lines=sub_job["sub_lines"],
+                sub_y=overlays.get("sub_y"),
+                sub_margin=overlays.get("sub_margin"),
+                sub_x=overlays.get("sub_x"),
+                subtitles_margin_v=overlays.get("subtitles_margin_v"),
+                boxes=boxes,
+                layout=lay_dict,
+                sub_visual_overrides=overlays_visual_overrides(overlays),
+                sub_effect=str(overlays.get("sub_effect") or "none"),
+            )
         else:
-            for _cue_item in sub_job["cues"]:
-                cue_inputs.extend(_render_cue_item(_cue_item))
+            renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
+            x_expr = _subtitle_overlay_x_expr(cw, ch, lay_dict, overlays.get("sub_x"))
+            fit_max_w = min(int(round(_sub_w_fraction(overlays) * pw)), _subtitle_max_line_width_px(pw))
+
+            def _render_cue_item(cue_item):
+                cue_start, cue_end, cue_text = cue_item
+                pieces: list[tuple[Path, int, str, float, float]] = []
+                for fit_lines, fit_px, fit_visuals, piece_start, piece_end in fit_png_cue_pieces(
+                    renderer,
+                    cue_text,
+                    sub_job["font_px"],
+                    sub_job["font_path"],
+                    sub_job["visuals"],
+                    fit_max_w,
+                    cue_start,
+                    cue_end,
+                    max_lines=sub_job["sub_lines"],
+                ):
+                    if not fit_lines:
+                        continue
+                    if sub_render_mode == "karaoke":
+                        for k_span, k_st, k_en in _karaoke_cue_spans(fit_lines, piece_start, piece_end):
+                            k_res = renderer.render_karaoke_lines(
+                                fit_lines, k_span, fit_px, sub_job["font_path"], fit_visuals
+                            )
+                            if k_res is None:
+                                continue
+                            png_path, _png_w, png_h = k_res
+                            top = _subtitle_block_top_px(
+                                cw, ch, lay_dict,
+                                sub_y=overlays.get("sub_y"),
+                                subtitles_margin_v=overlays.get("subtitles_margin_v"),
+                                boxes=boxes,
+                                font_px=sub_job["font_px"],
+                                sub_lines=sub_job["sub_lines"],
+                                block_h=png_h,
+                                sub_margin=overlays.get("sub_margin"),
+                            )
+                            pieces.append((png_path, top, x_expr, float(k_st), float(k_en)))
+                    else:
+                        png_path, _png_w, png_h = renderer.render_lines(
+                            fit_lines, fit_px, sub_job["font_path"], fit_visuals
+                        )
+                        top = _subtitle_block_top_px(
+                            cw, ch, lay_dict,
+                            sub_y=overlays.get("sub_y"),
+                            subtitles_margin_v=overlays.get("subtitles_margin_v"),
+                            boxes=boxes,
+                            font_px=sub_job["font_px"],
+                            sub_lines=sub_job["sub_lines"],
+                            block_h=png_h,
+                            sub_margin=overlays.get("sub_margin"),
+                        )
+                        pieces.append((png_path, top, x_expr, float(piece_start), float(piece_end)))
+                return pieces
+
+            if progress_fn and sub_job["cues"]:
+                _emit_progress_stage(progress_fn, f"Rendering subtitle PNGs ({len(sub_job['cues'])} cues)")
+            if len(sub_job["cues"]) > 1:
+                with ThreadPoolExecutor(max_workers=2, thread_name_prefix="recap-png") as _png_pool:
+                    for _pieces in _png_pool.map(_render_cue_item, sub_job["cues"]):
+                        cue_inputs.extend(_pieces)
+            else:
+                for _cue_item in sub_job["cues"]:
+                    cue_inputs.extend(_render_cue_item(_cue_item))
+
+            if sub_render_mode in ("timeline", "karaoke") and cue_inputs:
+                timeline_spec = build_png_timeline_concat(
+                    cue_inputs, work_dir, cw, ch,
+                    layout=lay_dict, sub_x=overlays.get("sub_x"), duration=duration,
+                )
         if timings_out is not None:
             timings_out["png"] = round(max(0.0, time.monotonic() - _t_png0), 3)
 
@@ -5744,10 +6093,18 @@ def apply_production_overlays(
             cmd += ["-i", str(pattern_file)]
             input_index += 1
         cue_indices: list[int] = []
-        for png_path, _top, _xe, _cs, _ce in cues_here:
-            cue_indices.append(input_index)
-            cmd += ["-i", str(png_path)]
+        timeline_idx: int | None = None
+        if ass_burn_file is not None:
+            pass
+        elif timeline_spec is not None and window is None and cue_subset is None:
+            timeline_idx = input_index
+            cmd += ["-f", "concat", "-safe", "0", "-i", str(timeline_spec[0])]
             input_index += 1
+        else:
+            for png_path, _top, _xe, _cs, _ce in cues_here:
+                cue_indices.append(input_index)
+                cmd += ["-i", str(png_path)]
+                input_index += 1
 
         graph: list[str] = list(graph_head or [])
         current = start_label
@@ -5789,19 +6146,26 @@ def apply_production_overlays(
         # horizontal placement is the centred expression by default,
         # or the Batch AG sub_x resolver expression when the user
         # moved the subtitle sideways.
-        for (png_path, top, x_expr, cue_start, cue_end), idx in zip(cues_here, cue_indices):
-            if window is not None:
-                # Window time: a cue that started before the window
-                # shows from its first frame; one that ends after it
-                # is clipped by the window's own length.
-                cue_start = max(0.0, cue_start - window[0])
-                cue_end = cue_end - window[0]
-            out = f"vsub{idx}"
-            graph.append(
-                f"{current}[{idx}:v]overlay=x='{x_expr}':y={top}:"
-                f"eof_action=repeat:enable='between(t,{cue_start:.3f},{cue_end:.3f})'[{out}]"
-            )
-            current = f"[{out}]"
+        if ass_burn_file is not None:
+            _ass_esc = str(ass_burn_file.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            _fdir_esc = str(bundled_fonts_dir().resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            graph.append(f"{current}ass=filename='{_ass_esc}':fontsdir='{_fdir_esc}'[vsubass]")
+            current = "[vsubass]"
+        elif timeline_idx is not None and timeline_spec is not None:
+            _tl_top = int(timeline_spec[1])
+            graph.append(f"{current}[{timeline_idx}:v]overlay=x=0:y={_tl_top}:eof_action=pass[vsubtl]")
+            current = "[vsubtl]"
+        else:
+            for (png_path, top, x_expr, cue_start, cue_end), idx in zip(cues_here, cue_indices):
+                if window is not None:
+                    cue_start = max(0.0, cue_start - window[0])
+                    cue_end = cue_end - window[0]
+                out = f"vsub{idx}"
+                graph.append(
+                    f"{current}[{idx}:v]overlay=x='{x_expr}':y={top}:"
+                    f"eof_action=repeat:enable='between(t,{cue_start:.3f},{cue_end:.3f})'[{out}]"
+                )
+                current = f"[{out}]"
 
         if pattern_idx is not None:
             # Diagonal tiled pattern over the WHOLE picture area — centre and
@@ -5955,7 +6319,13 @@ def apply_production_overlays(
     intermediate: Path | None = None
     step2_input = input_video
     single_done = False
-    heavy = _overlay_is_heavy(len(cue_inputs), duration)
+    # When using Single-Stream Timeline or ASS vector burn, peak RSS is ~250MB
+    # even for 300+ cues — skip the slow 60s chunked re-encode loop!
+    heavy = (
+        False
+        if (timeline_spec is not None or ass_burn_file is not None)
+        else _overlay_is_heavy(len(cue_inputs), duration)
+    )
     # Batch CC: EVERY production overlay encode below runs under the
     # one global overlay slot (it previously serialised single-pass
     # only, so two jobs' two-step passes could sum past the instance
@@ -6197,9 +6567,15 @@ def extract_preview_with_overlays(
         )
         rendered = None
         if fit_lines:
-            rendered = renderer.render_lines(
-                fit_lines, fit_px, font_file, fit_visuals
-            )
+            if str(overlays.get("sub_render_mode") or "").lower() == "karaoke":
+                first_w = fit_lines[0].split()[0] if " " in fit_lines[0] else fit_lines[0][: max(1, len(fit_lines[0]) // 3)]
+                rendered = renderer.render_karaoke_lines(
+                    fit_lines, (0, max(1, len(first_w))), fit_px, font_file, fit_visuals
+                )
+            else:
+                rendered = renderer.render_lines(
+                    fit_lines, fit_px, font_file, fit_visuals
+                )
         if rendered is not None:
             png_path, _png_w, png_h = rendered
             sub_idx = _next_idx
@@ -7402,6 +7778,7 @@ class EdgeSmartSync:
                         "audio_start": round(_start, 3),
                         "audio_end": round(_end, 3),
                         "audio_duration": round(_dur, 3),
+                        "speech_duration": round(float(_res.get("raw_duration") or _dur), 3),
                         "text": _seg["narration"],
                         "audio_file": str(_res["part"]),
                     }
@@ -7689,11 +8066,15 @@ class EdgeSmartSync:
             max_clusters_line = _subtitle_max_clusters(
                 font_size=int(self.overlays.get("subtitles_font_size", 16)),
                 sub_w=self.overlays.get("sub_w"),
+                lines_per_cue=lines_per_cue,
+                is_vert=(ch_val > cw_val),
             )
 
             for s_item in timing:
                 raw_st = float(s_item.get("audio_start", 0.0))
                 raw_en = float(s_item.get("audio_end", 0.0))
+                raw_sp_dur = float(s_item.get("speech_duration") or (raw_en - raw_st))
+                seg_speech_end = min(raw_en, raw_st + max(0.05, raw_sp_dur))
                 txt = str(s_item.get("text", "")).strip()
                 if not txt:
                     continue
@@ -7710,9 +8091,10 @@ class EdgeSmartSync:
                 if not sub_cues:
                     fallback_txt = canonicalize_burmese_text(txt)
                     sub_cues = [(raw_st, raw_en, fallback_txt)] if fallback_txt else []
-                for c_st, c_en, c_txt in sub_cues:
+                for c_idx, (c_st, c_en, c_txt) in enumerate(sub_cues):
                     all_sub_cues.append((c_st, c_en, c_txt))
-                    all_speech_ends.append(float(c_en))
+                    is_last_in_seg = (c_idx == len(sub_cues) - 1)
+                    all_speech_ends.append(min(float(c_en), seg_speech_end) if is_last_in_seg else float(c_en))
 
             # S2: best-effort END-side / gap-only reading-speed polish BEFORE
             # emitting SRT, ASS, and burn-in subtitle_cues so all outputs match.
@@ -7750,6 +8132,7 @@ class EdgeSmartSync:
                 boxes=self.overlays.get("boxes"),
                 layout=layout,
                 sub_visual_overrides=overlays_visual_overrides(self.overlays),
+                sub_effect=str(self.overlays.get("sub_effect") or ("karaoke" if str(self.overlays.get("sub_render_mode") or "").lower() == "karaoke" else "none")),
             )
             self.log(f"📝 Synced Myanmar ASS saved: {ass_file.name} (font={active_font})")
         except Exception as srt_err:
@@ -7916,6 +8299,20 @@ class EdgeSmartSync:
             )
             late["mux"] = mux_fp
             _stage_timings["mux"] = round(max(0.0, time.monotonic() - _t_mux0), 3)
+
+        # Method 4: Embed UTF-8 mov_text soft-subtitle CC track into MP4 container
+        # whenever sub_render_mode=="soft" or embed_soft_subs is enabled.
+        _srm = str(self.overlays.get("sub_render_mode") or "png").strip().lower()
+        if (
+            (_srm == "soft" or bool(self.overlays.get("embed_soft_subs", True)))
+            and srt_file.is_file()
+            and paths.final.is_file()
+        ):
+            try:
+                mux_soft_subtitle_track(self.ffmpeg, paths.final, srt_file)
+                self.log("💬 Embedded soft Myanmar CC track (mov_text) into MP4 container")
+            except Exception as _soft_exc:
+                self.log(f"⚠️ Soft subtitle track mux skipped: {_soft_exc}")
         checkpoint["stage_timings"] = dict(_stage_timings)
         out_plan["stage_timings"] = dict(_stage_timings)
         atomic_write_json(paths.checkpoint, checkpoint)

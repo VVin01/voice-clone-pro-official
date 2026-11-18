@@ -907,8 +907,14 @@ async def _deliver_recap_extra(callback: CallbackQuery, file_type: str) -> None:
 
         async with AsyncSessionLocal() as session:
             job = await session.get(Job, job_id)
-            # Ownership: never deliver another user's recap file.
+            # Ownership & completion status: never deliver another user's or cancelled/failed recap file.
             if job and job.user_id != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                await callback.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=t("clone_audio_not_found", lang),
+                )
+                return
+            if job is not None and job.status != JobStatus.SUCCESS.value:
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
                     text=t("clone_audio_not_found", lang),
@@ -918,8 +924,13 @@ async def _deliver_recap_extra(callback: CallbackQuery, file_type: str) -> None:
                 # AJ M7, mirrored from the video handler: without a Job
                 # row, the registry entry must prove ownership (admins
                 # exempt); neither source proving it means refuse.
-                _entry_owner = (RECAP_JOBS_REGISTRY.get(job_id) or {}).get("user_id")
-                if _entry_owner != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                _reg = RECAP_JOBS_REGISTRY.get(job_id) or {}
+                _entry_owner = _reg.get("user_id")
+                _reg_status = str(_reg.get("status") or "").upper()
+                if (
+                    (_entry_owner != callback.from_user.id and not settings.is_admin(callback.from_user.id))
+                    or (_reg_status and _reg_status not in ("COMPLETED", "SUCCESS"))
+                ):
                     await callback.bot.send_message(
                         chat_id=target_chat_id,
                         text=t("clone_audio_not_found", lang),
@@ -1111,13 +1122,18 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                         caption=t("clone_caption_recap", lang, job_id=job_id),
                         parse_mode="HTML",
                     )
+                elif has_parts:
+                    # >50MB full render with generated parts: parts ARE the Telegram delivery.
+                    try:
+                        from app.webapp.api import _deliver_recap_parts
+
+                        await _deliver_recap_parts(
+                            callback.bot, target_chat_id, job_id, lang, title=recap_title
+                        )
+                    except Exception:
+                        pass
                 else:
-                    # >50MB cannot be sent through the Bot API. The old
-                    # "direct download" URL button pointed at
-                    # /api/recap/download, which requires Telegram
-                    # init-data auth and only returned 401 in a browser.
-                    # Route through the Mini App instead, which downloads
-                    # with proper auth.
+                    # >50MB cannot be sent through the Bot API and no split parts exist.
                     app_url = settings.mini_app_url
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
@@ -1133,17 +1149,6 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                         reply_markup=kb,
                         parse_mode="HTML",
                     )
-                # Split jobs: deliver every part as well. For >10 min
-                # sources the full render usually exceeds the 50 MB bot
-                # limit, so the parts are the actual Telegram delivery.
-                try:
-                    from app.webapp.api import _deliver_recap_parts
-
-                    await _deliver_recap_parts(
-                        callback.bot, target_chat_id, job_id, lang, title=recap_title
-                    )
-                except Exception:
-                    pass
             else:
                 # File no longer on this server's disk (no persistent
                 # disk: redeploys/restarts wipe generated outputs). The

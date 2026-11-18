@@ -102,7 +102,8 @@ def test_home_tools_library_card_entries():
 
 def test_switchtab_lights_home_for_dockless_panes():
     body = _fn(APP_JS, "switchTab")
-    assert 'nav-item[data-tab="tab-home"]' in body
+    assert 'document.getElementById("btn-top-history")' in body
+    assert 'targetBtn.classList.add("active")' in body
 
 
 def test_home_tools_i18n_keys_both_locales():

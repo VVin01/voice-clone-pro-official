@@ -268,7 +268,12 @@ async def deliver_broadcast(
         while attempts <= max_retries and not delivered:
             attempts += 1
             try:
-                await bot.send_message(chat_id=user_id, text=text)
+                _send_kw = (
+                    {"parse_mode": None}
+                    if isinstance(getattr(getattr(bot, "default", None), "parse_mode", None), str)
+                    else {}
+                )
+                await bot.send_message(chat_id=user_id, text=text, **_send_kw)
                 delivered = True
                 sent += 1
                 if delivery:

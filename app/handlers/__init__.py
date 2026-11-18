@@ -115,9 +115,16 @@ def setup_handlers(dp: Dispatcher, session_factory: Any = None) -> None:
                 try:
                     await upd.callback_query.answer(notice, show_alert=True)
                 except Exception:
-                    if upd.callback_query.message is not None:
+                    if (
+                        upd.callback_query.message is not None
+                        and getattr(getattr(upd.callback_query.message, "chat", None), "type", None) not in ("group", "supergroup", "channel")
+                    ):
                         await upd.callback_query.message.answer(notice)
-            elif upd is not None and upd.message is not None:
+            elif (
+                upd is not None
+                and upd.message is not None
+                and getattr(getattr(upd.message, "chat", None), "type", None) not in ("group", "supergroup", "channel")
+            ):
                 await upd.message.answer(notice)
         except Exception:
             pass

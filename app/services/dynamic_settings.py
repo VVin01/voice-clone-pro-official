@@ -93,6 +93,7 @@ SETTING_TYPES: dict[str, type] = {
     "gemini_tts_fallback_1": str,
     "gemini_tts_lite_model": str,
     "gemini_tts_fallback_2": str,
+    "ai_prompt_profile": str,
     "voxcpm_timeout": int,
     "groq_whisper_model": str,
     "recap_thumbnail_monthly_cap_usd": float,
@@ -134,7 +135,23 @@ DEPRECATED_OR_SLOW_GEMINI_MODELS: set[str] = {
 }
 
 
-async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
+DEPRECATED_GEMINI_TTS_SETTING_DEFAULTS: dict[str, str] = {
+    "gemini_tts_primary_model": "gemini-3.8-flash-tts",
+    "gemini_tts_fallback_1": "",
+    "gemini_tts_lite_model": "gemini-3.8-flash-lite-tts",
+    "gemini_tts_fallback_2": "",
+}
+
+RETIRED_GEMINI_TTS_PREVIEW_MODELS: set[str] = {
+    "gemini-3.1-flash-tts-preview",
+    "gemini-2.5-flash-preview-tts",
+}
+
+
+_LAST_LOGGED_SETTINGS: dict[str, object] = {}
+
+
+async def load_dynamic_settings(session: AsyncSession, *, quiet: bool = False) -> dict[str, str]:
     """Load persistent settings from database into in-memory settings configuration."""
     stmt = select(BotSetting)
     res = await session.execute(stmt)
@@ -143,8 +160,11 @@ async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
     for row in rows:
         key = row.key
         raw_val = row.value
-        if key in DEPRECATED_GEMINI_SETTING_DEFAULTS and str(raw_val or "").strip().lower() in DEPRECATED_OR_SLOW_GEMINI_MODELS:
+        norm_val = str(raw_val or "").strip().lower()
+        if key in DEPRECATED_GEMINI_SETTING_DEFAULTS and norm_val in DEPRECATED_OR_SLOW_GEMINI_MODELS:
             raw_val = DEPRECATED_GEMINI_SETTING_DEFAULTS[key]
+        elif key in DEPRECATED_GEMINI_TTS_SETTING_DEFAULTS and norm_val in RETIRED_GEMINI_TTS_PREVIEW_MODELS:
+            raw_val = DEPRECATED_GEMINI_TTS_SETTING_DEFAULTS[key]
         loaded[key] = raw_val
         if key in SETTING_TYPES:
             expected_type = SETTING_TYPES[key]
@@ -159,7 +179,10 @@ async def load_dynamic_settings(session: AsyncSession) -> dict[str, str]:
                     parsed_val = str(raw_val)
                 if hasattr(settings, key):
                     setattr(settings, key, parsed_val)
-                    logger.info("Loaded dynamic setting '%s' = %s", key, _loggable_value(key, parsed_val))
+                    prev = _LAST_LOGGED_SETTINGS.get(key, object())
+                    if not quiet or prev != parsed_val:
+                        logger.info("Loaded dynamic setting '%s' = %s", key, _loggable_value(key, parsed_val))
+                        _LAST_LOGGED_SETTINGS[key] = parsed_val
             except Exception as e:
                 logger.warning("Failed to cast dynamic setting '%s' with value '%s': %s", key, _loggable_value(key, raw_val), e)
     return loaded

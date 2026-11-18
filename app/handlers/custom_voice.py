@@ -179,13 +179,12 @@ async def handle_cvr_request_start(
 
 @custom_voice_router.message(CustomVoiceFSM.waiting_for_name, F.text)
 async def handle_cvr_name_input(message: Message, state: FSMContext):
-    model_name = message.text.strip()
+    data = await state.get_data()
+    lang = data.get("lang", "my")
+    model_name = (message.text or "").strip()
     if not model_name or len(model_name) > 100:
         await message.answer(t("cvr_name_length", lang))
         return
-
-    data = await state.get_data()
-    lang = data.get("lang", "my")
 
     await state.update_data(model_name=model_name)
     await state.set_state(CustomVoiceFSM.waiting_for_sample)

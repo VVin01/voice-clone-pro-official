@@ -208,7 +208,8 @@ def quiet_point(levels: np.ndarray, start: float, end: float, speech_db: float) 
 
 
 def plan_parts(duration: float, part_seconds: float, *, smart: bool = True, max_extra: float = 20.0,
-               levels: Optional[np.ndarray] = None, min_tail: float = MIN_TAIL_SEC) -> list[dict[str, Any]]:
+               levels: Optional[np.ndarray] = None, min_tail: float = MIN_TAIL_SEC,
+               max_part_seconds: Optional[float] = None) -> list[dict[str, Any]]:
     """[{n, start, end, cut}] covering the whole video; cut = how the part ends ("exact", "pause", "breath",
     "quietest", "end"). Pure function — unit-tested without ffmpeg."""
     duration, part_seconds = float(duration), max(5.0, float(part_seconds))
@@ -217,13 +218,21 @@ def plan_parts(duration: float, part_seconds: float, *, smart: bool = True, max_
     start = 0.0
     while start + part_seconds < duration - 0.05:
         target = start + part_seconds
+        upper = min(target + max(0.0, float(max_extra)), duration)
+        if max_part_seconds is not None:
+            upper = min(upper, start + float(max_part_seconds))
         if smart and levels is not None:
-            cut, how = quiet_point(levels, target, min(target + max(0.0, float(max_extra)), duration), speech_db)
+            cut, how = quiet_point(levels, min(target, upper), upper, speech_db)
         else:
-            cut, how = target, "exact"
+            cut, how = min(target, upper), "exact"
         if duration - cut < min(min_tail, part_seconds / 4.0):   # a few seconds left: they join this part
-            break
+            if max_part_seconds is None or (duration - start) <= float(max_part_seconds):
+                break
         parts.append({"n": len(parts) + 1, "start": round(start, 3), "end": round(cut, 3), "cut": how})
+        start = cut
+    while max_part_seconds is not None and (duration - start) > float(max_part_seconds) + 0.05:
+        cut = start + float(max_part_seconds)
+        parts.append({"n": len(parts) + 1, "start": round(start, 3), "end": round(cut, 3), "cut": "exact"})
         start = cut
     parts.append({"n": len(parts) + 1, "start": round(start, 3), "end": round(duration, 3), "cut": "end"})
     return parts
@@ -510,6 +519,7 @@ def split_source_into_segments(
     out_dir: str | Path,
     *,
     part_seconds: float,
+    max_part_seconds: Optional[float] = None,
     ffmpeg: str = "ffmpeg",
     ffprobe: str = "ffprobe",
     log: LogFn = _noop,
@@ -536,13 +546,14 @@ def split_source_into_segments(
     out_dir = Path(out_dir)
     duration = probe_duration(ffprobe, source)
     part_seconds = max(30.0, float(part_seconds))
+    eff_cap = float(max_part_seconds) if max_part_seconds is not None else (part_seconds + 25.0)
     if duration <= part_seconds:
         return [{"n": 1, "path": str(source), "start": 0.0,
                  "end": round(duration, 3), "cut": "end"}]
 
     has_audio = _has_audio(ffprobe, source)
     levels = audio_levels(ffmpeg, source, timeout=split_audio_levels_timeout(duration)) if has_audio else None
-    plan = plan_parts(duration, part_seconds, smart=True, levels=levels)
+    plan = plan_parts(duration, part_seconds, smart=True, levels=levels, max_part_seconds=eff_cap)
     encoders = ffmpeg_encoders(ffmpeg)
     encoder = "h264_nvenc" if ("h264_nvenc" in encoders and nvenc_usable(ffmpeg)) else "libx264"
     out_dir.mkdir(parents=True, exist_ok=True)

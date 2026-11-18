@@ -1,14 +1,6 @@
-/* ════════════════════════════════════════════════════════════════════
-   VOICE CLONE PRO — MINI APP DESIGN SYSTEM (Premium Rebuild 2026-10-29)
-   One system: one accent (gold), one card language, 8pt spacing,
-   Burmese-first type scale. No stacked passes, no external fonts.
-   ════════════════════════════════════════════════════════════════════ */
+/* VOICE CLONE PRO — MINI APP DESIGN SYSTEM (Premium Rebuild 2026-1 */
 
-/* ── Subtitle webfonts (Batch Q font choice, 2026-11-04) ─────────────
-   The four user-selectable subtitle families, self-hosted from
-   /static/fonts/ (Bold builds, OFL-1.1 — licences ship beside the
-   engine's copies in app/assets/fonts/). The recap live preview
-   renders its sample in the chosen family so preview == burn. */
+/* Subtitle webfonts (Batch Q font choice, 2026-11-04) */
 @font-face {
     font-family: 'Padauk';
     src: url('/static/fonts/Padauk-Bold.ttf') format('truetype');
@@ -34,12 +26,7 @@
     font-display: swap;
 }
 
-/* ── Tokens ───────────────────────────────────────────────────────────
-   Liquid Glass reskin (owner's Style 5 pick, 2026-10-29): the token
-   NAMES are kept from the premium rebuild so every component rule
-   below keeps working; the VALUES are the glass palette — light
-   frosted surfaces, dark ink text, iOS-blue accent. (--gold* now
-   carries the accent, which is blue in this design.) */
+/* Tokens */
 :root {
     --bg: #dde9f5;
     --bg-deep: #dcebf7;
@@ -81,7 +68,7 @@
     --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 24px rgba(70, 110, 160, 0.10);
     --shadow-pop: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 18px 44px rgba(70, 110, 160, 0.28);
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-            "Noto Sans Myanmar", "Myanmar Text", Padauk, "Helvetica Neue", Arial, sans-serif;
+            Padauk, "Noto Sans Myanmar", "Myanmar Text", "Helvetica Neue", Arial, sans-serif;
     color-scheme: light;
 }
 
@@ -120,12 +107,7 @@ a { color: var(--gold-2); }
 /* ── Utilities ──────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 .hidden-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
-/* Batch CP: the recap file input IS the drop zone's hit target — a
-   full-cover invisible overlay, so the tap lands directly on the input
-   (Telegram Desktop's webview swallows label-forwarded clicks; a direct
-   hit carries trusted activation everywhere). JS disables its pointer
-   events outside the preview "empty" state (setRecapPreviewState), so
-   the progress UI and Cancel button inside the zone stay clickable. */
+/* Batch CP: the recap file input IS the drop zone's hit target — a */
 .drop-zone-file-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .mt-1 { margin-top: var(--s1); } .mt-2 { margin-top: var(--s2); }
 .mt-3 { margin-top: var(--s3); } .mt-4 { margin-top: var(--s4); }
@@ -137,7 +119,7 @@ a { color: var(--gold-2); }
 .text-xs { font-size: 12.5px; }
 .text-center { text-align: center; }
 .font-bold { font-weight: 700; }
-.text-gold { color: var(--gold-2) !important; }
+.text-gold { color: var(--vcp-warning, #B45309) !important; }
 .text-cyan { color: var(--sky) !important; }
 .text-danger { color: var(--red) !important; }
 .text-green { color: var(--green) !important; }
@@ -252,12 +234,7 @@ a { color: var(--gold-2); }
 .gate-chip.joined { color: #137333; border-color: rgba(19, 115, 51, 0.45); }
 .gate-chip.missing { color: #b3261e; border-color: rgba(179, 38, 30, 0.35); }
 
-/* ── Mini App entry gate lock (entry-gate, 2026-10-30) ────────────────
-   Full-screen lock over a blurred app: body starts .gate-locked, so the
-   app is covered from first paint until a LIVE verify-membership check
-   unlocks it. z-index 890: above the bottom nav (200), below the
-   image-modal layer (900) so the 401 "open via Telegram" modal can
-   still surface above the lock. */
+/* Mini App entry gate lock (entry-gate, 2026-10-30) */
 body.gate-locked { overflow: hidden; }
 body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-select: none; }
 .gate-lock {
@@ -496,9 +473,7 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     color: var(--text-2); font-size: 13.5px; font-weight: 600; line-height: 1.45; white-space: nowrap;
 }
 .pill-btn.active { background: var(--gold-soft); color: var(--gold-2); box-shadow: inset 0 0 0 1px var(--gold-border); }
-/* Batch K: recap pill controls meet the 44px touch-target floor.
-   Scoped to the recap tab — .pill-btn is shared with the voice and
-   downloader tabs, whose layouts keep the compact 38px height. */
+/* Batch K: recap pill controls meet the 44px touch-target floor. */
 #tab-recap .pill-btn { min-height: 44px; }
 
 .filter-chip {
@@ -612,9 +587,7 @@ select.studio-input { min-height: 50px; }
     transition: width 0.45s ease;
     position: relative; overflow: hidden;
 }
-/* Upload motion states (upload-ux pass): while work is in flight the
-   fill must never look frozen — an animated sheen runs while bytes
-   move (busy) and while the server prepares the file (indeterminate). */
+/* Upload motion states (upload-ux pass): while work is in flight t */
 .progress-bar-fill.busy::after,
 .progress-bar-fill.indeterminate::after {
     content: ""; position: absolute; inset: 0;
@@ -722,9 +695,7 @@ select.studio-input { min-height: 50px; }
     font-size: 12.5px; font-weight: 700; text-decoration: none; line-height: 1.4;
 }
 .history-dl-link.tg-btn { background: var(--sky-soft); color: var(--sky); border-color: rgba(62, 198, 224, 0.4); }
-/* Batch AF: an authenticated download in flight — downloadAuthFile
-   paints the live progress onto the tapped element and restores it
-   when the fetch settles; the element is inert meanwhile. */
+/* Batch AF: an authenticated download in flight — downloadAuthFile */
 .dl-downloading { opacity: 0.72; pointer-events: none; }
 .badge-expired { color: var(--text-3); font-size: 12px; }
 .history-error-snippet { font-size: 12px; color: var(--red); word-break: break-word; }
@@ -773,11 +744,7 @@ select.studio-input { min-height: 50px; }
 .hub-type-icon.recap { background: var(--gold-soft); }
 .hub-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .hub-row-title {
-    /* Padauk first for Myanmar: Noto Sans Myanmar's wide medial-ra glyph
-       (medial_ra.w2) is drawn as a heavy rectangular bracket that reads as a
-       "box outline" around consonant clusters (e.g. ကြောင်, ကြို) at small
-       bold sizes. Padauk — the product's Myanmar font — draws the same
-       medial as a fine open bracket. Verified at glyph-outline level. */
+    /* Padauk first for Myanmar: Noto Sans Myanmar's wide medial-ra gly */
     font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
     font-size: 13.5px; font-weight: 600; line-height: 1.5; color: var(--text);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -906,10 +873,7 @@ select.studio-input { min-height: 50px; }
     background: linear-gradient(160deg, #1c2434 0%, #0d1119 70%);
     background-size: cover; background-position: center;
 }
-/* Mirror flips backdrop + inset together: the render's _visual_filters
-   applies hflip to the source BEFORE its bg/fg split, so in the real
-   output both layers come out flipped (overlays/subtitles never are —
-   they live outside these two layers). */
+/* Mirror flips backdrop + inset together: the render's _visual_fil */
 .video-bg-placeholder.mirrored .mockup-inner-movie,
 .video-bg-placeholder.mirrored .video-backdrop-blur { transform: scaleX(-1); }
 .mockup-inner-movie { position: absolute; inset: 0; overflow: hidden; }
@@ -960,38 +924,17 @@ select.studio-input { min-height: 50px; }
 #recap-engine-picker .pill-btn.engine-locked::after { content: " 🔒"; }
 .draggable-box { position: absolute; left: 4%; right: 4%; z-index: 6; cursor: grab; touch-action: pan-y; }
 .draggable-box.is-dragging { cursor: grabbing; opacity: 0.9; }
-/* R40 item 5: the grip is the ONLY touch-drag initiator (see
-   enableVerticalDrag) — it swallows its own touch stream so a grab
-   there never scrolls the page, and gets a usable touch target. */
-/* Batch AH: the grip is the ONLY touch-drag initiator (R40 item 5),
-   so it must be a real, visible target — a wide pill handle — not
-   the bare 11px glyph owners could not find or hit. */
+/* R40 item 5: the grip is the ONLY touch-drag initiator (see */
+/* Batch AH: the grip is the ONLY touch-drag initiator (R40 item 5) */
 .drag-grip-icon { touch-action: none; padding: 7px 16px; margin: -4px 0; cursor: grab; background: rgba(10, 12, 18, 0.55); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; min-width: 30px; text-align: center; }
 .preview-blur-box {
-    /* Batch CA: NO backdrop-filter, by design. The box is a drag
-       handle over the ENGINE-composited frame, which already
-       carries the real blur with the new subtitle composited sharp
-       on top of it — a CSS frosting blurred EVERYTHING under the
-       rectangle, the subtitle included, so the subtitle looked
-       blurred whenever the box overlapped it (the common case: both
-       default to Y=85%). The region is marked by this tint plus the
-       dashed outline plus the edit-state label; the TRUE blur is
-       what the composited frame shows once the geometry settles. */
+    /* Batch CA: NO backdrop-filter, by design. The box is a drag */
     background: rgba(120, 130, 150, 0.45);
     border: 1.5px dashed rgba(255, 255, 255, 0.55); border-radius: 6px;
     display: flex; align-items: center; justify-content: center; gap: 5px;
-    /* Batch AM (M1): NO min-height floor. The old 22px floor painted
-       the handle ~1.7x taller than small H settings (H=7% of the
-       picture ≈ 15px at phone width; the slider minimum H=3% ≈ 6px).
-       Any floor above ~6px overstates a legitimate setting, and the
-       box stays grabbable without one: the whole surface drags, the
-       grip pill overflows symmetrically by design (negative margins),
-       and the resize handles extend ±5px past the box edges. */
+    /* Batch AM (M1): NO min-height floor. The old 22px floor painted */
 }
-/* The blur label is an editing affordance, not a standing caption:
-   hidden by default in every state (media or not) — at the shared
-   default Y=85% it otherwise paints over the subtitle sample text.
-   It is shown only while editing the box (see the F1 rules below). */
+/* The blur label is an editing affordance, not a standing caption: */
 .preview-blur-box .blur-label { display: none; font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.7); white-space: nowrap; overflow: hidden; }
 /* No-media placeholder state: slim outline only — with no media loaded
    there is nothing to blur yet. */
@@ -1007,14 +950,9 @@ select.studio-input { min-height: 50px; }
 }
 .box-resize-handle.left { left: -5px; }
 .box-resize-handle.right { right: -5px; }
-/* Batch AG: the blur box and the subtitle sample take EXPLICIT
-   left/width from the picture-relative geometry (their width can
-   legitimately reach 100% of the picture), so the shared
-   .draggable-box 92% cap does not apply to them. */
+/* Batch AG: the blur box and the subtitle sample take EXPLICIT */
 .preview-blur-box.draggable-box, .preview-sub-box.draggable-box { max-width: 100%; }
-/* Batch AK: the sub box is an OUTLINE-ONLY drag handle over the
-   engine-composited frame (which renders the real subtitle in the
-   real style) — the per-style CSS text rules are retired. */
+/* Batch AK: the sub box is an OUTLINE-ONLY drag handle over the */
 .preview-sub-box {
     z-index: 7; pointer-events: auto;
     display: flex; align-items: flex-start; justify-content: center;
@@ -1023,12 +961,7 @@ select.studio-input { min-height: 50px; }
 }
 .preview-sub-box .sub-grip { text-shadow: 0 1px 2px rgba(0,0,0,0.8); padding-top: 2px; }
 
-/* Batch AH: the recap title overlay box — centred on (title_x,
-   title_y) of the picture, like the engine's title_position, and
-   capped at 78% of the picture width. Batch AM (M2 residual): the
-   handle is GRIP-ONLY — the title itself renders inside the
-   composited frame, so the old ellipsized text span and its rule
-   are gone; nothing paints a fake one-line title here. */
+/* Batch AH: the recap title overlay box — centred on (title_x, */
 .preview-title-box {
     z-index: 7; text-align: center; padding: 4px 10px; pointer-events: auto;
     display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -1081,23 +1014,16 @@ select.studio-input { min-height: 50px; }
 .mini-toggle .t-val { color: var(--text-3); }
 .mini-toggle.active { color: var(--text); border-color: var(--gold-border); background: var(--gold-soft); }
 .mini-toggle.active .t-val { color: var(--green); }
-/* Batch BX: slider rows get breathing room on the spacing rhythm —
-   a drag starting on one slider must not be able to land on the
-   neighbouring control (walkthrough finding). */
+/* Batch BX: slider rows get breathing room on the spacing rhythm — */
 .editor-controls { display: flex; flex-direction: column; gap: var(--s4); }
 .slider-group { display: flex; flex-direction: column; gap: var(--s2); padding-block: var(--s1); }
-/* Batch AM (S9 cosmetic): a slider group whose feature toggle is
-   OFF (today: the blur geometry/strength group while the Blur
-   toggle is off) renders greyed and inert — display-only; the
-   values stay in place for when the toggle returns. */
+/* Batch AM (S9 cosmetic): a slider group whose feature toggle is */
 .slider-group.blur-off { opacity: 0.45; filter: grayscale(0.5); pointer-events: none; }
 .slider-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); font-size: 13px; color: var(--text-2); font-weight: 600; }
 .slider-val { font-size: 12.5px; font-weight: 700; color: var(--gold-2); white-space: nowrap; }
 .studio-slider {
     -webkit-appearance: none; appearance: none;
-    /* Batch BX: a taller touch box + explicit horizontal panning so
-       a vertical page scroll starting on the slider cannot swallow
-       the drag, and the thumb is a full-size touch target. */
+    /* Batch BX: a taller touch box + explicit horizontal panning so */
     width: 100%; height: 40px; background: transparent; cursor: pointer;
     touch-action: pan-x;
 }
@@ -1145,9 +1071,7 @@ select.studio-input { min-height: 50px; }
     font-size: 15px; display: inline-flex; align-items: center; justify-content: center;
 }
 .v-preview-btn.playing { border-color: var(--gold-border); }
-/* Batch BV: own-voice card inside the recap persona area — same card
-   rhythm as the persona cards; the body follows the ref-audio-card
-   spacing pattern. Locked state mirrors the engine pill's. */
+/* Batch BV: own-voice card inside the recap persona area — same ca */
 #recap-own-voice-card.engine-locked { opacity: 0.45; cursor: not-allowed; }
 .own-voice-lock-badge { font-size: 15px; flex-shrink: 0; }
 .recap-own-voice-body { margin-top: var(--s3); border-top: 1px solid var(--border); padding-top: var(--s3); }
@@ -1441,11 +1365,9 @@ select.studio-input { min-height: 50px; }
 
 .studio-toast {
     position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 50%;
-    transform: translateX(-50%); z-index: 1200;
+    transform: translateX(-50%); z-index: 1350;
     display: flex; align-items: flex-start; gap: var(--s2);
-    /* An explicit width is required: with left:50% + translateX(-50%) and
-       no width, the toast shrink-fits to at most half the viewport and
-       multi-line warnings crush into a tall narrow column. */
+    /* An explicit width is required: with left:50% + translateX(-50%)  */
     width: min(430px, calc(100vw - 32px)); padding: 11px 16px;
     background: var(--surface-3); border: 1px solid var(--border-strong);
     border-radius: var(--r-md); box-shadow: var(--shadow-pop);
@@ -1647,9 +1569,7 @@ select.studio-input { min-height: 50px; }
 .badge-engine.voxcpm { background: var(--violet-soft); color: var(--violet); }
 .preview-logo-watermark.top-right { position: static; }
 
-/* ── Narrow screens: the header tutorial pill's icon-only collapse
-   moved to the Batch BA ≤430px block at the end of this file (the
-   full labelled form now returns above 430px, per BA-1). ─────────── */
+/* Narrow screens: the header tutorial pill's icon-only collapse */
 
 /* ── Final fixes: bare inputs + VIP stat scale ──────────────────────── */
 input[type="text"], input[type="url"], input[type="number"], input[type="search"], input[type="tel"] {
@@ -1665,14 +1585,7 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 .reset-row { display: flex; justify-content: flex-end; }
 .spec-col.span-all { grid-column: 1 / -1; }
 
-/* ════════════════════════════════════════════════════════════════════
-   LIQUID GLASS RESKIN (Style 5 — owner's pick, 2026-10-29)
-   CSS-only layer over the premium rebuild structure: ambient pastel
-   background, frosted surfaces with specular top edges, floating pill
-   nav, bright filled pill CTAs. Blur is applied ONLY to major
-   surfaces (cards, header, nav, overlays) — never to nested children —
-   and falls back to near-opaque surfaces without backdrop-filter.
-   ════════════════════════════════════════════════════════════════════ */
+/* LIQUID GLASS RESKIN (Style 5 — owner's pick, 2026-10-29) */
 
 /* ── Ambient background (fixed layer behind everything) ─────────────── */
 html { background: #dcebf7; }
@@ -1882,13 +1795,7 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     .top-nav, .bottom-nav { background: rgba(255, 255, 255, 0.97); }
 }
 
-/* ════════════════════════════════════════════════════════════════════
-   DEFECT-FIX PASS (owner review of after3 screenshots, 2026-10-29)
-   1) nav clearance/opacity (nav rules above + padding above)
-   2) wallet stats 1+2 layout   3) plan-how collapsible
-   4) plan tabs single-line     5) compact tutorial banner + LIVE dot
-   7) persona filter chips one row   8) recap tutorial mini button
-   ════════════════════════════════════════════════════════════════════ */
+/* DEFECT-FIX PASS (owner review of after3 screenshots, 2026-10-29) */
 
 /* ── 2 · Wallet stats: tier as a header row, balances in 2 wide columns ── */
 .stats-row { grid-template-columns: 1fr 1fr; gap: var(--s3); }
@@ -1965,23 +1872,7 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 .recap-step-card .step-badge-title { align-items: flex-start; }
 .recap-step-card .step-badge-title .step-title { min-width: 0; }
 
-/* ════════════════════════════════════════════════════════════════════
-   LIQUID GLASS POLISH (high-end pass — owner's 'အဆင့်မြင့်မြင့် အကုန်'
-   instruction, 2026-10-29). Purely elevates the glass CRAFT on top of
-   the reskin + defect-fix layers; no structure/flow/copy changes and
-   no defect fix is undone (nav stays .9 opaque, clearance untouched).
-
-   Elevation system (one language everywhere):
-     L3 overlays  — --glass-strong fill, --blur-overlay, --shadow-pop
-     L2 chrome    — header/nav, --blur-chrome
-     L1 cards     — --blur-card, --shadow-card (specular .9)
-     L1 tiles     — nested in-card tiles: NO blur (perf rule), tinted
-                    fill + --shadow-tile (specular .85 + soft tint shadow)
-     L0 chips     — micro pills/badges: --glass-hi-soft (specular .55)
-     Inset wells  — inputs/drop-zone/tracks: --shadow-inset (pressed)
-   Every shadow is tinted rgba(70,110,160,·) to match the ambient
-   background — no black/grey shadows outside video content.
-   ════════════════════════════════════════════════════════════════════ */
+/* LIQUID GLASS POLISH (high-end pass — owner's 'အဆင့်မြင့်မြင့် အက */
 :root {
     --glass-hi-tile: inset 0 1px 0 rgba(255, 255, 255, 0.85);
     --glass-hi-soft: inset 0 1px 0 rgba(255, 255, 255, 0.55);
@@ -2100,10 +1991,7 @@ input[type="search"]:focus, input[type="tel"]:focus {
 }
 
 /* ── Recap script review / edit (two-phase flow) ─────────────────────── */
-/* Batch AK (P8): .script-review-row is defined ONCE (the Liquid
-   Glass block below carries layout + theme; the switch treatment
-   lives in the ONE-switch section). The stale dark-theme first
-   definition is gone. */
+/* Batch AK (P8): .script-review-row is defined ONCE (the Liquid */
 .script-hint { font-size: 13px; line-height: 1.7; opacity: 0.75; margin-top: 6px; }
 .script-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; max-height: 55vh; overflow-y: auto; }
 .script-seg { padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); }
@@ -2119,11 +2007,7 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .script-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .script-actions .btn { flex: 1 1 150px; min-height: 44px; }
 
-/* ── Release 2026-10-30 integration: Script Editor in Liquid Glass ──
-   The script-editing block above was written against the old dark theme
-   (near-black textarea, white-alpha borders, gold accents). Restyle the
-   family with the Liquid Glass tokens so the editor card matches the
-   rest of the Mini App. */
+/* Release 2026-10-30 integration: Script Editor in Liquid Glass */
 .script-seg {
     background: var(--surface-2);
     border: 1px solid var(--border);
@@ -2154,30 +2038,18 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .script-hint { color: var(--text-2); opacity: 1; }
 .rights-note { color: var(--text-2); }
 
-/* ════════════════════════════════════════════════════════════════════
-   OVERFLOW FIXES (2026-10-30 — owner-caught clipped text; verified with
-   the automated overflow detector in live-tests/overflow-audit).
-   System-level rules: long Burmese labels wrap inside their container
-   or get enough room — nothing escapes the screen edge again.
-   ════════════════════════════════════════════════════════════════════ */
+/* OVERFLOW FIXES (2026-10-30 — owner-caught clipped text; verified */
 
-/* 1 · Bottom nav: tighter type/padding + shrinkable items, so all five
-      labels keep real clearance inside their pill (device Myanmar fonts
-      are wider than test fonts — 4px slack was not enough). */
+/* 1 · Bottom nav: tighter type/padding + shrinkable items, so all  */
 .bottom-nav { padding: 5px; gap: 1px; }
 .nav-item { min-width: 0; padding: 4px 1px; font-size: 10.5px; }
 .nav-label { max-width: 100%; }
 
-/* 1b · Seven-item nav (admin variant, Home tab added): reclaim the
-      item padding/gap and drop the label a half-step so the widest
-      Myanmar label (အသံဖန်တီး) keeps real clearance inside its pill
-      instead of crowding the neighbours — measured at 390px. */
+/* 1b · Seven-item nav (admin variant, Home tab added): reclaim the */
 .bottom-nav:has(#nav-btn-admin:not(.hidden)) { gap: 0; }
 .bottom-nav:has(#nav-btn-admin:not(.hidden)) .nav-item { padding: 4px 0; font-size: 10px; }
 
-/* 2 · Pill groups: wrap cleanly inside the container instead of pushing
-      pills off-screen; a group label takes a row of its own (the pattern
-      the spec rows already use), so picker rows read label → options. */
+/* 2 · Pill groups: wrap cleanly inside the container instead of pu */
 .pill-group { display: flex; flex-wrap: wrap; align-items: center; max-width: 100%; }
 .pill-group > .spec-lbl { flex: 1 0 100%; margin-bottom: 2px; }
 
@@ -2196,9 +2068,7 @@ input[type="search"]:focus, input[type="tel"]:focus {
     .payment-methods { grid-template-columns: 1fr; }
 }
 
-/* 4b · Recap top-voice cards: one per row — name + description + preview
-      button need the full card width; squeezed into two columns the
-      labels ellipsize into unreadable stubs. */
+/* 4b · Recap top-voice cards: one per row — name + description + p */
 .recap-top-voices-grid { grid-template-columns: 1fr; }
 
 /* 4c · Overlay toggles: two per row so icon + label + ON/OFF stay on one
@@ -2225,13 +2095,9 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .settings-group > :first-child { margin-top: 0; }
 .settings-group .story-style-block { border-top: none; padding-top: 0; }
 
-/* ════════════════════════════════════════════════════════════════════
-   8 · PREMIUM PASS 2 (owner's annotated screenshots, 2026-10-30)
-   ──────────────────────────────────────────────────────────────────── */
+/* 8 · PREMIUM PASS 2 (owner's annotated screenshots, 2026-10-30) */
 
-/* 8a · Admin queue filters: ONE compact row — a horizontally scrollable
-   status strip (flex 1) + a compact engine select. Replaces the wrapped
-   two-group pill wall (~146px) with a single ~36px row. */
+/* 8a · Admin queue filters: ONE compact row — a horizontally scrol */
 .queue-filter-bar { flex-wrap: nowrap; gap: 8px; }
 .filter-scroll-strip {
     display: flex; flex: 1 1 auto; min-width: 0;
@@ -2258,11 +2124,7 @@ input[type="search"]:focus, input[type="tel"]:focus {
 }
 .queue-engine-select:focus { outline: none; border-color: var(--gold-border); }
 
-/* 8b · Live Preview canvas: cinematic surface — deep gradient frame,
-   fine film grain, soft vignette; glass play mark in the empty state.
-   Grain/vignette sit above the movie layer but below every control
-   overlay (crop shades z3, demo subs/badge z4, top overlay z5,
-   draggable boxes z6) and never intercept touches. */
+/* 8b · Live Preview canvas: cinematic surface — deep gradient fram */
 .video-bg-placeholder {
     background:
         radial-gradient(120% 90% at 18% 0%, rgba(245, 180, 80, 0.14) 0%, rgba(245, 180, 80, 0) 55%),
@@ -2314,19 +2176,7 @@ input[type="search"]:focus, input[type="tel"]:focus {
     animation: previewPulse 1.6s ease infinite; flex-shrink: 0;
 }
 
-/* ── Recap-fix pass 2026-10-30 ─────────────────────────────────────────
-   1) Blurred backdrop layer for the Live Preview letterbox area (the
-      JS fills it with the source thumbnail in video mode; without it the
-      letterbox area rendered as a plain black void).
-   2) Header squeeze guard: the brand track must be allowed to shrink
-      (minmax(0, 1fr)) so the language pill is never pushed past the
-      right edge on clients with wider Myanmar fonts / "MM" flag text.
-   3) Preview subtitle sample: the span is a flex item — without
-      min-width: 0 it cannot shrink, so the one/two-line clamp never
-      engaged and the text clipped at both ends.
-   4) Myanmar-safe line-height for toasts/alerts/banners: Myanmar glyph
-      stacks are tall; Latin-tuned 1.5–1.65 line-heights make adjacent
-      lines collide. Scoped to body.lang-my (set by setLanguage()). */
+/* Recap-fix pass 2026-10-30 */
 .video-backdrop-blur {
     position: absolute; inset: 0; z-index: 0; pointer-events: none;
     background-size: cover; background-position: center;
@@ -2359,8 +2209,8 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     display: flex; gap: var(--s1); overflow-x: auto; padding: var(--s1);
     margin-top: var(--s3);
     background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 999px; backdrop-filter: var(--blur-card);
-    scrollbar-width: none; position: sticky; top: 8px; z-index: 30;
+    border-radius: 999px;
+    scrollbar-width: none; position: sticky; top: calc(var(--vcp-hdr-sticky-top, 114px) + 4px); z-index: 95;
     box-shadow: var(--glass-hi);
     /* Round-6 P10: a soft right-edge fade signals the row scrolls —
        the last tabs used to sit off-screen with no affordance. */
@@ -2524,9 +2374,7 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     display: flex; justify-content: space-between; gap: var(--s2);
     font-size: 12.5px; color: var(--text-2); padding: 3px 0;
 }
-/* Batch O: the pre-existing-blocked count is NOT part of the
-   not-delivered breakdown (those users were never attempted), so it
-   renders as its own note block below the breakdown, not a row in it. */
+/* Batch O: the pre-existing-blocked count is NOT part of the */
 .adm-bc-note { margin-top: 8px; background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--r-sm, 10px); padding: 8px 10px; }
 
 /* Activity */
@@ -2559,19 +2407,11 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 #adm-jobs-history .admin-action-row .studio-input { flex: 2 1 auto; }
 #adm-jobs-history .admin-action-row .btn { flex: 1 1 auto; }
 .adm-fleet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-.adm-fleet-node-card { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 12px; }
+.adm-fleet-node-card { background: var(--vcp-flat-glass-bg, rgba(255, 255, 255, 0.86)); border: 1px solid var(--vcp-border, rgba(15, 23, 42, 0.12)); color: var(--vcp-text-primary, #0F172A); border-radius: 14px; padding: 14px; box-shadow: var(--vcp-shadow-sm); }
 .adm-fleet-node-head { display: flex; justify-content: space-between; align-items: center; }
 .adm-fleet-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* ── UI audit 2026-10-31 (wave2): Myanmar headings/titles/labels render
-   Padauk-first. Noto Sans Myanmar's medial-ra glyph (medial_ra.w2) is a
-   heavy rectangular bracket that reads as a "box outline" around
-   consonant clusters (ကြ, ကြို, မြ, ပြီ …) at small bold sizes — the same
-   defect fixed for .hub-row-title in 520f45e, swept across every
-   heading/title/label class whose strings carry U+103C clusters
-   (weight >= 600, verified per-class in the audit sweeps). Padauk draws
-   the medial as a fine open sweep. Regular-weight body text is NOT
-   switched here (product-wide body-font choice stays with the owner). */
+/* UI audit 2026-10-31 (wave2): Myanmar headings/titles/labels rend */
 .gate-lock-card h3, #gate-lock-btn-verify, #gate-btn-verify,
 .tutorial-banner-text strong, .tutorial-banner-btn,
 .persona-name, .card-label, .step-title, .accordion-title,
@@ -2587,10 +2427,7 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
 }
 
-/* Persona names were hard-truncated to one line on all 12 cards
-   (84px meta column vs 198-277px of text, both languages). The header
-   stacks (avatar, then full-width name + badge) so every name renders
-   completely in <=2 lines; measured on all 24 my/en names. */
+/* Persona names were hard-truncated to one line on all 12 cards */
 .persona-header { flex-direction: column; align-items: flex-start; gap: 6px; }
 .persona-meta { width: 100%; min-width: 0; }
 .persona-name {
@@ -2743,11 +2580,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .tutorial-banner-card.compact .tutorial-banner-text strong { font-size: 13px; }
 .tutorial-banner-card.compact .tutorial-banner-text span { font-size: 11.5px; }
 
-/* T4 — Recap Step-1 tutorial button shows the configured title; keep it
-   inside the step header row. Journey audit 2026-10-31: the title was
-   ellipsized at 390px ("Movie Recap ဖန်တီးနည်း…") — an ellipsized
-   label is exactly what the owner rejects, so the text now wraps
-   inside the same 46% cap instead of being cut. */
+/* T4 — Recap Step-1 tutorial button shows the configured title; ke */
 /* Batch AV: the #recap-step1-tut-btn sizing rule was retired with the
    button itself (duplicate of the header guide — parent dedupe). */
 
@@ -2795,12 +2628,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .dl-error-title { font-size: 13.5px; font-weight: 700; color: var(--red); line-height: 1.6; }
 .dl-error-hint { margin: 4px 0 0; font-size: 12.5px; line-height: 1.65; color: var(--text-2); }
 
-/* ── Voice compact UX 2026-11-01: text input first, persona picker
-   collapsed. The selected-voice summary row lives under the mode
-   segmented control; the picker only opens on demand. Follow-up
-   (owner, 2026-11-01 late): the picker now expands IN PLACE directly
-   beneath the summary row inside the same card — it used to sit
-   below the text input, disconnected from the Change tap. ──────── */
+/* Voice compact UX 2026-11-01: text input first, persona picker */
 .voice-selected-row {
     display: flex; align-items: center; gap: 8px;
     margin-top: 10px; padding: 9px 12px;
@@ -2814,21 +2642,14 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .vsr-change { flex-shrink: 0; }
-/* In-place picker: no card chrome of its own (it lives inside the
-   mode card); when open it separates from the summary row with a
-   hairline, when collapsed it occupies no space at all. */
+/* In-place picker: no card chrome of its own (it lives inside the */
 .persona-picker-card:not(.picker-collapsed) {
     margin-top: 10px; padding-top: 10px;
     border-top: 1px solid var(--border);
 }
 .persona-picker-card.picker-collapsed #curated-personas-card { display: none; }
 
-/* ════════════════════════════════════════════════════════════════════
-   RECAP TAB TIDY (2026-11-01 — owner's premium/hierarchy directive)
-   One calm 3-step path (Source → Preview docked with it → Voice),
-   everything else behind labeled, collapsed, hairline-divided groups.
-   Presentation only: no control, id, or submitted value changes.
-   ════════════════════════════════════════════════════════════════════ */
+/* RECAP TAB TIDY (2026-11-01 — owner's premium/hierarchy directive */
 
 /* B3 — sticky header/ADMIN bar: near-opaque glass, no ghosting. */
 .top-nav {
@@ -2873,9 +2694,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
    the label copy no longer carrying its own speaker glyph). */
 .preview-recap-voice-btn { border-radius: 999px; min-height: 44px; }
 
-/* ── Uniform pill groups (C1/C5/C9/C10): one component, even tiles.
-   Buttons grow to fill their row, so Burmese and EN render the same
-   systematic grid instead of ragged one-per-row stacks. */
+/* Uniform pill groups (C1/C5/C9/C10): one component, even tiles. */
 #story-style-picker-quick .style-select-pill,
 #recap-crop-presets-toolbar .pill-btn,
 #recap-logo-pos-picker .pill-btn,
@@ -2918,10 +2737,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .canvas-no-thumb-icon { font-size: 34px; opacity: 0.9; }
 .canvas-no-thumb-text { font-size: 12.5px; font-weight: 600; line-height: 1.7; color: rgba(255, 255, 255, 0.85); max-width: 210px; }
-/* F4 — short frames (16:9, incl. the Original fallback shape): shrink
-   the placeholder block and lift it off the drag-box band, so the
-   glyph clears the frame's top edge and the hint text never touches
-   the boxes at the bottom. */
+/* F4 — short frames (16:9, incl. the Original fallback shape): shr */
 .mockup-screen.ratio-16-9 .canvas-no-thumb { padding: var(--s2) var(--s4) 16%; gap: var(--s1); }
 .mockup-screen.ratio-16-9 .canvas-no-thumb-icon { font-size: 24px; }
 .mockup-screen.ratio-16-9 .canvas-no-thumb-text { font-size: 11.5px; line-height: 1.55; max-width: 250px; }
@@ -3014,9 +2830,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .toggle-pill-btn.active .switch-track { background: var(--gold); border-color: var(--gold-border); }
 .toggle-pill-btn.active .switch-track::after { left: 20px; }
-/* Mask-tab toggles: uniform rows — label left, switch right (C3).
-   The .t-val span itself renders as the switch track (its ON/OFF text
-   stays in the DOM for state/i18n but is not painted). */
+/* Mask-tab toggles: uniform rows — label left, switch right (C3). */
 .overlays-toggle-row { flex-direction: column; flex-wrap: nowrap; }
 .overlays-toggle-row .mini-toggle {
     flex: 1 1 auto; width: 100%; min-height: 44px;
@@ -3045,12 +2859,8 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-cost-hint { font-size: 12px; opacity: 0.9; }
 .recap-unverified-warning { font-size: 12.5px; line-height: 1.55; color: #d97706; font-weight: 600; }
 
-/* Batch CI — persistent duration-cap notice (Step 1 source area +
-   Step 4 under the CTA): same alert family as .upload-error-box, so
-   the over-limit reason stays readable in place instead of flashing
-   by as a toast. */
+/* Batch CI — persistent duration-cap notice (Step 1 source area + */
 .recap-overlimit-notice { padding: var(--s2) var(--s3); border-radius: var(--r-md); background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); font-size: 12.5px; line-height: 1.55; font-weight: 600; color: var(--red); }
-
 
 /* AGY-4 — slider thumbs lose the dark-theme black rim; blur box gets
    the glass specular highlight like every other frosted surface. */
@@ -3058,13 +2868,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .studio-slider::-moz-range-thumb { border-color: #ffffff; }
 .preview-blur-box { box-shadow: var(--glass-hi); }
 
-/* F1 — the blur label paints only in its editing context: the Mask
-   toolbar tab is active (.label-on, toggled by the tab handler), the
-   box is being dragged/resized (.is-dragging), or it is hovered.
-   When shown it rides just ABOVE the blur band: both drag boxes are
-   centre-anchored at the same default Y=85%, so any inside placement
-   shares the subtitle sample's centred text line in some ratio (in
-   the short 16:9 frame the whole band is shorter than two lines). */
+/* F1 — the blur label paints only in its editing context: the Mask */
 .preview-blur-box.label-on .blur-label,
 .preview-blur-box.is-dragging .blur-label,
 .preview-blur-box:hover .blur-label {
@@ -3072,20 +2876,11 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     transform: translateX(-50%); line-height: 1.1;
 }
 
-/* ════════════════════════════════════════════════════════════════════
-   FULL-APP POLISH (2026-11-01) — closes the full-app audit's fixable
-   findings (fix/full-app-polish). Presentation rules; the matching
-   markup/JS changes are noted per item.
-   ════════════════════════════════════════════════════════════════════ */
+/* FULL-APP POLISH (2026-11-01) — closes the full-app audit's fixab */
 
-/* NAV — the dock now carries 4 destinations (5 for admin): Downloader
-   and History moved into Home's Tools / Library card (owner decision
-   2026-11-01). Items are equal-flex, so the labels simply gain room. */
+/* NAV — the dock now carries 4 destinations (5 for admin): Downloa */
 
-/* G-1 — text ghosting under the floating dock at max scroll: the pill
-   goes near-opaque and a page-tone scrim fades content out behind it
-   (under the dock z-200 and the sticky CTA z-60, above flow content;
-   the max-scroll bottom clearance is unchanged). */
+/* G-1 — text ghosting under the floating dock at max scroll: the p */
 .bottom-nav { background: rgba(255, 255, 255, 0.97); }
 .nav-scrim {
     position: fixed; left: 0; right: 0; bottom: 0; height: 108px;
@@ -3097,16 +2892,12 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
    the tracking in slightly on the shared heading classes. */
 .card-label, .step-title, .pane-header h2 { letter-spacing: -0.2px; }
 
-/* H-1/H-2 — Refer card: the link gets its own wrapping box (full URL
-   readable, break-all at a smaller size) and the two actions become
-   wide one-line pills instead of squeezed circles. */
+/* H-1/H-2 — Refer card: the link gets its own wrapping box (full U */
 .ref-link-row { display: block; }
 .ref-link-text {
     display: block; white-space: normal; overflow: visible; text-overflow: clip;
     word-break: break-all; font-size: 11.5px; line-height: 1.6;
-    /* P3 (premium round 2026-11-02): balance the wrapped lines so a
-       lone orphan character never lands on line 2; the full link
-       stays visible and copyable (R29 intent). */
+    /* P3 (premium round 2026-11-02): balance the wrapped lines so a */
     text-wrap: balance;
     background: var(--inset); border: 1px solid var(--border);
     border-radius: var(--r-sm); padding: 8px 10px;
@@ -3121,29 +2912,20 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
    whole (label above the selector) instead of breaking the word. */
 .control-row .ctrl-title { flex: none; white-space: nowrap; }
 
-/* V-3 — persona preview button: icon + label stay on one line as one
-   centred group; descriptions balance instead of orphaning a syllable.
-   Sizes trimmed to the measured budget: at the base 12.5px the
-   icon+label group (132px) exceeds the card's content room (114px);
-   at 11.5px with an 18px icon and 5px gap it lands inside the pill
-   with clear margins, still one line, still centred. */
+/* V-3 — persona preview button: icon + label stay on one line as o */
 .voice-preview-btn { flex-wrap: nowrap; padding: 5px 8px; gap: 5px; font-size: 11.5px; }
 .voice-preview-btn .preview-btn-icon { width: 18px; height: 18px; }
 .voice-preview-btn .preview-btn-label { white-space: nowrap; }
 .persona-desc { text-wrap: balance; }
 
-/* R-2 — Micro-Zoom pills: natural one-line tiles (the uniform-tile
-   rule above stretched them to a 26% basis with wrapping text, which
-   dropped the 🔥 onto a second line and grew the selected pill). */
+/* R-2 — Micro-Zoom pills: natural one-line tiles (the uniform-tile */
 #recap-zoom-picker { align-items: stretch; }
 #recap-zoom-picker .pill-btn {
     flex: 0 1 auto; white-space: nowrap;
     display: inline-flex; align-items: center; justify-content: center;
 }
 
-/* D-1 — downloader meta line: separators are generated only between
-   non-empty parts, and travel with their part when the line wraps —
-   no dangling "•" (the hardcoded separator spans left the markup). */
+/* D-1 — downloader meta line: separators are generated only betwee */
 .dl-meta-row > span:empty { display: none; }
 .dl-meta-row > span:not(:empty) ~ span:not(:empty)::before {
     content: "•"; margin-right: 6px; color: var(--text-3);
@@ -3177,10 +2959,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     -webkit-mask-image: none; mask-image: none;
 }
 
-/* A-3/A-4/A-6 — admin user rows: two lines. Line 1 = name (the only
-   ellipsising part) + badges with flex:none so ACTIVE/BLOCKED and the
-   👑 VIP badge always render in full; line 2 = @username + sub-line,
-   allowed to wrap rather than clip. */
+/* A-3/A-4/A-6 — admin user rows: two lines. Line 1 = name (the onl */
 .adm-user-line1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .adm-user-name {
     flex: 0 1 auto; min-width: 0;
@@ -3198,22 +2977,13 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     white-space: normal; overflow: visible; text-overflow: clip;
     overflow-wrap: anywhere; line-height: 1.55;
 }
-/* Segments are atomic inline-blocks: a plain inline span can
-   fragment at the wrap point and strand its ::before separator at
-   the line end (seen in the first after-capture); an atomic box
-   always travels with its separator. Long single segments can
-   still break internally via overflow-wrap. */
+/* Segments are atomic inline-blocks: a plain inline span can */
 .adm-user-sub .adm-sub-seg { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .adm-user-sub .adm-sub-seg + .adm-sub-seg::before {
     content: "•"; margin: 0 5px; color: var(--text-3);
 }
 
-/* A-5 — the Users search row: the shared .admin-action-row gives the
-   button flex:1, which starved the input (measured room 128px for a
-   165px placeholder — even the shortened string clipped). Inside the
-   Users main view only, the button keeps its natural width and the
-   input takes the rest (room ~190px). The detail screen's action
-   rows are outside #adm-users-main and keep the equal-flex design. */
+/* A-5 — the Users search row: the shared .admin-action-row gives t */
 #adm-users-main .admin-action-row .btn { flex: none; }
 
 /* A-6 — category filter chips + Load-more for the Users list (the
@@ -3222,29 +2992,11 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .adm-users-filter-chip { white-space: nowrap; }
 #adm-users-load-more { width: 100%; margin-top: var(--s3); min-height: 44px; }
 
-/* ── Recap settings-UI fix batch (2026-11-02, RS-1/RS-2/RS-6/RS-7) ───
-   RS-1 — a multi-row .pill-group track kept border-radius:999px; on a
-   two-row track that arc is far larger than the active pill's own
-   corner arc at its 3px inset, so the white active pill's corner
-   paint crossed the track border at the diagonals (worst top-left,
-   where the default active sits; layout boxes were always inside).
-   A fixed 24px radius is concentric-safe for every pill height in
-   the tab (38–54px) and a visual no-op on single-row tracks, where
-   999px already clamped to ~half the track height. Inside a track
-   the active pill also drops its outer drop shadow (specular inset
-   only), so its paint can never leave the track. */
+/* Recap settings-UI fix batch (2026-11-02, RS-1/RS-2/RS-6/RS-7) */
 .pill-group, .pill-group.sm { border-radius: 24px; }
 .pill-group .pill-btn.active { box-shadow: var(--glass-hi); }
 
-/* RS-6/RS-7 — the R28 "uniform tiles" flex rules (flex-basis 42%/26%
-   + white-space:normal) let Burmese parentheticals wrap on SOME pills
-   only, so row-mates rendered 53px next to 38px, and short last rows
-   left orphan tiles / full-width stretches. The Recap pickers below
-   are now grids with grid-auto-rows:1fr — every option in a picker
-   shares one height (its tallest option's), and the column counts
-   divide each picker's options evenly. Labels, order and meaning
-   are unchanged; the R28 flex rules above are superseded for these
-   pickers only (engine/lang/split-minutes/zoom keep their verdicts). */
+/* RS-6/RS-7 — the R28 "uniform tiles" flex rules (flex-basis 42%/2 */
 #recap-quality-picker, #recap-logo-pos-picker, #recap-fill-picker,
 #recap-crop-presets-toolbar, #sub-lines-picker-toolbar,
 #font-size-picker-toolbar, #recap-sub-font-picker, #recap-speed-picker {
@@ -3253,7 +3005,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 #recap-quality-picker { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
 #recap-logo-pos-picker { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
 #recap-crop-presets-toolbar { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
-#sub-lines-picker-toolbar { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
+#sub-lines-picker-toolbar { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
 #font-size-picker-toolbar { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; }
 #recap-sub-font-picker { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
 /* Fill's three labels are the tab's longest; as a one-column stack
@@ -3265,10 +3017,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 #recap-speed-picker .pill-btn { grid-column: span 2; }
 #recap-speed-picker .pill-btn:nth-child(4),
 #recap-speed-picker .pill-btn:nth-child(5) { grid-column: span 3; }
-/* Batch AZ-11: #sub-style-picker is a <select> now (one compact
-   dropdown) — the chip-grid rules that stood here are retired; the
-   select is styled by .studio-select + the AZ glass-dropdown
-   pattern at the end of this file. */
+/* Batch AZ-11: #sub-style-picker is a <select> now (one compact */
 #story-style-picker-quick {
     display: grid; grid-template-columns: repeat(2, 1fr);
     grid-auto-rows: 1fr; gap: var(--s2); align-items: stretch;
@@ -3278,20 +3027,9 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .ratio-pills-grid { grid-auto-rows: 1fr; }
 
-/* RS-2 (superseded by Batch AH, 2026-11-05) — this block used to
-   neutralise the one-line/two-lines clamps so the sample always
-   rendered in full. The owner rejected that: the preview must
-   honour the Lines setting exactly like the render (Batch P
-   parity) — 1 line selected shows ONE line, 2 shows up to two.
-   The clamp rules above (.preview-sub-box.one-line / .two-lines)
-   therefore stand again; the plate fit measures the clamped text
-   rect, so the band tracks the shown line count. */
+/* RS-2 (superseded by Batch AH, 2026-11-05) — this block used to */
 
-/* RS-7 minors — one packing rule for the seek panel: every line
-   spans the full panel width. The action buttons split into equal
-   thirds; the preset pills spread edge-to-edge on their own line
-   (they used to right-pack via margin-left:auto while the actions
-   left-packed, leaving opposite dead space). */
+/* RS-7 minors — one packing rule for the seek panel: every line */
 .seek-actions-row .mini-btn-seek { flex: 1 1 0; }
 .seek-presets-pills {
     flex: 1 1 100%; margin-left: 0; justify-content: space-between;
@@ -3303,15 +3041,10 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-detail-toggle { flex: 1 1 auto; min-width: 0; }
 
 /* ── Batch AC: live jobs pill + sheet, prefs saved note ─────────── */
-/* Batch AK (Addition C): the pill is a full-width status BAR —
-   stacked lines with room to read (the old single-row pill was too
-   narrow for its two Burmese lines, which interleaved into
-   unreadable columns), a full-width progress track, and a dismiss
-   button. Anchored above the bottom nav, it never floats over
-   interactive content mid-screen. */
+/* Batch AK (Addition C): the pill is a full-width status BAR — */
 .live-jobs-pill {
     position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: 86px; z-index: 900; display: flex; align-items: stretch; gap: 6px;
+    bottom: calc(var(--nav-h, 64px) + env(safe-area-inset-bottom, 0px) + 22px); z-index: 850; display: flex; align-items: stretch; gap: 6px;
     width: min(96vw, 480px); padding: 10px 8px 10px 14px; border-radius: 14px;
     border: 1px solid rgba(255,255,255,0.35);
     background: rgba(23, 32, 54, 0.95); color: #fff; font-size: 12px;
@@ -3387,9 +3120,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .live-job-row-main { flex: 1 1 180px; min-width: 0; }
 .live-job-row-title { font-weight: 600; font-size: 13px; line-height: 1.45; white-space: normal; overflow-wrap: break-word; }
-/* Batch AK (Addition C): the meta line wraps normally across the
-   row's full width — it used to be squeezed into a narrow column
-   that stacked word-by-word at Mini App widths. */
+/* Batch AK (Addition C): the meta line wraps normally across the */
 .live-job-row-meta { font-size: 12px; opacity: 0.75; white-space: normal; overflow-wrap: break-word; line-height: 1.55; }
 .live-job-row-actions { display: flex; gap: 6px; align-items: center; }
 @media (max-width: 480px) {
@@ -3399,9 +3130,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .live-job-row-bar { height: 5px; border-radius: 999px; background: #e6ebf2; overflow: hidden; margin-top: 4px; }
 .live-job-row-fill { display: block; height: 100%; background: linear-gradient(90deg, #57c7ff, #ffd257); }
-/* Batch BC-3: income detail sheet rows (the sheet itself reuses the
-   live-jobs-sheet glass shell). Test-account rows are muted and carry
-   a TEST badge; they are display-only and never enter the total. */
+/* Batch BC-3: income detail sheet rows (the sheet itself reuses th */
 .income-mini-click { cursor: pointer; }
 .income-detail-total { font-weight: 700; font-size: 15px; margin: 10px 0 2px; }
 .income-detail-toggle-row {
@@ -3435,9 +3164,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .submit-confirm-hint { font-size: 12px; opacity: 0.8; margin-top: 10px; }
 .submit-confirm-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 
-/* ════════════════════════════════════════════════════════════════════
-   Batch AK — premium-standard fixes (2026-11-05)
-   ════════════════════════════════════════════════════════════════════ */
+/* Batch AK — premium-standard fixes (2026-11-05) */
 
 /* P1: the fill picker's selected state is unmistakable — a filled
    gold pill, not a faint tint (the ratio/fill/style pickers share
@@ -3514,11 +3241,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     font-size: 12.5px; line-height: 1.6; color: #d97706; font-weight: 600;
 }
 
-/* S6/P8: ONE switch language for every toggle component. The
-   checkbox rows, .toggle-pill-btn (.switch-track) and .mini-toggle
-   (.t-val) already share the track+knob treatment in the sections
-   above; .chip-toggle joins the same family here — a status dot
-   that fills gold when on, over the shared active colours. */
+/* S6/P8: ONE switch language for every toggle component. The */
 .chip-toggle::before {
     content: ""; width: 8px; height: 8px; border-radius: 50%;
     background: var(--surface-3); border: 1px solid var(--border-strong);
@@ -3528,13 +3251,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 
 /* ── Batch AS (2026-11-05): preview-truth + overflow fixes ─────────── */
 
-/* AS-1: the aspect cards are CARDS again, not pills — each stacks its
-   name, usage line and dimensions on their own lines with comfortable
-   padding, so nothing touches a border and no separator hangs alone
-   (the C8 pill compaction above squeezed all three onto shared lines:
-   the selected card's dimensions pressed past its right edge and the
-   Original card wrapped edge-to-edge). The 2×2 grid and the selected
-   styling are unchanged. */
+/* AS-1: the aspect cards are CARDS again, not pills — each stacks  */
 .ratio-pills-grid .ratio-btn {
     flex-direction: column; align-items: flex-start; justify-content: center;
     gap: 1px; min-height: 0; padding: 10px 12px;
@@ -3546,41 +3263,18 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .ratio-btn.active .ratio-sub { color: var(--gold-2); }
 
-/* AS-6: bottom clearance for the fixed CTA band. The sticky CTA bar
-   floats with its top edge ≈156px above the viewport bottom (86px
-   offset incl. the nav + ≈70px bar) over the shared 118px viewport
-   clearance, so a tab without its own extra padding strands its last
-   ~38px under the bar forever. The Voice tab gets the missing room
-   (118 + 72 = 190 ≥ 156 + margin); the Recap tab's existing 120px
-   (238 total) already clears it and is unchanged. */
+/* AS-6: bottom clearance for the fixed CTA band. The sticky CTA ba */
 #tab-voice { padding-bottom: 72px; }
 
-/* AS-6: the Voice persona filter chips size to their content and
-   WRAP instead of squeezing — the equal-flex nowrap row ellipsised
-   the last chip ("မိန်းကလေး") at phone widths. */
+/* AS-6: the Voice persona filter chips size to their content and */
 .persona-filter-row { flex-wrap: wrap; }
 .persona-filter-row .filter-chip {
     flex: 1 1 auto; overflow: visible; text-overflow: clip;
 }
 
-/* ── Batch AX: Recap wizard ────────────────────────────────────────
-   One step at a time (owner direction 2026-11-06): exactly one step
-   card is visible; completed steps disappear. The indicator was a
-   designed progress piece (AX-2R): a track behind four nodes, its
-   completed portion filled with the app's blue gradient; nodes are
-   38px circles with shadow and ring; the current node carries the
-   gradient + a gentle pulsing halo; ONLY the current step's name
-   renders, as a one-line caption under the track — no text inside
-   the chips (the AV labels squeezed and clipped at phone widths).
-   SUPERSEDED by Batch AZ-9 (owner rejected the numbered circles as
-   dated): the indicator is a liquid segmented capsule — see the
-   Batch AZ section at the end of this file. */
+/* Batch AX: Recap wizard */
 .recap-steps-nav { margin-bottom: var(--s2); }
-/* Batch AZ-9: the AX-2R track/nodes/caption rules that stood here
-   are retired — the indicator is now a liquid segmented capsule
-   whose full CSS lives in the Batch AZ section at the end of this
-   file. (@keyframes recap-step-pop is redefined there for the
-   segment pop.) */
+/* Batch AZ-9: the AX-2R track/nodes/caption rules that stood here */
 
 .recap-step-head { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 4px 2px; font-weight: 700; }
 .recap-step-word { color: var(--text-2); font-size: 14px; }
@@ -3630,10 +3324,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-step4-quote-value { font-size: 30px; font-weight: 800; line-height: 1.1; color: var(--gold, #f5c451); }
 .recap-step4-quote-unit { font-size: 15px; font-weight: 600; }
 
-/* Grip offset (owner 9:16 finding): the subtitle/title drag handles
-   float just ABOVE their box's top edge instead of lying over the
-   subtitle text's first characters. The stage clips at its own edge
-   (.mockup-inner-movie overflow:hidden), so nothing can leak out. */
+/* Grip offset (owner 9:16 finding): the subtitle/title drag handle */
 .preview-sub-box .sub-grip,
 .preview-title-box .title-grip {
     position: absolute; top: 0; left: 50%;
@@ -3645,21 +3336,9 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
    the sync lock pill wrap onto two lines instead of colliding. */
 #recap-preview-transform-group .card-header-row { flex-wrap: wrap; row-gap: var(--s2); }
 
-/* ── Batch AX-4R + AX-6: Step 4 output preview + tab-wide polish ────
-   AX-4R: Step 4 opens with a LARGE output-preview card — the same
-   engine composite the Step 2 stage shows — so the user sees the
-   finished video's form (a still at the current seek position,
-   captioned honestly as such) and can go back and fix things before
-   the job starts. AX-6: one design language across the whole Recap
-   tab — card headers, buttons, pills, toggles, sliders, section
-   labels, empty states and the quote card all share it. Polish
-   only: no behaviour, payload or id changes; the AU quality lock
-   keeps its shipped gold look (restated after the pill rule). */
+/* Batch AX-4R + AX-6: Step 4 output preview + tab-wide polish */
 
-/* Output preview card (AX-4R). The frame is a fixed aspect box
-   (JS sets aspect-ratio from the chosen canvas), so swapping frames
-   never jumps the layout; the previous frame stays visible until
-   the refreshed composite lands — no blank flash. */
+/* Output preview card (AX-4R). The frame is a fixed aspect box */
 .recap-output-card { margin-bottom: var(--s3); }
 .recap-output-frame {
     position: relative; width: 100%; margin: 0 auto;
@@ -3679,9 +3358,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap;
 }
 
-/* Card headers (AX-6): one pattern — the step number as a badge in
-   the indicator node's style (blue gradient, white number, soft
-   shadow + ring), title beside it, consistent padding. */
+/* Card headers (AX-6): one pattern — the step number as a badge in */
 .recap-step-head { gap: var(--s2); padding: var(--s2) 2px var(--s3); min-height: 52px; }
 .recap-step-head .step-num-pill {
     width: 30px; height: 30px; font-size: 14px; color: #fff;
@@ -3725,9 +3402,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 #tab-recap .script-review-row input[type="checkbox"] { accent-color: #2563eb; }
 
-/* Sliders (AX-6): the value readout is a fixed-width right-aligned
-   chip, so rows never jitter while sliding. (Track/thumb already
-   share the one .studio-slider component.) */
+/* Sliders (AX-6): the value readout is a fixed-width right-aligned */
 #tab-recap .slider-val {
     min-width: 58px; text-align: right; padding: 2px 8px;
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
@@ -3773,10 +3448,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     color: #fff; box-shadow: 0 8px 24px rgba(37, 99, 235, 0.38);
 }
 
-/* ── Batch AY — Home rearrangement: welcome strip tint, Start/Tools
-   tiles, branded sample mini-players, tutorials expandable, slim
-   Support card. New selectors + Home-scoped overrides only; no other
-   tab's rules are touched (spec ~/workspace/batch-ay-spec-2026-11-06.md). */
+/* Batch AY — Home rearrangement: welcome strip tint, Start/Tools */
 
 /* Welcome strip: soft blue gradient tint over the glass surface. */
 #tab-home .welcome-strip {
@@ -3784,9 +3456,7 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     border-color: rgba(37, 99, 235, 0.28);
 }
 
-/* Start / Tools tiles: one tile language — gradient icon chip, name
-   row with chevron, one-line hint; the grid stretches both tiles in
-   a row to equal height. Text wraps by design (never shrinks). */
+/* Start / Tools tiles: one tile language — gradient icon chip, nam */
 .home-tile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
 #tab-home .home-tile {
     display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2);
@@ -3814,9 +3484,7 @@ body.lang-my .home-tile-name { line-height: 1.7; }
 body.lang-my .home-tile-hint { line-height: 1.8; }
 #home-tools-card .card-label { margin-bottom: var(--s2); }
 
-/* Samples: branded mini-player rows — round gradient play/pause
-   button + meta + a slim progress line; the <audio> element itself
-   is hidden (setupSamplePlayers still loads/drives it). */
+/* Samples: branded mini-player rows — round gradient play/pause */
 .sample-main { display: flex; align-items: center; gap: var(--s3); }
 .sample-main .sample-meta { flex: 1; }
 .sample-play-btn {
@@ -3845,9 +3513,7 @@ body.lang-my .home-tile-hint { line-height: 1.8; }
 }
 #home-samples-card .sample-audio { display: none; }
 
-/* Tutorials (owner addendum): the card collapses to ONE header row
-   — title + count pill + chevron — which is itself the toggle; the
-   full list unfolds in place under it (accordion). */
+/* Tutorials (owner addendum): the card collapses to ONE header row */
 .home-tut-head {
     display: flex; align-items: center; gap: var(--s2);
     width: 100%; min-height: 44px; padding: 2px 0;
@@ -3888,15 +3554,7 @@ body.lang-my .home-tut-count { line-height: 1.7; }
    nav-pill mover + tab-enter toggles and AZ-7's toast exit hook.
    ════════════════════════════════════════════════════════════════════ */
 
-/* ── AZ-3 · Depth tiers + AZ-2 · specular rim tokens ─────────────
-   Three named tiers with distinct blur / alpha / shadow. The
-   legacy token names are re-pointed at the tiers, so every
-   component that references them keeps working and inherits the
-   separation. --rim-shadow is the shared specular edge: a bright
-   top hairline (white .92) fading to a faint bottom reflection,
-   with soft side light — the "liquid glass" rim, applied through
-   the shadow stack so it composes with every surface's own
-   shadow instead of forking per component. */
+/* AZ-3 · Depth tiers + AZ-2 · specular rim tokens */
 :root {
     --glass-1-bg: rgba(255, 255, 255, 0.50);
     --glass-2-bg: rgba(255, 255, 255, 0.65);
@@ -3923,13 +3581,7 @@ body.lang-my .home-tut-count { line-height: 1.7; }
     --shadow-pop: var(--shadow-3);
 }
 
-/* ── AZ-2 · Gradient hairline rims on the major surfaces ─────────
-   The border becomes a gradient (white .92 at the top → .16 at
-   the bottom) via the border-box layer; the padding-box layer
-   carries the surface's tier fill (each surface names its tier
-   through --az-bg). Surfaces with their own higher-specificity
-   tinted backgrounds (e.g. .pricing-card.featured-master) keep
-   them — this recipe only claims the plain glass surfaces. */
+/* AZ-2 · Gradient hairline rims on the major surfaces */
 .card, .top-nav, .bottom-nav, .modal-content, .studio-confirm-card,
 .gate-lock-card, .studio-toast, .floating-alert-card, .sticky-cta-bar,
 .submit-confirm-card, .live-jobs-sheet-card, .advanced-studio-accordion,
@@ -3949,10 +3601,7 @@ body.lang-my .home-tut-count { line-height: 1.7; }
 .floating-alert-card, .submit-confirm-card, .live-jobs-sheet-card {
     --az-bg: var(--glass-3-bg);
 }
-/* Tier blur completion: the surfaces the older layers did not
-   already cover at their tier. (Cards/header/nav/modals/toasts
-   already resolve through --blur-card/--blur-chrome/--blur-overlay,
-   which now point at tiers 1/2/3.) */
+/* Tier blur completion: the surfaces the older layers did not */
 .sticky-cta-bar {
     backdrop-filter: var(--glass-2-blur);
     -webkit-backdrop-filter: var(--glass-2-blur);
@@ -3970,13 +3619,7 @@ body.lang-my .home-tut-count { line-height: 1.7; }
     box-shadow: var(--rim-shadow), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-/* ── AZ-1 · Liquid ambient ───────────────────────────────────────
-   The existing fixed ambient layer (body::before) starts LIVING:
-   its pastel blobs shift toward the brand family (blue / sky /
-   violet) and the whole field drifts slowly — transform-only,
-   56 s alternate, overscanned (inset -8%) so the drift never
-   exposes an edge. The glass above it now refracts something
-   that moves. Static under prefers-reduced-motion. */
+/* AZ-1 · Liquid ambient */
 body::before {
     inset: -8%;
     background:
@@ -3992,10 +3635,7 @@ body::before {
     to { transform: translate3d(1.6%, 1.4%, 0) scale(1.05); }
 }
 
-/* ── AZ-4 · Liquid motion ────────────────────────────────────────
-   Tab switch: crossfade + 6px rise (~220 ms), driven by the
-   .tab-enter class the switch paths toggle (the old always-on
-   paneIn is retired so the motion is exactly the AZ-4 one). */
+/* AZ-4 · Liquid motion */
 .tab-pane.active { animation: none; }
 .tab-pane.tab-enter { animation: azPaneIn 0.22s ease; }
 @keyframes azPaneIn {
@@ -4040,11 +3680,7 @@ body::before {
     transform: translateX(120%); transition: transform 0.45s ease;
 }
 
-/* ── AZ-5 · Tinted glass accents ─────────────────────────────────
-   Primary buttons: the shipped blue gradient becomes glass —
-   brighter inner top highlight + a soft inner floor reflection
-   under a glass-bright border. Selected pills outside the Recap
-   tab's own blue language gain the rim. */
+/* AZ-5 · Tinted glass accents */
 .gold-gradient-btn, .primary-btn {
     border: 1px solid rgba(255, 255, 255, 0.35);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55),
@@ -4054,9 +3690,7 @@ body::before {
 .seg-btn.active, .pill-btn.active, .tb-tab-btn.active {
     box-shadow: var(--rim-shadow), 0 2px 8px rgba(70, 110, 160, 0.18);
 }
-/* Warm-gold glass variant: the AU quality pill keeps its shipped
-   gold and gains the rim; the featured Master plan card trades
-   its blue tint for the warm gold glass its name promises. */
+/* Warm-gold glass variant: the AU quality pill keeps its shipped */
 #recap-quality-picker .pill-btn.active {
     box-shadow: var(--rim-shadow), 0 2px 8px rgba(217, 154, 6, 0.35);
 }
@@ -4075,16 +3709,7 @@ body::before {
                 0 14px 34px rgba(70, 110, 160, 0.25);
 }
 
-/* ── AZ-7 · Toasts — presentation rebuilt ────────────────────────
-   Tier-3 glass + the AZ-2 rim (the surface recipe above), a
-   type-tinted inner wash, the icon in a tinted glass circle chip,
-   a liquid entrance (fade + rise + spring settle), a designed
-   exit (.leaving, applied by showStudioToast inside the existing
-   timeout budget — total on-screen time unchanged), and a slim
-   progress hairline in the type colour whose lifetime is the
-   call's own duration via --toast-life. Messages, durations,
-   close behaviour and the single-toast mechanism are unchanged;
-   the Myanmar line-height patches (1.95) stand untouched. */
+/* AZ-7 · Toasts — presentation rebuilt */
 .studio-toast {
     --toast-accent: var(--violet);
     border-radius: var(--r-lg);
@@ -4134,14 +3759,7 @@ body::before {
     to { opacity: 1; transform: none; }
 }
 
-/* ── AZ-9 · Step indicator — liquid segmented capsule ────────────
-   One floating tier-2 glass capsule holding four segment buttons.
-   The CURRENT segment expands (flex-grow ≈ 2.4, springy) into the
-   gradient pill and shows number + step name in white — the name
-   lives only where there is room, which kills the AV/AX cramping
-   structurally. Completed segments are blue-tinted glass ✓ chips;
-   upcoming are frosted with a muted number. Session-truth and
-   tap-to-jump behaviour are AX-3R's, unchanged. */
+/* AZ-9 · Step indicator — liquid segmented capsule */
 .recap-steps-capsule {
     display: flex; align-items: stretch; gap: 6px;
     padding: 6px; border-radius: 999px;
@@ -4183,10 +3801,7 @@ body::before {
     100% { transform: scale(1); }
 }
 
-/* ── AZ-10 · Text-defect fixes (live-observed on r70) ────────────
-   The class fix first: controls carrying Myanmar text get
-   min-height (never a fixed height), line-height ≥ 1.6 and
-   descender-clearing padding. Instances follow. */
+/* AZ-10 · Text-defect fixes (live-observed on r70) */
 /* Class: pill labels never starve their glyph stacks. */
 .pill-btn { line-height: 1.6; }
 /* Class: pills break only at word boundaries — never mid-word
@@ -4217,11 +3832,7 @@ body::before {
 .nav-item { line-height: 1.6; }
 .nav-label { line-height: 1.6; padding-bottom: 2px; }
 body.lang-my .nav-label { line-height: 1.75; }
-/* 5 · CTA/nav occlusion: the Voice pane gains the same order of
-   bottom room the Recap pane already carries (B2: 120px), so at
-   full scroll nothing rests under the sticky CTA bar + floating
-   nav. Sticky-bar zone ≈ 86px offset + ~70px bar; the viewport's
-   own ~118px clearance + this 72px clears it with a gap. */
+/* 5 · CTA/nav occlusion: the Voice pane gains the same order of */
 #tab-voice { padding-bottom: 72px; }
 /* 8 · Admin sub-texts + card labels: descender clearance. */
 .stat-lbl { line-height: 1.65; }
@@ -4233,14 +3844,7 @@ body.lang-my .nav-label { line-height: 1.75; }
     display: inline-flex; align-items: center; justify-content: center;
 }
 
-/* ── AZ-11 · Compact dropdown pattern ────────────────────────────
-   One glass dropdown row for every choice set with >5 options:
-   tier-1 glass fill, the rim, an inset well shadow and a chevron
-   (the queue-engine-select asset family). The Recap language
-   select and the subtitle-style select carry .glass-dropdown;
-   the Gemini voice select joins the same pattern; admin selects
-   (select.studio-input) get the chevron treatment — restyle
-   only, no structure change anywhere. */
+/* AZ-11 · Compact dropdown pattern */
 .glass-dropdown {
     appearance: none; -webkit-appearance: none;
     min-height: 50px; padding: 10px 40px 10px 14px;
@@ -4327,10 +3931,7 @@ select.studio-input {
     /* Brand compacts: the STUDIO subtitle hides; the VOICE CLONE
        wordmark, PRO tag and logo stay whole. */
     .sub-brand { display: none; }
-    /* Guide + language become compact icon buttons (the guide's
-       collapse moves here from the old ≤480px block): 40×40 hit
-       areas, icons whole, text spans hidden whole — never clipped.
-       Their titles (data-i18n-title) keep the labels reachable. */
+    /* Guide + language become compact icon buttons (the guide's */
     .tutorial-pill-btn, .lang-pill-btn {
         width: 40px; min-height: 40px; padding: 5px 0;
         justify-content: center; flex-shrink: 0;
@@ -4447,18 +4048,13 @@ select.studio-input {
 .persona-header { gap: var(--s2); }
 .persona-meta { gap: var(--s1); }
 
-/* Name: the typography scale's 15px card-title step, ONE line — every
-   short name measures ≤ the 118px card measure at 360px in both
-   languages, so nowrap never reaches the ellipsis in practice; the
-   ellipsis stays only as a guard for future longer names. */
+/* Name: the typography scale's 15px card-title step, ONE line — ev */
 .persona-name {
     font-size: 15px; line-height: 1.5;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Category: the former parenthetical as its own smaller line. It may
-   take a second line at narrow widths — balanced, as a whole phrase
-   block, never again split inside parentheses behind the name. */
+/* Category: the former parenthetical as its own smaller line. It m */
 .persona-category {
     font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
     font-size: 12px; font-weight: 600; line-height: 1.5;
@@ -4474,12 +4070,7 @@ body.lang-my .persona-desc { line-height: 1.75; }
    card's full inner width (see the measured note above). */
 .persona-footer-row { margin-inline: calc(-1 * var(--s3)); }
 
-/* Preview button: §4's 44px floor, the §1 padding step (8px), label
-   up from the BB V-3 shrink (11.5px) to the 12px scale step now that
-   the room exists. The label may shrink only via its trailing
-   ellipsis, and only the transient loading label at 360px ever does
-   (measured ≈14px of its trailing "…"; resting/playing labels fit
-   whole at every swept width). */
+/* Preview button: §4's 44px floor, the §1 padding step (8px), labe */
 .voice-preview-btn {
     min-height: 44px; padding: var(--s2); gap: 5px; font-size: 12px;
 }
@@ -4500,16 +4091,7 @@ body.lang-my .persona-desc { line-height: 1.75; }
    already inside its existing labels.
    ════════════════════════════════════════════════════════════════════ */
 
-/* ── BD-0 · The capsule family's missing tokens ────────────────────
-   BB-2's .speed-capsule references --glass-rim / --glass-spec /
-   --shadow-sm, which no :root ever defined, and composes its blur
-   as blur(var(--glass-2-blur)) — a nested filter function, invalid
-   at computed-value time. Its rim, shadow and backdrop blur have
-   therefore silently never rendered (the translucent fill + the
-   sliding pill carried the look). The tokens are defined here at
-   the values the design language already uses, and the blur line
-   is repaired — the whole capsule family (BB's speed selectors
-   included) now renders as designed. */
+/* BD-0 · The capsule family's missing tokens */
 :root {
     --glass-rim: rgba(255, 255, 255, 0.65);
     --glass-spec: var(--rim-shadow);
@@ -4520,20 +4102,7 @@ body.lang-my .persona-desc { line-height: 1.75; }
     -webkit-backdrop-filter: var(--glass-2-blur);
 }
 
-/* ── BD-1 · §5 — the shared segmented capsule (.seg-capsule) ───────
-   BB-2's component, generalised: tier-2 glass track + specular
-   rim, ONE gradient pill sliding to the active segment (measured
-   by moveSegPill, app.js — the moveSpeedPill pattern), the same
-   spring. Two geometries share it:
-   · one-row (engine picker): the active segment expands
-     (flex-grow 2.4) and shows its full label; inactive segments
-     show the compact .seg-short (the label's own emoji).
-   · wrapped (story-style picker): labels are long-form Burmese
-     (PIL/Padauk-measured up to ~155px at 13px — a one-row active
-     segment budgets 92.5px at 360px, so a one-row capsule cannot
-     carry them without shortening copy). Segments keep the C1
-     even-tile flex (1 1 42%) and their full labels; the same
-     gradient pill slides under whichever segment is active. */
+/* BD-1 · §5 — the shared segmented capsule (.seg-capsule) */
 .seg-capsule {
     position: relative; display: flex; align-items: stretch;
     gap: var(--s1); width: 100%; padding: 6px;
@@ -4577,12 +4146,7 @@ body.lang-my .persona-desc { line-height: 1.75; }
 #recap-engine-picker.seg-capsule { flex-wrap: nowrap; border-radius: 999px; }
 #recap-engine-picker .pill-btn.capsule-seg { flex: 1 1 0; min-width: 0; }
 #recap-engine-picker .pill-btn.capsule-seg.active { flex-grow: 2.4; }
-/* Batch BX: the engine picker always shows all three labels — an
-   icon-only inactive pill (the walkthrough's Step-3 finding) hides
-   which engines exist. Scoped to this picker only: the shared
-   capsule short/full swap stays for the two-option pickers. The
-   active pill also gives up its 2.4 expansion so the three labels
-   keep equal room. */
+/* Batch BX: the engine picker always shows all three labels — an */
 #recap-engine-picker .capsule-seg .seg-full { display: inline; }
 #recap-engine-picker .capsule-seg .seg-short { display: none; }
 #recap-engine-picker .pill-btn.capsule-seg.active { flex-grow: 1; }
@@ -4608,10 +4172,7 @@ body.lang-my .persona-desc { line-height: 1.75; }
     .seg-capsule-pill { transition: none; }
 }
 
-/* ── BD-2 · §5 — glass switches ────────────────────────────────────
-   Every toggle family joins the glass language: tier-2 glass track
-   (rim + inset well), white knob with specular, ON = the capsule
-   family's blue gradient. Track/knob geometry is unchanged. */
+/* BD-2 · §5 — glass switches */
 .switch-track, .mini-toggle .t-val,
 .script-review-row input[type="checkbox"] {
     background: var(--glass-2-bg);
@@ -4643,20 +4204,13 @@ body.lang-my .persona-desc { line-height: 1.75; }
     border-color: rgba(255, 255, 255, 0.35);
 }
 
-/* ── BD-3 · §5 — inset glass fields ────────────────────────────────
-   The base focus ring still carried the retired warm-gold tint
-   (rgba(242,179,61,·)); fields now focus in the app's blue, keep
-   the inset well, and text inputs meet the 44px floor. */
+/* BD-3 · §5 — inset glass fields */
 textarea:focus, .studio-input:focus, .studio-select:focus {
     box-shadow: var(--shadow-inset), 0 0 0 3px rgba(10, 132, 255, 0.18);
 }
 .studio-input { min-height: 44px; }
 
-/* ── BD-4 · §4 — button family completion ──────────────────────────
-   Secondary buttons gain the tier-2 glass rim (nested surfaces
-   take the specular, no extra blur — the L1 tile rule); the danger
-   family is red-tinted glass everywhere it appears. Radius and
-   heights already meet the family standard. */
+/* BD-4 · §4 — button family completion */
 .secondary-btn, .mini-btn {
     box-shadow: var(--rim-shadow), 0 2px 10px rgba(70, 110, 160, 0.07);
 }
@@ -4668,10 +4222,7 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
 }
 .adm-danger-btn { padding: var(--s3); }
 
-/* ── BD-5 · §6 — one row language ──────────────────────────────────
-   44px gradient-tinted icon tiles, 14px titles, 12px muted descs,
-   hairline dividers. Home tiles/samples already comply (AY); the
-   hub rows, admin user rows and tutorial rows join them. */
+/* BD-5 · §6 — one row language */
 .hub-type-icon {
     width: 44px; height: 44px; font-size: 20px;
     box-shadow: var(--rim-shadow);
@@ -4691,10 +4242,7 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
 }
 .home-tut-name { font-size: 14px; }
 
-/* ── BD-6 · §7 — one status-pill style ─────────────────────────────
-   Tinted glass + specular + a leading dot in the state's own
-   colour for every state badge family; BC's TEST badge leaves its
-   flat amber fill and joins the same style. */
+/* BD-6 · §7 — one status-pill style */
 .history-item-badge, .badge-status, .adm-status-tag, .badge-test,
 .count-badge, .hint-tag, .gate-chip, .mini-tag {
     box-shadow: var(--glass-hi-soft), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
@@ -4713,26 +4261,20 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
     border: 1px solid rgba(245, 158, 11, 0.45);
 }
 
-/* ── BD-7 · §8 — progress: gradient + glow head ────────────────────
-   Every bar keeps its gradient and gains a lit head (a soft glow
-   at the fill's leading edge); the live-jobs fill joins in. */
+/* BD-7 · §8 — progress: gradient + glow head */
 .progress-bar-fill { box-shadow: 2px 0 10px rgba(10, 132, 255, 0.45); }
 .live-jobs-pill-fill, .live-job-row-fill {
     box-shadow: 2px 0 8px rgba(87, 199, 255, 0.55);
 }
-/* The live-jobs pill completes its tier-2 dressing: the AZ rim is
-   joined by the family gradient hairline (its dark fill stays —
-   white text over jobs content is the design). */
+/* The live-jobs pill completes its tier-2 dressing: the AZ rim is */
 .live-jobs-pill { border-color: rgba(255, 255, 255, 0.45); }
 
-/* ── BD-8 · §1 — sheet interiors on the rhythm ─────────────────────
-   The live-jobs sheet + submit-confirm sheet carried orphan
-   values (10px / 14px / 20px mixes); both now speak the scale. */
-.live-jobs-sheet-card { padding: var(--s4); }
+/* BD-8 · §1 — sheet interiors on the rhythm */
+.live-jobs-sheet-card { padding: var(--s4) var(--s4) calc(var(--s4) + env(safe-area-inset-bottom, 0px)); }
 .live-jobs-sheet-head { margin-bottom: var(--s2); }
 .live-job-row { gap: var(--s2); padding: var(--s2) 0; }
 .live-job-row-bar { margin-top: var(--s1); }
-.submit-confirm-card { padding: var(--s4); }
+.submit-confirm-card { padding: var(--s4) var(--s4) calc(var(--s4) + env(safe-area-inset-bottom, 0px)); }
 .submit-confirm-hint { margin-top: var(--s2); }
 .submit-confirm-actions { gap: var(--s2); margin-top: var(--s3); }
 .studio-inline-status { gap: var(--s2); margin-top: var(--s2); }
@@ -4741,14 +4283,7 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
 .income-detail-toggle-row { gap: var(--s3); padding: var(--s2) 0 0; }
 .adm-state { padding: var(--s4) var(--s3); }
 
-/* ── BD-9 · §9 — loading: glass skeleton + header treatment ────────
-   The skeleton primitive becomes glass shimmer (tier-1 fill, rim,
-   a travelling highlight). While the entry gate is locked — the
-   whole initial-load window, before the real profile is
-   authoritative — the header's badge + balance chips shimmer as
-   neutral skeleton blocks instead of flashing the placeholder
-   FREE / 0.0m / 0c state (audit follow-up on r74); the gate
-   unlock repaints the profile, so no wrong state survives it. */
+/* BD-9 · §9 — loading: glass skeleton + header treatment */
 .skeleton {
     background: linear-gradient(100deg, rgba(255, 255, 255, 0.42) 40%, rgba(255, 255, 255, 0.72) 50%, rgba(255, 255, 255, 0.42) 60%);
     background-size: 200% 100%;
@@ -4766,9 +4301,7 @@ body.gate-locked .user-pill .bal-chip {
 }
 body.gate-locked .user-pill .live-dot { opacity: 0.35; }
 
-/* ── BD-10 · §10 — empty states: glass medallions ──────────────────
-   The hub / admin / preview empty states trade the bare emoji for
-   the family's glass icon medallion (tier-2 fill + rim). */
+/* BD-10 · §10 — empty states: glass medallions */
 .hub-state-emoji, .preview-empty-icon {
     width: 56px; height: 56px; font-size: 26px;
     display: inline-flex; align-items: center; justify-content: center;
@@ -4786,12 +4319,7 @@ body.gate-locked .user-pill .live-dot { opacity: 0.35; }
     box-shadow: var(--glass-hi-soft);
 }
 
-/* ── BD-11 · §11 — typography rhythm ───────────────────────────────
-   Body line-height follows the language (Burmese 1.75 / Latin
-   1.6); figures line up in tabular numerals; the audited orphan-
-   syllable wraps (TTS pane subtitle, plan descriptions) balance
-   instead of stranding a syllable. Component-level Myanmar
-   patches (toasts 1.95 etc.) are untouched. */
+/* BD-11 · §11 — typography rhythm */
 body.lang-my { line-height: 1.75; }
 body.lang-en { line-height: 1.6; }
 .bal-chip, .stat-val, .stat-num, .price-val, .acc-num,
@@ -4800,25 +4328,13 @@ body.lang-en { line-height: 1.6; }
 }
 .pane-header p, .plan-allocation, .plan-how-text { text-wrap: balance; }
 
-/* ── BD-12 · §12 — compactness trims ───────────────────────────────
-   Pane section gaps join the §1 scale (20px was an orphan against
-   the 4/8/12/16/24 rhythm): every tab screen tightens by 4px per
-   section gap. The two oversized placeholder paddings (drop zone,
-   preview empty state) come down one scale step. Measured
-   before/after: measure_heights.py + report.md. */
+/* BD-12 · §12 — compactness trims */
 .tab-pane { gap: var(--s4); }
 .video-drop-zone { padding: var(--s4); }
 .preview-empty-state { padding: var(--s6) var(--s4); }
 .hub-state { padding: var(--s4) var(--s3); }
 
-/* ════════════════════════════════════════════════════════════════════
-   BATCH BZ (2026-11-07) — today's-TTS visibility
-   The header gains a third balance chip (🎧, today's TTS spendable)
-   and Home gains the "Free today" card. Both follow the BD glass
-   chip/card language and the 4/8/12/16/24 spacing rhythm; at
-   ≤430 px the 🎧 chip compacts to icon + number only (it is a
-   <button>, so it also needs the bal-chip reset of button chrome).
-   ════════════════════════════════════════════════════════════════════ */
+/* BATCH BZ (2026-11-07) — today's-TTS visibility */
 button.bal-chip {
     font-family: inherit; cursor: pointer; appearance: none;
 }
@@ -4851,34 +4367,12 @@ button.bal-chip {
 .home-free-chevron { color: var(--text-2); font-size: 18px; flex-shrink: 0; }
 
 @media (max-width: 430px) {
-    /* Three chips must share the user-pill row: the 🎧 chip drops
-       to tighter inline padding — icon + compact number stay whole,
-       never clipped (its title keeps the label reachable). */
+    /* Three chips must share the user-pill row: the 🎧 chip drops */
     .bal-chip.tts { padding: 6px 7px; }
     .home-free-row { padding: var(--s2); gap: var(--s2); }
 }
 
-/* ════════════════════════════════════════════════════════════
-   BATCH CN (2026-11-07) — TTS TAB FIXES
-   CN-1: the Gemini key card's lines lost their first glyphs at
-   the card's left edge in the live webview (owner eyes-on, two
-   passes). Measured locally (headless Chromium, the shipped
-   markup + this stylesheet): the card's box geometry is
-   pixel-identical to the clean engine card — same content-left,
-   no transform, no negative margin, no overflow — so the loss
-   is glyph-ink level, the first-glyph clip this codebase has
-   met before (Batch BB: the speed-row titles' first cluster
-   "sliced flush at the card edge", fixed with the standard
-   inset). The key card is a stack of long body lines whose
-   first glyphs (Myanmar digits ၁/၂/၃, clusters, Latin "Key")
-   start flush at the content edge. The card gains ONE extra
-   spacing step of start padding, so every child's content —
-   text lines, the input row, the button row — clears the
-   card's hard glass edge uniformly; the shared .card rhythm
-   is untouched (end padding and all siblings unchanged).
-   CN-2: .detail-toggle — the tap-to-expand row for the tab's
-   long explanations (the toggleHomeTutorials idiom: a quiet
-   full-width row, chevron rotates on .open). ─────────────── */
+/* BATCH CN (2026-11-07) — TTS TAB FIXES */
 #tts-gemini-key-card { padding-inline-start: calc(var(--s4) + var(--s2)); }
 
 .detail-toggle {
@@ -5038,6 +4532,10 @@ button.bal-chip {
     --vcp-flat-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.72) 100%);
     --vcp-flat-glass-inset: rgba(255, 255, 255, 0.62);
     --vcp-flat-glass-border: rgba(255, 255, 255, 0.85);
+    --vcp-glass-shadow-sm: 0 4px 14px rgba(15, 23, 42, 0.08);
+    --vcp-border: rgba(15, 23, 42, 0.10);
+    --vcp-shadow-sm: 0 4px 12px -4px rgba(15, 23, 42, 0.10);
+    --vcp-bg-elevated: #FFFFFF;
 }
 
 /* ── Burmese Typography & Input Ergonomics Floor (§4) ───────────────── */
@@ -5058,11 +4556,7 @@ input[type="search"], input[type="password"], .studio-input, .studio-select,
     min-height: var(--vcp-input-min-h);
 }
 
-/* ── Glass Performance Rule (§4) ──────────────────────────────────────
-   backdrop-filter ONLY on: top header, bottom nav, modals, and bottom sheets.
-   All scrolling cards & nested controls inside .tab-pane use flat glass
-   (gradient background + 1px border, NO backdrop-filter) to prevent GPU
-   overdraw on low-to-mid Android WebViews. */
+/* Glass Performance Rule (§4) */
 .tab-pane .card,
 .tab-pane .vcp-card,
 .tab-pane .glass-inset,
@@ -6261,20 +5755,20 @@ body.lite .vcp-step2-sticky-preview {
     font-size: 11px;
     font-weight: 700;
     line-height: 1.4;
-    background: rgba(10, 132, 255, 0.14);
-    color: #93c5fd;
+    background: rgba(10, 132, 255, 0.12);
+    color: #1D4ED8;
     border: 1px solid rgba(10, 132, 255, 0.30);
     white-space: nowrap;
 }
 .vcp-billing-badge.is-credit-only {
-    background: rgba(16, 185, 129, 0.14);
-    color: #6ee7b7;
-    border-color: rgba(16, 185, 129, 0.32);
+    background: rgba(16, 185, 129, 0.13);
+    color: #065F46;
+    border-color: rgba(16, 185, 129, 0.34);
 }
 .vcp-billing-badge.is-vip {
-    background: rgba(245, 196, 81, 0.15);
-    color: #fde68a;
-    border-color: rgba(245, 196, 81, 0.35);
+    background: rgba(245, 158, 11, 0.15);
+    color: #92400E;
+    border-color: rgba(217, 119, 6, 0.38);
 }
 .vcp-own-voice-upsell-row {
     display: flex;
@@ -6289,9 +5783,9 @@ body.lite .vcp-step2-sticky-preview {
     border-radius: 999px;
     font-size: 11.5px;
     font-weight: 700;
-    border: 1px solid rgba(245, 196, 81, 0.45);
-    background: rgba(245, 196, 81, 0.14);
-    color: #fde68a;
+    border: 1px solid rgba(217, 119, 6, 0.45);
+    background: rgba(245, 158, 11, 0.14);
+    color: #92400E;
     cursor: pointer;
 }
 .vcp-lang-head-row {
@@ -6345,7 +5839,7 @@ body.lite .vcp-step2-sticky-preview {
 .vcp-quote-voice-val {
     font-size: 18px;
     font-weight: 800;
-    color: #93c5fd;
+    color: #1D4ED8;
 }
 .vcp-quote-voice-settle-note {
     font-size: 11.5px;
@@ -6357,14 +5851,14 @@ body.lite .vcp-step2-sticky-preview {
     border-top: 1px solid var(--vcp-flat-glass-border);
     font-size: 12px;
     font-weight: 600;
-    color: #6ee7b7;
+    color: #065F46;
 }
 .vcp-insuf-min-card {
     margin-top: 10px;
     padding: 12px 14px;
     border-radius: var(--vcp-radius-lg);
-    border: 1px solid rgba(251, 146, 60, 0.45);
-    background: rgba(251, 146, 60, 0.10);
+    border: 1px solid rgba(234, 88, 12, 0.38);
+    background: rgba(251, 146, 60, 0.12);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -6372,7 +5866,7 @@ body.lite .vcp-step2-sticky-preview {
 .vcp-insuf-min-title {
     font-size: 13.5px;
     font-weight: 700;
-    color: #fdba74;
+    color: #9A3412;
 }
 .vcp-insuf-min-desc {
     font-size: 12px;
@@ -6396,9 +5890,9 @@ body.lite .vcp-step2-sticky-preview {
     border-radius: 999px;
     font-size: 11px;
     font-weight: 700;
-    background: rgba(245, 196, 81, 0.16);
-    color: #fde68a;
-    border: 1px solid rgba(245, 196, 81, 0.35);
+    background: rgba(245, 158, 11, 0.16);
+    color: #92400E;
+    border: 1px solid rgba(217, 119, 6, 0.38);
 }
 .vcp-refund-badges {
     display: flex;
@@ -6415,8 +5909,17 @@ body.lite .vcp-step2-sticky-preview {
     font-size: 12.5px;
     font-weight: 700;
     line-height: 1.55;
-    color: #6ee7b7;
+    color: #065F46;
 }
+html[data-theme="dark"] .vcp-billing-badge { color: #93C5FD; }
+html[data-theme="dark"] .vcp-billing-badge.is-credit-only,
+html[data-theme="dark"] .vcp-quote-credit-only-note,
+html[data-theme="dark"] .vcp-refund-badge { color: #6EE7B7; }
+html[data-theme="dark"] .vcp-billing-badge.is-vip,
+html[data-theme="dark"] .vcp-own-voice-vip-btn,
+html[data-theme="dark"] .vcp-quality-surcharge-tag { color: #FDE68A; }
+html[data-theme="dark"] .vcp-quote-voice-val { color: #93C5FD; }
+html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
 .vcp-lang-sheet-backdrop {
     position: fixed;
     inset: 0;
@@ -6436,10 +5939,10 @@ body.lite .vcp-step2-sticky-preview {
     max-height: 75vh;
     overflow-y: auto;
     border-radius: var(--vcp-radius-xl);
-    background: var(--vcp-bg-elevated, #121a2b);
+    background: var(--vcp-bg-elevated, #FFFFFF);
     border: 1px solid var(--vcp-flat-glass-border);
-    padding: 16px;
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+    padding: 16px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
 }
 .vcp-lang-sheet-grid {
     display: grid;
@@ -6796,15 +6299,7 @@ body.lite #tab-admin .adm-back-btn {
     -webkit-backdrop-filter: none !important;
 }
 
-
-
-
-
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   HOME POLISH + VISUAL IDENTITY PASS (feat/home-polish-visual, r142)
-   Glass Performance Rule: NO new backdrop-filter inside scrolling content cards.
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* HOME POLISH + VISUAL IDENTITY PASS (feat/home-polish-visual, r14 */
 
 /* ── B1. Header Brand Moment ──────────────────────────────────────────────── */
 .top-nav,
@@ -7583,18 +7078,11 @@ html.lite #tab-home .home-free-row {
     border-color: rgba(13, 148, 136, 0.24) !important;
 }
 
-/* Downloader Studio = Amber */
-#tab-downloader .step-num-pill,
-#tab-downloader .primary-btn,
-#tab-downloader .vcp-btn--primary,
-#tab-downloader #btn-extract-dl,
-#tab-downloader #btn-dl-use-in-recap {
-    background: linear-gradient(135deg, #b45309 0%, #d97706 54%, #f59e0b 100%) !important;
-    color: #ffffff !important;
-    border-color: rgba(255, 255, 255, 0.28) !important;
-    box-shadow: 0 10px 22px -8px rgba(217, 119, 6, 0.42) !important;
+#tab-downloader #btn-extract-dl {
+    font-weight: 700;
 }
 
+/* Downloader Studio = Indigo */
 #tab-downloader .dl-empty-icon {
     display: inline-flex;
     align-items: center;
@@ -7836,6 +7324,9 @@ html:not(.lite) body::before {
     height: 38px;
     padding: 0;
 }
+.theme-pill-btn > * {
+    pointer-events: none;
+}
 .theme-pill-btn:active,
 .top-nav .tutorial-pill-btn:active,
 .top-nav .lang-pill-btn:active {
@@ -7949,7 +7440,7 @@ html:not(.lite) body::before {
 }
 .bottom-nav:has(#nav-btn-admin:not(.hidden)) .nav-item {
     padding: 5px 1px;
-    font-size: 9.5px;
+    font-size: 10.2px;
 }
 .bottom-nav:has(#nav-btn-admin:not(.hidden)) .vcp-nav-svg {
     width: 18px;
@@ -8002,10 +7493,7 @@ html.lite .bottom-nav[data-active-tab="tab-admin"] .nav-pill {
     scroll-margin-top: 124px;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   FIRST-CLASS DARK GLASS THEME (html[data-theme="dark"])
-   Zero backdrop-filter in scrolling .tab-pane content cards; frosted chrome only.
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* FIRST-CLASS DARK GLASS THEME (html[data-theme="dark"]) */
 html[data-theme="dark"] {
     color-scheme: dark;
     --bg: #070B16;
@@ -8039,6 +7527,15 @@ html[data-theme="dark"] {
     --vcp-dock-bg: linear-gradient(180deg, rgba(17, 25, 45, 0.88) 0%, rgba(10, 15, 30, 0.84) 100%);
     --gold: #38BDF8;
     --gold-2: #60A5FA;
+    --vcp-bg-elevated: #121A2E;
+    --vcp-border: rgba(148, 163, 184, 0.22);
+    --vcp-shadow-sm: 0 4px 12px -4px rgba(0, 0, 0, 0.42);
+    --vcp-glass-shadow-sm: 0 6px 16px rgba(0, 0, 0, 0.36);
+    --vcp-primary-deep: #60A5FA;
+    --vcp-success: #34D399;
+    --vcp-warning: #FBBF24;
+    --vcp-danger: #F87171;
+    --vcp-info: #38BDF8;
     --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 10px 28px rgba(0, 0, 0, 0.42);
     --shadow-pop: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 20px 48px rgba(0, 0, 0, 0.60);
 }
@@ -9143,8 +8640,6 @@ html, body {
         top: auto;
     }
 }
-#tab-recap .vcp-step2-sticky-preview.is-ratio-9-16,
-#tab-recap .vcp-step2-sticky-preview.is-portrait-stage { position: relative; top: auto; }
 #tab-recap .recap-dock-section {
     position: relative;
     z-index: 18;
@@ -9162,6 +8657,13 @@ html, body {
 #tab-recap .vcp-step2-cat-panel {
     position: relative;
     z-index: 2;
+}
+#tab-recap .recap-step2-summary,
+#tab-recap .recap-step-next-row {
+    position: relative;
+    z-index: 19;
+    background: var(--vcp-bg-card, #F8FAFF);
+    border-radius: 12px;
 }
 
 /* ── Step 2 MUST-FIX #1: Cinema Bezel + Separated Blur & Sub Grip Pills ─── */
@@ -10118,6 +9620,9 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
     padding: 6px;
+    position: static;
+    -webkit-mask-image: none;
+    mask-image: none;
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.86);
     border: 1px solid rgba(15, 23, 42, 0.08);
@@ -10504,9 +10009,9 @@ html[data-theme="dark"].lite .modal-content {
     height: auto !important;
     min-height: 20px;
     padding: 3px 4px !important;
-    font-size: 8.8px !important;
+    font-size: 10.5px !important;
     font-weight: 700;
-    line-height: 1.35 !important;
+    line-height: 1.4 !important;
     white-space: normal !important;
     word-break: keep-all !important;
     overflow-wrap: normal !important;
@@ -11022,12 +10527,17 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
 .slider-ticks span:nth-child(4) { left: 75%; }
 .adm-stage-table .adm-num { text-align: right; white-space: nowrap; }
 
-/* Recap AI Thumbnail Panel (feat/recap-ai-thumbnail) */
+/* Recap AI Thumbnail Panel (Light + Dark Ceramic/Obsidian themed) */
 .recap-ai-thumb-panel {
-    padding: 10px 12px;
-    border-radius: 12px;
-    background: rgba(255, 215, 0, 0.05);
-    border: 1px solid rgba(255, 215, 0, 0.22);
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(254, 243, 199, 0.55) 0%, rgba(255, 251, 235, 0.85) 100%);
+    border: 1px solid rgba(217, 119, 6, 0.30);
+    color: var(--vcp-text-primary);
+}
+html[data-theme="dark"] .recap-ai-thumb-panel {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 196, 81, 0.28);
 }
 .recap-thumb-preview {
     display: block;
@@ -11035,15 +10545,20 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
     max-width: 240px;
     aspect-ratio: 9 / 16;
     object-fit: cover;
-    border-radius: 10px;
+    border-radius: 12px;
     margin: 8px auto 0;
-    border: 1px solid rgba(255, 215, 0, 0.35);
+    border: 1px solid rgba(217, 119, 6, 0.38);
 }
 .recap-hist-thumb-box {
-    padding: 8px 10px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 215, 0, 0.18);
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(248, 250, 255, 0.85);
+    border: 1px solid rgba(217, 119, 6, 0.26);
+    color: var(--vcp-text-primary);
+}
+html[data-theme="dark"] .recap-hist-thumb-box {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 215, 0, 0.22);
 }
 .recap-hist-thumb-row {
     display: flex;
@@ -11054,4 +10569,272 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
     flex: 1 1 auto;
     min-width: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UNIFIED DESIGN SYSTEM V3 — UTILITY PARITY, DARK SEMANTICS, ACCESSIBILITY
+   & RESPONSIVE TABLET (>=768px) / DESKTOP (>=1024px) LAYOUTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+html[data-theme="dark"] .text-gold { color: #FBBF24 !important; }
+html[data-theme="dark"] .adm-fleet-node-card {
+    background: rgba(22, 32, 56, 0.88);
+    border-color: rgba(148, 163, 184, 0.26);
+    color: #F8FAFC;
+}
+
+#slip-preview-img {
+    max-height: 260px;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
+    display: block;
+    margin: 0 auto;
+    border-radius: 12px;
+}
+
+/* Missing button, utility, metric & table classes defined cleanly */
+.vcp-btn-secondary,
+.btn-secondary {
+    background: var(--vcp-flat-glass-bg, #fff);
+    color: var(--vcp-text-primary, #0F172A);
+    border: 1px solid var(--border-strong, rgba(15, 23, 42, 0.14));
+    border-radius: var(--vcp-radius-md, 12px);
+    min-height: 44px;
+    padding: 8px 14px;
+    font-weight: 600;
+    transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+}
+.btn-primary {
+    background: linear-gradient(135deg, #2563EB 0%, #38BDF8 100%);
+    color: #FFFFFF;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: var(--vcp-radius-md, 12px);
+    min-height: 44px;
+    padding: 8px 16px;
+    font-weight: 700;
+}
+.btn-sm { min-height: 36px; padding: 6px 12px; font-size: 13px; border-radius: 10px; }
+.btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.btn-group-sm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.grid { display: grid; }
+.grid-cols-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.gap-2 { gap: 8px; }
+.w-full { width: 100%; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.border-glass { border: 0; border-top: 1px solid var(--divider, rgba(15, 23, 42, 0.10)); height: 0; }
+.my-3 { margin-top: 12px; margin-bottom: 12px; }
+.pl-3 { padding-left: 16px; }
+.ml-2 { margin-left: 8px; }
+.rounded { border-radius: var(--vcp-radius-md, 12px); }
+.overflow-x-auto { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.font-semibold { font-weight: 600; }
+.text-sm { font-size: 13.5px; line-height: 1.5; }
+.text-warning { color: var(--vcp-warning, #B45309) !important; }
+.t-num { font-variant-numeric: tabular-nums; }
+.metric-card-sm {
+    background: var(--vcp-flat-glass-inset, rgba(255, 255, 255, 0.68));
+    border: 1px solid var(--vcp-border, rgba(15, 23, 42, 0.10));
+    border-radius: 12px;
+    padding: 8px 10px;
+}
+.adm-acc-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.adm-acc-sub { font-size: 11.5px; font-weight: 500; color: var(--vcp-text-secondary, #475569); }
+.adm-acc-chev { display: inline-block; transition: transform 0.2s ease; }
+details[open] > summary .adm-acc-chev { transform: rotate(180deg); }
+.table-responsive { width: 100%; overflow-x: auto; }
+.table-glass { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.table-glass th, .table-glass td {
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--divider, rgba(15, 23, 42, 0.10));
+    text-align: left;
+}
+.studio-error-banner {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-radius: var(--vcp-radius-md, 14px);
+    background: var(--vcp-danger-soft, rgba(217, 45, 32, 0.10));
+    border: 1px solid var(--vcp-danger-border, rgba(217, 45, 32, 0.35));
+    color: var(--vcp-text-primary);
+}
+.studio-error-banner-title { font-weight: 700; font-size: 14px; color: var(--vcp-danger, #C81E1E); }
+.studio-error-banner-msg { font-size: 13px; line-height: 1.55; word-break: break-word; }
+
+@media (hover: hover) {
+    .vcp-btn-secondary:hover, .btn-secondary:hover {
+        border-color: var(--vcp-primary, #0A84FF);
+        transform: translateY(-1px);
+    }
+    .btn-primary:hover, .gold-gradient-btn:hover {
+        filter: brightness(1.04);
+        transform: translateY(-1px);
+    }
+    .home-tile:hover, .voice-card:hover, .adm-tap:hover {
+        border-color: rgba(37, 99, 235, 0.34);
+    }
+}
+
+/* Responsive Tablet (>=768px) */
+@media (min-width: 768px) {
+    .app-container { max-width: 860px; }
+    .top-nav { max-width: 840px; margin-left: auto; margin-right: auto; }
+    .bottom-nav { max-width: 680px !important; }
+    #tab-history .hub-history-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+    #tab-vip .packages-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+}
+
+/* Responsive Desktop (>=1024px) */
+@media (min-width: 1024px) {
+    .app-container { max-width: 1080px; }
+    .top-nav { max-width: 1060px; }
+    #tab-recap .vcp-step2-sticky-preview.is-ratio-9-16,
+    #tab-recap .vcp-step2-sticky-preview.is-portrait-stage {
+        position: sticky;
+        top: var(--vcp-hdr-sticky-top, 114px);
+    }
+    #tab-recap #recap-step-2-body,
+    #tab-recap #recap-step-2-body .vcp-step2-split-shell,
+    #tab-recap .recap-step2-layout {
+        display: grid;
+        grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+    }
+    #tab-recap #recap-step-2-body > .recap-step2-summary,
+    #tab-recap #recap-step-2-body > .recap-step-next-row {
+        grid-column: 1 / -1;
+    }
+    #tab-admin .admin-stats-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    #tab-admin #adm-nav {
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+    }
+}
+
+/* ── Audit Section 8: Toast click-through & Lite Mode Utility Button ── */
+.studio-toast {
+    pointer-events: none;
+}
+.studio-toast button,
+.studio-toast a,
+.studio-toast .toast-close {
+    pointer-events: auto;
+}
+.theme-ico-wrap,
+.theme-ico-wrap svg,
+.lite-pill-btn .vcp-ico {
+    pointer-events: none;
+}
+.top-nav .lite-pill-btn {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+}
+.top-nav .lite-pill-btn.is-active {
+    background: rgba(10, 132, 255, 0.16) !important;
+    border-color: rgba(10, 132, 255, 0.45) !important;
+    color: #0a84ff !important;
+}
+html[data-theme="dark"] .top-nav .lite-pill-btn.is-active {
+    background: rgba(56, 189, 248, 0.22) !important;
+    border-color: rgba(56, 189, 248, 0.48) !important;
+    color: #38bdf8 !important;
+}
+@media (max-width: 430px) {
+    .top-nav .lite-pill-btn {
+        width: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        height: 36px;
+        padding: 0;
+        flex-shrink: 0;
+    }
+}
+@media (max-width: 380px) {
+    .bottom-nav .nav-item {
+        min-height: 48px;
+        font-size: 10px;
+        line-height: 1.45;
+        padding: 3px 1px;
+    }
+    .bottom-nav .nav-label {
+        font-size: 9.5px;
+        line-height: 1.35;
+    }
+}
+@media (max-width: 480px) {
+    #tab-vip .stats-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+}
+.vcp-subview-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    padding: 5px 12px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+}
+#btn-top-history.active {
+    background: var(--gold-soft);
+    border-color: var(--gold-border);
+    color: var(--gold-2);
+}
+.slider-sub-est {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+    margin-left: auto;
+    margin-right: 6px;
+}
+.vcp-saved-voice-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    border-radius: var(--r-md);
+    background: var(--gold-soft);
+    border: 1px solid var(--gold-border);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+
 

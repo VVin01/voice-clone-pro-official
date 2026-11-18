@@ -76,10 +76,14 @@ def restore_settings():
     orig_required_group_id = settings.required_group_id
     orig_char_limit = settings.character_limit_free
     orig_purchased_limit = settings.character_limit_purchased
+    orig_recap_on_queue = getattr(settings, "recap_on_queue", False)
+    orig_prompt_profile = getattr(settings, "ai_prompt_profile", "v2")
     settings.required_channel_id = ""
     settings.required_group_id = ""
     settings.character_limit_free = 1000
     settings.character_limit_purchased = 5000
+    settings.recap_on_queue = False
+    settings.ai_prompt_profile = "v2"
     yield
     settings.admin_ids_raw = orig_admin_ids
     settings.bot_token = orig_bot_token
@@ -88,6 +92,8 @@ def restore_settings():
     settings.required_group_id = orig_required_group_id
     settings.character_limit_free = orig_char_limit
     settings.character_limit_purchased = orig_purchased_limit
+    settings.recap_on_queue = orig_recap_on_queue
+    settings.ai_prompt_profile = orig_prompt_profile
     settings.bot_mode = orig_bot_mode
     settings.telegram_webhook_secret = orig_webhook_secret
     settings.bot_webhook_path = orig_webhook_path

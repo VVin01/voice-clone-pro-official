@@ -210,7 +210,7 @@ async def _record_incoming_referral(
     # Verify referrer exists and is not self
     stmt = select(User).where((User.referral_code == code) | (User.id == possible_id))
     res = await session.execute(stmt)
-    referrer = res.scalar_one_or_none()
+    referrer = res.scalars().first()
 
     if not referrer or referrer.id == new_user_id:
         return False
@@ -371,11 +371,12 @@ async def award_welcome_bonus(
         if user.welcome_bonus_awarded:
             return False, balance
 
-        # Insert WelcomeBonusAward row to enforce database-level primary-key uniqueness
+        # Insert WelcomeBonusAward row inside a savepoint so duplicate-key collisions never poison the caller's session.
         award_record = WelcomeBonusAward(user_id=user_id, seconds=bonus_sec)
-        session.add(award_record)
         try:
-            await session.flush()
+            async with session.begin_nested():
+                session.add(award_record)
+                await session.flush()
         except Exception:
             # Concurrent insert occurred or already exists
             return False, balance
@@ -1492,7 +1493,22 @@ async def admin_adjust_balance(
                         )
                     balance.purchased_seconds -= seconds
                     if balance.purchased_seconds == 0:
-                        user.account_category = AccountCategory.FREE.value
+                        has_purchased_recap = int(getattr(user, "recap_credits", 0) or 0) > DEFAULT_SIGNUP_RECAP_CREDITS
+                        if not has_purchased_recap and int(getattr(user, "recap_credits", 0) or 0) > 0:
+                            ref_rows = (
+                                await session.execute(
+                                    select(RecapCreditLedgerEvent.reference_id).where(
+                                        RecapCreditLedgerEvent.user_id == user_id,
+                                        RecapCreditLedgerEvent.direction == LedgerDirection.CREDIT.value,
+                                    )
+                                )
+                            ).scalars().all()
+                            has_purchased_recap = any(
+                                r and not str(r).startswith(("SIGNUP:", "REFUND:", "BACKFILL:"))
+                                for r in ref_rows
+                            )
+                        if not has_purchased_recap:
+                            user.account_category = AccountCategory.FREE.value
                 elif source == LedgerSource.MONTHLY_FREE:
                     if balance.monthly_free_seconds < seconds:
                         raise ValueError(

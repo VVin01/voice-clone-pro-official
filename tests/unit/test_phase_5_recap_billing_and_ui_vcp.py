@@ -1101,7 +1101,7 @@ async def test_part_c_cross_type_concurrent_submit_and_script_ready_cancel_vs_ex
 
 def test_p5_frontend_steps_3_4_and_option_b_controls_present():
     # Cache token pinned
-    assert INDEX_HTML.count("20261117_r161") == 4
+    assert INDEX_HTML.count("20261118_r164") == 4
 
     # Step 3 controls & badges
     for eid in (

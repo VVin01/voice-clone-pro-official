@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import logging
 from pathlib import Path
 import re
@@ -113,19 +114,22 @@ def _user_facing_worker_error(exc: BaseException, lang: str = "my") -> str:
     return t("worker_error_generic", lang)
 
 
-async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
-    """Upload generated audio file from Local Worker to Render Cloud so Mini App & Bot can serve it."""
+async def sync_output_to_cloud(job_id: str, file_path: Path) -> bool:
+    """Upload generated output file from Local Worker to Render Cloud so Mini App & Bot can serve it."""
     import os
+    # Primary web/worker runs co-located on shared persistent storage: no remote upload needed.
+    if getattr(settings, "instance_primary", True):
+        return True
     # Hardening (hunt F8): without a dedicated WORKER_TOKEN there is
     # no remote worker to sync for — the co-located worker writes
     # straight into shared storage, so this is a no-op. The bot
     # token is never used as an upload credential anymore.
     worker_token = (getattr(settings, "worker_token", "") or "").strip()
     if not worker_token:
-        return
+        return True
     cloud_url = os.getenv("RENDER_EXTERNAL_URL", "").strip() or os.getenv("MINI_APP_URL", "").strip() or "https://voice-clone-studio-c1er.onrender.com"
     if not file_path or not file_path.is_file():
-        return
+        return False
     is_mp4 = file_path.suffix.lower() == ".mp4"
     mime_type = "video/mp4" if is_mp4 else "audio/wav"
     upload_timeout = 300.0 if is_mp4 else 90.0
@@ -134,15 +138,20 @@ async def sync_output_to_cloud(job_id: str, file_path: Path) -> None:
         async with httpx.AsyncClient(timeout=upload_timeout) as client:
             with open(file_path, "rb") as f:
                 files = {"file": (file_path.name, f, mime_type)}
-                headers = {"X-Worker-Token": worker_token}
+                headers = {
+                    "X-Worker-Token": worker_token,
+                    "X-Worker-Defer-Status": "1",
+                }
                 url = f"{cloud_url}/api/internal/worker/upload-result/{job_id}"
                 resp = await client.post(url, files=files, headers=headers)
                 if resp.is_success:
                     logger.info("✅ Result for job %s successfully uploaded to Render Cloud server!", job_id)
-                else:
-                    logger.warning("Cloud upload for job %s returned status %s: %s", job_id, resp.status_code, resp.text)
+                    return True
+                logger.warning("Cloud upload for job %s returned status %s: %s", job_id, resp.status_code, resp.text)
+                return False
     except Exception as e:
         logger.warning("Failed to sync output to cloud for job %s: %s", job_id, e)
+        return False
 
 
 async def _voice_job_cancelled(session: AsyncSession, job: Job) -> bool:
@@ -208,10 +217,13 @@ def _synthesize_voxcpm_voice_job(
     if not allow_fallback:
         _dp_kwargs["allow_fallback"] = False
 
+    # Locked-timbre clones (ref + ref_transcript) ignore control_instruction;
+    # avoid subtracting ~400 phantom control tokens from chunk capacity.
+    effective_planning_control = "" if (reference_wav and reference_transcript) else (control_instruction or "")
     chunks = plan_text_chunks(
         text,
         reference_transcript=reference_transcript,
-        control_instruction=control_instruction or "",
+        control_instruction=effective_planning_control,
         reference_seconds=reference_seconds,
     )
     if len(chunks) <= 1:
@@ -337,9 +349,13 @@ async def process_recap_job(
         plan = _recap_redispatch_plan(job, user)
     except Exception as plan_err:
         logger.error("Could not build recap execution plan for job %s: %s", jid, plan_err, exc_info=True)
-        job.status = JobStatus.FAILED.value
-        job.error_message = f"Failed to build recap execution plan: {plan_err}"
-        await session.commit()
+        from app.webapp.api import _fail_stranded_recap_job
+        await _fail_stranded_recap_job(jid, job.user_id, persisted_state or {})
+        await session.refresh(job)
+        if job.status != JobStatus.FAILED.value:
+            job.status = JobStatus.FAILED.value
+            job.error_message = f"Failed to build recap execution plan: {plan_err}"
+            await session.commit()
         return False
 
     RECAP_JOBS_REGISTRY[jid] = plan["entry"]
@@ -830,7 +846,10 @@ async def process_single_job(
                     action="admin.voice_clone",
                     target_type="job",
                     target_id=str(job.id),
-                    details_json=f'{{"model": "{model.name}", "duration_seconds": {duration_seconds}}}',
+                    details_json=json.dumps({
+                        "model": getattr(model, "name", "Standard"),
+                        "duration_seconds": duration_seconds,
+                    }, ensure_ascii=False),
                 )
             )
 
@@ -860,7 +879,9 @@ async def process_single_job(
 
         # Upload audio result to Render Cloud server so Mini App & Bot can stream / download it
         final_audio_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
-        await sync_output_to_cloud(job.id, final_audio_path)
+        synced = await sync_output_to_cloud(job.id, final_audio_path)
+        if not synced and not getattr(settings, "instance_primary", True) and (getattr(settings, "worker_token", "") or "").strip():
+            raise RuntimeError("Failed to upload rendered output to cloud server")
 
         # Persist the billing + result state and end the transaction
         # BEFORE delivery (audit fix 2026-11-03): the Telegram sends
@@ -1020,6 +1041,11 @@ async def process_single_job(
         return True
 
     except Exception as exc:
+        # Clear any failed/PendingRollback transaction state before refreshing or refunding.
+        try:
+            await session.rollback()
+        except Exception:
+            pass
         # Batch AJ (H5): a failure racing a cancel must not overwrite
         # CANCELLED with FAILED either — the cancel path already
         # refunded and told the user; the refund attempt below stays
@@ -1315,11 +1341,12 @@ async def run_worker_loop(
                 try:
                     from app.services.dynamic_settings import load_dynamic_settings
                     async with AsyncSessionLocal() as ds_session:
-                        await load_dynamic_settings(ds_session)
+                        await load_dynamic_settings(ds_session, quiet=True)
                 except Exception as ds_exc:
                     logger.debug("Failed to refresh dynamic settings in worker: %s", ds_exc)
 
-            if _now_m - _last_heartbeat >= 15.0:
+            is_vps_worker = not bool(getattr(settings, "instance_primary", True))
+            if is_vps_worker and _now_m - _last_heartbeat >= 15.0:
                 _last_heartbeat = _now_m
                 try:
                     from app.services.dynamic_settings import set_dynamic_setting
@@ -1331,14 +1358,19 @@ async def run_worker_loop(
                             hb_session, "worker_laptop_engine", str(engine_filter or "all")
                         )
                         if not getattr(settings, "worker_laptop_host", ""):
+                            import os as _os
                             import socket
-                            host_str = socket.gethostname() or "212.28.177.252"
+                            host_str = (
+                                _os.getenv("VPS_PUBLIC_HOST", "").strip()
+                                or socket.gethostname()
+                                or "vps-worker"
+                            )
                             await set_dynamic_setting(hb_session, "worker_laptop_host", host_str)
                         await hb_session.commit()
                 except Exception as hb_exc:
                     logger.debug("Failed to record worker heartbeat: %s", hb_exc)
 
-            if str(getattr(settings, "worker_laptop_status", "ONLINE")).upper() == "PAUSED":
+            if is_vps_worker and str(getattr(settings, "worker_laptop_status", "ONLINE")).upper() == "PAUSED":
                 await asyncio.sleep(poll_interval)
                 continue
 
@@ -1349,7 +1381,8 @@ async def run_worker_loop(
                         recovered = await recover_stale_running_jobs(
                             session=session,
                             bot=bot,
-                            stale_timeout_seconds=int(_now_m - _loop_started),
+                            stale_timeout_seconds=settings.stale_job_timeout_seconds,
+                            recap_stale_timeout_seconds=getattr(settings, "recap_stale_job_timeout_seconds", 2700),
                         )
                         if recovered:
                             logger.info("Periodic sweep recovered %d stranded jobs: %s", len(recovered), recovered)

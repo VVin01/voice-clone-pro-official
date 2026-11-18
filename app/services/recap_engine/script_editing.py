@@ -141,6 +141,8 @@ def apply_script_edits(
         text = clean_edited_narration(edit.get("narration"))
         if not text:
             raise ValueError(f"Segment {index}: narration must not be empty")
+        if not any(ch.isalnum() or (0x1000 <= ord(ch) <= 0x109F and not ("\u104A" <= ch <= "\u104F")) for ch in text):
+            raise ValueError(f"Segment {index}: narration must contain speakable characters")
         if len(text) > MAX_NARRATION_CHARS:
             raise ValueError(
                 f"Segment {index}: narration is too long ({len(text)} > {MAX_NARRATION_CHARS} chars)"

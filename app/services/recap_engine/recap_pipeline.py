@@ -302,6 +302,17 @@ def assemble_blur_boxes(
     return merged, covered
 
 
+def _clean_planner_source_title(source_title: Optional[str], source_stem: str) -> str:
+    """Return meaningful movie/story title context, suppressing generic filenames like input_video."""
+    explicit = str(source_title or "").strip()
+    if explicit:
+        return explicit
+    stem = str(source_stem or "").strip()
+    if stem.lower() in {"input", "input_video", "source", "video", "downloaded_video", "temp", "media"}:
+        return ""
+    return stem
+
+
 def run_recap_pipeline(
     source_video_path: str | Path,
     job_dir: Optional[str | Path] = None,
@@ -354,12 +365,16 @@ def run_recap_pipeline(
     sub_visual_overrides: Optional[dict] = None,
     sub_font_custom_path: Optional[str] = None,
     sub_bold: bool = True,
+    sub_render_mode: str = "png",
+    sub_effect: str = "none",
+    embed_soft_subs: bool = True,
     protection_level: str = "standard",
     logo_path: Optional[str] = None,
     logo_position: Optional[list[float]] = None,
     logo_scale: float = 0.16,
     logo_opacity: float = 0.70,
     extra_text: Optional[str] = None,
+    source_title: Optional[str] = None,
     part_index: int = 1,
     total_parts: int = 1,
     prev_part_summary: str = "",
@@ -452,10 +467,7 @@ def run_recap_pipeline(
     plan_path, plan = planner.build(
         source=source,
         job_dir=target_job_dir,
-        # Batch DD: the title overlay is gone; the planner's
-        # narration context title is just the source file's stem
-        # (previously the overlay title text doubled as context).
-        source_title=source.stem,
+        source_title=_clean_planner_source_title(source_title, source.stem),
         reuse=True,
         **_part_kw,
     )
@@ -694,6 +706,11 @@ def run_recap_pipeline(
     if sub_font_custom_path:
         overlays["sub_font_custom_path"] = str(sub_font_custom_path)
     overlays["sub_bold"] = bool(sub_bold)
+    _srm = str(sub_render_mode or "png").strip().lower()
+    overlays["sub_render_mode"] = _srm if _srm in ("png", "timeline", "ass", "karaoke", "soft") else "png"
+    _seff = str(sub_effect or "none").strip().lower()
+    overlays["sub_effect"] = _seff if _seff in ("none", "fade", "pop", "karaoke") else "none"
+    overlays["embed_soft_subs"] = bool(embed_soft_subs)
     overlays["protection_level"] = normalize_protection_level(protection_level)
     overlays["tts_engine"] = str(tts_engine or "edge_tts")
     # Production-grade options, consumed by EdgeSmartSync (core.py):
@@ -874,7 +891,7 @@ def build_recap_script_plan(
     plan_path, plan = planner.build(
         source=source,
         job_dir=target_job_dir,
-        source_title=source_title or source.stem,
+        source_title=_clean_planner_source_title(source_title, source.stem),
         reuse=True,
         **_plan_part_kw,
     )
@@ -912,6 +929,9 @@ def generate_recap_preview(
     sub_visual_overrides: Optional[dict] = None,
     sub_font_custom_path: Optional[str] = None,
     sub_bold: bool = True,
+    sub_render_mode: str = "png",
+    sub_effect: str = "none",
+    embed_soft_subs: bool = True,
     protection_level: str = "standard",
     sample_text: str = "",
     output_ratio: str = "Original",
@@ -1083,6 +1103,11 @@ def generate_recap_preview(
     if sub_font_custom_path:
         overlays["sub_font_custom_path"] = str(sub_font_custom_path)
     overlays["sub_bold"] = bool(sub_bold)
+    _srm = str(sub_render_mode or "png").strip().lower()
+    overlays["sub_render_mode"] = _srm if _srm in ("png", "timeline", "ass", "karaoke", "soft") else "png"
+    _seff = str(sub_effect or "none").strip().lower()
+    overlays["sub_effect"] = _seff if _seff in ("none", "fade", "pop", "karaoke") else "none"
+    overlays["embed_soft_subs"] = bool(embed_soft_subs)
     overlays["protection_level"] = normalize_protection_level(protection_level)
 
     if logo_enabled and logo_path:

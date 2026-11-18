@@ -80,10 +80,11 @@ def _audit_prompt(monkeypatch, style):
 @pytest.mark.parametrize("style", ALL_STYLES)
 def test_density_targets_top_of_band_without_filler(monkeypatch, style):
     prompt = _prompt(monkeypatch, style)
-    # The band itself is unchanged; density writes to its TOP.
-    assert "~10 to 14 Burmese syllables per second" in prompt
-    assert "DENSITY TARGET (EVERY STYLE): Write to the TOP of that band (~14 syllables per second of window)" in prompt
-    assert "≈19–22 characters per second with no dead air" in prompt
+    # Reconciled v2 target: aligned cleanly with MEASURED_CHARS_PER_SECOND (17.6 chars/s)
+    # so compliant Gemini translations are never falsely flagged as over-budget.
+    assert "~10 to 12.5 Burmese syllables per second" in prompt
+    assert "DENSITY TARGET (EVERY STYLE): Write cleanly inside that band (~11 to 12.5 Burmese syllables per second of window)" in prompt
+    assert "≈16–18.5 characters per second" in prompt
     assert "repeating an already-narrated fact as filler is FORBIDDEN" in prompt
     # Item 5 guardrail: the duration budget beats density.
     assert "the spoken-duration budget always wins over density" in prompt
@@ -277,5 +278,5 @@ def test_internal_style_ids_unchanged():
 
 
 def test_cache_token_bumped_to_r158():
-    assert INDEX_HTML.count("?v=20261117_r161") == 4
+    assert INDEX_HTML.count("?v=20261118_r164") == 4
     assert "r157" not in INDEX_HTML

@@ -3,10 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
     <title>Voice Clone Pro</title>
+    <script>
+        (function () {
+            try {
+                var savedTheme = localStorage.getItem("vcp_theme_mode");
+                var theme = savedTheme === "dark" ? "dark" : "light";
+                document.documentElement.setAttribute("data-theme", theme);
+                var lite = localStorage.getItem("vcp_lite_mode");
+                if (lite === "1") document.documentElement.classList.add("lite");
+                document.addEventListener("DOMContentLoaded", function () {
+                    if (document.body) {
+                        document.body.setAttribute("data-theme", document.documentElement.getAttribute("data-theme") || theme);
+                        if (lite === "1") document.body.classList.add("lite");
+                    }
+                });
+            } catch (e) {}
+        })();
+    </script>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261117_r161">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261118_r164">
 </head>
 <body class="dark-theme gate-locked">
     <div id="app" class="app-container">
@@ -15,7 +33,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261117_r161" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261118_r164" alt="Voice Clone Pro logo" width="36" height="36">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -33,10 +51,14 @@
                         <svg class="vcp-ico vcp-ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
                     </span>
                 </button>
+                <button type="button" class="theme-pill-btn lite-pill-btn" id="btn-lite-toggle" onclick="toggleLiteMode()" title="Lite Mode (ပေါ့ပါးသက်သာစနစ်)" data-i18n-title="lite_toggle_title" data-i18n-aria="btn_lite_aria" aria-label="Toggle Lite Mode" aria-pressed="false">
+                    <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+                </button>
                 <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်" data-i18n-title="tut_guide_title">
                     <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
                     <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
                 </button>
+                <button type="button" class="theme-pill-btn" id="btn-top-history" onclick="openHistoryHub()" title="မှတ်တမ်း" data-i18n-title="history_title" aria-label="History"><span class="btn-icon" aria-hidden="true">⏱️</span></button>
                 <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()" title="ဘာသာစကား ပြောင်းရန်" data-i18n-title="lang_toggle_title"><span class="lang-flag" aria-hidden="true">🇲🇲</span><span class="lang-btn-text" id="lang-btn-text">မြန်မာ</span></button>
             </div>
 
@@ -81,6 +103,12 @@
             
             <!-- ════ TAB: HOME (V2 4-Zone IA: Hero+Balances, Studio Bento, Recent, Unified Tools/Hub) ════ -->
             <section id="tab-home" class="tab-pane active">
+                <!-- Home data load error (relocated to Home): shown only when the
+                     profile/voices fetch fails or times out; Retry re-runs it. -->
+                <div class="load-error-strip hidden" id="home-load-error" role="alert">
+                    <span class="load-error-text" data-i18n="home_load_error">⚠️ အချက်အလက် ရယူ၍ မရပါ — ကွန်ရက် စစ်ပြီး ပြန် စမ်းကြည့်ပါ</span>
+                    <button type="button" class="mini-chip" onclick="retryHomeLoad()" data-i18n="admin_retry">ပြန် စမ်းမည်</button>
+                </div>
                 <!-- Zone A: Hero + Unified Balance Trio + First-run Callout -->
                 <div class="card glass vcp-hero-card" id="home-hero-card" data-tier="free">
                     <div class="vcp-card home-status-strip vcp-hero-top" id="home-status-strip" onclick="switchTab('tab-vip')" role="button" tabindex="0">
@@ -396,13 +424,6 @@
                     <span class="tutorial-banner-btn" data-i18n="btn_watch">ကြည့်ရန် ▶️</span>
                 </div>
 
-                <!-- Home data load error (premium polish): shown only when the
-                     profile/voices fetch fails or times out; Retry re-runs it. -->
-                <div class="load-error-strip hidden" id="home-load-error" role="alert">
-                    <span class="load-error-text" data-i18n="home_load_error">⚠️ အချက်အလက် ရယူ၍ မရပါ — ကွန်ရက် စစ်ပြီး ပြန် စမ်းကြည့်ပါ</span>
-                    <button type="button" class="mini-chip" onclick="retryHomeLoad()" data-i18n="admin_retry">ပြန် စမ်းမည်</button>
-                </div>
-
                 <!-- Estimated Duration Notice -->
                 
 
@@ -474,6 +495,10 @@
                                 <span class="vcp-clone-req-item" data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</span>
                             </div>
                             <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် — ပိုရှည်ပါက ပထမ 45 စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်၊ WAV/MP3) တင်ပါ။ မတင်ပါက မူလ မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
+                            <div class="vcp-saved-voice-bar hidden" id="saved-custom-voice-bar">
+                                <span id="saved-custom-voice-label"></span>
+                                <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToVoice()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
+                            </div>
                             <div class="ref-upload-row">
                                 <label class="btn-file-upload" for="ref-audio-input">
                                     <span id="ref-audio-label" data-i18n="ref_file_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
@@ -557,6 +582,11 @@
                         <div class="progress-bar-fill indeterminate" id="voice-progress-fill" style="width: 100%;"></div>
                     </div>
                     <div class="eta-tag" id="voice-eta-text" data-i18n="calculating_eta">စောင့်ဆိုင်းချိန် ခန့်မှန်းနေသည်…</div>
+                    <button type="button" class="btn secondary-btn btn-sm mt-2 hidden" id="btn-cancel-voice-job" onclick="cancelVoiceJob()" data-i18n="voice_cancel_btn">✕ ပယ်ဖျက်မည်</button>
+                </div>
+                <div class="studio-error-banner hidden" id="voice-failed-box" role="alert">
+                    <strong data-i18n="voice_failed_title">အသံဖန်တီးမှု မအောင်မြင်ပါ</strong>
+                    <div class="text-xs mt-1" id="voice-failed-msg"></div>
                 </div>
 
                 <div class="card glass result-card hidden" id="voice-result-box">
@@ -747,6 +777,11 @@
                         <div class="progress-bar-fill indeterminate" id="tts-progress-fill" style="width: 100%;"></div>
                     </div>
                     <div class="eta-tag" data-i18n="calculating_eta">စောင့်ဆိုင်းချိန် ခန့်မှန်းနေသည်…</div>
+                    <button type="button" class="btn secondary-btn btn-sm mt-2 hidden" id="btn-cancel-tts-job" onclick="cancelTtsJob()" data-i18n="tts_cancel_btn">✕ ပယ်ဖျက်မည်</button>
+                </div>
+                <div class="studio-error-banner hidden" id="tts-failed-box" role="alert">
+                    <strong data-i18n="tts_failed_title">TTS အသံဖန်တီးမှု မအောင်မြင်ပါ</strong>
+                    <div class="text-xs mt-1" id="tts-failed-msg"></div>
                 </div>
 
                 <div class="card glass result-card hidden" id="tts-result-box">
@@ -1207,11 +1242,11 @@
                                 </button>
                                 <button type="button" class="vcp-sub-style-card" data-style-card="heavy" onclick="selectRecapSubStyleCard('heavy')">
                                     <span class="vcp-sub-sample sample-heavy" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
-                                    <span class="vcp-sub-card-name" data-i18n="recap_sub_heavy">🔲 Heavy (နောက်ခံထူ)</span>
+                                    <span class="vcp-sub-card-name" data-i18n="recap_sub_heavy">🔲 Heavy (ဘောင်ထူ)</span>
                                 </button>
                                 <button type="button" class="vcp-sub-style-card" data-style-card="soft" onclick="selectRecapSubStyleCard('soft')">
                                     <span class="vcp-sub-sample sample-soft" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
-                                    <span class="vcp-sub-card-name" data-i18n="recap_sub_soft">🌫️ Soft (နောက်ခံပါး)</span>
+                                    <span class="vcp-sub-card-name" data-i18n="recap_sub_soft">🌫️ Soft (ဘောင်ပါး)</span>
                                 </button>
                                 <button type="button" class="vcp-sub-style-card" data-style-card="rose" onclick="selectRecapSubStyleCard('rose')">
                                     <span class="vcp-sub-sample sample-rose" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
@@ -1226,7 +1261,7 @@
                                     <span class="vcp-sub-card-name" data-i18n="sub_style_mint">🟢 Mint Green (ပူစီနံစိမ်း)</span>
                                 </button>
                             </div>
-                            <select id="sub-style-picker" class="studio-select glass-dropdown mt-2" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
+                            <select id="sub-style-picker" class="studio-select glass-dropdown sr-only mt-2" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
                                 <option value="cinematic" data-i18n="sub_style_cinematic">🎬 Cinematic White (ရုပ်ရှင်အဖြူ)</option>
                                 <option value="glass" data-i18n="sub_style_glass">🪟 Modern Clean (မှန်ကြည်)</option>
                                 <option value="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</option>
@@ -1234,8 +1269,8 @@
                                 <option value="boxed" data-i18n="sub_style_boxed">⬛ Dark Box (နောက်ခံ)</option>
                                 <option value="neon" data-i18n="sub_style_neon">🔵 Neon Cyan (နီယွန်)</option>
                                 <option value="band" data-i18n="recap_sub_band">⬛ Band (အပြည့်ပတ်)</option>
-                                <option value="heavy" data-i18n="recap_sub_heavy">🔲 Heavy (နောက်ခံထူ)</option>
-                                <option value="soft" data-i18n="recap_sub_soft">🌫️ Soft (နောက်ခံပါး)</option>
+                                <option value="heavy" data-i18n="recap_sub_heavy">🔲 Heavy (ဘောင်ထူ)</option>
+                                <option value="soft" data-i18n="recap_sub_soft">🌫️ Soft (ဘောင်ပါး)</option>
                                 <option value="rose" data-i18n="sub_style_rose">🌸 Rose Pink (ပန်းရောင်)</option>
                                 <option value="orange" data-i18n="sub_style_orange">🟠 Sunset Orange (လိမ္မော်ရောင်)</option>
                                 <option value="mint" data-i18n="sub_style_mint">🟢 Mint Green (ပူစီနံစိမ်း)</option>
@@ -1259,9 +1294,33 @@
                                 <button type="button" class="pill-btn active" data-pos-band="bottom" data-i18n="recap_sub_pos_bottom">အောက်</button>
                             </div>
                         </div>
+                        <div class="style-selector-row mt-2">
+                            <span class="style-lbl" data-i18n="sub_mode_label">📝 စာတန်းထုတ် နည်းလမ်း (Mode):</span>
+                            <div class="pill-group sm" id="recap-sub-render-mode">
+                                <button type="button" class="pill-btn active" data-sub-mode="timeline" data-i18n="sub_mode_timeline">🖼️ Timeline (PNG)</button>
+                                <button type="button" class="pill-btn" data-sub-mode="ass" data-i18n="sub_mode_ass">⚡ Vector (ASS)</button>
+                                <button type="button" class="pill-btn" data-sub-mode="karaoke" data-i18n="sub_mode_karaoke">🎤 Karaoke (Active)</button>
+                                <button type="button" class="pill-btn" data-sub-mode="soft" data-i18n="sub_mode_soft">📺 Soft CC (MP4)</button>
+                                <button type="button" class="pill-btn" data-sub-mode="png" data-i18n="sub_mode_png">🎬 Classic PNG</button>
+                            </div>
+                        </div>
+                        <div class="style-selector-row mt-2" id="recap-sub-effect-row">
+                            <span class="style-lbl" data-i18n="sub_effect_label">✨ Animation:</span>
+                            <div class="pill-group sm" id="recap-sub-effect">
+                                <button type="button" class="pill-btn active" data-sub-effect="none" data-i18n="sub_effect_none">ပုံမှန်</button>
+                                <button type="button" class="pill-btn" data-sub-effect="fade" data-i18n="sub_effect_fade">Fade</button>
+                                <button type="button" class="pill-btn" data-sub-effect="pop" data-i18n="sub_effect_pop">Pop</button>
+                                <button type="button" class="pill-btn" data-sub-effect="karaoke" data-i18n="sub_effect_karaoke">Karaoke</button>
+                            </div>
+                        </div>
+                        <label class="script-review-row mt-2" for="toggle-embed-soft-subs">
+                            <input type="checkbox" id="toggle-embed-soft-subs" checked>
+                            <span class="script-lbl" data-i18n="sub_embed_soft_label">📺 Soft Subtitle Track (MP4 CC) ထည့်သွင်းမည်</span>
+                        </label>
                         <div class="slider-group mt-2">
                             <div class="slider-header">
                                 <span data-i18n="recap_sub_size_label">စာလုံးအရွယ် (Size):</span>
+                                <span class="slider-sub-est" id="val-font-chars-est">~24 chars/line</span>
                                 <span class="slider-val" id="val-font-size">16pt</span>
                             </div>
                             <input type="range" min="10" max="26" step="0.1" value="16" class="studio-slider" id="slider-font-size">
@@ -1602,6 +1661,10 @@
                                     <div class="vcp-own-voice-upsell-row">
                                         <p class="recap-own-voice-locked-hint hidden" id="recap-own-voice-locked-hint" data-i18n="recap_own_voice_locked_hint">🔒 ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</p>
                                         <button type="button" class="vcp-own-voice-vip-btn hidden" id="btn-recap-own-voice-vip" onclick="switchTab('tab-vip')" data-i18n="recap_own_voice_vip_cta">👑 VIP ရယူမည်</button>
+                                    </div>
+                                    <div class="vcp-saved-voice-bar hidden" id="recap-saved-voice-bar">
+                                        <span id="recap-saved-voice-label"></span>
+                                        <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToRecap()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
                                     </div>
                                     <div class="recap-own-voice-body hidden" id="recap-own-voice-body">
                                         <p class="ref-desc" data-i18n="recap_own_voice_hint">ကိုယ်ပိုင်အသံ နမူနာ (၁၀–၃၀ စက္ကန့် အကောင်းဆုံး၊ အများဆုံး ၅၀ စက္ကန့်) တင်ပါ။ ၅၀ စက္ကန့်ထက် ရှည်ရင် ပထမ ၄၅ စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်။</p>
@@ -1993,6 +2056,7 @@
             <!-- ════ TAB 3: DOWNLOADER ════ -->
             <section id="tab-downloader" class="tab-pane">
                 <div class="pane-header">
+                    <button type="button" class="vcp-subview-back-btn" onclick="switchTab('tab-home')" data-i18n="btn_back_home">← ပင်မသို့</button>
                     <h2 data-i18n="dl_title">📥 Media Downloader (မီဒီယာ ဒေါင်းလုဒ်)</h2>
                     <p data-i18n="dl_subtitle">YouTube, TikTok, Facebook နှင့် Douyin (抖音) မှ Video (MP4) / Audio (MP3) ဒေါင်းလုဒ် ရယူပါ</p>
                 </div>
@@ -2099,7 +2163,12 @@
                             <span class="stat-label" data-i18n="stat_recap_credits">Recap Credit လက်ကျန်</span>
                             <span class="stat-val text-cyan" id="profile-balance-credits">—</span>
                         </div>
+                        <div class="stat-col">
+                            <span class="stat-label" data-i18n="stat_tts_balance">🎧 TTS ယနေ့ လက်ကျန်</span>
+                            <span class="stat-val" id="vip-wallet-tts-val">—</span>
+                        </div>
                     </div>
+                    <button type="button" class="vcp-btn vcp-btn-glass mt-2 w-100" onclick="switchTab('tab-tts')" data-i18n="vip_byok_shortcut_btn">🔑 ကိုယ်ပိုင် Gemini Key ထည့်ရန် / စီမံရန်</button>
                 </div>
 
 
@@ -2227,18 +2296,18 @@
                         <div class="pay-method kpay vcp-pay-method">
                             <div class="pay-title">KBZPay (KPay)</div>
                             <div class="pay-account">
-                                <span class="acc-num" id="kpay-num">09790760003</span>
-                                <button class="mini-copy-btn" onclick="copyAccount('09790760003')" data-i18n="copy_btn">📋 ကူးမည်</button>
+                                <span class="acc-num" id="kpay-num">—</span>
+                                <button type="button" class="mini-copy-btn" onclick="copyAccount('')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
-                            <span class="acc-name" id="kpay-name">Account Name: Win Kyaw Oo</span>
+                            <span class="acc-name" id="kpay-name">—</span>
                         </div>
                         <div class="pay-method wavepay vcp-pay-method">
                             <div class="pay-title">WavePay</div>
                             <div class="pay-account">
-                                <span class="acc-num" id="wave-num">09790760003</span>
-                                <button class="mini-copy-btn" onclick="copyAccount('09790760003')" data-i18n="copy_btn">📋 ကူးမည်</button>
+                                <span class="acc-num" id="wave-num">—</span>
+                                <button type="button" class="mini-copy-btn" onclick="copyAccount('')" data-i18n="copy_btn">📋 ကူးမည်</button>
                             </div>
-                            <span class="acc-name" id="wave-name">Account Name: Win Kyaw Oo</span>
+                            <span class="acc-name" id="wave-name">—</span>
                         </div>
                     </div>
                     
@@ -2266,6 +2335,7 @@
             <!-- ════ TAB 5: HISTORY HUB (all creations in one place) ════ -->
             <section id="tab-history" class="tab-pane">
                 <div class="pane-header">
+                    <button type="button" class="vcp-subview-back-btn" onclick="switchTab('tab-home')" data-i18n="btn_back_home">← ပင်မသို့</button>
                     <h2 data-i18n="history_title">📜 မှတ်တမ်း</h2>
                     <p data-i18n="history_subtitle">သင် ဖန်တီးထားသော Voice နှင့် Recap အလုပ်များ အားလုံး တစ်နေရာတည်းတွင်</p>
                 </div>
@@ -2273,6 +2343,7 @@
                 <div class="hub-filter-row" role="tablist" data-i18n-aria="history_filter_aria" aria-label="History filter">
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip active" data-hub-filter="all" onclick="setHubHistoryFilter('all')"><span data-i18n="history_filter_all">အားလုံး</span></button>
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="VOICE_CLONE" onclick="setHubHistoryFilter('VOICE_CLONE')"><span data-i18n="history_filter_voice">🎙️ အသံ</span></button>
+                    <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="TTS" onclick="setHubHistoryFilter('TTS')"><span data-i18n="history_filter_tts">🎧 TTS</span></button>
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="RECAP" onclick="setHubHistoryFilter('RECAP')"><span data-i18n="history_filter_recap">🎬 Recap</span></button>
                     <button type="button" class="mini-chip hub-refresh-chip" onclick="loadUserHistory()" title="Refresh" data-i18n-title="btn_refresh" data-i18n-aria="btn_refresh" aria-label="Refresh">🔄</button>
                 </div>
@@ -2472,7 +2543,7 @@
                                 <div class="card-label">
                                     🖥️ <span data-i18n="adm_fleet_title">Infrastructure & Fleet (Render vs VPS)</span>
                                 </div>
-                                <button class="mini-chip" id="adm-fleet-refresh-btn" onclick="loadAdminFleetStatus()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                                <button type="button" class="mini-chip" id="adm-fleet-refresh-btn" onclick="loadAdminFleetStatus()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
                             </div>
                             <p class="text-xs text-muted mt-1" data-i18n="adm_fleet_desc">
                                 Render Cloud နှင့် VPS Worker တို့၏ အလုပ်တာဝန်ခွဲဝေမှုနှင့် အခြေအနေ စစ်ဆေး/ထိန်းချုပ်မှု။
@@ -2482,9 +2553,9 @@
                                     <div class="adm-fleet-node-head">
                                         <div>
                                             <strong>⚡ VPS Worker Node</strong>
-                                            <span class="text-xs text-muted" id="adm-vps-host-label">(212.28.177.252)</span>
+                                            <span class="text-xs text-muted" id="adm-vps-host-label">(VPS Worker)</span>
                                         </div>
-                                        <span class="badge-mini-gold" id="adm-vps-status-badge">Checking…</span>
+                                        <span class="badge-mini-gold" id="adm-vps-status-badge" data-i18n="adm_vps_status_checking">စစ်ဆေးနေသည်…</span>
                                     </div>
                                     <div class="adm-fleet-meta-row mt-1 text-xs">
                                         <span>Engine: <b id="adm-vps-engine">VOXCPM</b></span> · 
@@ -2504,7 +2575,7 @@
                                             <span id="adm-vps-toggle-icon">⏸️</span> <span id="adm-vps-toggle-label" data-i18n="adm_vps_pause">ခေတ္တရပ်မည် (Pause)</span>
                                         </button>
                                         <button type="button" class="btn vcp-btn-secondary text-xs ml-2" id="adm-btn-toggle-recap-queue" onclick="toggleRecapQueueRouting()">
-                                            <span id="adm-recap-queue-icon">🎬</span> <span id="adm-recap-queue-label">Recap Queue: Checking…</span>
+                                            <span id="adm-recap-queue-icon">🎬</span> <span id="adm-recap-queue-label" data-i18n="adm_recap_queue_checking">Recap Queue: စစ်ဆေးနေသည်…</span>
                                         </button>
                                     </div>
                                 </div>
@@ -3401,16 +3472,14 @@
                             <span class="adm-acc-meta"><span class="badge-studio gold">TTS</span><span class="adm-acc-chev" aria-hidden="true">▾</span></span>
                         </summary>
                         <div class="adm-acc-body">
-                        <p class="text-muted text-xs mt-1" data-i18n="adm_gemini_tts_note">Recap အသံထွက်ရာမှာ Primary → Fallback 1 → Lite → Fallback 2 အစီအစဉ်အတိုင်း သုံးပါတယ် (မူလ — 3.8-flash-tts → 3.1-flash-tts-preview → 3.8-flash-lite-tts → 2.5-flash-preview-tts)။</p>
+                        <p class="text-muted text-xs mt-1" data-i18n="adm_gemini_tts_note">Recap အသံထွက်ရာမှာ Primary → Lite (GA Chain) အစီအစဉ်အတိုင်း သုံးပါတယ် (မူလ — 3.8-flash-tts → 3.8-flash-lite-tts)။</p>
                         <div class="gemini-chain-grid mt-2">
                             <div class="model-tier-box">
                                 <div class="tier-badge tier-primary" data-i18n="adm_gemini_tts_primary">၁။ TTS Primary</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-tts-primary" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-primary')">
                                         <option value="gemini-3.8-flash-tts" data-i18n="adm_opt_tts_38_rec">gemini-3.8-flash-tts (Recommended)</option>
-                                        <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
                                         <option value="gemini-3.8-flash-lite-tts">gemini-3.8-flash-lite-tts</option>
-                                        <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts</option>
                                         <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-tts-primary-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash-tts">
@@ -3420,13 +3489,12 @@
                                 <div class="tier-badge tier-fb1" data-i18n="adm_gemini_tts_fb1">၂။ TTS Fallback 1</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-tts-fb1" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-fb1')">
-                                        <option value="gemini-3.1-flash-tts-preview" data-i18n="adm_opt_tts_31_rec">gemini-3.1-flash-tts-preview (Recommended)</option>
+                                        <option value="" data-i18n="adm_opt_tts_none">— မသုံး (GA Chain Only) —</option>
                                         <option value="gemini-3.8-flash-tts">gemini-3.8-flash-tts</option>
                                         <option value="gemini-3.8-flash-lite-tts">gemini-3.8-flash-lite-tts</option>
-                                        <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts</option>
                                         <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
-                                    <input type="text" id="adm-tts-fb1-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.1-flash-tts-preview">
+                                    <input type="text" id="adm-tts-fb1-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash-tts">
                                 </div>
                             </div>
                             <div class="model-tier-box">
@@ -3435,8 +3503,6 @@
                                     <select id="adm-tts-lite" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-lite')">
                                         <option value="gemini-3.8-flash-lite-tts" data-i18n="adm_opt_tts_38lite_rec">gemini-3.8-flash-lite-tts (Recommended)</option>
                                         <option value="gemini-3.8-flash-tts">gemini-3.8-flash-tts</option>
-                                        <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
-                                        <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts</option>
                                         <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
                                     <input type="text" id="adm-tts-lite-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash-lite-tts">
@@ -3446,13 +3512,12 @@
                                 <div class="tier-badge tier-fb3" data-i18n="adm_gemini_tts_fb2">၄။ TTS Fallback 2</div>
                                 <div class="model-select-wrap mt-1">
                                     <select id="adm-tts-fb2" class="studio-input vcp-input" onchange="checkCustomModel('adm-tts-fb2')">
-                                        <option value="gemini-2.5-flash-preview-tts" data-i18n="adm_opt_tts_25_rec">gemini-2.5-flash-preview-tts (Recommended)</option>
+                                        <option value="" data-i18n="adm_opt_tts_none">— မသုံး (GA Chain Only) —</option>
                                         <option value="gemini-3.8-flash-tts">gemini-3.8-flash-tts</option>
-                                        <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview</option>
                                         <option value="gemini-3.8-flash-lite-tts">gemini-3.8-flash-lite-tts</option>
                                         <option value="custom" data-i18n="adm_custom_opt">✏️ Custom…</option>
                                     </select>
-                                    <input type="text" id="adm-tts-fb2-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-2.5-flash-preview-tts">
+                                    <input type="text" id="adm-tts-fb2-custom" class="studio-input vcp-input mt-1 hidden" placeholder="e.g. gemini-3.8-flash-lite-tts">
                                 </div>
                             </div>
                         </div>
@@ -3697,20 +3762,20 @@
     </div>
 
     <!-- ════ FULLSCREEN SLIP PREVIEW MODAL ════ -->
-    <div id="slip-modal" class="image-modal hidden" onclick="closeSlipModal()">
+    <div id="slip-modal" class="image-modal hidden" role="dialog" aria-modal="true" onclick="closeSlipModal()">
         <div class="modal-content" onclick="event.stopPropagation()">
-            <button class="modal-close" onclick="closeSlipModal()">✕</button>
+            <button type="button" class="modal-close" onclick="closeSlipModal()">✕</button>
             <img id="modal-slip-img" src="" alt="Payment Slip Full View">
         </div>
     </div>
 
     <!-- OPEN VIA TELEGRAM MODAL (401) -->
-    <div id="open-via-telegram-modal" class="image-modal hidden" onclick="closeOpenViaTelegramModal()">
+    <div id="open-via-telegram-modal" class="image-modal hidden" role="dialog" aria-modal="true" onclick="closeOpenViaTelegramModal()">
         <div class="modal-content centered" onclick="event.stopPropagation()">
             <div class="modal-emoji">📱</div>
             <h3 data-i18n="open_via_telegram_title">📱 Telegram ထဲမှ ဖွင့်ပါ</h3>
             <p data-i18n="open_via_telegram_desc" class="modal-desc">ဒီ App ကို Telegram Bot ထဲမှ Mini App အဖြစ် ဖွင့်မှသာ အသုံးပြုနိုင်ပါသည်။ Browser မှ တိုက်ရိုက်ဖွင့်ပါက အကောင့် အတည်ပြုလို့ မရပါ။</p>
-            <button class="btn" onclick="closeOpenViaTelegramModal()" data-i18n="open_via_telegram_btn">နားလည်ပါပြီ</button>
+            <button type="button" class="btn" onclick="closeOpenViaTelegramModal()" data-i18n="open_via_telegram_btn">နားလည်ပါပြီ</button>
         </div>
     </div>
 
@@ -3718,25 +3783,25 @@
          A FREE user who picked Gemini with the taste spent is NEVER
          silently switched to Edge — this prompt offers the own-key
          way to keep Gemini, or an explicit Edge continue. -->
-    <div id="tts-key-prompt-modal" class="image-modal hidden">
+    <div id="tts-key-prompt-modal" class="image-modal hidden" role="dialog" aria-modal="true">
         <div class="modal-content centered" onclick="event.stopPropagation()">
             <div class="modal-emoji">✨</div>
             <h3 data-i18n="tts_key_prompt_title">✨ ဒီနေ့ Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ</h3>
             <p data-i18n="tts_key_prompt_body" class="modal-desc">ဒီနေ့အတွက် Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ။ ကိုယ်ပိုင် Gemini Key ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။</p>
-            <button class="btn gold-gradient-btn" id="btn-tts-prompt-add-key" data-i18n="tts_key_prompt_add">🔑 Key ထည့်မယ်</button>
-            <button class="btn secondary-btn mt-2" id="btn-tts-prompt-edge" data-i18n="tts_key_prompt_edge">Edge နဲ့ ဆက်လုပ်မယ်</button>
+            <button type="button" class="btn gold-gradient-btn" id="btn-tts-prompt-add-key" data-i18n="tts_key_prompt_add">🔑 Key ထည့်မယ်</button>
+            <button type="button" class="btn secondary-btn mt-2" id="btn-tts-prompt-edge" data-i18n="tts_key_prompt_edge">Edge နဲ့ ဆက်လုပ်မယ်</button>
         </div>
     </div>
 
     <!-- ════ ADMIN 24H MEDIA PREVIEW MODAL (VOICE & RECAP) ════ -->
-    <div id="admin-media-modal" class="image-modal hidden" onclick="closeAdminMediaModal()">
+    <div id="admin-media-modal" class="image-modal hidden" role="dialog" aria-modal="true" onclick="closeAdminMediaModal()">
         <div class="modal-content admin-media-content" onclick="event.stopPropagation()">
             <div class="modal-header">
                 <div class="modal-title-group">
                     <span id="admin-media-badge" class="history-item-badge badge-voice">🎙️ VOICE</span>
                     <h3 id="admin-media-title" class="modal-title" data-i18n="adm_media_default_title">Job Preview</h3>
                 </div>
-                <button class="modal-close" onclick="closeAdminMediaModal()">✕</button>
+                <button type="button" class="modal-close" onclick="closeAdminMediaModal()">✕</button>
             </div>
             <div id="admin-media-body" class="admin-media-body"></div>
             <div id="admin-media-deliverables" class="admin-media-deliverables"></div>
@@ -3779,13 +3844,13 @@
                 <div class="floating-alert-title" id="floating-alert-title" data-i18n="alert_default_title">အသိပေးချက်</div>
                 <div class="floating-alert-desc" id="floating-alert-desc" data-i18n="alert_default_desc">လုပ်ဆောင်ချက် အောင်မြင်စွာ ပြီးစီးပါပြီ!</div>
             </div>
-            <button class="floating-alert-action" id="floating-alert-btn" data-i18n="alert_btn_view">ကြည့်မည်</button>
-            <button class="floating-alert-close" onclick="closeFloatingAlert()">✕</button>
+            <button type="button" class="floating-alert-action" id="floating-alert-btn" data-i18n="alert_btn_view">ကြည့်မည်</button>
+            <button type="button" class="floating-alert-close" onclick="closeFloatingAlert()">✕</button>
         </div>
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261117_r161"></script>
-    <script src="/static/js/app.js?v=20261117_r161"></script>
+    <script src="/static/js/i18n.js?v=20261118_r164"></script>
+    <script src="/static/js/app.js?v=20261118_r164"></script>
 </body>
 </html>

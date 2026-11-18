@@ -247,8 +247,15 @@ async def test_submit_slip_identical_image_rejected_409(db_session, tmp_path, mo
     db_session.add(user)
     await db_session.flush()
 
-    png = b"\x89PNG\r\n\x1a\n" + b"hunt7-slip-bytes" * 8
-    other = b"\x89PNG\r\n\x1a\n" + b"different-slip!!" * 8
+    from PIL import Image
+
+    def _mk_png(rgb):
+        buf = io.BytesIO()
+        Image.new("RGB", (2, 2), color=rgb).save(buf, format="PNG")
+        return buf.getvalue()
+
+    png = _mk_png((10, 20, 30))
+    other = _mk_png((200, 150, 100))
 
     def _upload(data: bytes) -> UploadFile:
         return UploadFile(filename="slip.png", file=io.BytesIO(data))

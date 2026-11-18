@@ -470,7 +470,7 @@ def test_frontend_and_cache_token_wiring():
     app_js = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
     i18n_js = (ROOT / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
 
-    assert index_html.count("?v=20261117_r161") == 4
+    assert index_html.count("?v=20261118_r164") == 4
     assert 'id="recap-ai-thumbnail-box"' in index_html
     assert 'id="recap-thumb-headline-input"' in index_html
     assert 'id="btn-recap-ai-thumbnail"' in index_html

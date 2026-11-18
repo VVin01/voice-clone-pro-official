@@ -235,6 +235,10 @@ DEFAULT_BURMESE_CONTROL = (
     "smooth studio acoustic, velvety cadence, and pristine pronunciation without harsh sibilance or background noise. "
     "Speak in Myanmar language with authentic accent."
 )
+DEFAULT_CLONE_FIDELITY_CONTROL = (
+    "Match the reference speaker's exact vocal timbre, pitch register, and breathing cadence "
+    "with clear, natural Burmese pronunciation and steady studio clarity."
+)
 
 
 # Audit fix E (2026-11-03): markers of an HF/Gradio error that blames
@@ -1102,6 +1106,10 @@ class VoxCPMEngine:
                 if ref_file and prompt_text:
                     # Locked-timbre cloning: the reference clip alone defines the voice.
                     effective_control = ""
+                elif ref_file and not prompt_text and (
+                    not control_instruction or control_instruction == DEFAULT_BURMESE_CONTROL
+                ):
+                    effective_control = DEFAULT_CLONE_FIDELITY_CONTROL
                 # Batch AT (AT-3): endpoint names for THIS space —
                 # "/generate" by default, the clone/style family for
                 # spaces whose app exposes those functions instead.

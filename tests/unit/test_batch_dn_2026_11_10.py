@@ -67,9 +67,7 @@ def _reset_state():
 def test_tts_models_tuple_is_the_four_model_migration():
     assert gte.TTS_MODELS == (
         "gemini-3.8-flash-tts",
-        "gemini-3.1-flash-tts-preview",
         "gemini-3.8-flash-lite-tts",
-        "gemini-2.5-flash-preview-tts",
     )
 
 

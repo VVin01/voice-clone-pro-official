@@ -25,6 +25,7 @@ buttons, and the callback + FSM machinery behind them:
 from __future__ import annotations
 
 import html
+import inspect
 import logging
 from contextlib import asynccontextmanager
 
@@ -45,6 +46,15 @@ from app.services.payments import get_recent_payment_intent
 logger = logging.getLogger(__name__)
 
 group_admin_router = Router(name="group_admin")
+
+
+def _plain_send_kw(obj: object) -> dict:
+    """Pass parse_mode=None only when the real Bot defaults to HTML/Markdown."""
+    bot = getattr(obj, "bot", obj)
+    default = getattr(bot, "default", None)
+    if isinstance(getattr(default, "parse_mode", None), str):
+        return {"parse_mode": None}
+    return {}
 
 
 class GroupAiEditStates(StatesGroup):
@@ -205,6 +215,8 @@ async def _escalate(
     session: AsyncSession | None = None,
     limiter=None,
     dm_link: str | None = ...,
+    text_override: str | None = None,
+    is_group: bool = True,
 ) -> None:
     """Post the polite deferral line + DM every admin (cooldown-gated).
 
@@ -226,6 +238,7 @@ async def _escalate(
     user = message.from_user
     if user is None or not limiter.can_defer(user.id):
         return
+    effective_text = text_override if text_override is not None else (message.text or "")
     limiter.record_deferral(user.id)
     try:
         await message.reply(deferral_text)
@@ -236,9 +249,10 @@ async def _escalate(
     if limiter.ai_budget_available():
         limiter.record_ai_call()
         draft_text = await gai.draft_escalation_answer(
-            text=message.text or "",
+            text=effective_text,
             author_name=user.first_name or "",
             reason=reason,
+            is_group=is_group,
         )
 
     escalation_id = None
@@ -251,7 +265,7 @@ async def _escalate(
                 author_id=user.id,
                 author_label=user.first_name or "",
                 author_username=user.username,
-                question_text=message.text or "",
+                question_text=effective_text,
                 reason=reason,
                 draft_text=draft_text,
             )
@@ -260,7 +274,7 @@ async def _escalate(
         author_name=user.first_name or "",
         author_username=user.username,
         author_id=user.id,
-        text=message.text or "",
+        text=effective_text,
         chat_id=message.chat.id,
         message_id=message.message_id,
         reason=reason,
@@ -452,9 +466,43 @@ async def handle_group_message(
         user = message.from_user
         chat_type = getattr(message.chat.type, "value", str(message.chat.type))
         sender = bot or message.bot
-
-        # Voice understanding (Part 2)
         msg_voice = getattr(message, "voice", None)
+
+        # Prefilter chat, sender, admin, and bot status BEFORE any voice download / ASR.
+        if msg_voice is not None:
+            pre_reason = gai.prefilter_reason(
+                chat_id=message.chat.id,
+                chat_type=chat_type,
+                text="__voice__",
+                from_user_id=user.id if user else None,
+                from_user_is_bot=bool(user.is_bot) if user else True,
+                sender_chat_id=message.sender_chat.id if message.sender_chat else None,
+            )
+            if pre_reason is not None:
+                _log_decision(message, user.id if user else None, "prefiltered", pre_reason)
+                return
+        else:
+            message_text = getattr(message, "text", "") or ""
+            reason = gai.prefilter_reason(
+                chat_id=message.chat.id,
+                chat_type=chat_type,
+                text=message_text,
+                from_user_id=user.id if user else None,
+                from_user_is_bot=bool(user.is_bot) if user else True,
+                sender_chat_id=message.sender_chat.id if message.sender_chat else None,
+            )
+            if reason is not None:
+                _log_decision(message, user.id if user else None, "prefiltered", reason)
+                return
+
+        if not await _kill_switch_on(session):
+            _log_decision(message, user.id if user else None, "disabled", "kill_switch_off")
+            return
+
+        # Owner-tuned anti-spam values (BotSettings, kill-switch style).
+        await _refresh_limits(session)
+
+        # Voice understanding (Part 2): runs only after prefilter + kill switch + limits restore.
         if msg_voice is not None:
             if not await gai.is_voice_enabled(session):
                 _log_decision(message, user.id if user else None, "voice_ignored", "voice_disabled")
@@ -485,27 +533,17 @@ async def handle_group_message(
                 return
             gai.rate_limiter.record_voice_transcription()
             message_text = transcript.strip()
-        else:
-            message_text = getattr(message, "text", "") or ""
-
-        reason = gai.prefilter_reason(
-            chat_id=message.chat.id,
-            chat_type=chat_type,
-            text=message_text,
-            from_user_id=user.id if user else None,
-            from_user_is_bot=bool(user.is_bot) if user else True,
-            sender_chat_id=message.sender_chat.id if message.sender_chat else None,
-        )
-        if reason is not None:
-            _log_decision(message, user.id if user else None, "prefiltered", reason)
-            return
-
-        if not await _kill_switch_on(session):
-            _log_decision(message, user.id if user else None, "disabled", "kill_switch_off")
-            return
-
-        # Owner-tuned anti-spam values (BotSettings, kill-switch style).
-        await _refresh_limits(session)
+            reason = gai.prefilter_reason(
+                chat_id=message.chat.id,
+                chat_type=chat_type,
+                text=message_text,
+                from_user_id=user.id if user else None,
+                from_user_is_bot=bool(user.is_bot) if user else True,
+                sender_chat_id=message.sender_chat.id if message.sender_chat else None,
+            )
+            if reason is not None:
+                _log_decision(message, user.id if user else None, "prefiltered", reason)
+                return
 
         # Hard rule first: payment/refund/account topics never reach
         # the AI and NEVER enter moderation — defer in the group and hand the question to a human.
@@ -517,10 +555,12 @@ async def handle_group_message(
                 reason="sensitive",
                 deferral_text=gai.DEFERRAL_TEXT_SENSITIVE,
                 session=session,
+                text_override=message_text,
+                is_group=True,
             )
             return
 
-        # Moderation Layer (a): Deterministic rules check
+        # Moderation Layer (a): Deterministic rules check (runs even during reply cooldown!)
         is_admin = settings.is_admin(user.id) if user else True
         is_bot = bool(user.is_bot) if user else True
         whitelist = await gai.get_moderation_whitelist(session)
@@ -543,27 +583,12 @@ async def handle_group_message(
         if not gai.rate_limiter.can_reply(user.id, message.message_id):
             return
 
-        # Conversation context for the AI (in-memory only): snapshot
-        # the recent window BEFORE adding this message, so the prompt
-        # shows the conversation that led here; the current message
-        # then joins the buffer for the next candidate.
+        # Conversation context for the AI (in-memory only): snapshot BEFORE
+        # pushing this message, and only push clean messages (after moderation checks).
         context_lines = gai.context_buffer.snapshot(message.chat.id)
-        gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
-
         reply_to = message.reply_to_message
         replied_to_text = (getattr(reply_to, "text", None) or None) if reply_to else None
 
-        # Social fast paths (owner revision 2026-11-02): a pure
-        # greeting or a short "want to try" starter fragment gets a
-        # warm deterministic welcome/pointer — no AI call needed, and
-        # the tone stays exactly as approved. Join service notices
-        # never arrive here (they carry no user text).
-        #
-        # Batch AQ: a third deterministic path — while maintenance
-        # mode is on, a genuine service-availability question gets the
-        # maintenance answer immediately. It sits AFTER the sensitive
-        # check and the can_reply cooldown above, consumes no AI
-        # budget, and never fires when maintenance is off.
         fast_path_text = None
         fast_path_kind = None
         if gai.is_greeting_only(message_text):
@@ -580,7 +605,8 @@ async def handle_group_message(
             fast_path_text = gai.build_maintenance_reply()
             fast_path_kind = "maintenance"
         if fast_path_text is not None:
-            await message.reply(fast_path_text)
+            gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
+            await message.reply(fast_path_text, **_plain_send_kw(message))
             gai.rate_limiter.record_reply(user.id, message.message_id)
             _log_decision(message, user.id, f"fast_path:{fast_path_kind}")
             return
@@ -592,26 +618,19 @@ async def handle_group_message(
         )
         bot_mentioned = f"@{gai.BOT_USERNAME}" in (message_text or "").lower()
 
-        # FAQ cache (admin-approved answers only): a near-identical
-        # repeat question is answered from the cache — no AI call, no
-        # budget consumed. The per-user cooldown was already enforced
-        # by the can_reply check above, so cached answers cannot be
-        # used to spam either.
         async with _session_or_new(session) as s:
             faq_hit = await gai.find_faq_answer(s, message_text or "")
             if faq_hit is not None:
                 faq_id, faq_answer = faq_hit
                 answer_text = gai.strip_emoji(faq_answer)
                 if answer_text:
-                    await message.reply(answer_text)
+                    gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
+                    await message.reply(answer_text, **_plain_send_kw(message))
                     gai.rate_limiter.record_reply(user.id, message.message_id)
                     await gai.record_faq_hit(s, faq_id)
                     _log_decision(message, user.id, "faq_hit")
                     return
 
-        # AI answers are budget-gated: with the hourly/daily AI-call
-        # budget exhausted the bot stays silent (deferrals and the
-        # free paths above are unaffected — they need no AI call).
         if not gai.rate_limiter.ai_budget_available():
             _log_decision(message, user.id, "no_reply", "ai_budget_exhausted")
             return
@@ -630,7 +649,7 @@ async def handle_group_message(
         reply_text = decision_res[1]
         mod_verdict = getattr(decision_res, "moderation", None) or {"category": "none", "confidence": 0.0}
 
-        # Moderation Layer (b): Gemini verdict check
+        # Moderation Layer (b): Gemini verdict check (never push spam into context buffer!)
         if mod_enabled and not user_exempt:
             ai_category = mod_verdict.get("category", "none")
             ai_conf = float(mod_verdict.get("confidence", 0.0))
@@ -647,14 +666,12 @@ async def handle_group_message(
                     )
                     return
                 else:
-                    # Below threshold -> ignore completely (no reply, no strike)
                     _log_decision(message, user.id, "moderation_ignored", f"{ai_category}:{ai_conf:.2f}_below_threshold")
                     return
 
+        gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
+
         if decision == gai.DECISION_AI_FAILED:
-            # Batch AQ: the call failed (timeout / pool exhausted) —
-            # silence for the member, but logged AS a failure, not
-            # mistaken for the AI choosing not to answer.
             _log_decision(message, user.id, "ai_failed", "ai_call")
             return
         if decision == gai.DECISION_ESCALATE:
@@ -665,6 +682,8 @@ async def handle_group_message(
                 reason="ai_escalate",
                 deferral_text=gai.DEFERRAL_TEXT_UNSURE,
                 session=session,
+                text_override=message_text,
+                is_group=True,
             )
             return
         if decision != gai.DECISION_REPLY or not reply_text:
@@ -685,7 +704,7 @@ async def handle_group_message(
         if not gai.rate_limiter.can_reply(user.id, message.message_id):
             _log_decision(message, user.id, "no_reply", "cooldown_recheck")
             return
-        await message.reply(reply_text)
+        await message.reply(reply_text, **_plain_send_kw(message))
         gai.rate_limiter.record_reply(user.id, message.message_id)
         _log_decision(message, user.id, "reply", "ai")
     except Exception as exc:
@@ -892,6 +911,28 @@ async def handle_group_ai_edit_text(
 
 
 
+async def _load_private_history(
+    session: AsyncSession | None, user_id: int, *, limit: int = 6
+) -> list[tuple[str, str]]:
+    """Fetch the user's most recent private AI exchanges in chronological order."""
+    try:
+        from sqlalchemy import select
+        from app.models.schema import PrivateAiMessage
+
+        async with _session_or_new(session) as s:
+            rows = (
+                await s.execute(
+                    select(PrivateAiMessage)
+                    .where(PrivateAiMessage.user_id == int(user_id))
+                    .order_by(PrivateAiMessage.id.desc())
+                    .limit(limit)
+                )
+            ).scalars().all()
+        return [(str(r.direction or "user"), str(r.text or "")) for r in reversed(rows)]
+    except Exception:
+        return []
+
+
 @group_admin_router.message(F.chat.type == ChatType.PRIVATE, F.text)
 async def handle_private_message(
     message: Message,
@@ -990,6 +1031,7 @@ async def handle_private_message(
                 session=session,
                 limiter=pai.private_rate_limiter,
                 dm_link=None,
+                is_group=False,
             )
             if will_defer:
                 await _record_private_exchange(
@@ -1016,7 +1058,7 @@ async def handle_private_message(
             fast_path_text = gai.build_maintenance_reply()
             fast_path_kind = "maintenance"
         if fast_path_text is not None:
-            await message.reply(fast_path_text)
+            await message.reply(fast_path_text, **_plain_send_kw(message))
             pai.private_rate_limiter.record_reply(user.id, message.message_id)
             _log_private_decision(message, user.id, f"fast_path:{fast_path_kind}")
             await _record_private_exchange(
@@ -1032,10 +1074,26 @@ async def handle_private_message(
             return
         pai.private_rate_limiter.record_ai_call()
 
-        decision, reply_text = await pai.ask_private_ai(
-            text=message.text or "",
-            author_name=user.first_name or "",
-        )
+        history = await _load_private_history(session, user.id)
+        replied_to_text = getattr(getattr(message, "reply_to_message", None), "text", None)
+        ask_fn = pai.ask_private_ai
+        ask_kwargs: dict[str, object] = {
+            "text": message.text or "",
+            "author_name": user.first_name or "",
+        }
+        try:
+            sig = inspect.signature(ask_fn)
+            if "history" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                ask_kwargs["history"] = history
+            if "reply_to_text" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                ask_kwargs["reply_to_text"] = replied_to_text
+        except Exception:
+            pass
+        decision, reply_text = await ask_fn(**ask_kwargs)
 
         if decision == gai.DECISION_AI_FAILED:
             # The call failed — silence for the user, logged AS a
@@ -1054,6 +1112,7 @@ async def handle_private_message(
                 session=session,
                 limiter=pai.private_rate_limiter,
                 dm_link=None,
+                is_group=False,
             )
             if will_defer:
                 await _record_private_exchange(
@@ -1074,7 +1133,7 @@ async def handle_private_message(
         if not pai.private_rate_limiter.can_reply(user.id, message.message_id):
             _log_private_decision(message, user.id, "no_reply", "cooldown_recheck")
             return
-        await message.reply(reply_text)
+        await message.reply(reply_text, **_plain_send_kw(message))
         pai.private_rate_limiter.record_reply(user.id, message.message_id)
         _log_private_decision(message, user.id, "reply", "ai")
         await _record_private_exchange(
@@ -1181,6 +1240,7 @@ async def handle_escalation_callback(
                     record["chat_id"],
                     draft_text,
                     reply_to_message_id=record["message_id"],
+                    **_plain_send_kw(sender),
                 )
             except Exception as exc:
                 # The record stays APPROVED (this admin claimed it);
@@ -1195,13 +1255,27 @@ async def handle_escalation_callback(
                 status_line=gai.STATUS_LINE_POSTED.format(name=admin_name),
             )
 
-            # Only a successfully posted, admin-approved answer may
-            # enter the FAQ cache.
-            await gai.save_faq_pair(
-                s,
-                question_text=record.get("question_text") or "",
-                answer_text=draft_text,
-            )
+            # Only a successfully posted, admin-approved GROUP answer
+            # may enter the shared FAQ cache (private 1:1 escalations
+            # must never pollute group FAQs; log them to the private thread).
+            esc_chat_id = int(record.get("chat_id") or 0)
+            if esc_chat_id < 0:
+                await gai.save_faq_pair(
+                    s,
+                    question_text=record.get("question_text") or "",
+                    answer_text=draft_text,
+                )
+            elif esc_chat_id > 0:
+                try:
+                    await pai.record_private_exchange(
+                        s,
+                        user_id=int(record.get("author_id") or esc_chat_id),
+                        user_text=record.get("question_text") or "",
+                        reply_text=draft_text,
+                        kind=pai.KIND_ESCALATION,
+                    )
+                except Exception:
+                    pass
 
         await callback.answer(gai.ADMIN_CONFIRM_POSTED)
     except Exception as exc:

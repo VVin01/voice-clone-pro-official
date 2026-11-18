@@ -67,6 +67,11 @@ from typing import Any, Callable
 # one shared module now (also used by the recap planner and the
 # Gemini TTS engine).
 from app.services import key_rotation as _key_rotation
+from app.services.ai_prompt_registry import (
+    call_generate_content_compat,
+    is_v2_prompts,
+    sanitize_xml_tag_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1286,27 +1291,53 @@ def build_prompt(
     if is_reply_to_bot:
         context_bits.append("ဒီ စာက Bot ရဲ့ စာကို Reply လုပ်ထားတာပါ။")
     context = ("\n" + " ".join(context_bits)) if context_bits else ""
-    # Optional conversation context (recent group messages + the
-    # replied-to original). It is background ONLY: the protocol, the
-    # fact sheet and the silence rules are unchanged, and the model
-    # is told explicitly to answer the current message, not these.
+    v2 = is_v2_prompts()
+    effective_sheet = fact_sheet if fact_sheet is not None else get_effective_fact_sheet()
+
+    if not v2:
+        context_block = ""
+        if context_lines or replied_to_text:
+            parts = [
+                "=== အနီးဆုံး စကားဝိုင်း အခြေအနေ (နောက်ခံ အဖြစ်သာ — ဒီစာတွေကို တိုက်ရိုက် မဖြေရ၊ အောက်က လက်ရှိ စာကိုပဲ အကဲဖြတ်ပါ) ==="
+            ]
+            if context_lines:
+                parts.extend(context_lines)
+            if replied_to_text:
+                parts.append(
+                    f"လက်ရှိ စာက Reply လုပ်ထားတဲ့ မူရင်း စာ: {str(replied_to_text)[:CONTEXT_TEXT_MAX_CHARS]}"
+                )
+            context_block = "\n".join(parts) + "\n\n"
+        return (
+            f"{SYSTEM_INSTRUCTIONS}\n\n{effective_sheet}\n\n"
+            f"{context_block}"
+            f"=== Group ထဲက စာ ===\nရေးသူ: {author_name or 'Member'}{context}\nစာ: {text}\n\n"
+            "ဆုံးဖြတ်ချက်:"
+        )
+
+    _tags = ("recent_context", "member_message", "user_message")
+    safe_author = sanitize_xml_tag_content(author_name or "Member", *_tags)
+    safe_text = sanitize_xml_tag_content(text, *_tags)
     context_block = ""
     if context_lines or replied_to_text:
         parts = [
-            "=== အနီးဆုံး စကားဝိုင်း အခြေအနေ (နောက်ခံ အဖြစ်သာ — ဒီစာတွေကို တိုက်ရိုက် မဖြေရ၊ အောက်က လက်ရှိ စာကိုပဲ အကဲဖြတ်ပါ) ==="
+            "<recent_context>",
+            "အနီးဆုံး စကားဝိုင်း အခြေအနေ (နောက်ခံ အဖြစ်သာ — ဒီစာတွေကို တိုက်ရိုက် မဖြေရ၊ <member_message> ထဲက စာကိုပဲ အကဲဖြတ်ပါ):",
         ]
         if context_lines:
-            parts.extend(context_lines)
+            parts.extend(sanitize_xml_tag_content(line, *_tags) for line in context_lines)
         if replied_to_text:
-            parts.append(
-                f"လက်ရှိ စာက Reply လုပ်ထားတဲ့ မူရင်း စာ: {str(replied_to_text)[:CONTEXT_TEXT_MAX_CHARS]}"
-            )
+            safe_reply = sanitize_xml_tag_content(str(replied_to_text)[:CONTEXT_TEXT_MAX_CHARS], *_tags)
+            parts.append(f"လက်ရှိ စာက Reply လုပ်ထားတဲ့ မူရင်း စာ: {safe_reply}")
+        parts.append("</recent_context>")
         context_block = "\n".join(parts) + "\n\n"
-    effective_sheet = fact_sheet if fact_sheet is not None else get_effective_fact_sheet()
+
     return (
         f"{SYSTEM_INSTRUCTIONS}\n\n{effective_sheet}\n\n"
         f"{context_block}"
-        f"=== Group ထဲက စာ ===\nရေးသူ: {author_name or 'Member'}{context}\nစာ: {text}\n\n"
+        "<member_message>\n"
+        f"ရေးသူ: {safe_author}{context}\n"
+        f"စာ: {safe_text}\n"
+        "</member_message>\n\n"
         "ဆုံးဖြတ်ချက်:"
     )
 
@@ -1380,6 +1411,15 @@ _REPLY_LEAK_MARKERS: tuple[str, ...] = (
     "knowledge sheet",
     "system_instructions",
     "system instructions",
+    "supreme override",
+    "<member_message>",
+    "</member_message>",
+    "<recent_context>",
+    "</recent_context>",
+    "<user_message>",
+    "</user_message>",
+    "<conversation_history>",
+    "<replied_to_message>",
     "===",
     "【",
     "】",
@@ -1577,7 +1617,17 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
                 break
             attempts += 1
             try:
-                response = client.models.generate_content(model=model, contents=prompt)
+                cfg_kwargs = (
+                    {"temperature": 0.25, "max_output_tokens": 700}
+                    if is_v2_prompts()
+                    else None
+                )
+                response = call_generate_content_compat(
+                    client.models.generate_content,
+                    model=model,
+                    contents=prompt,
+                    config_kwargs=cfg_kwargs,
+                )
                 text = str(getattr(response, "text", "") or "").strip()
                 if text:
                     health.mark_success(key)
@@ -1590,11 +1640,19 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
             except Exception as exc:
                 last_exc = exc
                 low = str(exc).lower()
-                # Auth/quota rejection: this key is done — next key.
-                if any(marker in low for marker in ("api_key", "api key", "quota", "429", "permission", "unauthenticated")):
+                # Auth/invalid-key errors: abandon key across all models.
+                if any(
+                    marker in low
+                    for marker in ("api_key", "api key", "permission", "unauthenticated", "401", "403")
+                ):
                     health.mark_failure(key)
                     break
-                # Model-level problem: try the next model on this key.
+                # Quota/rate errors: cool (key, model) only so lighter models
+                # (3.5-flash-lite / flash-lite-latest) on the SAME key still try.
+                if any(marker in low for marker in ("quota", "429", "resource_exhausted")):
+                    health.mark_failure(key, model=model)
+                    continue
+                # Other model-level errors: try the next model on this key.
                 continue
     raise RuntimeError(
         f"group_ai_admin: Gemini pool exhausted after {attempts} attempts: {last_exc}"
@@ -1677,15 +1735,57 @@ DRAFT_INSTRUCTIONS_UNSURE = """သင်သည် "Voice Clone Pro Community" Te
 - မူကြမ်း စာသား တစ်ခုတည်းသာ ထုတ်ပါ — ရှင်းလင်းချက်၊ ခေါင်းစဉ်၊ အခြား စာ မပါရပါ။"""
 
 
+DRAFT_INSTRUCTIONS_SENSITIVE_GROUP_V2 = """သင်သည် "Voice Clone Pro Community" Telegram Group ရဲ့ Admin အဖွဲ့ကို ကူညီနေတဲ့ လက်ထောက် ဖြစ်ပါတယ်။
+
+အောက်က အဖွဲ့ဝင် မေးခွန်းဟာ ငွေကြေး/အကောင့်နဲ့ ဆိုင်တဲ့ ကိုယ်ရေး ကိစ္စ ဖြစ်လို့ Group ထဲမှာ တိုက်ရိုက် မဖြေဘဲ Admin စစ်ဆေးဖို့ လွှဲထားပါတယ်။ အဖွဲ့ဝင်ကို စိတ်အေးစေမယ့် ကိုင်တွယ်ထားကြောင်း အသိပေး စာ (Holding reply) မူကြမ်း တစ်ခု ရေးပေးပါ။
+
+စည်းကမ်းများ:
+- Admin က စစ်ဆေးနေကြောင်း၊ စစ်ပြီးတာနဲ့ ပြန်ဆက်သွယ်ပေးမည် ဖြစ်ကြောင်း ယဉ်ယဉ်ကျေးကျေး ပြောပါ။
+- Privacy & Security: အများသုံး Group ထဲမှာ ဖုန်းနံပါတ်၊ အကောင့်အချက်အလက် သို့မဟုတ် ပြေစာ (Slip) ပုံ လုံးဝ မတင်ခိုင်းပါနှင့် — @voiceclonepro_bot (DM) သို့သာ သီးသန့် ပို့ပေးဖို့ ညွှန်ကြားပါ။
+- Refund ရမယ်၊ ငွေ ပြန်ဝင်မယ်၊ Balance ပြင်ပေးမယ် စတဲ့ ရလဒ် တစ်ခုခုကို ကတိ လုံးဝ မပေးရပါ၊ အတည်ပြုသလို လုံးဝ မပြောရပါ။
+- မြန်မာဘာသာ စကားပြောဟန်၊ ဝါကျ တိုတို၊ Emoji လုံးဝ မပါရ၊ "ခင်ဗျာ" အများဆုံး တစ်ကြိမ်။
+- မူကြမ်း စာသား တစ်ခုတည်းသာ ထုတ်ပါ — ရှင်းလင်းချက်၊ ခေါင်းစဉ်၊ အခြား စာ မပါရပါ။"""
+
+
 def build_draft_prompt(
-    *, author_name: str, text: str, reason: str, fact_sheet: str | None = None
+    *,
+    author_name: str,
+    text: str,
+    reason: str,
+    fact_sheet: str | None = None,
+    is_group: bool = True,
 ) -> str:
-    instructions = (
-        DRAFT_INSTRUCTIONS_SENSITIVE if reason == "sensitive" else DRAFT_INSTRUCTIONS_UNSURE
-    )
-    effective_sheet = fact_sheet if fact_sheet is not None else get_effective_fact_sheet()
+    v2 = is_v2_prompts()
+    if reason == "sensitive":
+        if v2 and is_group:
+            instructions = DRAFT_INSTRUCTIONS_SENSITIVE_GROUP_V2
+        else:
+            instructions = DRAFT_INSTRUCTIONS_SENSITIVE
+        if not v2:
+            effective_sheet = fact_sheet if fact_sheet is not None else get_effective_fact_sheet()
+        else:
+            # Token optimization (~65% cut): sensitive holding replies never answer pricing/features.
+            effective_sheet = fact_sheet if fact_sheet is not None else ""
+    else:
+        instructions = DRAFT_INSTRUCTIONS_UNSURE
+        effective_sheet = fact_sheet if fact_sheet is not None else get_effective_fact_sheet()
+
+    _tags = ("member_message", "user_message")
+    if v2:
+        safe_author = sanitize_xml_tag_content(author_name or "Member", *_tags)
+        safe_text = sanitize_xml_tag_content(text, *_tags)
+        sheet_block = f"{effective_sheet}\n\n" if effective_sheet else ""
+        return (
+            f"{instructions}\n\n{sheet_block}"
+            "<member_message>\n"
+            f"ရေးသူ: {safe_author}\nစာ: {safe_text}\n"
+            "</member_message>\n\n"
+            "မူကြမ်း:"
+        )
+
+    sheet_block = f"{effective_sheet}\n\n" if effective_sheet else ""
     return (
-        f"{instructions}\n\n{effective_sheet}\n\n"
+        f"{instructions}\n\n{sheet_block}"
         f"=== အဖွဲ့ဝင် မေးခွန်း ===\nရေးသူ: {author_name or 'Member'}\nစာ: {text}\n\n"
         "မူကြမ်း:"
     )
@@ -1696,6 +1796,7 @@ async def draft_escalation_answer(
     text: str,
     author_name: str = "",
     reason: str,
+    is_group: bool = True,
     client_factory: Callable[[str], Any] | None = None,
 ) -> str | None:
     """Draft a suggested public answer for an escalation.
@@ -1707,7 +1808,12 @@ async def draft_escalation_answer(
     model confused the two prompts; never show it to an admin as
     an answer).
     """
-    prompt = build_draft_prompt(author_name=author_name, text=text, reason=reason)
+    prompt = build_draft_prompt(
+        author_name=author_name,
+        text=text,
+        reason=reason,
+        is_group=is_group,
+    )
     try:
         raw = await asyncio.wait_for(
             asyncio.to_thread(_ask_gemini_sync, prompt, client_factory=client_factory),
@@ -2808,10 +2914,14 @@ ADMIN_EDIT_EMPTY = "စာသား အလွတ် ဖြစ်နေပါတ�
 
 _SELLING_PATTERNS_BURMESE: tuple[str, ...] = (
     "ရောင်းမည်",
-    "ရောင်းတယ်",
     "ရောင်းပါတယ်",
+    "ရောင်းချပေးနေ",
     "ဝယ်ယူနိုင်ပါသည်",
     "ဝယ်ယူနိုင်သည်",
+    "လာဝယ်နိုင်",
+    "မှာယူနိုင်ပါပြီ",
+    "အော်ဒါကောက်",
+    "လက်ကားရမည်",
     "cb လာပါ",
     "dm လာပါ",
     "inbox လာပါ",
@@ -2824,21 +2934,20 @@ _SELLING_PATTERNS_BURMESE: tuple[str, ...] = (
     "စိတ်ဝင်စားရင် dm",
     "စိတ်ဝင်စားပါက dm",
     "service ရောင်း",
-    "ရောင်းပေး",
     "ဝယ်ချင်ရင် cb",
-    "စျေးနှုန်း",
-    "ဈေးနှုန်း",
+    "ဝယ်ချင်ရင် dm",
 )
 
 _SELLING_PATTERNS_ENGLISH: tuple[str, ...] = (
     "for sale",
     "dm to buy",
     "pm to buy",
+    "dm for price",
+    "inbox for price",
+    "order via dm",
     "contact to buy",
     "inbox to buy",
     "selling cheap",
-    "price list",
-    "buy now",
     "selling account",
     "cheap price",
     "order now dm",
@@ -2869,10 +2978,11 @@ def detect_moderation_violation(text: str | None) -> tuple[str | None, float]:
     raw = str(text).strip()
     low = raw.lower()
 
-    # 1. External t.me / bot links (excluding official VoiceClonePro links)
+    # 1. External t.me / bot links (excluding exact official VoiceClonePro links)
     for m in _EXTERNAL_TG_LINK_RE.finditer(low):
         full_match = m.group(0).lower()
-        if any(official in full_match for official in _OFFICIAL_TG_LINKS):
+        clean_match = re.sub(r"^https?://", "", full_match).rstrip("/")
+        if any(clean_match == official or clean_match.startswith(f"{official}/") for official in _OFFICIAL_TG_LINKS):
             continue
         return "selling", 1.0
 
@@ -2895,6 +3005,35 @@ def detect_moderation_violation(text: str | None) -> tuple[str | None, float]:
 # Part 2: Voice-message understanding (Gemini ASR Pool)
 # ---------------------------------------------------------------------------
 
+VOICE_TRANSCRIBE_PROMPT_V1 = (
+    "Please transcribe this Burmese voice message accurately into Burmese text. "
+    "Transcribe only the spoken words, without any explanation, markdown, timestamps, or commentary."
+)
+
+VOICE_TRANSCRIBE_PROMPT_V2 = (
+    "Transcribe this Burmese (or mixed Burmese/English) Telegram voice message into accurate text.\n"
+    "Domain glossary (preserve English spelling when spoken): Voice Clone Pro, Mini App, Recap, "
+    "Studio, VoxCPM, KPay, Wave Pay, Credits, Minutes.\n"
+    "Rules:\n"
+    "- Output ONLY the verbatim spoken words in proper Burmese orthography, without markdown, timestamps, or commentary.\n"
+    "- If there is no intelligible human speech (only silence, music, static, or background noise), output exactly: [NO_SPEECH]"
+)
+
+
+def _clean_voice_asr_transcript(raw_text: str) -> str | None:
+    """Normalize ASR output and suppress sentinel/silence hallucinations."""
+    text = str(raw_text or "").strip().strip("`").strip()
+    if not text:
+        return None
+    upper = text.upper()
+    if "[NO_SPEECH]" in upper or upper in ("NO_SPEECH", "SILENCE", "[SILENCE]", "(SILENCE)", "INAUDIBLE"):
+        return None
+    low = text.lower()
+    if low.startswith("transcribe this burmese") or low.startswith("please transcribe this burmese"):
+        return None
+    return text
+
+
 async def transcribe_voice_gemini(
     voice_bytes: bytes,
     mime_type: str = "audio/ogg",
@@ -2915,10 +3054,16 @@ async def transcribe_voice_gemini(
             logger.warning("group_ai_admin: no Gemini API keys found in pool for voice transcription")
             return None
         models = gemini_model_chain()
-        prompt = (
-            "Please transcribe this Burmese voice message accurately into Burmese text. "
-            "Transcribe only the spoken words, without any explanation, markdown, timestamps, or commentary."
-        )
+        health = _key_rotation.health_for("gemini")
+        _pool_keys = [key for _label, key in pool]
+        ordered = health.order_for_model(_pool_keys, models[0] if models else "")
+        _seen = set(ordered)
+        ordered = ordered + [k for k in _pool_keys if k not in _seen]
+        if ordered != _pool_keys:
+            rank = {key: idx for idx, key in enumerate(ordered)}
+            pool = sorted(pool, key=lambda item: rank[item[1]])
+        v2 = is_v2_prompts()
+        prompt = VOICE_TRANSCRIBE_PROMPT_V2 if v2 else VOICE_TRANSCRIBE_PROMPT_V1
         audio_part = types.Part.from_bytes(data=voice_bytes, mime_type=mime_type)
 
         attempts = 0
@@ -2932,13 +3077,17 @@ async def transcribe_voice_gemini(
                     return None
                 attempts += 1
                 try:
-                    response = client.models.generate_content(
+                    response = call_generate_content_compat(
+                        client.models.generate_content,
                         model=model,
                         contents=[audio_part, prompt],
+                        config_kwargs={"temperature": 0.1, "max_output_tokens": 500} if v2 else None,
                     )
-                    text = str(getattr(response, "text", "") or "").strip()
-                    if text:
-                        return text
+                    raw_text = str(getattr(response, "text", "") or "").strip()
+                    if raw_text:
+                        health.mark_success(key)
+                        health.record_usage(key, model)
+                        return _clean_voice_asr_transcript(raw_text)
                 except Exception as exc:
                     logger.warning(
                         "group_ai_admin: Gemini voice transcription attempt failed for key %s model %s: %s",
@@ -2949,9 +3098,13 @@ async def transcribe_voice_gemini(
                     low = str(exc).lower()
                     if any(
                         marker in low
-                        for marker in ("api_key", "api key", "quota", "429", "permission", "unauthenticated")
+                        for marker in ("api_key", "api key", "permission", "unauthenticated", "401", "403")
                     ):
+                        health.mark_failure(key)
                         break
+                    if any(marker in low for marker in ("quota", "429", "resource_exhausted")):
+                        health.mark_failure(key, model=model)
+                        continue
                     continue
         return None
 

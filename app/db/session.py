@@ -116,7 +116,7 @@ async def ensure_batch_aj_unique_indexes(engine) -> None:
             "uq_pr_slip_fingerprint_live",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_pr_slip_fingerprint_live "
             "ON payment_requests (slip_fingerprint) "
-            "WHERE slip_fingerprint IS NOT NULL AND status <> 'REJECTED'",
+            "WHERE slip_fingerprint IS NOT NULL AND status NOT IN ('REJECTED', 'CANCELLED')",
         ),
         (
             "uq_recap_ledger_refund_ref",
@@ -128,6 +128,20 @@ async def ensure_batch_aj_unique_indexes(engine) -> None:
     for name, ddl in statements:
         try:
             async with engine.begin() as conn:
+                if name == "uq_pr_slip_fingerprint_live":
+                    dialect_name = conn.dialect.name
+                    if dialect_name == "sqlite":
+                        old_idx = (await conn.execute(text(
+                            "SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_pr_slip_fingerprint_live'"
+                        ))).scalar_one_or_none()
+                        if old_idx and "CANCELLED" not in str(old_idx):
+                            await conn.execute(text("DROP INDEX IF EXISTS uq_pr_slip_fingerprint_live"))
+                    elif dialect_name == "postgresql":
+                        old_pg = (await conn.execute(text(
+                            "SELECT indexdef FROM pg_indexes WHERE indexname='uq_pr_slip_fingerprint_live'"
+                        ))).scalar_one_or_none()
+                        if old_pg and "CANCELLED" not in str(old_pg):
+                            await conn.execute(text("DROP INDEX IF EXISTS uq_pr_slip_fingerprint_live"))
                 await conn.execute(text(ddl))
         except Exception as exc:
             log.warning(
@@ -135,6 +149,33 @@ async def ensure_batch_aj_unique_indexes(engine) -> None:
                 "service-level guards remain in force.",
                 name, exc,
             )
+
+
+async def ensure_hot_path_composite_indexes(engine) -> None:
+    """Create composite indexes idempotently across SQLite and PostgreSQL."""
+    import logging
+
+    from sqlalchemy import text
+
+    log = logging.getLogger(__name__)
+    index_ddls = (
+        "CREATE INDEX IF NOT EXISTS ix_jobs_status_created_at ON jobs (status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_status_started_at ON jobs (status, started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_user_created_at ON jobs (user_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_mle_user_ref_dir ON minute_ledger_events (user_id, reference_id, direction)",
+        "CREATE INDEX IF NOT EXISTS ix_rcle_ref_dir ON recap_credit_ledger_events (reference_id, direction)",
+        "CREATE INDEX IF NOT EXISTS ix_pr_status_created_at ON payment_requests (status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_bd_campaign_status ON broadcast_deliveries (campaign_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_gae_status_created_at ON group_ai_escalations (status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_pam_created_at ON private_ai_messages (created_at)",
+    )
+    for ddl in index_ddls:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(ddl))
+        except Exception as exc:
+            log.debug("Composite index creation skipped (%s): %s", ddl, exc)
 
 
 async def init_db() -> None:
@@ -254,11 +295,51 @@ async def init_db() -> None:
                 if "edited_recap_credits" not in cols_pay:
                     connection.execute(text("ALTER TABLE payment_requests ADD COLUMN edited_recap_credits INTEGER"))
 
+                # Migrate pre-existing SQLite jobs CHECK constraint if WAITING_CHOICE is missing.
+                jobs_ddl = connection.execute(
+                    text("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'")
+                ).scalar_one_or_none()
+                if jobs_ddl and "chk_job_status" in jobs_ddl and "WAITING_CHOICE" not in jobs_ddl:
+                    import re as _re
+
+                    upgraded_ddl = _re.sub(
+                        r"CONSTRAINT\s+chk_job_status\s+CHECK\s*\(\s*status\s+IN\s*\([^)]*\)\s*\)",
+                        "CONSTRAINT chk_job_status CHECK (status IN ('PENDING', 'QUEUED', 'RUNNING', 'WAITING_CHOICE', 'SUCCESS', 'FAILED', 'CANCELLED'))",
+                        jobs_ddl,
+                        flags=_re.IGNORECASE,
+                    )
+                    if upgraded_ddl == jobs_ddl:
+                        upgraded_ddl = _re.sub(
+                            r"CHECK\s*\(\s*status\s+IN\s*\([^)]*\)\s*\)",
+                            "CHECK (status IN ('PENDING', 'QUEUED', 'RUNNING', 'WAITING_CHOICE', 'SUCCESS', 'FAILED', 'CANCELLED'))",
+                            jobs_ddl,
+                            flags=_re.IGNORECASE,
+                        )
+                    if upgraded_ddl != jobs_ddl:
+                        tmp_ddl = _re.sub(
+                            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[\"`\[]?jobs[\"`\]]?)",
+                            "CREATE TABLE jobs__new_chk",
+                            upgraded_ddl,
+                            count=1,
+                            flags=_re.IGNORECASE,
+                        )
+                        connection.execute(text("PRAGMA foreign_keys=OFF"))
+                        try:
+                            connection.execute(text("DROP TABLE IF EXISTS jobs__new_chk"))
+                            connection.execute(text(tmp_ddl))
+                            connection.execute(text("INSERT INTO jobs__new_chk SELECT * FROM jobs"))
+                            connection.execute(text("DROP TABLE jobs"))
+                            connection.execute(text("ALTER TABLE jobs__new_chk RENAME TO jobs"))
+                            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_user_id ON jobs (user_id)"))
+                        finally:
+                            connection.execute(text("PRAGMA foreign_keys=ON"))
+
         await conn.run_sync(_add_missing_cols)
 
     # Batch AJ: defensive unique indexes (see the helper). Runs AFTER
     # the column additions above so slip_fingerprint exists.
     await ensure_batch_aj_unique_indexes(engine)
+    await ensure_hot_path_composite_indexes(engine)
 
     # Initialize database identity metadata idempotently
     async with AsyncSessionLocal() as session:

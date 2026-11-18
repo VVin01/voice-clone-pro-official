@@ -155,8 +155,13 @@ def test_ask_on_38_lite_sends_the_short_prompt(tmp_path, monkeypatch):
 
 def test_ask_on_preview_sends_the_full_profile(tmp_path, monkeypatch):
     recorder = _Recorder()
+    monkeypatch.setattr(
+        gte,
+        "_effective_tts_models",
+        lambda: ("gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"),
+    )
     eng = _engine(tmp_path, monkeypatch, recorder)
-    gte._TTS_MODEL_CURSOR = 1  # rotation starts on TTS_MODELS[1]
+    gte._TTS_MODEL_CURSOR = 1  # rotation starts on preview model[1]
     eng._ask("မင်္ဂလာပါ", "Charon")
     _key, model, contents = recorder.calls[0]
     assert model == "gemini-3.1-flash-tts-preview"
@@ -176,6 +181,11 @@ def test_ask_rebuilds_the_prompt_when_failing_over_to_a_preview(
         return None
 
     recorder = _Recorder(behaviour=quota_on_38)
+    monkeypatch.setattr(
+        gte,
+        "_effective_tts_models",
+        lambda: ("gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"),
+    )
     eng = _engine(tmp_path, monkeypatch, recorder)
     gte._TTS_MODEL_CURSOR = 0
     data = eng._ask("မင်္ဂလာပါ", "Charon")

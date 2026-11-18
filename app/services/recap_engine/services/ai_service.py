@@ -29,17 +29,22 @@ class AIService:
         if not self.api_key:
             raise ValueError("⚠️ GEMINI_API_KEY မတွေ့ပါ! .env ဖိုင်ကို စစ်ဆေးပါ။")
         self.proxy = gemini_proxy()
-        self._enable_proxy()
-        self.client = genai.Client(api_key=self.api_key)
-        self._disable_proxy()
+        if self.proxy:
+            try:
+                http_options = types.HttpOptions(
+                    client_args={"proxy": self.proxy},
+                    async_client_args={"proxy": self.proxy},
+                )
+                self.client = genai.Client(api_key=self.api_key, http_options=http_options)
+            except Exception:
+                self.client = genai.Client(api_key=self.api_key)
+        else:
+            self.client = genai.Client(api_key=self.api_key)
         self.text_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.6-flash")
 
     def _enable_proxy(self):
-        if self.proxy:
-            os.environ["HTTPS_PROXY"] = self.proxy
-            os.environ["HTTP_PROXY"] = self.proxy
+        # Thread-safe no-op: proxy is bound per client via HttpOptions instead of global os.environ mutation.
+        return None
 
     def _disable_proxy(self):
-        if self.proxy:
-            os.environ.pop("HTTPS_PROXY", None)
-            os.environ.pop("HTTP_PROXY", None)
+        return None

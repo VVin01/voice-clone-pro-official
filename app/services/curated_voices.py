@@ -227,7 +227,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
             "asetrate=42336,aresample=44100,atempo=1.0417,deesser=i=0.5:m=0.5:f=0.5:s=o,highpass=f=70,equalizer=f=130:width_type=o:w=1:g=3.0,equalizer=f=3200:width_type=o:w=1:g=1.5,equalizer=f=7200:width_type=q:w=2:g=-3.5,loudnorm=I=-15:TP=-1.0:LRA=7"
         ),
         "control_instruction": (
-            "A deep, bass-rich, resonant, dramatic blockbuster movie trailer narrator. "
+            "A deep, bass-rich, resonant, dramatic Burmese male blockbuster movie trailer narrator. "
             "Authoritative gravitas, cinematic impact, velvety low-end warmth with pristine Burmese pronunciation."
         ),
         "cfg_value": 2.2,

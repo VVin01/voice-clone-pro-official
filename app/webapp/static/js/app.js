@@ -436,6 +436,11 @@ const state = {
     recapSubFont: "padauk",
     recapFontSize: 16,
     recapLines: 1,
+    recapSubRenderMode: "timeline",
+    recapSubEffect: "none",
+    recapEmbedSoftSubs: true,
+    savedCustomVoiceId: "",
+    savedCustomVoiceName: "",
     // Batch AA: true once the user DELIBERATELY sets the blur box
     // (Blur Y/H sliders, box drag, resize handles) for the current
     // source. Rides the submit payload as blur_box_explicit: an
@@ -518,6 +523,7 @@ function initLitePerformanceMode() {
         const isLite = forced === "1" || reducedMotion || cores <= 4 || mem <= 3;
         document.documentElement.classList.toggle("lite", isLite);
         if (document.body) document.body.classList.toggle("lite", isLite);
+        syncLiteModeUiState(isLite);
         return isLite;
     } catch (e) {
         return false;
@@ -525,11 +531,38 @@ function initLitePerformanceMode() {
 }
 window.initLitePerformanceMode = initLitePerformanceMode;
 
+function syncLiteModeUiState(isLite) {
+    const enabled = !!isLite;
+    const btn = document.getElementById("btn-lite-toggle");
+    if (btn) {
+        btn.setAttribute("aria-pressed", enabled ? "true" : "false");
+        btn.classList.toggle("is-active", enabled);
+    }
+    return enabled;
+}
+
+function toggleLiteMode() {
+    haptic("light");
+    const nextLite = !document.documentElement.classList.contains("lite");
+    try {
+        localStorage.setItem("vcp_lite_mode", nextLite ? "1" : "0");
+    } catch (e) {}
+    document.documentElement.classList.toggle("lite", nextLite);
+    if (document.body) document.body.classList.toggle("lite", nextLite);
+    syncLiteModeUiState(nextLite);
+    try {
+        showStudioToast(t(nextLite ? "lite_mode_on" : "lite_mode_off"), "info");
+    } catch (e) {}
+    return nextLite;
+}
+window.toggleLiteMode = toggleLiteMode;
+
 function syncThemeUiState(mode) {
     const resolved = mode === "dark" ? "dark" : "light";
     document.documentElement.setAttribute("data-theme", resolved);
     if (document.body) {
         document.body.setAttribute("data-theme", resolved);
+        document.body.classList.toggle("dark-theme", resolved === "dark");
     }
     const btn = document.getElementById("btn-theme-toggle");
     if (btn) {
@@ -673,6 +706,8 @@ function closeTopmostOverlay() {
         return true;
     }
     const overlayIds = [
+        ["recap-lang-sheet-backdrop", () => { if (typeof window !== "undefined" && typeof window.closeRecapLangSheet === "function") window.closeRecapLangSheet(); else document.getElementById("recap-lang-sheet-backdrop")?.classList.add("hidden"); }],
+        ["open-via-telegram-modal", () => { if (typeof closeOpenViaTelegramModal === "function") closeOpenViaTelegramModal(); else document.getElementById("open-via-telegram-modal")?.classList.add("hidden"); }],
         ["live-jobs-sheet", closeLiveJobsSheet],
         ["income-detail-sheet", closeIncomeDetail],
         ["slip-modal", () => { if (typeof closeSlipModal === "function") closeSlipModal(); else document.getElementById("slip-modal")?.classList.add("hidden"); }],
@@ -696,10 +731,17 @@ window.closeTopmostOverlay = closeTopmostOverlay;
 function hasOpenOverlay() {
     if (document.getElementById("studio-confirm-modal") || document.getElementById("studio-input-modal")) return true;
     if (document.querySelector(".vcp-sheet-backdrop.is-open")) return true;
-    const ids = ["live-jobs-sheet", "income-detail-sheet", "slip-modal", "tts-key-prompt-modal", "admin-media-modal", "adm-user-detail", "payment-box"];
+    const ids = ["recap-lang-sheet-backdrop", "open-via-telegram-modal", "live-jobs-sheet", "income-detail-sheet", "slip-modal", "tts-key-prompt-modal", "admin-media-modal", "adm-user-detail", "payment-box"];
     return ids.some(id => {
         const el = document.getElementById(id);
         return !!(el && !el.classList.contains("hidden"));
+    });
+}
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && hasOpenOverlay()) {
+            closeTopmostOverlay();
+        }
     });
 }
 
@@ -1430,7 +1472,8 @@ function renderLiveJobsPill() {
 }
 function liveJobsSheetRowHtml(job) {
     const isRecap = job.kind === "recap";
-    const title = escapeHtml(job.title || (isRecap ? "Movie Recap" : "Voice Synthesis"));
+    const isTts = job.kind === "tts";
+    const title = escapeHtml(job.title || (isRecap ? "Movie Recap" : isTts ? "AI TTS" : "Voice Synthesis"));
     const pct = Math.min(100, Math.max(0, job.progress_percent || 0));
     const isWaiting = job.status === "WAITING_CHOICE";
     const isTerminal = liveJobsIsTerminal(job.status);
@@ -1461,7 +1504,7 @@ function liveJobsSheetRowHtml(job) {
                 : `${escapeHtml(job.status || "")} · ${escapeHtml(liveJobStageText(job))}`));
     return `<div class="live-job-row vcp-job-card" data-live-job-id="${job.id}">
         <div class="vcp-job-head">
-            <span class="hub-type-icon ${isRecap ? "recap" : "voice"}">${isRecap ? "🎬" : "🎙️"}</span>
+            <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
             <div class="live-job-row-main">
                 <div class="live-job-row-title">${title}</div>
                 <div class="live-job-row-meta">${metaText}${elapsed && !overrun && !isWaiting ? " · " + escapeHtml(elapsed) : ""}</div>
@@ -1588,8 +1631,20 @@ window.liveJobCancel = function(jobId, kind) {
                     state.pollTimer = null;
                     const box = document.getElementById("voice-progress-box");
                     if (box) box.classList.add("hidden");
+                    const cancelBtn = document.getElementById("btn-cancel-voice-job");
+                    if (cancelBtn) cancelBtn.classList.add("hidden");
                     const btn = document.getElementById("btn-generate-voice");
                     if (btn) btn.disabled = false;
+                }
+                if (typeof ttsState !== "undefined" && ttsState.jobId === jobId) {
+                    if (ttsState.pollTimer) clearInterval(ttsState.pollTimer);
+                    ttsState.pollTimer = null;
+                    const tBox = document.getElementById("tts-progress-box");
+                    if (tBox) tBox.classList.add("hidden");
+                    const tCancel = document.getElementById("btn-cancel-tts-job");
+                    if (tCancel) tCancel.classList.add("hidden");
+                    const tBtn = document.getElementById("btn-generate-tts");
+                    if (tBtn) tBtn.disabled = false;
                 }
                 LiveJobs.fetchNow();
                 loadUserHistory();
@@ -1610,6 +1665,23 @@ window.liveJobOpen = function(jobId, kind) {
             openHistoryHub();
         } else {
             openRecapDetail(jobId);
+        }
+    } else if (kind === "tts") {
+        switchTab("tab-tts");
+        if (job && job.status === "SUCCESS") {
+            openHistoryHub();
+        } else {
+            const tBox = document.getElementById("tts-progress-box");
+            if (tBox) {
+                tBox.classList.remove("hidden");
+                tBox.scrollIntoView({ behavior: "smooth" });
+            }
+            if (jobId && typeof ttsState !== "undefined" && !ttsState.pollTimer && (!job || !liveJobsIsTerminal(job.status))) {
+                ttsState.jobId = jobId;
+                const tCancel = document.getElementById("btn-cancel-tts-job");
+                if (tCancel) tCancel.classList.remove("hidden");
+                if (typeof pollTtsJob === "function") pollTtsJob(jobId);
+            }
         }
     } else {
         switchTab("tab-voice");
@@ -1721,7 +1793,12 @@ function guardRearmCheck(guard, currentFingerprint) {
 }
 const voiceSubmitGuard = createSubmitGuard();
 const recapSubmitGuard = createSubmitGuard();
+const ttsSubmitGuard = createSubmitGuard();
 function studioConfigFingerprint(kind) {
+    if (kind === "tts") {
+        const ti = document.getElementById("tts-text-input");
+        return JSON.stringify({ text: ti ? ti.value : "", engine: typeof ttsState !== "undefined" ? ttsState.engine : "gemini", speed: typeof ttsState !== "undefined" ? ttsState.speed : "+12%" });
+    }
     if (kind === "voice") {
         const textInput = document.getElementById("voice-text-input");
         return JSON.stringify({
@@ -1751,8 +1828,8 @@ function studioConfigFingerprint(kind) {
     });
 }
 function setSubmitButtonState(kind) {
-    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
-    const btn = document.getElementById(kind === "voice" ? "btn-generate-voice" : "btn-start-recap");
+    const guard = kind === "voice" ? voiceSubmitGuard : (kind === "tts" ? ttsSubmitGuard : recapSubmitGuard);
+    const btn = document.getElementById(kind === "voice" ? "btn-generate-voice" : (kind === "tts" ? "btn-generate-tts" : "btn-start-recap"));
     if (!btn) return;
     const span = btn.querySelector(".btn-text");
     if (span && !span.dataset.acOriginal) span.dataset.acOriginal = span.innerText;
@@ -1769,7 +1846,7 @@ function setSubmitButtonState(kind) {
     if (kind === "recap" && typeof refreshStickyCtas === "function") refreshStickyCtas();
 }
 function studioSubmitBegin(kind) {
-    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+    const guard = kind === "voice" ? voiceSubmitGuard : (kind === "tts" ? ttsSubmitGuard : recapSubmitGuard);
     const result = guardBegin(guard, studioConfigFingerprint(kind));
     if (result === "unchanged") {
         showStudioToast(t("submit_already_creating"), "info", 5000);
@@ -1780,21 +1857,21 @@ function studioSubmitBegin(kind) {
     return true;
 }
 function studioSubmitSuccess(kind) {
-    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+    const guard = kind === "voice" ? voiceSubmitGuard : (kind === "tts" ? ttsSubmitGuard : recapSubmitGuard);
     guardSuccess(guard);
     setSubmitButtonState(kind);
 }
 function studioSubmitFailure(kind) {
-    const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+    const guard = kind === "voice" ? voiceSubmitGuard : (kind === "tts" ? ttsSubmitGuard : recapSubmitGuard);
     guardFailure(guard);
     setSubmitButtonState(kind);
 }
 function setupSubmitGuards() {
-    [["tab-voice", "voice"], ["tab-recap", "recap"]].forEach(([tabId, kind]) => {
+    [["tab-voice", "voice"], ["tab-recap", "recap"], ["tab-tts", "tts"]].forEach(([tabId, kind]) => {
         const tab = document.getElementById(tabId);
         if (!tab) return;
         const check = () => {
-            const guard = kind === "voice" ? voiceSubmitGuard : recapSubmitGuard;
+            const guard = kind === "voice" ? voiceSubmitGuard : (kind === "tts" ? ttsSubmitGuard : recapSubmitGuard);
             if (guardRearmCheck(guard, studioConfigFingerprint(kind))) {
                 setSubmitButtonState(kind);
             }
@@ -1806,6 +1883,7 @@ function setupSubmitGuards() {
     LiveJobs.subscribe(() => {
         setSubmitButtonState("voice");
         setSubmitButtonState("recap");
+        setSubmitButtonState("tts");
     });
 }
 
@@ -1931,8 +2009,10 @@ function subtitleFontFractionOfPicture(sizePt, lines) {
 }
 function convertSubCentreToMargin(centrePct, fontSizePt, lines) {
     const PH = 608;
-    const fp = Math.max(18, Math.round(PH * subtitleFontFractionOfPicture(fontSizePt || 16, lines || 1)));
-    const textH = fp * 1.15 * Math.max(1, parseInt(lines) || 1);
+    const nLines = Math.max(1, parseInt(lines) || 1);
+    const mult = nLines === 1 ? 1.15 : (nLines === 2 ? 2.30 : 3.65);
+    const fp = Math.max(18, Math.round(PH * subtitleFontFractionOfPicture(fontSizePt || 16, nLines)));
+    const textH = fp * mult;
     const pad = Math.max(10, fp * 0.40);
     const plateFrac = (textH + 2 * pad) / PH;
     const margin = (100 - centrePct) - (plateFrac * 100) / 2;
@@ -1955,6 +2035,9 @@ function ddConfigExtras() {
         }));
     }
     out.protection_level = state.recapProtection || "standard";
+    out.sub_render_mode = state.recapSubRenderMode || "timeline";
+    out.sub_effect = state.recapSubEffect || "none";
+    out.embed_soft_subs = state.recapEmbedSoftSubs !== false;
     if (state.recapTextColor) out.sub_text_color = state.recapTextColor;
     if (state.recapOutlineColor) out.sub_outline_color = state.recapOutlineColor;
     if (state.recapBgColor) out.sub_bg_color = state.recapBgColor;
@@ -2026,6 +2109,11 @@ function collectAccountPrefs() {
         recapZoom: state.recapZoom,
         recapVoice: state.recapVoice,
         recapGeminiVoice: state.recapGeminiVoice || "",
+        recapSubRenderMode: state.recapSubRenderMode || "timeline",
+        recapSubEffect: state.recapSubEffect || "none",
+        recapEmbedSoftSubs: state.recapEmbedSoftSubs !== false,
+        savedCustomVoiceId: state.savedCustomVoiceId || "",
+        savedCustomVoiceName: state.savedCustomVoiceName || "",
         // Phase 4: up to 3 named Step-2 presets ("My Presets"), JSON.
         recap_presets: serializeMyRecapPresets(),
     };
@@ -2082,8 +2170,11 @@ function applyAccountPrefs(prefs) {
         "recapBgColor", "recapOutlineWidth", "recapBgOpacity",
         "recapSubShadow", "recapSubBold", "recapSubFontCustomId",
         "recapZoom", "recapVoice", "recapGeminiVoice",
+        "recapSubRenderMode", "recapSubEffect", "recapEmbedSoftSubs",
+        "savedCustomVoiceId", "savedCustomVoiceName",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
+    if (typeof syncSavedCustomVoiceUi === "function") syncSavedCustomVoiceUi();
     state.recapSpeed = normalizeSpeedOption(state.recapSpeed);
     // Batch DD: the blur-box list rides prefs as JSON.
     if (typeof prefs.recapBlurBoxesJson === "string" && prefs.recapBlurBoxesJson) {
@@ -2136,7 +2227,13 @@ function showPrefsSavedNote() {
     // indicator area carries step state only. (The #prefs-saved-note
     // element stays in the markup, unused and hidden, so its id and
     // the Batch AC pin on it survive.)
-    try { showStudioToast(t("live_prefs_saved"), "success", 2200); } catch (e) {}
+    try {
+        if (typeof document !== "undefined" && typeof document.querySelector === "function"
+            && document.querySelector("#studio-toast-el.error")) {
+            return;
+        }
+        showStudioToast(t("live_prefs_saved"), "success", 2200);
+    } catch (e) {}
 }
 // Batch BB-8: the prefs saver is triggered by DELEGATED listeners on
 // the whole Recap/Voice tabs (setupAccountPrefs), so EVERY click —
@@ -2975,8 +3072,10 @@ function showFloatingAlert(title, message, actionCallback, actionText) {
             osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.16);
             gain.gain.setValueAtTime(0.08, ctx.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+            osc.onended = () => { try { ctx.close(); } catch (e) {} };
             osc.start();
             osc.stop(ctx.currentTime + 0.4);
+            setTimeout(() => { try { if (ctx.state !== "closed") ctx.close(); } catch (e) {} }, 700);
         }
     } catch (e) {}
 
@@ -3106,22 +3205,28 @@ function syncTabAdminLifecycle(tabId) {
     }
 }
 
+function pauseInactiveTabMedia(activeTabId) {
+    try {
+        document.querySelectorAll(".tab-pane").forEach(pane => {
+            if (pane.id !== activeTabId && typeof pane.querySelectorAll === "function") {
+                pane.querySelectorAll("audio, video").forEach(mediaEl => {
+                    try { if (!mediaEl.paused && typeof mediaEl.pause === "function") mediaEl.pause(); } catch (e) {}
+                });
+            }
+        });
+    } catch (e) {}
+}
+
 function switchTab(tabId) {
+    pauseInactiveTabMedia(tabId);
     const navButtons = document.querySelectorAll(".nav-item");
     const targetBtn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+    navButtons.forEach(b => b.classList.remove("active"));
     if (targetBtn) {
-        navButtons.forEach(b => b.classList.remove("active"));
         targetBtn.classList.add("active");
-    } else {
-        // Panes without a dock button of their own (Downloader / History
-        // live under Home's Tools / Library section now) keep Home lit,
-        // so the dock always shows where the user is.
-        const homeBtn = document.querySelector('.nav-item[data-tab="tab-home"]');
-        if (homeBtn) {
-            navButtons.forEach(b => b.classList.remove("active"));
-            homeBtn.classList.add("active");
-        }
     }
+    const topHistBtn = document.getElementById("btn-top-history");
+    if (topHistBtn) topHistBtn.classList.toggle("active", tabId === "tab-history");
     document.querySelectorAll(".tab-pane").forEach(pane => {
         pane.classList.remove("active");
     });
@@ -3134,6 +3239,9 @@ function switchTab(tabId) {
     moveNavPill();
     moveSpeedPills();
     moveSegPills();
+    if (tabId === "tab-history" && typeof loadUserHistory === "function") {
+        loadUserHistory();
+    }
     // Batch AW: the TTS tab paints its balance line fresh on entry.
     if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
         window.refreshTtsQuota();
@@ -3183,9 +3291,12 @@ function setupTabs() {
         btn.addEventListener("click", () => {
             const targetTab = btn.getAttribute("data-tab");
             haptic("light");
+            pauseInactiveTabMedia(targetTab);
 
             navButtons.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
+            const topHistBtn = document.getElementById("btn-top-history");
+            if (topHistBtn) topHistBtn.classList.toggle("active", targetTab === "tab-history");
 
             document.querySelectorAll(".tab-pane").forEach(pane => {
                 pane.classList.remove("active");
@@ -3209,6 +3320,9 @@ function setupTabs() {
 
             if (targetTab === "tab-history") {
                 loadUserHistory();
+            }
+            if (targetTab === "tab-vip" && typeof refreshPlanPrices === "function") {
+                refreshPlanPrices();
             }
 
             // Batch BI (BI-4): the TTS balance line must paint fresh
@@ -4262,6 +4376,7 @@ function paintVipPlanBalances(data) {
     if (!data) return;
     const balMin = document.getElementById("profile-balance-min");
     const balCredits = document.getElementById("profile-balance-credits");
+    const balTts = document.getElementById("vip-wallet-tts-val");
     const fmt = typeof tf === "function" ? tf : null;
     if (balMin) {
         balMin.innerText = data.is_admin
@@ -4272,6 +4387,14 @@ function paintVipPlanBalances(data) {
         balCredits.innerText = data.is_admin
             ? (typeof t === "function" ? t("unlimited") : "Unlimited")
             : (fmt ? fmt("home_free_value_credits", { count: data.recap_credits || 0 }) : `${data.recap_credits || 0} credits`);
+    }
+    if (balTts) {
+        const rem = data.tts_today_remaining_seconds;
+        balTts.innerText = (data.is_admin || data.tts_daily_limit_seconds === 0)
+            ? (typeof t === "function" ? t("unlimited") : "Unlimited")
+            : (typeof rem === "number"
+                ? (fmt ? fmt("home_free_value_min", { min: (rem / 60).toFixed(1) }) : `${(rem / 60).toFixed(1)} mins`)
+                : "—");
     }
 }
 window.paintVipPlanBalances = paintVipPlanBalances;
@@ -4486,6 +4609,7 @@ function refreshRecapEngineLock() {
             deselectRecapOwnVoice();
         }
     }
+    if (typeof syncSavedCustomVoiceUi === "function") syncSavedCustomVoiceUi();
 }
 window.refreshRecapEngineLock = refreshRecapEngineLock;
 
@@ -4608,13 +4732,9 @@ async function uploadRecapOwnVoiceFile(file) {
     try {
         const formData = new FormData();
         formData.append("reference_audio", file);
-        const headers = {};
-        if (state.tg && state.tg.initData) {
-            headers["X-Telegram-Init-Data"] = state.tg.initData;
-        }
         const res = await fetchWithTimeout("/api/recap/upload_voice_ref", {
             method: "POST",
-            headers: headers,
+            headers: getAuthHeaders(false),
             body: formData,
         }, 120000);
         const data = await res.json().catch(() => ({}));
@@ -4818,13 +4938,9 @@ async function handleVoiceGenerate() {
             if (presetVoice) formData.append("preset_voice", presetVoice);
             formData.append("reference_audio", state.selectedReferenceFile);
 
-            const headers = {};
-            if (state.tg && state.tg.initData) {
-                headers["X-Telegram-Init-Data"] = state.tg.initData;
-            }
             res = await fetchWithTimeout("/api/voices/generate-with-audio", {
                 method: "POST",
-                headers: headers,
+                headers: getAuthHeaders(false),
                 body: formData,
             }, 120000);
         } else {
@@ -4838,6 +4954,9 @@ async function handleVoiceGenerate() {
                     gender_preset: "m2m",
                     engine: "voxcpm", // VoxCPM2 only — backend default
                     preset_voice: presetVoice,
+                    voice_ref_id: (state.voxcpmSubMode === "custom" && !state.selectedReferenceFile && state.savedCustomVoiceActiveId)
+                        ? state.savedCustomVoiceActiveId
+                        : null,
                 }),
             }, 30000);
         }
@@ -4888,7 +5007,12 @@ function renderVoiceFallbackNote(data) {
 }
 
 function startJobPolling(jobId) {
-    if (state.pollTimer) clearInterval(state.pollTimer);
+    if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+    state.activeJobId = jobId;
+    const failedBoxInit = document.getElementById("voice-failed-box");
+    if (failedBoxInit) failedBoxInit.classList.add("hidden");
+    const cancelBtnInit = document.getElementById("btn-cancel-voice-job");
+    if (cancelBtnInit) cancelBtnInit.classList.remove("hidden");
 
     let tick = 0;
     let failStreak = 0;
@@ -4902,6 +5026,9 @@ function startJobPolling(jobId) {
     // server-side and lands in History).
     const stopPollingTimedOut = () => {
         clearInterval(state.pollTimer);
+        state.pollTimer = null;
+        const cancelBtn = document.getElementById("btn-cancel-voice-job");
+        if (cancelBtn) cancelBtn.classList.add("hidden");
         const box = document.getElementById("voice-progress-box");
         if (box) box.classList.add("hidden");
         const btn = document.getElementById("btn-generate-voice");
@@ -4960,6 +5087,9 @@ function startJobPolling(jobId) {
                 if (etaText) etaText.innerText = tf("voice_elapsed", { sec: Math.max(0, Math.round((Date.now() - pollStartedAt) / 1000)) });
             } else if (data.status === "SUCCESS") {
                 clearInterval(state.pollTimer);
+                state.pollTimer = null;
+                const cancelBtnDone = document.getElementById("btn-cancel-voice-job");
+                if (cancelBtnDone) cancelBtnDone.classList.add("hidden");
                 setVoiceStage("success");
                 haptic("success");
                 if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
@@ -5010,8 +5140,16 @@ function startJobPolling(jobId) {
 
             } else if (data.status === "FAILED") {
                 clearInterval(state.pollTimer);
+                state.pollTimer = null;
+                const cancelBtnFail = document.getElementById("btn-cancel-voice-job");
+                if (cancelBtnFail) cancelBtnFail.classList.add("hidden");
                 haptic("error");
-                showStudioToast(mapErrorToToast(data.error_message, 'voice'), 'error');
+                const errText = mapErrorToToast(data.error_message, 'voice');
+                showStudioToast(errText, 'error');
+                const fMsg = document.getElementById("voice-failed-msg");
+                if (fMsg) fMsg.textContent = errText;
+                const fBox = document.getElementById("voice-failed-box");
+                if (fBox) fBox.classList.remove("hidden");
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
                 if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
@@ -5020,6 +5158,9 @@ function startJobPolling(jobId) {
                 // (admin console) — stop instead of polling to the
                 // timeout with a stale progress card.
                 clearInterval(state.pollTimer);
+                state.pollTimer = null;
+                const cancelBtnStop = document.getElementById("btn-cancel-voice-job");
+                if (cancelBtnStop) cancelBtnStop.classList.add("hidden");
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btnGen) btnGen.disabled = false;
                 if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
@@ -5038,6 +5179,12 @@ function startJobPolling(jobId) {
         }
     }, 2000);
 }
+
+window.cancelVoiceJob = function() {
+    if (state.activeJobId && typeof window.liveJobCancel === "function") {
+        window.liveJobCancel(state.activeJobId, "voice");
+    }
+};
 
 // ── Recap duration caps ────────────────────────────────────────────────
 // The per-job cap mirrors the server and is NEVER raised: free 2 min,
@@ -5506,7 +5653,7 @@ function refreshRecapStep4Choices() {
             if (state.recapTtsEngine === "edge") {
                 const activeCard = voiceCard ? voiceCard.closest(".voice-card") : null;
                 const slug = activeCard ? activeCard.getAttribute("data-voice") : "";
-                const cv = (state.curatedVoices || []).find(v => v.slug === slug);
+                const cv = (state.curatedVoices || []).find(v => (v.id || v.slug) === slug);
                 const femaleSlugs = ["mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"];
                 const isFemale = cv ? cv.gender === "female" : femaleSlugs.includes(slug || "");
                 const edgeVoiceName = t(isFemale ? "tts_edge_nilar" : "tts_edge_thiha").replace(/\s*\([^)]*\)\s*$/, "");
@@ -5516,7 +5663,7 @@ function refreshRecapStep4Choices() {
         voiceEl.textContent = voiceLine;
     }
     const ratioEl = document.getElementById("recap-step4-choice-ratio");
-    const ratioCard = document.querySelector("#recap-preview-ratio-group .ratio-card.active");
+    const ratioCard = document.querySelector("#recap-preview-ratio-group .ratio-btn.active, #recap-preview-ratio-group .ratio-card.active");
     if (ratioEl) ratioEl.textContent = ratioCard
         ? (ratioCard.getAttribute("data-label") || ratioCard.textContent.trim()) : "";
     const titleSpan = document.getElementById("recap-step4-choice-title");
@@ -5740,7 +5887,7 @@ function refreshRecapStep4Thumb() {
         let aspect = "9 / 16";
         if (r === "16:9") aspect = "16 / 9";
         else if (r === "1:1") aspect = "1 / 1";
-        else if (r === "original" && thumb.naturalWidth > 0 && thumb.naturalHeight > 0) {
+        else if (String(r).toLowerCase() === "original" && thumb.naturalWidth > 0 && thumb.naturalHeight > 0) {
             aspect = thumb.naturalWidth + " / " + thumb.naturalHeight;
         }
         frame.style.aspectRatio = aspect;
@@ -5779,7 +5926,9 @@ function refreshRecapStep4Facts() {
     if (state.recapBurnSubs !== false) {
         const styleKey = "sub_style_" + (state.recapSubStyle || "yellow");
         const styleName = t(styleKey);
-        set("recap-fact-subs", "📝 " + (styleName && styleName !== styleKey ? styleName : (state.recapSubStyle || "yellow")) + ` · ${state.recapFontSize || 16}pt`);
+        const mKey = "sub_mode_" + (state.recapSubRenderMode || "timeline");
+        const mName = t(mKey);
+        set("recap-fact-subs", "📝 " + (styleName && styleName !== styleKey ? styleName : (state.recapSubStyle || "yellow")) + ` · ${state.recapFontSize || 16}pt` + (mName && mName !== mKey ? ` · ${mName}` : ""));
     } else {
         set("recap-fact-subs", "📝 " + t("recap_fact_off"));
     }
@@ -5934,13 +6083,19 @@ function setupRecapVisualEditor() {
         });
     }
 
+    let recapCanvasVideoObjectUrl = null;
     async function handleVideoFileSelect(file) {
         if (!file) return;
         haptic("medium");
         setRecapPreviewState("loading");
 
         // Instant client-side video preview via Object URL
+        if (recapCanvasVideoObjectUrl) {
+            try { URL.revokeObjectURL(recapCanvasVideoObjectUrl); } catch (e) {}
+            recapCanvasVideoObjectUrl = null;
+        }
         const objectUrl = URL.createObjectURL(file);
+        recapCanvasVideoObjectUrl = objectUrl;
         const innerMovie = document.getElementById("mockup-inner-movie");
         if (innerMovie) innerMovie.style.backgroundImage = "none";
         // "" (not "none") so the canvas keeps its CSS gradient surface
@@ -6052,10 +6207,10 @@ function setupRecapVisualEditor() {
                 durSpan.className = "mini-tag text-danger";
                 const maxM = Math.floor(maxAllowed / 60);
                 const msg = state.user?.is_vip ? tf("recap_over_max_vip", { max: maxM }) : t("recap_over_max_free");
-                durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${msg})</span>`;
+                durSpan.innerHTML = `⏱️ ${escapeHtml(data.estimated_duration || "00:00")} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${escapeHtml(msg)})</span>`;
             } else {
                 durSpan.className = "mini-tag";
-                durSpan.innerHTML = `⏱️ ${data.estimated_duration || "00:00"} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${t("recap_duration_valid") || "Ready"})</span>`;
+                durSpan.innerHTML = `⏱️ ${escapeHtml(data.estimated_duration || "00:00")} <span style="color:#10b981; font-weight:700; margin-left:4px;">(${escapeHtml(t("recap_duration_valid") || "Ready")})</span>`;
             }
         }
         if (subSpan) subSpan.innerText = data.has_subtitles ? t("recap_sub_ready") : t("recap_sub_ai");
@@ -6176,6 +6331,10 @@ function setupRecapVisualEditor() {
                 canvasVideo.removeAttribute("src");
                 canvasVideo.load();
                 canvasVideo.classList.add("hidden");
+            }
+            if (recapCanvasVideoObjectUrl) {
+                try { URL.revokeObjectURL(recapCanvasVideoObjectUrl); } catch (e) {}
+                recapCanvasVideoObjectUrl = null;
             }
             const infoBox = document.getElementById("recap-video-info-box");
             if (infoBox && !keepInfoCard) infoBox.classList.add("hidden");
@@ -6348,7 +6507,7 @@ function setupRecapVisualEditor() {
             const authThumb = data.thumbnail.startsWith("/api/recap/frame")
                 ? (await fetchAuthImageUrl(data.thumbnail))
                 : data.thumbnail;
-            state.recapThumbnailUrl = authThumb || data.thumbnail;
+            state.recapThumbnailUrl = sanitizeCssMediaUrl(authThumb || data.thumbnail);
             const probeImg = new Image();
             probeImg.onload = () => {
                 if (probeImg.naturalWidth && probeImg.naturalHeight && (!state.recapSourceWidth || !state.recapSourceHeight)) {
@@ -6379,16 +6538,13 @@ function setupRecapVisualEditor() {
         }
         const btnStartRecap = document.getElementById("btn-start-recap");
         const durSpan = document.getElementById("recap-info-dur");
+        const esc = escapeHtml;
 
         if (durSpan) {
             if (isOverLimit) {
                 durSpan.className = "mini-tag text-danger";
-                const maxM = Math.floor(maxAllowed / 60);
                 const tierLabel = state.user?.is_vip ? "VIP" : t("tier_free_label");
-                const durM = Math.floor(data.duration_seconds / 60);
-                const durS = Math.floor(data.duration_seconds % 60);
-                const durStr = `${durM}:${durS < 10 ? '0' : ''}${durS}`;
-                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${tf("recap_over_limit_label", { tier: tierLabel })})</span>`;
+                durSpan.innerHTML = `⏱️ ${esc(data.estimated_duration)} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${esc(tf("recap_over_limit_label", { tier: tierLabel }))})</span>`;
                 if (btnStartRecap) {
                     btnStartRecap.disabled = true;
                     btnStartRecap.style.opacity = "0.5";
@@ -6396,7 +6552,7 @@ function setupRecapVisualEditor() {
                 showStudioToast(t("toast_duration_over"), 'warning');
             } else {
                 durSpan.className = "mini-tag";
-                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span class="recap-ready-badge" style="color:#10b981; font-weight:700; margin-left:4px;">(${escapeHtml(t("recap_upload_ready_badge"))})</span>`;
+                durSpan.innerHTML = `⏱️ ${esc(data.estimated_duration)} <span class="recap-ready-badge" style="color:#10b981; font-weight:700; margin-left:4px;">(${esc(t("recap_upload_ready_badge"))})</span>`;
                 if (btnStartRecap && !recapJobIsActive()) {
                     btnStartRecap.disabled = false;
                     btnStartRecap.style.opacity = "";
@@ -6412,7 +6568,7 @@ function setupRecapVisualEditor() {
         if (state.recapNoAudio) {
             if (durSpan) {
                 durSpan.className = "mini-tag text-danger";
-                durSpan.innerHTML = `⏱️ ${data.estimated_duration} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${t("recap_no_audio_tag")})</span>`;
+                durSpan.innerHTML = `⏱️ ${esc(data.estimated_duration)} <span style="color:#ef4444; font-weight:700; margin-left:4px;">(${esc(t("recap_no_audio_tag"))})</span>`;
             }
             setRecapStartEnabled(false);
             showStudioToast(t("recap_no_audio"), 'warning');
@@ -6823,7 +6979,8 @@ function setupRecapVisualEditor() {
         const basis = Math.max(60, Math.min(r.pw * cw, r.ph * ch));
         const scaledBasis = PH * (basis / picH);
         const fp = Math.max(18, scaledBasis * subtitleFontFraction(state.recapFontSize || 16, state.recapLines || 1));
-        const textH = fp * ((state.recapLines || 1) === 2 ? 2.30 : 1.15);
+        const nLines = Math.max(1, state.recapLines || 1);
+        const textH = fp * (nLines === 1 ? 1.15 : (nLines === 2 ? 2.30 : 3.65));
         const pad = Math.max(10, fp * 0.40);
         return (textH + 2 * pad) / PH;
     }
@@ -7099,6 +7256,7 @@ function setupRecapVisualEditor() {
     if (sliderSubW && previewSub && valSubW) {
         sliderSubW.addEventListener("input", () => {
             syncSubBoxVisual();
+            if (typeof updateSubtitleCharsEstimator === "function") updateSubtitleCharsEstimator();
         });
     }
 
@@ -7544,7 +7702,7 @@ function setupRecapVisualEditor() {
                 stickyWrap.classList.toggle("is-ratio-9-16", ratioVal === "9:16");
                 stickyWrap.classList.toggle("is-ratio-16-9", ratioVal === "16:9");
                 stickyWrap.classList.toggle("is-ratio-1-1", ratioVal === "1:1");
-                stickyWrap.classList.toggle("is-ratio-orig", ratioVal === "orig");
+                stickyWrap.classList.toggle("is-ratio-orig", String(ratioVal).toLowerCase().startsWith("orig"));
                 stickyWrap.classList.toggle("is-portrait-stage", ratioNum < 0.85 || stage.cls === "ratio-9-16");
             }
             const topNav = document.querySelector(".top-nav");
@@ -8467,7 +8625,31 @@ function setupRecapVisualEditor() {
         return;
     }
     // 11. Font Size — Batch DD: ONE full-width slider (10–26pt)
-    // with a numeric readout, replacing the 4 size pills.
+    // with a numeric readout + live cluster capacity indicator.
+    function estimateSubtitleCharsPerLine(fontSize, lines, subW) {
+        const fs = parseFloat(fontSize) || 16;
+        const nLines = Math.max(1, parseInt(lines) || 1);
+        let base = 24;
+        if (Math.abs(fs - 16) > 0.05) {
+            const f16 = subtitleFontFraction(16, 1);
+            const fCur = Math.max(0.001, subtitleFontFraction(fs, 1));
+            base = Math.round(base * (f16 / fCur));
+        }
+        if (nLines >= 2) base = Math.round(base / 1.18);
+        const swEl = document.getElementById("slider-sub-w");
+        const wVal = subW != null ? parseFloat(subW) : (swEl ? parseFloat(swEl.value) : 92);
+        const wFrac = Math.max(0.10, Math.min(1.0, (wVal || 92) / 100.0));
+        if (Math.abs(wFrac - 0.77) > 0.01) base = Math.round(base * (wFrac / 0.77));
+        return Math.max(8, Math.min(46, base));
+    }
+    function updateSubtitleCharsEstimator() {
+        const el = document.getElementById("val-font-chars-est");
+        if (!el) return;
+        const n = estimateSubtitleCharsPerLine(state.recapFontSize || 16, state.recapLines || 1);
+        el.innerText = tf("sub_chars_est", { n });
+    }
+    window.estimateSubtitleCharsPerLine = estimateSubtitleCharsPerLine;
+    window.updateSubtitleCharsEstimator = updateSubtitleCharsEstimator;
     function syncSubtitleFontSize(sizeVal, snapThumb = true) {
         let f = parseFloat(sizeVal);
         if (!Number.isFinite(f)) f = 16;
@@ -8479,6 +8661,7 @@ function setupRecapVisualEditor() {
         if (fsSlider && snapThumb && parseFloat(fsSlider.value) !== state.recapFontSize) fsSlider.value = state.recapFontSize;
         const fsVal = document.getElementById("val-font-size");
         if (fsVal) fsVal.innerText = `${state.recapFontSize}pt`;
+        if (typeof updateSubtitleCharsEstimator === "function") updateSubtitleCharsEstimator();
         updateSubtitleVisualPreview();
         scheduleRecapCompositeRefresh();
         if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
@@ -8502,6 +8685,7 @@ function setupRecapVisualEditor() {
         document.querySelectorAll("#sub-lines-picker-toolbar .pill-btn").forEach(p => {
             p.classList.toggle("active", parseInt(p.getAttribute("data-lines")) === state.recapLines);
         });
+        if (typeof updateSubtitleCharsEstimator === "function") updateSubtitleCharsEstimator();
         updateSubtitleVisualPreview();
         scheduleRecapCompositeRefresh();
         if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
@@ -8512,6 +8696,49 @@ function setupRecapVisualEditor() {
             syncSubtitleLines(pill.getAttribute("data-lines"));
         });
     });
+
+    function syncSubtitleModeUi() {
+        const mode = state.recapSubRenderMode || "timeline";
+        document.querySelectorAll("#recap-sub-render-mode .pill-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-sub-mode") === mode);
+        });
+        const fxRow = document.getElementById("recap-sub-effect-row");
+        if (fxRow) fxRow.classList.toggle("hidden", mode === "soft");
+        document.querySelectorAll("#recap-sub-effect .pill-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-sub-effect") === (state.recapSubEffect || "none"));
+        });
+        const softCb = document.getElementById("toggle-embed-soft-subs");
+        if (softCb) softCb.checked = state.recapEmbedSoftSubs !== false;
+    }
+    document.querySelectorAll("#recap-sub-render-mode .pill-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            state.recapSubRenderMode = btn.getAttribute("data-sub-mode") || "timeline";
+            if (state.recapSubRenderMode === "karaoke") state.recapSubEffect = "karaoke";
+            else if (state.recapSubRenderMode === "ass" && state.recapSubEffect === "none") state.recapSubEffect = "fade";
+            syncSubtitleModeUi();
+            scheduleRecapCompositeRefresh();
+            if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        });
+    });
+    document.querySelectorAll("#recap-sub-effect .pill-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            haptic("selection");
+            state.recapSubEffect = btn.getAttribute("data-sub-effect") || "none";
+            if (state.recapSubEffect === "karaoke" && state.recapSubRenderMode === "timeline") state.recapSubRenderMode = "karaoke";
+            syncSubtitleModeUi();
+            if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        });
+    });
+    const embedSoftEl = document.getElementById("toggle-embed-soft-subs");
+    if (embedSoftEl) {
+        embedSoftEl.addEventListener("change", () => {
+            state.recapEmbedSoftSubs = !!embedSoftEl.checked;
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        });
+    }
 
     // 12b. Subtitle Font Picker (padauk / noto_sans / pyidaungsu / noto_serif)
     const subFontBtns = document.querySelectorAll("#recap-sub-font-picker .pill-btn");
@@ -8564,7 +8791,7 @@ function setupRecapVisualEditor() {
             if (v) v.innerText = txt;
         };
         setVal("recap-preview-ratio-group", `${state.recapRatio || "9:16"} · ${state.recapRatioFill || "blur"}`);
-        setVal("recap-subtitle-group", `${state.recapFontSize || 16}pt · ${styleName} · ${state.recapLines || 1}`);
+        setVal("recap-subtitle-group", `${state.recapFontSize || 16}pt · ${styleName} · ${state.recapLines || 1} · ${state.recapSubRenderMode || "timeline"}`);
         const nBoxes = (state.recapBlurBoxes || []).length;
         setVal("recap-blur-group", `${state.recapBlurAutoDetect !== false ? t("toggle_on") : t("toggle_off")} · ×${nBoxes}`);
         setVal("recap-logo-group", `${state.recapLogo !== false ? t("toggle_on") : t("toggle_off")} · ${state.recapLogoPos || "top-right"}`);
@@ -8582,7 +8809,7 @@ function setupRecapVisualEditor() {
             const titleKey = group.getAttribute("data-acc-title-key") || "";
             const head = document.createElement("button");
             head.type = "button";
-            head.className = "dd-acc-head";
+            head.className = "dd-acc-head vcp-acc-head";
             head.setAttribute("aria-expanded", "false");
             const titleSpan = document.createElement("span");
             titleSpan.className = "dd-acc-title";
@@ -8866,7 +9093,7 @@ function setupRecapVisualEditor() {
             const fd = new FormData();
             fd.append("font_file", f);
             const res = await fetch("/api/recap/upload_sub_font", {
-                method: "POST", headers: getAuthHeaders(), body: fd,
+                method: "POST", headers: getAuthHeaders(false), body: fd,
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || "upload failed");
@@ -8882,6 +9109,8 @@ function setupRecapVisualEditor() {
             if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
         } catch (e) {
             if (status) status.innerText = t("recap_font_upload_error");
+        } finally {
+            ddFontInput.value = "";
         }
     });
     const ddFontClear = document.getElementById("btn-sub-font-clear");
@@ -8930,6 +9159,8 @@ function setupRecapVisualEditor() {
         }
         ddSyncPosBandPills();
         ddSyncCustomFontUi();
+        if (typeof syncSubtitleModeUi === "function") syncSubtitleModeUi();
+        if (typeof updateSubtitleCharsEstimator === "function") updateSubtitleCharsEstimator();
         if (ddBoxes().length) ddLoadBoxToSliders(state.recapBlurBoxIndex || 0);
         ddRenderBlurChips();
         refreshRecapStep2Summary();
@@ -9168,7 +9399,8 @@ function setupRecapVisualEditor() {
                 }
                 // Reflect thumbnail on live preview canvas & state
                 if (data.thumbnail) {
-                    state.recapThumbnailUrl = data.thumbnail;
+                    const safeThumb = sanitizeCssMediaUrl(data.thumbnail);
+                    state.recapThumbnailUrl = safeThumb;
                     const probeImg = new Image();
                     probeImg.onload = () => {
                         if (probeImg.naturalWidth && probeImg.naturalHeight && (!state.recapSourceWidth || !state.recapSourceHeight)) {
@@ -9378,10 +9610,12 @@ function setupRecapVisualEditor() {
         recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja", "hi", "my", "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"],
         recapRenderQuality: ["standard", "high", "max"],
         recapTtsEngine: ["voxcpm", "gemini", "edge"],
+        recapSubRenderMode: ["png", "timeline", "ass", "karaoke", "soft"],
+        recapSubEffect: ["none", "fade", "pop", "karaoke"],
     };
     // Batch DD: the title keys are gone with the feature — legacy
     // snapshots carrying them are simply never applied.
-    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched", "recapSubShadow", "recapSubBold"];
+    const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched", "recapSubShadow", "recapSubBold", "recapEmbedSoftSubs"];
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
@@ -9737,6 +9971,9 @@ function setupRecapVisualEditor() {
             recapBlurAutoDetect: cfg.blur_auto_detect !== false,
             recapZoom: cfg.zoom_factor, recapVoice: cfg.voice_slug,
             recapGeminiVoice: cfg.gemini_voice || "",
+            recapSubRenderMode: cfg.sub_render_mode || "timeline",
+            recapSubEffect: cfg.sub_effect || "none",
+            recapEmbedSoftSubs: cfg.embed_soft_subs !== false,
             recapSplitEnabled: !!cfg.split_video,
         };
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snap)); } catch (e) {}
@@ -10936,10 +11173,24 @@ function dlSetSrtCardState(hasSubtitles) {
 }
 
 async function dlDownloadFile(downloadUrl, filename, btn) {
+    if (!downloadUrl) return;
     const original = btn ? btn.innerHTML : "";
     if (btn) { btn.disabled = true; btn.innerHTML = `<span>${t("dl_preparing")}</span>`; }
     try {
-        const res = await fetch(downloadUrl, { headers: getAuthHeaders() });
+        if (typeof urlCarriesStreamToken === "function" && urlCarriesStreamToken(downloadUrl) && window.Telegram?.WebApp?.openLink) {
+            const absUrl = downloadUrl.startsWith("http") ? downloadUrl : (window.location.origin + downloadUrl);
+            let opened = false;
+            try {
+                window.Telegram.WebApp.openLink(absUrl);
+                opened = true;
+            } catch (e) { /* fall through to blob fetch */ }
+            if (opened) {
+                haptic("success");
+                return;
+            }
+        }
+        const fetcher = typeof fetchWithTimeout === "function" ? fetchWithTimeout : fetch;
+        const res = await fetcher(downloadUrl, { headers: getAuthHeaders() }, 120000);
         if (!res.ok) throw new Error("Download failed");
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
@@ -11265,20 +11516,22 @@ function paintPaymentAccountNames(accounts) {
         list.forEach(acc => {
             const prov = (acc.provider || "").toLowerCase();
             if (prov.includes("kbz") || prov.includes("kpay")) {
+                state.kpayNumber = acc.number || "";
                 const elNum = document.getElementById("kpay-num");
                 const elName = document.getElementById("kpay-name");
-                if (elNum) elNum.innerText = acc.number;
+                if (elNum) elNum.innerText = acc.number || "—";
                 if (elName) {
                     elName.dataset.accountOwner = acc.name || "";
-                    elName.innerText = `${prefix} ${acc.name}`;
+                    elName.innerText = acc.name ? `${prefix} ${acc.name}` : "—";
                 }
             } else if (prov.includes("wave")) {
+                state.waveNumber = acc.number || "";
                 const elNum = document.getElementById("wave-num");
                 const elName = document.getElementById("wave-name");
-                if (elNum) elNum.innerText = acc.number;
+                if (elNum) elNum.innerText = acc.number || "—";
                 if (elName) {
                     elName.dataset.accountOwner = acc.name || "";
-                    elName.innerText = `${prefix} ${acc.name}`;
+                    elName.innerText = acc.name ? `${prefix} ${acc.name}` : "—";
                 }
             }
         });
@@ -11287,9 +11540,9 @@ function paintPaymentAccountNames(accounts) {
     ["kpay-name", "wave-name"].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
-        const owner = el.dataset.accountOwner || "Win Kyaw Oo";
+        const owner = el.dataset.accountOwner || "";
         el.dataset.accountOwner = owner;
-        el.innerText = `${prefix} ${owner}`;
+        el.innerText = owner ? `${prefix} ${owner}` : "—";
     });
 }
 window.paintPaymentAccountNames = paintPaymentAccountNames;
@@ -11350,7 +11603,18 @@ function closePaymentDrawer() {
 
 function copyAccount(accNum) {
     haptic("medium");
-    const numToCopy = accNum || "09790760003";
+    let liveNum = "";
+    try {
+        const evTarget = typeof window !== "undefined" && window.event && (window.event.currentTarget || window.event.target);
+        const row = evTarget && typeof evTarget.closest === "function" ? evTarget.closest(".pay-account") : null;
+        const numEl = row && typeof row.querySelector === "function" ? row.querySelector(".acc-num") : null;
+        if (numEl && numEl.textContent) liveNum = numEl.textContent.trim();
+    } catch (e) {}
+    const numToCopy = (liveNum && liveNum !== "—") ? liveNum : (accNum ? String(accNum).trim() : "");
+    if (!numToCopy || numToCopy === "—") {
+        showStudioToast(t("copy_unavailable_placeholder"), "warning");
+        return;
+    }
     // No native prompt dialog anywhere in the Mini App: when the Clipboard
     // API is unavailable, show the number in the premium modal with a
     // copy button instead.
@@ -11521,6 +11785,11 @@ function paintTtsTodaySurfaces(data) {
     if (typeof paintHomeTilePeriods === "function") paintHomeTilePeriods(data, window._lastTtsQuota || null);
     const voiceVal = document.getElementById("home-free-voice-value");
     if (voiceVal) voiceVal.innerText = data.is_admin ? "∞" : tf("home_free_value_min", { min: data.balance_minutes });
+    const vipTtsVal = document.getElementById("vip-wallet-tts-val");
+    if (vipTtsVal) {
+        if (data.is_admin || data.tts_daily_limit_seconds === 0) vipTtsVal.innerText = t("unlimited");
+        else if (typeof rem === "number") vipTtsVal.innerText = tf("home_free_value_min", { min: (rem / 60).toFixed(1) });
+    }
     const recapVal = document.getElementById("home-free-recap-value");
     if (recapVal) recapVal.innerText = data.is_admin ? "∞" : tf("home_free_value_credits", { count: data.recap_credits || 0 });
     paintHomeStatusStrip(data);
@@ -12012,11 +12281,21 @@ function initTtsTab() {
         });
     });
     const input = document.getElementById("tts-text-input");
-    if (input) input.addEventListener("input", () => {
-        // Any real edit settles the BZ prefill for this session.
-        ttsSampleSettled = true;
-        updateTtsCharCount();
-    });
+    if (input) {
+        try {
+            const savedDraft = localStorage.getItem("vcp_tts_draft");
+            if (savedDraft && !input.value) {
+                input.value = savedDraft;
+                ttsSampleSettled = true;
+            }
+        } catch (e) {}
+        input.addEventListener("input", () => {
+            // Any real edit settles the BZ prefill for this session.
+            ttsSampleSettled = true;
+            try { localStorage.setItem("vcp_tts_draft", input.value); } catch (e) {}
+            updateTtsCharCount();
+        });
+    }
     // Batch CG: key card + Item 3b prompt wiring.
     const keySaveBtn = document.getElementById("btn-tts-key-save");
     if (keySaveBtn) keySaveBtn.addEventListener("click", saveTtsGeminiKey);
@@ -12043,9 +12322,11 @@ if (document.readyState === "loading") {
 }
 
 async function generateTTS() {
+    if (!studioSubmitBegin("tts")) return;
     const input = document.getElementById("tts-text-input");
     const text = ((input && input.value) || "").trim();
     if (!text) {
+        studioSubmitFailure("tts");
         showStudioToast(t("tts_empty_error"), 'warning');
         return;
     }
@@ -12054,6 +12335,7 @@ async function generateTTS() {
     // spares the round trip.
     const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
     if (text.length > maxChars) {
+        studioSubmitFailure("tts");
         showStudioToast(tf("text_too_long", {
             len: text.length,
             tier: state.user?.is_vip ? "VIP" : t("tier_free_label"),
@@ -12067,6 +12349,7 @@ async function generateTTS() {
     // offers the own-key way to keep Gemini, or an explicit Edge
     // continue (which re-enters here with Edge selected).
     if (ttsState.engine === "gemini" && await _cgTasteBlocked()) {
+        studioSubmitFailure("tts");
         const modal = document.getElementById("tts-key-prompt-modal");
         if (modal) modal.classList.remove("hidden");
         return;
@@ -12078,9 +12361,13 @@ async function generateTTS() {
     const btn = document.getElementById("btn-generate-tts");
     const progressBox = document.getElementById("tts-progress-box");
     const resultBox = document.getElementById("tts-result-box");
+    const failedBox = document.getElementById("tts-failed-box");
+    const cancelBtn = document.getElementById("btn-cancel-tts-job");
     haptic("heavy");
     if (btn) btn.disabled = true;
     if (resultBox) resultBox.classList.add("hidden");
+    if (failedBox) failedBox.classList.add("hidden");
+    if (cancelBtn) cancelBtn.classList.remove("hidden");
     if (progressBox) progressBox.classList.remove("hidden");
     try {
         const res = await fetchWithTimeout("/api/tts/generate", {
@@ -12090,10 +12377,17 @@ async function generateTTS() {
         }, 30000);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "TTS request failed");
+        studioSubmitSuccess("tts");
         ttsState.jobId = data.job_id;
+        try { localStorage.setItem("vcp_active_tts_job_id", data.job_id); } catch (e) {}
+        if (typeof LiveJobs !== "undefined" && typeof LiveJobs.track === "function") {
+            LiveJobs.track({ id: data.job_id, kind: "tts", status: "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 1, title: text.slice(0, 70) });
+        }
         pollTtsJob(data.job_id);
     } catch (err) {
+        studioSubmitFailure("tts");
         showErrorToast(err, 'voice');
+        if (cancelBtn) cancelBtn.classList.add("hidden");
         if (progressBox) progressBox.classList.add("hidden");
         if (btn) btn.disabled = false;
     }
@@ -12101,7 +12395,7 @@ async function generateTTS() {
 window.generateTTS = generateTTS;
 
 function pollTtsJob(jobId) {
-    if (ttsState.pollTimer) clearInterval(ttsState.pollTimer);
+    if (ttsState.pollTimer) { clearInterval(ttsState.pollTimer); ttsState.pollTimer = null; }
     let tick = 0;
     const startedAt = Date.now();
     ttsState.pollTimer = setInterval(async () => {
@@ -12114,10 +12408,14 @@ function pollTtsJob(jobId) {
             const resultBox = document.getElementById("tts-result-box");
             const fill = document.getElementById("tts-progress-fill");
             const btn = document.getElementById("btn-generate-tts");
+            const cancelBtn = document.getElementById("btn-cancel-tts-job");
             if (data.status === "QUEUED" || data.status === "RUNNING") {
                 if (fill) paintProgressBarFill(fill, { status: data.status, progress_percent: 0 });
             } else if (data.status === "SUCCESS") {
+                try { localStorage.removeItem("vcp_active_tts_job_id"); } catch (e) {}
                 clearInterval(ttsState.pollTimer);
+                ttsState.pollTimer = null;
+                if (cancelBtn) cancelBtn.classList.add("hidden");
                 haptic("success");
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btn) btn.disabled = false;
@@ -12142,15 +12440,30 @@ function pollTtsJob(jobId) {
                 loadUserProfile();
                 loadUserHistory();
             } else if (data.status === "FAILED" || data.status === "CANCELLED") {
+                try { localStorage.removeItem("vcp_active_tts_job_id"); } catch (e) {}
                 clearInterval(ttsState.pollTimer);
-                haptic("error");
+                ttsState.pollTimer = null;
+                if (cancelBtn) cancelBtn.classList.add("hidden");
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btn) btn.disabled = false;
-                showStudioToast(t("tts_failed"), 'error');
+                if (data.status !== "FAILED") {
+                    haptic("light");
+                    showStudioToast(t("voice_cancelled_toast"), 'info', 5000);
+                } else {
+                    haptic("error");
+                    const errText = data.error_message ? mapErrorToToast(data.error_message, 'voice') : t("tts_failed");
+                    showStudioToast(t("tts_failed"), 'error');
+                    const tFailMsg = document.getElementById("tts-failed-msg");
+                    if (tFailMsg) tFailMsg.textContent = errText;
+                    const tFailBox = document.getElementById("tts-failed-box");
+                    if (tFailBox) tFailBox.classList.remove("hidden");
+                }
                 refreshTtsQuota();
             }
             if (tick > 120 && !["SUCCESS", "FAILED", "CANCELLED"].includes(data.status)) {
                 clearInterval(ttsState.pollTimer);
+                ttsState.pollTimer = null;
+                if (cancelBtn) cancelBtn.classList.add("hidden");
                 if (progressBox) progressBox.classList.add("hidden");
                 if (btn) btn.disabled = false;
                 showStudioToast(t("voice_wait_timeout"), 'info', 6000);
@@ -12158,6 +12471,9 @@ function pollTtsJob(jobId) {
         } catch (e) {
             if (tick > 120) {
                 clearInterval(ttsState.pollTimer);
+                ttsState.pollTimer = null;
+                const cancelBtn = document.getElementById("btn-cancel-tts-job");
+                if (cancelBtn) cancelBtn.classList.add("hidden");
                 const progressBox = document.getElementById("tts-progress-box");
                 if (progressBox) progressBox.classList.add("hidden");
                 const btn = document.getElementById("btn-generate-tts");
@@ -12166,6 +12482,12 @@ function pollTtsJob(jobId) {
         }
     }, 2000);
 }
+
+window.cancelTtsJob = function() {
+    if (ttsState.jobId && typeof window.liveJobCancel === "function") {
+        window.liveJobCancel(ttsState.jobId, "tts");
+    }
+};
 
 async function sendTtsToTelegram() {
     const jobId = ttsState.jobId;
@@ -12305,14 +12627,9 @@ async function submitPaymentSlip() {
         formData.append("amount_mmk", activeAmount);
         formData.append("slip_file", file);
 
-        const headers = {};
-        if (state.tg && state.tg.initData) {
-            headers["X-Telegram-Init-Data"] = state.tg.initData;
-        }
-
         const res = await fetchWithTimeout("/api/vip/submit-slip", {
             method: "POST",
-            headers: headers,
+            headers: getAuthHeaders(false),
             body: formData,
         }, 60000);
 
@@ -14008,7 +14325,7 @@ function renderAdminFleetUI(data) {
         else if (vps.status_code === "STANDBY") badge.classList.add("text-cyan");
         else badge.classList.add("text-danger");
     }
-    if (hostLbl) hostLbl.textContent = `(${vps.host || "212.28.177.252"})`;
+    if (hostLbl) hostLbl.textContent = `(${vps.host || t("adm_fleet_vps_host_default")})`;
     if (engLbl) engLbl.textContent = vps.engine || "VOXCPM";
     if (seenLbl) seenLbl.textContent = vps.last_seen_ago || "Never";
 
@@ -14094,6 +14411,13 @@ async function adminCancelJob(jobId) {
 window.adminCancelJob = adminCancelJob;
 
 // ── History ──────────────────────────────────────────────────────────
+
+function sanitizeCssMediaUrl(raw) {
+    const s = String(raw || "").trim();
+    if (!s || /["'()\\\r\n]/.test(s)) return "";
+    if (/^(https?:\/\/|\/|blob:|data:image\/)/i.test(s)) return s;
+    return "";
+}
 
 function escapeHtml(str) {
     if (!str) return "";
@@ -14837,9 +15161,9 @@ async function loadAdminSettings() {
         setSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", s.gemini_fallback_2 || "gemini-3.5-flash-lite");
         setSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", s.gemini_fallback_3 || "gemini-flash-lite-latest");
         setSelectOrCustom("adm-tts-primary", "adm-tts-primary-custom", s.gemini_tts_primary_model || "gemini-3.8-flash-tts");
-        setSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", s.gemini_tts_fallback_1 || "gemini-3.1-flash-tts-preview");
+        setSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", s.gemini_tts_fallback_1 || "");
         setSelectOrCustom("adm-tts-lite", "adm-tts-lite-custom", s.gemini_tts_lite_model || "gemini-3.8-flash-lite-tts");
-        setSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", s.gemini_tts_fallback_2 || "gemini-2.5-flash-preview-tts");
+        setSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", s.gemini_tts_fallback_2 || "");
         // Batch BS: the Groq Whisper (STT) model field — the GET
         // pre-fills it with the current effective model.
         const elGroqWhisper = document.getElementById("adm-groq-whisper-model");
@@ -15166,9 +15490,9 @@ async function saveAdminSettings() {
 async function saveGeminiTtsModelSettings() {
     haptic("medium");
     const primary = getSelectOrCustom("adm-tts-primary", "adm-tts-primary-custom", "gemini-3.8-flash-tts");
-    const fb1 = getSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", "gemini-3.1-flash-tts-preview");
+    const fb1 = getSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", "");
     const lite = getSelectOrCustom("adm-tts-lite", "adm-tts-lite-custom", "gemini-3.8-flash-lite-tts");
-    const fb2 = getSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", "gemini-2.5-flash-preview-tts");
+    const fb2 = getSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", "");
 
     const payload = {
         gemini_tts_primary_model: primary,
@@ -15320,7 +15644,7 @@ async function loadAdminGroupAiConsole() {
                 const timeStr = formatIsoTime(data.last_saved_at);
                 metaEl.textContent = tf("adm_group_ai_sheet_last_saved", {
                     time: timeStr,
-                    user: escapeHtml(data.last_saved_by || "Admin"),
+                    user: data.last_saved_by || "Admin",
                 });
             } else {
                 metaEl.textContent = t("adm_group_ai_sheet_default");
@@ -15913,6 +16237,7 @@ async function loadUserHistory() {
         // depends on server grouping.
         history.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
         hubHistoryCache = history;
+        window.__historyLoadedOnce = true;
         hubHistoryError = false;
         renderHistoryHub();
     } catch (e) {
@@ -16772,6 +17097,52 @@ function setCustomCloneStep(stepNum, file) {
 }
 window.setCustomCloneStep = setCustomCloneStep;
 
+function syncSavedCustomVoiceUi() {
+    const id = state.savedCustomVoiceId || "";
+    const name = state.savedCustomVoiceName || "Custom Voice";
+    const recapAllowed = typeof canUseRecapCloneEngine === "function"
+        ? canUseRecapCloneEngine()
+        : Boolean(state.user && (state.user.is_vip || state.user.is_admin));
+    [["saved-custom-voice-bar", "saved-custom-voice-label", true], ["recap-saved-voice-bar", "recap-saved-voice-label", recapAllowed]].forEach(([bId, lId, allow]) => {
+        const bar = document.getElementById(bId);
+        const lbl = document.getElementById(lId);
+        if (bar) bar.classList.toggle("hidden", !id || !allow);
+        if (lbl && id) lbl.innerText = tf("saved_custom_voice_use", { name });
+    });
+}
+window.syncSavedCustomVoiceUi = syncSavedCustomVoiceUi;
+
+function applySavedCustomVoiceToVoice() {
+    if (!state.savedCustomVoiceId) return;
+    if (typeof switchVoxCPMSubMode === "function") switchVoxCPMSubMode("custom");
+    state.selectedReferenceFile = null;
+    state.savedCustomVoiceActiveId = state.savedCustomVoiceId;
+    const lbl = document.getElementById("ref-audio-label");
+    if (lbl) lbl.innerText = `💾 ${state.savedCustomVoiceName || "Saved Custom Voice"}`;
+    const checkEl = document.getElementById("custom-clone-check-status");
+    if (checkEl) {
+        checkEl.innerText = `✅ ${state.savedCustomVoiceName || "Saved Custom Voice"}`;
+        checkEl.classList.remove("hidden");
+    }
+    showStudioToast(`✅ ${state.savedCustomVoiceName || "Saved Custom Voice"}`, "success");
+}
+window.applySavedCustomVoiceToVoice = applySavedCustomVoiceToVoice;
+
+function applySavedCustomVoiceToRecap() {
+    if (!state.savedCustomVoiceId) return;
+    state.recapOwnVoiceRefId = state.savedCustomVoiceId;
+    state.recapOwnVoiceFile = null;
+    state.recapOwnVoiceFileName = state.savedCustomVoiceName || "Saved Custom Voice";
+    state.recapOwnVoiceStatus = "ready";
+    state.recapOwnVoiceSelected = true;
+    const label = document.getElementById("recap-own-voice-file-label");
+    if (label) label.innerText = `💾 ${state.recapOwnVoiceFileName}`;
+    syncRecapOwnVoiceCard();
+    if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
+    showStudioToast(t("recap_own_voice_saved_toast"), "success");
+}
+window.applySavedCustomVoiceToRecap = applySavedCustomVoiceToRecap;
+
 async function saveCurrentRefAsCustomVoice() {
     haptic("light");
     const file = state.selectedReferenceFile;
@@ -16789,13 +17160,9 @@ async function saveCurrentRefAsCustomVoice() {
     try {
         const fd = new FormData();
         fd.append("reference_audio", file);
-        const headers = {};
-        if (state.tg && state.tg.initData) {
-            headers["X-Telegram-Init-Data"] = state.tg.initData;
-        }
         const res = await fetchWithTimeout("/api/recap/upload_voice_ref", {
             method: "POST",
-            headers,
+            headers: getAuthHeaders(false),
             body: fd,
         }, 120000);
         const data = await res.json().catch(() => ({}));
@@ -16805,6 +17172,10 @@ async function saveCurrentRefAsCustomVoice() {
         state.recapOwnVoiceFileName = data.filename || file.name || "";
         state.recapOwnVoiceStatus = "ready";
         state.recapOwnVoiceSelected = true;
+        state.savedCustomVoiceId = data.ref_id;
+        state.savedCustomVoiceName = data.filename || file.name || "Custom Voice";
+        syncSavedCustomVoiceUi();
+        if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
         if (typeof syncRecapOwnVoiceCard === "function") syncRecapOwnVoiceCard();
         setCustomCloneStep(5, file);
         showStudioToast(t("recap_own_voice_saved_toast"), "success");
@@ -16978,6 +17349,7 @@ const PORTABLE_RECAP_PRESET_KEYS = [
     "recapCropTop", "recapCropBottom", "recapCropLeft", "recapCropRight", "recapSyncCrop",
     "recapMirror", "recapZoom", "recapProtection",
     "recapBurnSubs", "recapSubStyle", "recapSubFont", "recapFontSize", "recapLines",
+    "recapSubRenderMode", "recapSubEffect", "recapEmbedSoftSubs",
     "recapSubMargin", "recapSubX", "recapSubW",
     "recapTextColor", "recapOutlineColor", "recapBgColor",
     "recapOutlineWidth", "recapBgOpacity", "recapSubShadow", "recapSubBold", "recapSubPosBand",
@@ -17459,6 +17831,9 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (typeof window.refreshRecapStep2Summary === "function") {
             window.refreshRecapStep2Summary();
+        }
+        if (typeof window.syncSavedCustomVoiceUi === "function") {
+            window.syncSavedCustomVoiceUi();
         }
         if (typeof renderCuratedVoices === "function" && Array.isArray(state?.curatedVoices) && state.curatedVoices.length) {
             renderCuratedVoices();

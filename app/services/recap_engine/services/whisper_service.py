@@ -457,6 +457,12 @@ class WhisperTimestampService:
         reasons: list[str] = []
         min_words = max(4, int(os.getenv("WHISPER_FALLBACK_MIN_WORDS", "10")))
         min_spoken_seconds = max(1.0, float(os.getenv("WHISPER_FALLBACK_MIN_SPEECH_SECONDS", "5.0")))
+        # Scale fallback thresholds proportionally for ultra-short clips (< 6s)
+        # so legitimate 2–5s voiceovers aren't falsely rejected as too short.
+        if 0.0 < media_duration < 6.0:
+            scale = media_duration / 6.0
+            min_words = max(2, int(round(min_words * scale)))
+            min_spoken_seconds = max(0.8, round(min_spoken_seconds * scale, 2))
         min_unique_ratio = min(1.0, max(0.0, float(os.getenv("WHISPER_FALLBACK_MIN_UNIQUE_RATIO", "0.42"))))
         min_language_probability = min(1.0, max(0.0, float(os.getenv("WHISPER_FALLBACK_MIN_LANGUAGE_PROB", "0.35"))))
         min_coverage = min(1.0, max(0.0, float(os.getenv("WHISPER_FALLBACK_MIN_COVERAGE", "0.08"))))
@@ -544,111 +550,117 @@ class WhisperTimestampService:
             groq_model = get_groq_whisper_model()
         except Exception:
             groq_model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
-        for idx, key in enumerate(api_keys, 1):
-            # Audit fix G: log only the non-reversible key digest —
-            # first-7/last-4 fragments of a real key must never reach logs.
-            key_label = f"key #{_key_rotation.key_id(key)}" if _key_rotation is not None else "key"
-            try:
-                self._log_msg(f"⚡ [1/4] Groq Cloud Whisper Turbo active ({key_label}, model={groq_model})...")
-                t0 = time.time()
-                with open(upload_path, "rb") as f:
-                    files = {"file": (upload_path.name, f, "audio/mpeg" if upload_path.suffix == ".mp3" else "audio/wav")}
-                    data: dict[str, Any] = {
-                        "model": groq_model,
-                        "response_format": "verbose_json",
-                        "temperature": "0.0",
-                    }
-                    if self.language:
-                        data["language"] = self.language
+        try:
+            for idx, key in enumerate(api_keys, 1):
+                # Audit fix G: log only the non-reversible key digest —
+                # first-7/last-4 fragments of a real key must never reach logs.
+                key_label = f"key #{_key_rotation.key_id(key)}" if _key_rotation is not None else "key"
+                try:
+                    self._log_msg(f"⚡ [1/4] Groq Cloud Whisper Turbo active ({key_label}, model={groq_model})...")
+                    t0 = time.time()
+                    with open(upload_path, "rb") as f:
+                        files = {"file": (upload_path.name, f, "audio/mpeg" if upload_path.suffix == ".mp3" else "audio/wav")}
+                        data: dict[str, Any] = {
+                            "model": groq_model,
+                            "response_format": "verbose_json",
+                            "temperature": "0.0",
+                            "timestamp_granularities[]": ["word", "segment"],
+                        }
+                        if self.language:
+                            data["language"] = self.language
 
-                    resp = requests.post(
-                        "https://api.groq.com/openai/v1/audio/transcriptions",
-                        headers={"Authorization": f"Bearer {key}"},
-                        files=files,
-                        data=data,
-                        timeout=90,
-                    )
+                        resp = requests.post(
+                            "https://api.groq.com/openai/v1/audio/transcriptions",
+                            headers={"Authorization": f"Bearer {key}"},
+                            files=files,
+                            data=data,
+                            timeout=90,
+                        )
 
-                if resp.status_code == 200:
-                    if groq_health is not None:
-                        groq_health.mark_success(key)
-                    raw_json = resp.json()
-                    raw_segments = raw_json.get("segments") or []
-                    if not raw_segments and raw_json.get("text"):
-                        dur = float(raw_json.get("duration") or media_duration or 1.0)
-                        raw_segments = [{"id": 0, "start": 0.0, "end": dur, "text": raw_json.get("text")}]
+                    if resp.status_code == 200:
+                        if groq_health is not None:
+                            groq_health.mark_success(key)
+                        raw_json = resp.json()
+                        raw_segments = raw_json.get("segments") or []
+                        if not raw_segments and raw_json.get("text"):
+                            dur = float(raw_json.get("duration") or media_duration or 1.0)
+                            raw_segments = [{"id": 0, "start": 0.0, "end": dur, "text": raw_json.get("text")}]
 
-                    top_words = raw_json.get("words") or []
-                    segments = []
-                    words_total = 0
-                    for s_idx, seg in enumerate(raw_segments):
-                        text = self._clean_text(str(seg.get("text") or ""))
-                        start = float(seg.get("start", 0.0) or 0.0)
-                        end = float(seg.get("end", 0.0) or 0.0)
-                        if not text or end <= start:
-                            continue
-                        
-                        seg_words = seg.get("words") or []
-                        if not seg_words and top_words:
-                            seg_words = [
-                                w for w in top_words
-                                if start - 0.05 <= float(w.get("start", 0.0) or 0.0) <= end + 0.05
-                            ]
-
-                        words = []
-                        for word in seg_words:
-                            w_text = self._clean_text(word.get("word") or word.get("text") or "")
-                            w_start = float(word.get("start", start) or start)
-                            w_end = float(word.get("end", w_start) or w_start)
-                            if not w_text or w_end <= w_start:
+                        top_words = raw_json.get("words") or []
+                        segments = []
+                        words_total = 0
+                        for s_idx, seg in enumerate(raw_segments):
+                            text = self._clean_text(str(seg.get("text") or ""))
+                            start = float(seg.get("start", 0.0) or 0.0)
+                            end = float(seg.get("end", 0.0) or 0.0)
+                            if not text or end <= start:
                                 continue
-                            words.append({
-                                "start": round(w_start, 3),
-                                "end": round(w_end, 3),
-                                "text": w_text,
-                            })
-                        words_total += len(words)
-                        segments.append({
-                            "id": s_idx,
-                            "start": round(start, 3),
-                            "end": round(end, 3),
-                            "duration": round(max(0.0, end - start), 3),
-                            "text": text,
-                            "words": words,
-                            "avg_logprob": round(float(seg.get("avg_logprob") or 0.0), 3),
-                            "no_speech_prob": round(float(seg.get("no_speech_prob") or 0.0), 3),
-                            "compression_ratio": round(float(seg.get("compression_ratio") or 0.0), 3),
-                        })
 
-                    elapsed = time.time() - t0
-                    self._log_msg(f"⚡ Groq Cloud Whisper succeeded in {elapsed:.2f}s ({len(segments)} segments, {words_total} words)")
-                    return {
-                        "backend": "groq-whisper",
-                        "model": groq_model,
-                        "language": raw_json.get("language") or self.language or "en",
-                        "language_probability": 1.0,
-                        "segments": segments,
-                        "word_count": words_total or len((raw_json.get("text") or "").split()),
-                        "avg_logprob": round(float(sum(s.get("avg_logprob", 0.0) for s in segments) / max(1, len(segments))), 3),
-                        "avg_no_speech_prob": round(float(sum(s.get("no_speech_prob", 0.0) for s in segments) / max(1, len(segments))), 3),
-                        "compression_ratio": round(float(sum(s.get("compression_ratio", 0.0) for s in segments) / max(1, len(segments))), 3),
-                    }
-                else:
-                    # Audit fix G: auth failures (401/403 — revoked or
-                    # invalid key) cool the key down too, mirroring the
-                    # HF triggers from audit fix E; otherwise a dead key
-                    # stays in rotation and burns an attempt on every call.
-                    if resp.status_code in (429, 401, 403) and groq_health is not None:
-                        groq_health.mark_failure(key)
-                    self._log_msg(f"⚠️ Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
-            except Exception as exc:
-                self._log_msg(f"⚠️ Groq Whisper key {idx} failed: {exc}")
-            finally:
-                if temp_audio and temp_audio.is_file():
-                    try:
-                        temp_audio.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                            seg_words = seg.get("words") or []
+                            no_speech_val = float(seg.get("no_speech_prob") or 0.0)
+                            avg_lp_val = float(seg.get("avg_logprob") or 0.0)
+                            if no_speech_val >= 0.90 and avg_lp_val <= -1.2 and not seg_words:
+                                continue
+                            if not seg_words and top_words:
+                                seg_words = [
+                                    w for w in top_words
+                                    if start - 0.05 <= float(w.get("start", 0.0) or 0.0) <= end + 0.05
+                                ]
+
+                            words = []
+                            for word in seg_words:
+                                w_text = self._clean_text(word.get("word") or word.get("text") or "")
+                                w_start = float(word.get("start", start) or start)
+                                w_end = float(word.get("end", w_start) or w_start)
+                                if not w_text or w_end <= w_start:
+                                    continue
+                                words.append({
+                                    "start": round(w_start, 3),
+                                    "end": round(w_end, 3),
+                                    "text": w_text,
+                                })
+                            words_total += len(words)
+                            segments.append({
+                                "id": s_idx,
+                                "start": round(start, 3),
+                                "end": round(end, 3),
+                                "duration": round(max(0.0, end - start), 3),
+                                "text": text,
+                                "words": words,
+                                "avg_logprob": round(float(seg.get("avg_logprob") or 0.0), 3),
+                                "no_speech_prob": round(float(seg.get("no_speech_prob") or 0.0), 3),
+                                "compression_ratio": round(float(seg.get("compression_ratio") or 0.0), 3),
+                            })
+
+                        elapsed = time.time() - t0
+                        self._log_msg(f"⚡ Groq Cloud Whisper succeeded in {elapsed:.2f}s ({len(segments)} segments, {words_total} words)")
+                        return {
+                            "backend": "groq-whisper",
+                            "model": groq_model,
+                            "language": raw_json.get("language") or self.language or "en",
+                            "language_probability": 1.0,
+                            "segments": segments,
+                            "word_count": words_total or len((raw_json.get("text") or "").split()),
+                            "avg_logprob": round(float(sum(s.get("avg_logprob", 0.0) for s in segments) / max(1, len(segments))), 3),
+                            "avg_no_speech_prob": round(float(sum(s.get("no_speech_prob", 0.0) for s in segments) / max(1, len(segments))), 3),
+                            "compression_ratio": round(float(sum(s.get("compression_ratio", 0.0) for s in segments) / max(1, len(segments))), 3),
+                        }
+                    else:
+                        # Audit fix G: auth failures (401/403 — revoked or
+                        # invalid key) cool the key down too, mirroring the
+                        # HF triggers from audit fix E; otherwise a dead key
+                        # stays in rotation and burns an attempt on every call.
+                        if resp.status_code in (429, 401, 403) and groq_health is not None:
+                            groq_health.mark_failure(key)
+                        self._log_msg(f"⚠️ Groq Whisper key {idx} HTTP {resp.status_code}: {resp.text[:200]}")
+                except Exception as exc:
+                    self._log_msg(f"⚠️ Groq Whisper key {idx} failed: {exc}")
+        finally:
+            if temp_audio and temp_audio.is_file():
+                try:
+                    temp_audio.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
         self._log_msg("↩️ All Groq keys exhausted or unavailable — falling back to local Neural Whisper...")
         return None

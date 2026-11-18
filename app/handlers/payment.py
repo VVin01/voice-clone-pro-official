@@ -337,7 +337,7 @@ async def _finalize_receipt_submission(message: Message, payment, file_id, lang:
             logger.warning("Failed to record admin review copies for payment %s: %s", payment.id, e)
 
 
-@payment_router.message(PaymentFSM.waiting_for_receipt, F.photo | F.document)
+@payment_router.message(PaymentFSM.waiting_for_receipt, F.chat.type == "private", F.photo | F.document)
 async def handle_receipt_received(message: Message, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "my")
@@ -375,7 +375,7 @@ async def handle_receipt_received(message: Message, state: FSMContext):
     await _finalize_receipt_submission(message, payment, file_id, lang)
 
 
-@payment_router.message(StateFilter(None), F.photo | F.document)
+@payment_router.message(StateFilter(None), F.chat.type == "private", F.photo | F.document)
 async def handle_receipt_after_restart(message: Message):
     """Slip photo/document with NO live FSM state (hunt B2).
 
@@ -460,7 +460,7 @@ async def handle_receipt_after_restart(message: Message):
     await _finalize_receipt_submission(message, payment, file_id, lang)
 
 
-@payment_router.message(PaymentFSM.waiting_for_receipt)
+@payment_router.message(PaymentFSM.waiting_for_receipt, F.chat.type == "private")
 async def handle_receipt_wrong_content(message: Message, state: FSMContext):
     """Anything that is not a photo/document while waiting for a slip.
 

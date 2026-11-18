@@ -114,6 +114,11 @@ async def reset_stale_running_recap_jobs(
             user_id = int(job.user_id)
             try:
                 state = _load_persisted_recap_state(job)
+                if state is not None and state.get("script_ready"):
+                    # Two-phase parked SCRIPT_READY jobs await user approval
+                    # (up to 24h TTL handled by expire_abandoned_script_ready_jobs);
+                    # never count deploys against them as stranded resets.
+                    continue
                 if state is None:
                     # Legacy row (no parseable persisted blob): the
                     # historical behaviour — re-queue, no counting.

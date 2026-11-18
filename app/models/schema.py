@@ -10,9 +10,11 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
+    TypeDecorator,
     UniqueConstraint,
     func,
 )
@@ -35,6 +37,27 @@ from app.models.enums import (
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class EncryptedText(TypeDecorator):
+    """Fernet-encrypted Text column with transparent legacy plaintext fallback."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        from app.services.gemini_key_service import encrypt_byok_secret
+
+        return encrypt_byok_secret(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        from app.services.gemini_key_service import decrypt_byok_secret
+
+        return decrypt_byok_secret(value)
 
 
 PK_INT = BigInteger().with_variant(Integer, "sqlite")
@@ -87,7 +110,7 @@ class User(Base):
     # gemini_key_state: "" (no key) / "ok" (validated, working) /
     # "invalid" (Google rejected it as an auth-class failure; routing
     # skips it until the user saves a fresh one).
-    gemini_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gemini_api_key: Mapped[str | None] = mapped_column(EncryptedText(), nullable=True)
     gemini_key_state: Mapped[str] = mapped_column(
         String(10), nullable=False, default=""
     )
@@ -237,6 +260,7 @@ class MinuteLedgerEvent(Base):
             name="chk_ledger_direction",
         ),
         CheckConstraint("seconds > 0", name="chk_ledger_seconds_positive"),
+        Index("ix_mle_user_ref_dir", "user_id", "reference_id", "direction"),
     )
 
 
@@ -278,6 +302,7 @@ class RecapCreditLedgerEvent(Base):
             name="chk_recap_ledger_direction",
         ),
         CheckConstraint("credits > 0", name="chk_recap_ledger_credits_positive"),
+        Index("ix_rcle_ref_dir", "reference_id", "direction"),
     )
 
 
@@ -416,6 +441,7 @@ class PaymentRequest(Base):
             "status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED')",
             name="chk_payment_status",
         ),
+        Index("ix_pr_status_created_at", "status", "created_at"),
     )
 
 
@@ -634,6 +660,9 @@ class Job(Base):
             "status IN ('PENDING', 'QUEUED', 'RUNNING', 'WAITING_CHOICE', 'SUCCESS', 'FAILED', 'CANCELLED')",
             name="chk_job_status",
         ),
+        Index("ix_jobs_status_created_at", "status", "created_at"),
+        Index("ix_jobs_status_started_at", "status", "started_at"),
+        Index("ix_jobs_user_created_at", "user_id", "created_at"),
     )
 
 
@@ -649,6 +678,10 @@ class AuditLog(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_audit_logs_created_at", "created_at"),
     )
 
 
@@ -711,6 +744,7 @@ class BroadcastDelivery(Base):
 
     __table_args__ = (
         UniqueConstraint("campaign_id", "user_id", name="uq_broadcast_delivery_campaign_user"),
+        Index("ix_bd_campaign_status", "campaign_id", "status"),
     )
 
 
@@ -795,6 +829,7 @@ class GroupAiEscalation(Base):
             "status IN ('PENDING', 'EDITING', 'APPROVED', 'DISMISSED', 'EXPIRED')",
             name="chk_group_ai_escalation_status",
         ),
+        Index("ix_gae_status_created_at", "status", "created_at"),
     )
 
 
@@ -887,6 +922,7 @@ class PrivateAiMessage(Base):
             "kind IN ('user', 'fast_path', 'ai_reply', 'escalation')",
             name="chk_private_ai_message_kind",
         ),
+        Index("ix_pam_created_at", "created_at"),
     )
 
 

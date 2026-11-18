@@ -70,16 +70,14 @@ def _user(uid: int) -> User:
 
 
 def test_tts_chain_seeded_defaults_match_production_tuple_verbatim():
-    expected = (
+    expected_chain = (
         "gemini-3.8-flash-tts",
-        "gemini-3.1-flash-tts-preview",
         "gemini-3.8-flash-lite-tts",
-        "gemini-2.5-flash-preview-tts",
     )
-    assert Settings.model_fields["gemini_tts_primary_model"].default == expected[0]
-    assert Settings.model_fields["gemini_tts_fallback_1"].default == expected[1]
-    assert Settings.model_fields["gemini_tts_lite_model"].default == expected[2]
-    assert Settings.model_fields["gemini_tts_fallback_2"].default == expected[3]
+    assert Settings.model_fields["gemini_tts_primary_model"].default == expected_chain[0]
+    assert Settings.model_fields["gemini_tts_fallback_1"].default == ""
+    assert Settings.model_fields["gemini_tts_lite_model"].default == expected_chain[1]
+    assert Settings.model_fields["gemini_tts_fallback_2"].default == ""
     for key in (
         "gemini_tts_primary_model",
         "gemini_tts_fallback_1",
@@ -87,8 +85,8 @@ def test_tts_chain_seeded_defaults_match_production_tuple_verbatim():
         "gemini_tts_fallback_2",
     ):
         assert SETTING_TYPES[key] is str
-    assert gte.TTS_MODELS == expected
-    assert gte._effective_tts_models() == expected
+    assert gte.TTS_MODELS == expected_chain
+    assert gte._effective_tts_models() == expected_chain
 
 
 def test_tts_chain_runtime_override_and_rotation(monkeypatch):
@@ -133,10 +131,10 @@ async def test_admin_settings_tts_chain_and_voxcpm_timeout_round_trip(db_session
         before = await api_mod.get_admin_settings(admin, db_session)
         assert (
             before["gemini_tts_primary_model"],
-            before["gemini_tts_fallback_1"],
             before["gemini_tts_lite_model"],
-            before["gemini_tts_fallback_2"],
         ) == gte.TTS_MODELS
+        assert before["gemini_tts_fallback_1"] == ""
+        assert before["gemini_tts_fallback_2"] == ""
         assert before["voxcpm_timeout"] == 60
 
         payload = api_mod.AdminSettingsPayload(
@@ -337,4 +335,4 @@ def test_admin_design_pass_i18n_parity_and_user_detail_completeness():
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
 
-    assert INDEX_HTML.count("20261117_r161") == 4
+    assert INDEX_HTML.count("20261118_r164") == 4

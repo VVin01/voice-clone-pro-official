@@ -1712,10 +1712,11 @@ class MediaDownloader:
                 if not os.path.exists(fp):
                     # Search directory for file with id
                     media_id = info_dl.get("id")
-                    for fname in os.listdir(dest_dir):
-                        if media_id in fname and fname.endswith(('.mp4', '.mkv', '.webm')):
-                            fp = os.path.join(dest_dir, fname)
-                            break
+                    if media_id:
+                        for fname in os.listdir(dest_dir):
+                            if str(media_id) in fname and fname.endswith(('.mp4', '.mkv', '.webm')):
+                                fp = os.path.join(dest_dir, fname)
+                                break
 
                 return fp, info_dl
 
@@ -1831,10 +1832,11 @@ class MediaDownloader:
 
                 if not os.path.exists(mp3):
                     media_id = info_dl.get("id")
-                    for fname in os.listdir(dest_dir):
-                        if media_id in fname and fname.endswith('.mp3'):
-                            mp3 = os.path.join(dest_dir, fname)
-                            break
+                    if media_id:
+                        for fname in os.listdir(dest_dir):
+                            if str(media_id) in fname and fname.endswith('.mp3'):
+                                mp3 = os.path.join(dest_dir, fname)
+                                break
 
                 return mp3, info_dl
 
@@ -2134,27 +2136,17 @@ class MediaDownloader:
             extract_ok = res.returncode == 0
         except subprocess.TimeoutExpired:
             logger.warning(f"Local audio extraction timed out for {file_path}; using silent fallback")
+            cmd_silent = [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+                "-t", str(min(1800, max(10, int(info.get("duration") or 10)))),
+                "-q:a", "9", "-acodec", "libmp3lame", out_mp3
+            ]
+            subprocess.run(cmd_silent, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=_local_media_timeout(info.get("duration")))
+            if os.path.exists(out_mp3):
+                return out_mp3, info
             extract_ok = False
         if not extract_ok or not os.path.exists(out_mp3):
-            # Fallback: Video may have no audio track (silent video)
-            # Generate synthetic silent audio so pipeline does not crash
-            dur = max(5.0, float(info.get("duration") or 10.0))
-            silent_cmd = [
-                "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
-                "-f", "lavfi",
-                "-i", "anullsrc=r=44100:cl=stereo",
-                "-t", str(dur),
-                "-acodec", "libmp3lame",
-                "-b:a", "192k",
-                out_mp3
-            ]
-            try:
-                res_sil = subprocess.run(silent_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=_local_media_timeout(dur))
-                silent_ok = res_sil.returncode == 0
-            except subprocess.TimeoutExpired:
-                silent_ok = False
-            if not silent_ok or not os.path.exists(out_mp3):
-                raise RuntimeError(f"Audio extraction failed for {file_path}")
+            raise RuntimeError(f"Audio extraction failed for {file_path} (no usable audio stream)")
 
         return out_mp3, info
 
@@ -2226,6 +2218,9 @@ class MediaDownloader:
         sub_visual_overrides: Optional[dict] = None,
         sub_font_custom_path: Optional[str] = None,
         sub_bold: bool = True,
+        sub_render_mode: str = "png",
+        sub_effect: str = "none",
+        embed_soft_subs: bool = True,
         protection_level: str = "standard",
         logo_path: Optional[str] = None,
         logo_position: Optional[list[float]] = None,
@@ -2261,6 +2256,7 @@ class MediaDownloader:
         os.makedirs(dest_dir, exist_ok=True)
 
         # 1. Resolve source video file
+        dl_title: Optional[str] = None
         if is_local_media(url_or_path):
             source_video_path = os.path.abspath(str(url_or_path).strip('\'"'))
             if not os.path.exists(source_video_path):
@@ -2273,6 +2269,7 @@ class MediaDownloader:
             recap_max_height = 1080 if is_vip else 720
             _dl_t0 = time.monotonic()
             source_video_path, info = self.download_video(url_or_path, target_dir=dest_dir, max_height=recap_max_height)
+            dl_title = str((info or {}).get("title") or "").strip() or None
             _dl_elapsed = round(max(0.0, time.monotonic() - _dl_t0), 3)
             _download_stage_sec = _dl_elapsed
 
@@ -2342,12 +2339,16 @@ class MediaDownloader:
             sub_visual_overrides=sub_visual_overrides,
             sub_font_custom_path=sub_font_custom_path,
             sub_bold=sub_bold,
+            sub_render_mode=sub_render_mode,
+            sub_effect=sub_effect,
+            embed_soft_subs=embed_soft_subs,
             protection_level=protection_level,
             logo_path=logo_path,
             logo_position=logo_position,
             logo_scale=logo_scale,
             logo_opacity=logo_opacity,
             extra_text=extra_text,
+            source_title=dl_title,
             output_ratio=output_ratio,
             frame_fill=frame_fill,
             crop_top=crop_top,
@@ -2393,6 +2394,9 @@ class MediaDownloader:
         sub_visual_overrides: Optional[dict] = None,
         sub_font_custom_path: Optional[str] = None,
         sub_bold: bool = True,
+        sub_render_mode: str = "png",
+        sub_effect: str = "none",
+        embed_soft_subs: bool = True,
         protection_level: str = "standard",
         sample_text: str = "",
         output_ratio: str = "Original",
@@ -2463,6 +2467,9 @@ class MediaDownloader:
             sub_visual_overrides=sub_visual_overrides,
             sub_font_custom_path=sub_font_custom_path,
             sub_bold=sub_bold,
+            sub_render_mode=sub_render_mode,
+            sub_effect=sub_effect,
+            embed_soft_subs=embed_soft_subs,
             protection_level=protection_level,
             output_ratio=output_ratio,
             frame_fill=frame_fill,

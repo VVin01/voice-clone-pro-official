@@ -416,15 +416,16 @@ async def claim_next_queued_job(
             Job.engine != "recap",
             ~Job.id.startswith("rc_"),
         )
-    elif engine_filter:
-        query = query.where(
-            (Job.engine == engine_filter)
-            | (Job.job_type == JobType.RECAP.value)
-            | (Job.engine == "recap")
-            | (Job.id.startswith("rc_"))
-        )
-    elif not allow_recap and engine_filter:
-        query = query.where(Job.engine == engine_filter)
+    if engine_filter:
+        if allow_recap:
+            query = query.where(
+                (Job.engine == engine_filter)
+                | (Job.job_type == JobType.RECAP.value)
+                | (Job.engine == "recap")
+                | (Job.id.startswith("rc_"))
+            )
+        else:
+            query = query.where(Job.engine == engine_filter)
 
     if skip_local_source:
         query = query.where(

@@ -72,8 +72,16 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
     # membership re-verification (Telegram API calls per hit), the
     # branding-logo upload (disk write), and the voice-job cancel.
     "/api/user/verify-membership": (20, 60),
-    "/api/user/logo": (20, 60),
+    "/api/user/logo": (10, 60),
+    "/api/user/preferences": (30, 60),
     "/api/jobs/{job_id}/cancel": (30, 60),
+    "/api/tts/generate": (15, 60),
+    "/api/tts/gemini-key": (10, 60),
+    "/api/recap/preview-composite": (30, 60),
+    "/api/recap/{job_id}/thumbnail": (6, 60),
+    "/api/recap/{job_id}/script": (20, 60),
+    "/api/recap/upload_voice_ref": (10, 60),
+    "/api/recap/upload_sub_font": (10, 60),
 }
 
 # GET endpoints are deliberately NOT rate limited (status polling
@@ -93,7 +101,10 @@ MAX_CONTENT_LENGTH: dict[str, int] = {
     "/api/vip/submit-slip": 10 * 1024 * 1024,
     "/api/voices/generate-with-audio": 55 * 1024 * 1024,
     "/api/recap/upload_video": 1024 * 1024 * 1024,
-    "/api/internal/worker/upload-result": 100 * 1024 * 1024,
+    "/api/recap/upload_voice_ref": 25 * 1024 * 1024,
+    "/api/recap/upload_sub_font": 15 * 1024 * 1024,
+    "/api/user/logo": 10 * 1024 * 1024,
+    "/api/internal/worker/upload-result": 500 * 1024 * 1024,
 }
 
 TOO_MANY_DETAIL = "တောင်းဆိုမှု များနေပါသည်။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။"
@@ -163,29 +174,51 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.limits = limits or RATE_LIMITS
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
-    def _is_limited(self, path: str) -> tuple[int, int] | None:
+    def _match_limit(self, path: str) -> tuple[str, tuple[int, int]] | None:
         # Exact match first so generate-with-audio is not confused
         # with generate; then single-segment templates; then the
         # longest matching prefix (template keys never take part in
-        # prefix matching).
+        # prefix matching). Returns (canonical_rule_key, (max_requests, window)).
         if path in self.limits:
-            return self.limits[path]
+            return path, self.limits[path]
         for template, limit in self.limits.items():
             if "{" in template and _template_matches(template, path):
-                return limit
+                return template, limit
+        best_rule: str | None = None
         best: tuple[int, int] | None = None
         best_len = -1
         for prefix, limit in self.limits.items():
             if "{" in prefix:
                 continue
             if path.startswith(prefix) and len(prefix) > best_len:
+                best_rule = prefix
                 best = limit
                 best_len = len(prefix)
-        return best
+        if best is not None and best_rule is not None:
+            return best_rule, best
+        return None
+
+    def _is_limited(self, path: str) -> tuple[int, int] | None:
+        matched = self._match_limit(path)
+        return matched[1] if matched is not None else None
 
     def _hits_for(self, key: str, limit: tuple[int, int], now: float) -> bool:
         """Record one hit; return True when the caller is OVER the limit."""
         max_requests, window = limit
+        if len(self._hits) > 2048:
+            # Periodic bounded eviction of stale/empty sliding-window buckets.
+            stale_keys = [
+                k for k, dq in list(self._hits.items())
+                if not dq or dq[-1] <= now - max(window, 60)
+            ]
+            for sk in stale_keys:
+                self._hits.pop(sk, None)
+            # Hard upper cap: evict oldest keys before inserting a new key so dict never exceeds 4096
+            while len(self._hits) >= (4096 if key not in self._hits else 4097):
+                oldest_key = next(iter(self._hits), None)
+                if oldest_key is None:
+                    break
+                self._hits.pop(oldest_key, None)
         hits = self._hits[key]
         while hits and hits[0] <= now - window:
             hits.popleft()
@@ -210,14 +243,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         except ValueError:
                             pass
                     break
-        # Rate limit: POST to a listed endpoint, plus DELETE for the
-        # listed destructive route (history delete). The upload-size
-        # gate above stays POST-only.
-        if request.method in ("POST", "DELETE"):
-            limit = self._is_limited(request.url.path)
-            if limit is not None:
-                key = f"{_rate_key(request)}:{request.url.path}"
-                if self._hits_for(key, limit, time.monotonic()):
+        # Rate limit: POST/PUT/DELETE on listed routes (bucketing by canonical
+        # route template so parameterized paths like /api/recap/{job_id}/retry
+        # cannot bypass the bucket by rotating IDs).
+        if request.method in ("POST", "PUT", "DELETE"):
+            matched = self._match_limit(request.url.path)
+            if matched is not None:
+                rule_key, limit = matched
+                rk = _rate_key(request)
+                key = f"{rk}:{rule_key}"
+                now_m = time.monotonic()
+                ip_agg_over = (
+                    rk.startswith("ipuser:")
+                    and self._hits_for(
+                        f"ipagg:{_client_ip(request)}:{rule_key}",
+                        (max(limit[0] * 5, 25), limit[1]),
+                        now_m,
+                    )
+                )
+                if ip_agg_over or self._hits_for(key, limit, now_m):
                     return JSONResponse(
                         status_code=429,
                         content={"detail": TOO_MANY_DETAIL},
@@ -227,8 +271,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Batch AJ (L10): the one GET with a real per-hit cost
             # (ffmpeg frame extraction) gets a bucket too.
             limit = GET_RATE_LIMITS[request.url.path]
-            key = f"{_rate_key(request)}:{request.url.path}"
-            if self._hits_for(key, limit, time.monotonic()):
+            rk = _rate_key(request)
+            key = f"{rk}:{request.url.path}"
+            now_m = time.monotonic()
+            ip_agg_over = (
+                rk.startswith("ipuser:")
+                and self._hits_for(
+                    f"ipagg:{_client_ip(request)}:{request.url.path}",
+                    (max(limit[0] * 5, 25), limit[1]),
+                    now_m,
+                )
+            )
+            if ip_agg_over or self._hits_for(key, limit, now_m):
                 return JSONResponse(
                     status_code=429,
                     content={"detail": TOO_MANY_DETAIL},

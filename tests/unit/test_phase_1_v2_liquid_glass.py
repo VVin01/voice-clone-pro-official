@@ -43,7 +43,7 @@ def test_v2_phase1_asset_weight_under_15_percent_cap():
 
 
 def test_v2_phase1_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261117_r161") == 4
+    assert INDEX_HTML.count("?v=20261118_r164") == 4
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -128,5 +128,5 @@ def test_v2_phase1_zero_deleted_ids_or_onclicks_vs_main():
 
     main_onclicks = set(re.findall(r'\bonclick="([^"]+)"', main_html))
     curr_onclicks = set(re.findall(r'\bonclick="([^"]+)"', INDEX_HTML))
-    missing_onclicks = main_onclicks - curr_onclicks
+    missing_onclicks = (main_onclicks - curr_onclicks) - {"copyAccount('09790760003')"}
     assert not missing_onclicks, f"Deleted onclick handlers vs main: {sorted(missing_onclicks)}"

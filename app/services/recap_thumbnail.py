@@ -195,7 +195,14 @@ def sanitize_headline_text(text: str | None, max_chars: int = HEADLINE_MAX_CHARS
     """
     if text is None:
         return ""
-    normalized = unicodedata.normalize("NFC", str(text))
+    raw_txt = str(text)
+    try:
+        from app.services.myanmar_text import convert_zawgyi_to_unicode, repair_burmese_mark_order
+
+        raw_txt = repair_burmese_mark_order(convert_zawgyi_to_unicode(raw_txt))
+    except Exception:
+        pass
+    normalized = unicodedata.normalize("NFC", raw_txt)
     raw_lines = re.split(r"[\r\n]+", normalized)
     clean_lines: list[str] = []
     for ln in raw_lines:
@@ -269,8 +276,17 @@ def validate_brain_response(data: Any, source_title: str = "") -> dict[str, str]
     if not re.search(r"[\u1000-\u109f]", raw_headline):
         return None
 
-    # Length limits: line1 <= 24 (setup ~18), line2 <= 18 (punch ~12)
-    if len(line1) > 24 or len(line2) > 18:
+    # Length limits: validate by Burmese visual grapheme clusters (setup <= 20, punch <= 15)
+    # rather than UTF codepoints (each Burmese syllable takes 3-5 codepoints), while keeping a
+    # generous UTF ceiling so absurd multi-sentence outputs are still rejected.
+    try:
+        from app.services.recap_engine.core import myanmar_grapheme_clusters
+
+        g1 = len(myanmar_grapheme_clusters(line1))
+        g2 = len(myanmar_grapheme_clusters(line2))
+    except Exception:
+        g1, g2 = len(line1), len(line2)
+    if g1 > 20 or g2 > 16 or len(line1) > 64 or len(line2) > 48:
         return None
 
     # Channel / brand check
@@ -307,6 +323,7 @@ def load_recap_narration_script(job_id: str, job_dir: Path | None = None) -> str
         candidate_paths.extend([
             p_dir / "smart_sync_plan.json",
             p_dir / "workspace" / "smart_sync_plan.json",
+            p_dir / "seg01" / "smart_sync_plan.json",
             p_dir / "narration.txt",
             p_dir / "workspace" / "narration.txt",
         ])
@@ -315,6 +332,7 @@ def load_recap_narration_script(job_id: str, job_dir: Path | None = None) -> str
     candidate_paths.extend([
         recap_dir / "smart_sync_plan.json",
         recap_dir / "workspace" / "smart_sync_plan.json",
+        recap_dir / "seg01" / "smart_sync_plan.json",
         recap_dir / "narration.txt",
         recap_dir / "workspace" / "narration.txt",
     ])
@@ -359,7 +377,22 @@ def call_brain_for_thumbnail(
 
     # Truncate script to first 5000 chars for prompt economy
     truncated_script = clean_script[:5000].strip() if clean_script else "N/A"
-    prompt = BRAIN_PROMPT_TEMPLATE.format(title=clean_title, script=truncated_script)
+    try:
+        from app.services.ai_prompt_registry import is_v2_prompts, sanitize_xml_tag_content
+
+        if is_v2_prompts():
+            safe_title = sanitize_xml_tag_content(clean_title)
+            safe_script = sanitize_xml_tag_content(truncated_script)
+            prompt = (
+                "<task>Generate a 9:16 vertical Myanmar movie recap poster headline and clean text-free English image prompt.</task>\n"
+                f"<source_title>{safe_title}</source_title>\n"
+                f"<story_script>{safe_script}</story_script>\n"
+                + BRAIN_PROMPT_TEMPLATE.split("Output format:", 1)[-1]
+            )
+        else:
+            prompt = BRAIN_PROMPT_TEMPLATE.format(title=clean_title, script=truncated_script)
+    except Exception:
+        prompt = BRAIN_PROMPT_TEMPLATE.format(title=clean_title, script=truncated_script)
 
     try:
         if gemini_call is not None:
@@ -382,10 +415,9 @@ def call_brain_for_thumbnail(
             if not key_pool:
                 logger.warning("No Gemini API keys available for brain thumbnail call")
                 return None
-            if not os.environ.get("GEMINI_API_KEY"):
-                os.environ["GEMINI_API_KEY"] = key_pool[0][1]
 
-            ai = ai_mod.AIService()
+            # Pass the primary key directly without mutating global os.environ.
+            ai = ai_mod.AIService(api_key=key_pool[0][1])
             _configure_gemini_key_pool(
                 ai,
                 key_pool,
@@ -503,16 +535,14 @@ def is_hf_insufficient_credit_error(exc: BaseException) -> bool:
 async def ensure_thumbnail_pool_table(session: AsyncSession) -> None:
     """Ensure `recap_thumbnail_pool_usage` table exists (safe idempotent check)."""
     try:
-        bind = session.get_bind()
-        if bind is not None:
-            async with bind.begin() as conn:
-                await conn.run_sync(
-                    lambda sync_conn: Base.metadata.create_all(
-                        sync_conn,
-                        tables=[RecapThumbnailPoolUsage.__table__],
-                        checkfirst=True,
-                    )
-                )
+        conn = await session.connection()
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(
+                sync_conn,
+                tables=[RecapThumbnailPoolUsage.__table__],
+                checkfirst=True,
+            )
+        )
     except Exception as exc:
         logger.debug("ensure_thumbnail_pool_table skipped/failed: %s", exc)
 
@@ -746,8 +776,18 @@ def _resolve_noto_serif_black_path() -> Path:
     return Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NotoSerifMyanmar-Black.ttf"
 
 
-def _get_noto_serif_black_font(size_px: int) -> ImageFont.FreeTypeFont:
+def _resolve_padauk_bold_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Padauk-Bold.ttf"
+
+
+def _get_noto_serif_black_font(size_px: int, line_text: str = "") -> ImageFont.FreeTypeFont:
+    # NotoSerifMyanmar-Black lacks ASCII/digits/Latin punctuation (239 Myanmar glyphs only);
+    # fall back to Padauk-Bold whenever non-Myanmar Latin/digit/ASCII punctuation is present.
     font_path = _resolve_noto_serif_black_path()
+    if line_text and re.search(r"[A-Za-z0-9!?,.;:\-\(\)\"\'\[\]/&%@#+=]", line_text):
+        padauk = _resolve_padauk_bold_path()
+        if padauk.is_file():
+            font_path = padauk
     layout = ImageFont.Layout.RAQM if features.check("raqm") else ImageFont.Layout.BASIC
     try:
         return ImageFont.truetype(str(font_path), size=size_px, layout_engine=layout)
@@ -765,13 +805,13 @@ def _fit_line_font(
     low = min_px
     high = max_px
     best_size = min_px
-    best_font = _get_noto_serif_black_font(min_px)
+    best_font = _get_noto_serif_black_font(min_px, line)
     dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
 
     while low <= high:
         mid = (low + high) // 2
-        f = _get_noto_serif_black_font(mid)
+        f = _get_noto_serif_black_font(mid, line)
         stroke = max(3, round(mid / 16))
         bbox = draw.textbbox((0, 0), line, font=f, stroke_width=stroke)
         w = bbox[2] - bbox[0]

@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services import group_ai_admin as gai
+from app.services.ai_prompt_registry import is_v2_prompts, sanitize_xml_tag_content
 
 logger = logging.getLogger(__name__)
 
@@ -204,30 +205,105 @@ PRIVATE_WELCOME_TEXT = (
 )
 
 
-def build_private_prompt(*, text: str, author_name: str) -> str:
+PRIVATE_SYSTEM_INSTRUCTIONS_V2_GUARDRAILS = """
+အရေးကြီး အမြဲတမ်း စည်းမျဉ်းများ (KNOWLEDGE SHEET ထက် အမြဲ ဦးစားပေး အကျုံးဝင်သည်):
+1. ဝယ်ယူထားသော Voice မိနစ်နှင့် Recap Credit များသည် သက်တမ်း ကုန်ဆုံးခြင်း (Expire) လုံးဝ မရှိပါ (Purchased minutes/credits NEVER expire) — Sheet ထဲတွင် မည်သို့ပင် ပါရှိစေကာမူ တစ်လစာ သက်တမ်းကုန်သည်ဟု လုံးဝ မပြောရပါ။
+2. Voice Clone Pro / VoxCPM2 သည် ပြောသံ (Timbre & Speaking Style) ကိုသာ ပွားပေးနိုင်သည် — သီချင်းဆိုသံ (Singing) သို့မဟုတ် Background Music ထုတ်လုပ်ပေးသည့် စနစ် မဟုတ်ပါ။
+3. Top-Up Credit/မိနစ် ထပ်ဝယ်ခြင်းသည် အခြေခံ Package ဝယ်ယူထားပြီးသူ (Active Base Package) များအတွက်သာ ဖြစ်သည် — Free အသုံးပြုသူများ အခြေခံ Package အရင် ဝယ်ရပါမည်။
+4. KNOWLEDGE SHEET ထဲတွင် မပါသော စျေးနှုန်း၊ Feature အသစ်၊ ရက်စွဲ သို့မဟုတ် လင့်ခ်အသစ်များကို လုံးဝ ထွင်မပြောရပါ — မသေချာပါက ESCALATE ထုတ်ပါ။"""
+
+
+def build_private_prompt(
+    *,
+    text: str,
+    author_name: str,
+    history: list[tuple[str, str]] | None = None,
+    reply_to_text: str | None = None,
+) -> str:
     """Assemble the full model prompt for one private-chat question.
 
-    Same assembly as ``gai.build_prompt`` — system instructions +
-    knowledge sheet + timestamp + the question — with private
-    framing and no group context: a 1:1 chat has no thread and no
-    onlookers, and member-name hygiene matters less when the author
-    is talking to the bot directly.
+    Supports ``v2`` XML delimiter hardening, conversation history memory
+    (last exchanges), replied-to quote context, and Supreme Override
+    guardrails while allowing instant ``v1`` rollback via
+    ``AI_PROMPT_PROFILE=v1``.
     """
-    fact_sheet = gai.build_fact_sheet()
+    fact_sheet = gai.get_effective_fact_sheet()
+    if not is_v2_prompts():
+        parts = [
+            PRIVATE_SYSTEM_INSTRUCTIONS,
+            "",
+            "═══ KNOWLEDGE SHEET ═══",
+            fact_sheet,
+            "",
+            "═══ အသုံးပြုသူရဲ့ စာ ═══",
+            f"မေးသူ: {author_name}".strip(),
+            f"မေးခွန်း: {text}",
+        ]
+        return "\n".join(parts)
+
+    safe_author = sanitize_xml_tag_content(
+        author_name or "User", "user_message", "conversation_history", "replied_to_message"
+    )
+    safe_text = sanitize_xml_tag_content(
+        text, "user_message", "conversation_history", "replied_to_message"
+    )
     parts = [
         PRIVATE_SYSTEM_INSTRUCTIONS,
+        PRIVATE_SYSTEM_INSTRUCTIONS_V2_GUARDRAILS,
         "",
         "═══ KNOWLEDGE SHEET ═══",
         fact_sheet,
-        "",
-        "═══ အသုံးပြုသူရဲ့ စာ ═══",
-        f"မေးသူ: {author_name}".strip(),
-        f"မေးခွန်း: {text}",
     ]
+    if history:
+        hist_lines: list[str] = []
+        for role_label, msg_body in list(history)[-6:]:
+            clean_body = sanitize_xml_tag_content(
+                str(msg_body or "").strip()[:280],
+                "user_message",
+                "conversation_history",
+                "replied_to_message",
+            )
+            if clean_body:
+                prefix = "User" if str(role_label).lower() == "user" else "Assistant"
+                hist_lines.append(f"- {prefix}: {clean_body}")
+        if hist_lines:
+            parts.extend([
+                "",
+                "<conversation_history>",
+                *hist_lines,
+                "</conversation_history>",
+            ])
+    if reply_to_text:
+        safe_reply = sanitize_xml_tag_content(
+            str(reply_to_text).strip()[:400],
+            "user_message",
+            "conversation_history",
+            "replied_to_message",
+        )
+        if safe_reply:
+            parts.extend([
+                "",
+                "<replied_to_message>",
+                safe_reply,
+                "</replied_to_message>",
+            ])
+    parts.extend([
+        "",
+        "<user_message>",
+        f"မေးသူ: {safe_author}".strip(),
+        f"မေးခွန်း: {safe_text}",
+        "</user_message>",
+    ])
     return "\n".join(parts)
 
 
-async def ask_private_ai(*, text: str, author_name: str) -> tuple[str, str | None]:
+async def ask_private_ai(
+    *,
+    text: str,
+    author_name: str,
+    history: list[tuple[str, str]] | None = None,
+    reply_to_text: str | None = None,
+) -> tuple[str, str | None]:
     """Ask Gemini about one private-chat question.
 
     Identical contract to ``gai.ask_group_admin_ai`` — DECISION_REPLY
@@ -235,7 +311,12 @@ async def ask_private_ai(*, text: str, author_name: str) -> tuple[str, str | Non
     DECISION_AI_FAILED — via the same synchronous call path and
     timeout, so the handler can mirror the group flow step for step.
     """
-    prompt = build_private_prompt(text=text, author_name=author_name)
+    prompt = build_private_prompt(
+        text=text,
+        author_name=author_name,
+        history=history,
+        reply_to_text=reply_to_text,
+    )
     try:
         raw = await asyncio.wait_for(
             asyncio.to_thread(gai._ask_gemini_sync, prompt),

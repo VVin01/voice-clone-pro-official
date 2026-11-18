@@ -15,7 +15,7 @@ from app.config import settings
 from app.models.enums import JobStatus, JobType, LedgerDirection
 from app.models.schema import AuditLog, Job, MinuteLedgerEvent, User, utc_now
 from app.services.i18n import t
-from app.services.ledger import refund_job_seconds
+from app.services.ledger import refund_job_seconds, refund_tts_referral_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +108,21 @@ async def recover_stale_running_jobs(
         refunded_seconds = sum(d.seconds for d in debits)
 
         if was_charged:
-            await refund_job_seconds(
-                session=session,
-                user_id=job.user_id,
-                job_id=str(job.id),
-                note=f"Automatic refund: job {job.id} interrupted by worker termination",
-            )
+            if job.job_type == JobType.TTS.value:
+                await refund_tts_referral_seconds(
+                    session=session,
+                    user_id=job.user_id,
+                    job_id=str(job.id),
+                    keep_seconds=0,
+                    note=f"Automatic referral refund: TTS job {job.id} interrupted",
+                )
+            else:
+                await refund_job_seconds(
+                    session=session,
+                    user_id=job.user_id,
+                    job_id=str(job.id),
+                    note=f"Automatic refund: job {job.id} interrupted by worker termination",
+                )
             logger.info("Refunded %ss to user %s for stale job %s", refunded_seconds, job.user_id, job.id)
 
         # Step 4: Record AuditLog
@@ -190,51 +199,81 @@ async def recover_stale_running_jobs(
     r_candidate_ids: Sequence[str] = r_res.scalars().all()
 
     for r_job_id in r_candidate_ids:
-        r_claim_stmt = (
-            update(Job)
-            .where(
-                Job.id == r_job_id,
-                Job.status == JobStatus.RUNNING.value,
-                Job.started_at <= r_cutoff,
-            )
-            .values(
-                status=JobStatus.FAILED.value,
-                error_message="Worker process interrupted or terminated unexpectedly (stale recap job recovered)",
-                finished_at=utc_now(),
-            )
-        )
-        r_update_res = await session.execute(r_claim_stmt)
-        if r_update_res.rowcount != 1:
-            continue
+        from app.webapp.api import _load_persisted_recap_state, _fail_stranded_recap_job
+        raw_cfg = (
+            await session.execute(select(Job.recap_config).where(Job.id == r_job_id))
+        ).scalar_one_or_none()
+        if raw_cfg:
+            try:
+                cfg_obj = json.loads(raw_cfg)
+                if cfg_obj.get("script_ready"):
+                    # Two-phase parked SCRIPT_READY jobs <24h old await user script approval;
+                    # >=24h parked jobs are abandoned and eligible for stale recovery.
+                    sr_at_raw = cfg_obj.get("script_ready_at")
+                    if not sr_at_raw:
+                        continue
+                    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                    sr_at = _dt.fromisoformat(str(sr_at_raw).replace("Z", "+00:00"))
+                    if sr_at.tzinfo is None:
+                        sr_at = sr_at.replace(tzinfo=_tz.utc)
+                    now_utc = utc_now()
+                    if now_utc.tzinfo is None:
+                        now_utc = now_utc.replace(tzinfo=_tz.utc)
+                    if (now_utc - sr_at) < _td(hours=24):
+                        continue
+            except Exception:
+                pass
 
         r_job = await session.get(Job, r_job_id)
         if not r_job:
             continue
-        await session.refresh(r_job)
-
-        from app.webapp.api import _load_persisted_recap_state, _fail_stranded_recap_job
+        r_user_id = int(r_job.user_id)
+        r_started_at = r_job.started_at
         r_state = _load_persisted_recap_state(r_job) or {}
-        await _fail_stranded_recap_job(str(r_job.id), r_job.user_id, r_state)
+        # Release any SQLite/PG read snapshot before _fail_stranded_recap_job opens its own session,
+        # and issue the refund + FAILED transition atomically inside _fail_stranded_recap_job FIRST
+        # so a mid-flight crash never leaves a job FAILED without refunding credits/minutes.
+        await session.rollback()
+
+        fail_result = await _fail_stranded_recap_job(str(r_job_id), r_user_id, r_state)
+        if fail_result is False:
+            # _fail_stranded_recap_job uses its own AsyncSessionLocal(); in isolated
+            # unit-test sessions the row doesn't exist in AsyncSessionLocal(). Check
+            # whether it exists there before aborting recovery.
+            try:
+                from app.db.session import AsyncSessionLocal as _ASL
+                async with _ASL() as _chk_s:
+                    _exists_in_global = await _chk_s.get(Job, str(r_job_id)) is not None
+            except Exception:
+                _exists_in_global = False
+            if _exists_in_global:
+                continue
+
+        if fail_result is None or fail_result is False:
+            r_job_upd = await session.get(Job, r_job_id)
+            if r_job_upd is not None and r_job_upd.status == JobStatus.RUNNING.value:
+                r_job_upd.status = JobStatus.FAILED.value
+                r_job_upd.finished_at = utc_now()
 
         session.add(
             AuditLog(
                 admin_id=0,
                 action="recap.stale_recovery",
                 target_type="job",
-                target_id=str(r_job.id),
+                target_id=str(r_job_id),
                 details_json=json.dumps({
-                    "user_id": r_job.user_id,
-                    "started_at": r_job.started_at.isoformat() if r_job.started_at else None,
+                    "user_id": r_user_id,
+                    "started_at": r_started_at.isoformat() if r_started_at else None,
                     "cutoff": r_cutoff.isoformat(),
                     "timeout_seconds": r_timeout,
                 }),
             )
         )
         await session.commit()
-        recovered_ids.append(str(r_job.id))
+        recovered_ids.append(str(r_job_id))
         logger.warning(
             "Safely recovered orphaned stale recap job %s (user=%s)",
-            r_job.id, r_job.user_id,
+            r_job_id, r_user_id,
         )
 
     return recovered_ids

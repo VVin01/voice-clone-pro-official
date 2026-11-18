@@ -170,7 +170,7 @@ async def _fetch_pulse_metrics(session: AsyncSession) -> dict:
     total_users = (await session.execute(select(func.count()).select_from(User))).scalar() or 0
     purchased_users = (await session.execute(select(func.count()).where(User.account_category == AccountCategory.PURCHASED.value))).scalar() or 0
 
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     jobs_today = (await session.execute(select(func.count()).where(Job.created_at >= today_start))).scalar() or 0
     queued_jobs = (await session.execute(select(func.count()).where(Job.status == JobStatus.QUEUED.value))).scalar() or 0
     running_jobs = (await session.execute(select(func.count()).where(Job.status == JobStatus.RUNNING.value))).scalar() or 0
@@ -1703,9 +1703,15 @@ async def handle_admin_broadcast_test(
 
     # Sent exactly the way deliver_broadcast sends (plain text, no
     # parse mode) so the admin sees precisely what recipients get.
+    _send_kw = (
+        {"parse_mode": None}
+        if isinstance(getattr(getattr(callback.bot, "default", None), "parse_mode", None), str)
+        else {}
+    )
     await callback.bot.send_message(
         chat_id=callback.from_user.id,
         text=broadcast_text,
+        **_send_kw,
     )
     await callback.answer(t("admin_alert_broadcast_test_sent", lang))
 

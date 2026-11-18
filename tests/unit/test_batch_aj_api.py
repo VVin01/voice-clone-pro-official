@@ -181,7 +181,10 @@ async def test_batch_aj_h1_miniapp_slip_replay_after_approval_blocked(db_session
     user, _ = await get_or_create_user(db_session, telegram_id=9304)
     await db_session.commit()
 
-    slip_bytes = b"fake-slip-image-bytes-001"
+    from PIL import Image
+    _buf = io.BytesIO()
+    Image.new("RGB", (2, 2), color=(42, 84, 126)).save(_buf, format="PNG")
+    slip_bytes = _buf.getvalue()
     fingerprint = "sha256:" + hashlib.sha256(slip_bytes).hexdigest()
     db_session.add(PaymentRequest(
         id="PAY-PRIOR", user_id=user.id, package_code="MIN_10", minutes=10,

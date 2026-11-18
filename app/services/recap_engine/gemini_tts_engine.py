@@ -103,20 +103,12 @@ GEMINI_VOICE_DISPLAY_MY: dict[str, str] = {
     "Gacrux": "မသီရိ",
     "Achernar": "မသွန်းရည်",
 }
-# Batch DN (2026-11-10): model migration ahead of the 2026-11-17
-# retirement of BOTH preview models on the Gemini API. Rotation order:
-# the GA replacement first (best quality), the current primary next
-# (its remaining pre-retirement days still serve), the GA lite model
-# (fastest), then the current reserve. After Nov 17 the two previews
-# simply fail per call and the existing failover moves on — no second
-# migration is needed at the deadline. gemini-2.5-pro-preview-tts is
-# deliberately ABSENT: its free-tier limits are 0/0/0 (it 429s on
-# every key), so it can never serve a line.
+# Post-Nov-17 retired preview models removed: pure active Gemini 3.8 GA
+# TTS chain. Free-tier preview reserve (3.1/2.5) is removed per owner directive;
+# gemini-2.5-pro-preview-tts remains absent (0/0/0 free-tier limits).
 TTS_MODELS = (
     "gemini-3.8-flash-tts",
-    "gemini-3.1-flash-tts-preview",
     "gemini-3.8-flash-lite-tts",
-    "gemini-2.5-flash-preview-tts",
 )
 # Batch U: process-level starting-model rotation cursor (in-memory
 # only, the same lifetime as KeyHealth). Advanced once per _ask() call.
@@ -177,19 +169,18 @@ def _is_retired_model_error(code: int, exc: BaseException) -> bool:
 def _effective_tts_models() -> tuple[str, ...]:
     """Resolve active TTS model chain from dynamic settings.
 
-    Effective read order mirrors today's production chain verbatim on day one:
-    (primary -> fallback_1 -> lite -> fallback_2) =
-    (gemini-3.8-flash-tts, gemini-3.1-flash-tts-preview,
-     gemini-3.8-flash-lite-tts, gemini-2.5-flash-preview-tts).
+    Post-Nov-17 default chain mirrors pure GA ``TTS_MODELS``:
+    (primary -> fallback_1 -> lite -> fallback_2) defaulting to
+    (gemini-3.8-flash-tts, "", gemini-3.8-flash-lite-tts, "").
     """
     try:
         from app.config import settings as _settings
 
         raw = (
             getattr(_settings, "gemini_tts_primary_model", TTS_MODELS[0]),
-            getattr(_settings, "gemini_tts_fallback_1", TTS_MODELS[1]),
-            getattr(_settings, "gemini_tts_lite_model", TTS_MODELS[2]),
-            getattr(_settings, "gemini_tts_fallback_2", TTS_MODELS[3]),
+            getattr(_settings, "gemini_tts_fallback_1", ""),
+            getattr(_settings, "gemini_tts_lite_model", TTS_MODELS[1]),
+            getattr(_settings, "gemini_tts_fallback_2", ""),
         )
     except Exception:
         return TTS_MODELS
@@ -251,7 +242,8 @@ def _rotated_tts_models(
     keep_lite_behind = bool(
         primaries
         and lites
-        and (keys or health is not None)
+        and health is not None
+        and keys
         and _primary_quota_fraction_used(primaries, health, keys) < _PRIMARY_QUOTA_LITE_THRESHOLD
     )
     if keep_lite_behind:
@@ -410,11 +402,21 @@ def default_voice_for_gender(is_female: bool) -> str:
 
 
 def _clean_tts_text(text: str) -> str:
-    """Transcript cleaning shared by both prompt shapes: English
-    glosses in parentheses are for reading only, and whitespace is
-    collapsed so the model sees one clean line."""
-    text = re.sub(r"\s*\([A-Za-z0-9 ,.'\-]+\)", "", str(text or ""))  # English glosses are for reading only
-    return re.sub(r"\s+", " ", text).strip()
+    """Transcript cleaning shared by both prompt shapes: ASCII-letter
+    English glosses in parentheses are for reading only (preserving numeric
+    expressions like '(2026)'), inline ASCII stage tags '[...]' are removed
+    so they never collide with the outer direction tag, Burmese mark order is
+    repaired, and whitespace is collapsed."""
+    cleaned = str(text or "")
+    try:
+        from app.services.myanmar_text import repair_burmese_mark_order
+
+        cleaned = repair_burmese_mark_order(cleaned)
+    except Exception:
+        pass
+    cleaned = re.sub(r"\s*\((?=[^)]*[A-Za-z])[A-Za-z0-9 ,.'\-]+\)", "", cleaned)
+    cleaned = re.sub(r"\s*\[(?=[^\]]*[A-Za-z])[^\]]{1,40}\]", "", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def narrator_prompt(text: str, voice: str, direction: str = "") -> str:
@@ -468,14 +470,17 @@ def narrator_prompt_short(text: str, voice: str) -> str:
 
 
 def _uses_short_prompt(model: str) -> bool:
-    """Batch DO: the gemini-3.8 family gets the short prompt shape;
-    every other model keeps the full narrator profile."""
-    return str(model or "").startswith("gemini-3.8")
+    """Default to leak-resistant short prompts for all GA and custom models;
+    only legacy 2.5/3.1 preview models take the full AUDIO PROFILE."""
+    m = str(model or "").strip().lower()
+    if "preview" in m or m.startswith(("gemini-2.5", "gemini-3.1")):
+        return False
+    return True
 
 
 def _prompt_for_model(model: str, text: str, voice: str, direction: str = "") -> str:
-    """The prompt for ONE model (Batch DO): short shape for the 3.8
-    family, the full narrator profile for everything else."""
+    """The prompt for ONE model: short leak-resistant shape for GA models,
+    full narrator profile only for explicit preview models."""
     if _uses_short_prompt(model):
         return narrator_prompt_short(text, voice)
     return narrator_prompt(text, voice, direction)
@@ -517,14 +522,28 @@ def _proxy() -> str:
     return ""
 
 
+_CLIENT_CACHE_LOCK = threading.Lock()
+_CLIENT_CACHE: dict[tuple[str, str], Any] = {}
+
+
 def _client(key: str):
     from google import genai
     from google.genai import types
 
     via = _proxy()
-    return genai.Client(api_key=key, http_options=types.HttpOptions(
+    cache_key = (key, via)
+    with _CLIENT_CACHE_LOCK:
+        cached = _CLIENT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(
         timeout=GEMINI_TTS_TIMEOUT_MS, retry_options=types.HttpRetryOptions(attempts=1),
         client_args={"proxy": via} if via else None, async_client_args={"proxy": via} if via else None))
+    with _CLIENT_CACHE_LOCK:
+        if len(_CLIENT_CACHE) >= 64:
+            _CLIENT_CACHE.clear()
+        _CLIENT_CACHE[cache_key] = client
+    return client
 
 
 def _code(exc: Exception) -> int:
@@ -766,6 +785,21 @@ class GeminiTTSEngine:
                                     self._dead.add((model, i))
                                 self.log(f"🪦 Gemini TTS model {model} unavailable/retired ({code or 'err'}) — skipping to next model")
                                 break
+                            low_err = str(exc).lower()
+                            is_auth_invalid = (
+                                code in (401, 403)
+                                or "api key not valid" in low_err
+                                or "api_key_invalid" in low_err
+                                or "permission_denied" in low_err
+                                or "permission denied" in low_err
+                            )
+                            if not self._record_usage and len(self.keys) == 1 and is_auth_invalid:
+                                with self._lock:
+                                    self._dead.add((model, i))
+                                    self.exhausted = True
+                                raise GeminiTTSError(
+                                    f"Gemini TTS: API key rejected ({code or 'invalid'}) — skipping remaining models."
+                                ) from exc
                             if code == 429 or code in (400, 401, 403):
                                 with self._lock:
                                     self._dead.add((model, i))

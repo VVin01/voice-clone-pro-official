@@ -2310,6 +2310,11 @@ def _restore_script_ready_from_db(job, user=None) -> Optional[dict]:
         "req_snapshot": state["config"],
         "is_vip": bool(state.get("is_vip")),
         "script_ready_at": state.get("script_ready_at"),
+        "billing_mode": state.get("billing_mode"),
+        "voice_seconds_held": int(state.get("voice_seconds_held") or 0),
+        "voice_settled": bool(state.get("voice_settled")),
+        "voice_refunded": bool(state.get("voice_refunded")),
+        "voice_seconds_refunded": int(state.get("voice_seconds_refunded") or 0),
     }
     _recap_set_entry_label(
         entry, "📝 Script ready — review & edit before rendering", stage="script_ready"
@@ -3643,9 +3648,10 @@ async def get_user_profile(
     except Exception:
         completed_jobs = None
 
-    # Check if user has an active or recently finished Recap/Voice job so Mini App can auto-resume
+    # Check if user has an active or recently finished Recap/Voice/TTS job so Mini App can auto-resume
     active_recap_job_id = None
     active_voice_job_id = None
+    active_tts_job_id = None
     try:
         recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
         stmt_active = (
@@ -3661,14 +3667,17 @@ async def get_user_profile(
                 ),
             )
             .order_by(Job.created_at.desc())
-            .limit(5)
+            .limit(8)
         )
         res_act = await db.execute(stmt_active)
         for aj in res_act.scalars().all():
             is_rc = (aj.job_type == JobType.RECAP.value or aj.id.startswith("rc_") or aj.engine == "recap")
+            is_tts_job = (aj.job_type == JobType.TTS.value)
             if is_rc and not active_recap_job_id:
                 active_recap_job_id = aj.id
-            elif not is_rc and not active_voice_job_id:
+            elif is_tts_job and not active_tts_job_id:
+                active_tts_job_id = aj.id
+            elif not is_rc and not is_tts_job and not active_voice_job_id:
                 active_voice_job_id = aj.id
     except Exception:
         pass
@@ -3731,6 +3740,7 @@ async def get_user_profile(
         "has_custom_logo": _find_user_logo(user.id) is not None,
         "active_recap_job_id": active_recap_job_id,
         "active_voice_job_id": active_voice_job_id,
+        "active_tts_job_id": active_tts_job_id,
         "completed_jobs": completed_jobs,
         "referral_code": referral_code,
         "referral_link": (
@@ -4078,6 +4088,7 @@ class VoiceGenerateRequest(BaseModel):
     gender_preset: str = Field("m2m", max_length=20)
     engine: str = Field("voxcpm", max_length=20)  # Job.engine String(20)
     preset_voice: Optional[str] = Field(None, max_length=50)  # Job.preset_voice String(50)
+    voice_ref_id: Optional[str] = Field(None, max_length=80)
 
     @field_validator("speed")
     @classmethod
@@ -4172,6 +4183,13 @@ async def create_voice_job(
     # directly with only a character-limit check.
     from app.services.queue import create_voice_clone_job
 
+    ref_audio_path: Optional[str] = None
+    if req.voice_ref_id and is_vip:
+        try:
+            ref_audio_path = str(_resolve_recap_voice_ref(req.voice_ref_id, user))
+        except HTTPException:
+            ref_audio_path = None
+
     try:
         job, _reason = await create_voice_clone_job(
             db,
@@ -4183,6 +4201,7 @@ async def create_voice_job(
             edge_voice=resolved_edge_voice,
             engine=actual_engine,
             preset_voice=req.preset_voice,
+            source_audio_path=ref_audio_path,
         )
     except ValueError:
         # Service-level preset_voice invariant (E4): same clean 400
@@ -4474,10 +4493,12 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
     ],
     "recapRenderQuality": ["standard", "high", "max"],
     "recapTtsEngine": ["voxcpm", "gemini", "edge"],
+    "recapSubRenderMode": ["png", "timeline", "ass", "karaoke", "soft"],
+    "recapSubEffect": ["none", "fade", "pop", "karaoke"],
 }
 USER_PREF_BOOLS: List[str] = [
     "recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs",
-    "recapLogo", "recapSplitEnabled",
+    "recapLogo", "recapSplitEnabled", "recapEmbedSoftSubs",
     # Batch BI: the source-subtitle auto-detect blur switch.
     "recapBlurAutoDetect",
     # Batch DD: free subtitle-style toggles (shadow / bold).
@@ -4510,6 +4531,7 @@ USER_PREF_STRINGS: Dict[str, int] = {
     "recapTextColor": 7, "recapOutlineColor": 7, "recapBgColor": 7,
     "recapBlurBoxesJson": 2000, "recapSubFontCustomId": 80,
     "recap_presets": 4000,
+    "savedCustomVoiceId": 80, "savedCustomVoiceName": 120,
 }
 USER_PREF_FLOATS: Dict[str, tuple] = {
     "recapZoom": (1.0, 1.2),
@@ -4536,6 +4558,11 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapBlurSubs": True,
     "recapLogo": True,
     "recapSplitEnabled": False,
+    "recapSubRenderMode": "timeline",
+    "recapSubEffect": "none",
+    "recapEmbedSoftSubs": True,
+    "savedCustomVoiceId": "",
+    "savedCustomVoiceName": "",
     "recapCropTop": 0,
     "recapCropBottom": 0,
     "recapCropLeft": 0,
@@ -4790,7 +4817,8 @@ def _live_job_payload(job, registry_entry=None, now=None, medians=None) -> Dict[
         or str(job.id).startswith("rc_")
         or job.engine == "recap"
     )
-    kind = "recap" if is_recap else "voice"
+    is_tts_job = (job.job_type == JobType.TTS.value)
+    kind = "recap" if is_recap else ("tts" if is_tts_job else "voice")
     status = job.status
     progress_percent = 100 if status == JobStatus.SUCCESS.value else 0
     progress_stage = None
@@ -5023,7 +5051,7 @@ async def cancel_voice_job(
 
     refund_info: Dict[str, Any] = {"refunded": False}
     try:
-        from app.services.ledger import refund_job_seconds
+        from app.services.ledger import refund_job_seconds, refund_tts_referral_seconds
 
         before = (await db.execute(
             select(MinuteLedgerEvent).where(
@@ -5031,7 +5059,12 @@ async def cancel_voice_job(
                 MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
             )
         )).first()
-        await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: voice job cancelled by user")
+        if job.job_type == JobType.TTS.value:
+            await refund_tts_referral_seconds(
+                db, job.user_id, str(job.id), keep_seconds=0, note="Refund: TTS job cancelled by user"
+            )
+        else:
+            await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: voice job cancelled by user")
         await db.commit()
         if not before:
             refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
@@ -5140,6 +5173,7 @@ async def upload_worker_job_result(
     file: UploadFile = File(...),
     auth_token: str = Header(None, alias="X-Worker-Token"),
     db: AsyncSession = Depends(get_db_session),
+    defer_status: Optional[str] = Header(None, alias="X-Worker-Defer-Status"),
 ):
     """Internal sync endpoint for Laptop Worker to upload converted audio results to Render Cloud."""
     # Hardening (hunt F8): the endpoint lives ONLY when a dedicated
@@ -5184,14 +5218,15 @@ async def upload_worker_job_result(
     # (basename + uuid + whitelisted audio extension) and enforce a size
     # limit while copying, so a crafted filename cannot traverse out of
     # outputs/ and an unbounded upload cannot fill the disk.
-    _allowed_audio_exts = {".wav", ".mp3", ".ogg", ".m4a"}
+    _allowed_audio_exts = {".wav", ".mp3", ".ogg", ".m4a", ".mp4"}
     _raw_ext = Path(file.filename or "").suffix.lower()
     _safe_ext = _raw_ext if _raw_ext in _allowed_audio_exts else ".wav"
     dest_filename = f"{job_id}_{uuid.uuid4().hex[:8]}{_safe_ext}"
     dest_path = outputs_dir / dest_filename
-    _max_worker_upload_bytes = 100 * 1024 * 1024
-    _written = 0
-    try:
+    _max_worker_upload_bytes = (500 if _safe_ext == ".mp4" else 100) * 1024 * 1024
+
+    def _copy_worker_upload_sync() -> None:
+        _written = 0
         with open(dest_path, "wb") as f_out:
             while True:
                 chunk = file.file.read(1024 * 1024)
@@ -5200,9 +5235,13 @@ async def upload_worker_job_result(
                 _written += len(chunk)
                 if _written > _max_worker_upload_bytes:
                     raise HTTPException(
-                        status_code=413, detail="Uploaded file exceeds the 100 MB limit"
+                        status_code=413,
+                        detail=f"Uploaded file exceeds the {500 if _safe_ext == '.mp4' else 100} MB limit",
                     )
                 f_out.write(chunk)
+
+    try:
+        await asyncio.to_thread(_copy_worker_upload_sync)
     except Exception:
         try:
             dest_path.unlink()
@@ -5211,7 +5250,12 @@ async def upload_worker_job_result(
         raise
 
     job.result_path = str(dest_path)
-    job.status = JobStatus.SUCCESS.value
+    _defer = (
+        isinstance(defer_status, str)
+        and defer_status.strip().lower() in ("1", "true", "yes")
+    )
+    if not _defer:
+        job.status = JobStatus.SUCCESS.value
     await db.commit()
 
     return {
@@ -5711,6 +5755,13 @@ async def upload_recap_video(
 
     meta, best_ts, thumb_path = await asyncio.to_thread(_probe_and_thumb)
     dur_sec = meta.get("duration", 0.0) or 0.0
+    if dur_sec <= 0:
+        saved_path.unlink(missing_ok=True)
+        thumb_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="ဗီဒီယိုဖိုင် မမှန်ကန်ပါ — ဖတ်ယူ၍ မရပါ။ MP4, MKV, MOV သို့မဟုတ် WEBM ဗီဒီယိုအစစ် တင်ပေးပါ။",
+        )
 
     thumb_url = f"/api/recap/frame?path={file_id}_thumb.jpg" if thumb_path.is_file() else ""
     display_title = Path(clean_name).stem or "Uploaded Movie Video"
@@ -5837,8 +5888,15 @@ async def upload_recap_sub_font(
         raise
     try:
         from PIL import ImageFont
+        from app.services.recap_engine.png_subtitles import validate_custom_subtitle_font
 
+        ok_font, err_font = validate_custom_subtitle_font(save_file)
+        if not ok_font:
+            save_file.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=err_font)
         ImageFont.truetype(str(save_file), 24)
+    except HTTPException:
+        raise
     except Exception:
         save_file.unlink(missing_ok=True)
         raise HTTPException(
@@ -5924,7 +5982,7 @@ async def get_recap_frame(
     try:
         res_actual = actual_path.resolve()
         res_storage = settings.storage_root.resolve()
-        if not str(res_actual).startswith(str(res_storage)):
+        if not res_actual.is_relative_to(res_storage):
             raise HTTPException(status_code=403, detail="Access denied")
     except HTTPException:
         raise
@@ -6173,6 +6231,9 @@ class RecapPreviewCompositeRequest(BaseModel):
     sub_bg_opacity: Optional[int] = Field(None, ge=0, le=100)
     sub_shadow: Optional[bool] = None
     sub_bold: bool = True
+    sub_render_mode: str = "png"
+    sub_effect: str = "none"
+    embed_soft_subs: bool = True
     sub_font_custom_id: Optional[str] = Field(None, max_length=80)
     include_logo: bool = True
     logo_pos: str = "top-right"
@@ -6211,7 +6272,7 @@ async def recap_preview_composite(
         try:
             res_actual = actual_path.resolve()
             res_storage = settings.storage_root.resolve()
-            if not str(res_actual).startswith(str(res_storage)):
+            if not res_actual.is_relative_to(res_storage):
                 raise HTTPException(status_code=403, detail="Access denied")
         except HTTPException:
             raise
@@ -6317,6 +6378,8 @@ async def recap_preview_composite(
             sub_visual_overrides=_dd_overrides_from(req),
             sub_font_custom_path=sub_font_custom_path_arg,
             sub_bold=bool(req.sub_bold),
+            sub_render_mode=getattr(req, "sub_render_mode", "png"),
+            sub_effect=getattr(req, "sub_effect", "none"),
             protection_level=req.protection_level,
             sample_text=(req.sample_text or ""),
             output_ratio=req.ratio,
@@ -6682,6 +6745,9 @@ class RecapConfigRequest(BaseModel):
     sub_bg_opacity: Optional[int] = Field(None, ge=0, le=100)
     sub_shadow: Optional[bool] = None
     sub_bold: bool = True
+    sub_render_mode: str = "png"
+    sub_effect: str = "none"
+    embed_soft_subs: bool = True
     # Batch DD: custom subtitle font — client handle + SERVER-ONLY
     # resolved path (the voice_ref_id/voice_ref_path pattern:
     # create_recap_job recomputes the path from the handle and
@@ -8119,6 +8185,7 @@ async def _execute_recap_background_job(
                         part_seconds=_recap_segment_target_seconds(
                             req.split_minutes, max_dur_limit
                         ),
+                        max_part_seconds=max_dur_limit,
                         ffmpeg=find_binary("ffmpeg"),
                         ffprobe=find_binary("ffprobe"),
                         log=lambda m: logger.info(f"Recap job {job_id}: {m}"),
@@ -8275,12 +8342,16 @@ async def _execute_recap_background_job(
             sub_visual_overrides=_dd_overrides_from(req),
             sub_font_custom_path=req.sub_font_custom_path,
             sub_bold=bool(req.sub_bold),
+            sub_render_mode=getattr(req, "sub_render_mode", "png"),
+            sub_effect=getattr(req, "sub_effect", "none"),
+            embed_soft_subs=bool(getattr(req, "embed_soft_subs", True)),
             logo_path=logo_path_arg,
             logo_position=logo_pos_coords if logo_path_arg else None,
             extra_text=watermark_text,
             is_vip=is_vip,
             max_duration_seconds=max_dur_limit,
             progress_callback=progress_cb,
+            should_stop=lambda: bool(entry.get("cancel_requested")),
             **extra_kw,
         )
 
@@ -8584,6 +8655,8 @@ async def _execute_recap_background_job(
                     recap_cfg_dict["final_script"] = final_script_text
                 if entry.get("stage_timings"):
                     recap_cfg_dict["stage_timings"] = entry["stage_timings"]
+                if "script_ready" in recap_cfg_dict:
+                    recap_cfg_dict["script_ready"] = False
                 new_recap_cfg_json = json.dumps(recap_cfg_dict, ensure_ascii=False) if recap_cfg_dict else None
 
                 _succ_values = {
@@ -9138,7 +9211,7 @@ _JOB_MEDIA_SUFFIXES = {
     ".mp3", ".wav", ".ogg", ".m4a", ".part", ".ytdl",
 }
 _FINAL_RENDER_NAME = "final_edge_tts_smart_sync.mp4"
-_KNOWN_TEMP_SUBDIRS = {"inputs", "voxcpm_refs", "recap_uploads", "recap_preview_src"}
+_KNOWN_TEMP_SUBDIRS = {"inputs", "voxcpm_refs", "recap_uploads", "recap_preview_src", "sub_fonts"}
 _TERMINAL_JOB_STATUSES = {
     JobStatus.SUCCESS.value,
     JobStatus.FAILED.value,
@@ -9335,12 +9408,9 @@ async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
                     stats["bytes"] += size
             except OSError:
                 continue
-        # 4. Abandoned clone-flow uploads: files in temp/inputs and
-        #    temp/voxcpm_refs that no surviving Job row references and
-        #    that have sat untouched for 24h (a live conversation or a
-        #    queued job is never that old, and referenced files are
-        #    kept regardless of age).
-        for sub in ("inputs", "voxcpm_refs"):
+        # 4. Abandoned clone-flow & font uploads: files in temp/inputs,
+        #    temp/voxcpm_refs, temp/sub_fonts, and temp/recap_preview_composite older than 24h.
+        for sub in ("inputs", "voxcpm_refs", "sub_fonts", "recap_preview_composite"):
             sub_dir = temp_root / sub
             if sub_dir.is_symlink() or not sub_dir.is_dir():
                 continue
@@ -9416,6 +9486,23 @@ async def _sweep_storage_orphans(*, retention_cutoff_ts: float) -> dict:
             except OSError:
                 continue
 
+    # 8. Orphaned tts_work/<job_id> temporary chunk directories past retention window.
+    tts_work_root = storage_root / "tts_work"
+    if tts_work_root.is_dir() and not tts_work_root.is_symlink():
+        for d in list(tts_work_root.iterdir()):
+            try:
+                if d.is_symlink() or not d.is_dir():
+                    continue
+                status = status_by_id.get(d.name)
+                if status is not None and status not in _TERMINAL_JOB_STATUSES:
+                    continue
+                size, newest = _dir_size_and_newest_mtime(d)
+                if now_ts - newest > _TEMP_JOB_DIR_AGE_SECONDS and _safe_rmtree(d, storage_root):
+                    stats["dirs"] += 1
+                    stats["bytes"] += size
+            except OSError:
+                continue
+
     if stats["dirs"] or stats["files"]:
         logger.info(
             "Storage orphan sweep (Batch W): removed %d dirs, %d files, freed %.1f MB.",
@@ -9465,13 +9552,13 @@ async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
 
             for j in expired_jobs:
                 # Snapshot every on-disk target BEFORE the record goes away.
-                targets: list[Path] = []
+                targets: list[tuple[Path, bool]] = []
                 if j.job_type == JobType.RECAP.value or j.id.startswith("rc_"):
-                    targets.append(settings.storage_root / "recap_output" / j.id)
+                    targets.append((settings.storage_root / "recap_output" / j.id, False))
                 if j.result_path:
-                    targets.append(Path(j.result_path))
+                    targets.append((Path(j.result_path), False))
                 if j.source_audio_path:
-                    targets.append(Path(j.source_audio_path))
+                    targets.append((Path(j.source_audio_path), True))
                 file_targets.append((j.id, targets))
                 await session.delete(j)
                 deleted_count += 1
@@ -9481,11 +9568,32 @@ async def cleanup_expired_jobs(retention_days: Optional[int] = None) -> int:
         logger.error(f"Error during media-retention cleanup (records): {e}")
         return 0
 
+    # Query surviving Job references BEFORE removing shared source files.
+    surviving_sources: set[Path] = set()
+    try:
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            rem_rows = (await session.execute(select(Job.source_audio_path).where(Job.source_audio_path.is_not(None)))).scalars().all()
+            for sp in rem_rows:
+                if sp:
+                    try:
+                        surviving_sources.add(Path(sp).resolve())
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+
     # Records are gone; now remove the files (best-effort — a failure here
     # can only orphan files, it can never break a live job record).
     for job_id, targets in file_targets:
-        for target in targets:
+        for target, is_shared_source in targets:
             try:
+                if is_shared_source and target.is_file():
+                    try:
+                        if target.resolve() in surviving_sources:
+                            continue
+                    except OSError:
+                        pass
                 if target.is_dir():
                     shutil.rmtree(target, ignore_errors=True)
                 elif target.is_file():
@@ -10125,37 +10233,38 @@ async def create_recap_job(
         except Exception as err_db:
             logger.warning(f"Could not persist recap Job record in DB: {err_db}")
 
-    # Start background task with VIP tier flag for watermark control and credit tracking
-    try:
-        asyncio.create_task(_run_recap_background_job(
-            job_id, req, user.id, user.id,
-            is_vip=is_vip, credit_deducted=deducted_credit,
-            phase="script" if req.script_review else "full",
-        ))
-    except Exception:
-        # The job never ran, so a deducted credit must not be lost.
-        # Batch O: refund under the persisted claim (the Job row and
-        # its blob committed above), so this refund is as durable as
-        # every other path; "error" (row/blob unexpectedly missing)
-        # falls back to the plain refund, still ledger-guarded.
-        if deducted_credit:
-            _claim, _recorded = await _claim_persisted_recap_refund(job_id, 1)
-            if _claim == "claimed":
-                if not await _refund_recap_credits(user.id, 1, job_id=job_id):
-                    await _release_persisted_recap_refund_claim(job_id)
-            elif _claim == "error":
-                await _refund_recap_credits(user.id, 1, job_id=job_id)
-        if (
-            submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
-            and estimated_voice_seconds > 0
-        ):
-            await _refund_recap_voice_minutes(
-                user.id,
-                job_id,
-                billing_mode=submit_billing_mode,
-                entry=RECAP_JOBS_REGISTRY.get(job_id),
-            )
-        raise
+    # Start background task only when RECAP_ON_QUEUE is off (when ON, queue worker claims db_job).
+    if not getattr(settings, "recap_on_queue", False):
+        try:
+            asyncio.create_task(_run_recap_background_job(
+                job_id, req, user.id, user.id,
+                is_vip=is_vip, credit_deducted=deducted_credit,
+                phase="script" if req.script_review else "full",
+            ))
+        except Exception:
+            # The job never ran, so a deducted credit must not be lost.
+            # Batch O: refund under the persisted claim (the Job row and
+            # its blob committed above), so this refund is as durable as
+            # every other path; "error" (row/blob unexpectedly missing)
+            # falls back to the plain refund, still ledger-guarded.
+            if deducted_credit:
+                _claim, _recorded = await _claim_persisted_recap_refund(job_id, 1)
+                if _claim == "claimed":
+                    if not await _refund_recap_credits(user.id, 1, job_id=job_id):
+                        await _release_persisted_recap_refund_claim(job_id)
+                elif _claim == "error":
+                    await _refund_recap_credits(user.id, 1, job_id=job_id)
+            if (
+                submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
+                and estimated_voice_seconds > 0
+            ):
+                await _refund_recap_voice_minutes(
+                    user.id,
+                    job_id,
+                    billing_mode=submit_billing_mode,
+                    entry=RECAP_JOBS_REGISTRY.get(job_id),
+                )
+            raise
 
     # Batch CB Item 3: the honest total range for THIS job's shape,
     # computed from the same resolver the Step-4 wizard consulted —
@@ -10581,10 +10690,25 @@ async def render_recap_job(
         raise HTTPException(status_code=409, detail="Recap job cannot be resumed (source missing)")
 
     req = RecapConfigRequest(**snapshot)
+    entry["script_ready"] = False
     entry["status"] = "RUNNING"
     entry["eta_run_started_at"] = time.time()
     entry["progress_step"] = "3/4"
     _recap_set_entry_label(entry, "🗣️ Rendering with your reviewed script...", stage="tts")
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as _sr_db:
+            _sr_job = await _sr_db.get(Job, job_id)
+            if _sr_job is not None:
+                _sr_state = _load_persisted_recap_state(_sr_job) or {}
+                _sr_state["script_ready"] = False
+                _sr_state["phase"] = "render"
+                _sr_job.recap_config = json.dumps(_sr_state, ensure_ascii=False)
+                _sr_job.started_at = datetime.now(timezone.utc)
+                await _sr_db.commit()
+    except Exception as _sr_exc:
+        logger.warning(f"Could not clear persisted script_ready flag for {job_id}: {_sr_exc}")
     asyncio.create_task(_run_recap_background_job(
         job_id, req, user.id, user.id,
         is_vip=bool(entry.get("is_vip")),
@@ -10850,9 +10974,18 @@ async def download_recap_file(
     # must be an admin). Files on disk with no job record are not served.
     if not _recap_registry_owner_ok(job_id, user):
         raise HTTPException(status_code=404, detail="Recap file not found")
+    _reg_dl_entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if _reg_dl_entry is not None:
+        _reg_dl_status = str(_reg_dl_entry.get("status") or "").upper()
+        if _reg_dl_status not in ("COMPLETED", "SUCCESS"):
+            raise HTTPException(status_code=404, detail="Recap file not ready or not found")
     job_row = None
     if job_id not in RECAP_JOBS_REGISTRY:
         job_row = await _require_job_owner(db, job_id, user)
+    else:
+        job_row = await db.get(Job, job_id)
+    if job_row is not None and job_row.status != JobStatus.SUCCESS.value:
+        raise HTTPException(status_code=404, detail="Recap file not ready or not found")
     db_result_path = None
     if file_type == "video":
         try:
@@ -11039,6 +11172,7 @@ async def create_recap_ai_thumbnail(
     req: Optional[RecapThumbnailRequest] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
+    _gate: User = Depends(require_gate_verified),
 ):
     """Generate a 9:16 vertical AI Thumbnail for a completed recap job (PAID + Admin only).
 
@@ -11053,6 +11187,12 @@ async def create_recap_ai_thumbnail(
         generate_recap_ai_thumbnail,
         is_user_eligible_for_thumbnail,
     )
+
+    if (user.status or "") == UserStatus.BLOCKED.value and not settings.is_admin(user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="USER_BANNED: This account has been suspended by the admin. Please contact support.",
+        )
 
     lang = user.language_code or "my"
 
@@ -11089,11 +11229,10 @@ async def create_recap_ai_thumbnail(
         entry_dict.get("title") or persisted_cfg.get("title"),
         db_job.input_text if db_job else None,
     )
-    default_headline = "" if clean_title == "Movie Recap Video" else clean_title
     if req is not None and req.headline_text is not None:
-        headline_text = req.headline_text
+        headline_text = str(req.headline_text).strip()
     else:
-        headline_text = default_headline
+        headline_text = ""
 
     story_style = entry_dict.get("story_style") or persisted_cfg.get("story_style") or ""
     job_dir = settings.storage_root / "recap_output" / job_id
@@ -11339,7 +11478,7 @@ async def save_tts_gemini_key(
     )
 
     candidate = (payload.key or "").strip()
-    lang = (getattr(user, "language", None) or "my").lower()
+    lang = (getattr(user, "language_code", None) or "my").lower()
     if not candidate:
         raise HTTPException(
             status_code=400, detail=t("gemini_key_invalid_error", lang)
@@ -11810,7 +11949,7 @@ async def get_user_history(
             # waits forever for a render that will never start.
             "script_ready": bool(
                 is_recap
-                and j.status in (JobStatus.RUNNING.value, JobStatus.SUCCESS.value, JobStatus.WAITING_CHOICE.value)
+                and j.status not in (JobStatus.FAILED.value, JobStatus.CANCELLED.value)
                 and (
                     ((_hist_entry or {}).get("status") == "SCRIPT_READY")
                     or bool((_hist_state or {}).get("script_ready"))
@@ -12109,7 +12248,14 @@ async def purge_admin_history(
         raise HTTPException(status_code=403, detail="Admin access required")
 
     now_utc = datetime.now(timezone.utc)
-    stmt = select(Job)
+    # Never purge active/non-terminal jobs in ANY purge mode.
+    _active_statuses = (
+        JobStatus.PENDING.value,
+        JobStatus.QUEUED.value,
+        JobStatus.RUNNING.value,
+        JobStatus.WAITING_CHOICE.value,
+    )
+    stmt = select(Job).where(Job.status.not_in(_active_statuses))
 
     if req.mode == "single" and req.job_id:
         stmt = stmt.where(Job.id == req.job_id)
@@ -12123,7 +12269,7 @@ async def purge_admin_history(
     elif req.mode == "older_24h":
         stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
     elif req.mode == "all_completed":
-        stmt = stmt.where(Job.status.in_([JobStatus.SUCCESS.value, JobStatus.FAILED.value]))
+        stmt = stmt.where(Job.status.in_([JobStatus.SUCCESS.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value]))
     elif req.mode == "matching":
         if req.timeframe == "older_24h":
             stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
@@ -12143,37 +12289,49 @@ async def purge_admin_history(
     res = await db.execute(stmt)
     jobs_to_delete = res.scalars().all()
     deleted_count = 0
+    purge_targets: list[tuple[str, bool, Optional[str], Optional[str]]] = []
 
     for j in jobs_to_delete:
         try:
-            # 1. Clean recap output directory
-            if j.job_type == JobType.RECAP.value or j.id.startswith("rc_") or j.engine == "recap":
-                job_dir = settings.storage_root / "recap_output" / j.id
-                if job_dir.is_dir():
-                    shutil.rmtree(job_dir, ignore_errors=True)
-
-            # 2. Clean voice files
-            if j.result_path and Path(j.result_path).is_file():
-                try:
-                    Path(j.result_path).unlink(missing_ok=True)
-                except Exception:
-                    pass
-            if j.source_audio_path and Path(j.source_audio_path).is_file():
-                try:
-                    Path(j.source_audio_path).unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-            # 3. Clean memory registry
+            is_recap = j.job_type == JobType.RECAP.value or j.id.startswith("rc_") or j.engine == "recap"
+            purge_targets.append((str(j.id), is_recap, j.result_path, j.source_audio_path))
             RECAP_JOBS_REGISTRY.pop(j.id, None)
-
-            # 4. Delete record
             await db.delete(j)
             deleted_count += 1
         except Exception as e:
             logger.warning(f"Error purging job {j.id}: {e}")
 
     await db.commit()
+
+    # Check surviving Job rows so shared source_audio_path uploads aren't removed out from under active/surviving jobs.
+    surviving_sources: set[Path] = set()
+    try:
+        rem_sources = (await db.execute(select(Job.source_audio_path).where(Job.source_audio_path.is_not(None)))).scalars().all()
+        for sp in rem_sources:
+            if sp:
+                try:
+                    surviving_sources.add(Path(sp).resolve())
+                except OSError:
+                    pass
+    except Exception:
+        pass
+
+    for jid, is_recap, res_p, src_p in purge_targets:
+        try:
+            if is_recap:
+                job_dir = settings.storage_root / "recap_output" / jid
+                if job_dir.is_dir():
+                    shutil.rmtree(job_dir, ignore_errors=True)
+            if res_p and Path(res_p).is_file():
+                Path(res_p).unlink(missing_ok=True)
+            if src_p and Path(src_p).is_file():
+                try:
+                    if Path(src_p).resolve() not in surviving_sources:
+                        Path(src_p).unlink(missing_ok=True)
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.warning(f"Error cleaning media for purged job {jid}: {e}")
     return {
         "success": True,
         "purged_count": deleted_count,
@@ -12406,6 +12564,24 @@ async def submit_payment_slip(
     # partial file when the cap is exceeded.
     await _save_upload_streaming(slip_file, dest_path, MAX_SLIP_UPLOAD_BYTES)
 
+    # Validate actual image bytes (magic bytes / Pillow decode) before fingerprinting or storing DB row.
+    def _verify_slip_image(path: Path) -> bool:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as img:
+                img.verify()
+            return True
+        except Exception:
+            return False
+
+    if not await asyncio.to_thread(_verify_slip_image, dest_path):
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="ပြေစာပုံဖိုင် မမှန်ကန်ပါ — JPG, PNG သို့မဟုတ် WEBP ပုံအစစ် တင်ပေးပါ။",
+        )
+
     # Duplicate-slip guard (hunt #7): the identical slip IMAGE already
     # sitting in one of this user's PENDING requests means this is the
     # same payment evidence submitted twice (double-tap / retry after
@@ -12439,7 +12615,7 @@ async def submit_payment_slip(
     prior_rows = (await db.execute(
         select(PaymentRequest).where(
             PaymentRequest.slip_fingerprint == slip_fingerprint,
-            PaymentRequest.status != PaymentStatus.REJECTED.value,
+            PaymentRequest.status.notin_([PaymentStatus.REJECTED.value, PaymentStatus.CANCELLED.value]),
         )
     )).scalars().all()
     for prior in prior_rows:
@@ -12617,7 +12793,7 @@ async def get_receipt_image(
     clean_fn = Path(filename).name
     receipts_dir = (settings.storage_root / "receipts").resolve()
     p = (receipts_dir / clean_fn).resolve() if clean_fn else receipts_dir
-    if not str(p).startswith(str(receipts_dir)) or not p.is_file():
+    if not p.is_relative_to(receipts_dir) or not p.is_file():
         raise HTTPException(status_code=404, detail="Receipt image not found")
     if settings.is_admin(user.id):
         return FileResponse(str(p))
@@ -12750,6 +12926,36 @@ async def _test_flagged_user_ids(db: AsyncSession) -> set:
         select(User.id).where(User.is_test_account.is_(True))
     )).scalars().all()
     return set(rows)
+
+
+_STORAGE_WALK_CACHE: dict[str, Any] = {"ts": 0.0, "bytes": None}
+
+
+def _scan_storage_bytes_sync() -> Optional[int]:
+    import os as _os
+    total = 0
+    seen_any = False
+    for base in (str(settings.storage_root), "/app/storage", "storage"):
+        if _os.path.isdir(base):
+            seen_any = True
+            for root, _dirs, files in _os.walk(base, followlinks=False):
+                for f in files:
+                    try:
+                        total += _os.path.getsize(_os.path.join(root, f))
+                    except OSError:
+                        pass
+            break
+    return total if seen_any else None
+
+
+async def _cached_storage_bytes() -> Optional[int]:
+    now = time.monotonic()
+    if (now - float(_STORAGE_WALK_CACHE.get("ts") or 0.0)) < 30.0 and _STORAGE_WALK_CACHE.get("bytes") is not None:
+        return _STORAGE_WALK_CACHE["bytes"]
+    val = await asyncio.to_thread(_scan_storage_bytes_sync)
+    _STORAGE_WALK_CACHE["ts"] = now
+    _STORAGE_WALK_CACHE["bytes"] = val
+    return val
 
 
 @api_router.get("/admin/overview")
@@ -12920,22 +13126,8 @@ async def get_admin_overview(
     except Exception:
         db_size_bytes = None
 
-    storage_bytes = None
     try:
-        import os as _os
-        total = 0
-        seen_any = False
-        for base in ("/app/storage", "storage"):
-            if _os.path.isdir(base):
-                seen_any = True
-                for root, _dirs, files in _os.walk(base):
-                    for f in files:
-                        try:
-                            total += _os.path.getsize(_os.path.join(root, f))
-                        except OSError:
-                            pass
-                break
-        storage_bytes = total if seen_any else None
+        storage_bytes = await _cached_storage_bytes()
     except Exception:
         storage_bytes = None
 
@@ -13303,6 +13495,35 @@ def _admin_category_filter(category: str = "") -> str:
     return cat if cat in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value) else ""
 
 
+def _format_admin_user_dict(u: User, bal: Optional[MinuteBalance]) -> dict:
+    """Serialize one User + MinuteBalance pair into canonical admin user row JSON."""
+    return {
+        "id": u.id,
+        "username": u.username,
+        "first_name": u.first_name,
+        "account_category": u.account_category,
+        "status": u.status,
+        "is_banned": (u.status or "") == UserStatus.BLOCKED.value,
+        "bot_blocked": bool(getattr(u, "bot_blocked", False)),
+        "is_test_account": bool(getattr(u, "is_test_account", False)),
+        "recap_credits": getattr(u, "recap_credits", 0) or 0,
+        "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+async def _batch_admin_user_rows(db: AsyncSession, rows: list[User]) -> list[dict]:
+    """Batch-load MinuteBalance rows in one query to avoid N+1 round-trips."""
+    if not rows:
+        return []
+    user_ids = [u.id for u in rows]
+    bal_rows = (
+        await db.execute(select(MinuteBalance).where(MinuteBalance.user_id.in_(user_ids)))
+    ).scalars().all()
+    bal_by_uid = {b.user_id: b for b in bal_rows}
+    return [_format_admin_user_dict(u, bal_by_uid.get(u.id)) for u in rows]
+
+
 @api_router.get("/admin/users/search")
 async def search_admin_users(
     q: str = "",
@@ -13333,41 +13554,14 @@ async def search_admin_users(
     rows = (await db.execute(
         stmt.order_by(User.created_at.desc()).limit(limit)
     )).scalars().all()
-    out = []
-    for u in rows:
-        bal = await db.get(MinuteBalance, u.id)
-        out.append({
-            "id": u.id,
-            "username": u.username,
-            "first_name": u.first_name,
-            "account_category": u.account_category,
-            "status": u.status,
-            "is_banned": (u.status or "") == UserStatus.BLOCKED.value,
-            "bot_blocked": bool(getattr(u, "bot_blocked", False)),
-            "is_test_account": bool(getattr(u, "is_test_account", False)),
-            "recap_credits": getattr(u, "recap_credits", 0) or 0,
-            "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
-        })
+    out = await _batch_admin_user_rows(db, list(rows))
     return {"users": out, "count": len(out)}
 
 
 async def _admin_user_row(db: AsyncSession, u: User) -> dict:
     """Canonical admin user payload (same shape as /admin/users/search)."""
     bal = await db.get(MinuteBalance, u.id)
-    return {
-        "id": u.id,
-        "username": u.username,
-        "first_name": u.first_name,
-        "account_category": u.account_category,
-        "status": u.status,
-        "is_banned": (u.status or "") == UserStatus.BLOCKED.value,
-        "bot_blocked": bool(getattr(u, "bot_blocked", False)),
-        "is_test_account": bool(getattr(u, "is_test_account", False)),
-        "recap_credits": getattr(u, "recap_credits", 0) or 0,
-        "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
-        "created_at": u.created_at.isoformat() if u.created_at else None,
-    }
+    return _format_admin_user_dict(u, bal)
 
 
 @api_router.get("/admin/users")
@@ -13420,7 +13614,7 @@ async def list_admin_users(
     rows = (await db.execute(
         stmt.order_by(User.created_at.desc()).limit(limit).offset(offset)
     )).scalars().all()
-    out = [await _admin_user_row(db, u) for u in rows]
+    out = await _batch_admin_user_rows(db, list(rows))
     return {"users": out, "count": len(out), "limit": limit, "offset": offset, "total": total}
 
 
@@ -14010,7 +14204,17 @@ async def toggle_admin_worker_status(
         await set_dynamic_setting(db, "worker_laptop_status", st, admin_id=admin.id)
         updated["worker_laptop_status"] = st
     elif payload.recap_on_queue is None:
-        curr = getattr(settings, "worker_laptop_status", "ONLINE").upper()
+        from app.models.schema import BotSetting as _BotSetting
+        stat_row = (
+            await db.execute(select(_BotSetting).where(_BotSetting.key == "worker_laptop_status"))
+        ).scalar_one_or_none()
+        curr = (
+            stat_row.value.strip().upper()
+            if stat_row and stat_row.value
+            else str(getattr(settings, "worker_laptop_status", "ONLINE") or "ONLINE").upper()
+        )
+        if curr == "OFFLINE":
+            curr = "ONLINE"
         new_st = "PAUSED" if curr == "ONLINE" else "ONLINE"
         await set_dynamic_setting(db, "worker_laptop_status", new_st, admin_id=admin.id)
         updated["worker_laptop_status"] = new_st
@@ -14197,10 +14401,11 @@ async def retry_queued_job(
             plan = _recap_redispatch_plan(job, u, restore_credit_state=True)
             plan["entry"]["progress_label"] = t("recap_progress_requeued", getattr(u, "language_code", None) or "my")
             RECAP_JOBS_REGISTRY[job_id] = plan["entry"]
-            asyncio.create_task(_run_recap_background_job(
-                job_id, plan["cfg"], job.user_id, job.chat_id or job.user_id,
-                is_vip=plan["is_vip"], credit_deducted=plan["credit_deducted"], phase=plan["phase"],
-            ))
+            if not getattr(settings, "recap_on_queue", False):
+                asyncio.create_task(_run_recap_background_job(
+                    job_id, plan["cfg"], job.user_id, job.chat_id or job.user_id,
+                    is_vip=plan["is_vip"], credit_deducted=plan["credit_deducted"], phase=plan["phase"],
+                ))
         except Exception as e:
             logger.warning(f"Could not re-dispatch recap job background task: {e}")
 
@@ -14261,14 +14466,19 @@ async def cancel_queued_job(
         )
 
         try:
-            from app.services.ledger import refund_job_seconds
+            from app.services.ledger import refund_job_seconds, refund_tts_referral_seconds
             before = (await db.execute(
                 select(MinuteLedgerEvent).where(
                     MinuteLedgerEvent.user_id == job.user_id,
                     MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
                 )
             )).first()
-            await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: job cancelled by admin")
+            if job.job_type == JobType.TTS.value:
+                await refund_tts_referral_seconds(
+                    db, job.user_id, str(job.id), keep_seconds=0, note="Refund: TTS job cancelled by admin"
+                )
+            else:
+                await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: job cancelled by admin")
             await db.commit()
             if not before:
                 refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
@@ -14456,9 +14666,9 @@ async def get_admin_settings(
         "gemini_fallback_2": getattr(settings, "gemini_fallback_2", "gemini-3.5-flash-lite"),
         "gemini_fallback_3": getattr(settings, "gemini_fallback_3", "gemini-flash-lite-latest"),
         "gemini_tts_primary_model": str(getattr(settings, "gemini_tts_primary_model", "gemini-3.8-flash-tts") or "gemini-3.8-flash-tts"),
-        "gemini_tts_fallback_1": str(getattr(settings, "gemini_tts_fallback_1", "gemini-3.1-flash-tts-preview") or "gemini-3.1-flash-tts-preview"),
+        "gemini_tts_fallback_1": str(getattr(settings, "gemini_tts_fallback_1", "") or ""),
         "gemini_tts_lite_model": str(getattr(settings, "gemini_tts_lite_model", "gemini-3.8-flash-lite-tts") or "gemini-3.8-flash-lite-tts"),
-        "gemini_tts_fallback_2": str(getattr(settings, "gemini_tts_fallback_2", "gemini-2.5-flash-preview-tts") or "gemini-2.5-flash-preview-tts"),
+        "gemini_tts_fallback_2": str(getattr(settings, "gemini_tts_fallback_2", "") or ""),
         # Batch BS: pre-filled with the CURRENT EFFECTIVE model
         # (dynamic setting > env > default, via the shared resolver
         # the transcribers use) so the field shows what transcription

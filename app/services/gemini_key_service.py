@@ -17,7 +17,10 @@ nothing (the tts_cap_consumed_seconds rule, applied to the pool).
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
+import os
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -47,12 +50,62 @@ def _utc_day():
     return datetime.now(timezone.utc).date()
 
 
+# ── BYOK Encryption at Rest (Fernet) ─────────────────────────────────
+_ENC_PREFIX = "enc:v1:"
+
+
+def _byok_fernet():
+    from cryptography.fernet import Fernet
+
+    raw_secret = (
+        os.getenv("BYOK_ENCRYPTION_KEY")
+        or getattr(settings, "bot_token", "")
+        or getattr(settings, "expected_db_identity", "")
+        or "voice-clone-pro-byok-key"
+    )
+    digest = hashlib.sha256(f"byok-v1:{raw_secret}".encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_byok_secret(value: str | None) -> str | None:
+    """Encrypt a plaintext BYOK secret for database storage; idempotent."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.startswith(_ENC_PREFIX):
+        return s
+    try:
+        token = _byok_fernet().encrypt(s.encode("utf-8")).decode("ascii")
+        return f"{_ENC_PREFIX}{token}"
+    except Exception:
+        return s
+
+
+def decrypt_byok_secret(value: str | None) -> str | None:
+    """Decrypt stored BYOK ciphertext, passing legacy plaintext values through."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if not s.startswith(_ENC_PREFIX):
+        return s
+    token = s[len(_ENC_PREFIX):]
+    try:
+        return _byok_fernet().decrypt(token.encode("ascii")).decode("utf-8")
+    except Exception:
+        # Fallback: if key material changed cleanly return None rather than ciphertext
+        return None
+
+
 # ── Storage ──────────────────────────────────────────────────────────
 
 def masked_key_view(user: User) -> dict:
     """The ONLY client-facing shape of a saved key: presence, state,
     and •••• + last 4. The value itself never leaves the server."""
-    key = (getattr(user, "gemini_api_key", None) or "").strip()
+    key = (decrypt_byok_secret(getattr(user, "gemini_api_key", None)) or "").strip()
     if not key:
         return {"has_key": False, "masked": None, "state": None}
     return {

@@ -275,14 +275,13 @@ def test_tts_start_key_rotates_per_call(tmp_path, monkeypatch):
 def test_tts_start_model_rotates_per_call(tmp_path, monkeypatch):
     recorder = _TTSRecorder()
     eng = _tts_engine(tmp_path, monkeypatch, recorder)
-    for _ in range(5):
+    for _ in range(3):
         assert eng._ask("prompt", "Charon")
     models = gte.TTS_MODELS
     # Quality Pass §2C item E: lite stays behind primary models while primaries
-    # are < 7/10 used, so the 3 primary models rotate first.
+    # are < 7/10 used, so the primary model leads first.
     primaries = [m for m in models if "lite" not in m]
-    assert [model for _key, model in recorder.calls] == [
-        primaries[0], primaries[1], primaries[2], primaries[0], primaries[1]]
+    assert [model for _key, model in recorder.calls] == [primaries[0]] * 3
 
     # Once primaries reach >= 7/10 usage on pool keys, lite joins starting rotation.
     health = key_rotation.health_for("gemini_tts")
@@ -292,10 +291,10 @@ def test_tts_start_model_rotates_per_call(tmp_path, monkeypatch):
         for m in primaries:
             health.record_usage(k, m, n=7)
     recorder.calls.clear()
-    for _ in range(5):
+    for _ in range(4):
         assert eng._ask("prompt", "Charon")
     assert [model for _key, model in recorder.calls] == [
-        models[0], models[1], models[2], models[3], models[0]]
+        models[0], models[1], models[0], models[1]]
 
 
 def test_tts_cooled_key_tail_appended_never_dropped(tmp_path, monkeypatch):
@@ -304,23 +303,11 @@ def test_tts_cooled_key_tail_appended_never_dropped(tmp_path, monkeypatch):
     eng = _tts_engine(tmp_path, monkeypatch, recorder)
     with pytest.raises(gte.GeminiTTSError):
         eng._ask("prompt", "Charon")
-    first, second, third, fourth = gte.TTS_MODELS
-    # The cooled key is LAST within the FIRST model's walk (its
-    # configure-time position — Batch O semantics) and is still
-    # tried for every model — rotation never drops it.
-    # (Batch DN: the walk covers all 4 TTS models, was 2. Later
-    # models get a FRESH per-model order: the cooled key rejoins at
-    # the head of its natural rotated position via the engine's
-    # tail-append in pool order (order_for_model still omits it —
-    # the cooldown has not expired — and the registry cursor has
-    # advanced, rotating the healthy pair), so its exact position
-    # varies by model. What the pin still guarantees, at the same
-    # strength: every (key, model) pair is attempted exactly once,
-    # the first walk is cooled-last, and no key is ever dropped.)
+    first, _second = gte.TTS_MODELS
     assert recorder.calls[:3] == [
         ("tts-key-1", first), ("tts-key-3", first), ("tts-key-2", first),
     ]
-    assert len(recorder.calls) == 12
+    assert len(recorder.calls) == 3 * len(gte.TTS_MODELS)
     assert sorted(recorder.calls) == sorted(
         (key, model)
         for key in ("tts-key-1", "tts-key-2", "tts-key-3")

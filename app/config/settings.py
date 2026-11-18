@@ -332,11 +332,14 @@ class Settings(BaseSettings):
     gemini_fallback_2: str = Field(default="gemini-3.5-flash-lite", alias="GEMINI_FALLBACK_2")
     gemini_fallback_3: str = Field(default="gemini-flash-lite-latest", alias="GEMINI_FALLBACK_3")
 
-    # Gemini TTS Dynamic Model Chain (effective order: primary -> fallback_1 -> lite -> fallback_2)
+    # Gemini TTS Dynamic Model Chain (GA models only; Nov 17 retired previews removed)
     gemini_tts_primary_model: str = Field(default="gemini-3.8-flash-tts", alias="GEMINI_TTS_PRIMARY_MODEL")
-    gemini_tts_fallback_1: str = Field(default="gemini-3.1-flash-tts-preview", alias="GEMINI_TTS_FALLBACK_1")
+    gemini_tts_fallback_1: str = Field(default="", alias="GEMINI_TTS_FALLBACK_1")
     gemini_tts_lite_model: str = Field(default="gemini-3.8-flash-lite-tts", alias="GEMINI_TTS_LITE_MODEL")
-    gemini_tts_fallback_2: str = Field(default="gemini-2.5-flash-preview-tts", alias="GEMINI_TTS_FALLBACK_2")
+    gemini_tts_fallback_2: str = Field(default="", alias="GEMINI_TTS_FALLBACK_2")
+
+    # Versioned AI Prompt Registry profile ("v2" upgraded default, "v1" instant rollback)
+    ai_prompt_profile: str = Field(default="v2", alias="AI_PROMPT_PROFILE")
 
     # Recap AI Thumbnail Generator (HF PRO monthly compute credit pool, paid/admin only)
     recap_thumbnail_monthly_cap_usd: float = Field(
